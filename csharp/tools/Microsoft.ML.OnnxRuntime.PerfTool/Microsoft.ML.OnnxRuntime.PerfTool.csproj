@@ -6,6 +6,7 @@
     <OnnxRuntimeCsharpRoot>..\..</OnnxRuntimeCsharpRoot>
     <buildDirectory Condition="'$(buildDirectory)'==''">$(OnnxRuntimeCsharpRoot)\..\build\Windows</buildDirectory>
     <NativeBuildOutputDir>$(buildDirectory)\$(Configuration)\$(Configuration)</NativeBuildOutputDir>
+    <SignAssembly>false</SignAssembly>
   </PropertyGroup>
 
   <ItemGroup>
@@ -17,7 +18,7 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
       <Visible>false</Visible>
     </None>
-    <None Include="$(NativeBuildOutputDir)\mkldnn.dll" Condition="Exists('$(NativeBuildOutputDir)\mkldnn.dll')">
+    <None Include="$(NativeBuildOutputDir)\mkldnn.dll">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
       <Visible>false</Visible>
     </None>
@@ -30,6 +31,7 @@
 
   <ItemGroup>
     <ProjectReference Include="$(OnnxRuntimeCSharpRoot)\src\Microsoft.ML.OnnxRuntime\Microsoft.ML.OnnxRuntime.csproj" />
+    <PackageReference Include="Microsoft.ML.Scoring" Version="1.1.0" />
   </ItemGroup>
 
 
