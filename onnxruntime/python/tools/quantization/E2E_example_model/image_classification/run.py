@@ -5,6 +5,8 @@ import re
 import abc
 import subprocess
 import json
+import argparse
+import time
 from PIL import Image
 
 import onnx
@@ -25,7 +27,7 @@ class ResNet50DataReader(CalibrationDataReader):
         if self.preprocess_flag:
             self.preprocess_flag = False
             session = onnxruntime.InferenceSession(self.augmented_model_path, None)
-            (_, height, width, _) = session.get_inputs()[0].shape
+            (_, _, height, width) = session.get_inputs()[0].shape
             nhwc_data_list = preprocess_func(self.image_folder, height, width, size_limit=0)
             input_name = session.get_inputs()[0].name
             self.datasize = len(nhwc_data_list)
@@ -56,18 +58,54 @@ def preprocess_func(images_folder, height, width, size_limit=0):
         input_data = np.float32(pillow_img) - \
         np.array([123.68, 116.78, 103.94], dtype=np.float32)
         nhwc_data = np.expand_dims(input_data, axis=0)
-        unconcatenated_batch_data.append(nhwc_data)
+        nchw_data = nhwc_data.transpose(0, 3, 1, 2)  # ONNX Runtime standard
+        unconcatenated_batch_data.append(nchw_data)
     batch_data = np.concatenate(np.expand_dims(unconcatenated_batch_data, axis=0), axis=0)
     return batch_data
 
 
+def benchmark(model_path):
+    session = onnxruntime.InferenceSession(model_path)
+    input_name = session.get_inputs()[0].name
+
+    total = 0.0
+    runs = 10
+    input_data = np.zeros((1, 3, 224, 224), np.float32)
+    # Warming up
+    _ = session.run([], {input_name: input_data})
+    for i in range(runs):
+        start = time.perf_counter()
+        _ = session.run([], {input_name: input_data})
+        end = (time.perf_counter() - start) * 1000
+        total += end
+        print(f"{end:.2f}ms")
+    total /= runs
+    print(f"Avg: {total:.2f}ms")
+
+
+def get_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input_model", required=True, help="input model")
+    parser.add_argument("--output_model", required=True, help="output model")
+    parser.add_argument("--calibrate_dataset", default="./test_images", help="calibration data set")
+    args = parser.parse_args()
+    return args
+
+
 def main():
-    input_model_path = './resnet50_v1.onnx'
-    output_model_path = './calibrated_quantized_model.onnx'
-    calibration_dataset_path = './test_images'
+    args = get_args()
+    input_model_path = args.input_model
+    output_model_path = args.output_model
+    calibration_dataset_path = args.calibrate_dataset
     dr = ResNet50DataReader(calibration_dataset_path)
     quantize_static(input_model_path, output_model_path, dr)
     print('Calibrated and quantized model saved.')
+
+    print('benchmarking fp32 model...')
+    benchmark(input_model_path)
+
+    print('benchmarking int8 model...')
+    benchmark(output_model_path)
 
 
 if __name__ == '__main__':
