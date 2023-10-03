@@ -195,3 +195,11 @@ Package.pins
 Package.resolved
 .build/
 .swiftpm/
+
+# qnn
+*.jar
+.config/
+.devcontainer/
+.gdn/
+.github/
+.pipelines/
