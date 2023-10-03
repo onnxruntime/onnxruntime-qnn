@@ -198,6 +198,8 @@ Package.resolved
 
 # qnn
 *.jar
+*.onnx
+*.pt
 .config/
 .devcontainer/
 .gdn/
