@@ -202,7 +202,6 @@ Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrap
   // Qnn format is begin_0, end_0, begin_1, end_1, ...
   ReArranagePads(pad_amount);
 
-  std::vector<uint32_t> pad_amount_dim{static_cast<uint32_t>(pad_amount.size() / 2), static_cast<uint32_t>(2)};
   std::vector<uint32_t> input_shape;
   ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].node_arg, input_shape), "Cannot get shape of input 0.");
 
@@ -223,11 +222,10 @@ Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrap
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Pad mode only support constant.");
   }
 
+  std::vector<uint32_t> pad_amount_dim{static_cast<uint32_t>(pad_amount.size() / 2), static_cast<uint32_t>(2)};
   QnnParamWrapper mode_param(node_unit.Index(), node_unit.Name(), QNN_OP_PAD_PARAM_SCHEME, mode_qnn_scalar);
   param_tensor_names.push_back(mode_param.GetParamTensorName());
   qnn_model_wrapper.AddParamWrapper(std::move(mode_param));
-
-  
 
   QnnParamWrapper multiples_param(node_unit.Index(), node_unit.Name(), QNN_OP_PAD_PARAM_PAD_AMOUNT, std::move(pad_amount_dim),
                                   std::move(pad_amount));
