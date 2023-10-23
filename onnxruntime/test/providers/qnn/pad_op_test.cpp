@@ -167,7 +167,7 @@ TEST_F(QnnCPUBackendTests, Pad2dPadsNotIni) {
 TEST_F(QnnCPUBackendTests, DISABLED_PadModeReflect) {
   bool has_constant_value = false;
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
-               TestInputDef<int64_t>({4}, true, {0, 2, 0, 0}),
+               TestInputDef<int64_t>({4}, true, {0, 1, 0, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
                {utils::MakeAttribute("mode", "reflect")},
                ExpectedEPNodeAssignment::All,
