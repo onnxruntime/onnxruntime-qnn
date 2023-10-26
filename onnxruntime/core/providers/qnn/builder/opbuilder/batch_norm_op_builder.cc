@@ -81,7 +81,6 @@ class BatchNormOpBuilder : public BaseOpBuilder {
                         float& scale,
                         int& zero_point) const {
     ORT_RETURN_IF_ERROR(CheckMinMax(rmin, rmax));
-    // avoid maybe-uninitialized error
     float qmin = 0.0f;
     float qmax = 255.0f;
     ORT_RETURN_IF_ERROR(GetQminQmax(qnn_data_type, qmin, qmax));
@@ -350,7 +349,6 @@ class BatchNormOpBuilder : public BaseOpBuilder {
                          const int zero_point,
                          const Qnn_DataType_t qnn_data_type,
                          int& quant_value) const {
-    // avoid maybe-uninitialized error
     int qmin = 0;
     int qmax = 255;
     ORT_RETURN_IF_ERROR(GetQminQmax(qnn_data_type, qmin, qmax));
@@ -370,7 +368,6 @@ class BatchNormOpBuilder : public BaseOpBuilder {
     int i = 0;
     int offset = 0;
     for (; i < static_cast<int>(channel); ++i) {
-      // avoid maybe-uninitialized error
       double mean_value = 0.0;
       ORT_RETURN_IF_ERROR(GetValueOnQnnDataType(mean_info.qnn_data_type, mean_raw_ptr + offset, mean_value, offset));
       mean_out[i] = (is_npu_backend) ? dequantize(mean_info, mean_value) : mean_value;
@@ -391,7 +388,6 @@ class BatchNormOpBuilder : public BaseOpBuilder {
     int i = 0;
     int offset = 0;
     for (; i < static_cast<int>(channel); ++i) {
-      // avoid maybe-uninitialized error
       double var_value = 0.0;
       ORT_RETURN_IF_ERROR(GetValueOnQnnDataType(var_info.qnn_data_type, var_raw_ptr + offset, var_value, offset));
       std_out[i] = (is_npu_backend) ? dequantize(var_info, var_value) : var_value;
@@ -415,7 +411,6 @@ class BatchNormOpBuilder : public BaseOpBuilder {
     int i = 0;
     int offset = 0;
     for (; i < static_cast<int>(channel); ++i) {
-      // avoid maybe-uninitialized error
       double scale_value = 0.0;
       ORT_RETURN_IF_ERROR(GetValueOnQnnDataType(scale_info.qnn_data_type, scale_raw_ptr + offset, scale_value, offset));
       scale_out[i] = (is_npu_backend) ? dequantize(scale_info, scale_value) : scale_value;
@@ -442,7 +437,6 @@ class BatchNormOpBuilder : public BaseOpBuilder {
     int i = 0;
     int offset = 0;
     for (; i < static_cast<int>(channel); ++i) {
-      // avoid maybe-uninitialized error
       double bias_value = 0.0;
       ORT_RETURN_IF_ERROR(GetValueOnQnnDataType(bias_info.qnn_data_type, bias_raw_ptr + offset, bias_value, offset));
       bias_out[i] = (is_npu_backend) ? dequantize(bias_info, bias_value) : bias_value;
@@ -462,7 +456,6 @@ class BatchNormOpBuilder : public BaseOpBuilder {
                      std::vector<uint8_t>& raw_tensor) const {
     if (is_npu_backend) {
       raw_tensor.resize(double_tensor.size());
-      // avoid maybe-uninitialized error
       float scale = 0.0f;
       int zero_point = 0;
       ORT_RETURN_IF_ERROR(GetQuantParams(static_cast<float>(rmin),
@@ -474,7 +467,6 @@ class BatchNormOpBuilder : public BaseOpBuilder {
       utils::InitializeQuantizeParam(quant_param, true, scale, zero_point);
       for (size_t i = 0; i < double_tensor.size(); ++i) {
         // onnx only supports 8 bits quantization
-        // avoid maybe-uninitialized error
         int quant_value_int = 0;
         ORT_RETURN_IF_ERROR(quantize(double_tensor[i], scale, zero_point, info.qnn_data_type, quant_value_int));
         if (info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8) {
