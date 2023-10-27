@@ -212,7 +212,7 @@ Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrap
   if ("constant" == mode) {
     mode_qnn_scalar.uint32Value = QNN_OP_PAD_SCHEME_CONSTANT;
   } else if ("reflect" == mode) {
-    for(size_t i = 0; i < input_shape.size(); i++) {
+    for (size_t i = 0; i < input_shape.size(); i++) {
       ORT_RETURN_IF(pad_amount[i * 2] > input_shape[i] - 1 || pad_amount[(i * 2) + 1] > input_shape[i] - 1, "Pad amount should not be greater than shape(input[0])[i] - 1");
     }
     mode_qnn_scalar.uint32Value = QNN_OP_PAD_SCHEME_MIRROR_REFLECT;
