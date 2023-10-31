@@ -47,7 +47,6 @@ class BatchNormOpBuilder : public BaseOpBuilder {
   Status GetQminQmax(const Qnn_DataType_t qnn_data_type,
                      T& qmin,
                      T& qmax) const {
-    // onnx only supports 8 bits quantization
     if (qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8) {
       qmin = static_cast<T>(std::numeric_limits<int8_t>::min());
       qmax = static_cast<T>(std::numeric_limits<int8_t>::max());
