@@ -76,13 +76,13 @@ int main(int, char* argv[]) {
     g_ort->SetIntraOpNumThreads(session_options, 1);
     g_ort->SetSessionGraphOptimizationLevel(session_options, ORT_ENABLE_BASIC);
 
-    // std::vector<const char*> options_keys = {"runtime"};
-    // std::vector<const char*> options_values = {"QnnCpu.dll"};
+    std::vector<const char*> options_keys = {"backend_path"};
+    std::vector<const char*> options_values = {R"(C:\Users\hungjuiw\workspace\onnxruntime\build\build_cli_tools\RelWithDebInfo\RelWithDebInfo\QnnCpu.dll)"};
 
-    // g_ort->SessionOptionsAppendExecutionProvider(
-    //     session_options, "QNN",
-    //     options_keys.data(), options_values.data(), options_keys.size()
-    // );
+    g_ort->SessionOptionsAppendExecutionProvider(
+        session_options, "QNN",
+        options_keys.data(), options_values.data(), options_keys.size()
+    );
 
     OrtSession* session;
     g_ort->CreateSession(env, model_path.c_str(), session_options, &session);
@@ -126,8 +126,12 @@ int main(int, char* argv[]) {
         input_node_dims[i].resize(num_dims);
         g_ort->GetDimensions(tensor_info, input_node_dims[i].data(), num_dims);
         std::cout << "input_node_dims " << i << ": [";
-        for (int j=0; j<input_node_dims[i].size(); ++j)
+        for (size_t j=0; j<input_node_dims[i].size(); ++j) {
+            // If onnx model has dynamic dimension on input, e.g. [N, 3, 224, 224]
+            // g_ort->GetDimensions yields [-1, 3, 224, 224]. We need to handle it with abs().
+            input_node_dims[i][j] = abs(input_node_dims[i][j]);
             std::cout << ' ' << input_node_dims[i][j];
+        }
         std::cout << " ]" << std::endl;
 
         if (type_info) g_ort->ReleaseTypeInfo(type_info);
@@ -137,10 +141,12 @@ int main(int, char* argv[]) {
     size_t num_output_nodes;
     std::vector<const char*> output_node_names;
     std::vector<std::vector<int64_t>> output_node_dims;
+    std::vector<ONNXTensorElementDataType> output_types;
     std::vector<OrtValue*> output_tensors;
     g_ort->SessionGetOutputCount(session, &num_output_nodes);
     output_node_names.resize(num_output_nodes);
     output_node_dims.resize(num_output_nodes);
+    output_types.resize(num_output_nodes);
     output_tensors.resize(num_output_nodes);
     for (size_t i = 0; i < num_output_nodes; i++) {
         // Get output node names
@@ -153,19 +159,31 @@ int main(int, char* argv[]) {
         g_ort->SessionGetOutputTypeInfo(session, i, &type_info);
         const OrtTensorTypeAndShapeInfo* tensor_info;
         g_ort->CastTypeInfoToTensorInfo(type_info, &tensor_info);
+        ONNXTensorElementDataType type;
+        g_ort->GetTensorElementType(tensor_info, &type);
+        output_types[i] = type;
+        std::cout << "output_types " << i << ": " << output_types[i] << std::endl;
 
         // Get output shapes/dims
         size_t num_dims;
         g_ort->GetDimensionsCount(tensor_info, &num_dims);
         output_node_dims[i].resize(num_dims);
-        g_ort->GetDimensions(tensor_info, (int64_t*)output_node_dims[i].data(), num_dims);
+        g_ort->GetDimensions(tensor_info, output_node_dims[i].data(), num_dims);
+        std::cout << "output_node_dims " << i << ": [";
+        for (size_t j=0; j<output_node_dims[i].size(); ++j) {
+            // If onnx model has dynamic dimension on output, e.g. [N, 1000]
+            // g_ort->GetDimensions yields [-1, 1000]. We need to handle it with abs().
+            output_node_dims[i][j] = abs(output_node_dims[i][j]);
+            std::cout << ' ' << output_node_dims[i][j];
+        }
+        std::cout << " ]" << std::endl;
 
         if (type_info) g_ort->ReleaseTypeInfo(type_info);
     }
 
     // Multiple test_data_set_X
     std::vector<std::basic_string<PATH_CHAR_TYPE>> test_data_sets = find_test_data_sets(model_dir);
-    for (auto const test_data_set : test_data_sets) {
+    for (auto const& test_data_set : test_data_sets) {
         std::wcout << test_data_set << std::endl;
         auto test_data_set_iter = std::filesystem::directory_iterator(test_data_set);
         size_t in_idx = 0;
@@ -180,20 +198,27 @@ int main(int, char* argv[]) {
                 // input data
                 size_t input_data_size = 1;
                 std::cout << "input_node_dims " << in_idx << ": [";
-                for (int j=0; j<input_node_dims[in_idx].size(); ++j) {
+                for (size_t j=0; j<input_node_dims[in_idx].size(); ++j) {
                     std::cout << ' ' << input_node_dims[in_idx][j];
                     input_data_size = input_data_size* input_node_dims[in_idx][j];
                 }
                 std::cout << " ]" << std::endl;
+
                 size_t input_data_length = input_data_size * sizeof(float);
+                std::cout << "Before input_data" << std::endl;
                 std::vector<float> input_data(input_data_size, 1.0);
+                
                 // Inference
+                std::cout << "Before CreateCpuMemoryInfo" << std::endl;
                 OrtMemoryInfo* memory_info;
                 g_ort->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &memory_info);
+                
+                std::cout << "Before CreateTensorWithDataAsOrtValue" << std::endl;
                 g_ort->CreateTensorWithDataAsOrtValue(
                     memory_info, reinterpret_cast<void*>(input_data.data()),
                     input_data_length, input_node_dims[in_idx].data(), input_node_dims[in_idx].size(), input_types[in_idx], &input_tensors[in_idx]
                 );
+                std::cout << "Before Read" << in_idx << std::endl;
                 // Read Input .pb
                 std::ifstream input_raw_file(filename_str, std::ios::binary);
                 // calculate number of bytes
@@ -202,6 +227,7 @@ int main(int, char* argv[]) {
                 // read the data
                 input_raw_file.seekg(0, std::ios::beg);
                 input_raw_file.read(reinterpret_cast<char*>(&input_data[0]), num_elements * sizeof(float));
+                std::cout << "Before Inference" << in_idx << std::endl;
                 g_ort->Run(
                     session, nullptr,
                     input_node_names.data(), (const OrtValue* const*)input_tensors.data(), input_tensors.size(),
@@ -212,27 +238,25 @@ int main(int, char* argv[]) {
         }
         // Dump output of each out node
         for (size_t out_idx=0; out_idx < num_output_nodes; out_idx++) {
-            std::cout << output_node_names[out_idx] << std::endl;
-            OrtValue* actual_output_value = output_tensors[out_idx];
-            OrtTensorTypeAndShapeInfo* out_tensor_info;
-            g_ort->GetTensorTypeAndShape(actual_output_value, &out_tensor_info);
-            size_t n_element;
-            g_ort->GetTensorShapeElementCount(out_tensor_info, &n_element);
-            ONNXTensorElementDataType out_dtype;
-            g_ort->GetTensorElementType(out_tensor_info, &out_dtype);
-            size_t element_size = GetONNXTypeSize(out_dtype);
-            std::cout << "GetElementCount " << n_element << std::endl;
-            std::cout << "GetTensorElementType " << out_dtype << std::endl;
+            // output data
+            size_t output_data_size = 1;
+            for (size_t j=0; j<output_node_dims[out_idx].size(); ++j) {
+                output_data_size = output_data_size* output_node_dims[out_idx][j];
+            }
+            size_t element_size = GetONNXTypeSize(output_types[out_idx]);
+            std::cout << "GetElementCount " << output_data_size << std::endl;
+            std::cout << "GetTensorElementType " << output_types[out_idx] << std::endl;
             std::cout << "GetONNXTypeSize " << element_size << std::endl;
             void* output_buffer;
             g_ort->GetTensorMutableData(output_tensors[out_idx], &output_buffer);
+            std::cout << "Hello" << std::endl;
             #ifdef _WIN32
                 std::wstring outfile = std::wstring(L"out_") + std::to_wstring(out_idx) + std::wstring(L".raw");
             #else
                 std::string outfile = std::string("out_") + std::to_string(out_idx) + std::string(".raw")
             #endif
             std::ofstream fout(std::filesystem::path(test_data_set) / outfile, std::ios::binary);
-            fout.write(reinterpret_cast<const char*>(output_buffer), n_element * element_size);
+            fout.write(reinterpret_cast<const char*>(output_buffer), output_data_size * element_size);
             fout.close();
         }
         std::cout << "Successfully Save Outputs" << std::endl;
