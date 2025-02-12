@@ -59,6 +59,65 @@ void collect_in_out_tensor_information(
 
         if (type_info) g_ort->ReleaseTypeInfo(type_info);
     }
+    return;
+}
+
+void load_input_tensors_from_pb(
+    std::filesystem::path inp_dir,
+    const OrtApi* g_ort,
+    size_t& num_input_tensors,
+    std::vector<std::vector<int64_t>>& input_tensor_dims,
+    std::vector<ONNXTensorElementDataType>& input_tensor_element_types,
+    std::vector<OrtValue*>& input_tensors,
+    std::vector<std::vector<float>>& input_data
+) {
+    // Multiple input .pb in each inp_dir (test_data_set_X)
+    input_data.resize(num_input_tensors);
+    for (size_t in_idx=0; in_idx < num_input_tensors; in_idx++) {
+        #ifdef _WIN32
+            std::wstring infile_name = std::wstring(L"input_") + std::to_wstring(in_idx) + std::wstring(L".pb");
+        #else
+            std::string infile_name = std::string("input_") + std::to_string(in_idx) + std::string(".pb")
+        #endif
+        auto infile_path = (inp_dir / infile_name);
+        std::wcout << "infile_path" << infile_path << std::endl;
+        // input data
+        size_t input_data_size = 1;
+        std::cout << "input_tensor_dims " << in_idx << ": [";
+        for (size_t j=0; j<input_tensor_dims[in_idx].size(); ++j) {
+            std::cout << ' ' << input_tensor_dims[in_idx][j];
+            input_data_size = input_data_size* input_tensor_dims[in_idx][j];
+        }
+        std::cout << " ]" << std::endl;
+
+        input_data[in_idx].resize(input_data_size);
+        size_t input_data_length = input_data_size * sizeof(float);
+            
+        // CreateTensor in Ort using input_data
+        // The input_data should not be released until Inference completes
+        OrtMemoryInfo* memory_info;
+        g_ort->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &memory_info);
+        g_ort->CreateTensorWithDataAsOrtValue(
+            memory_info, reinterpret_cast<void*>(input_data[in_idx].data()),
+            input_data_length,
+            input_tensor_dims[in_idx].data(),
+            input_tensor_dims[in_idx].size(),
+            input_tensor_element_types[in_idx],
+            &input_tensors[in_idx]
+        );
+        // Read Input .pb
+        std::ifstream input_raw_file(infile_path, std::ios::binary);
+        // calculate number of bytes
+        input_raw_file.seekg(0, std::ios::end);
+        const size_t num_elements = input_raw_file.tellg() / sizeof(float);
+        // read the data
+        input_raw_file.seekg(0, std::ios::beg);
+        input_raw_file.read(
+            reinterpret_cast<char*>(&input_data[in_idx][0]),
+            num_elements * sizeof(float)
+        );
+    }
+    return;
 }
 
 void dump_output_tensors_to_raws(
@@ -91,6 +150,7 @@ void dump_output_tensors_to_raws(
         fout.write(reinterpret_cast<const char*>(output_buffer), output_data_size * element_size);
         fout.close();
     }
+    return;
 }
     
 int main(int, char* argv[]) {
@@ -158,68 +218,44 @@ int main(int, char* argv[]) {
         output_tensors,
         false
     );
-    std::cout << "input_name "  << input_tensor_names[0] << std::endl;
-    std::cout << "output_name "  << output_tensor_names[0] << std::endl;
+    std::cout << "Successfully Collect Inputs/Outputs Information" << std::endl;
     std::cout << "num_input_tensors: " << num_input_tensors << std::endl;
     std::cout << "num_output_tensors: " << num_output_tensors << std::endl;
 
     // Multiple test_data_set_X
     std::vector<std::basic_string<PATH_CHAR_TYPE>> test_data_sets = find_test_data_sets(model_dir);
-    for (auto const& test_data_set : test_data_sets) {
-        std::wcout << test_data_set << std::endl;
-        auto test_data_set_iter = std::filesystem::directory_iterator(test_data_set);
-        size_t in_idx = 0;
-        // Multiple input .pb in each test_data_set_X
-        for (auto it=std::filesystem::begin(test_data_set_iter); it != std::filesystem::end(test_data_set_iter); ++it, ++in_idx) {
-            auto test_data_entry = *it;
-            auto filename_str = test_data_entry.path().filename().native();
-            const std::basic_string<PATH_CHAR_TYPE> prefix = ORT_TSTR("input_");
-            if (filename_str.compare(0, prefix.size(), prefix) == 0) {
-                std::wcout << "filename_str " << filename_str << std::endl;
-                std::cout << input_tensor_names[in_idx] << std::endl;
-                // input data
-                size_t input_data_size = 1;
-                std::cout << "input_tensor_dims " << in_idx << ": [";
-                for (size_t j=0; j<input_tensor_dims[in_idx].size(); ++j) {
-                    std::cout << ' ' << input_tensor_dims[in_idx][j];
-                    input_data_size = input_data_size* input_tensor_dims[in_idx][j];
-                }
-                std::cout << " ]" << std::endl;
-
-                size_t input_data_length = input_data_size * sizeof(float);
-                std::vector<float> input_data(input_data_size, 1.0);
-                
-                // Inference
-                OrtMemoryInfo* memory_info;
-                g_ort->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &memory_info);
-                g_ort->CreateTensorWithDataAsOrtValue(
-                    memory_info, reinterpret_cast<void*>(input_data.data()),
-                    input_data_length, input_tensor_dims[in_idx].data(), input_tensor_dims[in_idx].size(), input_tensor_element_types[in_idx], &input_tensors[in_idx]
-                );
-                // Read Input .pb
-                std::ifstream input_raw_file(filename_str, std::ios::binary);
-                // calculate number of bytes
-                input_raw_file.seekg(0, std::ios::end);
-                const size_t num_elements = input_raw_file.tellg() / sizeof(float);
-                // read the data
-                input_raw_file.seekg(0, std::ios::beg);
-                input_raw_file.read(reinterpret_cast<char*>(&input_data[0]), num_elements * sizeof(float));
-            }
-        }
-        g_ort->Run(
-            session, nullptr,
-            input_tensor_names.data(), (const OrtValue* const*)input_tensors.data(), input_tensors.size(),
-            output_tensor_names.data(), output_tensor_names.size(), output_tensors.data()
+    std::cout << "test_data_sets.size() " << test_data_sets.size() << std::endl;
+    for (size_t idx = 0; idx < test_data_sets.size(); idx++) {
+        std::cout << "---- test_data_set_" << idx << std::endl;
+        std::vector<std::vector<float>> input_data;
+        load_input_tensors_from_pb(
+            std::filesystem::path(test_data_sets[idx]), g_ort,
+            num_input_tensors,
+            input_tensor_dims,
+            input_tensor_element_types,
+            input_tensors,
+            input_data
         );
-        std::cout << "Successfully Inference " << in_idx << std::endl;
+        std::cout << "Successfully Load Inputs on test_data_sets_" << idx << std::endl;
+        g_ort->Run(
+            session,
+            nullptr,
+            input_tensor_names.data(),
+            (const OrtValue* const*)input_tensors.data(),
+            input_tensors.size(),
+            output_tensor_names.data(),
+            output_tensor_names.size(),
+            output_tensors.data()
+        );
+        std::cout << "Successfully Inference on test_data_sets_" << idx << std::endl;
         dump_output_tensors_to_raws(
-            std::filesystem::path(test_data_set), g_ort,
+            std::filesystem::path(test_data_sets[idx]), g_ort,
             num_output_tensors,
             output_tensor_dims,
             output_tensor_element_types,
             output_tensors
         );
-        std::cout << "Successfully Save Outputs" << std::endl;
+        std::cout << "Successfully Save Outputs on test_data_sets_" << idx << std::endl;
     }
     return 0;
 }
