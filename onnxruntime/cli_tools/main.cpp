@@ -62,7 +62,7 @@ void collect_in_out_tensor_information(
     return;
 }
 
-void load_input_tensors_from_pb(
+void load_input_tensors_from_raw(
     std::filesystem::path inp_dir,
     const OrtApi* g_ort,
     size_t& num_input_tensors,
@@ -71,16 +71,15 @@ void load_input_tensors_from_pb(
     std::vector<OrtValue*>& input_tensors,
     std::vector<std::vector<float>>& input_data
 ) {
-    // Multiple input .pb in each inp_dir (test_data_set_X)
+    // Multiple input .raw in each inp_dir (test_data_set_X)
     input_data.resize(num_input_tensors);
     for (size_t in_idx=0; in_idx < num_input_tensors; in_idx++) {
         #ifdef _WIN32
-            std::wstring infile_name = std::wstring(L"input_") + std::to_wstring(in_idx) + std::wstring(L".pb");
+            std::wstring infile_name = std::wstring(L"input_") + std::to_wstring(in_idx) + std::wstring(L".raw");
         #else
-            std::string infile_name = std::string("input_") + std::to_string(in_idx) + std::string(".pb")
+            std::string infile_name = std::string("input_") + std::to_string(in_idx) + std::string(".raw")
         #endif
         auto infile_path = (inp_dir / infile_name);
-        std::wcout << "infile_path" << infile_path << std::endl;
         // input data
         size_t input_data_size = 1;
         std::cout << "input_tensor_dims " << in_idx << ": [";
@@ -105,7 +104,7 @@ void load_input_tensors_from_pb(
             input_tensor_element_types[in_idx],
             &input_tensors[in_idx]
         );
-        // Read Input .pb
+        // Read Input .raw
         std::ifstream input_raw_file(infile_path, std::ios::binary);
         // calculate number of bytes
         input_raw_file.seekg(0, std::ios::end);
@@ -228,7 +227,7 @@ int main(int, char* argv[]) {
     for (size_t idx = 0; idx < test_data_sets.size(); idx++) {
         std::cout << "---- test_data_set_" << idx << std::endl;
         std::vector<std::vector<float>> input_data;
-        load_input_tensors_from_pb(
+        load_input_tensors_from_raw(
             std::filesystem::path(test_data_sets[idx]), g_ort,
             num_input_tensors,
             input_tensor_dims,
