@@ -293,6 +293,8 @@ def parse_arguments():
     )
     parser.add_argument("--skip-keras-test", action="store_true", help="Skip tests with Keras if keras is installed")
 
+    parser.add_argument("--build_executable_tool", action="store_true", help="Build executable tool for inference.")
+
     # C-Sharp bindings
     parser.add_argument(
         "--build_csharp",
@@ -1134,6 +1136,7 @@ def generate_build_tree(
         "-Donnxruntime_USE_VCPKG=" + ("ON" if args.use_vcpkg else "OFF"),
         "-Donnxruntime_USE_MIMALLOC=" + ("ON" if args.use_mimalloc else "OFF"),
         "-Donnxruntime_ENABLE_PYTHON=" + ("ON" if args.enable_pybind else "OFF"),
+        "-Donnxruntime_BUILD_EXECUTABLE_TOOLS=" + ("ON" if args.build_executable_tool else "OFF"),
         "-Donnxruntime_BUILD_CSHARP=" + ("ON" if args.build_csharp else "OFF"),
         "-Donnxruntime_BUILD_JAVA=" + ("ON" if args.build_java else "OFF"),
         "-Donnxruntime_BUILD_NODEJS=" + ("ON" if args.build_nodejs else "OFF"),
