@@ -95,6 +95,8 @@ int main(int, char* argv[]) {
             );
         }
         std::cout << "[test_data_sets_" << idx << "] " << "Successfully Save Outputs" << std::endl;
+        model_info.release_ort_values(g_ort);
+        std::cout << "[test_data_sets_" << idx << "] " << "Successfully Release OrtValue" << std::endl;
     }
     return 0;
 }

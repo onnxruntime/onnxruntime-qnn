@@ -1,5 +1,4 @@
-
-
+#include <cstdint>
 #include <iostream>
 #include "model_info.hpp"
 #include <onnxruntime_cxx_api.h>
@@ -72,6 +71,22 @@ std::vector<char*> OnnxModelInfo::get_out_tensor_names() { return out_tensor_nam
 std::vector<std::vector<int64_t>> OnnxModelInfo::get_out_tensor_dims() { return out_tensor_dims; }
 std::vector<ONNXTensorElementDataType> OnnxModelInfo::get_out_tensor_element_types() { return out_tensor_element_types; }
 std::vector<OrtValue*>& OnnxModelInfo::get_out_tensors() { return out_tensors; }
+
+void OnnxModelInfo::release_ort_values(const OrtApi* g_ort) {
+    for (size_t i = 0; i < num_in_tensors; i++) {
+        if (in_tensors[i]) {
+            g_ort->ReleaseValue(in_tensors[i]);
+            in_tensors[i] = nullptr;
+        }
+    }
+    for (size_t i = 0; i < num_out_tensors; i++) {
+        if (out_tensors[i]) {
+            g_ort->ReleaseValue(out_tensors[i]);
+            out_tensors[i] = nullptr;
+        }
+    }
+}
+
 void OnnxModelInfo::PrintOnnxModelInfo() {
     std::cout << "num_in_tensors: " << num_in_tensors << std::endl;
     std::cout << "num_out_tensors: " << num_out_tensors << std::endl;
@@ -98,25 +113,25 @@ size_t GetONNXTypeSize(ONNXTensorElementDataType dtype) {
         case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16:
             return 2;
         case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
-            return 4;
+            return sizeof(float);
         case ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE:
-            return 8;
+            return sizeof(double);
         case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
-            return 1;
+            return sizeof(uint8_t);
         case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16:
-            return 2;
+            return sizeof(uint16_t);
         case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32:
-            return 4;
+            return sizeof(uint32_t);
         case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64:
-            return 8;
+            return sizeof(uint64_t);
         case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
-            return 1;
+            return sizeof(int8_t);
         case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16:
-            return 2;
+            return sizeof(int16_t);
         case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:
-            return 4;
+            return sizeof(int32_t);
         case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:
-            return 8;
+            return sizeof(int64_t);
         default:
             throw std::runtime_error("Unsupported ONNX data type");
     }

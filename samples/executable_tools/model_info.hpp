@@ -15,6 +15,7 @@ class OnnxModelInfo {
         std::vector<ONNXTensorElementDataType> get_out_tensor_element_types();
         std::vector<OrtValue*>& get_out_tensors();
 
+        void release_ort_values(const OrtApi* g_ort);
         void PrintOnnxModelInfo();
     private:
         size_t num_in_tensors;
