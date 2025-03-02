@@ -1,4 +1,3 @@
-#include <stdexcept>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -44,13 +43,9 @@ void load_input_tensors_from_raws(
         #endif
         auto infile_path = (inp_dir / infile_name);
         // input data
-        size_t input_data_size = 1;
-        for (size_t j=0; j<model_info.get_in_tensor_dims()[in_idx].size(); ++j) {
-            input_data_size = input_data_size* model_info.get_in_tensor_dims()[in_idx][j];
-        }
-
-        input_data[in_idx].resize(input_data_size);
-        size_t input_data_length = input_data_size * sizeof(float);
+        size_t input_byte_nums = model_info.get_in_tensor_element_nums()[in_idx] * \
+            GetONNXTypeSize(model_info.get_out_tensor_element_types()[in_idx]);
+        input_data[in_idx].resize(input_byte_nums);
             
         // CreateTensor in Ort using input_data
         // The input_data should not be released until Inference completes
@@ -58,7 +53,7 @@ void load_input_tensors_from_raws(
         g_ort->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &memory_info);
         g_ort->CreateTensorWithDataAsOrtValue(
             memory_info, reinterpret_cast<void*>(input_data[in_idx].data()),
-            input_data_length,
+            input_byte_nums,
             model_info.get_in_tensor_dims()[in_idx].data(),
             model_info.get_in_tensor_dims()[in_idx].size(),
             model_info.get_in_tensor_element_types()[in_idx],
@@ -66,15 +61,11 @@ void load_input_tensors_from_raws(
         );
         // Read Input .raw
         std::ifstream input_raw_file(infile_path, std::ios::binary);
-        // calculate number of bytes
-        input_raw_file.seekg(0, std::ios::end);
-        const size_t num_elements = input_raw_file.tellg() / sizeof(float);
-        // read the data
-        input_raw_file.seekg(0, std::ios::beg);
         input_raw_file.read(
             reinterpret_cast<char*>(&input_data[in_idx][0]),
-            num_elements * sizeof(float)
+            input_byte_nums
         );
+        input_raw_file.close();
     }
     return;
 }
@@ -109,19 +100,20 @@ void load_input_tensors_from_pbs(
         tensor_proto.ParseFromString(buffer);
 
         // TensorProto -> std::vector<float>
-        size_t input_data_size = tensor_proto.raw_data().size();
-        std::cout << "input_data_size " << input_data_size << std::endl;
-        input_data[in_idx].resize(input_data_size);
+        size_t input_byte_nums = model_info.get_in_tensor_element_nums()[in_idx] * \
+            GetONNXTypeSize(model_info.get_out_tensor_element_types()[in_idx]);
+        assert(input_byte_nums == tensor_proto.raw_data().size());
+        input_data[in_idx].resize(input_byte_nums);
         std::memcpy(
             input_data[in_idx].data(),
-            tensor_proto.raw_data().data(), input_data_size
+            tensor_proto.raw_data().data(), input_byte_nums
         );
         OrtMemoryInfo* memory_info;
         g_ort->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &memory_info);
         g_ort->CreateTensorWithDataAsOrtValue(
             memory_info,
             reinterpret_cast<void*>(input_data[in_idx].data()),
-            input_data_size,
+            input_byte_nums,
             model_info.get_in_tensor_dims()[in_idx].data(),
             model_info.get_in_tensor_dims()[in_idx].size(),
             model_info.get_in_tensor_element_types()[in_idx],
@@ -139,11 +131,6 @@ void dump_output_tensors_to_raws(
     // Dump output of each out tensor
     for (size_t out_idx=0; out_idx < model_info.get_num_out_tensors(); out_idx++) {
         // output data
-        size_t output_data_size = 1;
-        for (size_t j=0; j<model_info.get_out_tensor_dims()[out_idx].size(); ++j) {
-            output_data_size = output_data_size* model_info.get_out_tensor_dims()[out_idx][j];
-        }
-        size_t element_size = GetONNXTypeSize(model_info.get_out_tensor_element_types()[out_idx]);
         void* output_buffer;
         g_ort->GetTensorMutableData(model_info.get_out_tensors()[out_idx], &output_buffer);
         #ifdef _WIN32
@@ -152,7 +139,11 @@ void dump_output_tensors_to_raws(
             std::string outfile = std::string("out_") + std::to_string(out_idx) + std::string(".raw")
         #endif
         std::ofstream fout(out_dir / outfile, std::ios::binary);
-        fout.write(reinterpret_cast<const char*>(output_buffer), output_data_size * element_size);
+        fout.write(
+            reinterpret_cast<const char*>(output_buffer),
+            model_info.get_out_tensor_element_nums()[out_idx] * \
+            GetONNXTypeSize(model_info.get_out_tensor_element_types()[out_idx])
+        );
         fout.close();
     }
     return;
@@ -167,12 +158,9 @@ void dump_output_tensors_to_pbs(
     for (size_t out_idx=0; out_idx < model_info.get_num_out_tensors(); out_idx++) {
         // output data
         ONNX_NAMESPACE::TensorProto tensor_proto;
-        size_t output_data_size = 1;
         for (size_t j=0; j<model_info.get_out_tensor_dims()[out_idx].size(); ++j) {
             tensor_proto.add_dims((int)model_info.get_out_tensor_dims()[out_idx][j]);
-            output_data_size = output_data_size* model_info.get_out_tensor_dims()[out_idx][j];
         }
-        size_t element_size = GetONNXTypeSize(model_info.get_out_tensor_element_types()[out_idx]);
         void* output_buffer;
         g_ort->GetTensorMutableData(model_info.get_out_tensors()[out_idx], &output_buffer);
         #ifdef _WIN32
@@ -180,13 +168,14 @@ void dump_output_tensors_to_pbs(
         #else
             std::string outfile = std::string("out_") + std::to_string(out_idx) + std::string(".pb")
         #endif
-        tensor_proto.set_data_type(ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT);
-        tensor_proto.set_raw_data(output_buffer, output_data_size * element_size);
-        std::cout << "[";
-        for (size_t j=0; j<tensor_proto.dims_size(); ++j) {
-            std::cout << " " << tensor_proto.dims((int) j);
-        }
-        std::cout << "]" << std::endl;
+        tensor_proto.set_data_type(
+            onnx_element_type_to_tensorproto_dtype(model_info.get_out_tensor_element_types()[out_idx])
+        );
+        tensor_proto.set_raw_data(
+            output_buffer, 
+            model_info.get_out_tensor_element_nums()[out_idx] * \
+            GetONNXTypeSize(model_info.get_out_tensor_element_types()[out_idx])
+        );
         std::ofstream fout(out_dir / outfile, std::ios::binary);
         tensor_proto.SerializeToOstream(&fout);
         fout.close();
