@@ -1,9 +1,11 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <string>
 #include <onnxruntime_cxx_api.h>
 #include "core/platform/path_lib.h"
 #include "onnx/onnx_pb.h"
+#include "onnxruntime_c_api.h"
 #include "utils.hpp"
 
 std::basic_string<PATH_CHAR_TYPE> find_model_path(std::string model_dir) {
@@ -25,6 +27,26 @@ std::vector<std::basic_string<PATH_CHAR_TYPE>> find_test_data_sets(std::string m
         }
     }
     return ret;
+}
+
+std::string check_data_format(const std::filesystem::path test_data_set_dir) {
+    if (std::filesystem::is_empty(test_data_set_dir)) {
+        std::cout << "input_0.pb or input_0.raw data should be provided" << std::endl;
+        exit(0);
+    }
+    for (auto const& dir_entry : std::filesystem::directory_iterator(test_data_set_dir)) {
+        if (dir_entry.path().extension().native() == ORT_TSTR(".pb")) {
+            return "pb";
+        }
+        else if (dir_entry.path().extension().native() == ORT_TSTR(".raw")) {
+            return "raw";
+        }
+        else {
+            std::cout << "Only .pb or .raw format of data is supported" << std::endl;
+            exit(0);
+        }
+    }
+    return std::string();
 }
 
 void load_input_tensors_from_raws(

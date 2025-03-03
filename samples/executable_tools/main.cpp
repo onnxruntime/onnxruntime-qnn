@@ -54,16 +54,20 @@ int main(int, char* argv[]) {
     for (size_t idx = 0; idx < test_data_sets.size(); idx++) {
         std::cout << "---- test_data_set_" << idx << " ----" << std::endl;
         std::vector<std::vector<float>> input_data;
-        if (strcmp(argv[3], "pb") == 0) {
+        auto test_data_set_dir = std::filesystem::path(test_data_sets[idx]);
+        auto data_format = check_data_format(test_data_set_dir);
+        if (data_format == "pb") {
+            std::cout << "[test_data_sets_" << idx << "] " << "Loading .pb" << std::endl;
             load_input_tensors_from_pbs(
-                std::filesystem::path(test_data_sets[idx]),
+                test_data_set_dir,
                 g_ort,
                 model_info,
                 input_data
             );
-        } else if (strcmp(argv[3], "raws") == 0) {
+        } else if (data_format == "raw") {
+            std::cout << "[test_data_sets_" << idx << "] " << "Loading .raw" << std::endl;
             load_input_tensors_from_raws(
-                std::filesystem::path(test_data_sets[idx]),
+                test_data_set_dir,
                 g_ort,
                 model_info,
                 input_data
@@ -81,15 +85,17 @@ int main(int, char* argv[]) {
             model_info.get_out_tensors().data()
         );
         std::cout << "[test_data_sets_" << idx << "] " << "Successfully Inference" << std::endl;
-        if (strcmp(argv[3], "pb") == 0) {
+        if (data_format == "pb") {
+            std::cout << "[test_data_sets_" << idx << "] " << "Dumping .pb" << std::endl;
             dump_output_tensors_to_pbs(
-            std::filesystem::path(test_data_sets[idx]),
+            test_data_set_dir,
             g_ort,
             model_info
             );
-        } else if (strcmp(argv[3], "raws") == 0) {
+        } else if (data_format == "raw") {
+            std::cout << "[test_data_sets_" << idx << "] " << "Dumping .raw" << std::endl;
             dump_output_tensors_to_raws(
-            std::filesystem::path(test_data_sets[idx]),
+            test_data_set_dir,
             g_ort,
             model_info
             );
