@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
+
 #include <filesystem>
 #include <onnxruntime_cxx_api.h>
 #include "core/platform/path_lib.h"
@@ -13,24 +16,20 @@ void load_input_tensors_from_raws(
     std::filesystem::path inp_dir,
     const OrtApi* g_ort,
     OnnxModelInfo& model_info,
-    std::vector<std::vector<float>>& input_data
-);
+    std::vector<std::vector<float>>& input_data);
 
 void dump_output_tensors_to_raws(
     std::filesystem::path out_dir,
     const OrtApi* g_ort,
-    OnnxModelInfo& model_info
-);
+    OnnxModelInfo& model_info);
 
 void load_input_tensors_from_pbs(
     std::filesystem::path inp_dir,
     const OrtApi* g_ort,
     OnnxModelInfo& model_info,
-    std::vector<std::vector<float>>& input_data
-);
+    std::vector<std::vector<float>>& input_data);
 
 void dump_output_tensors_to_pbs(
     std::filesystem::path out_dir,
     const OrtApi* g_ort,
-    OnnxModelInfo& model_info
-);
+    OnnxModelInfo& model_info);
