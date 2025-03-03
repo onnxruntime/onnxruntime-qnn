@@ -3,6 +3,8 @@
 
 #include <onnxruntime_cxx_api.h>
 
+#include <vector>
+
 class OnnxModelInfo {
     public:
         OnnxModelInfo(const OrtApi* g_ort, const OrtSession* session, OrtAllocator* allocator);

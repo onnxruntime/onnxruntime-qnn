@@ -1,10 +1,12 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include <vector>
 #include <iostream>
-#include <onnxruntime_cxx_api.h>
 #include <filesystem>
 #include <string>
+
+#include <onnxruntime_cxx_api.h>
 #include "core/platform/path_lib.h"
 #include "utils.hpp"
 
@@ -37,8 +39,9 @@ int main(int, char* argv[]) {
   std::vector<const char*> options_values = {backend_path.c_str()};
 
   g_ort->SessionOptionsAppendExecutionProvider(
-      session_options, "QNN",
-      options_keys.data(), options_values.data(), options_keys.size());
+    session_options, "QNN",
+    options_keys.data(), options_values.data(), options_keys.size()
+  );
 
   OrtSession* session;
   g_ort->CreateSession(env, model_path.c_str(), session_options, &session);
@@ -61,41 +64,46 @@ int main(int, char* argv[]) {
     if (data_format == "pb") {
       std::cout << "[test_data_sets_" << idx << "] " << "Loading .pb" << std::endl;
       load_input_tensors_from_pbs(
-          test_data_set_dir,
-          g_ort,
-          model_info,
-          input_data);
+        test_data_set_dir,
+        g_ort,
+        &model_info,
+        &input_data
+      );
     } else if (data_format == "raw") {
       std::cout << "[test_data_sets_" << idx << "] " << "Loading .raw" << std::endl;
       load_input_tensors_from_raws(
-          test_data_set_dir,
-          g_ort,
-          model_info,
-          input_data);
+        test_data_set_dir,
+        g_ort,
+        &model_info,
+        &input_data
+      );
     }
     std::cout << "[test_data_sets_" << idx << "] " << "Successfully Load Inputs" << std::endl;
     g_ort->Run(
-        session,
-        nullptr,
-        model_info.get_in_tensor_names().data(),
-        (const OrtValue* const*)model_info.get_in_tensors().data(),
-        model_info.get_in_tensors().size(),
-        model_info.get_out_tensor_names().data(),
-        model_info.get_out_tensor_names().size(),
-        model_info.get_out_tensors().data());
+      session,
+      nullptr,
+      model_info.get_in_tensor_names().data(),
+      (const OrtValue* const*)model_info.get_in_tensors().data(),
+      model_info.get_in_tensors().size(),
+      model_info.get_out_tensor_names().data(),
+      model_info.get_out_tensor_names().size(),
+      model_info.get_out_tensors().data()
+    );
     std::cout << "[test_data_sets_" << idx << "] " << "Successfully Inference" << std::endl;
     if (data_format == "pb") {
       std::cout << "[test_data_sets_" << idx << "] " << "Dumping .pb" << std::endl;
       dump_output_tensors_to_pbs(
-          test_data_set_dir,
-          g_ort,
-          model_info);
+        test_data_set_dir,
+        g_ort,
+        &model_info
+      );
     } else if (data_format == "raw") {
       std::cout << "[test_data_sets_" << idx << "] " << "Dumping .raw" << std::endl;
       dump_output_tensors_to_raws(
-          test_data_set_dir,
-          g_ort,
-          model_info);
+        test_data_set_dir,
+        g_ort,
+        &model_info
+      );
     }
     std::cout << "[test_data_sets_" << idx << "] " << "Successfully Save Outputs" << std::endl;
     model_info.release_ort_values(g_ort);
