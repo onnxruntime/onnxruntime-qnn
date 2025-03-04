@@ -3,9 +3,9 @@
 
 #include <onnxruntime_cxx_api.h>
 
+#include <filesystem> //NOLINT
 #include <string>
 #include <vector>
-#include <filesystem>
 
 #include "core/platform/path_lib.h"
 

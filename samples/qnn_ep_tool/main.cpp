@@ -1,12 +1,13 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include <vector>
-#include <iostream>
-#include <filesystem>
-#include <string>
-
 #include <onnxruntime_cxx_api.h>
+
+#include <filesystem> // NOLINT
+#include <iostream>
+#include <string>
+#include <vector>
+
 #include "core/platform/path_lib.h"
 #include "utils.hpp"
 
