@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "core/platform/path_lib.h"
-#include "utils.hpp"
+#include "include/utils.hpp"
 
 int main(int, char* argv[]) {
   std::string model_dir(argv[1]);

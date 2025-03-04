@@ -8,4 +8,5 @@ onnxruntime_add_executable(
     ${QNN_EP_TOOL_SRC_DIR}/utils.cpp
     ${QNN_EP_TOOL_SRC_DIR}/model_info.cpp
 )
+include_directories(${QNN_EP_TOOL_SRC_DIR})
 target_link_libraries(qnn_ep_tool onnxruntime onnx)

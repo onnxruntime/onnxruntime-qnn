@@ -7,7 +7,7 @@
 #include <iostream>
 #include <vector>
 
-#include "model_info.hpp"
+#include "include/model_info.hpp"
 #include "onnx/onnx_pb.h"
 
 OnnxModelInfo::OnnxModelInfo(const OrtApi* g_ort, const OrtSession* session, OrtAllocator* allocator) {

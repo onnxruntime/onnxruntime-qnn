@@ -10,10 +10,9 @@
 #include <vector>
 
 #include "core/platform/path_lib.h"
-#include "onnx/onnx_pb.h"
 #include "core/session/onnxruntime_c_api.h"
-
-#include "utils.hpp"
+#include "include/utils.hpp"
+#include "onnx/onnx_pb.h"
 
 std::basic_string<PATH_CHAR_TYPE> find_model_path(std::string model_dir) {
   std::basic_string<PATH_CHAR_TYPE> ret(ORT_TSTR(""));

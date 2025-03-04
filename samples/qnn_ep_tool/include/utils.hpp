@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#pragma once
+
 #include <onnxruntime_cxx_api.h>
 
 #include <filesystem> //NOLINT
@@ -9,7 +11,7 @@
 
 #include "core/platform/path_lib.h"
 
-#include "model_info.hpp"
+#include "include/model_info.hpp"
 
 std::basic_string<PATH_CHAR_TYPE> find_model_path(std::string model_dir);
 
