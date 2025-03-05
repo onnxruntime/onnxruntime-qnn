@@ -601,11 +601,13 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
             std::string str = str_stream.str();
             ORT_THROW("Wrong value for ", key, ". select from: ", str);
           }
+        } else if (key == "lora_config") {
+          // no validation
         } else {
           ORT_THROW(R"(Wrong key type entered. Choose from options: ['backend_path',
 'profiling_level', 'profiling_file_path', 'rpc_control_latency', 'vtcm_mb', 'htp_performance_mode',
 'qnn_saver_path', 'htp_graph_finalization_optimization_mode', 'qnn_context_priority',
-'soc_model', 'htp_arch', 'device_id', 'enable_htp_fp16_precision', 'offload_graph_io_quantization'])");
+'soc_model', 'htp_arch', 'device_id', 'enable_htp_fp16_precision', 'offload_graph_io_quantization', 'lora_config'])");
         }
 
         qnn_options[key] = value;
