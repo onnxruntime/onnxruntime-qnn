@@ -140,7 +140,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                        const Qnn_Tensor_t& qnn_tensor,
                                        Qnn_MemHandle_t& mem_handle);
 
-  Status parseLoraAdapterConfig(std::string lora_adapter_config);
+  Status parseLoraConfig(std::string lora_config);
 
  private:
   Status LoadBackend();

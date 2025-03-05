@@ -70,7 +70,7 @@ Status readBinaryFromFile(std::string filePath, uint8_t* buffer, size_t bufferSi
 }
 
 
-Status QnnBackendManager::parseLoraAdapterConfig(std::string lora_config_path) {
+Status QnnBackendManager::parseLoraConfig(std::string lora_config_path) {
 
   LOGS_DEFAULT(INFO) << "Acuiring the QnnInterface " << lora_config_path;
 
