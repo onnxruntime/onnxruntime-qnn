@@ -20,6 +20,12 @@ In each test_data_set_X/
 2. If only .raw input data provided, the tool will use .raw as input
 3. If both are provided (not recommended), the tool will prioritize .pb
 
+## Build
+The tool can be built with the flag "--build_qnn_ep_tool" set.
+```cmd
+.\build.bat --config RelWithDebInfo --build_shared_lib --parallel --compile_no_warning_as_error --cmake_generator "Visual Studio 17 2022" --use_qnn --qnn_home <path-to-qnn-sdk> --build_qnn_ep_tool
+```
+
 ## Command Line Usage
 1. The following command serves as an example to run the tool
     ```ps1

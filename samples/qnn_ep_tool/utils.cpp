@@ -111,13 +111,11 @@ void load_input_tensors_from_pbs(
     std::string infile_name = std::string("input_") + std::to_string(in_idx) + std::string(".pb")
 #endif
     const std::filesystem::path infile_path = (inp_dir / infile_name);
-    std::ifstream inp(infile_path, std::ios::binary);
-    // input_X.pb -> String
     std::string buffer;
+    buffer.resize(std::filesystem::file_size(infile_path));
+
+    // input_X.pb -> String
     std::ifstream file(infile_path, std::ios::binary);
-    file.seekg(0, std::ios::end);
-    buffer.resize(file.tellg());
-    file.seekg(0, std::ios::beg);
     file.read(&buffer[0], buffer.size());
     file.close();
 
@@ -134,6 +132,8 @@ void load_input_tensors_from_pbs(
       (*input_data)[in_idx].data(),
       tensor_proto.raw_data().data(), input_byte_nums
     );
+
+    // Prepare OrtValue
     OrtMemoryInfo* memory_info;
     g_ort->CreateCpuMemoryInfo(OrtArenaAllocator, OrtMemTypeDefault, &memory_info);
     g_ort->CreateTensorWithDataAsOrtValue(
