@@ -1,0 +1,44 @@
+#!/bin/sh
+
+function check_commits() {
+	# This function aims to check whether commits in the current branch
+	# contains non-quic GitHub account
+	for commit_id in $@
+	do
+		author=$(git show $commit_id --no-patch --pretty=format:"%an")
+		author_email=$(git show $commit_id --no-patch --pretty=format:"%ae")
+		if [ "$author" != *"quic"* ] || [ "$author_email" != *"quicinc.com"* ]; then
+			echo "[Error] Commit $commit_id: author $author is not a quic account"
+			exit 1
+		fi
+
+		commiter=$(git show $commit_id --no-patch --pretty=format:"%cn")
+		commiter_email=$(git show $commit_id --no-patch --pretty=format:"%ce")
+		if [ "$commiter" != *"quic"* ] || [ "$commiter_email" != *"quicinc.com"* ]; then
+			echo "[Error] Commit $commit_id: commiter $commiter is not a quic account"
+			exit 1
+		fi
+	done
+}
+
+function main() {
+	remote="$1"
+	url="$2"
+	branch=$(git symbolic-ref --short HEAD)
+
+	echo "[Info] remote: $remote"
+	echo "[Info] url: $url"
+	echo "[Info] branch: $branch"
+	if [[ "$url" == *"github.com"* ]]; then
+		# When pushing to external github repo, check the commits
+		echo "[Info] Push to external repo $url"
+		echo "[Info] Checking the accounts"
+		commit_ids=$(git rev-list $remote/$branch..HEAD)
+		check_commits $commit_ids
+
+	elif [[ "$url" == *"github.qualcomm.com"* ]]; then
+		echo "[Info] Push to internal repo $url"
+	fi
+}
+
+main $1 $2
