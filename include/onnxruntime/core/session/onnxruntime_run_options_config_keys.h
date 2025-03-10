@@ -43,6 +43,7 @@ static const char* const kOrtRunOptionsConfigQnnPerfModePostRun = "qnn.htp_perf_
 // Set RPC control latency for QNN HTP backend
 static const char* const kOrtRunOptionsConfigQnnRpcControlLatency = "qnn.rpc_control_latency";
 
+// Set QNN Lora Config File for apply Lora in QNN context binary
 static const char* const kOrtRunOptionsConfigQnnLoraConfig = "qnn.lora_config";
 
 // Set graph annotation id for CUDA EP. Use with enable_cuda_graph=true.

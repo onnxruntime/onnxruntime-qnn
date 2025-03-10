@@ -52,15 +52,6 @@ static const char* DlError() {
 #endif
 }
 
-size_t getFileSize(std::string filePath) {
-  std::ifstream in(filePath, std::ifstream::binary);
-  if(!in) return 0;
-  in.seekg(0, in.end);
-  const size_t length = static_cast<size_t>(in.tellg());
-  in.seekg(0, in.beg);
-  return length;
-}
-
 Status readBinaryFromFile(std::string filePath, uint8_t* buffer, size_t bufferSize) {
   ORT_RETURN_IF(nullptr == buffer, "Binary buffer is nullptr");
   std::ifstream in(filePath, std::ifstream::binary);
@@ -70,9 +61,9 @@ Status readBinaryFromFile(std::string filePath, uint8_t* buffer, size_t bufferSi
 }
 
 
-Status QnnBackendManager::parseLoraConfig(std::string lora_config_path) {
+Status QnnBackendManager::ParseLoraConfig(std::string lora_config_path) {
 
-  LOGS_DEFAULT(INFO) << "Acuiring the QnnInterface " << lora_config_path;
+  LOGS_DEFAULT(INFO) << "Acquiring the QnnInterface " << lora_config_path;
 
   QnnInterface_t* backend_interface_provider{nullptr};
   auto rt = GetQnnInterfaceProvider<QnnInterfaceGetProvidersFn_t,
@@ -87,6 +78,9 @@ Status QnnBackendManager::parseLoraConfig(std::string lora_config_path) {
   ORT_RETURN_IF_ERROR(rt);
   qnn_interface_ = backend_interface_provider->QNN_INTERFACE_VER_NAME;
 
+  // QNN Lora Config file format should be a single line, with the graph name first,
+  // followed by the qnn lora context binary path, separated by a semicolon (;)
+  // Example: <graph_name>;<binary_path>
   LOGS_DEFAULT(INFO) << "Loading Lora Config " << lora_config_path;
   std::ifstream file(lora_config_path);
   std::string line;
@@ -98,7 +92,7 @@ Status QnnBackendManager::parseLoraConfig(std::string lora_config_path) {
           std::string lora_adapter_bin_path;
 
           if (std::getline(ss, graph_name, ';') && std::getline(ss, lora_adapter_bin_path)) {
-              size_t bufferSize = getFileSize(lora_adapter_bin_path);
+              size_t bufferSize = std::filesystem::file_size(lora_adapter_bin_path.c_str());
 
               ORT_RETURN_IF(0 == bufferSize,  "Received path to an empty file. Nothing to deserialize.");
               std::unique_ptr<uint8_t[]> buffer = std::make_unique<uint8_t[]>(bufferSize);
