@@ -1175,7 +1175,7 @@ Status QNNExecutionProvider::OnRunStart(const onnxruntime::RunOptions& run_optio
 
   std::string lora_config = "";
   if (TryGetConfigEntry(config_options, kOrtRunOptionsConfigQnnLoraConfig, lora_config)){
-    LOGS_DEFAULT(VERBOSE) << "lora_aconfig: " << lora_config;
+    LOGS_DEFAULT(VERBOSE) << "lora_config: " << lora_config;
     ORT_RETURN_IF_ERROR(qnn_backend_manager_->ParseLoraConfig(lora_config));
   }
 
