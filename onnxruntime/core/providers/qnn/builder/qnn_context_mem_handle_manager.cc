@@ -63,7 +63,7 @@ Status QnnContextMemHandleManager::GetOrRegister(void* memory_address, const boo
     // If an invalid ion buffer fd is passed, then shared memory is in use
     int fd = rpcmem::INVALID_CLIENT_HANDLE;
     uint64_t offset = 0;
-    int rpc_mem_size = 4096;  // static_cast<int>(qnn_tensor_data_size);
+    int rpc_mem_size = static_cast<int>(qnn_tensor_data_size);
     if (uses_shared_memory) {
       HtpSharedMemoryAllocator::SharedMemoryInfo shared_memory_info{};
       ORT_RETURN_IF_ERROR(HtpSharedMemoryAllocator::GetAllocationSharedMemoryInfo(memory_address,

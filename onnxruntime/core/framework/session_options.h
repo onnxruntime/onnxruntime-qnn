@@ -118,7 +118,7 @@ struct SessionOptions {
   /// See https://github.com/microsoft/onnxruntime/blob/main/include/onnxruntime/core/common/logging/severity.h
   /// See https://github.com/microsoft/onnxruntime/blob/main/include/onnxruntime/core/session/onnxruntime_c_api.h#L231 for OrtLoggingLevel mappings
   /// Default = -1 (use default logger severity)
-  int session_log_severity_level = 0;
+  int session_log_severity_level = -1;
   int session_log_verbosity_level = 0;  ///< VLOG level if debug build and session_log_severity_level is 0 (VERBOSE).
 
   unsigned max_num_graph_transformation_steps = 10;  // TODO choose a good default here?

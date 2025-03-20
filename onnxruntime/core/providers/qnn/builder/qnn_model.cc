@@ -203,7 +203,7 @@ static Status BindQnnTensorMemoryToOrtValueMemory(const logging::Logger& logger,
                                                   Qnn_ContextHandle_t qnn_context,
                                                   Qnn_Tensor_t& qnn_tensor) {
   const bool uses_shared_memory = ort_value_memory_info == HtpSharedMemoryAllocator::AssociatedMemoryInfo();
-  const bool buffer_aligned = ((uintptr_t)ort_value_data % BUFF_ALIGNMENT) == 0;//&&ort_value_data_size % BUFF_ALIGNMENT == 0;
+  const bool buffer_aligned = ((uintptr_t)ort_value_data % BUFF_ALIGNMENT) == 0 && ort_value_data_size % BUFF_ALIGNMENT == 0;
   const bool htp_backend = qnn_backend_manager.GetQnnBackendType() == QnnBackendType::HTP;
 
   if (uses_shared_memory || (htp_backend && buffer_aligned)) {
