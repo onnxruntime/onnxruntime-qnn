@@ -806,6 +806,79 @@ TEST_F(QnnHTPBackendTests, MultithreadHtpPowerCfgDefaultAndRunOption) {
   }
 }
 
+// Tests running a single session in multiple threads on the HTP backend with EP option to set default power config
+TEST_F(QnnHTPBackendTests, RegisterBufferAlignedCPUAllocatedData) {
+  const int BUFFER_ALIGNMENT = 4096;
+  Ort::SessionOptions so;
+
+  // Ensure all type/shape inference warnings result in errors!
+  so.AddConfigEntry(kOrtSessionOptionsConfigStrictShapeTypeInference, "1");
+  so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
+
+  onnxruntime::ProviderOptions options;
+
+#if defined(_WIN32)
+  options["backend_path"] = "QnnHtp.dll";
+#else
+  options["backend_path"] = "libQnnHtp.so";
+#endif
+  options["offload_graph_io_quantization"] = "0";
+
+  so.AppendExecutionProvider("QNN", options);
+
+  Ort::Session session(*ort_env, ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx", so);
+
+  size_t input_size = 1 * 3 * 4 * 5;
+
+  auto memory_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
+  std::vector<Ort::Value> ort_inputs;
+  std::vector<const char*> ort_input_names;
+
+  // Allocate buffer-aligned memory to be mapped to fastrpc
+  void* input0_data_ptr = _aligned_malloc(4096, BUFFER_ALIGNMENT);
+  void* input1_data_ptr = _aligned_malloc(4096, BUFFER_ALIGNMENT);
+  void* input2_data_ptr = _aligned_malloc(4096, BUFFER_ALIGNMENT);
+
+  // Add input0
+  std::array<int64_t, 4> inputs_shape{1, 3, 4, 5};
+  ort_inputs.emplace_back(Ort::Value::CreateTensor<float>(
+      memory_info, (float*)input0_data_ptr, input_size, inputs_shape.data(), inputs_shape.size()));
+  ort_input_names.push_back("input0");
+
+  // Add input1
+  ort_inputs.emplace_back(Ort::Value::CreateTensor<float>(
+      memory_info, (float*)input1_data_ptr, input_size, inputs_shape.data(), inputs_shape.size()));
+  ort_input_names.push_back("input1");
+
+  // Add input2
+  ort_inputs.emplace_back(Ort::Value::CreateTensor<float>(
+      memory_info, (float*)input2_data_ptr, input_size, inputs_shape.data(), inputs_shape.size()));
+  ort_input_names.push_back("input2");
+
+  bool exception_thrown = false;
+  try {
+      // Run session and get outputs
+    std::array<const char*, 2> output_names{"output0", "output1"};
+    std::vector<Ort::Value> ort_outputs = session.Run(Ort::RunOptions{nullptr}, ort_input_names.data(), ort_inputs.data(),
+                                                      ort_inputs.size(), output_names.data(), output_names.size());
+
+    // Check output shape.
+    Ort::Value& ort_output = ort_outputs[1];
+    auto typeshape = ort_output.GetTensorTypeAndShapeInfo();
+    std::vector<int64_t> output_shape = typeshape.GetShape();
+
+    EXPECT_THAT(output_shape, ::testing::ElementsAre(1, 6, 7, 10));
+  }
+  catch (...) {
+    exception_thrown = true;
+  } 
+  _aligned_free(input0_data_ptr);
+  _aligned_free(input1_data_ptr);
+  _aligned_free(input2_data_ptr);
+
+  EXPECT_FALSE(exception_thrown);
+}
+
 // Test shape inference of QDQ NHWC Resize operator (opset 18) that uses
 // the sizes input. Use the QNN HTP backend.
 // Maps to QNN's ResizeBilinear operator.
