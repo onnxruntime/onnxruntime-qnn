@@ -95,7 +95,9 @@ Status CastOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
   ORT_RETURN_IF_ERROR(utils::GetQnnDataType(false,  // Do not try to get the quantized type. HTP cast supports normal types.
                                             type_proto,
                                             qnn_data_type));
-
+  if (qnn_data_type == QNN_DATATYPE_INT_64) {
+    qnn_data_type = QNN_DATATYPE_INT_32;
+  }
   std::vector<uint32_t> output_shape;
   ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output.node_arg, output_shape),
                     "Cannot get shape for QNN Cast node's output.");
