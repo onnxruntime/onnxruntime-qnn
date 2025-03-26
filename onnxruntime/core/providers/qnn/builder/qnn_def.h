@@ -155,6 +155,21 @@ class QnnTensorWrapper {
                                                                            dimensions_(std::move(shape)),
                                                                            client_buf_(std::move(client_buf)),
                                                                            quant_params_(quantize_params) {
+    if(data_type == QNN_DATATYPE_INT_64) {
+      data_type = QNN_DATATYPE_INT_32;
+      if (client_buf.size()) {
+        const size_t num_elems = client_buf.size() / sizeof(int64_t);
+        std::vector<uint8_t> cast_data;
+        cast_data.resize(num_elems * sizeof(int32_t));
+        gsl::span<int64_t> origin_values{reinterpret_cast<int64_t*>(client_buf.data()), num_elems};
+        gsl::span<int32_t> new_values(reinterpret_cast<int32_t*>(cast_data.data()), num_elems);
+        for (size_t i = 0; i < num_elems; i++) {
+          new_values[i] = static_cast<int32_t>(origin_values[i]);
+        }
+        data_type = QNN_DATATYPE_INT_32;
+        client_buf_ = std::move(cast_data);
+      }
+    }
     SetQnnTensorType(qnn_tensor_, tensor_type);
     SetQnnTensorName(qnn_tensor_, tensor_name_.c_str());
     SetQnnTensorDataType(qnn_tensor_, data_type);
