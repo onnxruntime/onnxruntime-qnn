@@ -156,7 +156,10 @@ class QnnTensorWrapper {
                                                                            client_buf_(std::move(client_buf)),
                                                                            quant_params_(quantize_params) {
     if(data_type == QNN_DATATYPE_INT_64) {
-      data_type = QNN_DATATYPE_INT_32;
+      // QNN doesn't support int64_t, so we cast to int32_t.
+      if (tensor_type == QNN_TENSOR_TYPE_NATIVE) {
+        data_type = QNN_DATATYPE_INT_32;
+      }
       if (client_buf.size()) {
         const size_t num_elems = client_buf.size() / sizeof(int64_t);
         std::vector<uint8_t> cast_data;
