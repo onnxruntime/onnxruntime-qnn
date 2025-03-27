@@ -150,12 +150,14 @@ Status BaseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
           const std::string cast_output_name = input_names[i] + "_cast_int32";
           if (!qnn_model_wrapper.IsQnnTensorWrapperExist(cast_output_name)) {
             Qnn_DataType_t qnn_data_type = QNN_DATATYPE_INT_32;
+            const auto& input_0 = node_unit.Inputs()[0];
             std::vector<uint32_t> output_shape;
-            std::copy(input_tensorwrapper.GetTensorDims().begin(), input_tensorwrapper.GetTensorDims().end(), std::back_inserter(output_shape));
+            ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_0.node_arg, output_shape),
+                              "QNN EP: Cannot get input shape for ", input_0.node_arg.Name().c_str());
             QnnTensorWrapper output_tensorwrapper(cast_output_name,
                                                   tensor_type,
                                                   qnn_data_type,
-                                                  QnnQuantParamsWrapper(),
+                                                  std::move(const_cast<QnnQuantParamsWrapper&>(input_tensorwrapper.GetQnnQuantParams())),
                                                   std::move(output_shape));
             ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)),
                               "Failed to add output tensor for QNN Cast node.");
@@ -163,7 +165,7 @@ Status BaseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
             ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(cast_output_name,
                                                               QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                               QNN_OP_CAST,
-                                                              std::move(input_names),
+                                                              {input_names[i]},
                                                               {cast_output_name},
                                                               {},
                                                               do_op_validation),
