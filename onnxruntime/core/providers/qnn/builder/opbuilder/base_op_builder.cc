@@ -150,10 +150,10 @@ Status BaseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
           const std::string cast_output_name = input_names[i] + "_cast_int32";
           if (!qnn_model_wrapper.IsQnnTensorWrapperExist(cast_output_name)) {
             Qnn_DataType_t qnn_data_type = QNN_DATATYPE_INT_32;
-            const auto& input_0 = node_unit.Inputs()[0];
+            const auto& input_i = node_unit.Inputs()[i];
             std::vector<uint32_t> output_shape;
-            ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_0.node_arg, output_shape),
-                              "QNN EP: Cannot get input shape for ", input_0.node_arg.Name().c_str());
+            ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_i.node_arg, output_shape),
+                              "QNN EP: Cannot get input shape for ", input_i.node_arg.Name().c_str());
             QnnTensorWrapper output_tensorwrapper(cast_output_name,
                                                   tensor_type,
                                                   qnn_data_type,
