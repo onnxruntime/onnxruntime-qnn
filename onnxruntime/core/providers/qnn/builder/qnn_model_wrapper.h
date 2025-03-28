@@ -234,8 +234,14 @@ class QnnModelWrapper {
                             tensor_data_type, quantize_param, do_op_validation, is_for_input, is_for_output);
   }
 
-  Status AddInt64CastNode(const std::string& input_name, std::string& cast_output_name,
+Status AddInt64CastNode(const std::string& input_name, std::string& cast_output_name,
                           std::vector<uint32_t>&& cast_output_shape, bool do_op_validation) {
+    const QnnTensorWrapper& tensor_wrapper = GetQnnTensorWrapper(input_name);
+    Qnn_DataType_t data_type = tensor_wrapper.GetTensorDataType();
+    if (data_type == QNN_DATATYPE_INT_32) {
+      // If the input tensor is already int32, skip adding the cast node
+      return Status::OK();
+    }
     cast_output_name = input_name + "_ort_qnn_ep_cast";
     QnnTensorWrapper cast_output(cast_output_name, QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_INT_32,
                                  QnnQuantParamsWrapper(), std::move(cast_output_shape));
