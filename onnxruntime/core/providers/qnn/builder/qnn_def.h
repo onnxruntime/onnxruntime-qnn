@@ -161,7 +161,6 @@ class QnnTensorWrapper {
         data_type = QNN_DATATYPE_INT_32;
       }
       if (client_buf_.size()) {
-        std::cout << client_buf_.size() << std::endl;
        const size_t num_elems = client_buf_.size() / sizeof(int64_t);
        std::vector<uint8_t> cast_data;
        cast_data.resize(num_elems * sizeof(int32_t));
