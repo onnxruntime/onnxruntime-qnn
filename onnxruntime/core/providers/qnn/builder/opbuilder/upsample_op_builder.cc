@@ -1,9 +1,11 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include <array>
-#include <cassert>
+#include <memory>
+#include <string>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -20,7 +22,7 @@ class UpsampleOpBuilder : public BaseOpBuilder {
 
   Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                        const NodeUnit& node_unit,
-                       const logging::Logger& logger) const override final ORT_MUST_USE_RESULT;
+                       const logging::Logger& logger) const final ORT_MUST_USE_RESULT;
 
  protected:
   Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
@@ -44,17 +46,14 @@ class UpsampleOpBuilder : public BaseOpBuilder {
                                   QnnQuantParamsWrapper& quant_param) const override ORT_MUST_USE_RESULT;
 
  private:
-  static const OnnxAttrInfo<std::string> onnx_mode_attr;
-  static const std::unordered_map<std::string, uint32_t> supported_modes;
+  const std::unordered_map<std::string, uint32_t> supported_modes = {
+      {"nearest", QNN_OP_RESIZE_INTERPOLATION_MODE_NEAREST},
+      {"linear", QNN_OP_RESIZE_INTERPOLATION_MODE_LINEAR},
+      {"cubic", QNN_OP_RESIZE_INTERPOLATION_MODE_CUBIC}};
+
+  // Info for Onnx Upsample attribute {<attribute_name>, <default_value>}
+  const OnnxAttrInfo<std::string> onnx_mode_attr = {"mode", "nearest"};
 };
-
-const std::unordered_map<std::string, uint32_t> UpsampleOpBuilder::supported_modes = {
-    {"nearest", QNN_OP_RESIZE_INTERPOLATION_MODE_NEAREST},
-    {"linear", QNN_OP_RESIZE_INTERPOLATION_MODE_LINEAR},
-    {"cubic", QNN_OP_RESIZE_INTERPOLATION_MODE_CUBIC}};
-
-// Info for Onnx Upsample attribute {"<attribute_name>", <default_value>}
-const OnnxAttrInfo<std::string> UpsampleOpBuilder::onnx_mode_attr = {"mode", "nearest"};
 
 static Status AddQnnScalar(QnnModelWrapper& qnn_model_wrapper,
                            const NodeUnit& node_unit,
@@ -104,10 +103,16 @@ Status UpsampleOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 
   // Check that only the spatial dimensions (width, height) are resized. The batch_size (N) and channels (C) should
   // be untouched. This code runs before layout transformation, so we know that the current layout is "channel first"
-  // (e.g., N, C, S1, S2, ..., SN), and that the minimum rank is 3.
-  assert(node_unit.Domain() != kMSInternalNHWCDomain);
+  // (e.g., N, C, S1, S2, ..., SN).
   ORT_RETURN_IF_NOT(input_shape[0] == output_shape[0] && input_shape[1] == output_shape[1],
                     "QNN EP: Resize may only change the spatial dimensions.");
+
+  if (!is_npu_backend) {
+    ONNX_NAMESPACE::DataType input_data_type = input_0.node_arg.Type();
+    ORT_RETURN_IF(input_data_type != ONNX_NAMESPACE::Utils::DataTypeUtils::ToType("float"),
+                  "QNN EP: Data type ", input_data_type->c_str(),
+                  " is not supported for Resize operator in CPU backend.");
+  }
 
   return Status::OK();
 }
@@ -117,9 +122,14 @@ Status UpsampleOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                         const logging::Logger& logger,
                                         std::vector<std::string>& input_names,
                                         bool do_op_validation) const {
-  ORT_UNUSED_PARAMETER(do_op_validation);
-
+  const int opset_version = node_unit.SinceVersion();
   const auto& inputs = node_unit.Inputs();
+
+  if (opset_version > 7 && do_op_validation) {
+    const std::string& scales_input_name = inputs[1].node_arg.Name();
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.IsConstantInput(scales_input_name),
+                      "QNN doesn't support dynamic scales input for ONNX Upsample op ", node_unit.Name().c_str());
+  }
 
   // Only need to consider the first input of Onnx upsample.
   ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
@@ -143,9 +153,11 @@ Status UpsampleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
 
   const size_t input_rank = input_shape.size();
   const bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
-  std::string qnn_op_type = QNN_OP_RESIZE;
+  std::string qnn_op_type = GetQnnOpType(node_unit.OpType());
 
   if (is_npu_backend && input_rank == 4 && interp_mode != "cubic") {
+    // Translate QNN's Resize to QNN's ResizeNearestNeighbor/ResizeBilinear to achieve better performance on
+    // the HTP backend. QNN's ResizeNearestNeighbor and ResizeBilinear are only supported when input rank is 4.
     qnn_op_type = (interp_mode == "nearest") ? QNN_OP_RESIZE_NEAREST_NEIGHBOR : QNN_OP_RESIZE_BILINEAR;
 
     // Parameter 'align_corners'
@@ -153,8 +165,8 @@ Status UpsampleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
     qnn_align_corners.dataType = QNN_DATATYPE_BOOL_8;
     qnn_align_corners.bool8Value = false;
     const std::string align_corners_param_name = (qnn_op_type == QNN_OP_RESIZE_BILINEAR)
-                                                 ? QNN_OP_RESIZE_BILINEAR_PARAM_ALIGN_CORNERS
-                                                 : QNN_OP_RESIZE_NEAREST_NEIGHBOR_PARAM_ALIGN_CORNERS;
+                                                     ? QNN_OP_RESIZE_BILINEAR_PARAM_ALIGN_CORNERS
+                                                     : QNN_OP_RESIZE_NEAREST_NEIGHBOR_PARAM_ALIGN_CORNERS;
 
     ORT_RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper, node_unit, param_tensor_names,
                                      qnn_align_corners, align_corners_param_name));
@@ -164,8 +176,8 @@ Status UpsampleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
     qnn_half_pixel_centers.dataType = QNN_DATATYPE_BOOL_8;
     qnn_half_pixel_centers.bool8Value = false;
     const std::string half_pixel_centers_param_name = (qnn_op_type == QNN_OP_RESIZE_BILINEAR)
-                                                      ? QNN_OP_RESIZE_BILINEAR_PARAM_HALF_PIXEL_CENTERS
-                                                      : QNN_OP_RESIZE_NEAREST_NEIGHBOR_PARAM_HALF_PIXEL_CENTERS;
+                                                          ? QNN_OP_RESIZE_BILINEAR_PARAM_HALF_PIXEL_CENTERS
+                                                          : QNN_OP_RESIZE_NEAREST_NEIGHBOR_PARAM_HALF_PIXEL_CENTERS;
 
     ORT_RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper, node_unit, param_tensor_names,
                                      qnn_half_pixel_centers, half_pixel_centers_param_name));
@@ -179,8 +191,8 @@ Status UpsampleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
       ORT_RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper, node_unit, param_tensor_names,
                                        qnn_antialias, QNN_OP_RESIZE_BILINEAR_PARAM_ANTIALIAS));
     }
-  }
-  else {
+  } else {
+    // Remain as QNN's Resize.
     // Parameter 'exclude_outside'
     Qnn_Scalar_t qnn_exclude_outside = QNN_SCALAR_INIT;
     qnn_exclude_outside.dataType = QNN_DATATYPE_BOOL_8;
@@ -192,7 +204,9 @@ Status UpsampleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
     // Parameter 'transformation_mode'
     Qnn_Scalar_t qnn_transformation_mode = QNN_SCALAR_INIT;
     qnn_transformation_mode.dataType = QNN_DATATYPE_UINT_32;
-    qnn_transformation_mode.uint32Value = QNN_OP_RESIZE_TRANSFORMATION_MODE_ASYMMETRIC;
+    qnn_transformation_mode.uint32Value = (supported_modes.at(interp_mode) == QNN_OP_RESIZE_INTERPOLATION_MODE_NEAREST)
+                                              ? static_cast<uint32_t>(QNN_OP_RESIZE_TRANSFORMATION_MODE_HALF_PIXEL)
+                                              : static_cast<uint32_t>(QNN_OP_RESIZE_TRANSFORMATION_MODE_ASYMMETRIC);
 
     ORT_RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper, node_unit, param_tensor_names,
                                      qnn_transformation_mode, QNN_OP_RESIZE_PARAM_TRANSFORMATION_MODE));
@@ -200,7 +214,7 @@ Status UpsampleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
     // Parameter 'interpolation_mode'
     Qnn_Scalar_t qnn_interp_mode = QNN_SCALAR_INIT;
     qnn_interp_mode.dataType = QNN_DATATYPE_UINT_32;
-    qnn_interp_mode.uint32Value = supported_modes.at(interp_mode);
+    qnn_interp_mode.uint32Value = static_cast<uint32_t>(supported_modes.at(interp_mode));
 
     ORT_RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper, node_unit, param_tensor_names,
                                      qnn_interp_mode, QNN_OP_RESIZE_PARAM_INTERPOLATION_MODE));
@@ -209,15 +223,19 @@ Status UpsampleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
     if (qnn_interp_mode.uint32Value == QNN_OP_RESIZE_INTERPOLATION_MODE_NEAREST) {
       Qnn_Scalar_t qnn_nearest_mode = QNN_SCALAR_INIT;
       qnn_nearest_mode.dataType = QNN_DATATYPE_UINT_32;
-      qnn_nearest_mode.uint32Value = QNN_OP_RESIZE_NEAREST_MODE_ROUND_PREFER_FLOOR;
+      qnn_nearest_mode.uint32Value = static_cast<uint32_t>(QNN_OP_RESIZE_NEAREST_MODE_ROUND_PREFER_FLOOR);
 
       ORT_RETURN_IF_ERROR(AddQnnScalar(qnn_model_wrapper, node_unit, param_tensor_names,
                                        qnn_nearest_mode, QNN_OP_RESIZE_PARAM_NEAREST_MODE));
     }
   }
 
-  return ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names), std::move(param_tensor_names),
-                        logger, do_op_validation, qnn_op_type);
+  ORT_RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit,
+                                     std::move(input_names),
+                                     std::move(param_tensor_names),
+                                     logger, do_op_validation, qnn_op_type));
+
+  return Status::OK();
 }
 
 Status UpsampleOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
