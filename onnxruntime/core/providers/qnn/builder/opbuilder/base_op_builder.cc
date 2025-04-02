@@ -31,7 +31,7 @@ Status BaseOpBuilder::AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper,
   // Inputs & output handling mostly same for most of the Ops, just node attributes are different
   ORT_RETURN_IF_ERROR(ProcessInputs(qnn_model_wrapper, node_unit, logger,
                                     input_names, do_op_validation));
-  ORT_RETURN_IF_ERROR(ProcessInt64Tensors(qnn_model_wrapper, node_unit, input_names));
+
   ORT_RETURN_IF_ERROR(ProcessAttributesAndOutputs(qnn_model_wrapper, node_unit, std::move(input_names),
                                                   logger, do_op_validation));
 
@@ -140,46 +140,43 @@ Status BaseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
   if (input_names.size() < 1) {
     return Status::OK();
   }
-
-  ORT_RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names), {},
-                                     logger, do_op_validation, GetQnnOpType(node_unit.OpType())));
-  return Status::OK();
-}
-
-Status BaseOpBuilder::ProcessInt64Tensors(QnnModelWrapper& qnn_model_wrapper,
-                                          const NodeUnit& node_unit,
-                                          std::vector<std::string>& input_names) const {
   for (size_t i = 0; i < input_names.size(); i++) {
     auto& input_tensorwrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_names[i]);
     // Insert cast to int32 if input dtype is int64
     if (input_tensorwrapper.GetTensorDataType() == QNN_DATATYPE_INT_64) {
+      LOGS(logger, INFO) << "input " << input_names[i] << " is int64, insert cast";
       const Qnn_TensorType_t tensor_type = QNN_TENSOR_TYPE_NATIVE;
       const std::string cast_output_name = input_names[i] + "_cast_int32";
       if (!qnn_model_wrapper.IsQnnTensorWrapperExist(cast_output_name)) {
-          Qnn_DataType_t qnn_data_type = QNN_DATATYPE_INT_32;
-          const auto& input_i = node_unit.Inputs()[i];
-          std::vector<uint32_t> output_shape;
-          ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_i.node_arg, output_shape),
-                            "QNN EP: Cannot get input shape for ", input_i.node_arg.Name().c_str());
-          QnnTensorWrapper output_tensorwrapper(cast_output_name,
-                                                tensor_type,
-                                                qnn_data_type,
-                                                QnnQuantParamsWrapper(),
-                                                std::move(output_shape));
-          ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)),
-                            "Failed to add output tensor for QNN Cast node.");
-          ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(cast_output_name,
-                                                            QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                            QNN_OP_CAST,
-                                                            {input_names[i]},
-                                                            {cast_output_name},
-                                                            {},
-                                                            false),
-                            "Failed to create QNN Cast node.");
+        Qnn_DataType_t qnn_data_type = QNN_DATATYPE_INT_32;
+        const auto& input_i = node_unit.Inputs()[i];
+        std::vector<uint32_t> output_shape;
+        ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_i.node_arg, output_shape),
+                          "QNN EP: Cannot get input shape for ", input_i.node_arg.Name().c_str());
+        QnnTensorWrapper output_tensorwrapper(cast_output_name,
+                                              tensor_type,
+                                              qnn_data_type,
+                                              std::move(const_cast<QnnQuantParamsWrapper&>(input_tensorwrapper.GetQnnQuantParams())),
+                                              std::move(output_shape));
+        ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)),
+                          "Failed to add output tensor for QNN Cast node.");
+
+        ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(cast_output_name,
+                                                          QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                          QNN_OP_CAST,
+                                                          {input_names[i]},
+                                                          {cast_output_name},
+                                                          {},
+                                                          do_op_validation),
+                          "Failed to create QNN Cast node.");
       }
+      // Update input_names to use the casted tensor name
       input_names[i] = cast_output_name;
     }
   }
+
+  ORT_RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names), {},
+                                     logger, do_op_validation, GetQnnOpType(node_unit.OpType())));
   return Status::OK();
 }
 
