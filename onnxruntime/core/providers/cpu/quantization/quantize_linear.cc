@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #include <core/common/safeint.h>
+#include <chrono>
 #include "core/framework/element_type_lists.h"
 #include "core/framework/float8.h"
 #include "core/framework/float16.h"
@@ -682,6 +683,7 @@ void ParQuantizeLinear(const InputType* Input,
                        const OutputType* ZeroPoint,
                        bool saturate,
                        concurrency::ThreadPool* thread_pool) {
+  std::chrono::time_point<std::chrono::high_resolution_clock> time_pt1 = std::chrono::high_resolution_clock::now();
 #if !defined(DISABLE_FLOAT8_TYPES)
   if constexpr (!boost::mp11::mp_contains<element_type_lists::AllFloat8, OutputType>::value) {
 #endif
@@ -695,6 +697,10 @@ void ParQuantizeLinear(const InputType* Input,
                          saturate, thread_pool);
   }
 #endif
+  std::chrono::time_point<std::chrono::high_resolution_clock> time_pt2 = std::chrono::high_resolution_clock::now();
+  std::chrono::microseconds delta = std::chrono::duration_cast<std::chrono::microseconds>(time_pt2 - time_pt1);
+  std::cout << "delta_ParQuantizeLinear" << std::endl;
+  std::cout << delta.count() << std::endl;
 }
 
 /**
@@ -703,6 +709,7 @@ void ParQuantizeLinear(const InputType* Input,
 template <typename T, typename InT>
 void ComputeLoop(OpKernelContext* ctx, const InT* input, const InT* scale, const T* zero_point, T* output,
                  int64_t process_block_count, int64_t broadcast_dim, int64_t process_block_size, bool saturate) {
+  std::chrono::time_point<std::chrono::high_resolution_clock> time_pt1 = std::chrono::high_resolution_clock::now();
   for (size_t n = 0; n < static_cast<size_t>(process_block_count); n++) {
     for (size_t bd = 0; bd < static_cast<size_t>(broadcast_dim); bd++) {
       ParQuantizeLinear(input, output, static_cast<size_t>(process_block_size), scale[bd], bd, zero_point,
@@ -711,6 +718,10 @@ void ComputeLoop(OpKernelContext* ctx, const InT* input, const InT* scale, const
       output += process_block_size;
     }
   }
+  std::chrono::time_point<std::chrono::high_resolution_clock> time_pt2 = std::chrono::high_resolution_clock::now();
+  std::chrono::microseconds delta = std::chrono::duration_cast<std::chrono::microseconds>(time_pt2 - time_pt1);
+  std::cout << "delta_In_Compute_Loop" << std::endl;
+  std::cout << delta.count() << std::endl;
 }
 
 // Quantizes float32 to INT4 (in-place) using MLAS kernel.
@@ -782,6 +793,10 @@ DEFINE_COMPUTE_LOOP_FP16_TO_INT4(UInt4x2)
 // formula is Y = X / Scale + ZeroPoint
 template <typename T>
 Status QuantizeLinear<T>::Compute(OpKernelContext* ctx) const {
+  // std::chrono::microseconds delta;
+  // std::chrono::time_point<std::chrono::high_resolution_clock> time_pt1;
+  // std::chrono::time_point<std::chrono::high_resolution_clock> time_pt2;
+  // time_pt1 = std::chrono::high_resolution_clock::now();
   auto& x = *ctx->Input<Tensor>(0);
   auto& y_scale = *ctx->Input<Tensor>(1);
   auto* y_zero_point = ctx->Input<Tensor>(2);
@@ -791,9 +806,18 @@ Status QuantizeLinear<T>::Compute(OpKernelContext* ctx) const {
   int64_t process_block_count;
   int64_t broadcast_dim;
   int64_t process_block_size;
+  // time_pt2 = std::chrono::high_resolution_clock::now();
+  // delta = std::chrono::duration_cast<std::chrono::microseconds>(time_pt2 - time_pt1);
+  // std::cout << "delta" << std::endl;
+  // std::cout << delta.count() << std::endl;
+  // time_pt1 = time_pt2;
   PrepareForQDQ(x.Shape(), y_scale, y_zero_point, axis_, block_size_,
                 process_block_count, broadcast_dim, process_block_size);
-
+  // time_pt2 = std::chrono::high_resolution_clock::now();
+  // delta = std::chrono::duration_cast<std::chrono::microseconds>(time_pt2 - time_pt1);
+  // std::cout << "delta_PrepareForQDQ" << std::endl;
+  // std::cout << delta.count() << std::endl;
+  // time_pt1 = time_pt2;
   const T* zero_point = y_zero_point != nullptr ? y_zero_point->Data<T>() : nullptr;
   T* output = y.MutableData<T>();
 
@@ -804,6 +828,11 @@ Status QuantizeLinear<T>::Compute(OpKernelContext* ctx) const {
 #endif
                                                                           : 0;
 
+  // time_pt2 = std::chrono::high_resolution_clock::now();
+  // delta = std::chrono::duration_cast<std::chrono::microseconds>(time_pt2 - time_pt1);
+  // std::cout << "delta_group" << std::endl;
+  // std::cout << delta.count() << std::endl;
+  // time_pt1 = time_pt2;
   if (x.IsDataType<float>()) {
     if (block_size_) {
       if (process_block_size > 1) {
@@ -834,6 +863,11 @@ Status QuantizeLinear<T>::Compute(OpKernelContext* ctx) const {
     } else {
       ComputeLoop<T, float>(ctx, x.Data<float>(), y_scale.Data<float>(), zero_point, output,
                             process_block_count, broadcast_dim, process_block_size, saturate_);
+      // time_pt2 = std::chrono::high_resolution_clock::now();
+      // delta = std::chrono::duration_cast<std::chrono::microseconds>(time_pt2 - time_pt1);
+      // std::cout << "delta_ComputeLoop" << std::endl;
+      // std::cout << delta.count() << std::endl;
+      // time_pt1 = time_pt2;
     }
   } else if (x.IsDataType<MLFloat16>()) {
     if (block_size_) {
