@@ -144,7 +144,6 @@ Status BaseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
     auto& input_tensorwrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_names[i]);
     // Insert cast to int32 if input dtype is int64
     if (input_tensorwrapper.GetTensorDataType() == QNN_DATATYPE_INT_64) {
-      LOGS(logger, INFO) << "input " << input_names[i] << " is int64, insert cast";
       const Qnn_TensorType_t tensor_type = QNN_TENSOR_TYPE_NATIVE;
       const std::string cast_output_name = input_names[i] + "_cast_int32";
       if (!qnn_model_wrapper.IsQnnTensorWrapperExist(cast_output_name)) {
