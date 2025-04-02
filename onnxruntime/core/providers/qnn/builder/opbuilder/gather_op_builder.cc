@@ -156,7 +156,18 @@ static Status ProcessIndicesInput(QnnModelWrapper& qnn_model_wrapper,
     ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
   }
 
-  input_names.push_back(input_name);
+  // Insert QNN Cast op to convert dynamic indices from int64 to int32.
+  std::string indices_input_name(input_name);
+  if (indices_info.qnn_data_type == QNN_DATATYPE_INT_64) {
+    assert(!indices_info.is_initializer);
+
+    ORT_RETURN_IF_ERROR(qnn_model_wrapper.AddInt64CastNode(input_name, indices_input_name,
+                                                           std::move(cast_output_shape),
+                                                           do_op_validation));
+  }
+
+  input_names.push_back(indices_input_name);
+
   return Status::OK();
 }
 
