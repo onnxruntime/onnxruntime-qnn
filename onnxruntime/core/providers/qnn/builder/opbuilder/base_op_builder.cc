@@ -31,7 +31,7 @@ Status BaseOpBuilder::AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper,
   // Inputs & output handling mostly same for most of the Ops, just node attributes are different
   ORT_RETURN_IF_ERROR(ProcessInputs(qnn_model_wrapper, node_unit, logger,
                                     input_names, do_op_validation));
-  ORT_RETURN_IF_ERROR(ProcessInt64Tensors(qnn_model_wrapper, node_unit, logger, input_names));
+  ORT_RETURN_IF_ERROR(ProcessInt64Tensors(qnn_model_wrapper, node_unit, input_names));
   ORT_RETURN_IF_ERROR(ProcessAttributesAndOutputs(qnn_model_wrapper, node_unit, std::move(input_names),
                                                   logger, do_op_validation));
   return Status::OK();
@@ -133,7 +133,6 @@ Status BaseOpBuilder::AddZeroBiasInput(QnnModelWrapper& qnn_model_wrapper,
 
 Status BaseOpBuilder::ProcessInt64Tensors(QnnModelWrapper& qnn_model_wrapper,
                                           const NodeUnit& node_unit,
-                                          const logging::Logger& logger,
                                           std::vector<std::string>& input_names) const {
   if (input_names.size() < 1) {
     return Status::OK();

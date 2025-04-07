@@ -78,7 +78,6 @@ class BaseOpBuilder : public IOpBuilder {
 
   Status ProcessInt64Tensors(QnnModelWrapper& qnn_model_wrapper,
                              const NodeUnit& node_unit,
-                             const logging::Logger& logger,
                              std::vector<std::string>& input_names) const ORT_MUST_USE_RESULT;
 
   virtual Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
