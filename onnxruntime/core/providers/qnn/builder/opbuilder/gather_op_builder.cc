@@ -37,22 +37,9 @@ class GatherOpBuilder : public BaseOpBuilder {
 Status GatherOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                       const NodeUnit& node_unit,
                                       const logging::Logger& logger) const {
-  // On QNN CPU backend, the QNN validator does not properly reject unsupported input shapes.
-  // This causes a Qnn graph execution error. So, reject those configs here.
-  // We should consider not using QNN CPU backend for onnxruntime unit tests.
-  const std::string& op_type = node_unit.OpType();
-  if (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::CPU && op_type == "GatherElements") {
-    const auto& input0 = node_unit.Inputs()[0];
-    std::vector<uint32_t> input0_shape;
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input0.node_arg, input0_shape),
-                      "Cannot get input[0] shape for ", op_type, " node ", node_unit.Name());
+  ORT_RETURN_IF_NOT(node_unit.OpType() == "Softmax", "Gather/GatherElements fallback to CPU");
 
-    const size_t input0_rank = input0_shape.size();
-    ORT_RETURN_IF_NOT(input0_rank > 1 && input0_rank <= 4,
-                      "QNN CPU backend does not support ", op_type, " with input[0] of rank ", input0_rank);
-  }
-
-  return BaseOpBuilder::IsOpSupported(qnn_model_wrapper, node_unit, logger);
+  return Status::OK();
 }
 
 // Makes negative indices positive and converts int64 indices to another integer type (typically int32 or uint32).
