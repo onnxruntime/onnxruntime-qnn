@@ -53,6 +53,13 @@ Status InstanceNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   if (input_rank <= 2 || input_rank > 4) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN InstanceNorm only supports input ranks of size 3 or 4.");
   }
+  bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
+  if (is_npu_backend) {
+    onnx::DataType scale_type = inputs[1].quant_param->zero_point->Type();
+    ORT_RETURN_IF(scale_type == ONNX_NAMESPACE::Utils::DataTypeUtils::ToType("int8"),
+                  "QNN EP: Data type ", scale_type->c_str(),
+                  " is not supported for InstanceNorm operator in HTP backend.");
+  }
 
   const uint32_t num_channels = (node_unit.Domain() == kMSInternalNHWCDomain) ? input_shape.back() : input_shape[1];
 
