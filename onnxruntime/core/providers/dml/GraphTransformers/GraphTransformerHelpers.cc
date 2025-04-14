@@ -15,7 +15,6 @@
 #include "core/optimizer/conv_bn_fusion.h"
 #include "core/optimizer/conv_mul_fusion.h"
 #include "core/optimizer/conv_add_fusion.h"
-#include "core/optimizer/matmul_add_fusion.h"
 #include "core/optimizer/dropout_elimination.h"
 #include "core/optimizer/slice_elimination.h"
 #include "core/optimizer/rule_based_graph_transformer.h"

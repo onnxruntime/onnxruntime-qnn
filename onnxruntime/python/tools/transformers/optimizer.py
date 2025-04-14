@@ -360,7 +360,6 @@ def optimize_model(
             if only_onnxruntime
             else [
                 "MatMulScaleFusion",
-                "MatMulAddFusion",
                 "MatmulTransposeFusion",
                 "GemmActivationFusion",
                 "BiasSoftmaxFusion",

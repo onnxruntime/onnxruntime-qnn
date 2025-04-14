@@ -2072,27 +2072,6 @@ TEST(InferenceSessionTests, TestRegisterTransformers) {
   }
 }
 
-// This test validates session initialize is successful when all the pre-defined
-// L1 and L2 transformers are enabled.
-TEST(InferenceSessionTests, TestL1AndL2Transformers) {
-  // Models which cover all transformers.
-  std::vector<std::string> test_model_uris = {"testdata/transform/fusion/fuse-conv-bn-mul-add-unsqueeze.onnx",
-                                              "testdata/transform/abs-id-max.onnx",
-                                              "testdata/transform/slice-v11-elim.onnx",
-                                              "testdata/transform/matmul_add_fusion/2Input/model.onnx",
-                                              "testdata/transform/matmul_add_fusion/3Input/gemm_relu.onnx",
-                                              "testdata/transform/fusion/fuse-conv-bn-add-mul-float16.onnx"};
-
-  for (const auto& model_uri : test_model_uris) {
-    SessionOptions so;
-    so.session_logid = "InferenceSessionTests.TestL1AndL2Transformers";
-    so.graph_optimization_level = TransformerLevel::Level2;
-    InferenceSession session_object{so, GetEnvironment()};
-    ASSERT_STATUS_OK(session_object.Load(model_uri));
-    ASSERT_STATUS_OK(session_object.Initialize());
-  }
-}
-
 TEST(InferenceSessionTests, TestStrictShapeInference) {
   std::vector<int64_t> input_shape{2, 2};
   std::vector<float> input_data{0.f, 1.f, 2.f, 3.f};
