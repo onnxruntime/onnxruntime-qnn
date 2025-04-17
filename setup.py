@@ -400,7 +400,6 @@ else:
     # QNN V68/V73 dependencies
     qnn_deps = [
         "QnnCpu.dll",
-        "QnnGpu.dll",
         "QnnHtp.dll",
         "QnnSaver.dll",
         "QnnSystem.dll",

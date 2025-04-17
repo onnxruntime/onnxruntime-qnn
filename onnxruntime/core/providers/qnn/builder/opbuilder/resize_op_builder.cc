@@ -222,8 +222,7 @@ Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   ORT_RETURN_IF_NOT(input_shape[0] == output_shape[0] && input_shape[1] == output_shape[1],
                     "QNN EP: Resize may only change the spatial dimensions.");
 
-  const bool is_cpu_backend = IsCpuBackend(qnn_model_wrapper.GetQnnBackendType());
-  if (is_cpu_backend) {
+  if (!is_npu_backend) {
     ONNX_NAMESPACE::DataType input_data_type = input_0.node_arg.Type();
     ORT_RETURN_IF(input_data_type != ONNX_NAMESPACE::Utils::DataTypeUtils::ToType("float"),
                   "QNN EP: Data type ", input_data_type->c_str(),
