@@ -90,4 +90,35 @@
             ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}
             LIBRARY  DESTINATION ${CMAKE_INSTALL_LIBDIR}
             RUNTIME  DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# === Bundle QNN ARM64 emulation files into wheel for x64 ===
+if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64")
+  set(WHEEL_CAPI_DIR "${CMAKE_BINARY_DIR}/${CMAKE_BUILD_TYPE}/onnxruntime/capi")
+  file(MAKE_DIRECTORY "${WHEEL_CAPI_DIR}")
+
+  foreach(f
+    QnnHtpv73Stub.dll
+    QnnHtpPrepare.dll
+    QnnSystem.dll
+    QnnCpu.dll
+    QnnHtp.dll
+  )
+    set(fpath "${onnxruntime_QNN_HOME}/lib/arm64x-windows-msvc/${f}")
+    if(EXISTS "${fpath}")
+      file(COPY "${fpath}" DESTINATION "${WHEEL_CAPI_DIR}")
+      message(STATUS "Copied ${f} to wheel capi")
+    endif()
+  endforeach()
+
+  # Copy Hexagon v73 Skel file
+  set(skel_path "${onnxruntime_QNN_HOME}/lib/hexagon-v73/unsigned/libQnnHtpv73Skel.so")
+  if(EXISTS "${skel_path}")
+    file(COPY "${skel_path}" DESTINATION "${WHEEL_CAPI_DIR}")
+  message(STATUS "Copied libQnnHtpv73Skel.so to wheel capi")
+  endif()
+
+  else()
+    message(STATUS "Skipping QNN ARM64 stub/skel copy: not an AMD64 platform")
+  endif()
+
   endif()
