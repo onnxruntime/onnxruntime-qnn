@@ -26,6 +26,7 @@
 #include "core/providers/cpu/tensor/unsqueeze.h"
 #include "core/providers/cpu/tensor/upsamplebase.h"
 #include "core/providers/cpu/tensor/tile.h"
+#include "core/providers/providers.h"
 
 #ifndef DISABLE_CONTRIB_OPS
 #include "contrib_ops/cpu/bert/attention_base.h"
@@ -328,6 +329,11 @@ std::unique_ptr<IAllocator> CreateCPUAllocator(const OrtMemoryInfo& info) {
 
 bool IAllocator::CalcMemSizeForArrayWithAlignment(size_t nmemb, size_t size, size_t alignment, size_t* out) noexcept {
   return g_host->IAllocator__CalcMemSizeForArrayWithAlignment(nmemb, size, alignment, out);
+}
+
+std::unique_ptr<IExecutionProvider> IExecutionProviderFactory::CreateProvider(
+    const OrtSessionOptions& session_options, const OrtLogger& session_logger) {
+  return g_host->IExecutionProviderFactory__CreateProvider(this, session_options, session_logger);
 }
 
 std::vector<std::unique_ptr<ComputeCapability>> IExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer,
@@ -775,7 +781,7 @@ std::unique_ptr<Model> CreateModel(const GraphViewer& graph_viewer, const loggin
 }  // namespace cann
 #endif
 
-void MurmurHash3::x86_128(const void* key, int len, uint32_t seed, void* out) {
+void MurmurHash3::x86_128(const void* key, size_t len, uint32_t seed, void* out) {
   return g_host->MurmurHash3__x86_128(key, len, seed, out);
 }
 
