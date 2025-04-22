@@ -93,7 +93,7 @@
 
 # === Bundle QNN ARM64 emulation files into wheel for x64 ===
 if(CMAKE_SYSTEM_PROCESSOR STREQUAL "AMD64")
-  set(WHEEL_CAPI_DIR "${CMAKE_BINARY_DIR}/${CMAKE_BUILD_TYPE}/onnxruntime/capi")
+  set(CAPI_DIR "${CMAKE_BINARY_DIR}/${CMAKE_BUILD_TYPE}/onnxruntime/capi")
   file(MAKE_DIRECTORY "${CAPI_DIR}")
 
   foreach(f
