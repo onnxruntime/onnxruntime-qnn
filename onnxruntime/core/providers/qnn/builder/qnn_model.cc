@@ -328,15 +328,20 @@ Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
   size_t tensor_count = tensor_wrappers.size();
   ORT_RETURN_IF(0 == tensor_count, "Zero tensor size!");
 
-  // Reserve qnn_tensor_infos according to the number of graph inputs.
-  auto input_count = GetGraphInputNumber();
-  ORT_RETURN_IF(0 == input_count, "Zero input number!");
-  qnn_tensor_infos.resize(input_count);
   std::vector<int> input_indices;
-  int start = 0;
-  int end = static_cast<uint32_t>(input_count);
-  for (int i = start; i < end; ++i) {
-    input_indices.push_back(i);
+  if (is_input) {
+    // Reserve qnn_tensor_infos according to the number of graph inputs.
+    auto input_count = GetGraphInputNumber();
+    ORT_RETURN_IF(0 == input_count, "Zero input number!");
+    qnn_tensor_infos.resize(input_count);
+
+    int start = 0;
+    int end = static_cast<uint32_t>(input_count);
+    for (int i = start; i < end; ++i) {
+      input_indices.push_back(i);
+    }
+  } else {
+    qnn_tensor_infos.resize(tensor_count);
   }
 
   for (auto& tensor_wrapper : tensor_wrappers) {
@@ -353,7 +358,9 @@ Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
     qnn_tensor_info.tensor_wrapper = &tensor_wrapper;
     qnn_tensor_info.tensor_byte_size = static_cast<uint32_t>(length);
     qnn_tensor_info.ort_index = ort_index;
-    input_indices.erase(std::find(input_indices.begin(), input_indices.end(), static_cast<int>(qnn_index)));
+    if (is_input) {
+      input_indices.erase(std::find(input_indices.begin(), input_indices.end(), static_cast<int>(qnn_index)));
+    }
   }
   // The number of graph inputs and the number of tensor wrappers may not match.
   // - For example, for ResizeNearestNeighbor op, Qnn only cares about the 1st input,
@@ -361,7 +368,7 @@ Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
   // - However, these remaining inputs still appear in the input list, resulting in
   //   a discrepancy in the input quantities.
   // If not all inputs are used, erase the empty allocations in qnn_tensor_infos.
-  if (!input_indices.empty()) {
+  if (is_input && !input_indices.empty()) {
     for (auto iter = input_indices.rbegin(); iter != input_indices.rend(); ++iter) {
       ORT_RETURN_IF_NOT(qnn_tensor_infos[*iter].tensor_byte_size == 0,
                         "Unused input ", *iter, " must have a tensor_byte_size of 0, but got ",
