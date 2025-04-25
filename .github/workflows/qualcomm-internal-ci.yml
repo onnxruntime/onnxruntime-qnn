@@ -30,6 +30,6 @@ jobs:
         run: |
           ${{ vars.VCVARSALL }} amd64 && ^
           .\build.bat --config RelWithDebInfo --build_shared_lib --parallel ^
-          --compile_no_warning_as_error --cmake_generator "Visual Studio 17 2022" ^
+          --cmake_generator "Visual Studio 17 2022" ^
           --use_qnn --qnn_home ${{ vars.QNN_SDK_ROOT }} ^
           --build_dir build_x86
