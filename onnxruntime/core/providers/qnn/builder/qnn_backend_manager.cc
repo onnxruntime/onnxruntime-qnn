@@ -10,6 +10,7 @@
 #include "QnnOpDef.h"
 #include "CPU/QnnCpuCommon.h"
 #include "GPU/QnnGpuCommon.h"
+#include "IR/QnnIrCommon.h"
 #include "DSP/QnnDspCommon.h"
 #include "HTP/QnnHtpCommon.h"
 #include "HTP/QnnHtpContext.h"
@@ -272,6 +273,8 @@ void QnnBackendManager::SetQnnBackendType(uint32_t backend_id) {
       qnn_backend_type_ = QnnBackendType::HTP;
       break;
     case QNN_BACKEND_ID_IR:
+      qnn_backend_type_ = QnnBackendType::IR;
+      break;
     case QNN_BACKEND_ID_SAVER:
       qnn_backend_type_ = QnnBackendType::SERIALIZER;
       break;
@@ -888,6 +891,8 @@ Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing) {
       break;
     case QnnBackendType::GPU:
     case QnnBackendType::SERIALIZER:
+    case QnnBackendType::IR:
+      // Currently only this works with QnnGpu.
       configs = nullptr;
       break;
     default:
