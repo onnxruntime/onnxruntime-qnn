@@ -10,7 +10,6 @@
 namespace {
 
 // Represented as a tuple of 3 strings <term_1, term_2, result>.
-// Represented as a tuple of 3 strings <term_1, term_2, result>.
 // The equation string is expected to follow the format "term_1,term_2->result"
 using Equation = std::tuple<std::string, std::string, std::string>;
 
