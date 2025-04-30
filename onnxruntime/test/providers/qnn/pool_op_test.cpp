@@ -224,10 +224,6 @@ TEST_F(QnnHTPBackendTests, MaxPool_Large_Input3_AutoPadValid_HTP_u8) {
                             TestInputDef<float>({1, 160, 14, 20}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                             {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
                              utils::MakeAttribute("strides", std::vector<int64_t>{2, 2}),
-                             utils::MakeAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}),
-                             utils::MakeAttribute("dilations", std::vector<int64_t>{1, 1}),
-                             utils::MakeAttribute("ceil_mode", static_cast<int64_t>(0)),
-                             utils::MakeAttribute("storage_order", static_cast<int64_t>(0)),
                              utils::MakeAttribute("auto_pad", "VALID")},
                             ExpectedEPNodeAssignment::All);
 }
