@@ -213,6 +213,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   QnnSerializerConfig* GetQnnSerializerConfig();
 
+
   // Handler to be called upon successful context creation via contextCreateFromBinaryListAsync()
   // This handler is expected to be called in the callback ContextCreateAsyncCallback() in the .cc file
   // Takes in the context and the notifyParam objects received by the callback function

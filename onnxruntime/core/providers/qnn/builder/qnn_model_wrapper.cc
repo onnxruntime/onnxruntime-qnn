@@ -53,7 +53,7 @@ bool QnnModelWrapper::IsQnnTensorWrapperExist(const std::string& name) const {
   return model_tensors_map_.find(name) != model_tensors_map_.end();
 }
 
-bool QnnModelWrapper::QnnParamExists(const std::string& param_tensor_name) const {
+bool QnnModelWrapper::IsQnnParamExist(const std::string& param_tensor_name) const {
   return model_params_map_.find(param_tensor_name) != model_params_map_.end();
 }
 
@@ -128,7 +128,7 @@ bool QnnModelWrapper::AddParamWrapper(QnnParamWrapper&& param_wrapper) {
     return false;
   }
 
-  if (QnnParamExists(param_tensor_name) == true) {
+  if (IsQnnParamExist(param_tensor_name) == true) {
     return true;
   }
 
@@ -158,7 +158,7 @@ bool QnnModelWrapper::CreateQnnInputOutputTensors(const std::string& qnn_node_na
       return false;
     }
 
-    // During graph partitioning, we only need to do op validation, it's not required to create Qnn graph tensor
+    // During graph patitioning, we only need to do op validation, it's not required to create Qnn graph tensor
     // We only need to create the Qnn graph tensor during Compile to create Qnn graph
     if (!do_op_validation) {
       std::string error_string;
