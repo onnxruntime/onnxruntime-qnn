@@ -117,6 +117,8 @@ TEST_F(QnnCPUBackendTests, EinsumRank4MatMulTransposeAll2) {
 // QNN HTP
 //
 
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+
 TEST_F(QnnHTPBackendTests, EinsumRank2MatMul) {
   const std::vector<int64_t> shape0{2, 3};
   const std::vector<int64_t> shape1{3, 4};
@@ -181,6 +183,7 @@ TEST_F(QnnHTPBackendTests, EinsumRank4MatMulTransposeAll2) {
       /*equation=*/"bkhq,bchk->bchq",
       /*f32_abs_err=*/1e-2f);
 }
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime
