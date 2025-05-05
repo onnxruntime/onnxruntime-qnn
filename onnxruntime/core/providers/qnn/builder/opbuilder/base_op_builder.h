@@ -213,6 +213,15 @@ class BaseOpBuilder : public IOpBuilder {
 
         {"Pad", QNN_OP_PAD},
 
+        {"Softplus", QNN_OP_ELEMENT_WISE_SOFTPLUS},
+        {"IsNaN", QNN_OP_ELEMENT_WISE_NOT_EQUAL},
+        {"NonZero", QNN_OP_NON_ZERO},
+        {"Xor", QNN_OP_ELEMENT_WISE_XOR},
+
+        // Note: Mod is handled separately inside ModOpBuilder
+        // {"Mod", QNN_OP_ELEMENT_WISE_MOD},
+        // {"Mod", QNN_OP_ELEMENT_WISE_FMOD},
+
         {"Expand", QNN_OP_ELEMENT_WISE_MULTIPLY}};
     auto it = onnx_op_type_to_qnn_op_type.find(onnx_op_type);
     ORT_ENFORCE(it != onnx_op_type_to_qnn_op_type.end());

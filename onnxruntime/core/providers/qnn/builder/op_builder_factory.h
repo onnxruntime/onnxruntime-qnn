@@ -98,5 +98,7 @@ void CreateExpandOpBuilder(const std::string& op_type, OpBuilderRegistrations& o
 void CreateHardSigmoidOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
 void CreateMatMulOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+
+void CreateModOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 }  // namespace qnn
 }  // namespace onnxruntime
