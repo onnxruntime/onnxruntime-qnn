@@ -41,6 +41,7 @@ class SimpleOpBuilder : public BaseOpBuilder {
   static constexpr std::array<std::string_view, 2> gridsample_supported_modes = {"bilinear", "nearest"};
   static constexpr std::array<std::string_view, 3> gridsample_supported_padding_modes = {"zeros", "border", "reflection"};
   static constexpr std::array<std::string_view, 4> scatterelements_supported_reduction = {"none", "add", "mul", "max"};
+  static constexpr std::array<std::string_view, 3> scatternd_supported_reduction = {"none", "add", "mul"};
 };
 
 Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
@@ -100,6 +101,14 @@ Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
     NodeAttrHelper node_helper(node_unit);
     std::string reduction = node_helper.Get("reduction", "none");
     ORT_RETURN_IF_NOT(utils::ArrayHasString(scatterelements_supported_reduction, reduction), "ScatterElements does not support reduction ",
+                      reduction.c_str());
+  }
+
+  // QNN ScatterND doesn't support MAX, MIN reduction
+  if (op_type == "ScatterND") {
+    NodeAttrHelper node_helper(node_unit);
+    std::string reduction = node_helper.Get("reduction", "none");
+    ORT_RETURN_IF_NOT(utils::ArrayHasString(scatternd_supported_reduction, reduction), "ScatterND does not support reduction ",
                       reduction.c_str());
   }
 
@@ -283,6 +292,31 @@ Status ProcessReductionAttribute(QnnModelWrapper& qnn_model_wrapper,
   return Status::OK();
 }
 
+// Process Reduction attribute of ScatterND op
+Status ProcessScatterNDReductionAttribute(QnnModelWrapper& qnn_model_wrapper,
+                                          const NodeUnit& node_unit,
+                                          std::vector<std::string>& param_tensor_names) {
+  NodeAttrHelper node_helper(node_unit);
+  std::string reduction = node_helper.Get("reduction", "none");
+  Qnn_Scalar_t reduction_qnn_scalar = QNN_SCALAR_INIT;
+  reduction_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
+  if ("none" == reduction) {
+    reduction_qnn_scalar.uint32Value = QNN_OP_SCATTER_ND_REDUCTION_NONE;
+  } else if ("add" == reduction) {
+    reduction_qnn_scalar.uint32Value = QNN_OP_SCATTER_ND_REDUCTION_ADD;
+  } else if ("mul" == reduction) {
+    reduction_qnn_scalar.uint32Value = QNN_OP_SCATTER_ND_REDUCTION_MUL;
+  } else {
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "ScatterND support only reduction:{none, add, mul}.");
+  }
+  QnnParamWrapper reduction_param(node_unit.Index(), node_unit.Name(), QNN_OP_SCATTER_ND_PARAM_REDUCTION,
+                                  reduction_qnn_scalar);
+  param_tensor_names.push_back(reduction_param.GetParamTensorName());
+  qnn_model_wrapper.AddParamWrapper(std::move(reduction_param));
+
+  return Status::OK();
+}
+
 Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                     const NodeUnit& node_unit,
                                                     std::vector<std::string>&& input_names,
@@ -398,6 +432,11 @@ Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_w
 
     // Process reduction attribute
     ORT_RETURN_IF_ERROR(ProcessReductionAttribute(qnn_model_wrapper, node_unit, param_tensor_names));
+  }
+
+  if (op_type == "ScatterND") {
+    // Process reduction attribute
+    ORT_RETURN_IF_ERROR(ProcessScatterNDReductionAttribute(qnn_model_wrapper, node_unit, param_tensor_names));
   }
 
   return ProcessOutputs(qnn_model_wrapper, node_unit,
