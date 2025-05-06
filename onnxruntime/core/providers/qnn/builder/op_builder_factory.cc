@@ -69,6 +69,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
     CreateSimpleOpBuilder("IsNaN", *this);
     CreateSimpleOpBuilder("NonZero", *this);
     CreateSimpleOpBuilder("Xor", *this);
+    CreateSimpleOpBuilder("ScatterElements", *this);
   }
 
   {

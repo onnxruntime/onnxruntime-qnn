@@ -217,6 +217,7 @@ class BaseOpBuilder : public IOpBuilder {
         {"IsNaN", QNN_OP_ELEMENT_WISE_NOT_EQUAL},
         {"NonZero", QNN_OP_NON_ZERO},
         {"Xor", QNN_OP_ELEMENT_WISE_XOR},
+        {"ScatterElements", QNN_OP_SCATTER_ELEMENTS},
 
         // Note: Mod is handled separately inside ModOpBuilder
         // {"Mod", QNN_OP_ELEMENT_WISE_MOD},
