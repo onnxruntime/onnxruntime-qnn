@@ -137,7 +137,8 @@ Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
     }
   }
 
-  return Status::OK();
+  // Invoke BaseOpBuilder to prepare OpConfig and validate on QNN Backend
+  return BaseOpBuilder::IsOpSupported(qnn_model_wrapper, node_unit, logger);
 }
 
 Status ConvOpBuilder::GetInputChannelNumber(QnnModelWrapper& qnn_model_wrapper,
