@@ -862,6 +862,96 @@ TEST_F(QnnHTPBackendTests, BinaryOp_Sub4D_Broadcast) {
                         ExpectedEPNodeAssignment::All);
 }
 
+// Test ScatterElements with axis on HTP
+TEST_F(QnnHTPBackendTests, ScatterElements_int64_int64_axis_default) {
+  std::vector<int64_t> data = {0, 1, 2, 3};
+  std::vector<int64_t> indices = {1};
+  std::vector<int64_t> updates = {10};
+  RunOpTest<int64_t>("ScatterElements",
+                     {
+                         TestInputDef<int64_t>({4}, false, std::move(data)),
+                         TestInputDef<int64_t>({1, 1}, false, std::move(indices)),
+                         TestInputDef<int64_t>({1}, false, std::move(updates)),
+                     },
+                     {
+                         utils::MakeAttribute("axis", static_cast<int64_t>(0)),
+                     },
+                     18,
+                     ExpectedEPNodeAssignment::All);
+}
+
+// Test ScatterElements with reduction ADD on HTP
+TEST_F(QnnHTPBackendTests, ScatterElements_int64_int64_reduction_add) {
+  std::vector<int64_t> data = {0, 1, 2, 3};
+  std::vector<int64_t> indices = {1};
+  std::vector<int64_t> updates = {10};
+  RunOpTest<int64_t>("ScatterElements",
+                     {
+                         TestInputDef<int64_t>({4}, false, std::move(data)),
+                         TestInputDef<int64_t>({1, 1}, false, std::move(indices)),
+                         TestInputDef<int64_t>({1}, false, std::move(updates)),
+                     },
+                     {
+                         utils::MakeAttribute("reduction", "add"),
+                     },
+                     18,
+                     ExpectedEPNodeAssignment::All);
+}
+
+// Test ScatterElements with reduction Mul on HTP
+TEST_F(QnnHTPBackendTests, ScatterElements_int64_int64_reduction_mul) {
+  std::vector<int64_t> data = {0, 1, 2, 3};
+  std::vector<int64_t> indices = {1};
+  std::vector<int64_t> updates = {10};
+  RunOpTest<int64_t>("ScatterElements",
+                     {
+                         TestInputDef<int64_t>({4}, false, std::move(data)),
+                         TestInputDef<int64_t>({1, 1}, false, std::move(indices)),
+                         TestInputDef<int64_t>({1}, false, std::move(updates)),
+                     },
+                     {
+                         utils::MakeAttribute("reduction", "mul"),
+                     },
+                     18,
+                     ExpectedEPNodeAssignment::All);
+}
+
+// Test ScatterElements with reduction Max on HTP
+TEST_F(QnnHTPBackendTests, ScatterElements_int64_int64_reduction_max) {
+  std::vector<int64_t> data = {0, 1, 2, 3};
+  std::vector<int64_t> indices = {1};
+  std::vector<int64_t> updates = {10};
+  RunOpTest<int64_t>("ScatterElements",
+                     {
+                         TestInputDef<int64_t>({4}, false, std::move(data)),
+                         TestInputDef<int64_t>({1, 1}, false, std::move(indices)),
+                         TestInputDef<int64_t>({1}, false, std::move(updates)),
+                     },
+                     {
+                         utils::MakeAttribute("reduction", "max"),
+                     },
+                     18,
+                     ExpectedEPNodeAssignment::All);
+}
+
+// Test ScatterElements with reduction Min on CPU Fallback
+TEST_F(QnnHTPBackendTests, ScatterElements_int64_int64_reduction_min) {
+  std::vector<int64_t> data = {0, 1, 2, 3};
+  std::vector<int64_t> indices = {1};
+  std::vector<int64_t> updates = {10};
+  RunOpTest<int64_t>("ScatterElements",
+                     {
+                         TestInputDef<int64_t>({4}, false, std::move(data)),
+                         TestInputDef<int64_t>({1, 1}, false, std::move(indices)),
+                         TestInputDef<int64_t>({1}, false, std::move(updates)),
+                     },
+                     {
+                         utils::MakeAttribute("reduction", "min"),
+                     },
+                     18,
+                     ExpectedEPNodeAssignment::None);
+}
+
 // Test accuracy of QDQ Pow
 #if defined(__linux__)
 // TODO: This fails on Linux (HTP emulation). Works on Windows ARM64.
