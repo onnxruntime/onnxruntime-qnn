@@ -10,6 +10,7 @@
 #include <string>
 #include <thread>
 #include <queue>
+#include <chrono>
 
 #include "core/common/denormal.h"
 #include "core/common/logging/isink.h"
@@ -1309,6 +1310,8 @@ common::Status InferenceSession::TransformGraph(onnxruntime::Graph& graph, bool 
   GraphPartitioner partitioner(kernel_registry_manager_, execution_providers_, std::move(graph_optimizer_registry),
                                check_load_cancellation_fn_);
 
+  auto transform_graph_start = std::chrono::steady_clock::now();
+
   // Run Ahead Of time function inlining
   if (const bool disable_aot_function_inlining =
           session_options_.config_options.GetConfigOrDefault(
@@ -1349,9 +1352,23 @@ common::Status InferenceSession::TransformGraph(onnxruntime::Graph& graph, bool 
     ORT_RETURN_IF_ERROR_SESSIONID_(apply_transformer_once(ensure_unique_dq_for_node_unit, *session_logger_, graph));
   }
 
+  std::cout << "Start ApplyTransformers..." << std::endl;
+  auto tranform_graph_before_apply_transformer = std::chrono::steady_clock::now();
   // apply execution provider independent level 0 and 1 graph optimizations.
   ORT_RETURN_IF_ERROR_SESSIONID_(graph_transformer_mgr_.ApplyTransformers(graph, TransformerLevel::Default, *session_logger_));
   ORT_RETURN_IF_ERROR_SESSIONID_(graph_transformer_mgr_.ApplyTransformers(graph, TransformerLevel::Level1, *session_logger_));
+
+  auto tranform_graph_after_apply_transformer = std::chrono::steady_clock::now();
+  auto duration_time_0 = std::chrono::duration_cast<std::chrono::milliseconds>(tranform_graph_after_apply_transformer - tranform_graph_before_apply_transformer);
+  for (int i = 0; i < 100; ++i) {
+    std::cout << "*";
+  }
+  std::cout << std::endl;
+  std::cout << "Time taken by InferenceSession::TransformGraph() (ApplyTransformers): " << duration_time_0.count() << " milliseconds" << std::endl;
+  for (int i = 0; i < 100; ++i) {
+    std::cout << "*";
+  }
+  std::cout << std::endl;
 
   // if saving model to ORT format we only assign nodes a custom EP can handle and don't compile them.
   // we do this to preserve the original nodes in the model but prevent optimizers from changing them.
@@ -1362,6 +1379,8 @@ common::Status InferenceSession::TransformGraph(onnxruntime::Graph& graph, bool 
 
   layout_transformation::TransformLayoutFunction transform_layout_fn = nullptr;
 
+  std::cout << "Start Transform Layout..." << std::endl;
+  auto tranform_graph_before_layout_transform = std::chrono::steady_clock::now();
   // only provide NCWH to NHWC layout transformer if supported
   if (layout_transformation::IsSupportedOpset(graph)) {
     // we want to run L1 transformers after the layout transform primarily to constant fold any initializers
@@ -1398,6 +1417,17 @@ common::Status InferenceSession::TransformGraph(onnxruntime::Graph& graph, bool 
       return Status::OK();
     };
   }
+  auto tranform_graph_after_layout_transform = std::chrono::steady_clock::now();
+  auto duration_time_1 = std::chrono::duration_cast<std::chrono::milliseconds>(tranform_graph_after_layout_transform - tranform_graph_before_layout_transform);
+  for (int i = 0; i < 100; ++i) {
+    std::cout << "*";
+  }
+  std::cout << std::endl;
+  std::cout << "Time taken by InferenceSession::TransformGraph() (TransformLayoutForEP): " << duration_time_1.count() << " milliseconds" << std::endl;
+  for (int i = 0; i < 100; ++i) {
+    std::cout << "*";
+  }
+  std::cout << std::endl;
 
   // debug infrastructure for layout transformation. it's extremely difficult to trace the transpose optimizer changes
   // manually, so dumping out the model so it can be viewed in Netron makes it far easier
@@ -1444,10 +1474,24 @@ common::Status InferenceSession::TransformGraph(onnxruntime::Graph& graph, bool 
 
   ORT_RETURN_IF_ERROR_SESSIONID_(graph.ConvertInitializersIntoOrtValues());
 
+  std::cout << "Start partition..." << std::endl;
+  auto tranform_graph_before_partition = std::chrono::steady_clock::now();
   // Do partitioning based on execution providers' capabilities.
   ORT_RETURN_IF_ERROR_SESSIONID_(partitioner.Partition(graph, session_state_->GetMutableFuncMgr(), transform_layout_fn,
                                                        session_options_.config_options, *session_logger_,
                                                        mode, session_options_.GetEpContextGenerationOptions(), debug_graph_fn));
+
+  auto tranform_graph_after_partition = std::chrono::steady_clock::now();
+  auto duration_time_2 = std::chrono::duration_cast<std::chrono::milliseconds>(tranform_graph_after_partition - tranform_graph_before_partition);
+  for (int i = 0; i < 100; ++i) {
+    std::cout << "*";
+  }
+  std::cout << std::endl;
+  std::cout << "Time taken by InferenceSession::TransformGraph() (partitioner.Partition): " << duration_time_2.count() << " milliseconds" << std::endl;
+  for (int i = 0; i < 100; ++i) {
+    std::cout << "*";
+  }
+  std::cout << std::endl;
 
   // Get graph optimizations loop level from session config, if not present, set to default value of 1 as per
   // the definition of kOrtSessionOptionsGraphOptimizationsLoopLevel.
@@ -1470,6 +1514,8 @@ common::Status InferenceSession::TransformGraph(onnxruntime::Graph& graph, bool 
     // If graph is not changed it will remain false and we will exit out of this loop.
     bool is_graph_modified = false;
 
+    std::cout << "Start Level2 transform..." << std::endl;
+    auto tranform_graph_before_level2 = std::chrono::steady_clock::now();
     // Apply Level2 and higher transformers.
     // We do not run Level 1 again as those transformers assume partitioning will run later to do node assignment.
     // Re-Run the Level2+ optimizations. The idea behind re-running Level2 and Level3 graph transforms is that,
@@ -1485,6 +1531,20 @@ common::Status InferenceSession::TransformGraph(onnxruntime::Graph& graph, bool 
                                    *session_logger_, graph,
                                    ((graph_optimizations_loop_level > 1) ? &is_graph_modified : nullptr)));
 
+    auto tranform_graph_after_level2 = std::chrono::steady_clock::now();
+    auto duration_time_3 = std::chrono::duration_cast<std::chrono::milliseconds>(tranform_graph_after_level2 - tranform_graph_before_level2);
+    for (int i = 0; i < 100; ++i) {
+      std::cout << "*";
+    }
+    std::cout << std::endl;
+    std::cout << "Time taken by InferenceSession::TransformGraph() (Apply Level2 (to max) Transformers): " << duration_time_3.count() << " milliseconds" << std::endl;
+    for (int i = 0; i < 100; ++i) {
+      std::cout << "*";
+    }
+    std::cout << std::endl;
+
+    std::cout << "Start insert cast..." << std::endl;
+    auto tranform_graph_before_insert_cast = std::chrono::steady_clock::now();
     // Insert cast node/s.
     {
       const InlinedVector<gsl::not_null<const KernelRegistry*>> kernel_regs =
@@ -1502,6 +1562,17 @@ common::Status InferenceSession::TransformGraph(onnxruntime::Graph& graph, bool 
           apply_transformer_once(insert_cast_transformer, *session_logger_, graph,
                                  ((graph_optimizations_loop_level > 1) ? &is_graph_modified : nullptr)));
     }
+    auto tranform_graph_after_insert_cast = std::chrono::steady_clock::now();
+    auto duration_time_4 = std::chrono::duration_cast<std::chrono::milliseconds>(tranform_graph_after_insert_cast - tranform_graph_before_insert_cast);
+    for (int i = 0; i < 100; ++i) {
+      std::cout << "*";
+    }
+    std::cout << std::endl;
+    std::cout << "Time taken by InferenceSession::TransformGraph() (Insert cast node/s): " << duration_time_4.count() << " milliseconds" << std::endl;
+    for (int i = 0; i < 100; ++i) {
+      std::cout << "*";
+    }
+    std::cout << std::endl;
 
     // Level 4 Transforms must be run after Insert Cast Node/s
     ORT_RETURN_IF_ERROR_SESSIONID_(
@@ -1515,6 +1586,8 @@ common::Status InferenceSession::TransformGraph(onnxruntime::Graph& graph, bool 
     }
   }
 
+  std::cout << "Start insert copy..." << std::endl;
+  auto tranform_graph_before_insert_copy = std::chrono::steady_clock::now();
   // Insert copy node/s.
   {
     std::vector<std::string> provider_types;
@@ -1525,6 +1598,17 @@ common::Status InferenceSession::TransformGraph(onnxruntime::Graph& graph, bool 
     MemcpyTransformer copy_transformer{provider_types, kernel_registry_manager_};
     ORT_RETURN_IF_ERROR_SESSIONID_(apply_transformer_once(copy_transformer, *session_logger_, graph));
   }
+  auto tranform_graph_after_insert_copy = std::chrono::steady_clock::now();
+  auto duration_time_5 = std::chrono::duration_cast<std::chrono::milliseconds>(tranform_graph_after_insert_copy - tranform_graph_before_insert_copy);
+  for (int i = 0; i < 100; ++i) {
+    std::cout << "*";
+  }
+  std::cout << std::endl;
+  std::cout << "Time taken by InferenceSession::TransformGraph() (Insert copy node/s): " << duration_time_5.count() << " milliseconds" << std::endl;
+  for (int i = 0; i < 100; ++i) {
+    std::cout << "*";
+  }
+  std::cout << std::endl;
 
 #ifdef ENABLE_TRAINING
   // Enable memory optimizations.
@@ -1540,6 +1624,17 @@ common::Status InferenceSession::TransformGraph(onnxruntime::Graph& graph, bool 
   }
 #endif
 
+  auto tranform_graph_end = std::chrono::steady_clock::now();
+  auto duration_time_6 = std::chrono::duration_cast<std::chrono::milliseconds>(tranform_graph_end - transform_graph_start);
+  for (int i = 0; i < 100; ++i) {
+    std::cout << "*";
+  }
+  std::cout << std::endl;
+  std::cout << "Time taken by InferenceSession::TransformGraph() (Total): " << duration_time_6.count() << " milliseconds" << std::endl;
+  for (int i = 0; i < 100; ++i) {
+    std::cout << "*";
+  }
+  std::cout << std::endl;
   return Status::OK();
 }
 #endif  // !defined(ORT_MINIMAL_BUILD)
@@ -2027,6 +2122,7 @@ common::Status InferenceSession::HasInvalidCombinationOfExecutionProviders() con
 #pragma warning(disable : 26117)
 #endif
 common::Status InferenceSession::Initialize() {
+  auto start = std::chrono::steady_clock::now();
   if (session_options_.IsLoadCancellationFlagSet()) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, MODEL_LOAD_CANCELED,
                            "Session initialization canceled due to user request.");
@@ -2282,15 +2378,52 @@ common::Status InferenceSession::Initialize() {
       }
 #endif
 
+      auto before_transform_graph = std::chrono::steady_clock::now();
+      auto duration_time_7 = std::chrono::duration_cast<std::chrono::milliseconds>(before_transform_graph - start);
+      for (int i = 0; i < 100; ++i) {
+        std::cout << "*";
+      }
+      std::cout << std::endl;
+      std::cout << "Time taken by Initialize() (before transform graph): " << duration_time_7.count() << " milliseconds" << std::endl;
+      for (int i = 0; i < 100; ++i) {
+        std::cout << "*";
+      }
+      std::cout << std::endl;
+
+      std::cout << "Start TransformGraph..." << std::endl;
       // apply any transformations to the main graph and any subgraphs
       ORT_RETURN_IF_ERROR_SESSIONID_(TransformGraph(graph, saving_ort_format));
 
+      auto after_transform_graph = std::chrono::steady_clock::now();
+      auto duration_time_8 = std::chrono::duration_cast<std::chrono::milliseconds>(after_transform_graph - before_transform_graph);
+      for (int i = 0; i < 100; ++i) {
+        std::cout << "*";
+      }
+      std::cout << std::endl;
+      std::cout << "Time taken by Initialize() (transform graph): " << duration_time_8.count() << " milliseconds" << std::endl;
+      for (int i = 0; i < 100; ++i) {
+        std::cout << "*";
+      }
+      std::cout << std::endl;
+      std::cout << "Start resolve graph..." << std::endl;
       // now that all the transforms are done, call Resolve on the main graph. this will recurse into the subgraphs.
       ORT_RETURN_IF_ERROR_SESSIONID_(graph.Resolve());
       if (session_options_.IsLoadCancellationFlagSet()) {
         return ORT_MAKE_STATUS(ONNXRUNTIME, MODEL_LOAD_CANCELED,
                                "Session initialization canceled due to user request.");
       }
+
+      auto resolve_graph = std::chrono::steady_clock::now();
+      auto duration_time_9 = std::chrono::duration_cast<std::chrono::milliseconds>(resolve_graph - after_transform_graph);
+      for (int i = 0; i < 100; ++i) {
+        std::cout << "*";
+      }
+      std::cout << std::endl;
+      std::cout << "Time taken by Initialize() (resolve graph): " << duration_time_9.count() << " milliseconds" << std::endl;
+      for (int i = 0; i < 100; ++i) {
+        std::cout << "*";
+      }
+      std::cout << std::endl;
 
       // Currently graph capture is only considered by CUDA EP, TRT EP, ROCM EP and JS EP.
       //
@@ -2562,6 +2695,17 @@ common::Status InferenceSession::Initialize() {
     }
   }
 
+  auto end = std::chrono::steady_clock::now();
+  auto duration_time_10 = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+  for (int i = 0; i < 100; ++i) {
+    std::cout << "*";
+  }
+  std::cout << std::endl;
+  std::cout << "Time taken by InferenceSession::Initialize() (Total): " << duration_time_10.count() << " milliseconds" << std::endl;
+  for (int i = 0; i < 100; ++i) {
+    std::cout << "*";
+  }
+  std::cout << std::endl;
   return status;
 }
 #if defined(_MSC_VER) && !defined(__clang__)

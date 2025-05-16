@@ -7,6 +7,7 @@
 #include <optional>
 #include <string_view>
 #include <unordered_set>
+#include <chrono>
 
 #include "core/common/string_utils.h"
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
@@ -1193,10 +1194,58 @@ Status QNNExecutionProvider::CompileFromOrtGraph(const std::vector<FusedNodeAndG
       json_graph_filepath = path.string();
     }
 
+    std::cout << "Start ComposeGraph..." << std::endl;
+    auto before_compose_graph = std::chrono::steady_clock::now();
+
     ORT_RETURN_IF_ERROR(qnn_model->ComposeGraph(graph_viewer, fused_node, model_settings_, logger,
                                                 all_graph_configs_ptr, json_graph_filepath));
+
+    auto after_compose_graph = std::chrono::steady_clock::now();
+    auto duration_time_00 = std::chrono::duration_cast<std::chrono::milliseconds>(after_compose_graph - before_compose_graph);
+
+    for (int i = 0; i < 100; ++i) {
+      std::cout << "*";
+    }
+    std::cout << std::endl;
+    std::cout << "Time taken by qnn::QnnModel->ComposeGraph() (Total): " << duration_time_00.count() << " milliseconds" << std::endl;
+    for (int i = 0; i < 100; ++i) {
+      std::cout << "*";
+    }
+    std::cout << std::endl;
+
+    std::cout << "Start FinalizeGraphs..." << std::endl;
+    auto before_finalize_graph = std::chrono::steady_clock::now();
+
     ORT_RETURN_IF_ERROR(qnn_model->FinalizeGraphs(logger));
+
+    auto after_finalize_graph = std::chrono::steady_clock::now();
+    auto duration_time_11 = std::chrono::duration_cast<std::chrono::milliseconds>(after_finalize_graph - before_finalize_graph);
+    for (int i = 0; i < 100; ++i) {
+      std::cout << "*";
+    }
+    std::cout << std::endl;
+    std::cout << "Time taken by qnn::QnnModel->FinalizeGraphs() (Total): " << duration_time_11.count() << " milliseconds" << std::endl;
+    for (int i = 0; i < 100; ++i) {
+      std::cout << "*";
+    }
+    std::cout << std::endl;
+
+    std::cout << "Start SetupQnnInputOutput..." << std::endl;
+    auto before_setup_qnn_input_output = std::chrono::steady_clock::now();
+
     ORT_RETURN_IF_ERROR(qnn_model->SetupQnnInputOutput(logger));
+
+    auto after_setup_qnn_input_output = std::chrono::steady_clock::now();
+    auto duration_time_22 = std::chrono::duration_cast<std::chrono::milliseconds>(after_setup_qnn_input_output - before_setup_qnn_input_output);
+    for (int i = 0; i < 100; ++i) {
+      std::cout << "*";
+    }
+    std::cout << std::endl;
+    std::cout << "Time taken by qnn::QnnModel->SetupQnnInputOutput() (Total): " << duration_time_22.count() << " milliseconds" << std::endl;
+    for (int i = 0; i < 100; ++i) {
+      std::cout << "*";
+    }
+    std::cout << std::endl;
 
     LOGS(logger, VERBOSE) << "fused node name: " << fused_node.Name();
     qnn_models_.emplace(fused_node.Name(), std::move(qnn_model));
@@ -1208,6 +1257,9 @@ Status QNNExecutionProvider::CompileFromOrtGraph(const std::vector<FusedNodeAndG
 
 Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused_nodes_and_graphs,
                                      std::vector<NodeComputeInfo>& node_compute_funcs) {
+  std::cout << "Start Compile..." << std::endl;
+  auto compile_start = std::chrono::steady_clock::now();
+
   const auto& logger = *GetLogger();
   bool is_qnn_ctx_model = qnn::IsFusedGraphHasCtxNode(fused_nodes_and_graphs);
 
@@ -1337,6 +1389,18 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
                         "Failed to set shared QnnBackendManager.");
     }
   }
+
+  auto compile_end = std::chrono::steady_clock::now();
+  auto duration_time_33 = std::chrono::duration_cast<std::chrono::milliseconds>(compile_end - compile_start);
+  for (int i = 0; i < 100; ++i) {
+    std::cout << "*";
+  }
+  std::cout << std::endl;
+  std::cout << "Time taken by QNNExecutionProvider::Compile() (Total): " << duration_time_33.count() << " milliseconds" << std::endl;
+  for (int i = 0; i < 100; ++i) {
+    std::cout << "*";
+  }
+  std::cout << std::endl;
   return Status::OK();
 }
 

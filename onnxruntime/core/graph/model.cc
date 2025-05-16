@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #include <memory>
+#include <chrono>
 #include "core/common/logging/logging.h"
 #include "core/flatbuffers/schema/ort.fbs.h"
 #include "core/flatbuffers/flatbuffers_utils.h"
@@ -445,6 +446,7 @@ Status Model::Load(const ModelProto& model_proto,
                    const IOnnxRuntimeOpSchemaRegistryList* local_registries,
                    const logging::Logger& logger,
                    const ModelOptions& options) {
+  auto start = std::chrono::steady_clock::now();
   // we expect a graph to be present
   if (!utils::HasGraph(model_proto)) {
     return Status(ONNXRUNTIME, INVALID_ARGUMENT, "No graph was found in the protobuf.");
@@ -472,6 +474,18 @@ Status Model::Load(const ModelProto& model_proto,
   Graph::ResolveOptions resolve_options;
   resolve_options.no_proto_sync_required = true;
   ORT_RETURN_IF_ERROR(model->MainGraph().Resolve(resolve_options));
+
+  auto end = std::chrono::steady_clock::now();
+  auto duration_time_44 = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+  for (int i = 0; i < 100; ++i) {
+    std::cout << "*";
+  }
+  std::cout << std::endl;
+  std::cout << "Time taken by Model::Load: " << duration_time_44.count() << " milliseconds" << std::endl;
+  for (int i = 0; i < 100; ++i) {
+    std::cout << "*";
+  }
+  std::cout << std::endl;
 
   return status;
 }
