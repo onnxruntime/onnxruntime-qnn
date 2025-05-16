@@ -35,5 +35,21 @@ const NodeUnit* GetOnlyChildOfType(const GraphViewer& graph_viewer,
                                    const std::unordered_map<const Node*, const NodeUnit*>& node_unit_map,
                                    const std::unordered_map<const NodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group);
 
+/// <summary>
+/// Utility function to get a parent NodeUnit. The returned NodeUnit must be of the expected type,
+/// and must not be a part of another IQnnNodeGroup.
+/// </summary>
+/// <param name="graph_viewer">GraphViewer containing all Nodes</param>
+/// <param name="child_node_unit">Child NodeUnit</param>
+/// <param name="parent_op_types">Valid Parent types</param>
+/// <param name="node_unit_map">Maps a Node to its NodeUnit</param>
+/// <param name="node_unit_to_qnn_node_group">Maps a NodeUnit to its IQnnNodeGroup.
+/// Used to check that the parent has not already been added to another IQnnNodeGroup.</param>
+/// <returns></returns>
+const NodeUnit* GetParentOfType(const GraphViewer& graph_viewer,
+                                const NodeUnit& child_node_unit,
+                                gsl::span<const std::string_view> parent_op_types,
+                                const std::unordered_map<const Node*, const NodeUnit*>& node_unit_map,
+                                const std::unordered_map<const NodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group);
 }  // namespace qnn
 }  // namespace onnxruntime
