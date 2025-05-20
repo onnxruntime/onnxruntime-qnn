@@ -108,7 +108,6 @@ static std::vector<uint32_t> AmendOutputShapeForRank3Pool(
     gsl::span<const uint32_t> kernel_shape,  // {k_h, k_w}
     gsl::span<const uint32_t> strides,       // {s_h, s_w}
     gsl::span<const uint32_t> pads) {
-
   assert(input_shape.size() == 4 &&
          kernel_shape.size() == 2 &&
          strides.size() == 2 &&
@@ -227,7 +226,6 @@ void SetPoolParam(const NodeUnit& node_unit,
   param_tensor_names.push_back(qnn_param.GetParamTensorName());
   qnn_model_wrapper.AddParamWrapper(std::move(qnn_param));
 }
-
 
 Status PoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                   const NodeUnit& node_unit,
