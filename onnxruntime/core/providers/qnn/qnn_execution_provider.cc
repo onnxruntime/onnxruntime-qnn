@@ -340,6 +340,10 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
   // Enable use of QNN Saver if the user provides a path the QNN Saver backend library.
   static const std::string QNN_SAVER_PATH_KEY = "qnn_saver_path";
   std::string qnn_saver_path;
+  for(auto it: provider_options_map){
+    std::cout << it.first << std::endl;
+  }
+  std::cout << "--------------------------" << std::endl;
   auto qnn_saver_path_pos = provider_options_map.find(QNN_SAVER_PATH_KEY);
   if (qnn_saver_path_pos != provider_options_map.end()) {
     qnn_saver_path = qnn_saver_path_pos->second;
@@ -458,6 +462,7 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
       SharedContext::GetInstance().ResetSharedQnnBackendManager();
     }
   } else {
+    std::cout << "!!!!!!!!!!!!!!!!!!!! qnn saver" << qnn_saver_path << std::endl;
     qnn_backend_manager_ = qnn::QnnBackendManager::Create(
         qnn::QnnBackendManagerConfig{backend_path,
                                      profiling_level_etw,
