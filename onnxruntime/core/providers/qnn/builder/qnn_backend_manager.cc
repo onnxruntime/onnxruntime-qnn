@@ -122,12 +122,10 @@ Status QnnBackendManager::GetQnnInterfaceProvider(const char* lib_path,
                                                   Qnn_Version_t req_version,
                                                   T** interface_provider) {
   std::string error_msg;
-  LOGS_DEFAULT(WARNING) << "lib_path: " << lib_path << std::endl;
   *backend_lib_handle = LoadLib(lib_path,
                                 static_cast<int>(DlOpenFlag::DL_NOW) | static_cast<int>(DlOpenFlag::DL_LOCAL),
                                 error_msg);
   ORT_RETURN_IF(nullptr == *backend_lib_handle, "Unable to load backend, error: ", error_msg, " ", DlError());
-  LOGS_DEFAULT(WARNING) << "lib_path222: " << lib_path << std::endl;
 
   // Get QNN Interface providers
   F GetInterfaceProviders{nullptr};
@@ -197,7 +195,6 @@ Status QnnBackendManager::LoadBackend() {
                                                      QNN_API_VERSION_MINOR,
                                                      QNN_API_VERSION_PATCH},
                                                     &backend_interface_provider);
-  LOGS_DEFAULT(WARNING) << "-1: " << backend_path_.c_str() << " " << QNN_API_VERSION_MAJOR << " " << QNN_API_VERSION_MINOR << " " << QNN_API_VERSION_PATCH << std::endl;
   ORT_RETURN_IF_ERROR(rt);
   qnn_interface_ = backend_interface_provider->QNN_INTERFACE_VER_NAME;
   auto backend_id = backend_interface_provider->backendId;
@@ -242,9 +239,6 @@ Status QnnBackendManager::LoadQnnSaverBackend() {
                                                      QNN_API_VERSION_MINOR,
                                                      QNN_API_VERSION_PATCH},
                                                     &backend_interface_provider);
-
-  LOGS_DEFAULT(WARNING) << "-1: " << backend_path_.c_str() << " " << QNN_API_VERSION_MAJOR << " " << QNN_API_VERSION_MINOR << " " << QNN_API_VERSION_PATCH << std::endl;
-  LOGS_DEFAULT(WARNING) << "0: " << rt << " " << backend_path_.c_str() << std::endl;
   ORT_RETURN_IF_ERROR(rt);
 
   // Set the "intended" backend type so that QNN builders still make the expected QNN API calls.
@@ -628,7 +622,6 @@ Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing) {
   context_config_weight_sharing.customConfig = &custom_config;
 
   QnnContext_Config_t context_priority_config = QNN_CONTEXT_CONFIG_INIT;
-    LOGS_DEFAULT(WARNING) <<  "6: " << std::endl;
   ORT_RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, context_priority_config));
 
   const QnnContext_Config_t* npu_context_configs[] = {&context_priority_config,
@@ -650,20 +643,16 @@ Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing) {
       configs = empty_context_configs;
       break;
   }
-    LOGS_DEFAULT(WARNING) <<  "7: " << std::endl;
 
   Qnn_ContextHandle_t context = nullptr;
   Qnn_ErrorHandle_t result = qnn_interface_.contextCreate(backend_handle_,
                                                           device_handle_,
                                                           configs,
                                                           &context);
-    LOGS_DEFAULT(WARNING) <<  "8: " << std::endl;
 
   ORT_RETURN_IF(QNN_CONTEXT_NO_ERROR != result, "Failed to create context. Error: ", QnnErrorHandleToString(result));
-    LOGS_DEFAULT(WARNING) <<  "9: " << std::endl;
 
   ORT_RETURN_IF_ERROR(AddQnnContextHandle(context));
-    LOGS_DEFAULT(WARNING) <<  "10: " << std::endl;
 
   context_created_ = true;
   return Status::OK();
@@ -920,8 +909,6 @@ Status QnnBackendManager::SetupBackend(const logging::Logger& logger,
   } else {
     status = LoadQnnSaverBackend();
   }
-
-  LOGS_DEFAULT(WARNING) << "1: " << qnn_saver_path_.empty() << " " << status.IsOK() << std::endl;
   if (status.IsOK()) {
     LOGS(logger, VERBOSE) << "LoadBackend succeed.";
   }
@@ -942,7 +929,7 @@ Status QnnBackendManager::SetupBackend(const logging::Logger& logger,
   if (status.IsOK()) {
     LOGS(logger, VERBOSE) << "SetLogger succeed.";
   }
-  LOGS_DEFAULT(WARNING) <<  "2: " << qnn_saver_path_.empty() << " " << status.IsOK() << std::endl;
+
   if (status.IsOK()) {
     status = InitializeBackend();
   }
@@ -956,7 +943,7 @@ Status QnnBackendManager::SetupBackend(const logging::Logger& logger,
   if (status.IsOK()) {
     LOGS(logger, VERBOSE) << "CreateDevice succeed.";
   }
-  LOGS_DEFAULT(WARNING) <<  "3: " << qnn_saver_path_.empty() << " " << status.IsOK() << std::endl;
+
   if (status.IsOK()) {
     status = InitializeProfiling();
   }
@@ -972,17 +959,15 @@ Status QnnBackendManager::SetupBackend(const logging::Logger& logger,
     enable_htp_weight_sharing = true;
 #endif
   }
-  LOGS_DEFAULT(WARNING) <<  "4: " << qnn_saver_path_.empty() << " " << status.IsOK() << std::endl;
+
   if (!load_from_cached_context) {
     if (status.IsOK()) {
       status = CreateContext(enable_htp_weight_sharing);
     }
-    LOGS_DEFAULT(WARNING) <<  "4.5: " << qnn_saver_path_.empty() << " " << status.IsOK() << std::endl;
     if (status.IsOK()) {
       LOGS(logger, VERBOSE) << "CreateContext succeed.";
     }
   }
-  LOGS_DEFAULT(WARNING) <<  "5: " << qnn_saver_path_.empty() << " " << status.IsOK() << std::endl;
 
   if (status.IsOK()) {
     LOGS(logger, VERBOSE) << "QNN SetupBackend succeed";
