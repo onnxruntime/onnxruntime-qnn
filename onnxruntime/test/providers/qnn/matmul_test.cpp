@@ -17,12 +17,17 @@ namespace test {
 
 // Returns a function that creates a graph with MatMul operator.
 static GetTestModelFn BuildMatMulOpTestCase(const TestInputDef<float>& input1_def,
-                                            const TestInputDef<float>& input2_def) {
-  return [input1_def, input2_def](ModelTestBuilder& builder) {
+                                            const TestInputDef<float>& input2_def,
+                                            bool use_empty_node_name = false) {
+  return [input1_def, input2_def, use_empty_node_name](ModelTestBuilder& builder) {
     NodeArg* input1 = MakeTestInput(builder, input1_def);
     NodeArg* input2 = MakeTestInput(builder, input2_def);
     NodeArg* output = builder.MakeOutput();
-    builder.AddNode("MatMul", {input1, input2}, {output});
+    if (use_empty_node_name) {
+      builder.AddNodeWithEmptyNodeName("MatMul", {input1, input2}, {output});
+    } else {
+      builder.AddNode("MatMul", {input1, input2}, {output});
+    }
   };
 }
 
@@ -44,9 +49,10 @@ static void RunMatMulOpTest(bool is_htp_backend, const std::vector<int64_t>& sha
 template <typename Input0QType, typename Input1QType, typename OutputQType>
 static GetTestQDQModelFn<OutputQType> BuildMatMulOpQDQTestCase(const TestInputDef<float>& input0_def,
                                                                const TestInputDef<float>& input1_def,
-                                                               bool use_contrib_qdq) {
-  return [input0_def, input1_def, use_contrib_qdq](ModelTestBuilder& builder,
-                                                   std::vector<QuantParams<OutputQType>>& output_qparams) {
+                                                               bool use_contrib_qdq,
+                                                               bool use_empty_node_name = false) {
+  return [input0_def, input1_def, use_contrib_qdq, use_empty_node_name](ModelTestBuilder& builder,
+                                                                        std::vector<QuantParams<OutputQType>>& output_qparams) {
     // input1 -> Q -> DQ ->
     NodeArg* input0 = MakeTestInput(builder, input0_def);
     QuantParams<Input0QType> input0_qparams = GetTestInputQuantParams<Input0QType>(input0_def);
@@ -60,7 +66,11 @@ static GetTestQDQModelFn<OutputQType> BuildMatMulOpQDQTestCase(const TestInputDe
 
     // MatMul
     auto* op_output = builder.MakeIntermediate();
-    builder.AddNode("MatMul", {input0_qdq, input1_qdq}, {op_output});
+    if (use_empty_node_name) {
+      builder.AddNodeWithEmptyNodeName("MatMul", {input0_qdq, input1_qdq}, {op_output});
+    } else {
+      builder.AddNode("MatMul", {input0_qdq, input1_qdq}, {op_output});
+    }
 
     // op_output -> Q -> DQ -> output
     AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(builder, op_output, output_qparams[0].scale,
@@ -125,7 +135,8 @@ static void RunQDQMatMulOpTest(const std::vector<int64_t>& shape_0, const std::v
                                bool is_initializer_0, bool is_initializer_1,
                                ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All,
                                int opset = 21, bool use_contrib_qdq = false,
-                               QDQTolerance tolerance = QDQTolerance()) {
+                               QDQTolerance tolerance = QDQTolerance(),
+                               bool use_empty_node_name = false) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -142,8 +153,8 @@ static void RunQDQMatMulOpTest(const std::vector<int64_t>& shape_0, const std::v
                                                               std::multiplies<int64_t>()))));
 
   TestQDQModelAccuracy(
-      BuildMatMulOpTestCase(input0_def, input1_def),
-      BuildMatMulOpQDQTestCase<Input0QType, Input1QType, OutputQType>(input0_def, input1_def, use_contrib_qdq),
+      BuildMatMulOpTestCase(input0_def, input1_def, use_empty_node_name),
+      BuildMatMulOpQDQTestCase<Input0QType, Input1QType, OutputQType>(input0_def, input1_def, use_contrib_qdq, use_empty_node_name),
       provider_options, opset, expected_ep_assignment, tolerance);
 }
 
@@ -266,6 +277,8 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ) {
                                                 true);
   RunQDQMatMulOpTest<uint8_t, uint8_t, uint8_t>({2, 1, 3, 3}, {3, 3, 2}, false, true);
   RunQDQMatMulOpTest<uint8_t, uint8_t, uint8_t>({3}, {3}, false, false);
+  // Test that the node name of Matmul is empty and will be set to its output name later in the op builder.
+  RunQDQMatMulOpTest<uint8_t, uint8_t, uint8_t>({3}, {3}, false, false, ExpectedEPNodeAssignment::All, 21, false, QDQTolerance(), true);
   RunQDQMatMulOpTest<uint8_t, uint8_t, uint8_t>({2, 3}, {3}, true, false);
 
   // UINT16, UINT8

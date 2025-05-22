@@ -977,6 +977,7 @@ NodeArg* MakeTestQDQBiasInput(ModelTestBuilder& builder, const TestInputDef<floa
  * \param attrs List of operator attributes.
  * \param op_domain The operator's domain. Defaults to the ONNX domain (i.e., "").
  * \param input_allocator Optional allocator to use to allocate input ORT values.
+ * \param use_empty_node_name Whether to create a node with an empty node name.
  * \returns A model building function.
  */
 template <typename InputType1, typename InputType2 = int64_t>
@@ -985,8 +986,9 @@ inline GetTestModelFn BuildOpTestCase(const std::string& op_type,
                                       const std::vector<TestInputDef<InputType2>>& input_defs_2,
                                       const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                       const std::string& op_domain = kOnnxDomain,
-                                      AllocatorPtr input_allocator = nullptr) {
-  return [op_type, input_defs_1, input_defs_2, attrs, op_domain, input_allocator](ModelTestBuilder& builder) {
+                                      AllocatorPtr input_allocator = nullptr,
+                                      bool use_empty_node_name = false) {
+  return [op_type, input_defs_1, input_defs_2, attrs, op_domain, input_allocator, use_empty_node_name](ModelTestBuilder& builder) {
     std::vector<NodeArg*> op_inputs;
     op_inputs.reserve(input_defs_1.size() + input_defs_2.size());
 
@@ -1001,10 +1003,15 @@ inline GetTestModelFn BuildOpTestCase(const std::string& op_type,
     }
 
     auto* output = builder.MakeOutput();
-    Node& onnx_node = builder.AddNode(op_type, op_inputs, {output}, op_domain);
+    Node* onnx_node = nullptr;
+    if (use_empty_node_name) {
+      onnx_node = &builder.AddNodeWithEmptyNodeName(op_type, op_inputs, {output}, op_domain);
+    } else {
+      onnx_node = &builder.AddNode(op_type, op_inputs, {output}, op_domain);
+    }
 
     for (const auto& attr : attrs) {
-      onnx_node.AddAttributeProto(attr);
+      onnx_node->AddAttributeProto(attr);
     }
   };
 }
@@ -1019,6 +1026,7 @@ inline GetTestModelFn BuildOpTestCase(const std::string& op_type,
  * \param op_domain The operator's domain. Defaults to the ONNX domain (i.e., "").
  * \param use_contrib_qdq Whether to use Q/DQ ops from the MS domain instead of the ONNX domain.
  * \param input_allocator Optional allocator to use to allocate input ORT values.
+ * \param use_empty_node_name Whether to create a node with an empty node name.
  * \returns A model building function.
  */
 template <typename QuantType, typename OtherInputType = int64_t>
@@ -1029,9 +1037,10 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
     const std::string& op_domain = kOnnxDomain,
     bool use_contrib_qdq = false,
-    AllocatorPtr input_allocator = nullptr) {
+    AllocatorPtr input_allocator = nullptr,
+    bool use_empty_node_name = false) {
   return [op_type, quant_input_defs, non_quant_input_defs, attrs, op_domain,
-          use_contrib_qdq, input_allocator](
+          use_contrib_qdq, input_allocator, use_empty_node_name](
              ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
     std::vector<NodeArg*> op_inputs;
     op_inputs.reserve(quant_input_defs.size() + non_quant_input_defs.size());
@@ -1053,10 +1062,15 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
 
     // Op -> op_output
     auto* op_output = builder.MakeIntermediate();
-    Node& onnx_node = builder.AddNode(op_type, op_inputs, {op_output}, op_domain);
+    Node* onnx_node = nullptr;
+    if (use_empty_node_name) {
+      onnx_node = &builder.AddNodeWithEmptyNodeName(op_type, op_inputs, {op_output}, op_domain);
+    } else {
+      onnx_node = &builder.AddNode(op_type, op_inputs, {op_output}, op_domain);
+    }
 
     for (const auto& attr : attrs) {
-      onnx_node.AddAttributeProto(attr);
+      onnx_node->AddAttributeProto(attr);
     }
 
     // op_output -> Q -> DQ -> output

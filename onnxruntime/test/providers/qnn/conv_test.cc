@@ -30,9 +30,10 @@ static GetTestModelFn BuildF32ConvTestCase(const std::string& conv_op_type, cons
                                            const std::vector<int64_t>& dilations,
                                            std::optional<int64_t> group,
                                            const std::string& auto_pad = "NOTSET",
-                                           std::optional<OutputActivationInfo> output_activation = std::nullopt) {
+                                           std::optional<OutputActivationInfo> output_activation = std::nullopt,
+                                           bool use_empty_node_name = false) {
   return [conv_op_type, input_def, weights_def, bias_def, strides, pads,
-          dilations, group, auto_pad, output_activation](ModelTestBuilder& builder) {
+          dilations, group, auto_pad, output_activation, use_empty_node_name](ModelTestBuilder& builder) {
     std::vector<NodeArg*> conv_inputs = {
         MakeTestInput(builder, input_def),
         MakeTestInput(builder, weights_def)};
@@ -43,23 +44,28 @@ static GetTestModelFn BuildF32ConvTestCase(const std::string& conv_op_type, cons
 
     auto* conv_output = output_activation.has_value() ? builder.MakeIntermediate() : builder.MakeOutput();
 
-    Node& conv_node = builder.AddNode(conv_op_type, conv_inputs, {conv_output});
-    conv_node.AddAttribute("auto_pad", auto_pad);
+    Node* conv_node = nullptr;
+    if (use_empty_node_name) {
+      conv_node = &builder.AddNodeWithEmptyNodeName(conv_op_type, conv_inputs, {conv_output});
+    } else {
+      conv_node = &builder.AddNode(conv_op_type, conv_inputs, {conv_output});
+    }
+    conv_node->AddAttribute("auto_pad", auto_pad);
 
     if (group.has_value()) {
-      conv_node.AddAttribute("group", group.value());
+      conv_node->AddAttribute("group", group.value());
     }
 
     if (!pads.empty() && auto_pad == "NOTSET") {
-      conv_node.AddAttribute("pads", pads);
+      conv_node->AddAttribute("pads", pads);
     }
 
     if (!strides.empty()) {
-      conv_node.AddAttribute("strides", strides);
+      conv_node->AddAttribute("strides", strides);
     }
 
     if (!dilations.empty()) {
-      conv_node.AddAttribute("dilations", dilations);
+      conv_node->AddAttribute("dilations", dilations);
     }
 
     if (output_activation.has_value()) {
@@ -112,11 +118,13 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvTestCase(
     std::optional<int64_t> group,
     const std::string& auto_pad = "NOTSET",
     bool use_contrib_qdq = false,
-    std::optional<OutputActivationInfo> output_activation = std::nullopt) {
+    std::optional<OutputActivationInfo> output_activation = std::nullopt,
+    bool use_empty_node_name = false) {
   return [conv_op_type, input_def, weights_def, bias_def, strides, pads,
           dilations, group, auto_pad,
-          use_contrib_qdq, output_activation](ModelTestBuilder& builder,
-                                              std::vector<QuantParams<ActivationQType>>& output_qparams) {
+          use_contrib_qdq, output_activation,
+          use_empty_node_name](ModelTestBuilder& builder,
+                               std::vector<QuantParams<ActivationQType>>& output_qparams) {
     std::vector<NodeArg*> conv_inputs;
 
     // input -> Q/DQ ->
@@ -142,22 +150,27 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvTestCase(
     }
 
     auto* conv_output = builder.MakeIntermediate();
-    Node& conv_node = builder.AddNode(conv_op_type, conv_inputs, {conv_output});
+    Node* conv_node = nullptr;
+    if (use_empty_node_name) {
+      conv_node = &builder.AddNodeWithEmptyNodeName(conv_op_type, conv_inputs, {conv_output});
+    } else {
+      conv_node = &builder.AddNode(conv_op_type, conv_inputs, {conv_output});
+    }
 
-    conv_node.AddAttribute("auto_pad", auto_pad);
+    conv_node->AddAttribute("auto_pad", auto_pad);
 
     if (group.has_value()) {
-      conv_node.AddAttribute("group", group.value());
+      conv_node->AddAttribute("group", group.value());
     }
 
     if (!pads.empty() && auto_pad == "NOTSET") {
-      conv_node.AddAttribute("pads", pads);
+      conv_node->AddAttribute("pads", pads);
     }
     if (!strides.empty()) {
-      conv_node.AddAttribute("strides", strides);
+      conv_node->AddAttribute("strides", strides);
     }
     if (!dilations.empty()) {
-      conv_node.AddAttribute("dilations", dilations);
+      conv_node->AddAttribute("dilations", dilations);
     }
 
     NodeArg* q_input = conv_output;
@@ -306,17 +319,18 @@ static void RunHTPConvOpTest(const std::string& conv_op_type, const TestInputDef
                              bool use_contrib_qdq = false,
                              int opset = 13,
                              QDQTolerance tolerance = QDQTolerance(),
-                             std::optional<OutputActivationInfo> output_activation = std::nullopt) {
+                             std::optional<OutputActivationInfo> output_activation = std::nullopt,
+                             bool use_empty_node_name = false) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracy(BuildF32ConvTestCase(conv_op_type, input_def, weights_def, bias_def, strides, pads, dilations,
-                                            group, auto_pad, output_activation),
+                                            group, auto_pad, output_activation, use_empty_node_name),
                        BuildQDQConvTestCase<ActivationQType, WeightQType>(conv_op_type, input_def, weights_def,
                                                                           bias_def, strides, pads, dilations,
                                                                           group, auto_pad, use_contrib_qdq,
-                                                                          output_activation),
+                                                                          output_activation, use_empty_node_name),
                        provider_options,
                        opset,
                        expected_ep_assignment,
@@ -1886,6 +1900,27 @@ TEST_F(QnnHTPBackendTests, Conv1DU8U8S32_bias_initializer) {
                                      ExpectedEPNodeAssignment::All);
 }
 
+// Tests 1D Conv with bias as an initializer.
+// Test that the node name of Conv1d is empty and will be set to its output name later in the op builder.
+TEST_F(QnnHTPBackendTests, Conv1DU8U8S32_bias_initializer_EmptyNodeName) {
+  std::vector<float> input_data = {0.f, 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f};
+  RunHTPConvOpTest<uint8_t, uint8_t>("Conv",
+                                     TestInputDef<float>({1, 2, 4}, false, input_data),           // Dynamic input
+                                     TestInputDef<float>({1, 2, 2}, true, {1.f, 2.f, 3.f, 4.f}),  // Static weight
+                                     TestInputDef<float>({1}, true, {1.0f}),                      // Initializer bias
+                                     {1},                                                         // strides
+                                     {0, 0},                                                      // pads
+                                     {1},                                                         // dilations
+                                     1,                                                           // default group
+                                     "NOTSET",
+                                     ExpectedEPNodeAssignment::All,
+                                     false,
+                                     13,
+                                     QDQTolerance(),
+                                     std::nullopt,
+                                     true);
+}
+
 // Tests 1D ConvTranspose with bias as an initializer.
 TEST_F(QnnHTPBackendTests, ConvTranspose1DU8U8S32_bias_initializer) {
   std::vector<float> input_data = {0.f, 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f};
@@ -1899,6 +1934,27 @@ TEST_F(QnnHTPBackendTests, ConvTranspose1DU8U8S32_bias_initializer) {
                                      1,                                                           // default group
                                      "NOTSET",
                                      ExpectedEPNodeAssignment::All);
+}
+
+// Tests 1D ConvTranspose with bias as an initializer.
+// Test that the node name of ConvTranspose1d is empty and will be set to its output name later in the op builder.
+TEST_F(QnnHTPBackendTests, ConvTranspose1DU8U8S32_bias_initializer_EmptyNodeName) {
+  std::vector<float> input_data = {0.f, 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f};
+  RunHTPConvOpTest<uint8_t, uint8_t>("ConvTranspose",
+                                     TestInputDef<float>({1, 2, 4}, false, input_data),           // Dynamic input
+                                     TestInputDef<float>({2, 1, 2}, true, {1.f, 2.f, 3.f, 4.f}),  // Static weight
+                                     TestInputDef<float>({1}, true, {1.0f}),                      // Initializer bias
+                                     {1},                                                         // strides
+                                     {0, 0},                                                      // pads
+                                     {1},                                                         // dilations
+                                     1,                                                           // default group
+                                     "NOTSET",
+                                     ExpectedEPNodeAssignment::All,
+                                     false,
+                                     13,
+                                     QDQTolerance(),
+                                     std::nullopt,
+                                     true);
 }
 
 // Tests auto_pad value "SAME_UPPER" on HTP backend (compares to CPU EP).
@@ -1947,6 +2003,27 @@ TEST_F(QnnHTPBackendTests, Conv1DU8U8S32_AutoPadUpper) {
                                      13);
 }
 
+// Tests Conv1d auto_pad value "SAME_UPPER" on HTP backend (compares to CPU EP).
+// Test that the node name of Conv1d is empty and will be set to its output name later in the op builder.
+TEST_F(QnnHTPBackendTests, Conv1DU8U8S32_AutoPadUpper_EmptyNodeName) {
+  std::vector<float> input_data = {0.f, 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f};
+  RunHTPConvOpTest<uint8_t, uint8_t>("Conv",
+                                     TestInputDef<float>({1, 2, 4}, false, input_data),           // Dynamic input
+                                     TestInputDef<float>({1, 2, 2}, true, {1.f, 2.f, 3.f, 4.f}),  // Static weight
+                                     TestInputDef<float>({1}, true, {1.0f}),                      // Initializer bias
+                                     {1},                                                         // strides
+                                     {0},                                                         // pads
+                                     {1},                                                         // dilations
+                                     1,                                                           // default group
+                                     "SAME_UPPER",                                                // auto_pad
+                                     ExpectedEPNodeAssignment::All,
+                                     false,  // use_contrib_qdq
+                                     13,
+                                     QDQTolerance(),
+                                     std::nullopt,
+                                     true);
+}
+
 // Tests TransposeConv1d auto_pad value "SAME_UPPER" on HTP backend (compares to CPU EP).
 TEST_F(QnnHTPBackendTests, ConvTranspose1DU8U8S32_AutoPadUpper) {
   std::vector<float> input_data = {0.f, 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f};
@@ -1962,6 +2039,27 @@ TEST_F(QnnHTPBackendTests, ConvTranspose1DU8U8S32_AutoPadUpper) {
                                      ExpectedEPNodeAssignment::All,
                                      false,  // use_contrib_qdq
                                      13);
+}
+
+// Tests TransposeConv1d auto_pad value "SAME_UPPER" on HTP backend (compares to CPU EP).
+// Test that the node name of ConvTranspose1d is empty and will be set to its output name later in the op builder.
+TEST_F(QnnHTPBackendTests, ConvTranspose1DU8U8S32_AutoPadUpper_EmptyNodeName) {
+  std::vector<float> input_data = {0.f, 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f};
+  RunHTPConvOpTest<uint8_t, uint8_t>("ConvTranspose",
+                                     TestInputDef<float>({1, 2, 4}, false, input_data),           // Dynamic input
+                                     TestInputDef<float>({2, 1, 2}, true, {1.f, 2.f, 3.f, 4.f}),  // Static weight
+                                     TestInputDef<float>({1}, true, {1.0f}),                      // Initializer bias
+                                     {1},                                                         // strides
+                                     {0},                                                         // pads
+                                     {1},                                                         // dilations
+                                     1,                                                           // default group
+                                     "SAME_UPPER",                                                // auto_pad
+                                     ExpectedEPNodeAssignment::All,
+                                     false,  // use_contrib_qdq
+                                     13,
+                                     QDQTolerance(),
+                                     std::nullopt,
+                                     true);
 }
 
 // Tests Conv's auto_pad value "SAME_LOWER" on HTP backend (compares to CPU EP).
@@ -2039,6 +2137,27 @@ TEST_F(QnnHTPBackendTests, Conv1DU8U8S32_AutoPadLower) {
                                      13);
 }
 
+// Tests Conv1d auto_pad value "SAME_LOWER" on HTP backend (compares to CPU EP).
+// Test that the node name of Conv1d is empty and will be set to its output name later in the op builder.
+TEST_F(QnnHTPBackendTests, Conv1DU8U8S32_AutoPadLower_EmptyNodeName) {
+  std::vector<float> input_data = {0.f, 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f};
+  RunHTPConvOpTest<uint8_t, uint8_t>("Conv",
+                                     TestInputDef<float>({1, 2, 4}, false, input_data),           // Dynamic input
+                                     TestInputDef<float>({1, 2, 2}, true, {1.f, 2.f, 3.f, 4.f}),  // Static weight
+                                     TestInputDef<float>({1}, true, {1.0f}),                      // Initializer bias
+                                     {1},                                                         // strides
+                                     {0},                                                         // pads
+                                     {1},                                                         // dilations
+                                     1,                                                           // default group
+                                     "SAME_LOWER",                                                // auto_pad
+                                     ExpectedEPNodeAssignment::All,
+                                     false,  // use_contrib_qdq
+                                     13,
+                                     QDQTolerance(),
+                                     std::nullopt,
+                                     true);
+}
+
 // Tests ConvTranspose 1d auto_pad value "SAME_LOWER" on HTP backend (compares to CPU EP).
 TEST_F(QnnHTPBackendTests, ConvTranspose1DU8U8S32_AutoPadLower) {
   std::vector<float> input_data = {0.f, 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f};
@@ -2054,6 +2173,27 @@ TEST_F(QnnHTPBackendTests, ConvTranspose1DU8U8S32_AutoPadLower) {
                                      ExpectedEPNodeAssignment::All,
                                      false,  // use_contrib_qdq
                                      13);
+}
+
+// Tests ConvTranspose 1d auto_pad value "SAME_LOWER" on HTP backend (compares to CPU EP).
+// Test that the node name of ConvTranspose1d is empty and will be set to its output name later in the op builder.
+TEST_F(QnnHTPBackendTests, ConvTranspose1DU8U8S32_AutoPadLower_EmptyNodeName) {
+  std::vector<float> input_data = {0.f, 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f};
+  RunHTPConvOpTest<uint8_t, uint8_t>("ConvTranspose",
+                                     TestInputDef<float>({1, 2, 4}, false, input_data),           // Dynamic input
+                                     TestInputDef<float>({2, 1, 2}, true, {1.f, 2.f, 3.f, 4.f}),  // Static weight
+                                     TestInputDef<float>({1}, true, {1.0f}),                      // Initializer bias
+                                     {1},                                                         // strides
+                                     {0},                                                         // pads
+                                     {1},                                                         // dilations
+                                     1,                                                           // default group
+                                     "SAME_LOWER",                                                // auto_pad
+                                     ExpectedEPNodeAssignment::All,
+                                     false,  // use_contrib_qdq
+                                     13,
+                                     QDQTolerance(),
+                                     std::nullopt,
+                                     true);
 }
 
 TEST_F(QnnHTPBackendTests, ConvU8U8S32_large_input1_padding_bias_initializer) {

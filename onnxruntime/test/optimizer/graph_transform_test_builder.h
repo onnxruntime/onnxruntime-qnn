@@ -294,6 +294,20 @@ class ModelTestBuilder {
                           domain);
   }
 
+  Node& AddNodeWithEmptyNodeName(const std::string& op_type,
+                                 const std::vector<NodeArg*>& input_args,
+                                 const std::vector<NodeArg*>& output_args,
+                                 const std::string& domain = "",
+                                 const NodeAttributes* attributes = nullptr) {
+    return graph_.AddNode("",
+                          op_type,
+                          "description",
+                          input_args,
+                          output_args,
+                          attributes,
+                          domain);
+  }
+
   Node& AddConvNode(NodeArg* input_arg,
                     NodeArg* weights_arg,
                     NodeArg* output_arg) {

@@ -820,7 +820,13 @@ Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
     QnnTensorWrapper output_tensorwrapper(conv_output_name, QNN_TENSOR_TYPE_NATIVE, qnn_data_type,
                                           output_quantize_param.Copy(), std::vector<uint32_t>(output_shape_2d));
     ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetNodeName(node_unit),
+    std::string qnn_node_name = utils::GetNodeName(node_unit);
+    // When the node name is the same as the output name,
+    // a suffix is added to the node name to avoid duplication with the Reshape node name.
+    if (qnn_node_name == output_name) {
+      qnn_node_name += "_" + output_node_type;
+    }
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(qnn_node_name,
                                                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                       output_node_type,
                                                       std::move(input_names),

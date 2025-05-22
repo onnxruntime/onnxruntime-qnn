@@ -121,13 +121,14 @@ static void RunQDQOpTest(const std::string& op_type,
                          ExpectedEPNodeAssignment expected_ep_assignment,
                          const std::string& op_domain = kOnnxDomain,
                          bool use_contrib_qdq = false,
-                         QDQTolerance tolerance = QDQTolerance()) {
+                         QDQTolerance tolerance = QDQTolerance(),
+                         bool use_empty_node_name = false) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type, input_defs, {}, attrs, op_domain),
-                       BuildQDQOpTestCase<InputQType>(op_type, input_defs, {}, attrs, op_domain, use_contrib_qdq),
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type, input_defs, {}, attrs, op_domain, nullptr, use_empty_node_name),
+                       BuildQDQOpTestCase<InputQType>(op_type, input_defs, {}, attrs, op_domain, use_contrib_qdq, nullptr, use_empty_node_name),
                        provider_options,
                        opset_version,
                        expected_ep_assignment,
@@ -528,6 +529,24 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Softmax13_NonLastAxis) {
                         ExpectedEPNodeAssignment::All);
 }
 
+// Test that 8-bit QDQ Softmax (opset 13) with axis != -1 is supported by QNN EP,
+// and the node name of Softmax is empty and will be set to its output name later in the op builder.
+// QNN EP will wrap the operator with transposes.
+TEST_F(QnnHTPBackendTests, UnaryOp_Softmax13_NonLastAxis_EmptyNodeName) {
+  const std::vector<float> input_data = {0.0f, 1.0f, 2.0f, 10.0f, 11.0f, 12.0f, 100.0f, 110.0f, 120.0f,
+                                         1.0856307f, 0.99734545f, 0.2829785f, 1.5062947f, 0.5786002f, 1.6514366f,
+                                         2.4266791f, 0.42891264f, 1.2659363f};
+  RunQDQOpTest<uint8_t>("Softmax",
+                        {TestInputDef<float>({1, 2, 3, 3}, false, input_data)},
+                        {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
+                        13,
+                        ExpectedEPNodeAssignment::All,
+                        kOnnxDomain,
+                        false,
+                        QDQTolerance(),
+                        true);
+}
+
 // Test that 8-bit QDQ Softmax (opset 13) with axis != -1 is supported by QNN EP.
 // QNN EP will wrap the operator with transposes.
 // This is a configuration used in one of our partner's models.
@@ -565,6 +584,21 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Softmax11_DefaultAxis) {
 }
 
 // Check that QNN compiles DQ -> Softmax -> Q as a single unit.
+// Test that the default axis (1) for SoftMax opset < 13 works,
+// and the node name of Softmax is empty and will be set to its output name later in the op builder.
+TEST_F(QnnHTPBackendTests, UnaryOp_Softmax11_DefaultAxis_EmptyNodeName) {
+  RunQDQOpTest<uint8_t>("Softmax",
+                        {TestInputDef<float>({1, 2, 3}, false, -5.0f, 5.0f)},
+                        {},  // Uses default axis of 1 for opset < 13.
+                        11,
+                        ExpectedEPNodeAssignment::All,
+                        kOnnxDomain,
+                        false,
+                        QDQTolerance(),
+                        true);
+}
+
+// Check that QNN compiles DQ -> Softmax -> Q as a single unit.
 // Test that setting an axis value of -1 works for Softmax opset < 13.
 TEST_F(QnnHTPBackendTests, UnaryOp_Softmax11_SetAxis) {
   RunQDQOpTest<uint8_t>("Softmax",
@@ -572,6 +606,21 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Softmax11_SetAxis) {
                         {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
                         11,
                         ExpectedEPNodeAssignment::All);
+}
+
+// Check that QNN compiles DQ -> Softmax -> Q as a single unit.
+// Test that setting an axis value of -1 works for Softmax opset < 13,
+// and the node name of Softmax is empty and will be set to its output name later in the op builder.
+TEST_F(QnnHTPBackendTests, UnaryOp_Softmax11_SetAxis_EmptyNodeName) {
+  RunQDQOpTest<uint8_t>("Softmax",
+                        {TestInputDef<float>({1, 2, 3}, false, -5.0f, 5.0f)},
+                        {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
+                        11,
+                        ExpectedEPNodeAssignment::All,
+                        kOnnxDomain,
+                        false,
+                        QDQTolerance(),
+                        true);
 }
 
 // Check that QNN compiles DQ -> LogSoftmax -> Q as a single unit.

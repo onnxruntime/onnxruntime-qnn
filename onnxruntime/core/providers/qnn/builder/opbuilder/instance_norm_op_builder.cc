@@ -201,7 +201,13 @@ Status InstanceNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
   QnnTensorWrapper output_tensorwrapper(op_output_name, QNN_TENSOR_TYPE_NATIVE, output_info.qnn_data_type,
                                         output_info.quant_param.Copy(), std::vector<uint32_t>(op_output_shape));
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetNodeName(node_unit),
+  std::string qnn_node_name = utils::GetNodeName(node_unit);
+  // When the node name is the same as the output name,
+  // a suffix is added to the node name to avoid duplication with the Reshape node name.
+  if (qnn_node_name == orig_output_name) {
+    qnn_node_name += "_" + node_unit.OpType();
+  }
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(qnn_node_name,
                                                     QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                     GetQnnOpType(node_unit.OpType()),
                                                     std::move(input_names),

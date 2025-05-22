@@ -443,8 +443,17 @@ Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_w
                                             op_output_quant_param.Copy(), std::vector<uint32_t>(op_output_shape));
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(op_output_tensor_wrapper)),
                     "Failed to add output tensor.");
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetNodeName(node_unit), QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                    use_fully_connected ? QNN_OP_FULLY_CONNECTED : QNN_OP_MAT_MUL,
+  std::string qnn_node_name = utils::GetNodeName(node_unit);
+  std::string op_type = use_fully_connected ? QNN_OP_FULLY_CONNECTED : QNN_OP_MAT_MUL;
+  if (reshape_output) {
+    // When the node name is the same as the output name,
+    // a suffix is added to the node name to avoid duplication with the Reshape node name.
+    if (qnn_node_name == org_output_name) {
+      qnn_node_name += "_" + op_type;
+    }
+  }
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(qnn_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                    op_type,
                                                     std::move(input_names), {op_output_name},
                                                     std::move(param_tensor_names), do_op_validation),
                     "Failed to add fused Matmul node.");
