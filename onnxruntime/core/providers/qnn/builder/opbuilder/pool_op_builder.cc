@@ -227,7 +227,6 @@ void SetPoolParam(const NodeUnit& node_unit,
   qnn_model_wrapper.AddParamWrapper(std::move(qnn_param));
 }
 
-
 Status PoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                   const NodeUnit& node_unit,
                                                   std::vector<std::string>&& input_names,

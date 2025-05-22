@@ -185,6 +185,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   {
     CreateCumSumOpBuilder("CumSum", *this);
   }
+
+  {
+    CreateQuickGeluOpBuilder("QuickGelu", *this);
+  }
 }
 
 const IOpBuilder* GetOpBuilder(const std::string& onnx_op_type) {
