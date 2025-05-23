@@ -17,7 +17,6 @@ except ImportError:
     to_array_extended = None
 
 from .calibrate import TensorData
-from .fusions import replace_upsample_with_resize
 from .onnx_model import ONNXModel
 from .quant_utils import (
     DEQUANT_OP_NAME,
@@ -207,7 +206,6 @@ class BaseQuantizer:
             logging.warning(
                 f"The original model opset version is {opset_version}, which does not support quantization. Please update the model to opset >= 11. Updating the model automatically to opset 11. Please verify the quantized model."
             )
-            replace_upsample_with_resize(self.model)
             self.model.model.opset_import.remove(ai_onnx_domain[0])
             self.model.model.opset_import.extend([onnx.helper.make_opsetid("", 11)])
             opset_version = 11

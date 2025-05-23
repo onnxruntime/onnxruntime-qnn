@@ -85,6 +85,20 @@ def quant_pre_process(
                 verbose,
             )
 
+        # Since Upsample is deprecated after opset v10, and the model's opset will
+        # be upgraded to at least v11 during quantization, we need to replace Upsample
+        # with Resize first to avoid generating an invalid model.
+        if model:
+            ai_onnx_domain = [
+                opset for opset in model.opset_import if not opset.domain or opset.domain == "ai.onnx"
+            ]
+            if len(ai_onnx_domain) == 1:
+                opset_version = ai_onnx_domain[0].version
+                if opset_version < 10:
+                    ReplaceUpsampleWithResize(ONNXModel(model), opset_version).apply()
+                    model.opset_import.remove(ai_onnx_domain[0])
+                    model.opset_import.extend([onnx.helper.make_opsetid("", 11)])
+
         if not skip_optimization:
             # Use ORT optimizers (native code) to optimize model
             if not skip_symbolic_shape:
