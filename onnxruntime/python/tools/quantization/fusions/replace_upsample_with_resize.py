@@ -54,6 +54,8 @@ class ReplaceUpsampleWithResize(Fusion):
                     elif attr.name == 'width_scale':
                         w_scale = attr.float
 
+                scales_input = np.array([1 ,1, h_scale, w_scale], np.float32)
+
             scales_tensor = onnx.helper.make_tensor(
                 name=node.name + '_scales',
                 data_type=onnx.TensorProto.FLOAT,
