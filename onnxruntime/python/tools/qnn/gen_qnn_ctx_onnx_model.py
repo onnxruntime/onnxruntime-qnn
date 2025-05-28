@@ -18,6 +18,7 @@ class QnnTensorStruct:
         self.scale = 0.0
         self.offset = 0
         self.dim = []
+        self.id = None
 
 
 def is_quantized_data_type(qnn_data_type, is_converter_json):
@@ -116,38 +117,30 @@ def parse_qnn_converter_json_file(qnn_convert_json, qnn_input_tensor_dic, qnn_ou
             "type" in qnn_tensor_attribute and "data_type" in qnn_tensor_attribute and "dims" in qnn_tensor_attribute
         ), "QNN converted json file not valid. Can't find some keys from tensors"
 
-        # Get all graph inputs
-        if qnn_tensor_attribute["type"] == 0:
-            qnn_tensor = QnnTensorStruct()
-            qnn_tensor.name = qnn_tensor_name
-            qnn_tensor.onnx_data_type = qnn_data_type_to_onnx_data_type(
-                qnn_tensor_attribute["data_type"], is_qnn_converter_json
-            )
-            qnn_tensor.is_quantized = is_quantized_data_type(qnn_tensor_attribute["data_type"], is_qnn_converter_json)
-            qnn_tensor.dim = qnn_tensor_attribute["dims"]
-            if (
-                qnn_tensor_attribute["quant_params"]["definition"] == 1
-                and qnn_tensor_attribute["quant_params"]["encoding"] == 0
-            ):
-                qnn_tensor.scale = qnn_tensor_attribute["quant_params"]["scale_offset"]["scale"]
-                qnn_tensor.offset = 0 - qnn_tensor_attribute["quant_params"]["scale_offset"]["offset"]
-            qnn_input_tensor_dic[qnn_tensor_name] = qnn_tensor
+        # If tensor is not IO, ignore it
+        if qnn_tensor_attribute["type"] != 0 and qnn_tensor_attribute["type"] != 1:
+            continue
 
-        # Get all graph outputs
-        if qnn_tensor_attribute["type"] == 1:
-            qnn_tensor = QnnTensorStruct()
-            qnn_tensor.name = qnn_tensor_name
-            qnn_tensor.onnx_data_type = qnn_data_type_to_onnx_data_type(
-                qnn_tensor_attribute["data_type"], is_qnn_converter_json
-            )
-            qnn_tensor.is_quantized = is_quantized_data_type(qnn_tensor_attribute["data_type"], is_qnn_converter_json)
-            qnn_tensor.dim = qnn_tensor_attribute["dims"]
-            if (
-                qnn_tensor_attribute["quant_params"]["definition"] == 1
-                and qnn_tensor_attribute["quant_params"]["encoding"] == 0
-            ):
-                qnn_tensor.scale = qnn_tensor_attribute["quant_params"]["scale_offset"]["scale"]
-                qnn_tensor.offset = 0 - qnn_tensor_attribute["quant_params"]["scale_offset"]["offset"]
+        # Get all graph inputs & output
+        qnn_tensor = QnnTensorStruct()
+        qnn_tensor.name = qnn_tensor_name
+        qnn_tensor.onnx_data_type = qnn_data_type_to_onnx_data_type(
+            qnn_tensor_attribute["data_type"], is_qnn_converter_json
+        )
+        qnn_tensor.is_quantized = is_quantized_data_type(qnn_tensor_attribute["data_type"], is_qnn_converter_json)
+        qnn_tensor.dim = qnn_tensor_attribute["dims"]
+        if (
+            qnn_tensor_attribute["quant_params"]["definition"] == 1
+            and qnn_tensor_attribute["quant_params"]["encoding"] == 0
+        ):
+            qnn_tensor.scale = qnn_tensor_attribute["quant_params"]["scale_offset"]["scale"]
+            qnn_tensor.offset = 0 - qnn_tensor_attribute["quant_params"]["scale_offset"]["offset"]
+
+        qnn_tensor.id = qnn_tensor_attribute["id"]
+
+        if qnn_tensor_attribute["type"] == 0:
+            qnn_input_tensor_dic[qnn_tensor_name] = qnn_tensor
+        else:
             qnn_output_tensor_dic[qnn_tensor_name] = qnn_tensor
 
     assert len(qnn_input_tensor_dic) >= 1 and len(qnn_output_tensor_dic) >= 1, (
@@ -170,7 +163,7 @@ def generate_wrapper_onnx_file(
     value_infos = []
 
     model_inputs = []
-    for qnn_input in qnn_input_tensor_dic.values():
+    for qnn_input in sorted(qnn_output_tensor_dic.values(), key=lambda inp: inp.id):
         if qnn_input.is_quantized and not quantized_IO:
             q_scale_input_name = qnn_input.name + "_scale"
             q_offset_input_name = qnn_input.name + "_zp"
@@ -215,7 +208,7 @@ def generate_wrapper_onnx_file(
     graph_nodes.append(qnn_ep_context_node)
 
     model_outputs = []
-    for qnn_output in qnn_output_tensor_dic.values():
+    for qnn_output in sorted(qnn_output_tensor_dic.values(), key=lambda out: out.id):
         if qnn_output.is_quantized and not quantized_IO:
             dq_scale_input_name = qnn_output.name + "_scale"
             dq_offset_input_name = qnn_output.name + "_zp"
