@@ -228,7 +228,7 @@ TEST_F(QnnHTPBackendTests, BatchNorm1D) {
 
 // Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.
 // Use an input of rank 4.
-TEST_F(QnnHTPBackendTests, BatchNorm2D_a8w8) {
+TEST_F(QnnHTPBackendTests, BatchNorm2D_U8U8S32) {
   constexpr int64_t num_channels = 2;
   std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
                                    -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
@@ -241,12 +241,64 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_a8w8) {
 
 // Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.
 // Use an input of rank 4.
-TEST_F(QnnHTPBackendTests, BatchNorm2D_a16w8) {
+TEST_F(QnnHTPBackendTests, BatchNorm2D_U8S8S32) {
+  constexpr int64_t num_channels = 2;
+  std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
+                                   -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
+
+  RunBatchNormQDQTest<uint8_t, int8_t>(TestInputDef<float>({2, num_channels, 2, 2}, false, input_data),  // Input data
+                                        TestInputDef<float>({num_channels}, true, {1.0f, 2.0f}),          // Scale initializer
+                                        TestInputDef<float>({num_channels}, true, {1.1f, 2.1f}),          // Bias initializer
+                                        ExpectedEPNodeAssignment::None);
+}
+
+// Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.
+// Use an input of rank 4.
+TEST_F(QnnHTPBackendTests, BatchNorm2D_U8U16S32) {
+  constexpr int64_t num_channels = 2;
+  std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
+                                   -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
+
+  RunBatchNormQDQTest<uint8_t, uint16_t>(TestInputDef<float>({2, num_channels, 2, 2}, false, input_data),  // Input data
+                                        TestInputDef<float>({num_channels}, true, {1.0f, 2.0f}),          // Scale initializer
+                                        TestInputDef<float>({num_channels}, true, {1.1f, 2.1f}),          // Bias initializer
+                                        ExpectedEPNodeAssignment::None);
+}
+
+// Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.
+// Use an input of rank 4.
+TEST_F(QnnHTPBackendTests, BatchNorm2D_U8S16S32) {
+  constexpr int64_t num_channels = 2;
+  std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
+                                   -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
+
+  RunBatchNormQDQTest<uint8_t, int16_t>(TestInputDef<float>({2, num_channels, 2, 2}, false, input_data),  // Input data
+                                        TestInputDef<float>({num_channels}, true, {1.0f, 2.0f}),          // Scale initializer
+                                        TestInputDef<float>({num_channels}, true, {1.1f, 2.1f}),          // Bias initializer
+                                        ExpectedEPNodeAssignment::None);
+}
+
+// Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.
+// Use an input of rank 4.
+TEST_F(QnnHTPBackendTests, BatchNorm2D_U16U8S32) {
   constexpr int64_t num_channels = 2;
   std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
                                    -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
 
   RunBatchNormQDQTest<uint16_t, uint8_t>(TestInputDef<float>({2, num_channels, 2, 2}, false, input_data),  // Input data
+                                        TestInputDef<float>({num_channels}, true, {1.0f, 2.0f}),          // Scale initializer
+                                        TestInputDef<float>({num_channels}, true, {1.1f, 2.1f}),          // Bias initializer
+                                        ExpectedEPNodeAssignment::All);
+}
+
+// Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.
+// Use an input of rank 4.
+TEST_F(QnnHTPBackendTests, DISABLED_BatchNorm2D_U16U16S32) {
+  constexpr int64_t num_channels = 2;
+  std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
+                                   -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
+
+  RunBatchNormQDQTest<uint16_t, uint16_t>(TestInputDef<float>({2, num_channels, 2, 2}, false, input_data),  // Input data
                                          TestInputDef<float>({num_channels}, true, {1.0f, 2.0f}),          // Scale initializer
                                          TestInputDef<float>({num_channels}, true, {1.1f, 2.1f}),          // Bias initializer
                                          ExpectedEPNodeAssignment::All);

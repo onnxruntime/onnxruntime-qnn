@@ -428,6 +428,9 @@ class BatchNormOpBuilder : public BaseOpBuilder {
     }
     return Status::OK();
   }
+ protected:
+  Status CheckHtpDataTypes(const std::vector<Qnn_DataType_t> in_dtypes,
+                           const std::vector<Qnn_DataType_t> out_dtypes) const override ORT_MUST_USE_RESULT;
 };
 
 // BatchNorm is sensitive with data layout, no special validation so far
@@ -436,6 +439,7 @@ class BatchNormOpBuilder : public BaseOpBuilder {
 Status BatchNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                          const NodeUnit& node_unit,
                                          const logging::Logger& logger) const {
+  ORT_RETURN_IF_ERROR(ProcessDataTypes(qnn_model_wrapper, node_unit));
   if (node_unit.Domain() == kMSInternalNHWCDomain) {
     // It's useless to fallback the node after layout transformation because CPU EP can't support it anyway
     // Still do it here so hopefully QNN Op validation API can tell us some details why it's not supported
@@ -489,6 +493,56 @@ Status BatchNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 
   return Status::OK();
 }
+
+Status BatchNormOpBuilder::CheckHtpDataTypes(const std::vector<Qnn_DataType_t> in_dtypes,
+                                             const std::vector<Qnn_DataType_t> out_dtypes) const {
+  bool is_supported_dtype = false;
+  // in_dtypes: [X, scale, B, input_mean, input_var]
+  std::vector<Qnn_DataType_t> all_dtypes(in_dtypes.begin(), in_dtypes.begin()+3);
+  // out_dtypes: [Y, running_mean, running_var]
+  all_dtypes.insert(all_dtypes.end(), out_dtypes.begin(), out_dtypes.begin()+1);
+  // FP16
+  if (
+    (all_dtypes == std::vector<Qnn_DataType_t>
+    {QNN_DATATYPE_FLOAT_16, QNN_DATATYPE_FLOAT_16, QNN_DATATYPE_FLOAT_16, QNN_DATATYPE_FLOAT_16}) ||
+    (all_dtypes == std::vector<Qnn_DataType_t>
+    {QNN_DATATYPE_FLOAT_32, QNN_DATATYPE_FLOAT_32, QNN_DATATYPE_FLOAT_32, QNN_DATATYPE_FLOAT_32})
+  ) {
+    is_supported_dtype = true;
+  }
+  // INT16
+  else if (
+    (all_dtypes == std::vector<Qnn_DataType_t>
+    {QNN_DATATYPE_UFIXED_POINT_16, QNN_DATATYPE_UFIXED_POINT_8, QNN_DATATYPE_UFIXED_POINT_8, QNN_DATATYPE_UFIXED_POINT_16}) ||
+    (all_dtypes == std::vector<Qnn_DataType_t>
+    {QNN_DATATYPE_UFIXED_POINT_16, QNN_DATATYPE_UFIXED_POINT_8, QNN_DATATYPE_SFIXED_POINT_32, QNN_DATATYPE_UFIXED_POINT_16}) ||
+    (all_dtypes == std::vector<Qnn_DataType_t>
+    {QNN_DATATYPE_UFIXED_POINT_16, QNN_DATATYPE_UFIXED_POINT_16, QNN_DATATYPE_UFIXED_POINT_8, QNN_DATATYPE_UFIXED_POINT_16}) ||
+    (all_dtypes == std::vector<Qnn_DataType_t>
+    {QNN_DATATYPE_UFIXED_POINT_16, QNN_DATATYPE_UFIXED_POINT_16, QNN_DATATYPE_SFIXED_POINT_32, QNN_DATATYPE_UFIXED_POINT_16}) ||
+    (all_dtypes == std::vector<Qnn_DataType_t>
+    {QNN_DATATYPE_UFIXED_POINT_16, QNN_DATATYPE_SFIXED_POINT_16, QNN_DATATYPE_UFIXED_POINT_8, QNN_DATATYPE_UFIXED_POINT_16}) ||
+    (all_dtypes == std::vector<Qnn_DataType_t>
+    {QNN_DATATYPE_UFIXED_POINT_16, QNN_DATATYPE_SFIXED_POINT_16, QNN_DATATYPE_SFIXED_POINT_32, QNN_DATATYPE_UFIXED_POINT_16})
+  ) {
+    is_supported_dtype = true;
+  }
+  // INT8
+  else if (
+    (all_dtypes == std::vector<Qnn_DataType_t>
+    {QNN_DATATYPE_UFIXED_POINT_8, QNN_DATATYPE_UFIXED_POINT_8, QNN_DATATYPE_UFIXED_POINT_8, QNN_DATATYPE_UFIXED_POINT_8}) ||
+    (all_dtypes == std::vector<Qnn_DataType_t>
+    {QNN_DATATYPE_UFIXED_POINT_8, QNN_DATATYPE_UFIXED_POINT_8, QNN_DATATYPE_SFIXED_POINT_32, QNN_DATATYPE_UFIXED_POINT_8}) ||
+    (all_dtypes == std::vector<Qnn_DataType_t>
+    {QNN_DATATYPE_SFIXED_POINT_8, QNN_DATATYPE_SFIXED_POINT_8, QNN_DATATYPE_SFIXED_POINT_8, QNN_DATATYPE_SFIXED_POINT_8})
+  ) {
+    is_supported_dtype = true;
+  }
+  if (!is_supported_dtype) {
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN Batchnorm unsupported datatype");
+  }
+  return Status::OK();
+};
 
 Status BatchNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                          const NodeUnit& node_unit,
