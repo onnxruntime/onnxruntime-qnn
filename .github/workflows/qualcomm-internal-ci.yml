@@ -1,4 +1,4 @@
-name: Qualcomm_PR_CI
+name: Qualcomm_Internal_CI
 on:
   push:
     branches:
