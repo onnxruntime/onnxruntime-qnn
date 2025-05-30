@@ -19,6 +19,7 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include "core/mlas/inc/mlas.h"
+#include "core/optimizer/affine_elimination.h"
 #include "core/optimizer/attention_fusion.h"
 #include "core/optimizer/bias_dropout_fusion.h"
 #include "core/optimizer/bias_gelu_fusion.h"
@@ -144,6 +145,7 @@ InlinedVector<std::unique_ptr<RewriteRule>> GenerateRewriteRules(
       rules.push_back(std::make_unique<PadFusion>());
       rules.push_back(std::make_unique<MatmulBNFusion>());
       rules.push_back(std::make_unique<LabelEncoderFusion>());
+      rules.push_back(std::make_unique<AffineElimination>());
       break;
 
     case TransformerLevel::Level2:
