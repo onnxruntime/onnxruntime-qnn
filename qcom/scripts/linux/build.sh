@@ -89,7 +89,9 @@ case "${target_platform}" in
     fi
 
     qnn_args=(--use_qnn --qnn_home "${qairt_sdk_root}")
-    platform_args=(--build_shared_lib)
+    platform_args=(--build_shared_lib
+                   --build_wheel
+                   --skip_onnx_tests)
 
     case "${mode}" in
       build)

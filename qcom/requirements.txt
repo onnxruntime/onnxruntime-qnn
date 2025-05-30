@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: MIT
 backoff >= 2.2.1, == 2.*
 certifi >= 2025.4.26
+numpy == 2.1.2
+onnx == 1.17.0
 prettytable >= 3.16.0, == 3.*
 pyyaml >= 6.0.2, == 6.*
 requests >= 2.32.3, == 2.*

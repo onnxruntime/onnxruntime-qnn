@@ -160,6 +160,8 @@ else {
         $ArchArg `
         --config "$Config" `
         --build_shared_lib `
+        --build_wheel `
+        --skip_onnx_tests `
         --parallel `
         --cmake_generator "$CmakeGenerator" `
         $QnnArgs `
