@@ -1,4 +1,4 @@
-name: Qualcomm_Internal_Windows_CI
+name: Qualcomm_PR_CI
 on:
   push:
     branches:
@@ -49,3 +49,9 @@ jobs:
           name: ORT Windows ARM64 Tests
           path: |
             ${{ github.workspace }}/build/onnxruntime-tests-windows-arm64.zip
+
+# only one active job per PR. this will cause jobs to be immediately cancelled on subsequent pushes in PRs.
+# ref: https://docs.github.com/en/actions/using-jobs/using-concurrency#example-using-a-fallback-value
+concurrency:
+  group: pr-workflow-${{ github.head_ref || github.run_id }}
+  cancel-in-progress: true
