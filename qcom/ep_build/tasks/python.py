@@ -1,6 +1,7 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
+import os
 from pathlib import Path
 
 from ..task import (
@@ -11,6 +12,7 @@ from ..task import (
     RunExecutablesWithVenvTask,
 )
 from ..util import (
+    MSFT_CI_REQUIREMENTS_RELPATH,
     REPO_ROOT,
 )
 
@@ -69,7 +71,7 @@ class CreateVenvTask(CompositeTask):
                             "pip",
                             "install",
                             "-r",
-                            f"{REPO_ROOT}/requirements-dev.txt",
+                            f"{REPO_ROOT}/{MSFT_CI_REQUIREMENTS_RELPATH}",
                             "--native-tls",
                         ],
                         ["lintrunner", "init"],
