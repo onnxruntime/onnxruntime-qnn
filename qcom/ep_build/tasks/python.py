@@ -72,6 +72,8 @@ class CreateVenvTask(CompositeTask):
                             "install",
                             "-r",
                             f"{REPO_ROOT}/{MSFT_CI_REQUIREMENTS_RELPATH}",
+                            "-r",
+                            f"{REPO_ROOT}/requirements-dev.txt",
                             "--native-tls",
                         ],
                         ["lintrunner", "init"],
