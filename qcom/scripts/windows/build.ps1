@@ -90,15 +90,16 @@ if (-Not ($ValidArchs -contains $Arch)) {
     throw "Invalid arch $Arch. Supported architectures: $ValidArchs"
 }
 
-$ArchArg = $null
+$ArchArgs = $null
 if ($Arch -eq "x86_64")
 {
     $HostArch = [System.Runtime.InteropServices.RuntimeInformation,mscorlib]::OSArchitecture
     if ($HostArch -ne "x64") {
         throw "Cross-compilation to $Arch is not supported on $HostArch host."
     }
+    $ArchArgs += "--build_wheel", "--skip_onnx_tests"
 } else {
-    $ArchArg = "--$Arch"
+    $ArchArgs += "--$Arch"
 }
 
 $Actions = @()
@@ -157,11 +158,9 @@ if ($MakeTestArchive) {
 else {
     .\build.bat `
         $Actions `
-        $ArchArg `
+        $ArchArgs `
         --config "$Config" `
         --build_shared_lib `
-        --build_wheel `
-        --skip_onnx_tests `
         --parallel `
         --cmake_generator "$CmakeGenerator" `
         $QnnArgs `
