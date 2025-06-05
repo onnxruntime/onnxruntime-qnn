@@ -10,7 +10,7 @@ from pathlib import Path
 
 import onnx
 
-from .......tools.python.util.onnx_model_utils import fix_output_shapes, make_input_shape_fixed
+from ....tools.onnx_model_utils import fix_output_shapes, make_input_shape_fixed
 from ...fusions import FusionGelu, FusionLayerNormalization
 from ...onnx_model import ONNXModel
 from ...quant_utils import save_and_reload_model_with_shape_infer
