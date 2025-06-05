@@ -33,6 +33,12 @@ jobs:
           path: |
             ${{ github.workspace }}/build/onnxruntime-tests-windows-x86_64.zip
 
+      - uses: actions/upload-artifact@v3
+        with:
+          name: ORT Windows x86_64 Python Wheel
+          path: |
+            ${{ github.workspace }}/build/windows-x86_64/RelWithDebInfo/RelWithDebInfo/dist/onnxruntime_qnn*.whl
+
   test-windows-x86_64:
     runs-on: ["self-hosted", "Windows", "X64"]
     needs: [build-windows-x86_64]
