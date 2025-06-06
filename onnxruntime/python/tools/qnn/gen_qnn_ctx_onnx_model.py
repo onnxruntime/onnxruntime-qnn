@@ -122,21 +122,25 @@ def parse_qnn_converter_json_file(qnn_convert_json, qnn_input_tensor_dic, qnn_ou
             continue
 
         # Get all graph inputs & output
-        qnn_tensor = QnnTensorStruct()
-        qnn_tensor.name = qnn_tensor_name
-        qnn_tensor.onnx_data_type = qnn_data_type_to_onnx_data_type(
-            qnn_tensor_attribute["data_type"], is_qnn_converter_json
-        )
-        qnn_tensor.is_quantized = is_quantized_data_type(qnn_tensor_attribute["data_type"], is_qnn_converter_json)
-        qnn_tensor.dim = qnn_tensor_attribute["dims"]
+
+        qnn_tensor = QnnTensorStruct(
+    	    name=qnn_tensor_name,
+    	    onnx_data_type=qnn_data_type_to_onnx_data_type(
+    	        qnn_tensor_attribute["data_type"], is_qnn_converter_json
+    	    ),
+    	    is_quantized=is_quantized_data_type(
+    	        qnn_tensor_attribute["data_type"], is_qnn_converter_json
+    	    ),
+    	    dim=qnn_tensor_attribute["dims"],
+    	    id=qnn_tensor_attribute["id"]
+    	)
+        
         if (
             qnn_tensor_attribute["quant_params"]["definition"] == 1
             and qnn_tensor_attribute["quant_params"]["encoding"] == 0
         ):
             qnn_tensor.scale = qnn_tensor_attribute["quant_params"]["scale_offset"]["scale"]
             qnn_tensor.offset = 0 - qnn_tensor_attribute["quant_params"]["scale_offset"]["offset"]
-
-        qnn_tensor.id = qnn_tensor_attribute["id"]
 
         if qnn_tensor_attribute["type"] == 0:
             qnn_input_tensor_dic[qnn_tensor_name] = qnn_tensor
