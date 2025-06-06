@@ -11,22 +11,14 @@ from onnx import TensorProto, helper
 
 
 class QnnTensorStruct:
-    def __init__(self):
+    def __init__(self, name="", onnx_data_type=TensorProto.FLOAT, is_quantized=False, scale=0.0, offset=0, dim=None, id=None):
         self.name = ""
         self.onnx_data_type = TensorProto.FLOAT
         self.is_quantized = False
-class QnnTensorStruct:
-    def __init__(self, name="", onnx_data_type=TensorProto.FLOAT, is_quantized=False, scale=0.0, offset=0, dim=None, id=None):
-        self.name = name
-        self.onnx_data_type = onnx_data_type
-        self.is_quantized = is_quantized
         self.scale = scale
         self.offset = offset
         self.dim = [] if dim is None else dim
         self.id = id
-        self.offset = 0
-        self.dim = []
-        self.id = None
 
 
 def is_quantized_data_type(qnn_data_type, is_converter_json):
