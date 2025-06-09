@@ -593,7 +593,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
   qdq_model.ToProto().SerializeToString(&qdq_model_data);
 
   // Uncomment to save QDQ model to disk for debugging.
-  // ASSERT_STATUS_OK(onnxruntime::Model::Save(qdq_model, ToPathString("cmp_accuracy.qdq.onnx")));
+  ASSERT_STATUS_OK(onnxruntime::Model::Save(qdq_model, ToPathString("cmp_accuracy.qdq.onnx")));
 
   bool is_qnn_ep = true;
   TryEnableQNNSaver(qnn_options);

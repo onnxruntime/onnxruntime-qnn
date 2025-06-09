@@ -334,6 +334,7 @@ class BatchNormOpBuilder : public BaseOpBuilder {
     int i = 0;
     int offset = 0;
     const Qnn_QuantizeParams_t& quant_param = scale_info.quant_param.Get();
+    std::cout << "PreprocessScale " << quant_param.scaleOffsetEncoding.scale << " " << quant_param.scaleOffsetEncoding.offset << std::endl;
     for (; i < static_cast<int>(channel); ++i) {
       double scale_value = 0.0;
       ORT_RETURN_IF_ERROR(GetValueOnQnnDataType(scale_info.qnn_data_type, scale_raw_ptr + offset, scale_value, offset));
@@ -390,20 +391,31 @@ class BatchNormOpBuilder : public BaseOpBuilder {
     bool symmetric = false;
     if (info.quant_param.IsQuantized()) {
       size_t data_size = double_tensor.size();
-      // QNN BatchNorm int32 bias requires symmetric quantizated
-      if (info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_32) {
-        data_size *= sizeof(int32_t);
-        symmetric = true;
-      }
-      raw_tensor.resize(data_size);
       float scale = 0.0f;
       int32_t zero_point = 0;
-      ORT_RETURN_IF_ERROR(utils::GetQuantParams(static_cast<float>(rmin),
-                                                static_cast<float>(rmax),
-                                                info.qnn_data_type,
-                                                scale,
-                                                zero_point,
-                                                symmetric));
+      if (info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_32) {
+        // QNN BatchNorm int32 bias requires symmetric quantizated
+        data_size *= sizeof(int32_t);
+        symmetric = true;
+        scale = 0.0f;
+        zero_point = 0;
+        ORT_RETURN_IF_ERROR(utils::GetQuantParams(static_cast<float>(rmin),
+                                                  static_cast<float>(rmax),
+                                                  info.qnn_data_type,
+                                                  scale,
+                                                  zero_point,
+                                                  symmetric));
+      } else if (info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) {
+        // QNN BatchNorm uint16 scale requires symmetric quantizated
+        data_size *= sizeof(uint16_t);
+        symmetric = true;
+        scale = info.quant_param.Get().scaleOffsetEncoding.scale;
+        zero_point = info.quant_param.Get().scaleOffsetEncoding.offset;
+      }
+      std::cout << "symmetric " << symmetric << std::endl;
+      std::cout << "info.quant_param.offset " << info.quant_param.Get().scaleOffsetEncoding.offset << std::endl;
+      raw_tensor.resize(data_size);
+      std::cout << "Postprocess " << scale << " " << zero_point << std::endl;
       quant_param = QnnQuantParamsWrapper(scale, zero_point);
       for (size_t i = 0; i < double_tensor.size(); ++i) {
         // onnx only supports 8 bits quantization
@@ -411,6 +423,10 @@ class BatchNormOpBuilder : public BaseOpBuilder {
         ORT_RETURN_IF_ERROR(utils::Quantize(double_tensor[i], scale, zero_point, info.qnn_data_type, quant_value_int));
         if (info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_8) {
           raw_tensor[i] = static_cast<uint8_t>(quant_value_int);
+        } else if (info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) {
+          uint16_t quant_value = static_cast<uint16_t>(quant_value_int);
+          size_t pos = i * sizeof(uint16_t);
+          std::memcpy(&raw_tensor[pos], reinterpret_cast<uint8_t*>(&quant_value), sizeof(uint16_t));
         } else if (info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8) {
           int8_t quant_value = static_cast<int8_t>(quant_value_int);
           raw_tensor[i] = *reinterpret_cast<uint8_t*>(&quant_value);

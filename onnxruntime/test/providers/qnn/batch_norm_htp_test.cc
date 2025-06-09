@@ -113,13 +113,14 @@ GetTestQDQModelFn<InputQType> BuildQDQBatchNormTestCase(const TestInputDef<float
     const auto& input_shape = input_def.GetShape();
     const auto& input_data = input_def.GetRawData();
     const int64_t num_channels = input_shape[1];
-    bool symmetric = sizeof(InputQType) == sizeof(uint16_t);
+
     NodeArg* input = MakeTestInput(builder, input_def);
-    QuantParams<InputQType> input_qparams = GetTestInputQuantParams<InputQType>(input_def, symmetric);
+    QuantParams<InputQType> input_qparams = GetTestInputQuantParams<InputQType>(input_def);
     NodeArg* input_qdq = AddQDQNodePair<InputQType>(builder, input, input_qparams.scale, input_qparams.zero_point);
 
+    bool scale_symmetric = sizeof(ScaleQType) == sizeof(uint16_t);
     NodeArg* scale = MakeTestInput(builder, scale_def);
-    QuantParams<ScaleQType> scale_qparams = GetTestInputQuantParams<ScaleQType>(scale_def);
+    QuantParams<ScaleQType> scale_qparams = GetTestInputQuantParams<ScaleQType>(scale_def, scale_symmetric);
     NodeArg* scale_qdq = AddQDQNodePair<ScaleQType>(builder, scale, scale_qparams.scale, scale_qparams.zero_point);
 
     NodeArg* bias_qdq;
@@ -293,7 +294,7 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_U16U8S32) {
 
 // Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.
 // Use an input of rank 4.
-TEST_F(QnnHTPBackendTests, DISABLED_BatchNorm2D_U16U16S32) {
+TEST_F(QnnHTPBackendTests, BatchNorm2D_U16U16S32) {
   constexpr int64_t num_channels = 2;
   std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
                                    -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
