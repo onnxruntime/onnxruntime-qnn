@@ -122,7 +122,6 @@ def parse_qnn_converter_json_file(qnn_convert_json, qnn_input_tensor_dic, qnn_ou
             continue
 
         # Get all graph inputs & output
-
         qnn_tensor = QnnTensorStruct(
     	    name=qnn_tensor_name,
     	    onnx_data_type=qnn_data_type_to_onnx_data_type(
