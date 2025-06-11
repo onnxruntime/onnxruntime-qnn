@@ -74,7 +74,7 @@ Status ReciprocalOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
                     "Failed to add output tensor wrapper for reciprocal.");
 
   // Create Div node: 1 / input
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode("Reciprocal_Div",
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(output_name + "_div",
                                                     QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                     QNN_OP_ELEMENT_WISE_DIVIDE,
                                                     {one_tensor_name, input_names[0]},
