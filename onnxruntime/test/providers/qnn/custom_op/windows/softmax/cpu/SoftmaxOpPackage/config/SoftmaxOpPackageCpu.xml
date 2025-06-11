@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+Copyright (c) 2023 Qualcomm Technologies, Inc.
+All Rights Reserved.
+Confidential and Proprietary - Qualcomm Technologies, Inc.
+-->
+<OpDefCollection
+        PackageName="SoftmaxOpPackage"
+        Domain="aisw"
+        Version="1.0"
+>
+    <OpDefList>
+        <!--Example Op Package which defines a generic Softmax,
+        Tensorflow Conv2D and Tensorflow BiasAdd as custom operations-->
+        <OpDef>
+            <Name>Softmax</Name>
+            <Description>
+                <Content>
+                    Computes data normalization exponentially on an input tensor given an optional positive
+                    scaling factor, beta. The computation is done element-wise per batch along the last dimension.
+
+                    See Softmax backend definition for supported datatypes and constraints per backend
+                </Content>
+            </Description>
+
+            <Reference Source="Android NDK NeuralNetworks"
+                       Url="ANEURALNETWORKS_SOFTMAX &lt;https://developer.android.com/ndk/reference/group/neural-networks#group___neural_networks_1ggaabbe492c60331b13038e39d4207940e0a2bfbb83a537701e2843a3d5004250c2c&gt;"/>
+
+            <Input>
+                <Name>in[0]</Name>
+                <Description>
+                    <Content>input activation</Content>
+                </Description>
+                <Mandatory>true</Mandatory>
+                <Datatype>BACKEND_SPECIFIC</Datatype>
+                <Shape>
+                    <Rank>1D</Rank>
+                    <Text>A 1-dimensional tensor</Text>
+                </Shape>
+            </Input>
+
+            <Output>
+                <Name>out[0]</Name>
+                <Description>
+                    <Content>output activation</Content>
+                </Description>
+                <Mandatory>true</Mandatory>
+                <Datatype>BACKEND_SPECIFIC</Datatype>
+                <Shape>
+                    <Rank>1D</Rank>
+                    <Text>A 1-dimensional tensor</Text>
+                </Shape>
+            </Output>
+
+            <Parameter>
+                <Name>axis</Name>
+                <Mandatory>false</Mandatory>
+                <Datatype>QNN_DATATYPE_UINT_32</Datatype>
+                <Shape>
+                    <Rank>SCALAR</Rank>
+                </Shape>
+                <Default>N-1</Default>
+            </Parameter>
+
+            <UseDefaultTranslation>true</UseDefaultTranslation>
+
+            <!--This Op is implemented on these Backends-->
+            <SupportedBackend>CPU</SupportedBackend>
+        </OpDef>
+    </OpDefList>
+
+    <SupplementalOpDefList Backend="CPU">
+        <SupportedOps>
+            <OpName>Softmax</OpName>
+        </SupportedOps>
+
+        <!--Softmax-->
+        <SupplementalOpDef>
+            <Name>Softmax</Name>
+
+            <Input>
+                <Name>in[0]</Name>
+                <Datatype>QNN_DATATYPE_FLOAT_32</Datatype>
+                <Datatype>QNN_DATATYPE_UFIXED_POINT_8</Datatype>
+                <Datatype>QNN_DATATYPE_UFIXED_POINT_16</Datatype>
+            </Input>
+
+            <Output>
+                <Name>out[0]</Name>
+                <Datatype>QNN_DATATYPE_FLOAT_32</Datatype>
+                <Datatype>QNN_DATATYPE_UFIXED_POINT_8</Datatype>
+                <Datatype>QNN_DATATYPE_UFIXED_POINT_16</Datatype>
+            </Output>
+        </SupplementalOpDef>
+    </SupplementalOpDefList>
+
+</OpDefCollection>

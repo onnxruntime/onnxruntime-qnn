@@ -727,6 +727,30 @@ if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_RED
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/*)
   list(APPEND onnxruntime_test_framework_libs onnxruntime_providers_qnn)
   list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn)
+
+  # Build QNN UDO
+  if(UNIX)
+    find_program(MAKE_EXECUTABLE NAMES make REQUIRED)
+    list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/custom_op/*)
+    add_custom_target(QnnCustomOp_Softmax
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/qnn_custom_op-src
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/qnn_custom_op-build
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${TEST_SRC_DIR}/providers/qnn/custom_op/linux/softmax/cpu/SoftmaxOpPackage ${CMAKE_CURRENT_BINARY_DIR}/qnn_custom_op-src/SoftmaxOpPackage
+        COMMAND ${MAKE_EXECUTABLE} -C ${CMAKE_CURRENT_BINARY_DIR}/qnn_custom_op-src/SoftmaxOpPackage all
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_BINARY_DIR}/qnn_custom_op-src/SoftmaxOpPackage/libs/ ${CMAKE_CURRENT_BINARY_DIR}/qnn_custom_op-build
+    )
+    list(APPEND onnxruntime_test_providers_dependencies QnnCustomOp_Softmax)
+  elseif(WIN32)
+    list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/custom_op/*)
+    add_custom_target(QnnCustomOp_Softmax
+        COMMAND ${CMAKE_COMMAND} -S ${TEST_SRC_DIR}/providers/qnn/custom_op/windows/softmax/cpu/SoftmaxOpPackage -T ClangCL -B ${CMAKE_CURRENT_BINARY_DIR}/qnn_custom_op-src -DCMAKE_EXPORT_COMPILE_COMMANDS=1 -DCMAKE_VERBOSE_MAKEFILE=ON -DCMAKE_CXX_STANDARD=17 -G "Visual Studio 17 2022"
+        COMMAND ${CMAKE_COMMAND} --build ${CMAKE_CURRENT_BINARY_DIR}/qnn_custom_op-src --config Release
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_CURRENT_BINARY_DIR}/qnn_custom_op-src/Release ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}/qnn_custom_op-build
+    )
+    list(APPEND onnxruntime_test_providers_dependencies QnnCustomOp_Softmax)
+  endif()
+
+
   if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
     list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_shared)
   endif()

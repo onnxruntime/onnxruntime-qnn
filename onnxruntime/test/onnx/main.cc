@@ -561,6 +561,18 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
           if (value.empty()) {
             ORT_THROW("Please provide the valid file path.");
           }
+        } else if (key == "op_pack_path") {
+          if (value.empty()) {
+            ORT_THROW("Please provide the valid op_pack_path.");
+          }
+        } else if (key == "op_pack_interface") {
+          if (value.empty()) {
+            ORT_THROW("Please provide the valid op_pack_interface.");
+          }
+        } else if (key == "op_pack_target") {
+          if (value.empty()) {
+            ORT_THROW("Please provide the valid op_pack_target.");
+          }
         } else if (key == "qnn_context_embed_mode") {
           if (value != "0") {
             ORT_THROW("Set to 0 to disable qnn_context_embed_mode.");

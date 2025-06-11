@@ -12,6 +12,7 @@ namespace qnn {
 class OpBuilderRegistrations {
  public:
   OpBuilderRegistrations();
+  void RegisterCustomOpBuilder(const std::string& op_type, const std::string& op_package);
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(OpBuilderRegistrations);
   const IOpBuilder* GetOpBuilderByOnnxOpType(const std::string& onnx_op_type) const {
     auto pos = op_builder_map_.find(onnx_op_type);
@@ -22,8 +23,8 @@ class OpBuilderRegistrations {
     return nullptr;
   }
 
-  void AddOpBuilder(const std::string& onnx_op_type, std::unique_ptr<IOpBuilder> builder) {
-    if (GetOpBuilderByOnnxOpType(onnx_op_type) != nullptr) {  // already have this Op added
+  void AddOpBuilder(const std::string& onnx_op_type, std::unique_ptr<IOpBuilder> builder, bool force = false) {
+    if (!force && GetOpBuilderByOnnxOpType(onnx_op_type) != nullptr) {  // already have this Op added
       return;
     }
 
@@ -35,8 +36,8 @@ class OpBuilderRegistrations {
     } else {
       // New Op builder, add to vector and all the maps
       builders_.push_back(std::move(builder));
-      op_builder_map_.emplace(onnx_op_type, builders_.back().get());
-      builder_type_builder_map_.emplace(builder_type, builders_.back().get());
+      op_builder_map_[onnx_op_type] = builders_.back().get();
+      builder_type_builder_map_[builder_type] = builders_.back().get();
     }
   }
 
@@ -47,6 +48,8 @@ class OpBuilderRegistrations {
   // <Op_builder_type, IOpBuilder*>
   std::unordered_map<std::string, const IOpBuilder*> builder_type_builder_map_;
 };
+void RegisterCustomOpBuilder(const std::string& op_type, const std::string& op_package);
+
 const IOpBuilder* GetOpBuilder(const std::string& onnx_op_type);
 
 void CreateSimpleOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
@@ -107,5 +110,6 @@ void CreateLSTMOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_
 
 void CreateCumSumOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
+void CreateCustomOpBuilder(const std::string& op_type, const std::string& op_pacakge, OpBuilderRegistrations& op_registrations);
 }  // namespace qnn
 }  // namespace onnxruntime
