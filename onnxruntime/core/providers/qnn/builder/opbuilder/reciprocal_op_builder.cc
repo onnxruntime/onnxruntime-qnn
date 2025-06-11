@@ -86,7 +86,6 @@ Status ReciprocalOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
   return Status::OK();
 }
 
-
 void CreateReciprocalOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
   op_registrations.AddOpBuilder(op_type, std::make_unique<ReciprocalOpBuilder>());
 }
