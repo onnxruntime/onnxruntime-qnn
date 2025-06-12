@@ -15,8 +15,38 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build-android:
+    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Build Android
+        run: |
+          python3 qcom/build_and_test.py archive_ort_android
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: ORT Android Tests
+          path: |
+            ${{ github.workspace }}/build/onnxruntime-tests-android.zip
+
+  # The build isn't yet capable of archiving and extracting Linux builds; take that up separately:
+  # TODO: [AISW-138979] Run unit tests with HTP simulator
+  build-linux:
+    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Build Linux
+        run: |
+          python3 qcom/build_and_test.py build_ort_linux
+
   build-windows-x86_64:
-    runs-on: ["self-hosted", "Windows", "X64"]
+    runs-on: ["self-hosted", "Windows", "X64", "Build"]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,8 +69,19 @@ jobs:
           path: |
             ${{ github.workspace }}/build/windows-x86_64/RelWithDebInfo/RelWithDebInfo/dist/onnxruntime_qnn*.whl
 
+  lint:
+    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - name: Run Linting Tool
+        run: |
+          python3 qcom/build_and_test.py lint
+
   test-windows-x86_64:
-    runs-on: ["self-hosted", "Windows", "X64"]
+    runs-on: ["self-hosted", "Windows", "X64", "Build"]
     needs: [build-windows-x86_64]
     steps:
       - uses: actions/checkout@v4
@@ -62,6 +103,7 @@ jobs:
         uses: mikepenz/action-junit-report@v4.0.4
         if: always() # always run even if the previous step fails
         with:
+          check_name: windows-x86_64-test-results
           report_paths: ${{ github.workspace }}/build/windows-x86_64/RelWithDebInfo/RelWithDebInfo/*.results.xml
 
       - uses: actions/upload-artifact@v3
@@ -71,7 +113,7 @@ jobs:
             ${{ github.workspace }}/build/windows-x86_64/RelWithDebInfo/RelWithDebInfo/*.results.xml
 
   build-windows-arm64:
-    runs-on: ["self-hosted", "Windows", "X64"]
+    runs-on: ["self-hosted", "Windows", "X64", "Build"]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -88,8 +130,42 @@ jobs:
           path: |
             ${{ github.workspace }}/build/onnxruntime-tests-windows-arm64.zip
 
+  # TODO: [AISW-140530] combine Android and Windows
+  test-android:
+    runs-on: ["self-hosted", "Linux", "QDC"]
+    needs: [build-android]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+
+      - uses: actions/download-artifact@v3
+        with:
+          name: ORT Android Tests
+          path: |
+            ${{ github.workspace }}/build
+
+      - name: Test Android
+        env:
+          QDC_API_TOKEN: ${{ secrets.QDC_API_TOKEN }}
+        run: |
+          python3 qcom/build_and_test.py create_venv test_ort_qdc_android --only
+
+      - name: Publish Test Report
+        uses: mikepenz/action-junit-report@v4.0.4
+        if: always() # always run even if the previous step fails
+        with:
+          check_name: android-test-results
+          report_paths: ${{ github.workspace }}/build/qdc-android/*.results.xml
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: ORT Android Test Results
+          path: |
+            ${{ github.workspace }}/build/qdc-android/*.*
+
   test-windows-arm64:
-    runs-on: ["self-hosted", "Windows", "X64"]
+    runs-on: ["self-hosted", "Linux", "QDC"]
     needs: [build-windows-arm64]
     steps:
       - uses: actions/checkout@v4
@@ -105,14 +181,14 @@ jobs:
       - name: Test Windows ARM64
         env:
           QDC_API_TOKEN: ${{ secrets.QDC_API_TOKEN }}
-        shell: cmd
         run: |
-          python .\qcom\build_and_test.py create_venv test_ort_qdc_windows_arm64 --only
+          python3 qcom/build_and_test.py create_venv test_ort_qdc_windows_arm64 --only
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v4.0.4
         if: always() # always run even if the previous step fails
         with:
+          check_name: windows-arm64-test-results
           report_paths: ${{ github.workspace }}/build/qdc-windows/*.results.xml
 
       - uses: actions/upload-artifact@v3

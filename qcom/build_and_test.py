@@ -55,18 +55,22 @@ def parse_arguments():
 
 Environment variables
 ---------------------
+  ANDROID_HOME/ANDROID_NDK_HOME
+    If both are specified, they are used instead of installing known good
+    versions into build/tools.
+
+  JAVA_HOME
+    If specified, it is used instead of installing a known good version into build/tools.
+
+  ORT_BUILD_TOOLS_PATH
+    If specified, use this directory for build-managed tools instead of build/tools.
+
   QAIRT_SDK_ROOT
   QNN_SDK_ROOT
   SNPE_ROOT
     If specified, any of these will be used in place of the LKG QAIRT version.
     They are searched in the above order.
 
-  ANDROID_HOME/ANDROID_NDK_HOME
-    If both are specified, they are used instead of installing known good
-    versions into build/tools.
-
-  JAVA_HOME
-    If specified, it is used instead of installing a known good version into build/tools
   QDC_API_TOKEN
     API token for use with testing in Qualcomm Device Cloud.
 """
@@ -146,15 +150,30 @@ class TaskLibrary:
     @task
     @depends(["build_ort_android"])
     def archive_ort_android(self, plan: Plan) -> str:
-        return plan.add_step(
-            BuildEpLinuxTask(
-                "Archiving ONNX Runtime for Android",
-                self.__venv_path,
-                "android",
-                self.__qairt_sdk_root,
-                "archive",
+        if is_host_linux():
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Archiving ONNX Runtime for Android",
+                    self.__venv_path,
+                    "android",
+                    self.__qairt_sdk_root,
+                    "archive",
+                )
             )
-        )
+        elif is_host_windows():
+            return plan.add_step(
+                BuildEpWindowsTask(
+                    "Archiving ONNX Runtime for Android",
+                    self.__venv_path,
+                    "android",
+                    "arm64",
+                    "Release",
+                    self.__qairt_sdk_root,
+                    "archive",
+                )
+            )
+        else:
+            raise NotImplementedError("Archiving for Android on this host is not supported.")
 
     @task
     @depends(["build_ort_windows_arm64"])
@@ -163,7 +182,9 @@ class TaskLibrary:
             BuildEpWindowsTask(
                 "Archiving ONNX Runtime for Windows on ARM64",
                 self.__venv_path,
+                "windows",
                 "arm64",
+                "RelWithDebInfo",
                 self.__qairt_sdk_root,
                 "archive",
             )
@@ -176,7 +197,9 @@ class TaskLibrary:
             BuildEpWindowsTask(
                 "Archiving ONNX Runtime for Windows on x86_64",
                 self.__venv_path,
+                "windows",
                 "x86_64",
+                "RelWithDebInfo",
                 self.__qairt_sdk_root,
                 "archive",
             )
@@ -195,15 +218,30 @@ class TaskLibrary:
     @task
     @depends(["create_venv"])
     def build_ort_android(self, plan: Plan) -> str:
-        return plan.add_step(
-            BuildEpLinuxTask(
-                "Building ONNX Runtime for Android",
-                self.__venv_path,
-                "android",
-                self.__qairt_sdk_root,
-                "build",
+        if is_host_linux():
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Building ONNX Runtime for Android",
+                    self.__venv_path,
+                    "android",
+                    self.__qairt_sdk_root,
+                    "build",
+                )
             )
-        )
+        elif is_host_windows():
+            return plan.add_step(
+                BuildEpWindowsTask(
+                    "Building ONNX Runtime for Android",
+                    self.__venv_path,
+                    "android",
+                    "arm64",
+                    "Release",
+                    self.__qairt_sdk_root,
+                    "build",
+                )
+            )
+        else:
+            raise NotImplementedError("Building for Android on this host is not supported.")
 
     @task
     @depends(["create_venv"])
@@ -225,7 +263,9 @@ class TaskLibrary:
             BuildEpWindowsTask(
                 "Building ONNX Runtime for Windows on ARM64",
                 self.__venv_path,
+                "windows",
                 "arm64",
+                "RelWithDebInfo",
                 self.__qairt_sdk_root,
                 "build",
             )
@@ -248,7 +288,9 @@ class TaskLibrary:
             BuildEpWindowsTask(
                 "Building ONNX Runtime for Windows on x86_64",
                 self.__venv_path,
+                "windows",
                 "x86_64",
+                "RelWithDebInfo",
                 self.__qairt_sdk_root,
                 "build",
             )
@@ -268,6 +310,16 @@ class TaskLibrary:
             )
         )
 
+    @public_task("Run the source linter")
+    @depends(["create_venv"])
+    def lint(self, plan: Plan) -> str:
+        return plan.add_step(RunLinterTask(self.__venv_path))
+
+    @public_task("Run the source linter and fix any issues automatically")
+    @depends(["create_venv"])
+    def lint_and_fix(self, plan: Plan) -> str:
+        return plan.add_step(RunLinterTask(self.__venv_path, auto_fix=True))
+
     @public_task("Print a list of commonly used tasks; see also --task=list_all.")
     @depends(["list_public"])
     def list(self, plan: Plan) -> str:
@@ -280,11 +332,6 @@ class TaskLibrary:
     @task
     def list_public(self, plan: Plan) -> str:
         return plan.add_step(ListTasksTask(PUBLIC_TASKS))
-
-    @public_task("Run the source linter")
-    @depends(["create_venv"])
-    def run_linter(self, plan: Plan) -> str:
-        return plan.add_step(RunLinterTask(self.__venv_path))
 
     @public_task("Test ONNX Runtime")
     @depends(
@@ -306,6 +353,17 @@ class TaskLibrary:
                 "linux",
                 self.__qairt_sdk_root,
                 "test",
+            )
+        )
+
+    @task
+    @depends(["archive_ort_android"])
+    def test_ort_qdc_android(self, plan: Plan) -> str:
+        return plan.add_step(
+            QdcTestsTask(
+                "Testing ONNX Runtime for Android in QDC",
+                self.__venv_path,
+                ["android"],
             )
         )
 
@@ -337,7 +395,9 @@ class TaskLibrary:
             BuildEpWindowsTask(
                 "Testing ONNX Runtime for Windows on ARM64",
                 self.__venv_path,
+                "windows",
                 "arm64",
+                "RelWithDebInfo",
                 self.__qairt_sdk_root,
                 "test",
             )
@@ -350,7 +410,9 @@ class TaskLibrary:
             BuildEpWindowsTask(
                 "Testing ONNX Runtime for Windows on x86_64",
                 self.__venv_path,
+                "windows",
                 "x86_64",
+                "RelWithDebInfo",
                 self.__qairt_sdk_root,
                 "test",
             )

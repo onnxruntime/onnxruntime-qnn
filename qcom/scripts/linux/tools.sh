@@ -7,32 +7,20 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 source "${REPO_ROOT}/qcom/scripts/linux/common.sh"
 
 #
+# Remove outdated packages from th tools directory.
+#
+function clean_tools_dir() {
+    package_manager --clean
+}
+
+#
 # Get the Android NDK root (ANDROID_NDK_HOME).
 # This also installs any other Android SDK packages that ORT needs.
 #
 function get_android_ndk_root() {
-    local build_tools_version="34.0.0"
-    local ndk_version="26.2.11394342"
-    local platform_version="29"
-
-    local sdk_root=$(get_android_sdk_root)
-    local ndk_root="${sdk_root}/ndk/${ndk_version}"
-
-    if [ -d "${ndk_root}" ]; then
-        log_debug "NDK found in ${ndk_root}"
-    else
-        log_debug "Installing NDK into ${ndk_root}"
-        local sdkmanager=$(realpath $(get_package_bindir android_commandlinetools_linux)/sdkmanager)
-        (yes || true) | "${sdkmanager}" --sdk_root="${sdk_root}" \
-            --install \
-            "build-tools;${build_tools_version}" \
-            "platforms;android-${platform_version}" \
-            "ndk;${ndk_version}" > /dev/null
-
-        (yes || true) | "${sdkmanager}" --sdk_root="${sdk_root}" --licenses > /dev/null
-    fi
-
-    echo $ndk_root
+    python \
+        "${REPO_ROOT}/qcom/scripts/all/install_ndk.py" \
+        "--cli-tools-root=$(get_package_contentdir android_commandlinetools_linux)"
 }
 
 #
@@ -96,7 +84,7 @@ function get_qairt_contentdir() {
 }
 
 function get_tools_dir() {
-    local tools_dir="${REPO_ROOT}/build/tools"
+    local tools_dir="${ORT_BUILD_TOOLS_PATH:-${REPO_ROOT}/build/tools}"
 
     if [ ! -d "${tools_dir}" ]; then
         mkdir -p "${tools_dir}"

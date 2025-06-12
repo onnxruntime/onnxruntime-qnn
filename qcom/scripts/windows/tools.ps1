@@ -4,8 +4,28 @@
 $RepoRoot = (Resolve-Path -Path "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)\..\..\..").Path
 
 function Get-ToolsDir() {
-    $ToolsDir = (Join-Path $RepoRoot "build\Tools")
+    if (Test-Path Env:ORT_BUILD_TOOLS_PATH) {
+        $ToolsDir = $Env:ORT_BUILD_TOOLS_PATH
+    } else {
+        $ToolsDir = (Join-Path $RepoRoot "build\Tools")
+    }
     New-Item -ItemType Directory $ToolsDir -Force
+    if (-not $?) {
+        throw "Failed to create $ToolsDir"
+    }
+}
+
+function Get-AndroidNdkRoot() {
+    $InstallNdk = "$RepoRoot\qcom\scripts\all\install_ndk.py"
+
+    python.exe $InstallNdk --cli-tools-root (Get-PackageContentDir android_commandlinetools_windows_x86_64)
+    if (-not $?) {
+        throw "Failed to get NDK content root."
+    }
+}
+
+function Get-AndroidSdkRoot() {
+    (Resolve-Path "$(Get-PackageContentDir android_commandlinetools_windows_x86_64)\..").Path
 }
 
 function Get-PackageBinDir() {
@@ -17,6 +37,9 @@ function Get-PackageBinDir() {
 
     Install-Package $Package
     python.exe (Get-PackageManager) --print-bin-dir --package $Package --package-root (Get-ToolsDir)
+    if (-not $?) {
+        throw "Failed to get bin directory for $Package."
+    }
 }
 
 function Get-PackageContentDir() {
@@ -28,6 +51,9 @@ function Get-PackageContentDir() {
 
     Install-Package $Package
     python.exe (Get-PackageManager) --print-content-dir --package $Package --package-root (Get-ToolsDir)
+    if (-not $?) {
+        throw "Failed to get content directory for $Package."
+    }
 }
 
 function Get-PackageManager() {
@@ -42,4 +68,15 @@ function Install-Package() {
     )
 
     python.exe (Get-PackageManager) --install --package $Package --package-root (Get-ToolsDir)
+    if (-not $?) {
+        throw "Failed to install package $Package."
+    }
+}
+
+# We call this "Optimize" to conform to the PowerShell approved verbs list.
+function Optimize-ToolsDir() {
+    python.exe (Get-PackageManager) --clean --package-root (Get-ToolsDir)
+    if (-not $?) {
+        throw "Failed to optimize tools directory."
+    }
 }
