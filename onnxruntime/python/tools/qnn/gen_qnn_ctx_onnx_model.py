@@ -114,7 +114,8 @@ def parse_qnn_converter_json_file(qnn_convert_json, qnn_input_tensor_dic, qnn_ou
     for qnn_tensor_name, qnn_tensor_attribute in qnn_convert_json["graph"]["tensors"].items():
         # type:0 - QNN input tensor, type:1 - QNN output tensor
         assert (
-            "type" in qnn_tensor_attribute and "data_type" in qnn_tensor_attribute and "dims" in qnn_tensor_attribute
+            "type" in qnn_tensor_attribute and "data_type" in qnn_tensor_attribute and "dims" in qnn_tensor_attribute and \
+            "id" in qnn_tensor_attribute and "quant_params" in qnn_tensor_attribute
         ), "QNN converted json file not valid. Can't find some keys from tensors"
 
         # If tensor is not IO, ignore it
@@ -139,7 +140,7 @@ def parse_qnn_converter_json_file(qnn_convert_json, qnn_input_tensor_dic, qnn_ou
             and qnn_tensor_attribute["quant_params"]["encoding"] == 0
         ):
             qnn_tensor.scale = qnn_tensor_attribute["quant_params"]["scale_offset"]["scale"]
-            qnn_tensor.offset = 0 - qnn_tensor_attribute["quant_params"]["scale_offset"]["offset"]
+            qnn_tensor.offset = -qnn_tensor_attribute["quant_params"]["scale_offset"]["offset"]
 
         if qnn_tensor_attribute["type"] == 0:
             qnn_input_tensor_dic[qnn_tensor_name] = qnn_tensor
