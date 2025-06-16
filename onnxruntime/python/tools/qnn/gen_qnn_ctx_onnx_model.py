@@ -118,7 +118,7 @@ def parse_qnn_converter_json_file(qnn_convert_json, qnn_input_tensor_dic, qnn_ou
         ), "QNN converted json file not valid. Can't find some keys from tensors"
 
         # If tensor is not IO, ignore it
-        if qnn_tensor_attribute["type"] != 0 and qnn_tensor_attribute["type"] != 1:
+        if qnn_tensor_attribute["type"]  not in [0, 1]:
             continue
 
         # Get all graph inputs & output
