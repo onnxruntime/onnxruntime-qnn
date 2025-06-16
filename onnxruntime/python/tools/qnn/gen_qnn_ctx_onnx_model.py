@@ -11,7 +11,9 @@ from onnx import TensorProto, helper
 
 
 class QnnTensorStruct:
-    def __init__(self, name="", onnx_data_type=TensorProto.FLOAT, is_quantized=False, scale=0.0, offset=0, dim=None, id=None):
+    def __init__(
+        self, name="", onnx_data_type=TensorProto.FLOAT, is_quantized=False, scale=0.0, offset=0, dim=None, id=None
+    ):
         self.name = name
         self.onnx_data_type = onnx_data_type
         self.is_quantized = is_quantized
@@ -114,27 +116,26 @@ def parse_qnn_converter_json_file(qnn_convert_json, qnn_input_tensor_dic, qnn_ou
     for qnn_tensor_name, qnn_tensor_attribute in qnn_convert_json["graph"]["tensors"].items():
         # type:0 - QNN input tensor, type:1 - QNN output tensor
         assert (
-            "type" in qnn_tensor_attribute and "data_type" in qnn_tensor_attribute and "dims" in qnn_tensor_attribute and \
-            "id" in qnn_tensor_attribute and "quant_params" in qnn_tensor_attribute
+            "type" in qnn_tensor_attribute
+            and "data_type" in qnn_tensor_attribute
+            and "dims" in qnn_tensor_attribute
+            and "id" in qnn_tensor_attribute
+            and "quant_params" in qnn_tensor_attribute
         ), "QNN converted json file not valid. Can't find some keys from tensors"
 
         # If tensor is not IO, ignore it
-        if qnn_tensor_attribute["type"]  not in [0, 1]:
+        if qnn_tensor_attribute["type"] not in [0, 1]:
             continue
 
         # Get all graph inputs & output
         qnn_tensor = QnnTensorStruct(
-    	    name=qnn_tensor_name,
-    	    onnx_data_type=qnn_data_type_to_onnx_data_type(
-    	        qnn_tensor_attribute["data_type"], is_qnn_converter_json
-    	    ),
-    	    is_quantized=is_quantized_data_type(
-    	        qnn_tensor_attribute["data_type"], is_qnn_converter_json
-    	    ),
-    	    dim=qnn_tensor_attribute["dims"],
-    	    id=qnn_tensor_attribute["id"]
-    	)
-        
+            name=qnn_tensor_name,
+            onnx_data_type=qnn_data_type_to_onnx_data_type(qnn_tensor_attribute["data_type"], is_qnn_converter_json),
+            is_quantized=is_quantized_data_type(qnn_tensor_attribute["data_type"], is_qnn_converter_json),
+            dim=qnn_tensor_attribute["dims"],
+            id=qnn_tensor_attribute["id"],
+        )
+
         if (
             qnn_tensor_attribute["quant_params"]["definition"] == 1
             and qnn_tensor_attribute["quant_params"]["encoding"] == 0
