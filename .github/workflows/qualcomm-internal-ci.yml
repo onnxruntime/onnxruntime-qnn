@@ -45,6 +45,12 @@ jobs:
         run: |
           python3 qcom/build_and_test.py build_ort_linux
 
+      - uses: actions/upload-artifact@v3
+        with:
+          name: ORT Linux x86_64 Python Wheel
+          path: |
+            ${{ github.workspace }}/build/linux/Release/onnxruntime_qnn*.whl
+
   build-windows-x86_64:
     runs-on: ["self-hosted", "Windows", "X64", "Build"]
     steps:
