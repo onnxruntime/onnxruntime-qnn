@@ -49,7 +49,7 @@ jobs:
         with:
           name: ORT Linux x86_64 Python Wheel
           path: |
-            ${{ github.workspace }}/build/linux/Release/onnxruntime_qnn*.whl
+            ${{ github.workspace }}/build/linux/Release/dist/onnxruntime_qnn*.whl
 
   build-windows-x86_64:
     runs-on: ["self-hosted", "Windows", "X64", "Build"]
