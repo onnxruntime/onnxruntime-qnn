@@ -112,7 +112,7 @@ if (-Not ($ValidArchs -contains $Arch)) {
     throw "Invalid arch $Arch. Supported architectures: $ValidArchs"
 }
 
-$ArchArgs = $null
+$ArchArgs = @()
 if ($Arch -eq "x86_64")
 {
     $HostArch = [System.Runtime.InteropServices.RuntimeInformation,mscorlib]::OSArchitecture
