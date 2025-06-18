@@ -119,7 +119,7 @@ if ($Arch -eq "x86_64")
     if ($HostArch -ne "x64") {
         throw "Cross-compilation to $Arch is not supported on $HostArch host."
     }
-    $ArchArgs += "--build_wheel", "--skip_onnx_tests"
+    $ArchArgs += "--build_wheel"
 } else {
     $ArchArgs += "--$Arch"
 }
