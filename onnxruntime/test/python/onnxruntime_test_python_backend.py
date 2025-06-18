@@ -22,12 +22,6 @@ class TestBackend(unittest.TestCase):
         output_expected = np.array([[1.0, 4.0], [9.0, 16.0], [25.0, 36.0]], dtype=np.float32)
         np.testing.assert_allclose(output_expected, res[0], rtol=1e-05, atol=1e-08)
 
-    @unittest.skipIf(
-        platform.uname().system == "Windows"
-        and "QNNExecutionProvider" in onnxrt.get_available_providers()
-        and platform.machine().lower() in ["x86", "amd64", "i386"],
-        "Test hangs indefinitely with QAIRT Windows x86 2.33+",
-    )
     def test_allocation_plan_works_with_only_execute_path_to_fetches_option(self):
         """
                (inp0)  (inp1)
