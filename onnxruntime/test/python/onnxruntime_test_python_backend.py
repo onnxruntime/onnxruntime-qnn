@@ -2,7 +2,6 @@
 # Licensed under the MIT License.
 
 # -*- coding: UTF-8 -*-
-import platform
 import unittest
 
 import numpy as np
