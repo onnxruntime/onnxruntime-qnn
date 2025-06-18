@@ -45,7 +45,7 @@ def qnn_preprocess_model(
     Args:
         model_input: Path to the input model file or ModelProto.
         model_output: Path the output model file, which is only created if this method returns True.
-        exclude_initializer_from_input: True if initializer should be removed from input. Defaults to false.
+        exclude_initializer_from_input: True if initializer should be excluded from input. Defaults to false.
         fuse_layernorm: True if ReduceMean sequences should be fused into LayerNormalization nodes.
             Defaults to False.
         save_as_external_data: True if output model should be saved with external data. Defaults to false.
@@ -103,9 +103,9 @@ def qnn_preprocess_model(
         fix_output_shapes(onnx_model.model)
         modified = True
 
-    # Remove initializer from input if model.ir_version >= 4
+    # Exclude initializer from input if model.ir_version >= 4
     if exclude_initializer_from_input:
-        modified = remove_initializer_from_input(onnx_model.model) or modified
+        modified |= remove_initializer_from_input(onnx_model.model)
 
     # Fuse Erf sequence into a single Gelu
     fusion_gelu = FusionGelu(onnx_model)
