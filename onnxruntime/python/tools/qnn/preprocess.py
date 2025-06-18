@@ -126,7 +126,7 @@ def qnn_preprocess_model(
             Defaults to None.
         dynamic_input_shapes: A list of tuples specifying model input name to and its static shape in comma seprated
             format, for example: [('input', '1,3,256,256')]. Defaults to None.
-        exclude_initializer_from_input: True if initializer should be excluded from input. Defaults to false.
+        exclude_initializer_from_input: A bool specifying whether to exclude initializer from input. Defaults to False.
 
     Returns:
         A bool indicating whether the model is modified.

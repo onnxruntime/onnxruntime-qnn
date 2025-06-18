@@ -45,7 +45,8 @@ def qnn_preprocess_model(
     Args:
         model_input: Path to the input model file or ModelProto.
         model_output: Path the output model file, which is only created if this method returns True.
-        exclude_initializer_from_input: True if initializer should be excluded from input. Defaults to false.
+        exclude_initializer_from_input: A bool specifying whether to exclude initializer from input.
+            Defaults to False.
         fuse_layernorm: True if ReduceMean sequences should be fused into LayerNormalization nodes.
             Defaults to False.
         save_as_external_data: True if output model should be saved with external data. Defaults to false.
