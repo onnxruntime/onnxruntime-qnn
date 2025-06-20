@@ -262,9 +262,10 @@ Status ResizeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_w
   const std::string transformation_mode = GetOnnxAttr(node_helper, onnx_coord_transf_mode_attr);
   const std::string nearest_mode = GetOnnxAttr(node_helper, onnx_nearest_mode_attr);
   const bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
+  const bool is_gpu_backend = IsGpuBackend(qnn_model_wrapper.GetQnnBackendType());
   std::string qnn_op_type = "Resize";
 
-  if (is_npu_backend && input_rank == 4 && interp_mode == "nearest") {
+  if ((is_npu_backend || is_gpu_backend) && input_rank == 4 && interp_mode == "nearest") {
     // Translate Resize with
     // {input_rank: 4, mode: "nearest", coordinate_transformation_mode: XXX} to
     // QNN's ResizeNearestNeighbor operator on the HTP backend. QNN ResizeNearestNeighbor
@@ -288,8 +289,7 @@ Status ResizeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_w
                                          QNN_OP_RESIZE_NEAREST_NEIGHBOR_PARAM_HALF_PIXEL_CENTERS, qnn_half_pixel);
     param_tensor_names.push_back(qnn_half_pixel_param.GetParamTensorName());
     qnn_model_wrapper.AddParamWrapper(std::move(qnn_half_pixel_param));
-  } else if (is_npu_backend && input_rank == 4 && interp_mode == "linear" &&
-             transformation_mode != "pytorch_half_pixel") {
+  } else if ((is_npu_backend || is_gpu_backend) && input_rank == 4 && interp_mode == "linear" && transformation_mode != "pytorch_half_pixel") {
     // Translate Resize with
     // {input_rank: 4, mode: "linear", coordinate_transformation_mode: XXX} to
     // QNN's ResizeBilinear operator on the HTP backend. QNN ResizeBilinear seems to be faster than QNN Resize on
