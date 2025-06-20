@@ -783,6 +783,8 @@ class DefaultWeightOnlyQuantizer:
         block_size = self.config.block_size
         k_blocks = (rows + block_size - 1) // block_size
 
+        pack_size = 4 if self.config.bits == 2 else 2 if self.config.bits == 4 else 1
+
         if self.config.quant_format == QuantFormat.QOperator:
             blob_size = (block_size + kpack - 1) // kpack
             padded_rows = k_blocks * block_size
@@ -1163,6 +1165,7 @@ class MatMulNBitsQuantizer:
     def __init__(
         self,
         model: ModelProto | str,
+        bits: int,
         block_size: int = 128,
         is_symmetric: bool = False,
         accuracy_level: int | None = None,
@@ -1177,6 +1180,7 @@ class MatMulNBitsQuantizer:
             nodes_to_exclude = []
         self.model = ONNXModel(onnx.load(model)) if isinstance(model, str) else ONNXModel(model)
         self.model_path = model if isinstance(model, str) else None
+        self.bits = bits
         self.block_size = block_size
         self.is_symmetric = is_symmetric
         self.accuracy_level = accuracy_level
@@ -1186,6 +1190,7 @@ class MatMulNBitsQuantizer:
 
         if algo_config is None:
             algo_config = DefaultWeightOnlyQuantConfig(
+                bits=bits,
                 block_size=block_size,
                 is_symmetric=is_symmetric,
                 accuracy_level=accuracy_level,
@@ -1507,6 +1512,7 @@ if __name__ == "__main__":
         )
     elif args.quant_method == "default":
         quant_config = DefaultWeightOnlyQuantConfig(
+            bits=args.bits,
             block_size=args.block_size,
             is_symmetric=args.symmetric,
             accuracy_level=args.accuracy_level,
@@ -1546,6 +1552,7 @@ if __name__ == "__main__":
 
     quant = MatMulNBitsQuantizer(
         model=model,
+        bits=args.bits,
         accuracy_level=args.accuracy_level,
         nodes_to_exclude=args.nodes_to_exclude,
         nodes_to_include=args.nodes_to_include,

@@ -262,6 +262,62 @@ QNBitGemmPerGemmWorkspaceAlignment(
     }
 }
 
+size_t
+Q2BitGemmPackQuantBDataSize(
+    size_t /*N*/,
+    size_t /*K*/,
+    size_t /*BlkLen*/,
+    bool HasZeroPoint,
+    MLAS_QNBIT_GEMM_COMPUTE_TYPE /*ComputeType*/
+)
+{
+    return 0;
+}
+
+void
+SQ2BitGemmPackQuantBData(
+    size_t /*N*/,
+    size_t /*K*/,
+    size_t /*BlkLen*/,
+    MLAS_QNBIT_GEMM_COMPUTE_TYPE /* ComputeType*/,
+    const std::byte* /*QuantBDataBegin*/,
+    std::byte* /*PackedQuantBDataBegin*/,
+    MLAS_THREADPOOL* /*ThreadPool*/
+)
+{
+}
+
+size_t
+Q2BitGemmPerGemmWorkspaceSize(
+    size_t /*M*/,
+    size_t /*N*/,
+    size_t /*K*/,
+    size_t /*BlkLen*/,
+    MLAS_QNBIT_GEMM_COMPUTE_TYPE /*ComputeType*/
+)
+{
+    return 0;
+}
+
+size_t
+SQ2BitGemmKernel_CompInt8_avx2(
+    size_t /*BlkLen*/,
+    const std::byte* /*QuantA*/,
+    const std::byte* /*QuantBData*/,
+    const float* /*QuantBScale*/,
+    const std::byte* /*QuantBZeroPoint*/,
+    float* /*C*/,
+    size_t /*CountM*/,
+    size_t /*CountN*/,
+    size_t /*CountK*/,
+    size_t /*BlockCountK*/,
+    size_t /*ldc*/,
+    const float* /*Bias*/
+)
+{
+    return 0;
+}
+
 }  // namespace
 
 bool
@@ -295,6 +351,9 @@ GetMlasQNBitGemmDispatchNeon(
     static const MLAS_QNBIT_GEMM_DISPATCH MlasQNBitGemmDispatchNeon = [&]() {
         MLAS_QNBIT_GEMM_DISPATCH d;
 
+        d.Q2BitGemmPackQuantBDataSize = sqnbitgemm_neon::Q2BitGemmPackQuantBDataSize;
+        d.SQ2BitGemmPackQuantBData = sqnbitgemm_neon::SQ2BitGemmPackQuantBData;
+
         d.Q4BitGemmPackQuantBDataSize = sqnbitgemm_neon::Q4BitGemmPackQuantBDataSize;
         d.SQ4BitGemmPackQuantBData = sqnbitgemm_neon::SQ4BitGemmPackQuantBData;
         d.SQ4BitGemmPackQuantBDataAndBlkSum = sqnbitgemm_neon::SQ4BitGemmPackQuantBDataAndBlkSum;
@@ -306,6 +365,7 @@ GetMlasQNBitGemmDispatchNeon(
         d.SQ4BitBlkDequantBForSgemm_CompFp32 = sqnbitgemm_neon::SQ4BitBlkDequantBForSgemm_CompFp32;
 
         if (InitializeWithDotSupport) {
+            d.SQ2BitGemmKernel_CompInt8 = sqnbitgemm_neon::SQ2BitGemmKernel_CompInt8_avx2;
             d.SQ4BitGemmKernel_CompInt8 = sqnbitgemm_neon::SQ4BitGemmKernel_CompInt8;
             d.QuantizeARow_CompInt8 = sqnbitgemm_neon::QuantizeARow_CompInt8;
             d.UsePacked_CompInt8 = sqnbitgemm_neon::UsePacked_CompInt8;

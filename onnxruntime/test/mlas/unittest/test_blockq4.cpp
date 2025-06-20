@@ -32,6 +32,9 @@ int SetElem(int v, int idx, int value) {
   return v;
 }
 
+constexpr int Q2Bits = 2;
+constexpr int Q4Bits = 4;
+
 template <typename T, int qbits>
 class MlasBlockwiseQdqTest : public MlasTestBase {
  private:
@@ -62,6 +65,7 @@ class MlasBlockwiseQdqTest : public MlasTestBase {
     return std::abs(va - vb) < err + std::abs(va) * rel;
   }
 
+  template<int qbits>
   void Test(int rows, int columns, int block_size, bool columnwise, bool symmetric) {
     constexpr int packSize = 8 / qbits;
     T* input = FpBuf.GetFilledBuffer(rows * columns, [this](T* start, size_t size) {
@@ -155,6 +159,13 @@ class MlasBlockwiseQdqTest : public MlasTestBase {
             ASSERT_EQ(GetElem<qbits>(qdq_weights_T[idx], l), GetElem<qbits>(elements[idx], l))
                 << ", qdq index=[" << r + l << "x" << c << "], shape=[" << rows << "x" << columns
                 << "] block: " << block_size << ", symmetric: " << symmetric << ", columnwise: " << columnwise;
+            if constexpr (qbits == 4) {
+              if (columnwise) {
+                ASSERT_EQ(qdq_weights_T[idx] >> 4, elements[idx] >> 4)
+                    << ", index=[" << r + 1 << "x" << c << "], shape=[" << rows << "x" << columns
+                    << "] block: " << block_size << ", symmetric: " << symmetric << ", columnwise: " << columnwise;
+              }
+            }
           }
         }
       }
@@ -176,6 +187,11 @@ class MlasBlockwiseQdqTest : public MlasTestBase {
             ASSERT_EQ(GetElem<qbits>(qdq_zp_T[idx], l), GetElem<qbits>(zp[idx], l))
                 << ", qdq index=" << r + l << "x" << c << ", shape=[" << rows << "x" << columns
                 << "] block: " << block_size << ", symmetric: " << symmetric << ", columnwise: " << columnwise;
+            if (columnwise) {
+              ASSERT_EQ(qdq_zp_T[idx] >> 4, zp[idx] >> 4)
+                  << ", index=" << r + 1 << "x" << c << ", shape=[" << rows << "x" << columns
+                  << "] block: " << block_size << ", symmetric: " << symmetric << ", columnwise: " << columnwise;
+            }
           }
         }
       }
@@ -188,44 +204,78 @@ class MlasBlockwiseQdqTest : public MlasTestBase {
     return suite_name.c_str();
   }
 
-  void ExecuteShort(void) override {
-    Test(20, 1, 32, true, false);
-    Test(20, 1, 32, true, true);
-    Test(1, 20, 32, false, false);
-    Test(1, 20, 32, false, true);
-    Test(52, 1, 32, true, false);
-    Test(52, 1, 32, true, true);
-    Test(1, 52, 32, false, false);
-    Test(1, 52, 32, false, true);
-    Test(20, 3, 32, true, false);
-    Test(20, 3, 32, true, true);
-    Test(3, 20, 32, false, false);
-    Test(3, 20, 32, false, true);
-    Test(52, 3, 32, true, false);
-    Test(52, 3, 32, true, true);
-    Test(3, 52, 32, false, false);
-    Test(3, 52, 32, false, true);
-    Test(52, 3, 64, true, false);
-    Test(52, 3, 64, true, true);
-    Test(3, 52, 64, false, false);
-    Test(3, 52, 64, false, true);
-    Test(32 * 9 + 17, 41, 32, true, false);
-    Test(32 * 9 + 17, 41, 32, true, true);
-    Test(41, 32 * 9 + 17, 32, false, false);
-    Test(41, 32 * 9 + 17, 32, false, true);
-    Test(32 * 9 + 17, 41, 64, true, false);
-    Test(32 * 9 + 17, 41, 64, true, true);
-    Test(41, 32 * 9 + 17, 64, false, false);
-    Test(41, 32 * 9 + 17, 64, false, true);
-    Test(32 * 15 + 17, 63, 128, true, false);
-    Test(32 * 15 + 17, 63, 128, true, true);
-    Test(63, 32 * 15 + 17, 128, false, false);
-    Test(63, 32 * 15 + 17, 128, false, true);
+  void ExecuteShort(void) {
+    // only support columnwise = true with qbits=2
+    Test<Q2Bits>(20, 1, 32, true, false);
+    Test<Q2Bits>(20, 1, 32, true, true);
+    //Test<Q2Bits>(1, 20, 32, false, false);
+    //Test<Q2Bits>(1, 20, 32, false, true);
+    Test<Q2Bits>(52, 1, 32, true, false);
+    Test<Q2Bits>(52, 1, 32, true, true);
+    //Test<Q2Bits>(1, 52, 32, false, false);
+    //Test<Q2Bits>(1, 52, 32, false, true);
+    Test<Q2Bits>(20, 3, 32, true, false);
+    Test<Q2Bits>(20, 3, 32, true, true);
+    //Test<Q2Bits>(3, 20, 32, false, false);
+    //Test<Q2Bits>(3, 20, 32, false, true);
+    Test<Q2Bits>(52, 3, 32, true, false);
+    Test<Q2Bits>(52, 3, 32, true, true);
+    //Test<Q2Bits>(3, 52, 32, false, false);
+    //Test<Q2Bits>(3, 52, 32, false, true);
+    Test<Q2Bits>(52, 3, 64, true, false);
+    Test<Q2Bits>(52, 3, 64, true, true);
+    //Test<Q2Bits>(3, 52, 64, false, false);
+    //Test<Q2Bits>(3, 52, 64, false, true);
+    Test<Q2Bits>(32 * 9 + 17, 41, 32, true, false);
+    Test<Q2Bits>(32 * 9 + 17, 41, 32, true, true);
+    //Test<Q2Bits>(41, 32 * 9 + 17, 32, false, false);
+    //Test<Q2Bits>(41, 32 * 9 + 17, 32, false, true);
+    Test<Q2Bits>(32 * 9 + 17, 41, 64, true, false);
+    Test<Q2Bits>(32 * 9 + 17, 41, 64, true, true);
+    //Test<Q2Bits>(41, 32 * 9 + 17, 64, false, false);
+    //Test<Q2Bits>(41, 32 * 9 + 17, 64, false, true);
+    Test<Q2Bits>(32 * 15 + 17, 63, 128, true, false);
+    Test<Q2Bits>(32 * 15 + 17, 63, 128, true, true);
+    //Test<Q2Bits>(63, 32 * 15 + 17, 128, false, false);
+    //Test<Q2Bits>(63, 32 * 15 + 17, 128, false, true);
 
-    Test(256, 256, 32, true, false);
-    Test(256, 256, 32, true, true);
-    Test(256, 256, 32, false, false);
-    Test(256, 256, 32, false, true);
+    Test<Q4Bits>(20, 1, 32, true, false);
+    Test<Q4Bits>(20, 1, 32, true, true);
+    Test<Q4Bits>(1, 20, 32, false, false);
+    Test<Q4Bits>(1, 20, 32, false, true);
+    Test<Q4Bits>(52, 1, 32, true, false);
+    Test<Q4Bits>(52, 1, 32, true, true);
+    Test<Q4Bits>(1, 52, 32, false, false);
+    Test<Q4Bits>(1, 52, 32, false, true);
+    Test<Q4Bits>(20, 3, 32, true, false);
+    Test<Q4Bits>(20, 3, 32, true, true);
+    Test<Q4Bits>(3, 20, 32, false, false);
+    Test<Q4Bits>(3, 20, 32, false, true);
+    Test<Q4Bits>(52, 3, 32, true, false);
+    Test<Q4Bits>(52, 3, 32, true, true);
+    Test<Q4Bits>(3, 52, 32, false, false);
+    Test<Q4Bits>(3, 52, 32, false, true);
+    Test<Q4Bits>(52, 3, 64, true, false);
+    Test<Q4Bits>(52, 3, 64, true, true);
+    Test<Q4Bits>(3, 52, 64, false, false);
+    Test<Q4Bits>(3, 52, 64, false, true);
+    Test<Q4Bits>(32 * 9 + 17, 41, 32, true, false);
+    Test<Q4Bits>(32 * 9 + 17, 41, 32, true, true);
+    Test<Q4Bits>(41, 32 * 9 + 17, 32, false, false);
+    Test<Q4Bits>(41, 32 * 9 + 17, 32, false, true);
+    Test<Q4Bits>(32 * 9 + 17, 41, 64, true, false);
+    Test<Q4Bits>(32 * 9 + 17, 41, 64, true, true);
+    Test<Q4Bits>(41, 32 * 9 + 17, 64, false, false);
+    Test<Q4Bits>(41, 32 * 9 + 17, 64, false, true);
+    Test<Q4Bits>(32 * 15 + 17, 63, 128, true, false);
+    Test<Q4Bits>(32 * 15 + 17, 63, 128, true, true);
+    Test<Q4Bits>(63, 32 * 15 + 17, 128, false, false);
+    Test<Q4Bits>(63, 32 * 15 + 17, 128, false, true);
+
+    Test<Q4Bits>(256, 256, 32, true, false);
+    Test<Q4Bits>(256, 256, 32, true, true);
+    Test<Q4Bits>(256, 256, 32, false, false);
+    Test<Q4Bits>(256, 256, 32, false, true);
   }
 
   MlasBlockwiseQdqTest() = default;
