@@ -104,11 +104,11 @@ class MlasSQTernaryBitGemmTest : public MlasTestBase {
 
     // quantize B
     uint8_t* QuantBData = nullptr;
-    size_t QuantBDataSizeInBytes = QTernaryBitGemmPerGemmWorkspaceSize(M, N, K, QK_K, SQNBIT_CompInt8);
+    size_t QuantBDataSizeInBytes = QTernaryBitGemmPerGemmWorkspaceSize(M, N, K, QK_K, false, SQNBIT_CompInt8);
     QuantBData = BufferQuantBData.GetBuffer(QuantBDataSizeInBytes);
     MlasQuantizeBlockwise_Q1_0(QuantBData, B, static_cast<int>(K), static_cast<int>(N));
     void* Workspace = nullptr;
-    const size_t WorkspaceSize = MlasQNBitGemmBatchWorkspaceSize(M, N, K, 1, 0, QK_K, SQNBIT_CompInt8, TQ1_0);
+    const size_t WorkspaceSize = MlasQNBitGemmBatchWorkspaceSize(M, N, K, 1, 0, QK_K, false, SQNBIT_CompInt8, TQ1_0);
     Workspace = BufferWorkspace.GetBuffer(WorkspaceSize);
 
 #if 1

@@ -174,6 +174,7 @@ QTernaryBitGemmPerGemmWorkspaceSize(
     size_t N,
     size_t K,
     size_t BlkLen,
+    bool HasZeroPoint,
     MLAS_QNBIT_GEMM_COMPUTE_TYPE ComputeType
 );
     /**

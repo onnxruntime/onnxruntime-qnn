@@ -206,7 +206,7 @@ MlasQNBitGemmBatchWorkspaceSize(
 )
 {
     if (weight_quantization_type == TQ1_0) {
-        const size_t PerGemmWorkspaceStride = QTernaryBitGemmPerGemmWorkspaceSize(M, N, K, BlkLen, ComputeType);
+        const size_t PerGemmWorkspaceStride = QTernaryBitGemmPerGemmWorkspaceSize(M, N, K, BlkLen, HasZeroPoint, ComputeType);
         const size_t WorkspaceSize = BatchN * PerGemmWorkspaceStride;
         return WorkspaceSize;
     }

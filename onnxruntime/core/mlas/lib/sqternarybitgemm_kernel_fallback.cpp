@@ -148,6 +148,7 @@ size_t QTernaryBitGemmPerGemmWorkspaceSize(
     size_t /*N*/,
     size_t K,
     size_t BlkLen,
+    bool HasZeroPoint,
     MLAS_QNBIT_GEMM_COMPUTE_TYPE ComputeType
 )
 {
@@ -165,6 +166,7 @@ size_t QTernaryBitGemmPackQuantBDataSize(
     size_t N,
     size_t K,
     size_t BlkLen,
+    bool HasZeroPoint,
     MLAS_QNBIT_GEMM_COMPUTE_TYPE ComputeType
 )
 {
@@ -243,7 +245,7 @@ const MLAS_QNBIT_GEMM_DISPATCH MlasSQTernaryBitGemmDispatchFallback = []() {
 
     d.Q2BitGemmPackQuantBDataSize = QTernaryBitGemmPackQuantBDataSize;
     d.SQ2BitGemmPackQuantBData = nullptr;
-    d.Q2BitGemmPerGemmWorkspaceSize = QTernaryBitGemmPerGemmWorkspaceSize;
+    d.QNBitGemmPerGemmWorkspaceSize = QTernaryBitGemmPerGemmWorkspaceSize;
     d.SQ2BitGemmKernel_CompInt8 = SQTernaryBitGemmKernel_TQ1_0_Q8_K; // Not implemented in fallback
     d.QuantizeARow_CompInt8 = QuantizeARow_Q8_K;
 
