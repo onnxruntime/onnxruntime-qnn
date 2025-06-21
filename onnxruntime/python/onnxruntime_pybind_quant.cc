@@ -38,9 +38,8 @@ template <typename T, int qbits>
 void QuantizeMatMulNBitsBlockwise(
     py::array_t<uint8_t> dst,          // shape: [ N, block_per_K, block_blob_size ]
     py::array_t<T> src,                // shape: [K, N]
-    int32_t bits,
     py::array_t<T> scale,              // shape: [N, block_per_K]
-    py::array_t<uint8_t> zero_points,  // shape: [N, block_per_K] if bits > 4 else [N, (block_per_K + 1) / 2]
+    py::array_t<uint8_t> zero_points,  // shape: [N, block_per_K] if qbits > 4 else [N, (block_per_K + 1) / 2]
     int32_t block_size,
     int32_t N,
     int32_t K,
@@ -54,30 +53,29 @@ void QuantizeMatMulNBitsBlockwise(
   py::buffer_info scale_buf = scale.request();
   py::buffer_info zp_buf = zero_points.request();
 
-  if (bits != 2 && bits != 4) {
+  if constexpr (qbits != 2 && qbits != 4) {
     ORT_THROW("Only support 2 and 4 bit quantization.");
   }
   MlasQuantizeBlockwise<T, qbits>(
-      reinterpret_cast<uint8_t*>(dst_buf.ptr),
-      reinterpret_cast<T*>(scale_buf.ptr),
-      is_symmetric ? nullptr : reinterpret_cast<uint8_t*>(zp_buf.ptr),
-      reinterpret_cast<const T*>(src_buf.ptr),
-      block_size,
-      true,
-      K,
-      N,
-      N,
-      tp.get());
-  }
+    reinterpret_cast<uint8_t*>(dst_buf.ptr),
+    reinterpret_cast<T*>(scale_buf.ptr),
+    is_symmetric ? nullptr : reinterpret_cast<uint8_t*>(zp_buf.ptr),
+    reinterpret_cast<const T*>(src_buf.ptr),
+    block_size,
+    true,
+    K,
+    N,
+    N,
+    tp.get()
+  );
 }
 
-template <typename T>
-bool QuantizeQDQMatMul4BitsBlockwise(
+template <typename T, int qbits>
+bool QuantizeQDQMatMulNBitsBlockwise(
     py::array_t<uint8_t> dst,          // shape: [K, N / 2]
     py::array_t<T> src,                // shape: [K, N]
     py::array_t<T> scale,              // shape: [block_per_K, N]
     py::array_t<uint8_t> zero_points,  // shape: [block_per_K, N / 2]
-    int32_t bits,
     int32_t quant_block_size,
     int32_t N,
     int32_t K,
@@ -91,34 +89,23 @@ bool QuantizeQDQMatMul4BitsBlockwise(
   py::buffer_info scale_buf = scale.request();
   py::buffer_info zp_buf = zero_points.request();
 
-  if (bits == 2) {
-    if constexpr (std::is_same<T, MLFloat16>::value) {
-      assert(false);
-    }
-    return MlasQDQQuantizeBlockwise<float, 2>(
-      reinterpret_cast<const float*>(src_buf.ptr),
-      reinterpret_cast<float*>(scale_buf.ptr),
-      is_symmetric ? nullptr : reinterpret_cast<uint8_t*>(zp_buf.ptr),
-      reinterpret_cast<uint8_t*>(dst_buf.ptr),
-      true,
-      K,
-      N,
-      quant_block_size,
-      tp.get());
-  } else if (bits == 4) {
-    return MlasQDQQuantizeBlockwise<T, 4>(
-      reinterpret_cast<const T*>(src_buf.ptr),
-      reinterpret_cast<T*>(scale_buf.ptr),
-      is_symmetric ? nullptr : reinterpret_cast<uint8_t*>(zp_buf.ptr),
-      reinterpret_cast<uint8_t*>(dst_buf.ptr),
-      true,
-      K,
-      N,
-      quant_block_size,
-      tp.get());
-  } else {
+  if constexpr (qbits != 2 && qbits != 4) {
     ORT_THROW("Only support 2 and 4 bit quantization.");
   }
+  if constexpr (qbits == 2 && std::is_same<T, MLFloat16>::value) {
+    ORT_THROW("2 bits have not yet supported MLFloat16");
+  }
+  return MlasQDQQuantizeBlockwise<T, qbits>(
+    reinterpret_cast<const T*>(src_buf.ptr),
+    reinterpret_cast<T*>(scale_buf.ptr),
+    is_symmetric ? nullptr : reinterpret_cast<uint8_t*>(zp_buf.ptr),
+    reinterpret_cast<uint8_t*>(dst_buf.ptr),
+    true,
+    K,
+    N,
+    quant_block_size,
+    tp.get()
+  );
 }
 
 template <typename T>
@@ -156,8 +143,10 @@ void CreateQuantPybindModule(py::module& m) {
   m.def("quantize_matmul_8bits", &QuantizeMatMulNBitsBlockwise<MLFloat16, 8>);
   m.def("quantize_matmul_bnb4", &QuantizeMatMulBnb4Blockwise<float>);
   m.def("quantize_matmul_bnb4", &QuantizeMatMulBnb4Blockwise<MLFloat16>);
-  m.def("quantize_qdq_matmul_4bits", &QuantizeQDQMatMul4BitsBlockwise<float>);
-  m.def("quantize_qdq_matmul_4bits", &QuantizeQDQMatMul4BitsBlockwise<MLFloat16>);
+  m.def("quantize_qdq_matmul_4bits", &QuantizeQDQMatMulNBitsBlockwise<float, 4>);
+  m.def("quantize_qdq_matmul_4bits", &QuantizeQDQMatMulNBitsBlockwise<MLFloat16, 4>);
+  m.def("quantize_qdq_matmul_2bits", &QuantizeQDQMatMulNBitsBlockwise<float, 2>);
+  m.def("quantize_qdq_matmul_2bits", &QuantizeQDQMatMulNBitsBlockwise<MLFloat16, 2>);
 }
 
 }  // namespace python
