@@ -325,7 +325,7 @@ QTernaryBitGemmPackQuantBDataSize(
     size_t N,
     size_t K,
     size_t BlkLen,
-    bool HasZeroPoint,
+    bool,
     MLAS_QNBIT_GEMM_COMPUTE_TYPE ComputeType
 )
 {
@@ -343,7 +343,7 @@ QTernaryBitGemmPerGemmWorkspaceSize(
     size_t /*N*/,
     size_t K,
     size_t BlkLen,
-    bool HasZeroPoint,
+    bool,
     MLAS_QNBIT_GEMM_COMPUTE_TYPE ComputeType
 )
 {

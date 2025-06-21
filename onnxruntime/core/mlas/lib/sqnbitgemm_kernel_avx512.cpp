@@ -496,8 +496,6 @@ const MLAS_QNBIT_GEMM_DISPATCH MlasSQNBitGemmDispatchAvx512 = []() {
     d.Q2BitGemmPackQuantBDataSize = Q2BitGemmPackQuantBDataSize;
     d.SQ2BitGemmPackQuantBData = SQ2BitGemmPackQuantBData;
 
-    d.Q2BitGemmPerGemmWorkspaceSize = Q2BitGemmPerGemmWorkspaceSize;
-
     d.SQ2BitGemmKernel_CompInt8 = SQ2BitGemmKernel_CompInt8_avx2;
     d.QuantizeARow_CompInt8 = QuantizeARow_CompInt8;
 
