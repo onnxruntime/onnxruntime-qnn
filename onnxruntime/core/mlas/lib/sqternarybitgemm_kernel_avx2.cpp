@@ -367,12 +367,12 @@ QTernaryBitGemmPerGemmWorkspaceSize(
 const MLAS_QNBIT_GEMM_DISPATCH MlasSQTernaryBitGemmDispatchAvx2 = []() {
     MLAS_QNBIT_GEMM_DISPATCH d;
 
-    d.Q2BitGemmPackQuantBDataSize = QTernaryBitGemmPackQuantBDataSize;
-    d.SQ2BitGemmPackQuantBData = nullptr;
+    // d.Q2BitGemmPackQuantBDataSize = QTernaryBitGemmPackQuantBDataSize;
+    // d.SQ2BitGemmPackQuantBData = nullptr;
 
     d.QNBitGemmPerGemmWorkspaceSize = QTernaryBitGemmPerGemmWorkspaceSize;
 
-    d.SQ2BitGemmKernel_CompInt8 = SQTernaryBitGemmKernel_TQ1_0_Q8_K;
+    // d.SQ2BitGemmKernel_CompInt8 = SQTernaryBitGemmKernel_TQ1_0_Q8_K;
     d.QuantizeARow_CompInt8 = QuantizeARow_Q8_K;
 
     return d;

@@ -29,8 +29,6 @@ Abstract:
 #include "sqnbitgemm_m1_sym_kernel_avx2_int8_blklen32.h"
 #include "sqnbitgemm_m1_sym_kernel_avx2_int8_blklen64.h"
 
-#include "sqnbitgemm_bitnet_kernel_avx2.h"
-
 void
 MlasCastF16ToF32KernelAvx2(const unsigned short* src_fp16, float* dst_fp32, size_t size)
 {
@@ -1460,12 +1458,6 @@ const MLAS_QNBIT_GEMM_DISPATCH MlasSQNBitGemmDispatchAvx2 = []() {
     d.SQ8BitGemmKernel_BlkSum_CompInt8 = SQ8BitGemmKernel_BlkSum_CompInt8_avx2<false>;
     d.QuantizeARowComputeBlkSum_CompInt8 = QuantizeARow_CompInt8_avx2;
 
-    d.Q2BitGemmPackQuantBDataSize = Q2BitGemmPackQuantBDataSize;
-    d.SQ2BitGemmPackQuantBData = SQ2BitGemmPackQuantBData;
-
-    d.SQ2BitGemmKernel_CompInt8 = SQ2BitGemmKernel_CompInt8_avx2;
-    d.QuantizeARow_CompInt8 = QuantizeARow_CompInt8;
-
     return d;
 }();
 
@@ -1487,13 +1479,6 @@ const MLAS_QNBIT_GEMM_DISPATCH MlasSQNBitGemmDispatchAvx2vnni = []() {
     d.SQ4BitGemmKernel_BlkSum_CompInt8 = SQ4BitGemmKernel_BlkSum_CompInt8_avx2vnni;
     d.SQ8BitGemmKernel_BlkSum_CompInt8 = SQ8BitGemmKernel_BlkSum_CompInt8_avx2<true>;
     d.QuantizeARowComputeBlkSum_CompInt8 = QuantizeARow_CompInt8_avx2;
-
-    // change funcions if implementation are different from avx2
-    d.Q2BitGemmPackQuantBDataSize = Q2BitGemmPackQuantBDataSize;
-    d.SQ2BitGemmPackQuantBData = SQ2BitGemmPackQuantBData;
-
-    d.SQ2BitGemmKernel_CompInt8 = SQ2BitGemmKernel_CompInt8_avx2;
-    d.QuantizeARow_CompInt8 = QuantizeARow_CompInt8;
 
     return d;
 }();

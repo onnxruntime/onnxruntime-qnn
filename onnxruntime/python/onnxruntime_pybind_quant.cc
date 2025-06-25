@@ -145,8 +145,8 @@ void CreateQuantPybindModule(py::module& m) {
   m.def("quantize_matmul_bnb4", &QuantizeMatMulBnb4Blockwise<MLFloat16>);
   m.def("quantize_qdq_matmul_4bits", &QuantizeQDQMatMulNBitsBlockwise<float, 4>);
   m.def("quantize_qdq_matmul_4bits", &QuantizeQDQMatMulNBitsBlockwise<MLFloat16, 4>);
-  m.def("quantize_qdq_matmul_2bits", &QuantizeQDQMatMulNBitsBlockwise<float, 2>);
-  m.def("quantize_qdq_matmul_2bits", &QuantizeQDQMatMulNBitsBlockwise<MLFloat16, 2>);
+  // m.def("quantize_qdq_matmul_2bits", &QuantizeQDQMatMulNBitsBlockwise<float, 2>);
+  // m.def("quantize_qdq_matmul_2bits", &QuantizeQDQMatMulNBitsBlockwise<MLFloat16, 2>);
 }
 
 }  // namespace python
