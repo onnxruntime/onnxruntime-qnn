@@ -196,3 +196,11 @@ Package.resolved
 .build/
 .swiftpm/
 repros/
+
+# Qualcomm-specific
+
+# GitHub Enterprise prevents us from uploading binaries
+*.dll
+*.exe
+*.jar
+*.mp3
