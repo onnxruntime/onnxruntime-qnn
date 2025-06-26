@@ -1819,12 +1819,12 @@ quantize_row_tq1_0_ref(const float* x, block_tq1_0* y, int64_t k)
             for (size_t m = 0; m < 32; ++m) {
                 uint8_t q = 0;
                 for (size_t n = 0; n < 5; ++n) {
-                    int xi = lroundf(x[m + n * 32] * id) + 1;  // -1, 0, 1 -> 0, 1, 2
+                    uint8_t xi = (uint8_t) (lroundf(x[m + n * 32] * id) + 1);  // -1, 0, 1 -> 0, 1, 2
                     q *= 3;
                     q += xi;
                 }
                 // ceiling division (243 == pow(3, 5))
-                q = ((uint16_t)q * 256 + (243 - 1)) / 243;
+                q = (uint8_t) (q * 256 + (243 - 1)) / 243;
                 y[i].qs[j + m] = q;
             }
             x += 5 * 32;
@@ -1834,12 +1834,12 @@ quantize_row_tq1_0_ref(const float* x, block_tq1_0* y, int64_t k)
             for (size_t m = 0; m < 16; ++m) {
                 uint8_t q = 0;
                 for (size_t n = 0; n < 5; ++n) {
-                    int xi = lroundf(x[m + n * 16] * id) + 1;  // -1, 0, 1 -> 0, 1, 2
+                    uint8_t xi = (uint8_t) lroundf(x[m + n * 16] * id) + 1;  // -1, 0, 1 -> 0, 1, 2
                     q *= 3;
                     q += xi;
                 }
                 // ceiling division (243 == pow(3, 5))
-                q = ((uint16_t)q * 256 + (243 - 1)) / 243;
+                q = (uint8_t) (q * 256 + (243 - 1)) / 243;
                 y[i].qs[j + m] = q;
             }
             x += 5 * 16;
@@ -1849,14 +1849,14 @@ quantize_row_tq1_0_ref(const float* x, block_tq1_0* y, int64_t k)
             uint8_t q = 0;
             for (size_t m = 0; m < 4; ++m) {
                 // -1, 0, 1 -> 0, 1, 2
-                int xi = lroundf(x[j + m * sizeof(y->qh)] * id) + 1;
+                uint8_t xi = (uint8_t) lroundf(x[j + m * sizeof(y->qh)] * id) + 1;
                 q *= 3;
                 q += xi;
             }
             // shift the first value to the most significant trit
             q *= 3;
             // ceiling division (243 == pow(3, 5))
-            q = ((uint16_t)q * 256 + (243 - 1)) / 243;
+            q = (uint8_t) (q * 256 + (243 - 1)) / 243;
             y[i].qh[j] = q;
         }
         x += 4 * sizeof(y->qh);
