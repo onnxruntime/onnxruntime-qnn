@@ -119,8 +119,7 @@ static Status ProcessIndicesInput(QnnModelWrapper& qnn_model_wrapper,
                                   const NodeUnitIODef& indices_input,
                                   int64_t input0_axis_dim,
                                   const logging::Logger& logger,
-                                  std::vector<std::string>& input_names,
-                                  bool do_op_validation) {
+                                  std::vector<std::string>& input_names) {
   const auto& input_name = indices_input.node_arg.Name();
 
   TensorInfo indices_info = {};
@@ -156,17 +155,7 @@ static Status ProcessIndicesInput(QnnModelWrapper& qnn_model_wrapper,
     ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
   }
 
-  // Insert QNN Cast op to convert dynamic indices from int64 to int32.
-  std::string indices_input_name(input_name);
-  if (indices_info.qnn_data_type == QNN_DATATYPE_INT_64) {
-    assert(!indices_info.is_initializer);
-
-    ORT_RETURN_IF_ERROR(qnn_model_wrapper.AddInt64CastNode(input_name, indices_input_name,
-                                                           std::move(cast_output_shape),
-                                                           do_op_validation));
-  }
-
-  input_names.push_back(indices_input_name);
+  input_names.push_back(input_name);
 
   return Status::OK();
 }
@@ -176,6 +165,8 @@ Status GatherOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                       const logging::Logger& logger,
                                       std::vector<std::string>& input_names,
                                       bool do_op_validation) const {
+  ORT_UNUSED_PARAMETER(do_op_validation);
+
   const auto& inputs = node_unit.Inputs();
   ORT_RETURN_IF(inputs.size() != 2, "QNN EP: ", node_unit.OpType(), " operator must have two inputs");
   ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
@@ -183,7 +174,7 @@ Status GatherOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   int64_t input0_axis_dim = 0;
   ORT_RETURN_IF_ERROR(GetInpu0AxisDimValue(qnn_model_wrapper, node_unit, /*default_axis*/ 0, input0_axis_dim));
 
-  return ProcessIndicesInput(qnn_model_wrapper, inputs[1], input0_axis_dim, logger, input_names, do_op_validation);
+  return ProcessIndicesInput(qnn_model_wrapper, inputs[1], input0_axis_dim, logger, input_names);
 }
 
 Status GatherOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,

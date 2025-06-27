@@ -370,7 +370,7 @@ Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrapper,
 
   // Common LSTM cell inputs
   const std::string null_tensor_name = "null_tensor";
-  QnnTensorWrapper null_tensor_wrapper(null_tensor_name, QNN_TENSOR_TYPE_NULL, QNN_DATATYPE_UNDEFINED,
+  QnnTensorWrapper null_tensor_wrapper(null_tensor_name, QNN_TENSOR_TYPE_NULL, QNN_DATATYPE_FLOAT_32,
                                        QnnQuantParamsWrapper(), std::vector<uint32_t>{0});
 
   qnn_model_wrapper.AddTensorWrapper(std::move(null_tensor_wrapper));
@@ -516,7 +516,7 @@ Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrapper,
                                                   input_tensor_infos[3].quant_param.Copy(), std::vector<uint32_t>(output_shape));
         ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(add_output_tensorwrapper)),
                           "QNN EP: Failed to add output tensor for inserted ElementWiseAdd node.");
-        ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_ELEMENT_WISE_ADD,
+        ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(qnn_lstm_bias_name[i], QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_ELEMENT_WISE_ADD,
                                                           std::move(add_input_names), {qnn_lstm_bias_name[i]}, {}, do_op_validation),
                           "Failed to create manually inserted ElementWiseAdd node.");
         qnn_lstm_input_names[qnn_input_indices[i]] = qnn_lstm_bias_name[i];
