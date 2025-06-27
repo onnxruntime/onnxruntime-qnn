@@ -14,8 +14,13 @@ from ....tools.onnx_model_utils import fix_output_shapes, make_input_shape_fixed
 from ...fusions import FusionGelu, FusionLayerNormalization
 from ...onnx_model import ONNXModel
 from ...quant_utils import save_and_reload_model_with_shape_infer
+from .fusion_depthtospace import FusionDepthToSpace
 from .fusion_lpnorm import FusionLpNormalization
 from .fusion_spacetodepth import FusionSpaceToDepth
+from .shape_nonzero import ShapeNonZero
+from .squash_identity import SquashIdentity
+from .squash_split import SquashSplit
+from .squash_where import SquashWhere
 
 
 def qnn_preprocess_model(
@@ -100,6 +105,16 @@ def qnn_preprocess_model(
         fix_output_shapes(onnx_model.model)
         modified = True
 
+    # Shape dynamic-shaped NonZero.
+    modified |= ShapeNonZero(onnx_model).apply()
+
+    # Squash Identity.
+    modified |= SquashIdentity(onnx_model).apply()
+    # Squash identity Split.
+    modified |= SquashSplit(onnx_model).apply()
+    # Squash static Where.
+    modified |= SquashWhere(onnx_model).apply()
+
     # Fuse Erf sequence into a single Gelu
     fusion_gelu = FusionGelu(onnx_model)
     if fusion_gelu.apply():
@@ -110,10 +125,10 @@ def qnn_preprocess_model(
     if fusion_lpnorm.apply():
         modified = True
 
+    # Fuse Reshape/Transpose sequence into a single DepthToSpace.
+    modified |= FusionDepthToSpace(onnx_model).apply()
     # Fuse Reshape/Transpose sequence into a single SpaceToDepth.
-    fusion_s2d = FusionSpaceToDepth(onnx_model)
-    if fusion_s2d.apply():
-        modified = True
+    modified |= FusionSpaceToDepth(onnx_model).apply()
 
     # Optionally, fuse ReduceMean sequence into a single LayerNormalization node.
     if fuse_layernorm:
@@ -158,7 +173,7 @@ def qnn_preprocess_model(
     if modified:
         onnx_model.topological_sort()
         onnx.save_model(
-            model,
+            onnx_model.model,
             model_output,
             save_as_external_data=save_as_external_data,
             all_tensors_to_one_file=all_tensors_to_one_file,
