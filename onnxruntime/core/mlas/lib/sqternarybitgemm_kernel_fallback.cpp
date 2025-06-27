@@ -243,10 +243,10 @@ size_t SQTernaryBitGemmKernel_TQ1_0_Q8_K(
 const MLAS_QNBIT_GEMM_DISPATCH MlasSQTernaryBitGemmDispatchFallback = []() {
     MLAS_QNBIT_GEMM_DISPATCH d;
 
-    d.Q2BitGemmPackQuantBDataSize = QTernaryBitGemmPackQuantBDataSize;
-    d.SQ2BitGemmPackQuantBData = nullptr;
+    // d.Q2BitGemmPackQuantBDataSize = QTernaryBitGemmPackQuantBDataSize;
+    // d.SQ2BitGemmPackQuantBData = nullptr;
     d.QNBitGemmPerGemmWorkspaceSize = QTernaryBitGemmPerGemmWorkspaceSize;
-    d.SQ2BitGemmKernel_CompInt8 = SQTernaryBitGemmKernel_TQ1_0_Q8_K; // Not implemented in fallback
+    // d.SQ2BitGemmKernel_CompInt8 = SQTernaryBitGemmKernel_TQ1_0_Q8_K; // Not implemented in fallback
     d.QuantizeARow_CompInt8 = QuantizeARow_Q8_K;
 
     return d;

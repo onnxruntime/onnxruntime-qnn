@@ -248,8 +248,9 @@ class SQNBitGemmShortExecuteTest : public MlasTestFixture<MlasSQTernaryBitGemmTe
 
  private:
   size_t M_, N_, K_;
-  MLAS_QNBIT_GEMM_COMPUTE_TYPE ComputeType_;
-  bool WithThreadpool_, Symmetric_, WithBias_;
+  // MLAS_QNBIT_GEMM_COMPUTE_TYPE ComputeType_;
+  // bool Symmetric_;
+  bool WithThreadpool_, WithBias_;
 };
 
 static size_t SQNBitGemmRegisterAllShortExecuteTests() {
