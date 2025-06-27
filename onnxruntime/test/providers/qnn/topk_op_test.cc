@@ -41,7 +41,9 @@ static void RunTopKTestOnCPU(const TestInputDef<DataType>& input_def,
                              const TestInputDef<int64_t>& k_def,
                              const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                              ExpectedEPNodeAssignment expected_ep_assignment,
-                             int opset = 19) {
+                             int opset = 19,
+                             logging::Severity log_severity = logging::Severity::kERROR,
+                             bool verify_outputs = true) {
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = "cpu";
@@ -49,7 +51,10 @@ static void RunTopKTestOnCPU(const TestInputDef<DataType>& input_def,
   RunQnnModelTest(BuildTopKTestCase<DataType>(input_def, k_def, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment);
+                  expected_ep_assignment,
+                  1e-5f /* fp32_abs_err */,
+                  log_severity,
+                  verify_outputs);
 }
 
 //
@@ -78,6 +83,17 @@ TEST_F(QnnCPUBackendTests, TopK_MinValues_Unsupported) {
                           TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                           {utils::MakeAttribute("largest", static_cast<int64_t>(0))},
                           ExpectedEPNodeAssignment::None);  // Should not be assigned to QNN EP.
+}
+
+// Test that TopK that returns non-sorted values is ignored by QNN EP..
+TEST_F(QnnCPUBackendTests, TopK_NonSortedValues) {
+  RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+                          TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
+                          {utils::MakeAttribute("sorted", static_cast<int64_t>(0))},
+                          ExpectedEPNodeAssignment::All,
+                          19 /* opset */,
+                          logging::Severity::kWARNING /* log_severity */,
+                          false /* verify_outputs */);
 }
 
 // Test TopK on CPU backend: top 2 largest floats from last axis
@@ -142,15 +158,14 @@ static void RunQDQTopKTestOnHTP(const TestInputDef<float>& input_def,
                                 const TestInputDef<int64_t>& k_def,
                                 const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                 ExpectedEPNodeAssignment expected_ep_assignment,
-                                int opset = 19,
-                                bool use_contrib_qdq = false) {
+                                int opset = 19) {
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
   auto f32_model_builder = BuildTopKTestCase<float>(input_def, k_def, attrs);
-  auto qdq_model_builder = BuildQDQTopKTestCase<QType>(input_def, k_def, attrs, use_contrib_qdq);
+  auto qdq_model_builder = BuildQDQTopKTestCase<QType>(input_def, k_def, attrs);
   TestQDQModelAccuracy(f32_model_builder,
                        qdq_model_builder,
                        provider_options,

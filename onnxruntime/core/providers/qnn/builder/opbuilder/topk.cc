@@ -45,10 +45,14 @@ class TopKOpBuilder : public BaseOpBuilder {
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
  private:
-  Status ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit) const;
+  Status ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper,
+                        const NodeUnit& node_unit,
+                        const logging::Logger& logger) const;
 };
 
-Status TopKOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit) const {
+Status TopKOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper,
+                                     const NodeUnit& node_unit,
+                                     const logging::Logger& logger) const {
   size_t input_count = node_unit.Inputs().size();
   size_t output_count = node_unit.Outputs().size();
   ORT_RETURN_IF_NOT(input_count >= TOPK_MIN_INPUT && input_count <= TOPK_MAX_INPUT,
@@ -60,14 +64,11 @@ Status TopKOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const N
   if (!qnn_model_wrapper.IsConstantInput(input_1)) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "The number of top elements to retrieve must be specified as constant input.");
   }
+
   NodeAttrHelper node_helper(node_unit);
-  auto largest = node_helper.Get("largest", 1);
-  auto sorted = node_helper.Get("sorted", 1);
-  if (0 == sorted) {
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN TopK output is always sorted");
-  }
-  if (0 == largest) {
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN TopK output is always largest values");
+  ORT_RETURN_IF(0 == node_helper.Get("largest", 1), "QNN TopK output is always largest values.");
+  if (0 == node_helper.Get("sorted", 1)) {
+    LOGS(logger, WARNING) << "QNN TopK produces sorted output. Attribute sorted=0 may lead to accuracy issue.";
   }
 
   return Status::OK();
@@ -79,7 +80,7 @@ Status TopKOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                     std::vector<std::string>& input_names,
                                     bool do_op_validation) const {
   if (do_op_validation) {
-    ORT_RETURN_IF_ERROR(ExplictOpCheck(qnn_model_wrapper, node_unit));
+    ORT_RETURN_IF_ERROR(ExplictOpCheck(qnn_model_wrapper, node_unit, logger));
   }
 
   const auto& inputs = node_unit.Inputs();
