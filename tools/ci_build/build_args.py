@@ -124,6 +124,11 @@ def add_core_build_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--target", help="Build a specific CMake target (e.g., winml_dll).")
     parser.add_argument(
+        "--export_compile_commands",
+        action="store_true",
+        help="Export compile commands into the database compile_commands.json",
+    )
+    parser.add_argument(
         "--compile_no_warning_as_error",
         action="store_true",
         help="Prevent warnings from being treated as errors during compile. Only works for cmake targets that honor the COMPILE_WARNING_AS_ERROR property",

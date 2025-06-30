@@ -368,6 +368,8 @@ def generate_build_tree(
     cmake_args = [cmake_path, cmake_dir]
     if not use_dev_mode(args):
         cmake_args += ["--compile-no-warning-as-error"]
+    if args.export_compile_commands:
+        cmake_args += ["-DCMAKE_EXPORT_COMPILE_COMMANDS=1"]
 
     types_to_disable = args.disable_types
     # enable/disable float 8 types
