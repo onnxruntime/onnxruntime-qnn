@@ -72,7 +72,7 @@ class BaseOpBuilder : public IOpBuilder {
 
   Status ProcessDataTypes(QnnModelWrapper& qnn_model_wrapper,
                           const NodeUnit& node_unit) const ORT_MUST_USE_RESULT;
-  
+
   virtual Status CheckCpuDataTypes(const std::vector<Qnn_DataType_t>,
                                    const std::vector<Qnn_DataType_t>) const ORT_MUST_USE_RESULT;
 

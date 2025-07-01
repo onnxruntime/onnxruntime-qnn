@@ -45,13 +45,13 @@ Status BaseOpBuilder::ProcessDataTypes(QnnModelWrapper& qnn_model_wrapper,
   std::vector<Qnn_DataType_t> output_qnn_dtypes;
   const auto& inputs = node_unit.Inputs();
   const auto& outputs = node_unit.Outputs();
-  for (auto input:inputs){
+  for (auto input : inputs) {
     TensorInfo tensor_info = {};
     ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input, tensor_info));
     Qnn_DataType_t qnn_data_type = tensor_info.qnn_data_type;
     input_qnn_dtypes.push_back(qnn_data_type);
   }
-  for (auto output:outputs){
+  for (auto output : outputs) {
     TensorInfo tensor_info = {};
     ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(output, tensor_info));
     Qnn_DataType_t qnn_data_type = tensor_info.qnn_data_type;
@@ -59,26 +59,24 @@ Status BaseOpBuilder::ProcessDataTypes(QnnModelWrapper& qnn_model_wrapper,
   }
   if (IsCpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     return CheckCpuDataTypes(input_qnn_dtypes, output_qnn_dtypes);
-  }
-  else if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+  } else if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     return CheckHtpDataTypes(input_qnn_dtypes, output_qnn_dtypes);
-  }
-  else if (IsGpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+  } else if (IsGpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     return CheckGpuDataTypes(input_qnn_dtypes, output_qnn_dtypes);
   }
   return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Only support backend: CPU, HTP and GPU");
 }
 
 Status BaseOpBuilder::CheckCpuDataTypes(const std::vector<Qnn_DataType_t> input_qnn_dtypes,
-                                     const std::vector<Qnn_DataType_t> output_qnn_dtypes) const ORT_MUST_USE_RESULT {
+                                        const std::vector<Qnn_DataType_t> output_qnn_dtypes) const {
   return Status::OK();
 }
 Status BaseOpBuilder::CheckHtpDataTypes(const std::vector<Qnn_DataType_t> input_qnn_dtypes,
-                                     const std::vector<Qnn_DataType_t> output_qnn_dtypes) const ORT_MUST_USE_RESULT {
+                                        const std::vector<Qnn_DataType_t> output_qnn_dtypes) const {
   return Status::OK();
 }
 Status BaseOpBuilder::CheckGpuDataTypes(const std::vector<Qnn_DataType_t> input_qnn_dtypes,
-                                     const std::vector<Qnn_DataType_t> output_qnn_dtypes) const ORT_MUST_USE_RESULT {
+                                        const std::vector<Qnn_DataType_t> output_qnn_dtypes) const {
   return Status::OK();
 }
 
