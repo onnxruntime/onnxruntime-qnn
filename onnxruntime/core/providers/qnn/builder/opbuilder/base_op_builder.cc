@@ -67,16 +67,16 @@ Status BaseOpBuilder::ProcessDataTypes(QnnModelWrapper& qnn_model_wrapper,
   return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Only support backend: CPU, HTP and GPU");
 }
 
-Status BaseOpBuilder::CheckCpuDataTypes(const std::vector<Qnn_DataType_t> input_qnn_dtypes,
-                                        const std::vector<Qnn_DataType_t> output_qnn_dtypes) const {
+Status BaseOpBuilder::CheckCpuDataTypes(const std::vector<Qnn_DataType_t>,
+                                        const std::vector<Qnn_DataType_t>) const {
   return Status::OK();
 }
-Status BaseOpBuilder::CheckHtpDataTypes(const std::vector<Qnn_DataType_t> input_qnn_dtypes,
-                                        const std::vector<Qnn_DataType_t> output_qnn_dtypes) const {
+Status BaseOpBuilder::CheckHtpDataTypes(const std::vector<Qnn_DataType_t>,
+                                        const std::vector<Qnn_DataType_t>) const {
   return Status::OK();
 }
-Status BaseOpBuilder::CheckGpuDataTypes(const std::vector<Qnn_DataType_t> input_qnn_dtypes,
-                                        const std::vector<Qnn_DataType_t> output_qnn_dtypes) const {
+Status BaseOpBuilder::CheckGpuDataTypes(const std::vector<Qnn_DataType_t>,
+                                        const std::vector<Qnn_DataType_t>) const {
   return Status::OK();
 }
 
