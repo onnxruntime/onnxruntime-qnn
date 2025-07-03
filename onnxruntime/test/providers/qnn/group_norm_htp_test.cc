@@ -92,15 +92,11 @@ TEST_F(QnnHTPBackendTests, GroupNormU8) {
                                    -5.25769f, 2.73637f, -0.901382f, -6.55612f, 1.99497f, -4.79228f, 2.69813f, 8.3064f, 0.0362501f};
   std::vector<float> scale_data = {-0.148738f, -1.45158f};
   std::vector<float> bias_data = {-2.2785083772f, 2.3338717017f};
-  ONNX_NAMESPACE::AttributeProto num_groups_attr;
-  num_groups_attr.name = "num_groups";
-  num_groups_attr.type = ONNX_NAMESPACE::AttributeProto::INT;
-  num_groups_attr.i = 2;
 
   RunGroupNormQDQTest(TestInputDef<float>({1, 2, 3, 3}, false, input_data).OverrideValueRange(-10.0f, 10.0f),
                       TestInputDef<float>({2}, true, scale_data).OverrideValueRange(-2.0f, 2.0f),
                       TestInputDef<float>({2}, true, bias_data).OverrideValueRange(-3.0f, 3.0f),
-                      {num_groups_attr},
+                      {utils::MakeAttribute("num_groups", static_cast<int64_t>(2))},
                       ExpectedEPNodeAssignment::All);
 }
 
@@ -109,15 +105,11 @@ TEST_F(QnnHTPBackendTests, GroupNormU16) {
                                    -5.25769f, 2.73637f, -0.901382f, -6.55612f, 1.99497f, -4.79228f, 2.69813f, 8.3064f, 0.0362501f};
   std::vector<float> scale_data = {-0.148738f, -1.45158f};
   std::vector<float> bias_data = {-2.2785083772f, 2.3338717017f};
-  ONNX_NAMESPACE::AttributeProto num_groups_attr;
-  num_groups_attr.name = "num_groups";
-  num_groups_attr.type = ONNX_NAMESPACE::AttributeProto::INT;
-  num_groups_attr.i = 2;
 
   RunGroupNormQDQTest<uint16_t>(TestInputDef<float>({1, 2, 3, 3}, false, input_data).OverrideValueRange(-10.0f, 10.0f),
                                 TestInputDef<float>({2}, true, scale_data).OverrideValueRange(-2.0f, 2.0f),
                                 TestInputDef<float>({2}, true, bias_data).OverrideValueRange(-3.0f, 3.0f),
-                                {num_groups_attr},
+                                {utils::MakeAttribute("num_groups", static_cast<int64_t>(2))},
                                 ExpectedEPNodeAssignment::All,
                                 true);  // Use contrib Q/DQ ops for 16-bit support.
 }
@@ -125,15 +117,10 @@ TEST_F(QnnHTPBackendTests, GroupNormU16) {
 // Check that QNN compiles DQ -> GroupNormalization -> Q as a single unit.
 // Use an input of rank 3.
 TEST_F(QnnHTPBackendTests, GroupNormU8Rank3) {
-  ONNX_NAMESPACE::AttributeProto num_groups_attr;
-  num_groups_attr.name = "num_groups";
-  num_groups_attr.type = ONNX_NAMESPACE::AttributeProto::INT;
-  num_groups_attr.i = 2;
-
   RunGroupNormQDQTest(TestInputDef<float>({1, 2, 3}, false, {6.0f, 4.0f, 2.0f, 6.0f, 8.0f, 2.0f}),
                       TestInputDef<float>({2}, true, {1.0f, 2.0f}),
                       TestInputDef<float>({2}, true, {1.0f, 3.0f}),
-                      {num_groups_attr},
+                      {utils::MakeAttribute("num_groups", static_cast<int64_t>(2))},
                       ExpectedEPNodeAssignment::All);
 }
 
@@ -142,15 +129,11 @@ TEST_F(QnnHTPBackendTests, GroupNormU8Rank3) {
 TEST_F(QnnHTPBackendTests, GroupNormU8Rank3_BatchSizeNot1) {
   std::vector<float> input_data = {6.0f, 4.0f, 2.0f, 6.0f, 8.0f, 2.0f,
                                    -8.0f, -6.0f, 0.0f, 1.0f, 3.0f, 6.0f};
-  ONNX_NAMESPACE::AttributeProto num_groups_attr;
-  num_groups_attr.name = "num_groups";
-  num_groups_attr.type = ONNX_NAMESPACE::AttributeProto::INT;
-  num_groups_attr.i = 2;
 
   RunGroupNormQDQTest(TestInputDef<float>({2, 2, 3}, false, input_data),
                       TestInputDef<float>({2}, true, {1.0f, 2.0f}),
                       TestInputDef<float>({2}, true, {1.0f, 3.0f}),
-                      {num_groups_attr},
+                      {utils::MakeAttribute("num_groups", static_cast<int64_t>(2))},
                       ExpectedEPNodeAssignment::All);
 }
 
@@ -159,15 +142,11 @@ TEST_F(QnnHTPBackendTests, GroupNormU8Rank3_BatchSizeNot1) {
 TEST_F(QnnHTPBackendTests, GroupNormU16Rank3_BatchSizeNot1) {
   std::vector<float> input_data = {6.0f, 4.0f, 2.0f, 6.0f, 8.0f, 2.0f,
                                    -8.0f, -6.0f, 0.0f, 1.0f, 3.0f, 6.0f};
-  ONNX_NAMESPACE::AttributeProto num_groups_attr;
-  num_groups_attr.name = "num_groups";
-  num_groups_attr.type = ONNX_NAMESPACE::AttributeProto::INT;
-  num_groups_attr.i = 2;
 
   RunGroupNormQDQTest<uint16_t>(TestInputDef<float>({2, 2, 3}, false, input_data),
                                 TestInputDef<float>({2}, true, {1.0f, 2.0f}),
                                 TestInputDef<float>({2}, true, {1.0f, 3.0f}),
-                                {num_groups_attr},
+                                {utils::MakeAttribute("num_groups", static_cast<int64_t>(2))},
                                 ExpectedEPNodeAssignment::All,
                                 true);  // Use contrib Q/DQ ops for 16-bit support.
 }
@@ -178,15 +157,11 @@ TEST_F(QnnHTPBackendTests, GroupNormU16Rank3_BatchSizeNot1) {
 TEST_F(QnnHTPBackendTests, GroupNormU8Rank3_BatchSizeNot1_Initializer) {
   std::vector<float> input_data = {6.0f, 4.0f, 2.0f, 6.0f, 8.0f, 2.0f,
                                    -8.0f, -6.0f, 0.0f, 1.0f, 3.0f, 6.0f};
-  ONNX_NAMESPACE::AttributeProto num_groups_attr;
-  num_groups_attr.name = "num_groups";
-  num_groups_attr.type = ONNX_NAMESPACE::AttributeProto::INT;
-  num_groups_attr.i = 2;
 
   RunGroupNormQDQTest(TestInputDef<float>({2, 2, 3}, true, input_data),
                       TestInputDef<float>({2}, true, {1.0f, 2.0f}),
                       TestInputDef<float>({2}, false, {1.0f, 3.0f}),
-                      {num_groups_attr},
+                      {utils::MakeAttribute("num_groups", static_cast<int64_t>(2))},
                       ExpectedEPNodeAssignment::All);
 }
 
@@ -196,30 +171,21 @@ TEST_F(QnnHTPBackendTests, GroupNormU8Rank3_BatchSizeNot1_Initializer) {
 TEST_F(QnnHTPBackendTests, GroupNormU16Rank3_BatchSizeNot1_Initializer) {
   std::vector<float> input_data = {6.0f, 4.0f, 2.0f, 6.0f, 8.0f, 2.0f,
                                    -8.0f, -6.0f, 0.0f, 1.0f, 3.0f, 6.0f};
-  ONNX_NAMESPACE::AttributeProto num_groups_attr;
-  num_groups_attr.name = "num_groups";
-  num_groups_attr.type = ONNX_NAMESPACE::AttributeProto::INT;
-  num_groups_attr.i = 2;
 
   RunGroupNormQDQTest<uint16_t>(TestInputDef<float>({2, 2, 3}, true, input_data),
                                 TestInputDef<float>({2}, true, {1.0f, 2.0f}),
                                 TestInputDef<float>({2}, false, {1.0f, 3.0f}),
-                                {num_groups_attr},
+                                {utils::MakeAttribute("num_groups", static_cast<int64_t>(2))},
                                 ExpectedEPNodeAssignment::All,
                                 true);  // Use contrib Q/DQ ops for 16-bit support.
 }
 
 // Check that QNN GroupNormalization operator does not handle inputs with rank > 4.
 TEST_F(QnnHTPBackendTests, GroupNormU8Rank5) {
-  ONNX_NAMESPACE::AttributeProto num_groups_attr;
-  num_groups_attr.name = "num_groups";
-  num_groups_attr.type = ONNX_NAMESPACE::AttributeProto::INT;
-  num_groups_attr.i = 2;
-
   RunGroupNormQDQTest(TestInputDef<float>({1, 2, 3, 3, 3}, false, -10.0f, 10.0f),
                       TestInputDef<float>({2}, true, -2.0f, 2.0f),
                       TestInputDef<float>({2}, true, -3.0f, 3.0f),
-                      {num_groups_attr},
+                      {utils::MakeAttribute("num_groups", static_cast<int64_t>(2))},
                       ExpectedEPNodeAssignment::None);
 }
 

@@ -15,6 +15,10 @@ class GroupNormOpBuilder : public BaseOpBuilder {
   GroupNormOpBuilder() : BaseOpBuilder("GroupNormOpBuilder") {}
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(GroupNormOpBuilder);
 
+  Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
+                       const NodeUnit& node_unit,
+                       const logging::Logger& logger) const override final ORT_MUST_USE_RESULT;
+
  protected:
   Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                        const NodeUnit& node_unit,
@@ -28,6 +32,56 @@ class GroupNormOpBuilder : public BaseOpBuilder {
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
 };
+
+// Group normalization op is sensitive to data layout.
+// The nodes from 1st call of GetCapability do not get layout transformer applied, so their shapes are still NCHW.
+// The nodes from 2nd call of GetCapability get their layout transformed to NHWC.
+// Therefore, we need to check the node domain to determine if the layout has been transformed.
+Status GroupNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
+                                         const NodeUnit& node_unit,
+                                         const logging::Logger& logger) const {
+  ORT_UNUSED_PARAMETER(logger);
+
+  // Check input type is float for CPU.
+  const auto& inputs = node_unit.Inputs();
+  // Check input type is float for CPU. Can't use Qnn Op validation API since it's before layout transformation
+  ORT_RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, inputs[0].node_arg.Type()));
+
+  std::vector<uint32_t> input_shape;
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].node_arg, input_shape), "Cannot get shape of input 0");
+  const size_t input_rank = input_shape.size();
+
+  if (input_rank <= 2 || input_rank > 4) {
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN GroupNorm only supports input ranks of size 3 or 4.");
+  }
+
+  const uint32_t num_channels = (node_unit.Domain() == kMSInternalNHWCDomain) ? input_shape.back() : input_shape[1];
+
+  std::vector<uint32_t> scale_shape;
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[1].node_arg, scale_shape), "Cannot get shape of input 1 (scale)");
+  if (scale_shape.size() != 1 || scale_shape[0] != num_channels) {
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN GroupNorm input 1 (scale) must have 1D shape [channel].");
+  }
+
+  std::vector<uint32_t> bias_shape;
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[2].node_arg, bias_shape), "Cannot get shape of input 2 (bias)");
+  if (bias_shape.size() != 1 || bias_shape[0] != num_channels) {
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN GroupNorm input 2 (bias) must have 1D shape [channel].");
+  }
+
+  NodeAttrHelper node_helper(node_unit);
+  const float epsilon = node_helper.Get("epsilon", 1e-05f);  // Default is 1e-05 according to ONNX spec.
+  if (epsilon <= 0.0f) {
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN GroupNorm epsilon must be greater than 0.0");
+  }
+
+  // Continue Op validation if it's NHWC transformed
+  if (node_unit.Domain() == kMSInternalNHWCDomain) {
+    return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
+  }
+
+  return Status::OK();
+}
 
 Status GroupNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                          const NodeUnit& node_unit,
