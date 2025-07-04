@@ -24,6 +24,7 @@ struct HandlerArgs {
   const std::vector<int64_t>& perm_inv;  // inverse of perm.
   // Cached result from calling HandlerInfo.transposible_inputs_fn
   std::vector<size_t>& transposible_inputs;
+  const std::unordered_set<std::string>& outputs_leading_to_transpose = {};
 };
 
 // Each op handler points to a (potentially shared) function for determining which input indices are eligible for
@@ -76,6 +77,7 @@ bool HandleSoftHardMax(HandlerArgs& args);
 
 // base handlers that are used by extended handlers. add from transpose_optimizer.cc as needed.
 bool HandleReduceOps(HandlerArgs& args);
+bool HandleReshape(HandlerArgs& args);
 bool HandleResize([[maybe_unused]] HandlerArgs& args);
 
 void TransposeInput(api::GraphRef& graph, api::NodeRef& node, size_t i,
