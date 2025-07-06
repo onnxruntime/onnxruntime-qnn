@@ -1149,6 +1149,73 @@ void QNNExecutionProvider::InitQnnHtpGraphConfigs(qnn::QnnConfigsBuilder<QnnGrap
       graph_precision_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
       graph_precision_config->customConfig = htp_graph_precision_config;
     }
+
+    // TODO: Process from options
+    // add QnnIrOptimizer graph config options.
+    gsl::not_null<QnnHtpGraph_CustomConfig_t*> htp_graph_qnn_ir_optimizer_config = configs_builder.PushCustomConfig();
+    htp_graph_qnn_ir_optimizer_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_ENABLE_QNN_IR_OPTIMIZER;
+    htp_graph_qnn_ir_optimizer_config->enableQnnIrOptimizer = true;
+
+    gsl::not_null<QnnGraph_Config_t*> graph_qnn_ir_optimizer_config = configs_builder.PushConfig();
+    graph_qnn_ir_optimizer_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
+    graph_qnn_ir_optimizer_config->customConfig = htp_graph_qnn_ir_optimizer_config;
+
+    // dumpDLC
+    gsl::not_null<QnnHtpGraph_CustomConfig_t*> htp_graph_qnn_ir_optimizer_dump_dlc_config = configs_builder.PushCustomConfig();
+    htp_graph_qnn_ir_optimizer_dump_dlc_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_QNN_IR_OPTIMIZER_DUMP_DLC;
+    htp_graph_qnn_ir_optimizer_dump_dlc_config->dumpDLC = true;
+
+    gsl::not_null<QnnGraph_Config_t*> graph_qnn_ir_optimizer_dump_dlc_config = configs_builder.PushConfig();
+    graph_qnn_ir_optimizer_dump_dlc_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
+    graph_qnn_ir_optimizer_dump_dlc_config->customConfig = htp_graph_qnn_ir_optimizer_dump_dlc_config;
+
+    // enablePasses
+    gsl::not_null<QnnHtpGraph_CustomConfig_t*> htp_graph_qnn_ir_optimizer_enable_pass_config = configs_builder.PushCustomConfig();
+    htp_graph_qnn_ir_optimizer_enable_pass_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_QNN_IR_OPTIMIZER_ENABLE_PASSES;
+    std::vector<std::string> enable_passes = {
+      "SquashPad",
+      "FoldSoftmax",
+      "MatchChannelShuffle",
+      "MatchSpaceToDepth",
+      "OptimizeDepthToSpace",
+      "AlignMatmulRanks",
+      "Replace6dOps",
+      "FoldReshapes",
+      "OptimizeGatherND",
+      "SquashReshape",
+      "SquashMultiplePermute",
+      "RemoveNoOps",
+      "FoldConcats",
+      "OptimizeTransposes",
+      "OptimizeTransposeReshape",
+      "FoldReshapes",
+      "HandleGatherNegativeIndices",
+      "RemoveNoOps"};
+    htp_graph_qnn_ir_optimizer_enable_pass_config->enablePasses.data = new char*[enable_passes.size()];
+    for (auto i = 0; i < enable_passes.size(); ++i) {
+      htp_graph_qnn_ir_optimizer_enable_pass_config->enablePasses.data[i] = new char[enable_passes[i].size() + 1];
+      strcpy_s(htp_graph_qnn_ir_optimizer_enable_pass_config->enablePasses.data[i], enable_passes[i].size() + 1, enable_passes[i].c_str());
+    }
+    htp_graph_qnn_ir_optimizer_enable_pass_config->enablePasses.size = static_cast<int>(enable_passes.size());
+
+    gsl::not_null<QnnGraph_Config_t*> graph_qnn_ir_optimizer_enable_pass_config = configs_builder.PushConfig();
+    graph_qnn_ir_optimizer_enable_pass_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
+    graph_qnn_ir_optimizer_enable_pass_config->customConfig = htp_graph_qnn_ir_optimizer_enable_pass_config;
+
+    // disablePasses
+    gsl::not_null<QnnHtpGraph_CustomConfig_t*> htp_graph_qnn_ir_optimizer_disable_pass_config = configs_builder.PushCustomConfig();
+    htp_graph_qnn_ir_optimizer_disable_pass_config->option = QNN_HTP_GRAPH_CONFIG_OPTION_QNN_IR_OPTIMIZER_DISABLE_PASSES;
+    std::vector<std::string> disable_passes = {};
+    htp_graph_qnn_ir_optimizer_disable_pass_config->disablePasses.data = new char*[disable_passes.size()];
+    for (auto i = 0; i < disable_passes.size(); ++i) {
+      htp_graph_qnn_ir_optimizer_disable_pass_config->disablePasses.data[i] = new char[disable_passes[i].size() + 1];
+      strcpy_s(htp_graph_qnn_ir_optimizer_disable_pass_config->disablePasses.data[i], disable_passes[i].size() + 1, disable_passes[i].c_str());
+    }
+    htp_graph_qnn_ir_optimizer_disable_pass_config->disablePasses.size = static_cast<int>(disable_passes.size());
+
+    gsl::not_null<QnnGraph_Config_t*> graph_qnn_ir_optimizer_disable_pass_config = configs_builder.PushConfig();
+    graph_qnn_ir_optimizer_disable_pass_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
+    graph_qnn_ir_optimizer_disable_pass_config->customConfig = htp_graph_qnn_ir_optimizer_disable_pass_config;
   }
 }
 
