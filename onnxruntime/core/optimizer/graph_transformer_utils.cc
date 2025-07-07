@@ -67,6 +67,7 @@
 #include "core/optimizer/qdq_transformer/avx2_weight_s8_to_u8.h"
 #endif
 #include "core/optimizer/qdq_transformer/weight_bias_quantization.h"
+#include "core/optimizer/qdq_transformer/where_dummy_dq.h"
 #include "core/optimizer/qdq_transformer/clip_quantizelinear.h"
 #include "core/optimizer/qdq_transformer/ensure_unique_dq_for_node_unit.h"
 #include "core/optimizer/qdq_transformer/qdq_propagation.h"
@@ -144,6 +145,7 @@ InlinedVector<std::unique_ptr<RewriteRule>> GenerateRewriteRules(
       rules.push_back(std::make_unique<PadFusion>());
       rules.push_back(std::make_unique<MatmulBNFusion>());
       rules.push_back(std::make_unique<LabelEncoderFusion>());
+      rules.push_back(std::make_unique<WhereDummyDq>());
       break;
 
     case TransformerLevel::Level2:
