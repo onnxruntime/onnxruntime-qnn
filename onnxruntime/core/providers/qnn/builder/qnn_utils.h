@@ -207,6 +207,21 @@ Status QuantizeData(gsl::span<const float> data, gsl::span<const uint32_t> shape
                     /*out*/ gsl::span<uint8_t> quant_bytes, Qnn_DataType_t data_type,
                     std::optional<int64_t> axis = std::nullopt);
 
+// Quantizes the given float data using the provided Low Power Block Quantization parameters
+// (float channel_scales, int block_scales and offsets)
+// The provided offsets must use the QNN convention where offset = -zero_point.
+Status LowPowerBlockQuantizeData(gsl::span<const float> data,
+                                 gsl::span<const uint32_t> data_shape,
+                                 gsl::span<const float> channel_scales,
+                                 gsl::span<const uint8_t> block_scales,
+                                 gsl::span<const int32_t> offsets,
+                                 /*out*/ gsl::span<uint8_t> quant_bytes,
+                                 Qnn_DataType_t data_type,
+                                 int64_t data_axis,
+                                 int64_t block_scales_axis,
+                                 size_t channel_block_size,
+                                 gsl::span<const uint32_t> block_scales_shape);
+
 // Quantizes (per-tensor) the given float data using the provided scale and offset.
 // The provided offset must use the QNN convention where offset = -zero_point.
 template <typename QuantType>
@@ -227,6 +242,29 @@ inline Status QuantizeData(gsl::span<const float> data, float scale, int32_t off
     float_val = std::max(float_val, clip_min);
     float_val = std::min(float_val, clip_max);
     output[i] = static_cast<QuantType>(float_val);
+  }
+  return Status::OK();
+}
+
+// Quantizes (per-tensor) the given float data using the provided scale and offset.
+// The provided offset must use the QNN convention where offset = -zero_point.
+inline Status QuantizeData_Int4(gsl::span<const float> data, float scale, int32_t offset,
+                                /*out*/ gsl::span<uint8_t> quant_bytes) {
+  const size_t num_elems = data.size();
+  const size_t expected_output_bytes = sizeof(int8_t) * num_elems;
+  ORT_RETURN_IF_NOT(expected_output_bytes == quant_bytes.size(),
+                    "Output buffer is not large enough to hold quantized bytes.");
+  const double clip_min = static_cast<double>(-8.0f);
+  const double clip_max = static_cast<double>(7.0f);
+
+  int8_t* output = reinterpret_cast<int8_t*>(quant_bytes.data());
+  for (size_t i = 0; i < num_elems; ++i) {
+    const double scale_dbl = static_cast<double>(scale);
+    const double offset_dbl = static_cast<double>(offset);
+    double float_val = std::nearbyint(static_cast<double>(data[i]) / scale_dbl) - offset_dbl;
+    float_val = std::max(float_val, clip_min);
+    float_val = std::min(float_val, clip_max);
+    output[i] = static_cast<int8_t>(float_val);
   }
   return Status::OK();
 }

@@ -1037,6 +1037,90 @@ Status QuantizeData(gsl::span<const float> data, gsl::span<const uint32_t> shape
   return Status::OK();
 }
 
+/**
+ * @brief QuantizeData with LPBQ encodings (per_channel_float_scales, per_block_int_scales)
+ * @pre-condition data should have axis at 0
+ *
+ * @param data float data of Gemm weight
+ * @param data_shape shape of Gemm weight
+ * @param pc_f_scales per-channel float scales
+ * @param pb_i_scales per-block int scales
+ * @param pc_offsets per-channel offsets
+ * @param quantize data (int4 data) stored in uint8
+ * @param data_type data_type of quantized tensor (int4)
+ * @param axis channel dimension (default: 0)
+ * @param block_size size of block in a channel
+ * @param block_scales_shape shape of block scales
+ */
+Status LowPowerBlockQuantizeData(gsl::span<const float> data,
+                                 gsl::span<const uint32_t> data_shape,
+                                 gsl::span<const float> channel_scales,
+                                 gsl::span<const uint8_t> block_scales,
+                                 gsl::span<const int32_t> offsets,
+                                 /*out*/ gsl::span<uint8_t> quant_bytes,
+                                 Qnn_DataType_t data_type,
+                                 int64_t data_axis,
+                                 int64_t block_scales_axis,
+                                 size_t channel_block_size,
+                                 gsl::span<const uint32_t> block_scales_shape) {
+  // transpose weight to match [K, N] where K : In Channel and N : Out Channel
+  const size_t num_dims = data_shape.size();
+  const size_t num_elems = ShapeSizeCalc(data_shape, 0, num_dims);
+  ORT_RETURN_IF_NOT(num_elems == data.size(), "Shape mismatch with data to quantize");
+  // LPBQ is currently supported for INT4 and INT8 types. INT4 weight is stored in INT8 buffer.
+  size_t expected_num_quant_bytes = GetElementSizeByType(QNN_DATATYPE_SFIXED_POINT_8) * data.size();
+  ORT_RETURN_IF_NOT(quant_bytes.size() == expected_num_quant_bytes,
+                    "Cannot quantize data because output buffer is not the correct size");
+
+  size_t data_axis_no_neg = data_axis < 0 ? static_cast<size_t>(data_axis) + num_dims : static_cast<size_t>(data_axis);
+
+  size_t block_scales_axis_no_neg = block_scales_axis < 0 ? static_cast<size_t>(block_scales_axis) + num_dims : static_cast<size_t>(block_scales_axis);
+
+  // Assumption: data is of rank-2 with OutChannels at 0-dim
+  ORT_RETURN_IF_NOT(data_axis_no_neg == 0, "BlockQuantize works for Output Channel at axis 0");  // Data is expected in format: OI or OIHW; Output channel at axis-0
+  // Current implementation is expecting block axis at axis-0
+  ORT_RETURN_IF_NOT(data_shape[data_axis_no_neg] == block_scales_shape[block_scales_axis_no_neg], "Incompatible shape of block_scales w.r.t data");
+
+  size_t channel_count = data_shape[data_axis_no_neg];
+  size_t block_count = (block_scales_axis_no_neg == 0) ? block_scales_shape[1] : block_scales_shape[0];
+  size_t data_block_size = ShapeSizeCalc(data_shape, data_axis_no_neg + 1, num_dims) / channel_block_size;
+
+  ORT_RETURN_IF_NOT(channel_scales.size() == channel_count, "Unexpected size of per-channel-float-scales output buffer");
+  ORT_RETURN_IF_NOT(offsets.size() == channel_count, "Unexpected size of offsets output buffer");
+  ORT_RETURN_IF_NOT(block_scales.size() == channel_count * block_count, "Unexpected size of Per-block-int-scales output buffer");
+
+  size_t i = 0;
+  for (size_t cn = 0; cn < channel_count; ++cn) {
+    for (size_t bn = 0; bn < block_count; ++bn) {
+      switch (data_type) {
+        case QNN_DATATYPE_SFIXED_POINT_8: {
+          auto input_span = gsl::make_span<const float>(&data[i], data_block_size);
+          auto output_span = gsl::make_span<uint8_t>(&quant_bytes[i * sizeof(int8_t)], sizeof(int8_t) * data_block_size);
+          size_t block_scales_index = block_scales_axis_no_neg == 0 ? cn * block_count + bn : bn * channel_count + cn;
+          const float scale = channel_scales[cn] * static_cast<const float>(block_scales[block_scales_index]);
+          ORT_RETURN_IF_ERROR(QuantizeData<int8_t>(input_span, scale, offsets[cn], output_span));
+          break;
+        }
+        case QNN_DATATYPE_SFIXED_POINT_4: {
+          auto input_span = gsl::make_span<const float>(&data[i], data_block_size);
+          auto output_span = gsl::make_span<uint8_t>(&quant_bytes[i * sizeof(int8_t)], sizeof(int8_t) * data_block_size);
+          size_t block_scales_index = block_scales_axis_no_neg == 0 ? cn * block_count + bn : bn * channel_count + cn;
+          const float scale = channel_scales[cn] * static_cast<const float>(block_scales[block_scales_index]);
+          ORT_RETURN_IF_ERROR(QuantizeData_Int4(input_span, scale, offsets[cn], output_span));
+          break;
+        }
+        default:
+          return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "Unsupported quantization data type for LowPowerBlockQuantizeData");
+      }
+      i += data_block_size;
+    }
+  }
+
+  assert(i == data.size());
+
+  return Status::OK();
+}
+
 std::string GetQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface, Qnn_ErrorHandle_t qnn_error_handle) {
   const char* error_msg = nullptr;
   if (qnn_interface.errorGetMessage(qnn_error_handle, &error_msg) == QNN_SUCCESS) {

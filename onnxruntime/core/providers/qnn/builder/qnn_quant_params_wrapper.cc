@@ -95,6 +95,45 @@ QnnQuantParamsWrapper::QnnQuantParamsWrapper(gsl::span<const float> scales, gsl:
   }
 }
 
+// Construct a LPBQ quantization param.
+QnnQuantParamsWrapper::QnnQuantParamsWrapper(gsl::span<const float> per_channel_float_scales, gsl::span<const uint8_t> per_block_int_scales,
+                                             gsl::span<const int32_t> offsets, int64_t axis, int64_t block_size, bool is_int4) {
+  ORT_UNUSED_PARAMETER(block_size);
+  assert(per_channel_float_scales.size() == offsets.size());  // Logic error if sizes don't match.
+  const uint32_t num_elems = static_cast<uint32_t>(per_channel_float_scales.size());
+  params_.encodingDefinition = QNN_DEFINITION_DEFINED;
+
+  params_.quantizationEncoding = QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION;
+
+  Qnn_BlockwiseExpansion_t* const lpbqPtr = (Qnn_BlockwiseExpansion_t*)malloc(sizeof(Qnn_BlockwiseExpansion_t));
+  Qnn_BlockwiseExpansion_t& lpbq = *lpbqPtr;
+
+  lpbq.axis = static_cast<int32_t>(axis);
+
+  // Deep copy to the scaleOffset data.
+  if (num_elems > 0) {
+    const size_t num_bytes = num_elems * sizeof(Qnn_ScaleOffset_t);
+    constexpr std::uintptr_t align = alignof(Qnn_ScaleOffset_t);
+    per_channel_data_ = std::make_unique<char[]>(num_bytes + align);
+    Qnn_ScaleOffset_t* aligned_dst = ALIGN_PTR_UP(per_channel_data_.get(), align, Qnn_ScaleOffset_t*);
+
+    for (size_t i = 0; i < static_cast<uint32_t>(num_elems); i++) {
+      aligned_dst[i].offset = offsets[i];
+      aligned_dst[i].scale = per_channel_float_scales[i];
+    }
+
+    lpbq.scaleOffsets = aligned_dst;
+  }
+
+  lpbq.numBlocksPerAxis = static_cast<uint32_t>(per_block_int_scales.size()) / num_elems;
+  lpbq.blockScaleBitwidth = is_int4 ? 4 : 8;
+  lpbq.blockScaleStorageType = QNN_BLOCKWISE_EXPANSION_BITWIDTH_SCALE_STORAGE_8;
+  std::vector<uint8_t> blocksScale8(per_block_int_scales.size());
+  std::copy(per_block_int_scales.begin(), per_block_int_scales.end(), blocksScale8.begin());
+  lpbq.blocksScale8 = blocksScale8.data();
+  params_.blockwiseExpansion = lpbqPtr;
+}
+
 // Get a copy of scales. Works for both per-tensor and per-channel.
 Status QnnQuantParamsWrapper::GetScales(/*out*/ std::vector<float>& scales) const {
   ORT_RETURN_IF_NOT(params_.encodingDefinition == QNN_DEFINITION_DEFINED, "Unquantized qparams does not have scales");
@@ -214,6 +253,12 @@ Status QnnQuantParamsWrapper::Init(const Qnn_QuantizeParams_t& params) {
         params_.bwAxisScaleOffsetEncoding.scales = nullptr;
         params_.bwAxisScaleOffsetEncoding.offsets = nullptr;
       }
+      break;
+    }
+    case QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION: {
+      params_.encodingDefinition = params.encodingDefinition;
+      params_.quantizationEncoding = params.quantizationEncoding;
+      params_.blockwiseExpansion = params.blockwiseExpansion;
       break;
     }
     default:
