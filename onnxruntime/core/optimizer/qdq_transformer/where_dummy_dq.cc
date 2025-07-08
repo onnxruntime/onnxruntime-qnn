@@ -22,27 +22,24 @@ namespace onnxruntime {
         std::cout << "Doing WhereDummyDq" << std::endl;
         auto& where_node = node;
         const auto& where_inputs = where_node.InputDefs();
-        const NodeArg* where_in1 = where_inputs[1];
-        const NodeArg* where_in2 = where_inputs[2];
-        const Node* parent_node_1 = graph.GetProducerNode(where_in1->Name());
-        const Node* parent_node_2 = graph.GetProducerNode(where_in2->Name());
+        const Node* parent_node_1 = graph.GetProducerNode(where_inputs[1]->Name());
+        const Node* parent_node_2 = graph.GetProducerNode(where_inputs[2]->Name());
         bool is_with_qdq = false;
 
         const Node* dq_node = nullptr;
         int const_idx = -1;
-        const ONNX_NAMESPACE::TensorProto* const_node_data_proto = nullptr;
         if (parent_node_1 && parent_node_1->OpType() == QDQ::DQOpName && !parent_node_2) {
             dq_node = parent_node_1;
-            graph.GetInitializedTensor(where_in2->Name(), const_node_data_proto);
             const_idx = 2;
         } else if (parent_node_2 && parent_node_2->OpType() == QDQ::DQOpName && !parent_node_1) {
             dq_node = parent_node_2;
-            graph.GetInitializedTensor(where_in1->Name(), const_node_data_proto);
             const_idx = 1;
         } else {
             return Status::OK();
         }
-    
+
+        const ONNX_NAMESPACE::TensorProto* const_node_data_proto = nullptr;
+        graph.GetInitializedTensor(where_inputs[const_idx]->Name(), const_node_data_proto);
         const ONNX_NAMESPACE::TensorProto* dq_node_scale_proto = nullptr;
         graph.GetInitializedTensor(dq_node->InputDefs()[2]->Name(), dq_node_scale_proto);
 
@@ -96,6 +93,7 @@ namespace onnxruntime {
 
         std::cout << "Finish create dummy dq node" << std::endl;
 
+        graph.RemoveInitializedTensor(where_inputs[const_idx]->Name());
         where_node.MutableInputDefs()[const_idx] = &dummy_dq_arg;
         // TODO: Whether to remove original constant
         graph.AddEdge(dummy_dq_node.Index(), where_node.Index(), 0, const_idx);
