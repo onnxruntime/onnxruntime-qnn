@@ -36,19 +36,28 @@ namespace onnxruntime {
             return Status::OK();
         }
         if (!parent_node_1) {
+            // parent_node_1 is nullptr (Constant Initializer)
+            // parent_node_2 is a DequantizeLinear
+            const ONNX_NAMESPACE::TensorProto* parent_node_1_data_proto = nullptr;
+            graph.GetInitializedTensor(where_in1->Name(), parent_node_1_data_proto);
+            const ONNX_NAMESPACE::TensorProto* parent_node_2_scale_proto = nullptr;
+            graph.GetInitializedTensor(parent_node_2->InputDefs()[2]->Name(), parent_node_2_scale_proto);
+
             std::cout << "insert DQ for parent_node_1" << std::endl;
             ONNX_NAMESPACE::TensorProto dummy_data_proto;
             int dummy_data = 1;
             dummy_data_proto.set_name(graph.GenerateNodeArgName(node.Name() + "_dummy_data"));
-            // TODO: Set data type to the one of parent_node_2
-            dummy_data_proto.set_data_type(onnx::TensorProto_DataType_UINT16);
+            // Set data type to the one of parent_node_2 dq's zp dtype
+            dummy_data_proto.set_data_type(parent_node_2_scale_proto->data_type());
             dummy_data_proto.add_int32_data(dummy_data);
             NodeArg& dummy_data_arg = graph_utils::AddInitializerWithExternalData(graph, dummy_data_proto);
             
             // Dummy scale initializer.
             ONNX_NAMESPACE::TensorProto dummy_scale_proto;
-            // TODO: Set scale to the original value
-            float scale = 1.0;
+            // Set scale to the original value
+            Initializer initializer(graph, *parent_node_1_data_proto, graph.ModelPath());
+            const float* where_const_data = initializer.data<float>();
+            float scale = *where_const_data;
             dummy_scale_proto.set_name(graph.GenerateNodeArgName(node.Name() + "_dummy_scale"));
             dummy_scale_proto.set_data_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
             dummy_scale_proto.add_float_data(scale);
@@ -75,13 +84,12 @@ namespace onnxruntime {
                 graph.AddNode(
                     graph.GenerateNodeArgName(node.Name() + "_dummy_dq"),
                     QDQ::DQOpName,
-                    "Dummy DQ node",
+                    "DeQuantizeLinear from WhereDummyDq GraphTransformer",
                     {&dummy_data_arg, &dummy_scale_arg, &dummy_zp_arg},
                     {&dummy_dq_arg},
                     nullptr,
-                    "com.microsoft"
+                    parent_node_2->Domain()
                 );
-            //TODO: Use the domain of another dq node
             where_node.MutableInputDefs()[1] = &dummy_dq_arg;
             // TODO: Whether to remove original constant
             graph.AddEdge(dummy_dq_node.Index(), where_node.Index(), 0, 1);
