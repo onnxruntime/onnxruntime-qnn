@@ -15,16 +15,16 @@ namespace onnxruntime {
     when Where node has one DQ and one one scalar initializer input
 */
 class WhereDummyDq : public RewriteRule {
-    public:
-        WhereDummyDq() noexcept : RewriteRule("WhereDummyDq") {}
+ public:
+  WhereDummyDq() noexcept : RewriteRule("WhereDummyDq") {}
 
-        std::vector<std::string> TargetOpTypes() const noexcept override {
-            return {"Where"};
-        }
+  std::vector<std::string> TargetOpTypes() const noexcept override {
+    return {"Where"};
+  }
 
-    private:
-        bool SatisfyCondition(const Graph& graph, const Node& node, const logging::Logger& logger) const override;
+ private:
+  bool SatisfyCondition(const Graph& graph, const Node& node, const logging::Logger& logger) const override;
 
-        Status Apply(Graph& graph, Node& node, RewriteRuleEffect& rule_effect, const logging::Logger& logger) const override;
+  Status Apply(Graph& graph, Node& node, RewriteRuleEffect& rule_effect, const logging::Logger& logger) const override;
 };
-}
+}  // namespace onnxruntime
