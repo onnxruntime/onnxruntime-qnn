@@ -1,16 +1,21 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
 
 import argparse
 import hashlib
+import logging
 import os
 import re
 import subprocess
 import sys
-
-import qai_hub as hub
-
 from datetime import datetime
 from pathlib import Path
-from typing import List, Dict
+
+from core.logging import initialize_logging
+from core.model_dir import ModelDir
+from core.plan import PUBLIC_TASKS, TASK_REGISTRY, Plan, public_task, task
+
+MODELS_DIR = os.path.abspath("models")
 
 VALID_MODELS = [
     "llama_v3_2_3b_instruct",
@@ -21,13 +26,13 @@ VALID_MODELS = [
     "stable_diffusion_v2_1"
 ]
 
-ORT_QNN_PATH = os.path.join("..", "onnxruntime-qnn-ep", "onnxruntime-qnn-ep", "build", "linux", "Release", "dist", "onnxruntime_qnn_qcom_internal-1.23.0-cp310-cp310-linux_x86_64.whl")
+ORT_QNN_PATH = os.path.join("..", "..", "build", "linux", "Release", "dist", "onnxruntime_qnn_qcom_internal-1.23.0-cp310-cp310-linux_x86_64.whl")
 
 
 def hash_directory(directory_path, hash_algo='sha256'):
     print(f"Generating hash for {directory_path}")
     hash_func = hashlib.new(hash_algo)
- 
+
     for root, dirs, files in sorted(os.walk(directory_path)):
         for file in sorted(files):
             file_path = os.path.join(root, file)
@@ -66,7 +71,7 @@ class Split:
         self._to_checkpoint()
 
     def _read_data_from_checkpoint(self):
-        with open(os.path.join(os.path.dirname(self.split_path), f"{self.split_name}.checkpoint"), "r") as f:
+        with open(os.path.join(os.path.dirname(self.split_path), f"{self.split_name}.checkpoint")) as f:
             lines = f.readlines()
         self.sha = hash_directory(self.split_path)
         if self.sha != lines[0].strip():
@@ -146,7 +151,7 @@ class Split:
         print(f"Submitted profile job {profile_job.job_id} for {self.split_name} on QAIRT...")
 
 
-class ModelDir:
+class ModelDirOld:
 
     def __init__(self, model_name):
         self.model_name = model_name
@@ -164,7 +169,7 @@ class ModelDir:
 
         # Install uv inside the virtual environment
         subprocess.run([self.interpreter_path, "-m", "pip", "install", "uv"], check=True)
-        print(f"Installed uv")
+        print("Installed uv")
 
         # Install model-specific QAIHM package
         if local_mode:
@@ -185,7 +190,7 @@ class ModelDir:
         if "llama" in self.model_name:
             subprocess.run([self.interpreter_path, "-m", "uv", "pip", "install", "-r", "llama-requirements.txt"],
                            check=True)
-            print(f"Installed packages from llama-requirements.txt")
+            print("Installed packages from llama-requirements.txt")
 
     def export(self):
         export_cmd = f"qai_hub_models.models.{self.model_name}.export"
@@ -193,10 +198,9 @@ class ModelDir:
                        check=True)
         print(f"Successfully exported: {self.model_name}")
 
-    def _find_instantiations(self):
-        return [d for d in os.listdir(self.model_dir) if os.path.isdir(os.path.join(self.model_dir, d)) and d != "venv"]
 
-    def _find_splits_to_upload(self) -> Dict[str, List[str]]:
+
+    def _find_splits_to_upload(self) -> dict[str, list[str]]:
         self.instantiations = self._find_instantiations()
         instantiations_contents = {d: [] for d in self.instantiations}
 
@@ -216,7 +220,7 @@ class ModelDir:
             for split in self.splits[instantiation]:
                 split.upload()
 
-    def find_cached_splits(self) -> Dict[str, List[str]]:
+    def find_cached_splits(self) -> dict[str, list[str]]:
         self.instantiations = self._find_instantiations()
         instantiations_contents = {d: [] for d in self.instantiations}
 
@@ -243,10 +247,10 @@ class ModelDir:
 
     def _override_onnxruntime_qnn(self):
         # Override the onnxruntime_qnn library with the one from the QDQ model
-        print(f"Overriding onnxruntime_qnn library with the one from local build")
+        print("Overriding onnxruntime_qnn library with the one from local build")
         subprocess.run([self.interpreter_path, "-m", "uv", "pip", "uninstall", "onnxruntime"], check=True)
         subprocess.run([self.interpreter_path, "-m", "uv", "pip", "install", ORT_QNN_PATH], check=True)
-        print(f"Overridden onnxruntime_qnn library with the one from the QDQ model")
+        print("Overridden onnxruntime_qnn library with the one from the QDQ model")
 
     def convert_w_ort_ep(self):
         self._override_onnxruntime_qnn()
@@ -260,40 +264,92 @@ class ModelDir:
                 split.profile_on_qairt()
 
 
+@task(description="Bootstraps the model directory environment")
+def bootstrap(plan: Plan):
+    plan.model_dir.bootstrap()
+
+
+@public_task(description="Exports a model from AI Hub Models to AI Hub", dependencies=["bootstrap"], checkpoint_outputs=["exported_model_id"])
+def export(plan: Plan):
+    plan.model_dir.export()
+
+
+@public_task(description="Compiles an uploaded model to ONNX using AI Hub", dependencies=["export"], checkpoint_outputs=["compiled_onnx_model_id"])
+def compile_on_onnx(plan: Plan):
+    plan.model_dir.export()
+
+
 def parse_args():
-    parser = argparse.ArgumentParser(description="Setup model environment for evaluating some set of models using AI Hub Models")
-    parser.add_argument("--model", help="Name of the model/package to be used")
+    parser = argparse.ArgumentParser(description="Evaluates Gen AI models through a specified pipeline")
     parser.add_argument("--clean", action="store_true", help="Clean up the model directories")
-    parser.add_argument("--skip_export", action="store_true", help="Skip the export step")
-    parser.add_argument("--skip_upload", action="store_true", help="Skip the upload step")
-    parser.add_argument("--skip_compile_on_onnx", action="store_true", help="Skip the compile step")
-    parser.add_argument("--skip_download_qdq_model", action="store_true", help="Skip the download step")
-    parser.add_argument("--skip_convert_w_ort_ep", action="store_true", help="Skip the convert step w/ ORT EP")
-    parser.add_argument("--skip_profile_on_qairt", action="store_true", help="Profile the model on QAIRT")
+    parser.add_argument("--model", help="Name of the model/package to be used")
+    parser.add_argument(
+        "task",
+        type=str,
+        help='Task to run. Specify "list" to show all tasks.',
+    )
+    parser.add_argument(
+        "--force",
+        type=str,
+        action="append",
+        help="Force a task to run even if it has already been completed"
+    )
 
     return parser.parse_args()
 
 
 def clean():
-    # Clean up the model directories
-    for model_name in VALID_MODELS:
-        model_dir = os.path.abspath(model_name)
-        if os.path.exists(model_dir):
-            subprocess.run(["rm", "-rf", model_dir], check=True)
-            print(f"Deleted directory: {model_dir}")
+    models_dir = os.path.abspath("models")
+    if os.path.exists(models_dir) and os.path.isdir(models_dir):
+        subprocess.run(["rm", "-rf", models_dir], check=True)
+        logging.info(f"Deleted directory: {models_dir}")
+    else:
+        logging.error(f"Models directory {models_dir} does not exist. Nothing to clean.")
 
 
 def main():
+    initialize_logging()
     args = parse_args()
+
+    if os.path.abspath(os.path.dirname(__file__)) != os.path.abspath(os.getcwd()):
+        logging.error("This script is only intended to run from the location of the script.")
+        sys.exit(0)
 
     if args.clean:
         clean()
         sys.exit(0)
 
-    # Create the model directory
     model_name = args.model
     if model_name not in VALID_MODELS:
-        raise ValueError(f"Invalid model name: {model_name}. Valid models are: {VALID_MODELS}")
+        logging.error(f"Invalid model name: {model_name}. Valid models are: {VALID_MODELS}")
+        sys.exit(0)
+
+    if args.task is None:
+        logging.error("No task specified. Please specify a task to run.")
+        sys.exit(0)
+
+    if args.task == "list":
+        logging.info("Available tasks:")
+        for task_name in PUBLIC_TASKS:
+            print(f"{task_name}: {TASK_REGISTRY[task_name].description}")
+        sys.exit(0)
+
+    if args.task not in TASK_REGISTRY:
+        logging.error(f"Invalid task: {args.task}. Valid tasks are: {PUBLIC_TASKS}")
+        sys.exit(0)
+
+    # Create the models directory
+    models_dir = os.path.abspath("models")
+    if not os.path.exists(models_dir):
+        os.makedirs(models_dir)
+    else:
+        logging.warning(f"Models directory {models_dir} already exists, continuing...")
+
+    model_dir = ModelDir(MODELS_DIR, model_name)
+
+    plan = Plan(args.task, force=args.force or [])
+
+    return
 
     model_dir = ModelDir(model_name)
     model_dir.bootstrap(local_mode=True)

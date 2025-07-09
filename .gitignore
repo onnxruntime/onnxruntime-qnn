@@ -196,3 +196,6 @@ Package.resolved
 .build/
 .swiftpm/
 repros/
+
+# Qualcomm-specific
+qcom/gen_ai/models
