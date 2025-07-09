@@ -3823,41 +3823,68 @@ TEST_F(GraphTransformationTests, ReluClip11FusionGHIssue9753) {
 }
 
 TEST_F(GraphTransformationTests, WhereDummyDqTest) {
-  auto& logger = DefaultLoggingManager().DefaultLogger();
-  Model model("WhereDummyDqTester", false, logger);
-  Graph& graph = model.MainGraph();
-  ModelTestBuilder builder(graph);
-  
-  // DQ
-  auto* dq_Input = builder.MakeInput<uint16_t>({4,3,32}, 0.0, 1.0);
-  auto* dq_scale = builder.MakeInitializer<float>({}, 0.0, 1.0);
-  auto* dq_zp = builder.MakeInitializer<uint16_t>({}, 0.0, 1.0);
-  auto* dq_out = builder.MakeIntermediate();
-  auto& dqlinear = builder.AddNode("DequantizeLinear", {dq_Input, dq_scale, dq_zp}, {dq_out});
+  auto build_test_case = [&](
+    bool is_dq_1,
+    bool is_dq_2,
+    int expected_num_where,
+    int expected_num_dq,
+    int expected_num_q
+  ) {
+    auto& logger = DefaultLoggingManager().DefaultLogger();
+    Model model("WhereDummyDqTester", false, logger);
+    Graph& graph = model.MainGraph();
+    ModelTestBuilder builder(graph);
 
-  // Where
-  auto* where_cond = builder.MakeInputBool({4,3,32});
-  auto* true_data = builder.MakeInitializer<float>({}, 0.0, 1.0);
-  auto* where_out = builder.MakeIntermediate();
-  auto& where = builder.AddNode("Where", {where_cond, true_data, dq_out}, {where_out});
+    NodeArg* where_in1 = nullptr;
+    NodeArg* where_in2 = nullptr;
+    if (is_dq_1) {
+      // DQ
+      auto* dq_Input = builder.MakeInput<uint16_t>({4,3,32}, 0.0, 1.0);
+      auto* dq_scale = builder.MakeInitializer<float>({}, 0.0, 1.0);
+      auto* dq_zp = builder.MakeInitializer<uint16_t>({}, 0.0, 1.0);
+      where_in1 = builder.MakeIntermediate();
+      auto& dqlinear = builder.AddNode("DequantizeLinear", {dq_Input, dq_scale, dq_zp}, {where_in1});
+    } else {
+      where_in1 = builder.MakeInitializer<float>({}, 0.0, 1.0);
+    }
+    if (is_dq_2) {
+      // DQ
+      auto* dq_Input = builder.MakeInput<uint16_t>({4,3,32}, 0.0, 1.0);
+      auto* dq_scale = builder.MakeInitializer<float>({}, 0.0, 1.0);
+      auto* dq_zp = builder.MakeInitializer<uint16_t>({}, 0.0, 1.0);
+      where_in2 = builder.MakeIntermediate();
+      auto& dqlinear = builder.AddNode("DequantizeLinear", {dq_Input, dq_scale, dq_zp}, {where_in2});
+    } else {
+      where_in2 = builder.MakeInitializer<float>({}, 0.0, 1.0);
+    }
 
-  // Q
-  auto* q_scale = builder.MakeInitializer<float>({}, 0.0, 1.0);
-  auto* q_zp = builder.MakeInitializer<uint16_t>({}, 0.0, 1.0);
-  auto* q_out = builder.MakeOutput();
-  auto& qlinear = builder.AddNode("QuantizeLinear", {where_out, q_scale, q_zp}, {q_out});
+    // Where
+    auto* where_cond = builder.MakeInputBool({4,3,32});
+    auto* where_out = builder.MakeIntermediate();
+    auto& where = builder.AddNode("Where", {where_cond, where_in1, where_in2}, {where_out});
 
-  builder.SetGraphOutputs();
-  ASSERT_STATUS_OK(graph.Resolve());
+    // Q
+    auto* q_scale = builder.MakeInitializer<float>({}, 0.0, 1.0);
+    auto* q_zp = builder.MakeInitializer<uint16_t>({}, 0.0, 1.0);
+    auto* q_out = builder.MakeOutput();
+    auto& qlinear = builder.AddNode("QuantizeLinear", {where_out, q_scale, q_zp}, {q_out});
 
-  auto where_dq_rule = std::make_unique<WhereDummyDq>();
-  auto rule_effect = RewriteRule::RewriteRuleEffect::kNone;
-  where_dq_rule->CheckConditionAndApply(graph, where, rule_effect, logger);
+    builder.SetGraphOutputs();
+    ASSERT_STATUS_OK(graph.Resolve());
 
-  std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
-  ASSERT_EQ(op_to_count["Where"], 1);
-  ASSERT_EQ(op_to_count["DequantizeLinear"], 2);
-  ASSERT_EQ(op_to_count["QuantizeLinear"], 1);
+    auto where_dq_rule = std::make_unique<WhereDummyDq>();
+    auto rule_effect = RewriteRule::RewriteRuleEffect::kNone;
+    where_dq_rule->CheckConditionAndApply(graph, where, rule_effect, logger);
+
+    std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
+    ASSERT_EQ(op_to_count["Where"], expected_num_where);
+    ASSERT_EQ(op_to_count["DequantizeLinear"], expected_num_dq);
+    ASSERT_EQ(op_to_count["QuantizeLinear"], expected_num_q);
+  };
+  build_test_case(true, true, 1, 2, 1);
+  build_test_case(true, false, 1, 2, 1);
+  build_test_case(false, true, 1, 2, 1);
+  build_test_case(false, false, 1, 0, 1);
 }
 
 // Test Reshape Fusion with 2 constant initializers for Concat inputs.
