@@ -94,6 +94,7 @@ Status WhereDummyDq::Apply(Graph& graph, Node& node, RewriteRuleEffect& rule_eff
     graph.RemoveInitializedTensor(where_inputs[const_idx]->Name());
   }
   graph.AddEdge(dummy_dq_node.Index(), node.Index(), 0, const_idx);
+  rule_effect = RewriteRuleEffect::kUpdatedCurrentNode;
 
   return Status::OK();
 }

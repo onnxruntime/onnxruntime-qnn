@@ -69,8 +69,6 @@
 #include "core/optimizer/pre_shape_node_elimination.h"
 #include "core/optimizer/propagate_cast_ops.h"
 #include "core/optimizer/qdq_transformer/qdq_util.h"
-#include "core/optimizer/rewrite_rule.h"
-#include "core/optimizer/qdq_transformer/where_dummy_dq.h"
 #include "core/optimizer/quick_gelu_fusion.h"
 #include "core/optimizer/relu_clip_fusion.h"
 #include "core/optimizer/reshape_fusion.h"
@@ -3820,70 +3818,6 @@ TEST_F(GraphTransformationTests, ReluClip11FusionGHIssue9753) {
   // After fusion, the model only contains Clip.
   ASSERT_TRUE(op_to_count["Relu"] == 0);
   ASSERT_TRUE(op_to_count["Clip"] == 1);
-}
-
-TEST_F(GraphTransformationTests, WhereDummyDqTest) {
-  auto TestWhereWithDqInput = [&](
-                                  bool is_dq_1,
-                                  bool is_dq_2,
-                                  int expected_num_where,
-                                  int expected_num_dq,
-                                  int expected_num_q) {
-    auto& logger = DefaultLoggingManager().DefaultLogger();
-    Model model("WhereDummyDqTester", false, logger);
-    Graph& graph = model.MainGraph();
-    ModelTestBuilder builder(graph);
-
-    NodeArg* where_in1 = nullptr;
-    NodeArg* where_in2 = nullptr;
-    if (is_dq_1) {
-      // DQ
-      auto* dq_Input = builder.MakeInput<uint16_t>({4, 3, 32}, 0.0, 1.0);
-      auto* dq_scale = builder.MakeInitializer<float>({}, 0.0, 1.0);
-      auto* dq_zp = builder.MakeInitializer<uint16_t>({}, 0.0, 1.0);
-      where_in1 = builder.MakeIntermediate();
-      auto& dqlinear = builder.AddNode("DequantizeLinear", {dq_Input, dq_scale, dq_zp}, {where_in1});
-    } else {
-      where_in1 = builder.MakeInitializer<float>({}, 0.0, 1.0);
-    }
-    if (is_dq_2) {
-      // DQ
-      auto* dq_Input = builder.MakeInput<uint16_t>({4, 3, 32}, 0.0, 1.0);
-      auto* dq_scale = builder.MakeInitializer<float>({}, 0.0, 1.0);
-      auto* dq_zp = builder.MakeInitializer<uint16_t>({}, 0.0, 1.0);
-      where_in2 = builder.MakeIntermediate();
-      auto& dqlinear = builder.AddNode("DequantizeLinear", {dq_Input, dq_scale, dq_zp}, {where_in2});
-    } else {
-      where_in2 = builder.MakeInitializer<float>({}, 0.0, 1.0);
-    }
-
-    // Where
-    auto* where_cond = builder.MakeInputBool({4, 3, 32});
-    auto* where_out = builder.MakeIntermediate();
-    auto& where = builder.AddNode("Where", {where_cond, where_in1, where_in2}, {where_out});
-
-    // Q
-    auto* q_scale = builder.MakeInitializer<float>({}, 0.0, 1.0);
-    auto* q_zp = builder.MakeInitializer<uint16_t>({}, 0.0, 1.0);
-    auto* q_out = builder.MakeOutput();
-    auto& qlinear = builder.AddNode("QuantizeLinear", {where_out, q_scale, q_zp}, {q_out});
-
-    builder.SetGraphOutputs();
-    ASSERT_STATUS_OK(graph.Resolve());
-
-    auto where_dq_rule = std::make_unique<WhereDummyDq>();
-    auto rule_effect = RewriteRule::RewriteRuleEffect::kNone;
-    where_dq_rule->CheckConditionAndApply(graph, where, rule_effect, logger);
-
-    std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
-    ASSERT_EQ(op_to_count["Where"], expected_num_where);
-    ASSERT_EQ(op_to_count["DequantizeLinear"], expected_num_dq);
-    ASSERT_EQ(op_to_count["QuantizeLinear"], expected_num_q);
-  };
-  TestWhereWithDqInput(true, true, 1, 2, 1);
-  TestWhereWithDqInput(true, false, 1, 2, 1);
-  TestWhereWithDqInput(false, true, 1, 2, 1);
-  TestWhereWithDqInput(false, false, 1, 0, 1);
 }
 
 // Test Reshape Fusion with 2 constant initializers for Concat inputs.

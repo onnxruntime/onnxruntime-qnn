@@ -145,13 +145,13 @@ InlinedVector<std::unique_ptr<RewriteRule>> GenerateRewriteRules(
       rules.push_back(std::make_unique<PadFusion>());
       rules.push_back(std::make_unique<MatmulBNFusion>());
       rules.push_back(std::make_unique<LabelEncoderFusion>());
-      rules.push_back(std::make_unique<WhereDummyDq>());
       break;
 
     case TransformerLevel::Level2:
       rules.push_back(std::make_unique<ClipQuantFusion>());
       rules.push_back(std::make_unique<ReluQuantFusion>());
       rules.push_back(std::make_unique<GemmTransposeFusion>());
+      rules.push_back(std::make_unique<WhereDummyDq>());
       break;
 
     case TransformerLevel::Level3:
