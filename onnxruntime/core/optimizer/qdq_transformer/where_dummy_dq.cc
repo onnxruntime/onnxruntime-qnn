@@ -90,8 +90,10 @@ namespace onnxruntime {
                 dq_node->Domain()
             );
 
-        graph.RemoveInitializedTensor(where_inputs[const_idx]->Name());
         node.MutableInputDefs()[const_idx] = &dummy_dq_arg;
+        if (graph.GetConsumerNodes(where_inputs[const_idx]->Name()).size() == 0) {
+            graph.RemoveInitializedTensor(where_inputs[const_idx]->Name());
+        }
         graph.AddEdge(dummy_dq_node.Index(), node.Index(), 0, const_idx);
 
         return Status::OK();
