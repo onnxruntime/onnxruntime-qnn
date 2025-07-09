@@ -69,6 +69,8 @@
 #include "core/optimizer/pre_shape_node_elimination.h"
 #include "core/optimizer/propagate_cast_ops.h"
 #include "core/optimizer/qdq_transformer/qdq_util.h"
+#include "core/optimizer/rewrite_rule.h"
+#include "core/optimizer/qdq_transformer/where_dummy_dq.h"
 #include "core/optimizer/quick_gelu_fusion.h"
 #include "core/optimizer/relu_clip_fusion.h"
 #include "core/optimizer/reshape_fusion.h"
@@ -3818,6 +3820,44 @@ TEST_F(GraphTransformationTests, ReluClip11FusionGHIssue9753) {
   // After fusion, the model only contains Clip.
   ASSERT_TRUE(op_to_count["Relu"] == 0);
   ASSERT_TRUE(op_to_count["Clip"] == 1);
+}
+
+TEST_F(GraphTransformationTests, WhereDummyDqTest) {
+  auto& logger = DefaultLoggingManager().DefaultLogger();
+  Model model("WhereDummyDqTester", false, logger);
+  Graph& graph = model.MainGraph();
+  ModelTestBuilder builder(graph);
+  
+  // DQ
+  auto* dq_Input = builder.MakeInput<uint16_t>({4,3,32}, 0.0, 1.0);
+  auto* dq_scale = builder.MakeInitializer<float>({}, 0.0, 1.0);
+  auto* dq_zp = builder.MakeInitializer<uint16_t>({}, 0.0, 1.0);
+  auto* dq_out = builder.MakeIntermediate();
+  auto& dqlinear = builder.AddNode("DequantizeLinear", {dq_Input, dq_scale, dq_zp}, {dq_out});
+
+  // Where
+  auto* where_cond = builder.MakeInputBool({4,3,32});
+  auto* true_data = builder.MakeInitializer<float>({}, 0.0, 1.0);
+  auto* where_out = builder.MakeIntermediate();
+  auto& where = builder.AddNode("Where", {where_cond, true_data, dq_out}, {where_out});
+
+  // Q
+  auto* q_scale = builder.MakeInitializer<float>({}, 0.0, 1.0);
+  auto* q_zp = builder.MakeInitializer<uint16_t>({}, 0.0, 1.0);
+  auto* q_out = builder.MakeOutput();
+  auto& qlinear = builder.AddNode("QuantizeLinear", {where_out, q_scale, q_zp}, {q_out});
+
+  builder.SetGraphOutputs();
+  ASSERT_STATUS_OK(graph.Resolve());
+
+  auto where_dq_rule = std::make_unique<WhereDummyDq>();
+  auto rule_effect = RewriteRule::RewriteRuleEffect::kNone;
+  where_dq_rule->CheckConditionAndApply(graph, where, rule_effect, logger);
+
+  std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
+  ASSERT_EQ(op_to_count["Where"], 1);
+  ASSERT_EQ(op_to_count["DequantizeLinear"], 2);
+  ASSERT_EQ(op_to_count["QuantizeLinear"], 1);
 }
 
 // Test Reshape Fusion with 2 constant initializers for Concat inputs.
