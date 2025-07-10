@@ -151,7 +151,6 @@ InlinedVector<std::unique_ptr<RewriteRule>> GenerateRewriteRules(
       rules.push_back(std::make_unique<ClipQuantFusion>());
       rules.push_back(std::make_unique<ReluQuantFusion>());
       rules.push_back(std::make_unique<GemmTransposeFusion>());
-      rules.push_back(std::make_unique<WhereDummyDq>());
       break;
 
     case TransformerLevel::Level3:
@@ -273,6 +272,7 @@ InlinedVector<std::unique_ptr<GraphTransformer>> GenerateTransformers(
         // It runs unconditionally in InferenceSession::TransformGraph() prior to Level1 optimizers.
         // We also put it here with other Level1 optimizers so that it can fix things up after their changes.
         transformers.emplace_back(std::make_unique<EnsureUniqueDQForNodeUnit>());
+        transformers.emplace_back(std::make_unique<WhereDummyDq>());
       }
 
       // add __backwardpass attribute to nodes after YieldOp, ROCm-only

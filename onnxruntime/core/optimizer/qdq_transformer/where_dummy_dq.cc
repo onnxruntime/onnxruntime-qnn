@@ -13,7 +13,10 @@
 #include "core/optimizer/qdq_transformer/qdq_util.h"
 
 namespace onnxruntime {
-bool WhereDummyDq::SatisfyCondition(const Graph& graph, const Node& node, const logging::Logger& /*logger*/) const {
+bool WhereDummyDq::SatisfyCondition(const Graph& graph, const Node& node) const {
+  if (!(node.OpType() == "Where")) {
+    return false;
+  }
   const auto& where_inputs = node.InputDefs();
   const Node* parent_node_1 = graph.GetProducerNode(where_inputs[1]->Name());
   const Node* parent_node_2 = graph.GetProducerNode(where_inputs[2]->Name());
@@ -31,7 +34,7 @@ bool WhereDummyDq::SatisfyCondition(const Graph& graph, const Node& node, const 
   return false;
 }
 
-Status WhereDummyDq::Apply(Graph& graph, Node& node, RewriteRuleEffect& rule_effect, const logging::Logger&) const {
+Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified) const {
   const auto& where_inputs = node.InputDefs();
   const Node* parent_node_1 = graph.GetProducerNode(where_inputs[1]->Name());
   const Node* parent_node_2 = graph.GetProducerNode(where_inputs[2]->Name());
@@ -94,7 +97,27 @@ Status WhereDummyDq::Apply(Graph& graph, Node& node, RewriteRuleEffect& rule_eff
     graph.RemoveInitializedTensor(where_inputs[const_idx]->Name());
   }
   graph.AddEdge(dummy_dq_node.Index(), node.Index(), 0, const_idx);
-  rule_effect = RewriteRuleEffect::kUpdatedCurrentNode;
+  modified = true;
+
+  return Status::OK();
+}
+
+Status WhereDummyDq::ApplyImpl(Graph& graph, bool& modified, int graph_level, const logging::Logger& logger) const {
+  const GraphViewer graph_viewer{graph};
+  const auto& node_indices = graph_viewer.GetNodesInTopologicalOrder();
+  for (const auto node_idx : node_indices) {
+    auto* node_ptr = graph.GetNode(node_idx);
+    if (!node_ptr) {
+      continue;
+    }
+
+    Node& node = *node_ptr;
+    ORT_RETURN_IF_ERROR(Recurse(node, modified, graph_level, logger));
+
+    if (this->SatisfyCondition(graph, node)) {
+      ORT_RETURN_IF_ERROR(WhereDummyDq::InsertDummyDQ(node, graph, modified));
+    }
+  }
 
   return Status::OK();
 }

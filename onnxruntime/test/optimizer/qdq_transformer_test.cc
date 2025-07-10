@@ -3228,7 +3228,7 @@ TEST(QDQTransformerTests, WhereDummyDqTest) {
                                   int expected_num_where,
                                   int expected_num_dq,
                                   int expected_num_q,
-                                  RewriteRule::RewriteRuleEffect expected_effect) {
+                                  bool expected_modified) {
     auto& logger = DefaultLoggingManager().DefaultLogger();
     Model model("WhereDummyDqTester", false, logger);
     Graph& graph = model.MainGraph();
@@ -3242,7 +3242,7 @@ TEST(QDQTransformerTests, WhereDummyDqTest) {
       auto* dq_scale = builder.MakeInitializer<float>({}, 0.0, 1.0);
       auto* dq_zp = builder.MakeInitializer<uint16_t>({}, 0.0, 1.0);
       where_in1 = builder.MakeIntermediate();
-      auto& dqlinear = builder.AddNode("DequantizeLinear", {dq_Input, dq_scale, dq_zp}, {where_in1});
+      builder.AddNode("DequantizeLinear", {dq_Input, dq_scale, dq_zp}, {where_in1});
     } else {
       where_in1 = builder.MakeInitializer<float>({}, 0.0, 1.0);
     }
@@ -3252,7 +3252,7 @@ TEST(QDQTransformerTests, WhereDummyDqTest) {
       auto* dq_scale = builder.MakeInitializer<float>({}, 0.0, 1.0);
       auto* dq_zp = builder.MakeInitializer<uint16_t>({}, 0.0, 1.0);
       where_in2 = builder.MakeIntermediate();
-      auto& dqlinear = builder.AddNode("DequantizeLinear", {dq_Input, dq_scale, dq_zp}, {where_in2});
+      builder.AddNode("DequantizeLinear", {dq_Input, dq_scale, dq_zp}, {where_in2});
     } else {
       where_in2 = builder.MakeInitializer<float>({}, 0.0, 1.0);
     }
@@ -3260,31 +3260,31 @@ TEST(QDQTransformerTests, WhereDummyDqTest) {
     // Where
     auto* where_cond = builder.MakeInputBool({4, 3, 32});
     auto* where_out = builder.MakeIntermediate();
-    auto& where = builder.AddNode("Where", {where_cond, where_in1, where_in2}, {where_out});
+    builder.AddNode("Where", {where_cond, where_in1, where_in2}, {where_out});
 
     // Q
     auto* q_scale = builder.MakeInitializer<float>({}, 0.0, 1.0);
     auto* q_zp = builder.MakeInitializer<uint16_t>({}, 0.0, 1.0);
     auto* q_out = builder.MakeOutput();
-    auto& qlinear = builder.AddNode("QuantizeLinear", {where_out, q_scale, q_zp}, {q_out});
+    builder.AddNode("QuantizeLinear", {where_out, q_scale, q_zp}, {q_out});
 
     builder.SetGraphOutputs();
     ASSERT_STATUS_OK(graph.Resolve());
 
-    auto where_dq_rule = std::make_unique<WhereDummyDq>();
-    auto rule_effect = RewriteRule::RewriteRuleEffect::kNone;
-    where_dq_rule->CheckConditionAndApply(graph, where, rule_effect, logger);
+    auto where_optimizer = std::make_unique<WhereDummyDq>();
+    bool modified = false;
+    ASSERT_STATUS_OK(where_optimizer->Apply(graph, modified, logger));
 
     std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
     ASSERT_EQ(op_to_count["Where"], expected_num_where);
     ASSERT_EQ(op_to_count["DequantizeLinear"], expected_num_dq);
     ASSERT_EQ(op_to_count["QuantizeLinear"], expected_num_q);
-    ASSERT_EQ(rule_effect, expected_effect);
+    ASSERT_EQ(modified, expected_modified);
   };
-  TestWhereWithDqInput(true, true, 1, 2, 1, RewriteRule::RewriteRuleEffect::kNone);
-  TestWhereWithDqInput(true, false, 1, 2, 1, RewriteRule::RewriteRuleEffect::kUpdatedCurrentNode);
-  TestWhereWithDqInput(false, true, 1, 2, 1, RewriteRule::RewriteRuleEffect::kUpdatedCurrentNode);
-  TestWhereWithDqInput(false, false, 1, 0, 1, RewriteRule::RewriteRuleEffect::kNone);
+  TestWhereWithDqInput(true, true, 1, 2, 1, false);
+  TestWhereWithDqInput(true, false, 1, 2, 1, true);
+  TestWhereWithDqInput(false, true, 1, 2, 1, true);
+  TestWhereWithDqInput(false, false, 1, 0, 1, false);
 }
 
 TEST(QDQTransformerTests, Concat) {
