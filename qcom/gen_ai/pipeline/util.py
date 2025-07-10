@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: MIT
 
 
-
 class Colors:
     GREEN = "\033[0;32m"
     GREY = "\033[0;37m"
