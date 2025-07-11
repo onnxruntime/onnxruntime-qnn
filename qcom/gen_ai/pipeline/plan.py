@@ -13,18 +13,18 @@ TASK_REGISTRY = {}
 PUBLIC_TASKS = []
 
 
-def task(description: str, dependencies: list[str] = None, checkpoint_outputs: list[str] = None):
+def task(description: str, dependencies: list[str] = None):
     def decorator(func):
-        TASK_REGISTRY[func.__name__] = TaskInfo(description, dependencies or [], checkpoint_outputs or [])
+        TASK_REGISTRY[func.__name__] = TaskInfo(description, dependencies or [])
         return func
 
     return decorator
 
 
-def public_task(description: str, dependencies: list[str] = None, checkpoint_outputs: list[str] = None):
+def public_task(description: str, dependencies: list[str] = None):
     def decorator(func):
         PUBLIC_TASKS.append(func.__name__)
-        TASK_REGISTRY[func.__name__] = TaskInfo(description, dependencies or [], checkpoint_outputs or [])
+        TASK_REGISTRY[func.__name__] = TaskInfo(description, dependencies or [])
         return func
 
     return decorator
@@ -79,7 +79,8 @@ class Plan:
         return step_id
 
     def force_step(self, step_id: str):
-        self._forced.append(step_id)
+        if step_id not in self._forced:
+            self._forced.append(step_id)
 
     def for_each(self, func: Callable[[str, Task], None]) -> None:
         for s in self._steps:
@@ -107,6 +108,8 @@ class Plan:
             step_msg = step.step_id
             if not step.task.does_work():
                 step_msg += " (no-op)"
+            if step.step_id in self._forced:
+                step_msg += " (forced)"
             if self.is_checkpointed(step.step_id):
                 step_msg += " (checkpointed)"
             print(step_msg)
@@ -115,7 +118,7 @@ class Plan:
         start_time = time.monotonic()
 
         def run_task(step_id: str, task: Task) -> None:
-            if self.is_checkpointed(step_id) and not step_id in self._forced:
+            if self.is_checkpointed(step_id) and step_id not in self._forced:
                 logging.warning(f"Checkpointed step {step_id}, skipping...")
             else:
                 step_start_time = time.monotonic()

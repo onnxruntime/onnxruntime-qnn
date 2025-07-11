@@ -7,7 +7,7 @@ from ..task import Task
 from .utils.checkpoint import Checkpoint
 
 
-class CompileModelDirTask(Task):
+class UploadSplitsToHubTask(Task):
     def __init__(self, model_dir):
         self.model_dir = model_dir
 
@@ -18,7 +18,7 @@ class CompileModelDirTask(Task):
         for instantiation in self.model_dir.splits:
             for split in self.model_dir.splits[instantiation]:
                 checkpoint_path = Checkpoint.get_checkpoint_path_from_model_path(split.split_path)
-                if not Checkpoint.has_checkpoint(checkpoint_path, "compiled_model_id"):
+                if not Checkpoint.has_checkpoint(checkpoint_path, "exported_model_id"):
                     return False
 
         return True

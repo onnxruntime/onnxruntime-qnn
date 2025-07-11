@@ -5,7 +5,6 @@ import argparse
 import hashlib
 import logging
 import os
-import re
 import subprocess
 import sys
 from datetime import datetime
@@ -14,7 +13,7 @@ from pathlib import Path
 from pipeline.logging import initialize_logging
 from pipeline.model_dir import ModelDir
 from pipeline.plan import PUBLIC_TASKS, TASK_REGISTRY, Plan, public_task, task
-from pipeline.tasks import BootstrapModelDirTask, CompileModelDirTask, ExportModelDirTask
+from pipeline.tasks import BootstrapModelDirTask, CompileModelDirTask, ExportModelDirTask, UploadSplitsToHubTask
 
 MODELS_DIR = os.path.abspath("models")
 
@@ -60,36 +59,6 @@ class Split:
             os.path.dirname(self.split_path), f"{self.split_name.replace('.aimet', '')}_qdq.onnx"
         )
         self.compiled_model = None
-
-    def _to_checkpoint(self):
-        self.sha = hash_directory(self.split_path)
-        lines = [self.sha, self.hub_model.model_id]
-        if self.compiled_model:
-            lines.append(self.compiled_model.model_id)
-        with open(os.path.join(os.path.dirname(self.split_path), f"{self.split_name}.checkpoint"), "w") as f:
-            f.writelines([line + "\n" for line in lines])
-
-    def upload(self):
-        self.hub_model = hub.upload_model(self.split_path)
-        print(f"Uploaded split {self.split_name} to AI Hub...")
-        self._to_checkpoint()
-
-    def _read_data_from_checkpoint(self):
-        with open(os.path.join(os.path.dirname(self.split_path), f"{self.split_name}.checkpoint")) as f:
-            lines = f.readlines()
-        self.sha = hash_directory(self.split_path)
-        if self.sha != lines[0].strip():
-            raise ValueError(f"Mismatch between stored SHA and SHA of file for {self.split_name}")
-        self.hub_model = hub.get_model(lines[1].strip())
-
-        if len(lines) >= 3:
-            self.compiled_model = hub.get_model(lines[2].strip())
-
-    @classmethod
-    def from_checkpoint(cls, checkpoint_path):
-        split = cls(checkpoint_path.replace(".checkpoint", ""))
-        split._read_data_from_checkpoint()
-        return split
 
     def compile_on_onnx(self):
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -166,58 +135,6 @@ class ModelDirOld:
         self.venv_dir = os.path.join(model_name, "venv")
         self.interpreter_path = os.path.join(self.venv_dir, "bin", "python")
 
-    def export(self):
-        export_cmd = f"qai_hub_models.models.{self.model_name}.export"
-        subprocess.run(
-            [self.interpreter_path, "-m", export_cmd, "--skip-compiling", "--output-dir", self.model_dir], check=True
-        )
-        print(f"Successfully exported: {self.model_name}")
-
-    def _find_splits_to_upload(self) -> dict[str, list[str]]:
-        self.instantiations = self._find_instantiations()
-        instantiations_contents = {d: [] for d in self.instantiations}
-
-        model_pattern = re.compile(r"(\d+)_of_\d+\.aimet$")
-        for instantiation in instantiations_contents:
-            instantiation_models = os.listdir(os.path.join(self.model_dir, instantiation))
-            sorted_splits = sorted(
-                [
-                    Split(os.path.join(self.model_dir, instantiation, model))
-                    for model in instantiation_models
-                    if model_pattern.search(model)
-                ],
-                key=lambda x: int(model_pattern.search(x.split_name).group(1)),
-            )
-            instantiations_contents[instantiation] = sorted_splits
-
-        return instantiations_contents
-
-    def upload_splits(self):
-        self.splits = self._find_splits_to_upload()
-        for instantiation in self.splits:
-            for split in self.splits[instantiation]:
-                split.upload()
-
-    def find_cached_splits(self) -> dict[str, list[str]]:
-        self.instantiations = self._find_instantiations()
-        instantiations_contents = {d: [] for d in self.instantiations}
-
-        model_pattern = re.compile(r"(\d+)_of_\d+\.aimet$")
-        for instantiation in instantiations_contents:
-            checkpoint_files = [
-                file for file in os.listdir(os.path.join(self.model_dir, instantiation)) if file.endswith(".checkpoint")
-            ]
-            sorted_splits = sorted(
-                [
-                    Split.from_checkpoint(os.path.join(self.model_dir, instantiation, checkpoint))
-                    for checkpoint in checkpoint_files
-                ],
-                key=lambda x: int(model_pattern.search(x.split_name).group(1)),
-            )
-            instantiations_contents[instantiation] = sorted_splits
-
-        self.splits = instantiations_contents
-
     def compile_on_onnx(self):
         for instantiation in self.splits:
             for split in self.splits[instantiation]:
@@ -256,17 +173,22 @@ class TaskLibrary:
         return plan.add_step(BootstrapModelDirTask(self.model_dir, local_mode=True))
 
     @public_task(
-        description="Exports a model from AI Hub Models to AI Hub",
+        description="Exports a model from AI Hub Models to the model directory",
         dependencies=["bootstrap"],
-        checkpoint_outputs=["exported_model_id"],
     )
     def export(self, plan: Plan):
         return plan.add_step(ExportModelDirTask(self.model_dir))
 
     @public_task(
-        description="Compiles an uploaded model to ONNX using AI Hub",
+        description="Uploads the splits of a model to AI Hub",
         dependencies=["export"],
-        checkpoint_outputs=["compiled_onnx_model_id"],
+    )
+    def upload_to_hub(self, plan: Plan):
+        return plan.add_step(UploadSplitsToHubTask(self.model_dir))
+
+    @public_task(
+        description="Compiles an uploaded model to ONNX using AI Hub",
+        dependencies=["upload_to_hub"],
     )
     def compile_on_onnx(self, plan: Plan):
         return plan.add_step(CompileModelDirTask(self.model_dir))
@@ -284,7 +206,13 @@ def parse_args():
         help='Task to run. Specify "list" to show all tasks.',
     )
     parser.add_argument(
-        "--force", type=str, action="append", help="Force a task to run even if it has already been completed"
+        "--force",
+        type=str,
+        action="append",
+        help="Force a task and all affected tasks to run even if it has already been completed",
+    )
+    parser.add_argument(
+        "--force_only", type=str, action="append", help="Force a task to run even if it has already been completed"
     )
 
     return parser.parse_args()
@@ -299,7 +227,7 @@ def clean():
         logging.error(f"Models directory {models_dir} does not exist. Nothing to clean.")
 
 
-def plan_from_dependencies(model_dir: ModelDir, task: str, force: list[str]):
+def plan_from_dependencies(model_dir: ModelDir, task: str, force: list[str], force_only: list[str]):
     plan = Plan(task)
     task_library = TaskLibrary(model_dir)
 
@@ -332,6 +260,10 @@ def plan_from_dependencies(model_dir: ModelDir, task: str, force: list[str]):
             work_list.append(task_name)
             work_list.extend(reversed(unfulfilled_deps))
 
+    # Add forced only tasks to plan
+    for forced_task in force_only:
+        plan.force_step(forced_task)
+
     # Add forced tasks based on forced list using depth-first search for UI-specified forced tasks
     for forced_task in force:
         if not plan.has_step(forced_task):
@@ -341,10 +273,10 @@ def plan_from_dependencies(model_dir: ModelDir, task: str, force: list[str]):
         path = []
         while len(work_list) > 0:
             current_task = work_list.pop()
+            path.append(current_task)
 
             # Return the path if we found our forced task
             if current_task == forced_task:
-                path.append(current_task)
                 break
 
             for dep in TASK_REGISTRY.get(current_task).dependencies:
@@ -400,7 +332,7 @@ def main():
         logging.warning(f"Models directory {models_dir} already exists, continuing...")
 
     model_dir = ModelDir(MODELS_DIR, model_name)
-    plan = plan_from_dependencies(model_dir, task, force=args.force or [])
+    plan = plan_from_dependencies(model_dir, task, force=args.force or [], force_only=args.force_only or [])
 
     if args.dryrun:
         plan.print()

@@ -8,19 +8,12 @@ REPO_ROOT = (Path(__file__).parent / ".." / "..").resolve()
 
 
 class TaskInfo:
-    def __init__(
-        self, description: str, dependencies: list[str], checkpoint_outputs: list[str], group_name: str | None = None
-    ) -> None:
+    def __init__(self, description: str, dependencies: list[str]) -> None:
         """
-        Initialize a new instance.
-
-        Args:
-          * :group_name: Used for logging and grouping messages. None is valid.
+        Information about a registered task
         """
         self.description = description
         self.dependencies = dependencies
-        self.checkpoint_outputs = checkpoint_outputs
-        self.group_name = group_name
 
 
 class Task(ABC):
