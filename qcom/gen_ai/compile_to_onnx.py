@@ -23,12 +23,13 @@ def main():
         exported_model_id = Checkpoint.get_from_checkpoint(checkpoint_path, "exported_model_id")
         exported_model = hub.get_model(exported_model_id)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        compiled_model = hub.submit_compile_job(
+        compiled_job = hub.submit_compile_job(
             exported_model,
             hub.Device("Snapdragon X Elite CRD"),
             name=f"{Path(model_path).name.removesuffix('.aimet')}_qairt_{timestamp}",
             options="--target_runtime onnx",
         )
+        compiled_model = compiled_job.get_target_model()
         print(f"Model compiled successfully! Model ID: {compiled_model.model_id}")
         Checkpoint.add_to_checkpoint(checkpoint_path, "compiled_model_id", compiled_model.model_id)
     except Exception as e:

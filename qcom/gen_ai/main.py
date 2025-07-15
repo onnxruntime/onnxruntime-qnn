@@ -2,18 +2,23 @@
 # SPDX-License-Identifier: MIT
 
 import argparse
-import hashlib
 import logging
 import os
 import subprocess
 import sys
-from datetime import datetime
-from pathlib import Path
 
 from pipeline.logging import initialize_logging
 from pipeline.model_dir import ModelDir
 from pipeline.plan import PUBLIC_TASKS, TASK_REGISTRY, Plan, public_task, task
-from pipeline.tasks import BootstrapModelDirTask, CompileModelDirTask, ExportModelDirTask, UploadSplitsToHubTask
+from pipeline.tasks import (
+    BootstrapModelDirTask,
+    CompileModelDirTask,
+    ConvertAIMETModelDirTask,
+    ConvertQDQModelDirTask,
+    DownloadQDQModelDirTask,
+    ExportModelDirTask,
+    UploadSplitsToHubTask,
+)
 
 MODELS_DIR = os.path.abspath("models")
 
@@ -25,143 +30,6 @@ VALID_MODELS = [
     "qwen2_7b_instruct",
     "stable_diffusion_v2_1",
 ]
-
-ORT_QNN_PATH = os.path.join(
-    "..", "..", "build", "linux", "Release", "dist", "onnxruntime_qnn_qcom_internal-1.23.0-cp310-cp310-linux_x86_64.whl"
-)
-
-
-def hash_directory(directory_path, hash_algo="sha256"):
-    print(f"Generating hash for {directory_path}")
-    hash_func = hashlib.new(hash_algo)
-
-    for root, dirs, files in sorted(os.walk(directory_path)):
-        for file in sorted(files):
-            file_path = os.path.join(root, file)
-            relative_path = os.path.relpath(file_path, directory_path)
-            hash_func.update(relative_path.encode())  # Include file path in hash
-            with open(file_path, "rb") as f:
-                while chunk := f.read(8192):
-                    hash_func.update(chunk)
-
-    print(f"Finished hash generation for {directory_path}")
-    return hash_func.hexdigest()
-
-
-class Split:
-    def __init__(self, split_path):
-        self.split_path = split_path
-        self.split_name = Path(split_path).name
-        self.sha = None
-        self.hub_model = None
-        self.qdq_model = None
-        self.onnx_qdq_path = os.path.join(
-            os.path.dirname(self.split_path), f"{self.split_name.replace('.aimet', '')}_qdq.onnx"
-        )
-        self.compiled_model = None
-
-    def compile_on_onnx(self):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        print(f"Compiling {self.split_name} for ONNX using hub...")
-        compile_job = hub.submit_compile_job(
-            self.hub_model,
-            hub.Device("Snapdragon X Elite CRD"),
-            name=f"{self.split_name}_qairt_{timestamp}",
-            options="--target_runtime onnx",
-        )
-        print(f"Submitted compile job {compile_job.job_id} for {self.split_name} on ONNX...")
-        self.compiled_model = compile_job.get_target_model()
-        self._to_checkpoint()
-
-    def _get_qdq_model(self):
-        print(f"Determining QDQ model ID for model {self.split_name}")
-        compile_job = self.compiled_model.producer
-        self.qdq_model = compile_job.get_target_model()
-
-    def download_qdq_model(self):
-        self._get_qdq_model()
-        # Download the model to a temporary directory inside the model dir and then move it outside
-        print(f"Downloading QDQ model to {self.onnx_qdq_path}")
-        downloaded_path = self.qdq_model.download(self.onnx_qdq_path)
-        print(f"Downloaded QDQ model to {downloaded_path}")
-
-    def convert_w_ort_ep(self):
-        import onnxruntime
-
-        sess_options = onnxruntime.SessionOptions()
-        sess_options.add_session_config_entry("ep.context_enable", "1")
-        ep_context_onnx_model_path = os.path.join(
-            os.path.dirname(self.split_path), f"{self.split_name.replace('.aimet', '')}_ep_converted.onnx"
-        )
-        sess_options.add_session_config_entry("ep.context_file_path", ep_context_onnx_model_path)
-        sess_options.log_severity_level = 0
-        sess_options.log_verbosity_level = 1
-        print(f"Saving EP context binary to {ep_context_onnx_model_path}")
-
-        provider_options = [
-            {
-                "backend_path": "libQnnHtp.so",
-                "htp_graph_finalization_optimization_mode": 3,
-                "soc_model": "60",
-                "htp_arch": "73",
-                "vtcm_mb": "8",
-                "dump_json_qnn_graph": "1",
-                "json_qnn_graph_dir": os.path.dirname(self.split_path),
-            }
-        ]
-
-        sess = onnxruntime.InferenceSession(
-            self.onnx_qdq_path,
-            sess_options=sess_options,
-            providers=["QNNExecutionProvider"],
-            provider_options=provider_options,
-        )
-
-        print("Successfully generated EP context binary.")
-
-    def profile_on_qairt(self):
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        print(f"Profiling {self.split_name} for QAIRT using ORT...")
-        profile_job = hub.submit_profile_job(
-            self.compiled_model, hub.Device("Snapdragon X Elite CRD"), name=f"{self.split_name}_qairt_{timestamp}"
-        )
-        print(f"Submitted profile job {profile_job.job_id} for {self.split_name} on QAIRT...")
-
-
-class ModelDirOld:
-    def __init__(self, model_name):
-        self.model_name = model_name
-        self.model_dir = os.path.abspath(self.model_name)
-        self.venv_dir = os.path.join(model_name, "venv")
-        self.interpreter_path = os.path.join(self.venv_dir, "bin", "python")
-
-    def compile_on_onnx(self):
-        for instantiation in self.splits:
-            for split in self.splits[instantiation]:
-                split.compile_on_onnx()
-
-    def download_qdq_models(self):
-        for instantiation in self.splits:
-            for split in self.splits[instantiation]:
-                split.download_qdq_model()
-
-    def _override_onnxruntime_qnn(self):
-        # Override the onnxruntime_qnn library with the one from the QDQ model
-        print("Overriding onnxruntime_qnn library with the one from local build")
-        subprocess.run([self.interpreter_path, "-m", "uv", "pip", "uninstall", "onnxruntime"], check=True)
-        subprocess.run([self.interpreter_path, "-m", "uv", "pip", "install", ORT_QNN_PATH], check=True)
-        print("Overridden onnxruntime_qnn library with the one from the QDQ model")
-
-    def convert_w_ort_ep(self):
-        self._override_onnxruntime_qnn()
-        for instantiation in self.splits:
-            for split in self.splits[instantiation]:
-                split.convert_w_ort_ep()
-
-    def profile_on_qairt(self):
-        for instantiation in self.splits:
-            for split in self.splits[instantiation]:
-                split.profile_on_qairt()
 
 
 class TaskLibrary:
@@ -192,6 +60,21 @@ class TaskLibrary:
     )
     def compile_on_onnx(self, plan: Plan):
         return plan.add_step(CompileModelDirTask(self.model_dir))
+
+    @public_task(
+        description="Downloads the ONNX QDQ models from AI Hub",
+        dependencies=["compile_on_onnx"],
+    )
+    def download_qdq(self, plan: Plan):
+        return plan.add_step(DownloadQDQModelDirTask(self.model_dir))
+
+    @public_task(description="Converts a downloaded QDQ model using ORT-QNN", dependencies=["download_qdq"])
+    def convert_qdq_on_onnx(self, plan: Plan):
+        return plan.add_step(ConvertQDQModelDirTask(self.model_dir))
+
+    @public_task(description="Convert AIMET model using QAIRT", dependencies=["export"])
+    def convert_aimet_on_qairt(self, plan: Plan):
+        return plan.add_step(ConvertAIMETModelDirTask(self.model_dir))
 
 
 def parse_args():

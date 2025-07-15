@@ -1,11 +1,13 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
-
 import logging
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
+
+ORT_QNN_WHEEL_PATH = os.path.join("..", "..", "build", "linux", "Release", "dist")
 
 
 class Split:
@@ -105,3 +107,24 @@ class ModelDir:
             print("Installed packages from llama-requirements.txt")
 
         Path(os.path.join(self.model_dir, "venv.checkpoint")).touch()
+
+    def override_onnxruntime(self):
+        ort_wheel_candidates = os.listdir(ORT_QNN_WHEEL_PATH)
+
+        if len(ort_wheel_candidates) != 1:
+            logging.error("No ONNX Runtime wheel found in the specified path")
+            sys.exit(1)
+
+        # Uninstall existing onnxruntime package to prevent any potential conflicts
+        subprocess.run([self.interpreter_path, "-m", "uv", "pip", "uninstall", "onnxruntime"], check=True)
+
+        ort_wheel = os.path.join(ORT_QNN_WHEEL_PATH, ort_wheel_candidates[0])
+        subprocess.run([self.interpreter_path, "-m", "uv", "pip", "install", ort_wheel], check=True)
+
+    def get_blank_results(self):
+        results = {}
+        for instantiation in self.splits:
+            results[instantiation] = {}
+            for split in self.splits[instantiation]:
+                results[instantiation][split] = {}
+        return results
