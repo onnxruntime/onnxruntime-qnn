@@ -106,6 +106,7 @@ QnnQuantParamsWrapper::QnnQuantParamsWrapper(gsl::span<const float> per_channel_
   params_.quantizationEncoding = QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION;
 
   Qnn_BlockwiseExpansion_t* const lpbqPtr = (Qnn_BlockwiseExpansion_t*)malloc(sizeof(Qnn_BlockwiseExpansion_t));
+  assert(lpbqPtr && "Allocation of Qnn_BlockwiseExpansion_t object failed.");
   Qnn_BlockwiseExpansion_t& lpbq = *lpbqPtr;
 
   lpbq.axis = static_cast<int32_t>(axis);
@@ -128,6 +129,7 @@ QnnQuantParamsWrapper::QnnQuantParamsWrapper(gsl::span<const float> per_channel_
   lpbq.numBlocksPerAxis = static_cast<uint32_t>(per_block_int_scales.size()) / num_elems;
   lpbq.blockScaleBitwidth = is_int4 ? 4 : 8;
   lpbq.blockScaleStorageType = QNN_BLOCKWISE_EXPANSION_BITWIDTH_SCALE_STORAGE_8;
+
   std::vector<uint8_t> blocksScale8(per_block_int_scales.size());
   std::copy(per_block_int_scales.begin(), per_block_int_scales.end(), blocksScale8.begin());
   lpbq.blocksScale8 = blocksScale8.data();

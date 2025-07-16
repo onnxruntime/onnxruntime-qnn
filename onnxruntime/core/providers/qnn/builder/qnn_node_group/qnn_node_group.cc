@@ -17,7 +17,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/reshape_gemm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/scale_softmax_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/channel_shuffle_fusion.h"
-#include "core/providers/qnn/builder/qnn_node_group/lpbq_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/lpbqgemm_fusion.h"
 
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -91,7 +91,7 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
     const logging::Logger& logger) {
   // Maps a starting operator type to the fusion function.
   static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
-      {"DequantizeLinear", {LPBQFusion::TryFusion, DQQFusion::TryFusion}},
+      {"DequantizeLinear", {LowPowerBlockQuantizedGemmFusion::TryFusion, DQQFusion::TryFusion}},
       {"HardSigmoid", {HardSigmoidMulFusion::TryFusion}},
       {"Gemm", {ReshapeGemmFusion::TryFusion}},
       {"Mul", {ScaleSoftmaxFusion::TryFusion}},
@@ -105,7 +105,6 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
   auto iter = fusions.find(starting_node_unit.OpType());
   if (iter != fusions.end()) {
     for (auto& fusion_func : iter->second) {
-      // FusionFunc fusion_func = iter->second;
       std::unique_ptr<IQnnNodeGroup> fused_node_group = fusion_func(qnn_model_wrapper, starting_node_unit, node_to_node_unit,
                                                                     node_unit_to_qnn_node_group, logger);
       if (fused_node_group) {

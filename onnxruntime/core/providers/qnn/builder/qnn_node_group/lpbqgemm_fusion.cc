@@ -10,7 +10,7 @@
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_node_group/utils.h"
-#include "core/providers/qnn/builder/qnn_node_group/lpbq_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/lpbqgemm_fusion.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -24,7 +24,7 @@ static Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                     const NodeUnit& output_ql_node_unit,
                                     bool validate);
 
-std::unique_ptr<IQnnNodeGroup> LPBQFusion::TryFusion(
+std::unique_ptr<IQnnNodeGroup> LowPowerBlockQuantizedGemmFusion::TryFusion(
     QnnModelWrapper& qnn_model_wrapper,
     const NodeUnit& scale_dql_node_unit,
     const std::unordered_map<const Node*, const NodeUnit*>& node_to_node_unit,
@@ -32,7 +32,7 @@ std::unique_ptr<IQnnNodeGroup> LPBQFusion::TryFusion(
     const logging::Logger& logger) {
   ORT_UNUSED_PARAMETER(logger);
 
-  // Looking for a standalone Cast to start the sequence.
+  // Looking for a standalone DequantizeLinear to start the sequence.
   if (scale_dql_node_unit.OpType() != "DequantizeLinear") {
     return nullptr;
   }
@@ -106,20 +106,20 @@ std::unique_ptr<IQnnNodeGroup> LPBQFusion::TryFusion(
     return nullptr;
   }
 
-  return std::make_unique<LPBQFusion>(scale_dql_node_unit,
-                                      *p_w_ql_node_unit,
-                                      *p_w_dql_node_unit,
-                                      *p_act_dql_node_unit,
-                                      *p_gemm_node_unit,
-                                      *p_output_ql_node_unit);
+  return std::make_unique<LowPowerBlockQuantizedGemmFusion>(scale_dql_node_unit,
+                                                            *p_w_ql_node_unit,
+                                                            *p_w_dql_node_unit,
+                                                            *p_act_dql_node_unit,
+                                                            *p_gemm_node_unit,
+                                                            *p_output_ql_node_unit);
 }
 
-LPBQFusion::LPBQFusion(const NodeUnit& Scale_DQL_node_unit,
-                       const NodeUnit& W_QL_node_unit,
-                       const NodeUnit& W_DQL_node_unit,
-                       const NodeUnit& Act_DQL_node_unit,
-                       const NodeUnit& Gemm_node_unit,
-                       const NodeUnit& Output_QL_node_unit)
+LowPowerBlockQuantizedGemmFusion::LowPowerBlockQuantizedGemmFusion(const NodeUnit& Scale_DQL_node_unit,
+                                                                   const NodeUnit& W_QL_node_unit,
+                                                                   const NodeUnit& W_DQL_node_unit,
+                                                                   const NodeUnit& Act_DQL_node_unit,
+                                                                   const NodeUnit& Gemm_node_unit,
+                                                                   const NodeUnit& Output_QL_node_unit)
     : node_units_{&Scale_DQL_node_unit,
                   &W_QL_node_unit,
                   &W_DQL_node_unit,
@@ -128,22 +128,35 @@ LPBQFusion::LPBQFusion(const NodeUnit& Scale_DQL_node_unit,
                   &Output_QL_node_unit} {
 }
 
-Status LPBQFusion::IsSupported(QnnModelWrapper& qmw, const logging::Logger& logger) const {
+Status LowPowerBlockQuantizedGemmFusion::IsSupported(QnnModelWrapper& qmw, const logging::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
   return CreateOrValidateOnQnn(qmw, *node_units_[0], *node_units_[1], *node_units_[2], *node_units_[3], *node_units_[4], *node_units_[5], true);
 }
 
-Status LPBQFusion::AddToModelBuilder(QnnModelWrapper& qmw, const logging::Logger& logger) const {
+Status LowPowerBlockQuantizedGemmFusion::AddToModelBuilder(QnnModelWrapper& qmw, const logging::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
   return CreateOrValidateOnQnn(qmw, *node_units_[0], *node_units_[1], *node_units_[2], *node_units_[3], *node_units_[4], *node_units_[5], false);
 }
 
-gsl::span<const NodeUnit* const> LPBQFusion::GetNodeUnits() const {
+gsl::span<const NodeUnit* const> LowPowerBlockQuantizedGemmFusion::GetNodeUnits() const {
   return node_units_;
 }
 
-const NodeUnit* LPBQFusion::GetTargetNodeUnit() const {
+const NodeUnit* LowPowerBlockQuantizedGemmFusion::GetTargetNodeUnit() const {
   return node_units_[0];
+}
+
+Status UnpackWeightTensorData(const QnnModelWrapper& qnn_model_wrapper,
+                              const onnx::TensorProto* weight_tensor_proto,
+                              std::vector<uint32_t>& weight_shape,
+                              int64_t input_channel_axis,
+                              std::vector<uint8_t>& unpacked_tensor) {
+  if (input_channel_axis == 0) {
+    // Transpose to keep output_channel at index 0;
+    return utils::TwoDimensionTranspose(qnn_model_wrapper, weight_shape, *weight_tensor_proto, unpacked_tensor);
+  } else {
+    return qnn_model_wrapper.UnpackInitializerData(*weight_tensor_proto, unpacked_tensor);
+  }
 }
 
 Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
@@ -189,7 +202,7 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   // get per_block_int_scale value from input[0] of DequantizeLinear
   std::vector<uint8_t> per_block_int_scale;
   const NodeUnitIODef& per_block_int_def = scale_dql_node_unit.Inputs()[0];
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales(per_block_int_def.node_arg.Name(), per_block_int_scale));
+  ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales<uint8_t>(per_block_int_def.node_arg.Name(), per_block_int_scale));
   std::vector<int32_t> weight_offset(per_channel_float_scale.size(), 0);
   std::vector<uint32_t> block_scales_shape;
   ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(per_block_int_def.node_arg, block_scales_shape), "Failed to get block_scales shape");
@@ -211,7 +224,7 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   auto input_channel_axis = helper.Get("axis", static_cast<int64_t>(0));
   auto block_size = helper.Get("block_size", static_cast<int64_t>(0));
 
-  weight_qparams = QnnQuantParamsWrapper(per_channel_float_scale, per_block_int_scale, weight_offset, input_channel_axis, block_size, is_int4_type);  // is_int4_type is false;
+  weight_qparams = QnnQuantParamsWrapper(per_channel_float_scale, per_block_int_scale, weight_offset, input_channel_axis, block_size, is_int4_type);
 
   std::vector<uint32_t> weight_shape;
   std::vector<uint8_t> unpacked_tensor;
@@ -219,19 +232,13 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(w_ql_input_1_def.node_arg, weight_shape), "Failed to get weight shape");
   Qnn_DataType_t weight_data_type = is_int4_type ? QNN_DATATYPE_SFIXED_POINT_4 : QNN_DATATYPE_SFIXED_POINT_8;
   const auto& weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
+  ORT_RETURN_IF_ERROR(UnpackWeightTensorData(qnn_model_wrapper, weight_tensor_proto, weight_shape, input_channel_axis, unpacked_tensor));
   size_t output_channel_axis = 0;  // Current LowPowerBlockQuantize() support output_channel_axis at index=0;
-  if (input_channel_axis == 0) {   // input_channel_axis = 0; Transpose to keep output_channel at index 0;
-    ORT_RETURN_IF_ERROR(
-        utils::TwoDimensionTranspose(qnn_model_wrapper, weight_shape, *weight_tensor_proto, unpacked_tensor));
-  } else {
-    ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*weight_tensor_proto, unpacked_tensor));
-  }
 
   // Quantize weight tensor
   size_t weight_elements = unpacked_tensor.size() / sizeof(float);
   auto float_data = gsl::make_span<const float>(reinterpret_cast<const float*>(unpacked_tensor.data()), weight_elements);
-  std::vector<uint8_t> quant_data;
-  quant_data.resize(weight_elements);
+  std::vector<uint8_t> quant_data(weight_elements);
 
   // scale = per_channel_float_scale * per_block_int_scale
   // weight_data_type = 4 but store in int8 buffer

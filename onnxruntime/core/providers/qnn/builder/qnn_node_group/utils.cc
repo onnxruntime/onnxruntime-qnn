@@ -68,7 +68,7 @@ const NodeUnit* GetChildOfType(const GraphViewer& graph_viewer,
                                const std::unordered_map<const NodeUnit*, const IQnnNodeGroup*>& qnn_node_group_map) {
   const Node& parent_node = parent_node_unit.GetNode();
 
-  // Parent must have a single child (1 output edge) and must not produce a graph output.
+  // Parent must not produce a graph output.
   if (graph_viewer.NodeProducesGraphOutput(parent_node)) {
     return nullptr;
   }
@@ -124,14 +124,13 @@ const NodeUnit* GetParentOfType(const GraphViewer& graph_viewer,
   const Node& child_node = child_node_unit.GetNode();
 
   for (auto edge = child_node.InputEdgesBegin(); edge != child_node.InputEdgesEnd(); ++edge) {
-    // if (edge->GetDstArgIndex() == 0) {
     const Node& parent_node = edge->GetNode();
     if (graph_viewer.GetNode(parent_node.Index()) == nullptr) {
-      return nullptr;  // Node is not in this GraphViewer
+      return nullptr;
     }
 
     if (graph_viewer.NodeProducesGraphOutput(parent_node)) {
-      return nullptr;  // Node is producing a graph output
+      return nullptr;
     }
 
     const std::string& parent_type = parent_node.OpType();
@@ -145,7 +144,6 @@ const NodeUnit* GetParentOfType(const GraphViewer& graph_viewer,
     }
 
     if (!is_valid_parent_type) {
-      // return nullptr;
       continue;
     }
 
@@ -167,7 +165,6 @@ const NodeUnit* GetParentOfType(const GraphViewer& graph_viewer,
     }
 
     return p_parent_node_unit;
-    //}
   }
   return nullptr;
 }

@@ -248,8 +248,18 @@ inline Status QuantizeData(gsl::span<const float> data, float scale, int32_t off
 
 // Quantizes (per-tensor) the given float data using the provided scale and offset.
 // The provided offset must use the QNN convention where offset = -zero_point.
-inline Status QuantizeData_Int4(gsl::span<const float> data, float scale, int32_t offset,
-                                /*out*/ gsl::span<uint8_t> quant_bytes) {
+
+// Define a specialized struct for Int4 quantization
+struct Int4QuantTraits {
+  using StorageType = int8_t;
+  static constexpr double clip_min = -8.0;
+  static constexpr double clip_max = 7.0;
+};
+
+// Template specialization for Int4 quantization
+template <>
+inline Status QuantizeData<Int4QuantTraits>(gsl::span<const float> data, float scale, int32_t offset,
+                                            /*out*/ gsl::span<uint8_t> quant_bytes) {
   const size_t num_elems = data.size();
   const size_t expected_output_bytes = sizeof(int8_t) * num_elems;
   ORT_RETURN_IF_NOT(expected_output_bytes == quant_bytes.size(),
