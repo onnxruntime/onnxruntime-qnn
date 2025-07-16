@@ -518,7 +518,7 @@ TEST_F(QnnCPUBackendTests, ConvTranspose3D_f32_AutoPadLower) {
 }
 
 // Tests Conv's auto_pad value "VALID" (compares to CPU EP).
-TEST_F(QnnCPUBackendTests, Convf32_AutoPadUpper) {
+TEST_F(QnnCPUBackendTests, Convf32_AutoPadValid) {
   RunCPUConvOpTest("Conv",
                    TestInputDef<float>({1, 1, 3, 3}, false, -3.0f, 3.0f),  // Random dynamic input
                    TestInputDef<float>({2, 1, 2, 2}, true, -1.0f, 1.0f),   // Random static weights
@@ -543,7 +543,7 @@ TEST_F(QnnCPUBackendTests, Convf32_AutoPadUpper) {
 }
 
 // Tests ConvTranspose's auto_pad value "VALID" (compares to CPU EP).
-TEST_F(QnnCPUBackendTests, ConvTransposef32_AutoPadUpper) {
+TEST_F(QnnCPUBackendTests, ConvTransposef32_AutoPadValid) {
   RunCPUConvOpTest("ConvTranspose",
                    TestInputDef<float>({1, 1, 3, 3}, false, -3.0f, 3.0f),  // Random dynamic input
                    TestInputDef<float>({1, 2, 2, 2}, true, -1.0f, 1.0f),   // Random static weights
