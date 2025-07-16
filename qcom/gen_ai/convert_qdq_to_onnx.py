@@ -9,6 +9,7 @@ import sys
 
 GENERATE_DLC = True
 
+
 def main():
     parser = argparse.ArgumentParser(description="Converts a QDQ model using ORT-QNN")
     parser.add_argument("--model", required=True, help="Path to the model file to convert")
@@ -30,18 +31,15 @@ def main():
             sys.exit(1)
 
         # Convert the model using ORT-QNN
-
         sess_options = onnxruntime.SessionOptions()
         sess_options.add_session_config_entry("ep.context_enable", "1")
-        ep_context_onnx_model_path = os.path.join(
-            os.path.dirname(model_path), model_path.replace('.aimet', '_ep_converted.onnx')
-        )
+        artifact_dir = model_path.replace('.aimet', '_onnx')
+        ep_context_onnx_model_path = os.path.join(artifact_dir, os.path.basename(model_path).replace('.aimet', ''))
         sess_options.add_session_config_entry("ep.context_file_path", ep_context_onnx_model_path)
         sess_options.log_severity_level = 0
         sess_options.log_verbosity_level = 1
         print(f"Saving EP context binary to {ep_context_onnx_model_path}")
 
-        artifact_dir = model_path.replace('.aimet', '_onnx')
         if not GENERATE_DLC:
             provider_options = [
                 {
