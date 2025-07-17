@@ -199,6 +199,9 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   {
     CreateCumSumOpBuilder("CumSum", *this);
   }
+  {
+    CreateRandomUniformLikeOpBuilder("RandomUniformLike", *this);
+  }
 
   {
     CreateGatherNDOpBuilder("GatherND", *this);
