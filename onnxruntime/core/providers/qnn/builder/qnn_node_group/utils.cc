@@ -69,6 +69,7 @@ const NodeUnit* GetChildOfType(const GraphViewer& graph_viewer,
   const Node& parent_node = parent_node_unit.GetNode();
 
   // Parent must not produce a graph output.
+  // This check ensures we don't try to fuse with nodes that produce graph outputs
   if (graph_viewer.NodeProducesGraphOutput(parent_node)) {
     return nullptr;
   }
@@ -126,10 +127,12 @@ const NodeUnit* GetParentOfType(const GraphViewer& graph_viewer,
   for (auto edge = child_node.InputEdgesBegin(); edge != child_node.InputEdgesEnd(); ++edge) {
     const Node& parent_node = edge->GetNode();
     if (graph_viewer.GetNode(parent_node.Index()) == nullptr) {
+      // Node is not in this GraphViewer
       return nullptr;
     }
 
     if (graph_viewer.NodeProducesGraphOutput(parent_node)) {
+      // Node is producing a graph output
       return nullptr;
     }
 

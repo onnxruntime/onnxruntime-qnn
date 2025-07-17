@@ -1089,7 +1089,9 @@ Status LowPowerBlockQuantizeData(gsl::span<const float> data,
   ORT_RETURN_IF_NOT(offsets.size() == channel_count, "Unexpected size of offsets output buffer");
   ORT_RETURN_IF_NOT(block_scales.size() == channel_count * block_count, "Unexpected size of Per-block-int-scales output buffer");
 
-  // Pre-determine the block_scales_index calculation method
+  // Pre-determine the block_scales_index calculation method based on the axis configuration
+  // If block_scales_axis is 0, then the channel dimension comes first in the block scales tensor
+  // Otherwise, the block dimension comes first
   bool is_channel_first = (block_scales_axis_no_neg == 0);
 
   size_t i = 0;
@@ -1097,8 +1099,14 @@ Status LowPowerBlockQuantizeData(gsl::span<const float> data,
     for (size_t bn = 0; bn < block_count; ++bn) {
       auto input_span = gsl::make_span<const float>(&data[i], data_block_size);
       auto output_span = gsl::make_span<uint8_t>(&quant_bytes[i * sizeof(int8_t)], sizeof(int8_t) * data_block_size);
+
+      // Calculate the index into the block_scales array based on the layout
+      // For channel-first layout: index = cn * block_count + bn
+      // For block-first layout: index = bn * channel_count + cn
       size_t block_scales_index = is_channel_first ? (cn * block_count + bn) : (bn * channel_count + cn);
-      const float scale = channel_scales[cn] * static_cast<const float>(block_scales[block_scales_index]);
+
+      // Combine the per-channel float scale with the per-block int scale
+      const float scale = channel_scales[cn] * static_cast<float>(block_scales[block_scales_index]);
 
       switch (data_type) {
         case QNN_DATATYPE_SFIXED_POINT_8: {

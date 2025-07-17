@@ -151,10 +151,14 @@ Status UnpackWeightTensorData(const QnnModelWrapper& qnn_model_wrapper,
                               std::vector<uint32_t>& weight_shape,
                               int64_t input_channel_axis,
                               std::vector<uint8_t>& unpacked_tensor) {
+  ORT_RETURN_IF_NOT(weight_tensor_proto != nullptr, "Weight tensor proto is null");
+
   if (input_channel_axis == 0) {
     // Transpose to keep output_channel at index 0;
+    // This is needed for proper LPBQ encoding where output channels must be at dimension 0
     return utils::TwoDimensionTranspose(qnn_model_wrapper, weight_shape, *weight_tensor_proto, unpacked_tensor);
   } else {
+    // No transpose needed, just unpack the initializer data
     return qnn_model_wrapper.UnpackInitializerData(*weight_tensor_proto, unpacked_tensor);
   }
 }

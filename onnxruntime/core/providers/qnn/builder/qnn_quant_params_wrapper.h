@@ -38,7 +38,7 @@ class QnnQuantParamsWrapper {
   const Qnn_QuantizeParams_t& Get() const { return params_; }
 
   // Initialize this object from a raw Qnn_QuantizeParam_t object.
-  Status Init(const Qnn_QuantizeParams_t& params);
+  Status Init(const Qnn_QuantizeParams_t& params, const size_t lpbq_num_scaleoffsets = 0);
 
   // Initialize this object from a (potentially) quantized ONNX tensor.
   // QnnModelWrapper provides utilities for unpacking scale and zero-point ONNX initializers.
@@ -157,6 +157,12 @@ class QnnQuantParamsWrapper {
   // - QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET: array of scale/zp pairs [{scale0, zp0}, {scale1, zp1}, ...]
   // - QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET: parallel arrays for scales and zps [scale0, ...] [zp0, zp1, ...]
   std::unique_ptr<char[]> per_channel_data_;
+
+  // Stores LowPowerBlockQuant encodings meta like number of per_channel_scales, per-block scales,
+  // and blockwise_expansion_data
+  uint32_t per_channel_scales_size_;
+  std::unique_ptr<uint8_t[]> block_scales_data_;
+  std::unique_ptr<char[]> blockwise_expansion_data_;
 };
 
 }  // namespace qnn
