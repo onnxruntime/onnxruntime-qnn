@@ -91,9 +91,9 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
     const logging::Logger& logger) {
   // Maps a starting operator type to the fusion function.
   static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
-      {"DequantizeLinear", {LowPowerBlockQuantizedGemmFusion::TryFusion, DQQFusion::TryFusion}},
+      {"DequantizeLinear", {DQQFusion::TryFusion}},
       {"HardSigmoid", {HardSigmoidMulFusion::TryFusion}},
-      {"Gemm", {ReshapeGemmFusion::TryFusion}},
+      {"Gemm", {LowPowerBlockQuantizedGemmFusion::TryFusion, ReshapeGemmFusion::TryFusion}},
       {"Mul", {ScaleSoftmaxFusion::TryFusion}},
       {"Transpose", {ChannelShuffleFusion::TryFusion}}};
 

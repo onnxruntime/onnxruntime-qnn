@@ -26,80 +26,80 @@ static Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
 
 std::unique_ptr<IQnnNodeGroup> LowPowerBlockQuantizedGemmFusion::TryFusion(
     QnnModelWrapper& qnn_model_wrapper,
-    const NodeUnit& scale_dql_node_unit,
+    const NodeUnit& gemm_node_unit,
     const std::unordered_map<const Node*, const NodeUnit*>& node_to_node_unit,
     const std::unordered_map<const NodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const logging::Logger& logger) {
   ORT_UNUSED_PARAMETER(logger);
 
-  // Looking for a standalone DequantizeLinear to start the sequence.
-  if (scale_dql_node_unit.OpType() != "DequantizeLinear") {
-    return nullptr;
-  }
-
-  // Check if DequantizeLinear has per-channel float scales
-  TensorInfo pc_scales_tensor_info = {};
-  auto status = qnn_model_wrapper.GetTensorInfo(scale_dql_node_unit.Inputs()[0], pc_scales_tensor_info);
-  if (status != Status::OK() || !pc_scales_tensor_info.quant_param.IsPerChannel()) {
+  // Looking for a Gemm to start search for Gemm w/ LPBQ encodings pattern.
+  if (gemm_node_unit.OpType() != "Gemm") {
     return nullptr;
   }
 
   const GraphViewer& graph_viewer = qnn_model_wrapper.GetGraphViewer();
 
-  // Get QuantizeLinear NodeUnit
-  const std::array<std::string_view, 1> scale_dql_child_types = {"QuantizeLinear"};
-  const NodeUnit* p_w_ql_node_unit = GetChildOfType(graph_viewer,
-                                                    scale_dql_node_unit,
-                                                    scale_dql_child_types,
-                                                    node_to_node_unit,
-                                                    node_unit_to_qnn_node_group);
-  if (p_w_ql_node_unit == nullptr) {
-    return nullptr;
-  }
-
-  // Check if input of QuantizeLinear is constant initializer
-  // Check if QuantizeLinear input has block quantization params (scales of rank-2 or higher)
-  if (!qnn_model_wrapper.IsConstantInput(p_w_ql_node_unit->Inputs()[0].node_arg.Name()) &&
-      p_w_ql_node_unit->Inputs()[0].quant_param->scale.Shape()->dim_size() < 2) {
-    return nullptr;
-  }
-
-  // Get DequantizeLinear NodeUnit
-  const std::array<std::string_view, 1> ql_child_types = {"DequantizeLinear"};
-  const NodeUnit* p_w_dql_node_unit = GetOnlyChildOfType(graph_viewer,
-                                                         *p_w_ql_node_unit,
-                                                         ql_child_types,
-                                                         node_to_node_unit,
-                                                         node_unit_to_qnn_node_group);
-  if (p_w_dql_node_unit == nullptr) {
-    return nullptr;
-  }
-
-  // Get Gemm NodeUnit
-  const std::array<std::string_view, 1> dql_child_types = {"Gemm"};
-  const NodeUnit* p_gemm_node_unit = GetOnlyChildOfType(graph_viewer,
-                                                        *p_w_dql_node_unit,
-                                                        dql_child_types,
-                                                        node_to_node_unit,
-                                                        node_unit_to_qnn_node_group);
-  if (p_gemm_node_unit == nullptr) {
-    return nullptr;
-  }
-
-  // Get DequantizeLinear NodeUnit on Activation (input 0) of Gemm node
+  // Get DequantizeLinear on Activation (input 0) of Gemm node
   const NodeUnit* p_act_dql_node_unit = GetParentOfInput(graph_viewer,
-                                                         *p_gemm_node_unit,
-                                                         p_gemm_node_unit->Inputs()[0],
+                                                         gemm_node_unit,
+                                                         gemm_node_unit.Inputs()[0],
                                                          node_to_node_unit,
                                                          node_unit_to_qnn_node_group);
   if (p_act_dql_node_unit == nullptr && p_act_dql_node_unit->OpType() != "DequantizeLinear") {
     return nullptr;
   }
 
-  // Get DequantizeLinear NodeUnit
+  // Get DequantizeLinear on Weight (input 1) of Gemm node
+  const NodeUnit* p_w_dql_node_unit = GetParentOfInput(graph_viewer,
+                                                       gemm_node_unit,
+                                                       gemm_node_unit.Inputs()[1],
+                                                       node_to_node_unit,
+                                                       node_unit_to_qnn_node_group);
+  if (p_w_dql_node_unit == nullptr && p_w_dql_node_unit->OpType() != "DequantizeLinear") {
+    return nullptr;
+  }
+
+  // Get QuantizeLinear on Weight (input 1) of Gemm node (optional)
+  const std::array<std::string_view, 1> w_dql_parent_types = {"QuantizeLinear"};
+  const NodeUnit* p_w_ql_node_unit = GetParentOfType(graph_viewer,
+                                                     *p_w_dql_node_unit,
+                                                     w_dql_parent_types,
+                                                     node_to_node_unit,
+                                                     node_unit_to_qnn_node_group);
+  if (p_w_ql_node_unit == nullptr) {
+    return nullptr;
+  }
+
+  // Check if input of QuantizeLinear is constant initializer
+  if (!qnn_model_wrapper.IsConstantInput(p_w_ql_node_unit->Inputs()[0].node_arg.Name())) {
+    return nullptr;
+  }
+
+  // Get DequantizeLinear contains per-block int scales and per-channel float scales
+  const std::array<std::string_view, 1> w_ql_parent_types = {"DequantizeLinear"};
+  const NodeUnit* p_scale_dql_node_unit = GetParentOfType(graph_viewer,
+                                                          *p_w_ql_node_unit,
+                                                          w_ql_parent_types,
+                                                          node_to_node_unit,
+                                                          node_unit_to_qnn_node_group);
+  if (p_scale_dql_node_unit == nullptr) {
+    return nullptr;
+  }
+
+  TensorInfo pc_scales_tensor_info = {};
+  if (Status status = qnn_model_wrapper.GetTensorInfo(p_scale_dql_node_unit->Inputs()[0], pc_scales_tensor_info);
+      !status.IsOK()) {
+    return nullptr;
+  }
+  // Check if input 0 of DequantizeLinear is constant initializer and has per-channel float scales
+  if (!pc_scales_tensor_info.is_initializer || !pc_scales_tensor_info.quant_param.IsPerChannel()) {
+    return nullptr;
+  }
+
+  // Get QuantizeLinear NodeUnit at Gemm output
   const std::array<std::string_view, 1> gemm_child_types = {"QuantizeLinear"};
   const NodeUnit* p_output_ql_node_unit = GetOnlyChildOfType(graph_viewer,
-                                                             *p_gemm_node_unit,
+                                                             gemm_node_unit,
                                                              gemm_child_types,
                                                              node_to_node_unit,
                                                              node_unit_to_qnn_node_group);
@@ -108,22 +108,22 @@ std::unique_ptr<IQnnNodeGroup> LowPowerBlockQuantizedGemmFusion::TryFusion(
   }
 
   if (Status status = CreateOrValidateOnQnn(qnn_model_wrapper,
-                                            scale_dql_node_unit,
+                                            *p_scale_dql_node_unit,
                                             *p_w_ql_node_unit,
                                             *p_w_dql_node_unit,
                                             *p_act_dql_node_unit,
-                                            *p_gemm_node_unit,
+                                            gemm_node_unit,
                                             *p_output_ql_node_unit,
                                             true);
       !status.IsOK()) {
     return nullptr;
   }
 
-  return std::make_unique<LowPowerBlockQuantizedGemmFusion>(scale_dql_node_unit,
+  return std::make_unique<LowPowerBlockQuantizedGemmFusion>(*p_scale_dql_node_unit,
                                                             *p_w_ql_node_unit,
                                                             *p_w_dql_node_unit,
                                                             *p_act_dql_node_unit,
-                                                            *p_gemm_node_unit,
+                                                            gemm_node_unit,
                                                             *p_output_ql_node_unit);
 }
 
@@ -156,7 +156,7 @@ gsl::span<const NodeUnit* const> LowPowerBlockQuantizedGemmFusion::GetNodeUnits(
 }
 
 const NodeUnit* LowPowerBlockQuantizedGemmFusion::GetTargetNodeUnit() const {
-  return node_units_[0];
+  return node_units_[4];
 }
 
 Status UnpackWeightTensorData(const QnnModelWrapper& qnn_model_wrapper,
