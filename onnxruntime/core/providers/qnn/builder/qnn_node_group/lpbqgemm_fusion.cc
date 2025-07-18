@@ -45,7 +45,7 @@ std::unique_ptr<IQnnNodeGroup> LowPowerBlockQuantizedGemmFusion::TryFusion(
                                                          gemm_node_unit.Inputs()[0],
                                                          node_to_node_unit,
                                                          node_unit_to_qnn_node_group);
-  if (p_act_dql_node_unit == nullptr && p_act_dql_node_unit->OpType() != "DequantizeLinear") {
+  if (p_act_dql_node_unit == nullptr || p_act_dql_node_unit->OpType() != "DequantizeLinear") {
     return nullptr;
   }
 
@@ -55,7 +55,7 @@ std::unique_ptr<IQnnNodeGroup> LowPowerBlockQuantizedGemmFusion::TryFusion(
                                                        gemm_node_unit.Inputs()[1],
                                                        node_to_node_unit,
                                                        node_unit_to_qnn_node_group);
-  if (p_w_dql_node_unit == nullptr && p_w_dql_node_unit->OpType() != "DequantizeLinear") {
+  if (p_w_dql_node_unit == nullptr || p_w_dql_node_unit->OpType() != "DequantizeLinear") {
     return nullptr;
   }
 
