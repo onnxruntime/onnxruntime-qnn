@@ -1061,7 +1061,7 @@ Status LowPowerBlockQuantizeData(gsl::span<const float> data,
                                  Qnn_DataType_t data_type,
                                  int64_t data_axis,
                                  int64_t block_scales_axis,
-                                 size_t channel_block_size,
+                                 size_t data_block_size,
                                  gsl::span<const uint32_t> block_scales_shape) {
   // transpose weight to match [K, N] where K : In Channel and N : Out Channel
   const size_t num_dims = data_shape.size();
@@ -1083,8 +1083,9 @@ Status LowPowerBlockQuantizeData(gsl::span<const float> data,
 
   size_t channel_count = data_shape[data_axis_no_neg];
   size_t block_count = (block_scales_axis_no_neg == 0) ? block_scales_shape[1] : block_scales_shape[0];
-  size_t data_block_size = ShapeSizeCalc(data_shape, data_axis_no_neg + 1, num_dims) / channel_block_size;
+  size_t data_block_count = ShapeSizeCalc(data_shape, data_axis_no_neg + 1, num_dims) / data_block_size;
 
+  ORT_RETURN_IF_NOT(data_block_count == block_count, "Incompatible LowPowerBlockQuantization encodings.");
   ORT_RETURN_IF_NOT(channel_scales.size() == channel_count, "Unexpected size of per-channel-float-scales output buffer");
   ORT_RETURN_IF_NOT(offsets.size() == channel_count, "Unexpected size of offsets output buffer");
   ORT_RETURN_IF_NOT(block_scales.size() == channel_count * block_count, "Unexpected size of Per-block-int-scales output buffer");
@@ -1124,7 +1125,7 @@ Status LowPowerBlockQuantizeData(gsl::span<const float> data,
     }
   }
 
-  assert(i == data.size());
+  ORT_RETURN_IF_NOT(i == data.size(), "Failed to LowPowerBlockQuantize due to mismatch per-channel and per-block scales");
 
   return Status::OK();
 }

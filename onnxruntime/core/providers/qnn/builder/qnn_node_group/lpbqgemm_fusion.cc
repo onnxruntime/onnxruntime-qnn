@@ -37,6 +37,13 @@ std::unique_ptr<IQnnNodeGroup> LowPowerBlockQuantizedGemmFusion::TryFusion(
     return nullptr;
   }
 
+  // Check if DequantizeLinear has per-channel float scales
+  TensorInfo pc_scales_tensor_info = {};
+  auto status = qnn_model_wrapper.GetTensorInfo(scale_dql_node_unit.Inputs()[0], pc_scales_tensor_info);
+  if (status != Status::OK() || !pc_scales_tensor_info.quant_param.IsPerChannel()) {
+    return nullptr;
+  }
+
   const GraphViewer& graph_viewer = qnn_model_wrapper.GetGraphViewer();
 
   // Get QuantizeLinear NodeUnit
@@ -47,6 +54,13 @@ std::unique_ptr<IQnnNodeGroup> LowPowerBlockQuantizedGemmFusion::TryFusion(
                                                     node_to_node_unit,
                                                     node_unit_to_qnn_node_group);
   if (p_w_ql_node_unit == nullptr) {
+    return nullptr;
+  }
+
+  // Check if input of QuantizeLinear is constant initializer
+  // Check if QuantizeLinear input has block quantization params (scales of rank-2 or higher)
+  if (!qnn_model_wrapper.IsConstantInput(p_w_ql_node_unit->Inputs()[0].node_arg.Name()) &&
+      p_w_ql_node_unit->Inputs()[0].quant_param->scale.Shape()->dim_size() < 2) {
     return nullptr;
   }
 
@@ -72,14 +86,13 @@ std::unique_ptr<IQnnNodeGroup> LowPowerBlockQuantizedGemmFusion::TryFusion(
     return nullptr;
   }
 
-  // Get DequantizeLinear NodeUnit
-  const std::array<std::string_view, 1> gemm_parent_types = {"DequantizeLinear"};
-  const NodeUnit* p_act_dql_node_unit = GetParentOfType(graph_viewer,
-                                                        *p_gemm_node_unit,
-                                                        gemm_parent_types,
-                                                        node_to_node_unit,
-                                                        node_unit_to_qnn_node_group);
-  if (p_act_dql_node_unit == nullptr) {
+  // Get DequantizeLinear NodeUnit on Activation (input 0) of Gemm node
+  const NodeUnit* p_act_dql_node_unit = GetParentOfInput(graph_viewer,
+                                                         *p_gemm_node_unit,
+                                                         p_gemm_node_unit->Inputs()[0],
+                                                         node_to_node_unit,
+                                                         node_unit_to_qnn_node_group);
+  if (p_act_dql_node_unit == nullptr && p_act_dql_node_unit->OpType() != "DequantizeLinear") {
     return nullptr;
   }
 
@@ -228,7 +241,8 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   auto input_channel_axis = helper.Get("axis", static_cast<int64_t>(0));
   auto block_size = helper.Get("block_size", static_cast<int64_t>(0));
 
-  weight_qparams = QnnQuantParamsWrapper(per_channel_float_scale, per_block_int_scale, weight_offset, input_channel_axis, block_size, is_int4_type);
+  size_t output_channel_axis = 0;  // Current LowPowerBlockQuantize() support output_channel_axis at index=0;
+  weight_qparams = QnnQuantParamsWrapper(per_channel_float_scale, per_block_int_scale, weight_offset, output_channel_axis, block_size, is_int4_type);
 
   std::vector<uint32_t> weight_shape;
   std::vector<uint8_t> unpacked_tensor;
@@ -237,7 +251,6 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   Qnn_DataType_t weight_data_type = is_int4_type ? QNN_DATATYPE_SFIXED_POINT_4 : QNN_DATATYPE_SFIXED_POINT_8;
   const auto& weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
   ORT_RETURN_IF_ERROR(UnpackWeightTensorData(qnn_model_wrapper, weight_tensor_proto, weight_shape, input_channel_axis, unpacked_tensor));
-  size_t output_channel_axis = 0;  // Current LowPowerBlockQuantize() support output_channel_axis at index=0;
 
   // Quantize weight tensor
   size_t weight_elements = unpacked_tensor.size() / sizeof(float);
@@ -312,6 +325,7 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
     if (has_bias) {
       input_tensors.emplace_back(bias_tensor.GetQnnTensor());
     }
+
     ORT_RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(node_name,
                                                           QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                           QNN_OP_FULLY_CONNECTED,
