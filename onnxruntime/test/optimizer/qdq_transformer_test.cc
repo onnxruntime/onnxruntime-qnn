@@ -4574,6 +4574,70 @@ TEST(QDQTransformerTests, QDQ_Selector_Test_Reshape) {
   RunQDQSelectorReshapeTestCase<uint16_t>({1, 3, 2, 2}, {1, 12}, false, .003f, .005f, kQnnExecutionProvider, 1);
 }
 
+template <typename QuantType>
+static void RunQDQSelectorTransposeTestCase(const std::vector<int64_t>& input_shape,
+                                            const std::vector<int64_t>& perms,
+                                            bool use_contrib_qdq = false,
+                                            float q_scale = .003,
+                                            float dq_scale = .005,
+                                            const std::string execution_provider = kQnnExecutionProvider,
+                                            int expected_node_num = 3) {
+  auto build_test_case = [
+    input_shape,
+    perms,
+    use_contrib_qdq,
+    q_scale,
+    dq_scale,
+    execution_provider](ModelTestBuilder& builder) {
+    constexpr QuantType qmin = std::numeric_limits<QuantType>::min();
+    constexpr QuantType qmax = std::numeric_limits<QuantType>::max();
+
+    auto* input_arg = builder.MakeInput<QuantType>(input_shape, qmin, qmax);
+    auto* output_arg = builder.MakeOutput();
+    QuantType zero_point = 1 + (qmax + qmin) / 2;
+
+    // Add Transpose node
+    auto* input_arg_dq = builder.MakeIntermediate();
+    auto* transpose_output = builder.MakeIntermediate();
+    auto& dq_node = builder.AddDequantizeLinearNode<QuantType>(input_arg, dq_scale, zero_point, input_arg_dq, use_contrib_qdq);
+    dq_node.SetExecutionProviderType(execution_provider);
+
+    auto& transpose_node = builder.AddNode("Transpose", {input_arg_dq}, {transpose_output});
+    transpose_node.AddAttribute("perm", perms);
+    transpose_node.SetExecutionProviderType(execution_provider);
+
+    // add Q
+    auto& q_node = builder.AddQuantizeLinearNode<QuantType>(transpose_output, q_scale, zero_point, output_arg, use_contrib_qdq);
+    q_node.SetExecutionProviderType(execution_provider);
+  };
+
+  auto& logger = DefaultLoggingManager().DefaultLogger();
+  Model model("TransposeQDQTester", false, logger);
+  Graph& graph = model.MainGraph();
+  ModelTestBuilder builder(graph);
+  build_test_case(builder);
+  builder.SetGraphOutputs();
+  ASSERT_STATUS_OK(graph.Resolve());
+
+  {
+    const GraphViewer whole_graph_viewer(graph);
+    // Get all the NodeUnits in the graph_viewer
+    std::vector<std::unique_ptr<NodeUnit>> node_unit_holder;
+    std::unordered_map<const Node*, const NodeUnit*> node_unit_map;
+    std::tie(node_unit_holder, node_unit_map) = QDQ::GetAllNodeUnits(whole_graph_viewer, logger);
+
+    ASSERT_EQ(expected_node_num, node_unit_holder.size());
+    ASSERT_EQ(3, node_unit_map.size());
+  }
+}
+TEST(QDQTransformerTests, QDQ_Selector_Test_Transpose) {
+  RunQDQSelectorTransposeTestCase<uint16_t>({1, 3, 2, 2}, {0, 1, 3, 2}, false, .003f, .003f, kCpuExecutionProvider, 1);
+  RunQDQSelectorTransposeTestCase<uint16_t>({1, 3, 2, 2}, {0, 1, 3, 2}, false, .003f, .005f, kCpuExecutionProvider, 3);
+  RunQDQSelectorTransposeTestCase<uint16_t>({1, 3, 2, 2}, {0, 1, 3, 2}, false, .003f, .003f, kQnnExecutionProvider, 1);
+  // QNN EP can form Node Unit for Transpose even if Q and DQ have different scale value
+  RunQDQSelectorTransposeTestCase<uint16_t>({1, 3, 2, 2}, {0, 1, 3, 2}, false, .003f, .005f, kQnnExecutionProvider, 1);
+}
+
 // regression test to validate TransposeOptimizer and QDQ Propagation don't loop
 // see https://github.com/microsoft/onnxruntime/issues/11605
 TEST(QDQTransformerTests, QDQPropagation_GH11605_Opset12_19) {
