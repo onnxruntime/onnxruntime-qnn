@@ -40,7 +40,9 @@ bool IsQDQPairSupported(
     const Node& q_node, const Node& dq_node,
     const GetConstantInitializerFn& get_const_initializer,
     const std::filesystem::path& model_path,
-    bool check_op_type = true);
+    bool check_op_type = true,
+    bool check_scale_value = true,
+    bool check_zp_value = true);
 
 // Check if a DQ -> Q sequence represents a conversion in quantization data type.
 // Example of uint8 to uint16:

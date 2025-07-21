@@ -947,8 +947,19 @@ template <typename QuantType>
 static void RunReshapeDropQDQTestCase(const std::vector<int64_t>& input_shape,
                                       const std::vector<int64_t>& new_shape,
                                       bool use_contrib_qdq = false,
-                                      int opset = 12) {
-  auto build_test_case = [input_shape, new_shape, use_contrib_qdq](ModelTestBuilder& builder) {
+                                      int opset = 12,
+                                      float q_scale = .003,
+                                      float dq_scale = .003,
+                                      int expected_dq_num = 0,
+                                      int expected_q_num = 0) {
+  auto build_test_case = [
+    input_shape,
+    new_shape,
+    use_contrib_qdq,
+    q_scale,
+    dq_scale,
+    expected_dq_num,
+    expected_q_num](ModelTestBuilder& builder) {
     constexpr QuantType qmin = std::numeric_limits<QuantType>::min();
     constexpr QuantType qmax = std::numeric_limits<QuantType>::max();
 
@@ -960,22 +971,35 @@ static void RunReshapeDropQDQTestCase(const std::vector<int64_t>& input_shape,
     auto* new_shape_arg = builder.Make1DInitializer(new_shape);
     auto* input_arg_dq = builder.MakeIntermediate();
     auto* reshape_output = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<QuantType>(input_arg, .003f, zero_point, input_arg_dq, use_contrib_qdq);
+    builder.AddDequantizeLinearNode<QuantType>(input_arg, dq_scale, zero_point, input_arg_dq, use_contrib_qdq);
     builder.AddNode("Reshape", {input_arg_dq, new_shape_arg}, {reshape_output});
 
     // add Q
-    builder.AddQuantizeLinearNode<QuantType>(reshape_output, .003f, zero_point, output_arg, use_contrib_qdq);
+    builder.AddQuantizeLinearNode<QuantType>(reshape_output, q_scale, zero_point, output_arg, use_contrib_qdq);
   };
 
-  auto check_graph = [use_contrib_qdq](InferenceSessionWrapper& session) {
+  auto check_graph = [
+    use_contrib_qdq,
+    expected_q_num,
+    expected_dq_num](InferenceSessionWrapper& session) {
     auto op_to_count = CountOpsInGraph(session.GetGraph());
     const QDQOpKeys qdq_keys = GetQDQOpKeys(use_contrib_qdq);
     EXPECT_EQ(op_to_count["Reshape"], 1);
-    EXPECT_EQ(op_to_count[qdq_keys.quantize_linear], 0);
-    EXPECT_EQ(op_to_count[qdq_keys.dequantize_linear], 0);
+    EXPECT_EQ(op_to_count[qdq_keys.quantize_linear], expected_q_num);
+    EXPECT_EQ(op_to_count[qdq_keys.dequantize_linear], expected_dq_num);
   };
 
-  TransformerTester(build_test_case, check_graph, TransformerLevel::Level1, TransformerLevel::Level2, opset);
+  TransformerTester(
+    build_test_case,
+    check_graph,
+    TransformerLevel::Level1,
+    TransformerLevel::Level2,
+    opset,
+    0.0,
+    0.0,
+    nullptr,
+    {},
+    {});
 }
 
 // Checks that Q/DQ nodes are dropped from DQ -> Reshape -> Q. Uses 8-bit and 16-bit Q/DQ ops.
@@ -986,6 +1010,8 @@ TEST(QDQTransformerTests, ReshapeDropQDQ) {
   RunReshapeDropQDQTestCase<uint16_t>({1, 3, 2, 2}, {1, 12}, true);       // Use int16 com.microsoft QDQ ops
   RunReshapeDropQDQTestCase<int16_t>({1, 3, 2, 2}, {1, 12}, false, 21);   // Use int16 ONNX QDQ ops
   RunReshapeDropQDQTestCase<uint16_t>({1, 3, 2, 2}, {1, 12}, false, 21);  // Use int16 ONNX QDQ ops
+  RunReshapeDropQDQTestCase<int16_t>({1, 3, 2, 2}, {1, 12}, true, 12, .003f, 0.005f, 1, 1);        // Test different scale
+  RunReshapeDropQDQTestCase<uint16_t>({1, 3, 2, 2}, {1, 12}, true, 12, .003f, 0.005f, 1, 1);       // Test different scale
 }
 
 // Runs a test case that checks if Q/DQ nodes are *not* dropped from DQ -> MaxPool -> Q if the quantization scale is
@@ -4482,6 +4508,70 @@ TEST(QDQTransformerTests, QDQ_Selector_Test_Add_Clip) {
     }
 #endif  // defined(USE_NNAPI) || defined(USE_QNN) || defined(USE_XNNPACK)
   }
+}
+
+template <typename QuantType>
+static void RunQDQSelectorReshapeTestCase(const std::vector<int64_t>& input_shape,
+                                          const std::vector<int64_t>& new_shape,
+                                          bool use_contrib_qdq = false,
+                                          float q_scale = .003,
+                                          float dq_scale = .005,
+                                          const std::string execution_provider = kQnnExecutionProvider,
+                                          int expected_node_num = 3) {
+  auto build_test_case = [
+    input_shape,
+    new_shape,
+    use_contrib_qdq,
+    q_scale,
+    dq_scale,
+    execution_provider](ModelTestBuilder& builder) {
+    constexpr QuantType qmin = std::numeric_limits<QuantType>::min();
+    constexpr QuantType qmax = std::numeric_limits<QuantType>::max();
+
+    auto* input_arg = builder.MakeInput<QuantType>(input_shape, qmin, qmax);
+    auto* output_arg = builder.MakeOutput();
+    QuantType zero_point = 1 + (qmax + qmin) / 2;
+
+    // Add Reshape node
+    auto* new_shape_arg = builder.Make1DInitializer(new_shape);
+    auto* input_arg_dq = builder.MakeIntermediate();
+    auto* reshape_output = builder.MakeIntermediate();
+    auto& dq_node = builder.AddDequantizeLinearNode<QuantType>(input_arg, dq_scale, zero_point, input_arg_dq, use_contrib_qdq);
+    dq_node.SetExecutionProviderType(execution_provider);
+
+    auto& reshape_node = builder.AddNode("Reshape", {input_arg_dq, new_shape_arg}, {reshape_output});
+    reshape_node.SetExecutionProviderType(execution_provider);
+
+    // add Q
+    auto& q_node = builder.AddQuantizeLinearNode<QuantType>(reshape_output, q_scale, zero_point, output_arg, use_contrib_qdq);
+    q_node.SetExecutionProviderType(execution_provider);
+  };
+
+  auto& logger = DefaultLoggingManager().DefaultLogger();
+  Model model("ReshapeQDQTester", false, logger);
+  Graph& graph = model.MainGraph();
+  ModelTestBuilder builder(graph);
+  build_test_case(builder);
+  builder.SetGraphOutputs();
+  ASSERT_STATUS_OK(graph.Resolve());
+
+  {
+    const GraphViewer whole_graph_viewer(graph);
+    // Get all the NodeUnits in the graph_viewer
+    std::vector<std::unique_ptr<NodeUnit>> node_unit_holder;
+    std::unordered_map<const Node*, const NodeUnit*> node_unit_map;
+    std::tie(node_unit_holder, node_unit_map) = QDQ::GetAllNodeUnits(whole_graph_viewer, logger);
+
+    ASSERT_EQ(expected_node_num, node_unit_holder.size());
+    ASSERT_EQ(3, node_unit_map.size());
+  }
+}
+TEST(QDQTransformerTests, QDQ_Selector_Test_Reshape) {
+  RunQDQSelectorReshapeTestCase<uint16_t>({1, 3, 2, 2}, {1, 12}, false, .003f, .003f, kCpuExecutionProvider, 1);
+  RunQDQSelectorReshapeTestCase<uint16_t>({1, 3, 2, 2}, {1, 12}, false, .003f, .005f, kCpuExecutionProvider, 3);
+  RunQDQSelectorReshapeTestCase<uint16_t>({1, 3, 2, 2}, {1, 12}, false, .003f, .003f, kQnnExecutionProvider, 1);
+  // QNN EP can form Node Unit for Reshape even if Q and DQ have different scale value
+  RunQDQSelectorReshapeTestCase<uint16_t>({1, 3, 2, 2}, {1, 12}, false, .003f, .005f, kQnnExecutionProvider, 1);
 }
 
 // regression test to validate TransposeOptimizer and QDQ Propagation don't loop

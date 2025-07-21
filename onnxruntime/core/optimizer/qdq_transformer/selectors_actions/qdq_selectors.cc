@@ -179,7 +179,22 @@ bool DropQDQNodeGroupSelector::Check(const GraphViewer& graph_viewer, const Node
     }
   }
 
-  return IsQDQPairSupported(graph_viewer.GetGraph(), q_node, dq_node, get_const_initializer, graph_viewer.ModelPath());
+  bool check_scale_val = true;
+  if (node.GetExecutionProviderType() == "QNNExecutionProvider") {
+    if ((node.OpType() == "Reshape") ||  (node.OpType() == "Transpose")) {
+      check_scale_val = false;
+    }
+  }
+
+  return IsQDQPairSupported(
+    graph_viewer.GetGraph(),
+    q_node,
+    dq_node,
+    get_const_initializer,
+    graph_viewer.ModelPath(),
+    true, // check_op_type
+    check_scale_val // check_scale_value
+  );
 }
 
 bool DropDQNodeGroupSelector::Check(const GraphViewer& graph_viewer, const Node& node, const Node* redundant_clip_node,
@@ -793,7 +808,23 @@ bool TopKNodeGroupSelector::Check(const GraphViewer& graph_viewer, const Node& n
     return graph_viewer.GetConstantInitializer(initializer_name, true);
   };
 
-  return IsQDQPairSupported(graph_viewer.GetGraph(), q_node, dq_node, get_const_initializer, graph_viewer.ModelPath());
+  bool check_scale_val = true;
+  bool check_zp_val = true;
+  if (node.GetExecutionProviderType() == "QNNExecutionProvider") {
+    check_scale_val = false;
+    check_zp_val = false;
+  }
+
+  return IsQDQPairSupported(
+    graph_viewer.GetGraph(),
+    q_node,
+    dq_node,
+    get_const_initializer,
+    graph_viewer.ModelPath(),
+    true, // check_op_type
+    check_scale_val, // check_scale_value
+    check_zp_val // check_zp_value
+  );
 }
 
 bool CumSumNodeGroupSelector::Check(const GraphViewer& graph_viewer, const Node& node, const Node* redundant_clip_node,

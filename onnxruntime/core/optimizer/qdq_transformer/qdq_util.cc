@@ -19,7 +19,9 @@ bool IsQDQPairSupported(
     const Node& q_node, const Node& dq_node,
     const GetConstantInitializerFn& get_const_initializer,
     const std::filesystem::path& model_path,
-    bool check_op_type) {
+    bool check_op_type,
+    bool check_scale_value,
+    bool check_zp_value) {
   if (check_op_type) {
     if (!MatchQNode(q_node) || !MatchDQNode(dq_node)) {
       return false;
@@ -63,25 +65,31 @@ bool IsQDQPairSupported(
   Initializer dq_scale(graph, *dq_scale_tensor_proto, model_path);
 
   if (q_zp.data_type() != dq_zp.data_type() ||
-      q_scale.data_type() != dq_scale.data_type() ||
-      !SpanEq(q_zp.DataAsByteSpan(), dq_zp.DataAsByteSpan())) {
+      q_scale.data_type() != dq_scale.data_type()) {
+    return false;
+  }
+  if (check_zp_value && !SpanEq(q_zp.DataAsByteSpan(), dq_zp.DataAsByteSpan())) {
     return false;
   }
 
-  switch (q_scale.data_type()) {
-    case ONNX_NAMESPACE::TensorProto::FLOAT:
-      return *q_scale.data<float>() == *dq_scale.data<float>();
+  if (check_scale_value) {
+    switch (q_scale.data_type()) {
+      case ONNX_NAMESPACE::TensorProto::FLOAT:
+        return *q_scale.data<float>() == *dq_scale.data<float>();
 
-    case ONNX_NAMESPACE::TensorProto::FLOAT16:
-      return *q_scale.data<MLFloat16>() == *dq_scale.data<MLFloat16>();
+      case ONNX_NAMESPACE::TensorProto::FLOAT16:
+        return *q_scale.data<MLFloat16>() == *dq_scale.data<MLFloat16>();
 
-    case ONNX_NAMESPACE::TensorProto::BFLOAT16:
-      return *q_scale.data<BFloat16>() == *dq_scale.data<BFloat16>();
+      case ONNX_NAMESPACE::TensorProto::BFLOAT16:
+        return *q_scale.data<BFloat16>() == *dq_scale.data<BFloat16>();
 
-    default:
-      assert(false);
-      return false;
+      default:
+        assert(false);
+        return false;
+    }
   }
+
+  return true;
 }
 
 bool IsDQQConversion(
