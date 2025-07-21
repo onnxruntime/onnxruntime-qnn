@@ -4492,13 +4492,12 @@ static void RunQDQSelectorReshapeTestCase(const std::vector<int64_t>& input_shap
                                           float dq_scale = .005,
                                           const std::string execution_provider = kQnnExecutionProvider,
                                           int expected_node_num = 3) {
-  auto build_test_case = [
-    input_shape,
-    new_shape,
-    use_contrib_qdq,
-    q_scale,
-    dq_scale,
-    execution_provider](ModelTestBuilder& builder) {
+  auto build_test_case = [input_shape,
+                          new_shape,
+                          use_contrib_qdq,
+                          q_scale,
+                          dq_scale,
+                          execution_provider](ModelTestBuilder& builder) {
     constexpr QuantType qmin = std::numeric_limits<QuantType>::min();
     constexpr QuantType qmax = std::numeric_limits<QuantType>::max();
 
@@ -4556,13 +4555,12 @@ static void RunQDQSelectorTransposeTestCase(const std::vector<int64_t>& input_sh
                                             float dq_scale = .005,
                                             const std::string execution_provider = kQnnExecutionProvider,
                                             int expected_node_num = 3) {
-  auto build_test_case = [
-    input_shape,
-    perms,
-    use_contrib_qdq,
-    q_scale,
-    dq_scale,
-    execution_provider](ModelTestBuilder& builder) {
+  auto build_test_case = [input_shape,
+                          perms,
+                          use_contrib_qdq,
+                          q_scale,
+                          dq_scale,
+                          execution_provider](ModelTestBuilder& builder) {
     constexpr QuantType qmin = std::numeric_limits<QuantType>::min();
     constexpr QuantType qmax = std::numeric_limits<QuantType>::max();
 
