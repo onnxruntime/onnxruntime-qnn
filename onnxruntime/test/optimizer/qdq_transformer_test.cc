@@ -4611,13 +4611,13 @@ TEST(QDQTransformerTests, QDQ_Selector_Test_Transpose) {
 }
 
 template <typename QuantType>
-static void RunQDQSelectorTopkTestCase(const std::vector<int64_t>& input_shape,
-                                            const std::vector<int64_t>& k_elem,
-                                            bool use_contrib_qdq = false,
-                                            float q_scale = .003,
-                                            float dq_scale = .005,
-                                            const std::string execution_provider = kQnnExecutionProvider,
-                                            int expected_node_num = 3) {
+static void RunQDQSelectorTopKTestCase(const std::vector<int64_t>& input_shape,
+                                       const std::vector<int64_t>& k_elem,
+                                       bool use_contrib_qdq = false,
+                                       float q_scale = .003,
+                                       float dq_scale = .005,
+                                       const std::string execution_provider = kQnnExecutionProvider,
+                                       int expected_node_num = 3) {
   auto build_test_case = [input_shape,
                           k_elem,
                           use_contrib_qdq,
@@ -4666,12 +4666,12 @@ static void RunQDQSelectorTopkTestCase(const std::vector<int64_t>& input_shape,
     ASSERT_EQ(3, node_unit_map.size());
   }
 }
-TEST(QDQTransformerTests, QDQ_Selector_Test_Topk) {
-  RunQDQSelectorTopkTestCase<uint16_t>({1, 3, 2, 4}, {2}, false, .003f, .003f, kCpuExecutionProvider, 1);
-  RunQDQSelectorTopkTestCase<uint16_t>({1, 3, 2, 4}, {2}, false, .003f, .005f, kCpuExecutionProvider, 3);
-  RunQDQSelectorTopkTestCase<uint16_t>({1, 3, 2, 4}, {2}, false, .003f, .003f, kQnnExecutionProvider, 1);
+TEST(QDQTransformerTests, QDQ_Selector_Test_TopK) {
+  RunQDQSelectorTopKTestCase<uint16_t>({1, 3, 2, 4}, {2}, false, .003f, .003f, kCpuExecutionProvider, 1);
+  RunQDQSelectorTopKTestCase<uint16_t>({1, 3, 2, 4}, {2}, false, .003f, .005f, kCpuExecutionProvider, 3);
+  RunQDQSelectorTopKTestCase<uint16_t>({1, 3, 2, 4}, {2}, false, .003f, .003f, kQnnExecutionProvider, 1);
   // QNN EP can form Node Unit for Topk even if Q and DQ have different scale value
-  RunQDQSelectorTopkTestCase<uint16_t>({1, 3, 2, 4}, {2}, false, .003f, .005f, kQnnExecutionProvider, 1);
+  RunQDQSelectorTopKTestCase<uint16_t>({1, 3, 2, 4}, {2}, false, .003f, .005f, kQnnExecutionProvider, 1);
 }
 
 // regression test to validate TransposeOptimizer and QDQ Propagation don't loop
