@@ -44,6 +44,8 @@ Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified) con
   int const_idx = parent_node_1 ? 2 : 1;
 
   // Dummy data initializer.
+  const ONNX_NAMESPACE::TensorProto* dq_node_scale_proto = nullptr;
+  graph.GetInitializedTensor(dq_node->InputDefs()[1]->Name(), dq_node_scale_proto);
   const ONNX_NAMESPACE::TensorProto* dq_node_zp_proto = nullptr;
   graph.GetInitializedTensor(dq_node->InputDefs()[2]->Name(), dq_node_zp_proto);
 
@@ -66,7 +68,7 @@ Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified) con
   const float* where_const_data = initializer.data<float>();
   float scale = *where_const_data;
   dummy_scale_proto.set_name(graph.GenerateNodeArgName(node.Name() + "_dummy_scale"));
-  dummy_scale_proto.set_data_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  dummy_scale_proto.set_data_type(dq_node_scale_proto->data_type());
   dummy_scale_proto.add_float_data(scale);
   NodeArg& dummy_scale_arg = graph_utils::AddInitializerWithExternalData(graph, dummy_scale_proto);
 
@@ -74,12 +76,12 @@ Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified) con
   int zp = 0;
   ONNX_NAMESPACE::TensorProto dummy_zp_proto;
   dummy_zp_proto.set_name(graph.GenerateNodeArgName(node.Name() + "_dummy_zp"));
-  dummy_zp_proto.set_data_type(ONNX_NAMESPACE::TensorProto_DataType_UINT16);
+  dummy_zp_proto.set_data_type(dq_node_zp_proto->data_type());
   dummy_zp_proto.add_int32_data(static_cast<int32_t>(zp));
   NodeArg& dummy_zp_arg = graph_utils::AddInitializerWithExternalData(graph, dummy_zp_proto);
 
   ONNX_NAMESPACE::TypeProto dummy_dq_type_proto = utils::TypeProtoFromTensorProto(*const_node_data_proto);
-  dummy_dq_type_proto.mutable_tensor_type()->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  dummy_dq_type_proto.mutable_tensor_type()->set_elem_type(const_node_data_proto->data_type());
   NodeArg& dummy_dq_arg =
       graph.GetOrCreateNodeArg(graph.GenerateNodeArgName(node.Name() + "_dummy_dq"), &dummy_dq_type_proto);
   Node& dummy_dq_node =
