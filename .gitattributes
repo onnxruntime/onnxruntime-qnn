@@ -1,13 +1,17 @@
 # This sets the default behavior, overriding core.autocrlf
 * text=auto
-
 # All source files should have unix line-endings in the repository,
 # but convert to native line-endings on checkout
 *.cc text
 *.h text
-
 # Windows specific files should retain windows line-endings
 *.sln text eol=crlf
-
 # make sure build.sh retains Unix line endings, even when checked out on windows.
 *.sh text eol=lf
+cmake/external/git.Win32.2.41.03.patch/msys-2.0.dll filter=lfs diff=lfs merge=lfs -text
+cmake/external/git.Win32.2.41.03.patch/msys-gcc_s-1.dll filter=lfs diff=lfs merge=lfs -text
+cmake/external/git.Win32.2.41.03.patch/patch.exe filter=lfs diff=lfs merge=lfs -text
+java/gradle/wrapper/gradle-wrapper.jar filter=lfs diff=lfs merge=lfs -text
+js/react_native/android/gradle/wrapper/gradle-wrapper.jar filter=lfs diff=lfs merge=lfs -text
+js/react_native/e2e/android/gradle/wrapper/gradle-wrapper.jar filter=lfs diff=lfs merge=lfs -text
+onnxruntime/python/tools/transformers/models/whisper/test/1272-141231-0002.mp3 filter=lfs diff=lfs merge=lfs -text
