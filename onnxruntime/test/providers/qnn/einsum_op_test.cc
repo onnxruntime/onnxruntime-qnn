@@ -188,8 +188,8 @@ TEST_F(QnnCPUBackendTests, EinsumRank4MatMulTransposeAll1) {
 }
 
 TEST_F(QnnCPUBackendTests, EinsumMatMulBroadcastTransposeY) {
-  const std::vector<int64_t> shape0{3, 14, 14, 6};
-  const std::vector<int64_t> shape1{14, 14, 6};
+  const std::vector<int64_t> shape0{2, 3, 3, 4};
+  const std::vector<int64_t> shape1{3, 3, 4};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
   const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
@@ -285,8 +285,8 @@ TEST_F(QnnHTPBackendTests, EinsumF16Rank4MatMulTransposeAll2) {
 }
 
 TEST_F(QnnHTPBackendTests, EinsumF16MatMulBroadcastTransposeY) {
-  const std::vector<int64_t> shape0{3, 14, 14, 6};
-  const std::vector<int64_t> shape1{14, 14, 6};
+  const std::vector<int64_t> shape0{2, 3, 3, 4};
+  const std::vector<int64_t> shape1{3, 3, 4};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
   const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
@@ -362,8 +362,8 @@ TEST_F(QnnHTPBackendTests, EinsumQdqRank4MatMulTransposeAll2) {
 }
 
 TEST_F(QnnHTPBackendTests, EinsumQdqMatMulBroadcastTransposeY) {
-  const std::vector<int64_t> shape0{3, 14, 14, 6};
-  const std::vector<int64_t> shape1{14, 14, 6};
+  const std::vector<int64_t> shape0{2, 3, 3, 4};
+  const std::vector<int64_t> shape1{3, 3, 4};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
   const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnHtpQdqEinsum<uint8_t, uint8_t>(
@@ -460,8 +460,8 @@ TEST_F(QnnGPUBackendTests, EinsumRank4MatMulTransposeAll2) {
 
 // Numeric instability in GPU backend, see also MatMul tests.
 TEST_F(QnnGPUBackendTests, DISABLED_EinsumMatMulBroadcastTransposeY) {
-  const std::vector<int64_t> shape0{3, 14, 14, 6};
-  const std::vector<int64_t> shape1{14, 14, 6};
+  const std::vector<int64_t> shape0{2, 3, 3, 4};
+  const std::vector<int64_t> shape1{3, 3, 4};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
   const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(

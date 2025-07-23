@@ -163,6 +163,7 @@ bool IsEquationMatMulBroadcastTransposeY(const Equation& equation) {
   if (result_dims != 4) {
     return false;
   }
+  // Check matrix multiplication dimensions
   char term_1_m = term_1[term1_dims - 2];
   char term_1_k = term_1[term1_dims - 1];
   char term_2_k = term_2[term2_dims - 1];
@@ -176,6 +177,16 @@ bool IsEquationMatMulBroadcastTransposeY(const Equation& equation) {
     return false;
   }
   if (term_2_n != result_n) {
+    return false;
+  }
+  // Check batch dimensions
+  if (term_1[0] != result[0]) {
+    return false;
+  }
+  if (term_1[1] != result[1]) {
+    return false;
+  }
+  if (term_2[0] != result[1]) {
     return false;
   }
   return true;
