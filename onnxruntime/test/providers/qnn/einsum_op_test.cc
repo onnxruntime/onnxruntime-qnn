@@ -187,6 +187,19 @@ TEST_F(QnnCPUBackendTests, EinsumRank4MatMulTransposeAll1) {
       /*tolerance=*/1e-4f);
 }
 
+TEST_F(QnnCPUBackendTests, EinsumMatMulBroadcastTransposeY) {
+  const std::vector<int64_t> shape0{3, 14, 14, 6};
+  const std::vector<int64_t> shape1{14, 14, 6};
+  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  RunQnnEinsum<float>(
+      /*backend=*/kQnnBackendTypeCpu,
+      /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
+      /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
+      /*equation=*/"bhwc,hkc->bhwk",
+      /*tolerance=*/1e-4f);
+}
+
 TEST_F(QnnCPUBackendTests, EinsumRank4MatMulTransposeAll2) {
   const std::vector<int64_t> shape0{1, 7, 1, 7};
   const std::vector<int64_t> shape1{1, 9, 1, 7};
@@ -271,6 +284,19 @@ TEST_F(QnnHTPBackendTests, EinsumF16Rank4MatMulTransposeAll2) {
       /*tolerance=*/1e-2f);
 }
 
+TEST_F(QnnHTPBackendTests, EinsumF16MatMulBroadcastTransposeY) {
+  const std::vector<int64_t> shape0{3, 14, 14, 6};
+  const std::vector<int64_t> shape1{14, 14, 6};
+  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  RunQnnEinsum<float>(
+      /*backend=*/kQnnBackendTypeHtp,
+      /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
+      /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
+      /*equation=*/"bhwc,hkc->bhwk",
+      /*tolerance=*/1e-2f);
+}
+
 //
 // QNN HTP QDQ
 //
@@ -332,6 +358,18 @@ TEST_F(QnnHTPBackendTests, EinsumQdqRank4MatMulTransposeAll2) {
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
       /*equation=*/"bkhq,bchk->bchq",
+      /*tolerance=*/QDQTolerance());
+}
+
+TEST_F(QnnHTPBackendTests, EinsumQdqMatMulBroadcastTransposeY) {
+  const std::vector<int64_t> shape0{3, 14, 14, 6};
+  const std::vector<int64_t> shape1{14, 14, 6};
+  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  RunQnnHtpQdqEinsum<uint8_t, uint8_t>(
+      /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
+      /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
+      /*equation=*/"bhwc,hkc->bhwk",
       /*tolerance=*/QDQTolerance());
 }
 
@@ -417,6 +455,19 @@ TEST_F(QnnGPUBackendTests, EinsumRank4MatMulTransposeAll2) {
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
       /*equation=*/"bkhq,bchk->bchq",
+      /*tolerance=*/1e-4f);
+}
+
+TEST_F(QnnGPUBackendTests, EinsumMatMulBroadcastTransposeY) {
+  const std::vector<int64_t> shape0{3, 14, 14, 6};
+  const std::vector<int64_t> shape1{14, 14, 6};
+  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  RunQnnEinsum<float>(
+      /*backend=*/kQnnBackendTypeGpu,
+      /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
+      /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
+      /*equation=*/"bhwc,hkc->bhwk",
       /*tolerance=*/1e-4f);
 }
 
