@@ -47,7 +47,7 @@ Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified) con
   graph.GetInitializedTensor(dq_node->InputDefs()[1]->Name(), dq_node_scale_proto);
   const ONNX_NAMESPACE::TensorProto* dq_node_zp_proto = nullptr;
   graph.GetInitializedTensor(dq_node->InputDefs()[2]->Name(), dq_node_zp_proto);
-  
+
   // Dummy data initializer.
   ONNX_NAMESPACE::TensorProto dummy_data_proto;
   dummy_data_proto.set_name(graph.GenerateNodeArgName(node.Name() + "_dummy_data"));

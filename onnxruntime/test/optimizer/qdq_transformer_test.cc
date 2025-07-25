@@ -3221,7 +3221,6 @@ TEST(QDQTransformerTests, ReluQuantFusion_Level2Only) {
   test_case(TransformerLevel::Level3, 0);     // Will not fuse Relu into QuantizeLinear due to zero-point != -128
 }
 
-
 template <typename ScaleType, typename ZpType>
 void TestWhereWithDqInput(bool is_dq_1,
                           bool is_dq_2,
