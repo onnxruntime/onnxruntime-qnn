@@ -32,8 +32,9 @@ std::unique_ptr<IQnnNodeGroup> LowPowerBlockQuantizedGemmFusion::TryFusion(
     const logging::Logger& logger) {
   ORT_UNUSED_PARAMETER(logger);
 
+  // Only HTP supports LPBQ encoding format
   // Looking for a Gemm to start search for Gemm w/ LPBQ encodings pattern.
-  if (gemm_node_unit.OpType() != "Gemm") {
+  if (!IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) || gemm_node_unit.OpType() != "Gemm") {
     return nullptr;
   }
 

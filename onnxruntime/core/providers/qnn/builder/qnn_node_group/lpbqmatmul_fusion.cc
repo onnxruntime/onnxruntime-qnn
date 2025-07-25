@@ -28,8 +28,11 @@ std::unique_ptr<IQnnNodeGroup> LowPowerBlockQuantizedMatMulFusion::TryFusion(
     const std::unordered_map<const Node*, const NodeUnit*>& node_to_node_unit,
     const std::unordered_map<const NodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const logging::Logger& logger) {
+  ORT_UNUSED_PARAMETER(logger);
+
+  // Only HTP supports LPBQ encoding format
   // Looking for a MatMul to start search for MatMul w/ LPBQ encodings pattern.
-  if (matmul_node_unit.OpType() != "MatMul") {
+  if (!IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) || matmul_node_unit.OpType() != "MatMul") {
     return nullptr;
   }
 
