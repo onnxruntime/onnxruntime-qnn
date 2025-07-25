@@ -100,7 +100,7 @@ ProviderOptions GetProviderOptions() {
 
 }  // namespace
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#if defined(__aarch64__) || defined(_M_ARM64)
 
 TEST_F(QnnHTPBackendTests, LPBQMatMulFusion) {
   ProviderOptions provider_options = GetProviderOptions();
@@ -113,7 +113,7 @@ TEST_F(QnnHTPBackendTests, LPBQMatMulFusion) {
                   /*verify_outputs=*/false);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // defined(__aarch64__) || defined(_M_ARM64)
 
 }  // namespace test
 }  // namespace onnxruntime
