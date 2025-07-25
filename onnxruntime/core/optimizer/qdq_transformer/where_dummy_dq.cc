@@ -43,19 +43,54 @@ Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified) con
   const Node* dq_node = parent_node_1 ? parent_node_1 : parent_node_2;
   int const_idx = parent_node_1 ? 2 : 1;
 
-  // Dummy data initializer.
   const ONNX_NAMESPACE::TensorProto* dq_node_scale_proto = nullptr;
   graph.GetInitializedTensor(dq_node->InputDefs()[1]->Name(), dq_node_scale_proto);
   const ONNX_NAMESPACE::TensorProto* dq_node_zp_proto = nullptr;
   graph.GetInitializedTensor(dq_node->InputDefs()[2]->Name(), dq_node_zp_proto);
-
+  
+  // Dummy data initializer.
   ONNX_NAMESPACE::TensorProto dummy_data_proto;
-  int dummy_data = 1;
   dummy_data_proto.set_name(graph.GenerateNodeArgName(node.Name() + "_dummy_data"));
   // Set data type to the one of const_node dq's zp dtype
   dummy_data_proto.set_data_type(dq_node_zp_proto->data_type());
-  dummy_data_proto.add_int32_data(dummy_data);
-  NodeArg& dummy_data_arg = graph_utils::AddInitializerWithExternalData(graph, dummy_data_proto);
+
+  // Dummy zero point initializer.
+  ONNX_NAMESPACE::TensorProto dummy_zp_proto;
+  dummy_zp_proto.set_name(graph.GenerateNodeArgName(node.Name() + "_dummy_zp"));
+  dummy_zp_proto.set_data_type(dq_node_zp_proto->data_type());
+
+  switch (dummy_zp_proto.data_type()) {
+    case ONNX_NAMESPACE::TensorProto_DataType_INT8: {
+      int8_t zp = 0;
+      int8_t dummy_data = 1;
+      dummy_zp_proto.set_raw_data(&zp, 1);
+      dummy_data_proto.set_raw_data(&dummy_data, 1);
+      break;
+    }
+    case ONNX_NAMESPACE::TensorProto_DataType_UINT8: {
+      uint8_t zp = 0;
+      uint8_t dummy_data = 1;
+      dummy_zp_proto.set_raw_data(&zp, 1);
+      dummy_data_proto.set_raw_data(&dummy_data, 1);
+      break;
+    }
+    case ONNX_NAMESPACE::TensorProto_DataType_INT16: {
+      int16_t zp = 0;
+      int16_t dummy_data = 1;
+      dummy_zp_proto.set_raw_data(&zp, 2);
+      dummy_data_proto.set_raw_data(&dummy_data, 2);
+      break;
+    }
+    case ONNX_NAMESPACE::TensorProto_DataType_UINT16: {
+      uint16_t zp = 0;
+      uint16_t dummy_data = 1;
+      dummy_zp_proto.set_raw_data(&zp, 2);
+      dummy_data_proto.set_raw_data(&dummy_data, 2);
+      break;
+    }
+    default:
+      return Status::OK();
+  }
 
   // Dummy scale initializer.
   const ONNX_NAMESPACE::TensorProto* const_node_data_proto = nullptr;
@@ -64,20 +99,30 @@ Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified) con
   ONNX_NAMESPACE::TensorProto dummy_scale_proto;
   // Set scale to the original value
   Initializer initializer(graph, *const_node_data_proto, graph.ModelPath());
-  // Use float to represent the original data value
-  const float* where_const_data = initializer.data<float>();
-  float scale = *where_const_data;
   dummy_scale_proto.set_name(graph.GenerateNodeArgName(node.Name() + "_dummy_scale"));
   dummy_scale_proto.set_data_type(dq_node_scale_proto->data_type());
-  dummy_scale_proto.add_float_data(scale);
-  NodeArg& dummy_scale_arg = graph_utils::AddInitializerWithExternalData(graph, dummy_scale_proto);
+  float* where_const_scalar;
+  switch (initializer.data_type()) {
+    case ONNX_NAMESPACE::TensorProto_DataType_FLOAT: {
+      where_const_scalar = initializer.data<float>();
+      break;
+    }
+    default:
+      return Status::OK();
+  }
+  switch (dummy_scale_proto.data_type()) {
+    case ONNX_NAMESPACE::TensorProto_DataType_FLOAT: {
+      float scale = *where_const_scalar;
+      dummy_scale_proto.set_raw_data(&scale, sizeof(float));
+      break;
+    }
+    default:
+      return Status::OK();
+  }
 
-  // Dummy zero point initializer.
-  int zp = 0;
-  ONNX_NAMESPACE::TensorProto dummy_zp_proto;
-  dummy_zp_proto.set_name(graph.GenerateNodeArgName(node.Name() + "_dummy_zp"));
-  dummy_zp_proto.set_data_type(dq_node_zp_proto->data_type());
-  dummy_zp_proto.add_int32_data(static_cast<int32_t>(zp));
+  // Start editing the graph
+  NodeArg& dummy_data_arg = graph_utils::AddInitializerWithExternalData(graph, dummy_data_proto);
+  NodeArg& dummy_scale_arg = graph_utils::AddInitializerWithExternalData(graph, dummy_scale_proto);
   NodeArg& dummy_zp_arg = graph_utils::AddInitializerWithExternalData(graph, dummy_zp_proto);
 
   ONNX_NAMESPACE::TypeProto dummy_dq_type_proto = utils::TypeProtoFromTensorProto(*const_node_data_proto);
