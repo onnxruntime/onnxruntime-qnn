@@ -123,6 +123,25 @@ class ModelTestBuilder {
     return MakeInput<bool>(shape, data, allocator);
   }
 
+  // Special handle for std::vector<Int4x2>.
+  NodeArg* MakeInitializerInt4(const std::vector<int64_t>& shape, const std::vector<int8_t>& data) {
+    std::string name = graph_.GenerateNodeArgName("constant");
+    ONNX_NAMESPACE::TensorProto tensor_proto;
+    tensor_proto.set_name(name);
+    tensor_proto.set_data_type(utils::ToTensorProtoElementType<Int4x2>());
+    std::unique_ptr<int8_t[]> data_buffer = std::make_unique<int8_t[]>(data.size());
+    for (size_t i = 0; i < data.size(); ++i) data_buffer[i] = data[i];
+    utils::SetRawDataInTensorProto(tensor_proto, data_buffer.get(), data.size());
+
+    for (auto& dim : shape) {
+      tensor_proto.add_dims(dim);
+    }
+
+    graph_.AddInitializedTensor(tensor_proto);
+
+    return &graph_.GetOrCreateNodeArg(name, nullptr);
+  }
+
   template <typename T>
   NodeArg* MakeInput(const std::optional<std::vector<int64_t>>& shape,
                      std::optional<std::string> input_name = std::nullopt) {
