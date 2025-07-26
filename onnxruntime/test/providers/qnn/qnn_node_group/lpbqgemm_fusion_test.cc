@@ -76,7 +76,7 @@ GetQDQTestCaseFn BuildLPBQGemmTestCase() {
     // Gemm
     NodeArg* gemm_bias = builder.MakeInitializer<float>({output_channels}, -1.0f, 1.0f);
     NodeArg* gemm_output = builder.MakeIntermediate();
-    builder.AddNode("Gemm", {act_dql_output, w_dql_output}, {gemm_output});
+    builder.AddNode("Gemm", {act_dql_output, w_dql_output, gemm_bias}, {gemm_output});
 
     // QuantizeLinear for Output
     NodeArg* output_ql_scale = builder.MakeScalarInitializer<float>(0.00019595865160226822f);
