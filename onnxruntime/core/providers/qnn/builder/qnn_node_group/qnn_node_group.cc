@@ -16,6 +16,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_gemm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/scale_softmax_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/cast_q_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/channel_shuffle_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/udo_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/lpbqgemm_fusion.h"
@@ -78,6 +79,7 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"HardSigmoid", {HardSigmoidMulFusion::TryFusion}},
     {"Gemm", {LowPowerBlockQuantizedGemmFusion::TryFusion, ReshapeGemmFusion::TryFusion}},
     {"Mul", {ScaleSoftmaxFusion::TryFusion}},
+    {"Cast", {CastQuantizeFusion::TryFusion}},
     {"Transpose", {ChannelShuffleFusion::TryFusion}}};
 
 void registerUDO(const std::string& node_type, const std::string& op_package) {
