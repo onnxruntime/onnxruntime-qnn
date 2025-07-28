@@ -34,7 +34,7 @@ bool WhereDummyDq::SatisfyCondition(const Graph& graph, const Node& node) const 
   return false;
 }
 
-Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified) const {
+Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified, const logging::Logger& logger) const {
   const auto& where_inputs = node.InputDefs();
   const Node* parent_node_1 = graph.GetProducerNode(where_inputs[1]->Name());
   const Node* parent_node_2 = graph.GetProducerNode(where_inputs[2]->Name());
@@ -51,7 +51,7 @@ Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified) con
   // Dummy data initializer.
   ONNX_NAMESPACE::TensorProto dummy_data_proto;
   dummy_data_proto.set_name(graph.GenerateNodeArgName(node.Name() + "_dummy_data"));
-  // Set data type to the one of const_node dq's zp dtype
+  // Set data type to dq node's zp dtype
   dummy_data_proto.set_data_type(dq_node_zp_proto->data_type());
 
   // Dummy zero point initializer.
@@ -89,34 +89,32 @@ Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified) con
       break;
     }
     default:
+      LOGS(logger, WARNING) << "Currently support existing DQ's zero point with INT8, UINT8, INT16, UINT16";
       return Status::OK();
+  }
+
+  // Set dummy scale to the original value
+  const ONNX_NAMESPACE::TensorProto* const_node_data_proto = nullptr;
+  graph.GetInitializedTensor(where_inputs[const_idx]->Name(), const_node_data_proto);
+  Initializer initializer(graph, *const_node_data_proto, graph.ModelPath());
+  if (dq_node_scale_proto->data_type() != const_node_data_proto->data_type()) {
+    // WhereDummyDq fills the const value to the dummy DQ's scale
+    LOGS(logger, WARNING) << "Currently only support existing DQ's scale with same datatype as scalar";
+    return Status::OK();
   }
 
   // Dummy scale initializer.
-  const ONNX_NAMESPACE::TensorProto* const_node_data_proto = nullptr;
-  graph.GetInitializedTensor(where_inputs[const_idx]->Name(), const_node_data_proto);
-
   ONNX_NAMESPACE::TensorProto dummy_scale_proto;
-  // Set scale to the original value
-  Initializer initializer(graph, *const_node_data_proto, graph.ModelPath());
   dummy_scale_proto.set_name(graph.GenerateNodeArgName(node.Name() + "_dummy_scale"));
   dummy_scale_proto.set_data_type(dq_node_scale_proto->data_type());
-  float* where_const_scalar;
   switch (initializer.data_type()) {
     case ONNX_NAMESPACE::TensorProto_DataType_FLOAT: {
-      where_const_scalar = initializer.data<float>();
+      float* where_const_scalar = initializer.data<float>();
+      dummy_scale_proto.set_raw_data(where_const_scalar, sizeof(float));
       break;
     }
     default:
-      return Status::OK();
-  }
-  switch (dummy_scale_proto.data_type()) {
-    case ONNX_NAMESPACE::TensorProto_DataType_FLOAT: {
-      float scale = *where_const_scalar;
-      dummy_scale_proto.set_raw_data(&scale, sizeof(float));
-      break;
-    }
-    default:
+      LOGS(logger, WARNING) << "Currently support scalar with FLOAT";
       return Status::OK();
   }
 
@@ -162,7 +160,7 @@ Status WhereDummyDq::ApplyImpl(Graph& graph, bool& modified, int graph_level, co
     ORT_RETURN_IF_ERROR(Recurse(node, modified, graph_level, logger));
 
     if (this->SatisfyCondition(graph, node)) {
-      ORT_RETURN_IF_ERROR(WhereDummyDq::InsertDummyDQ(node, graph, modified));
+      ORT_RETURN_IF_ERROR(WhereDummyDq::InsertDummyDQ(node, graph, modified, logger));
     }
   }
 

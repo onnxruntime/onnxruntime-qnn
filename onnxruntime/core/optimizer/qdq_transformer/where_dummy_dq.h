@@ -21,6 +21,6 @@ class WhereDummyDq : public GraphTransformer {
   Status ApplyImpl(Graph& graph, bool& modified, int graph_level, const logging::Logger& logger) const override;
 
   bool SatisfyCondition(const Graph& graph, const Node& node) const;
-  Status InsertDummyDQ(Node& node, Graph& graph, bool& modified) const;
+  Status InsertDummyDQ(Node& node, Graph& graph, bool& modified, const logging::Logger& logger) const;
 };
 }  // namespace onnxruntime
