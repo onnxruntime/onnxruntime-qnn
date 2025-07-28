@@ -511,6 +511,16 @@ Status EinsumOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
       !IsEquationReduceSumMulBroadcastX(parsed_equation.value())) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, node_unit.OpType() + " unsupported equation: " + equation);
   }
+  if (IsEquationReduceSumMulBroadcastX(parsed_equation.value())) {
+    if (IsGpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+      // QAIRT 3.36.1: Failed to validate on GPU.
+      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, node_unit.OpType() + " unsupported equation: " + equation + " on backend GPU");
+    }
+    if (node_unit.Inputs()[0].quant_param.has_value()) {
+      // QAIRT 3.36.1: Failed to finalize QNN graph 1002.
+      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, node_unit.OpType() + " unsupported equation: " + equation + " for quantized inputs");
+    }
+  }
   return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
 }
 

@@ -399,7 +399,8 @@ TEST_F(QnnHTPBackendTests, EinsumQdqMatMulBroadcastTransposeY) {
       /*tolerance=*/QDQTolerance());
 }
 
-TEST_F(QnnHTPBackendTests, EinsumQdqReduceSumMulBroadcastX) {
+// TODO: Re-enable. QAIRT 3.36.1: failed to finalize QNN graph 1002.
+TEST_F(QnnHTPBackendTests, DISABLED_EinsumQdqReduceSumMulBroadcastX) {
   const std::vector<int64_t> shape0{1, 3, 2, 4};
   const std::vector<int64_t> shape1{2, 3, 4};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
@@ -510,7 +511,8 @@ TEST_F(QnnGPUBackendTests, DISABLED_EinsumMatMulBroadcastTransposeY) {
       /*tolerance=*/1e-4f);
 }
 
-TEST_F(QnnGPUBackendTests, EinsumReduceSumMulBroadcastX) {
+// TODO: Re-enable. Failed on QAIRT 3.36.1.
+TEST_F(QnnGPUBackendTests, DISABLED_EinsumReduceSumMulBroadcastX) {
   const std::vector<int64_t> shape0{1, 3, 2, 4};
   const std::vector<int64_t> shape1{2, 3, 4};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
