@@ -15,7 +15,14 @@ class UploadSplitsToHubTask(Task):
         return True
 
     def is_checkpointed(self) -> bool:
+
+        if len(self.model_dir.splits) < 1:
+            return False
+
         for instantiation in self.model_dir.splits:
+            if len(self.model_dir.splits[instantiation]) < 1:
+                return False
+
             for split in self.model_dir.splits[instantiation]:
                 checkpoint_path = Checkpoint.get_checkpoint_path_from_model_path(split.split_path)
                 if not Checkpoint.has_checkpoint(checkpoint_path, "exported_model_id"):

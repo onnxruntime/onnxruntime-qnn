@@ -23,6 +23,7 @@ from pipeline.tasks import (
 MODELS_DIR = os.path.abspath("models")
 
 VALID_MODELS = [
+    "llama_v3_1_8b_instruct",
     "llama_v3_2_3b_instruct",
     "llama_v3_8b_instruct",
     "mistral_7b_instruct_v0_3",

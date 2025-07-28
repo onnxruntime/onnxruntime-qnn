@@ -75,16 +75,14 @@ class ModelDir:
             qaihm_package = os.path.join(
                 os.environ.get("AI_HUB_MODELS_ROOT"),
                 "build",
-                "release",
                 "wheel",
-                "qai_hub_models-0.30.6-py3-none-any.whl",
+                "qai_hub_models-0.32.0-py3-none-any.whl",
             )
             qaihm_model_package = os.path.join(
                 os.environ.get("AI_HUB_MODELS_ROOT"),
                 "build",
-                "release",
                 "wheel",
-                f"qai_hub_models-0.30.6-py3-none-any.whl[{self.model_name}]",
+                f"qai_hub_models-0.32.0-py3-none-any.whl[{self.model_name}]",
             )
         else:
             qaihm_package = "qai_hub_models"
@@ -110,6 +108,8 @@ class ModelDir:
 
     def override_onnxruntime(self):
         ort_wheel_candidates = os.listdir(ORT_QNN_WHEEL_PATH)
+
+        print(ort_wheel_candidates)
 
         if len(ort_wheel_candidates) != 1:
             logging.error("No ONNX Runtime wheel found in the specified path")

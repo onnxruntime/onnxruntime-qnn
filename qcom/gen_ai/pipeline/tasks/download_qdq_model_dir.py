@@ -15,7 +15,15 @@ class DownloadQDQModelDirTask(Task):
         return True
 
     def is_checkpointed(self) -> bool:
+
+        if len(self.model_dir.splits) < 1:
+            return False
+
         for instantiation in self.model_dir.splits:
+
+            if len(self.model_dir.splits[instantiation]) < 1:
+                return False
+
             for split in self.model_dir.splits[instantiation]:
                 onnx_qdq_path = os.path.join(
                     os.path.dirname(split.split_path), f"{split.split_path.replace('.aimet', '')}_qdq.onnx"
