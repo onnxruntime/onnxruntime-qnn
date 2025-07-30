@@ -56,18 +56,22 @@ GetQDQTestCaseFn BuildLPBQMatMulTestCase() {
 
     // QuantizeLinear for Weight
     NodeArg* w_ql_input = builder.MakeInitializer<float>({input_channels, output_channels}, -2.0f, 2.0f);
-    std::vector<int8_t> zero_points_data = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                                            // 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                                            // 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                                            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-    NodeArg* w_ql_zero_point = builder.MakeInitializerInt4({blocks_per_axis, output_channels}, zero_points_data);
+    std::vector<Int4x2> zero_points_data;
+    size_t num_storage_elems = blocks_per_axis * output_channels;
+    zero_points_data.resize(Int4x2::CalcNumInt4Pairs(num_storage_elems));
+    for (size_t i = 0; i < num_storage_elems; ++i) {
+      size_t r = i >> 1;
+      size_t c = i & 0x1;
+      zero_points_data[r].SetElem(c, 0);
+    }
+    NodeArg* w_ql_zero_point = builder.MakeInitializer<Int4x2>({blocks_per_axis, output_channels}, zero_points_data);
     NodeArg* w_ql_output = builder.MakeIntermediate();
     Node& w_ql = builder.AddNode("QuantizeLinear", {w_ql_input, scale_dql_output, w_ql_zero_point}, {w_ql_output});
     w_ql.AddAttribute("axis", static_cast<int64_t>(0));
     w_ql.AddAttribute("block_size", static_cast<int64_t>(4));
 
     // DequantizeLinear for Weight
-    NodeArg* w_dql_zero_point = builder.MakeInitializerInt4({blocks_per_axis, output_channels}, zero_points_data);
+    NodeArg* w_dql_zero_point = builder.MakeInitializer<Int4x2>({blocks_per_axis, output_channels}, zero_points_data);
     NodeArg* w_dql_output = builder.MakeIntermediate();
     Node& w_dql = builder.AddNode("DequantizeLinear", {w_ql_output, scale_dql_output, w_dql_zero_point}, {w_dql_output});
     w_dql.AddAttribute("axis", static_cast<int64_t>(0));
