@@ -39,7 +39,7 @@ static GetTestQDQModelFn<QuantType> BuildQDQTransposeTestCase(const TestInputDef
   return [input_def, attrs](ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
     NodeArg* input = MakeTestInput(builder, input_def);
     QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-    NodeArg* input_qdq = AddQDQNodePair(builder, input, input_qparams.scale, input_qparams.zero_point);
+    NodeArg* input_qdq = AddQDQNodePair<QuantType>(builder, input, input_qparams.scale, input_qparams.zero_point);
 
     auto* output = builder.MakeIntermediate();
     Node& test_node = builder.AddNode("Transpose", {input_qdq}, {output});
@@ -60,7 +60,7 @@ static GetTestQDQModelFn<QuantType> BuildQDQTransposeTestCase(const TestInputDef
  * \attrs node attributes
  * \param expected_ep_assignment How many nodes are expected to be assigned to QNN (All, Some, or None).
  */
-template <typename QuantType = uint8_t>
+template <typename QuantType>
 static void RunTransposeQDQTest(const TestInputDef<float>& input_def,
                                 const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                 ExpectedEPNodeAssignment expected_ep_assignment) {
@@ -72,7 +72,7 @@ static void RunTransposeQDQTest(const TestInputDef<float>& input_def,
   TestQDQModelAccuracy(BuildTransposeTestCase<float>(input_def, attrs),
                        BuildQDQTransposeTestCase<QuantType>(input_def, attrs),
                        provider_options,
-                       18,
+                       21,
                        expected_ep_assignment);
 }
 
@@ -107,9 +107,28 @@ static void RunTransposeNonQDQOnHTP(const TestInputDef<DataType>& input_def,
 
 // Check that QNN compiles DQ -> Transpose -> Q as a single unit.
 TEST_F(QnnHTPBackendTests, TransposeQDQU8) {
-  RunTransposeQDQTest(TestInputDef<float>({1, 3, 224, 128}, false, 0.0f, 1.0f),
-                      {utils::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
-                      ExpectedEPNodeAssignment::All);
+  RunTransposeQDQTest<uint8_t>(TestInputDef<float>({1, 3, 224, 128}, false, 0.0f, 1.0f),
+                               {utils::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
+                               ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, TransposeQDQS8) {
+  RunTransposeQDQTest<int8_t>(TestInputDef<float>({1, 3, 224, 128}, false, 0.0f, 1.0f),
+                              {utils::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
+                              ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, TransposeQDQU16) {
+  RunTransposeQDQTest<uint16_t>(TestInputDef<float>({1, 3, 224, 128}, false, 0.0f, 1.0f),
+                                {utils::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
+                                ExpectedEPNodeAssignment::All);
+}
+
+// QuantizeLinear and DequantizeLinear have not yet supported S16
+TEST_F(QnnHTPBackendTests, TransposeQDQS16) {
+  RunTransposeQDQTest<int16_t>(TestInputDef<float>({1, 3, 224, 128}, false, 0.0f, 1.0f),
+                               {utils::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
+                               ExpectedEPNodeAssignment::Some);
 }
 
 // Check that QNN supports Transpose with int32 data input on HTP

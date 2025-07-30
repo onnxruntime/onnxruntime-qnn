@@ -113,8 +113,9 @@ GetTestQDQModelFn<QuantType> BuildQDQReshapeExpandTestCase(const std::string& op
                                                            const TestInputDef<float>& input_def,
                                                            const TestInputDef<int64_t>& shape_def,
                                                            const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                                                           bool in_out_should_equal,
                                                            bool use_contrib_qdq = false) {
-  return [input_def, shape_def, attrs,
+  return [input_def, shape_def, attrs, in_out_should_equal,
           use_contrib_qdq, op_type](ModelTestBuilder& builder,
                                     std::vector<QuantParams<QuantType>>& output_qparams) {
     // input -> Q -> DQ ->
@@ -136,9 +137,11 @@ GetTestQDQModelFn<QuantType> BuildQDQReshapeExpandTestCase(const std::string& op
 
     // op_output -> Q -> DQ -> output
     // NOTE: Input and output quantization parameters must be equal for Reshape.
-    output_qparams[0] = input_qparams;  // Overwrite!
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, reshape_output, input_qparams.scale,
-                                                     input_qparams.zero_point, use_contrib_qdq);
+    if (in_out_should_equal) {
+      output_qparams[0] = input_qparams;  // Overwrite!
+    }
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, reshape_output, output_qparams[0].scale,
+                                                     output_qparams[0].zero_point, use_contrib_qdq);
   };
 }
 
@@ -169,6 +172,7 @@ static void RunQDQReshapeExpandTestOnHTP(const std::string& op_type,
                                          const TestInputDef<float>& input_def,
                                          const TestInputDef<int64_t>& shape_def,
                                          const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                                         bool in_out_should_equal,
                                          ExpectedEPNodeAssignment expected_ep_assignment,
                                          int opset = 19,
                                          bool use_contrib_qdq = false) {
@@ -178,7 +182,7 @@ static void RunQDQReshapeExpandTestOnHTP(const std::string& op_type,
   provider_options["offload_graph_io_quantization"] = "0";
 
   auto f32_model_builder = BuildOpTestCase<float, int64_t>(op_type, {input_def}, {shape_def}, attrs);
-  auto qdq_model_builder = BuildQDQReshapeExpandTestCase<QType>(op_type, input_def, shape_def, attrs, use_contrib_qdq);
+  auto qdq_model_builder = BuildQDQReshapeExpandTestCase<QType>(op_type, input_def, shape_def, attrs, in_out_should_equal, use_contrib_qdq);
   TestQDQModelAccuracy(f32_model_builder,
                        qdq_model_builder,
                        provider_options,
@@ -192,6 +196,7 @@ TEST_F(QnnHTPBackendTests, Reshape_DynamicShape_Unsupported) {
                                         TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
                                         TestInputDef<int64_t>({2}, false /* is_initializer */, {1, 48}),
                                         {},                              // Attributes
+                                        true,                            // in_out_should_equal
                                         ExpectedEPNodeAssignment::None,  // Should not be assigned to QNN EP.
                                         19);                             // Opset
 }
@@ -202,6 +207,7 @@ TEST_F(QnnHTPBackendTests, Reshape_AllowZeroAttr_Unsupported) {
                                         TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
                                         TestInputDef<int64_t>({2}, true, {1, 48}),
                                         {utils::MakeAttribute("allowzero", static_cast<int64_t>(1))},
+                                        true,                            // in_out_should_equal
                                         ExpectedEPNodeAssignment::None,  // Should not be assigned to QNN EP.
                                         19);                             // Opset
 }
@@ -211,7 +217,8 @@ TEST_F(QnnHTPBackendTests, Reshape_4D_u8) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Reshape",
                                         TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                                         TestInputDef<int64_t>({2}, true, {1, 48}),
-                                        {},  // Attributes
+                                        {},    // Attributes
+                                        false, // in_out_should_equal
                                         ExpectedEPNodeAssignment::All,
                                         19);  // Opset
 }
@@ -221,7 +228,8 @@ TEST_F(QnnHTPBackendTests, Reshape_4D_u16) {
   RunQDQReshapeExpandTestOnHTP<uint16_t>("Reshape",
                                          TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                                          TestInputDef<int64_t>({2}, true, {1, 48}),
-                                         {},  // Attributes
+                                         {},    // Attributes
+                                         false, // in_out_should_equal
                                          ExpectedEPNodeAssignment::All,
                                          19,     // Opset
                                          true);  // Use com.microsoft Q/DQ ops
@@ -255,6 +263,7 @@ TEST_F(QnnHTPBackendTests, Reshape_4D_0MeansCopy) {
                                         TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                                         TestInputDef<int64_t>({3}, true, {1, 0, 16}),  // zero means copy => '(1, 3, 16)'
                                         {},                                            // Attributes
+                                        false,                                         // in_out_should_equal
                                         ExpectedEPNodeAssignment::All,
                                         19);  // Opset
 }
@@ -264,7 +273,8 @@ TEST_F(QnnHTPBackendTests, Reshape_4D_Neg1MeansInfer) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Reshape",
                                         TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                                         TestInputDef<int64_t>({3}, true, {1, 3, -1}),  // -1 means infer => '(1, 3, 16)'
-                                        {},                                            // Attributes
+                                        {},   
+                                        false,                                         // in_out_should_equal                                         // Attributes
                                         ExpectedEPNodeAssignment::All,
                                         19);  // Opset
 }
@@ -304,7 +314,8 @@ TEST_F(QnnHTPBackendTests, Expand_4D) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Expand",
                                         TestInputDef<float>({3}, false, {1.0f, 2.0f, 3.0f}),
                                         TestInputDef<int64_t>({4}, true, {3, 2, 2, 1}),
-                                        {},  // Attributes
+                                        {},   // Attributes
+                                        true, // in_out_should_equal
                                         ExpectedEPNodeAssignment::All,
                                         19);  // Opset
 }
@@ -314,7 +325,8 @@ TEST_F(QnnHTPBackendTests, Expand_5D) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Expand",
                                         TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}),
                                         TestInputDef<int64_t>({5}, true, {3, 2, 2, 2, 1}),
-                                        {},  // Attributes
+                                        {},   // Attributes
+                                        true, // in_out_should_equal
                                         ExpectedEPNodeAssignment::All,
                                         19);  // Opset
 }
@@ -324,7 +336,8 @@ TEST_F(QnnHTPBackendTests, Expand_6D) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Expand",
                                         TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}),
                                         TestInputDef<int64_t>({6}, true, {3, 2, 2, 2, 2, 1}),
-                                        {},  // Attributes
+                                        {},   // Attributes
+                                        true, // in_out_should_equal
                                         ExpectedEPNodeAssignment::None,
                                         19);  // Opset
 }
