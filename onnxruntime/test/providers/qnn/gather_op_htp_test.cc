@@ -50,9 +50,9 @@ GetTestQDQModelFn<QuantType> BuildQDQGatherTestCase(const TestInputDef<float>& i
 
 template <typename QuantType, typename IndicesType>
 GetTestQDQModelFn<QuantType> BuildQDQGatherNdTestCase(const TestInputDef<float>& input_def,
-                                                    const TestInputDef<IndicesType>& indices_def,
-                                                    const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                                    bool use_contrib_qdq = false) {
+                                                      const TestInputDef<IndicesType>& indices_def,
+                                                      const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                                                      bool use_contrib_qdq = false) {
   return [input_def, indices_def, attrs, use_contrib_qdq](ModelTestBuilder& builder,
                                                           std::vector<QuantParams<QuantType>>& output_qparams) {
     // input -> Q -> DQ ->
@@ -252,6 +252,19 @@ TEST_F(QnnHTPBackendTests, GatherNDOp_IndicesDynamicInt64) {
                             {0, 0, 1, 1}),
       {},  // No attributes for GatherND
       13,  // Opset version
+      ExpectedEPNodeAssignment::All);
+}
+
+// Static negative int64 indices with negative values and batch_dims = 0
+TEST_F(QnnHTPBackendTests, GatherNDOp_Negative_IndicesInt64_BatchDims0) {
+  RunOpTest<float, int64_t>(
+      "GatherND",
+      TestInputDef<float>({2, 2, 2}, true,  // Static input
+                          {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f}),
+      TestInputDef<int64_t>({2, 2}, true,  // Static -ve indices with negative values
+                            {-1, -1, 0, 0}),
+      {utils::MakeAttribute("batch_dims", static_cast<int64_t>(0))},  // Attribute for batch_dims
+      13,                                                             // Opset version
       ExpectedEPNodeAssignment::All);
 }
 
