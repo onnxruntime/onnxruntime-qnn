@@ -34,7 +34,8 @@ using GetConstantInitializerFn = std::function<const ONNX_NAMESPACE::TensorProto
 // Check if Q/DQ pair is supported in extended level QDQ transformers. It requires:
 // 1. Q/DQ doesn't have optional input.
 // 2. scale and zero point is constant scalar
-// 3. Q and DQ have same scale and zero point
+// 3. Q and DQ have same scale if check_scale_value
+// 4. Q and DQ have same zero point if check_zp_value
 bool IsQDQPairSupported(
     const Graph& graph,
     const Node& q_node, const Node& dq_node,
