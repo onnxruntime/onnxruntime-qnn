@@ -217,8 +217,8 @@ TEST_F(QnnHTPBackendTests, Reshape_4D_u8) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Reshape",
                                         TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                                         TestInputDef<int64_t>({2}, true, {1, 48}),
-                                        {},    // Attributes
-                                        false, // in_out_should_equal
+                                        {},     // Attributes
+                                        false,  // in_out_should_equal
                                         ExpectedEPNodeAssignment::All,
                                         19);  // Opset
 }
@@ -228,8 +228,8 @@ TEST_F(QnnHTPBackendTests, Reshape_4D_u16) {
   RunQDQReshapeExpandTestOnHTP<uint16_t>("Reshape",
                                          TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                                          TestInputDef<int64_t>({2}, true, {1, 48}),
-                                         {},    // Attributes
-                                         false, // in_out_should_equal
+                                         {},     // Attributes
+                                         false,  // in_out_should_equal
                                          ExpectedEPNodeAssignment::All,
                                          19,     // Opset
                                          true);  // Use com.microsoft Q/DQ ops
@@ -273,8 +273,8 @@ TEST_F(QnnHTPBackendTests, Reshape_4D_Neg1MeansInfer) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Reshape",
                                         TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                                         TestInputDef<int64_t>({3}, true, {1, 3, -1}),  // -1 means infer => '(1, 3, 16)'
-                                        {},   
-                                        false,                                         // in_out_should_equal                                         // Attributes
+                                        {},
+                                        false,  // in_out_should_equal                                         // Attributes
                                         ExpectedEPNodeAssignment::All,
                                         19);  // Opset
 }
@@ -314,8 +314,8 @@ TEST_F(QnnHTPBackendTests, Expand_4D) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Expand",
                                         TestInputDef<float>({3}, false, {1.0f, 2.0f, 3.0f}),
                                         TestInputDef<int64_t>({4}, true, {3, 2, 2, 1}),
-                                        {},   // Attributes
-                                        true, // in_out_should_equal
+                                        {},    // Attributes
+                                        true,  // in_out_should_equal
                                         ExpectedEPNodeAssignment::All,
                                         19);  // Opset
 }
@@ -325,8 +325,8 @@ TEST_F(QnnHTPBackendTests, Expand_5D) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Expand",
                                         TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}),
                                         TestInputDef<int64_t>({5}, true, {3, 2, 2, 2, 1}),
-                                        {},   // Attributes
-                                        true, // in_out_should_equal
+                                        {},    // Attributes
+                                        true,  // in_out_should_equal
                                         ExpectedEPNodeAssignment::All,
                                         19);  // Opset
 }
@@ -336,8 +336,8 @@ TEST_F(QnnHTPBackendTests, Expand_6D) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Expand",
                                         TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}),
                                         TestInputDef<int64_t>({6}, true, {3, 2, 2, 2, 2, 1}),
-                                        {},   // Attributes
-                                        true, // in_out_should_equal
+                                        {},    // Attributes
+                                        true,  // in_out_should_equal
                                         ExpectedEPNodeAssignment::None,
                                         19);  // Opset
 }
