@@ -133,6 +133,7 @@ Status GatherNDOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   std::string indices_input_name = indices_input.node_arg.Name();
   if (indices_info.qnn_data_type == QNN_DATATYPE_INT_64) {
     assert(!indices_info.is_initializer);
+    indices_input_name += "_ort_qnn_ep_cast";
     ORT_RETURN_IF_ERROR(qnn_model_wrapper.AddInt64CastNode(input_name, indices_input_name,
                                                            std::move(cast_output_shape),
                                                            do_op_validation));
