@@ -959,7 +959,7 @@ TEST_F(QnnHTPBackendTests, QnnIr_OutputFiles) {
 }
 
 // Test that QNN Saver generates the expected files for a model meant to run on the QNN HTP backend.
-TEST_F(QnnHTPBackendTests, DISABLED_QnnSaver_OutputFiles) {
+TEST_F(QnnHTPBackendTests, QnnSaver_OutputFiles) {
   const std::filesystem::path qnn_saver_output_dir = "saver_output";
 
   // Remove pre-existing QNN Saver output files. Note that fs::remove_all() can handle non-existing paths.
@@ -1441,7 +1441,7 @@ TEST_F(QnnIRBackendTests, QnnIr_OutputFiles) {
 }
 
 // Test that QNN Saver generates the expected files for a model meant to run on any QNN backend.
-TEST(QnnSaverBackendTests, DISABLED_QnnSaver_OutputFiles) {
+TEST(QnnSaverBackendTests, QnnSaver_OutputFiles) {
   const std::filesystem::path qnn_saver_output_dir = "saver_output";
 
   // Remove pre-existing QNN Saver output files. Note that fs::remove_all() can handle non-existing paths.
@@ -1456,6 +1456,41 @@ TEST(QnnSaverBackendTests, DISABLED_QnnSaver_OutputFiles) {
   EXPECT_TRUE(std::filesystem::exists(qnn_saver_output_dir / "saver_output.c"));
   EXPECT_TRUE(std::filesystem::exists(qnn_saver_output_dir / "params.bin"));
 }
+
+
+TEST_F(QnnHTPBackendTests, TempDumpDlcTest) {
+  const auto& logger = DefaultLoggingManager().DefaultLogger();
+  if (IsIRBackendSupported() == BackendSupport::UNSUPPORTED) {
+    LOGS(logger, WARNING) << "QNN IR backend is not available! Skipping test.";
+    GTEST_SKIP();
+  } else if (IsIRBackendSupported() == BackendSupport::SUPPORT_ERROR) {
+    LOGS(logger, ERROR) << "Failed to check if QNN IR backend is available.";
+    FAIL();
+  }
+
+  const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
+
+  // Remove pre-existing QNN Ir output files. Note that fs::remove_all() can handle non-existing paths.
+  std::filesystem::remove_all(qnn_dlc_dir);
+  ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
+
+  InitNHWCResizeModel("/tmp/QuantizedConv.onnx",
+                      TestBackend::Htp,  // backend
+                      TestBackend::Ir);  // serializer backend
+
+  // File names are taken from graph node names. Just make sure that we got one .dlc
+  // in the expected directory.
+  ASSERT_TRUE(std::filesystem::exists(qnn_dlc_dir));
+
+  int file_count = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(qnn_dlc_dir)) {
+    EXPECT_TRUE(entry.is_regular_file());
+    EXPECT_EQ(entry.path().extension(), ".dlc");
+    ++file_count;
+  }
+  EXPECT_EQ(file_count, 1);
+}
+
 
 #endif  // !defined(ORT_MINIMAL_BUILD)
 
