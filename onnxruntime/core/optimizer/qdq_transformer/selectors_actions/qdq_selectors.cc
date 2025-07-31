@@ -180,7 +180,7 @@ bool DropQDQNodeGroupSelector::Check(const GraphViewer& graph_viewer, const Node
   }
 
   bool check_scale_val = true;
-  if (node.GetExecutionProviderType() == "QNNExecutionProvider") {
+  if (node.GetExecutionProviderType() == kQnnExecutionProvider) {
     if ((node.OpType() == "Reshape") || (node.OpType() == "Transpose")) {
       check_scale_val = false;
     }
