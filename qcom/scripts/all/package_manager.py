@@ -30,6 +30,8 @@ DEFAULT_PACKAGE_CACHE_DIR = Path(
 )
 DEFAULT_MAX_CACHE_SIZE_BYTES = int(os.environ.get("ORT_BUILD_PACKAGE_CACHE_SIZE", f"{5 * 1024 * 1024 * 1024}"))  # 5 GiB
 
+CAFILE = os.environ.get("REQUESTS_CA_BUNDLE", certifi.where())
+
 
 class FileCache:
     def __init__(
@@ -41,7 +43,13 @@ class FileCache:
         self.__cache_dir.mkdir(exist_ok=True)
         self.__max_cache_size_bytes = max_cache_size_bytes
 
-    def fetch(self, cache_key: str, url: str, expected_sha256: str | None) -> Path:
+    def fetch(
+        self,
+        cache_key: str,
+        url: str,
+        expected_sha256: str | None = None,
+        expected_sha1: str | None = None,
+    ) -> Path:
         """
         Get path to a local copy of the given URL.
 
@@ -58,10 +66,11 @@ class FileCache:
 
             # Defer writing the final file so we don't leave partial downloads if we get killed.
             with tempfile.SpooledTemporaryFile(mode="wr+b") as tmp_file:
-                with urllib.request.urlopen(
-                    url, context=ssl.create_default_context(cafile=certifi.where())
-                ) as response:
-                    length = int(response.getheader("content-length")) / 1024 / 1024
+                with urllib.request.urlopen(url, context=ssl.create_default_context(cafile=CAFILE)) as response:
+                    content_length = response.getheader("content-length")
+                    length = (
+                        int(response.getheader("content-length")) / 1024 / 1024 if content_length is not None else 0
+                    )
                     with tqdm.tqdm(
                         total=length,
                         unit="MiB",
@@ -75,14 +84,18 @@ class FileCache:
                             pbar.update(len(chunk) / 1024 / 1024)
 
                 # Make sure the download's hash matches
-                if expected_sha256 is not None:
-                    tmp_file.seek(0)
-                    actual_sha256 = hashlib.sha256()
-                    for bytes in iter(lambda: tmp_file.read(32768), b""):
-                        actual_sha256.update(bytes)
-                    logging.debug(f"SHA256 hash for {cache_file_path.name}: {actual_sha256.hexdigest()}")
-                    if expected_sha256 != actual_sha256.hexdigest():
-                        raise ValueError(f"sha256 mismatch for {cache_file_path.name}")
+                for expected_sha, sha_name, sha_fn in [
+                    (expected_sha1, "SHA1", hashlib.sha1),
+                    (expected_sha256, "SHA256", hashlib.sha256),
+                ]:
+                    if expected_sha is not None:
+                        tmp_file.seek(0)
+                        actual_sha = sha_fn()
+                        for bytes in iter(lambda: tmp_file.read(32768), b""):
+                            actual_sha.update(bytes)
+                        logging.debug(f"{sha_name} hash for {cache_file_path.name}: {actual_sha.hexdigest()}")
+                        if expected_sha != actual_sha.hexdigest():
+                            raise ValueError(f"{sha_name} mismatch for {cache_file_path.name}")
 
                 # Write the final file. Note that SpooledTemporaryFile doesn't necessarily create a file
                 # so there's a good chance we're writing to disk for the first time.
@@ -136,6 +149,21 @@ class PackageManager:
         self.__package_root = package_root
         self.__package_root.mkdir(parents=True, exist_ok=True)
 
+    @classmethod
+    def clean(cls, package_root: Path) -> None:
+        config = cls.__parse_config(PACKAGE_CONFIG)
+
+        known = [f"{cls.__format_package_dir(name, atts['version'])}" for name, atts in config.items()]
+
+        for subdir in package_root.iterdir():
+            if not subdir.is_dir():
+                continue
+            if subdir.name in known:
+                logging.debug(f"{subdir.name} is up to date")
+            else:
+                logging.info(f"Removing unknown/outdated package in {subdir.name}")
+                shutil.rmtree(subdir)
+
     def get_bindir(self, assert_exists: bool = True) -> Path:
         """
         Get the binary directory of this package.
@@ -168,8 +196,7 @@ class PackageManager:
         """
         Get the name of a package-unique directory.
         """
-        package_version = self.__config["version"]
-        return Path(f"{self.__package}-{package_version}")
+        return Path(self.__format_package_dir(self.__package, self.__config["version"]))
 
     def get_root_dir(self) -> Path:
         """Get the path of the directory in which a package is extracted."""
@@ -231,6 +258,10 @@ class PackageManager:
         return fmt_str.format_map({key: self.__config.get(key) for key in simple_substitutions})
 
     @staticmethod
+    def __format_package_dir(package_name: str, package_version: str) -> str:
+        return f"{package_name}-{package_version}"
+
+    @staticmethod
     def __parse_config(config_path: Path) -> dict[str, dict[str, Any]]:
         with config_path.open() as config_file:
             return yaml.safe_load(config_file)
@@ -239,15 +270,17 @@ class PackageManager:
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--package", action="store", help="Specify the package to select", required=True)
+    parser.add_argument("--package", action="store", help="Specify the package to select")
     parser.add_argument(
         "--package-root",
         action="store",
         help="Path to the package installation directory",
         required=True,
+        type=Path,
     )
 
     action_group = parser.add_argument_group("Actions").add_mutually_exclusive_group(required=True)
+    action_group.add_argument("--clean", action="store_true", help="Uninstall all outdated packages")
     action_group.add_argument("--install", action="store_true", help="Install the selected package")
     action_group.add_argument(
         "--print-bin-dir",
@@ -268,11 +301,16 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.DEBUG, format=log_format, force=True)
     parser = make_parser()
     args = parser.parse_args()
-    packager = PackageManager(args.package, Path(args.package_root))
 
-    if args.install:
-        packager.install()
-    elif args.print_bin_dir:
-        print(packager.get_bindir())
-    elif args.print_content_dir:
-        print(packager.get_content_dir())
+    if args.clean:
+        PackageManager.clean(args.package_root)
+    else:
+        if "package" not in args:
+            raise ValueError("--package is required for package installation or inspection.")
+        packager = PackageManager(args.package, args.package_root)
+        if args.install:
+            packager.install()
+        elif args.print_bin_dir:
+            print(packager.get_bindir())
+        elif args.print_content_dir:
+            print(packager.get_content_dir())

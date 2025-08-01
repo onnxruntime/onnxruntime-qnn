@@ -22,9 +22,11 @@ from ep_build.plan import (
     task,
 )
 from ep_build.task import (
-    ExtractZipTask,
+    CompositeTask,
+    ExtractArchiveTask,
     ListTasksTask,
     NoOpTask,
+    PyTestTask,
 )
 from ep_build.tasks.build import (
     BuildEpLinuxTask,
@@ -37,6 +39,7 @@ from ep_build.util import (
     REPO_ROOT,
     is_host_arm64,
     is_host_linux,
+    is_host_mac,
     is_host_windows,
 )
 
@@ -55,18 +58,25 @@ def parse_arguments():
 
 Environment variables
 ---------------------
+  ANDROID_HOME/ANDROID_NDK_HOME
+    If both are specified, they are used instead of installing known good
+    versions into build/tools.
+
+  JAVA_HOME
+    If specified, it is used instead of installing a known good version into build/tools.
+
+  ORT_BUILD_TOOLS_PATH
+    If specified, use this directory for build-managed tools instead of build/tools.
+
+  ORT_NIGHTLY_BUILD
+    If set to 1, instruct the ORT build to use a more verbose version string.
+
   QAIRT_SDK_ROOT
   QNN_SDK_ROOT
   SNPE_ROOT
     If specified, any of these will be used in place of the LKG QAIRT version.
     They are searched in the above order.
 
-  ANDROID_HOME/ANDROID_NDK_HOME
-    If both are specified, they are used instead of installing known good
-    versions into build/tools.
-
-  JAVA_HOME
-    If specified, it is used instead of installing a known good version into build/tools
   QDC_API_TOKEN
     API token for use with testing in Qualcomm Device Cloud.
 """
@@ -146,7 +156,7 @@ class TaskLibrary:
     @task
     @depends(["build_ort_android"])
     def archive_ort_android(self, plan: Plan) -> str:
-        if is_host_linux():
+        if is_host_linux() or is_host_mac():
             return plan.add_step(
                 BuildEpLinuxTask(
                     "Archiving ONNX Runtime for Android",
@@ -170,6 +180,19 @@ class TaskLibrary:
             )
         else:
             raise NotImplementedError("Archiving for Android on this host is not supported.")
+
+    @task
+    @depends(["build_ort_linux"])
+    def archive_ort_linux(self, plan: Plan) -> str:
+        return plan.add_step(
+            BuildEpLinuxTask(
+                "Archiving ONNX Runtime for Linux",
+                self.__venv_path,
+                "linux",
+                self.__qairt_sdk_root,
+                "archive",
+            )
+        )
 
     @task
     @depends(["build_ort_windows_arm64"])
@@ -214,7 +237,7 @@ class TaskLibrary:
     @task
     @depends(["create_venv"])
     def build_ort_android(self, plan: Plan) -> str:
-        if is_host_linux():
+        if is_host_linux() or is_host_mac():
             return plan.add_step(
                 BuildEpLinuxTask(
                     "Building ONNX Runtime for Android",
@@ -297,9 +320,29 @@ class TaskLibrary:
         return plan.add_step(CreateVenvTask(self.__python_executable, self.__venv_path))
 
     @task
+    def extract_ort_linux(self, plan: Plan) -> str:
+        return plan.add_step(
+            ExtractArchiveTask(
+                "Extracting ONNX Runtime for Linux",
+                REPO_ROOT / "build" / "onnxruntime-tests-linux.tar.bz2",
+                REPO_ROOT / "build" / "linux" / "Release",
+            )
+        )
+
+    @task
+    def extract_ort_windows_arm64(self, plan: Plan) -> str:
+        return plan.add_step(
+            ExtractArchiveTask(
+                "Extracting ONNX Runtime for Windows on ARM64",
+                REPO_ROOT / "build" / "onnxruntime-tests-windows-arm64.zip",
+                REPO_ROOT / "build" / "windows-arm64" / "RelWithDebInfo",
+            )
+        )
+
+    @task
     def extract_ort_windows_x86_64(self, plan: Plan) -> str:
         return plan.add_step(
-            ExtractZipTask(
+            ExtractArchiveTask(
                 "Extracting ONNX Runtime for Windows on x86_64",
                 REPO_ROOT / "build" / "onnxruntime-tests-windows-x86_64.zip",
                 REPO_ROOT / "build" / "windows-x86_64" / "RelWithDebInfo",
@@ -349,6 +392,48 @@ class TaskLibrary:
                 "linux",
                 self.__qairt_sdk_root,
                 "test",
+            )
+        )
+
+    @task
+    @depends(["archive_ort_android"])
+    def test_ort_local_android(self, plan: Plan) -> str:
+        env = dict(os.environ)
+        test_root = REPO_ROOT / "build" / "qdc_test_root"
+        env["QDC_TEST_ROOT"] = str(test_root)
+
+        # This is a pretty slow way to do this, but it's easy to implement
+        # and essentially free to maintain. If you find yourself using this
+        # often enough that your life would be better if we didn't roundtrip
+        # through a zip file, please open a Jira and we'll invest more here.
+        return plan.add_step(
+            CompositeTask(
+                group_name=None,
+                tasks=[
+                    ExtractArchiveTask(
+                        "Extracting ONNX Runtime for Android",
+                        REPO_ROOT / "build" / "onnxruntime-tests-android.zip",
+                        test_root,
+                    ),
+                    PyTestTask(
+                        "Testing ONNX Runtime for Android with a local device",
+                        self.__venv_path,
+                        ["tests"],
+                        env=env,
+                        cwd=REPO_ROOT / "qcom" / "scripts" / "linux" / "appium",
+                    ),
+                ],
+            )
+        )
+
+    @task
+    @depends(["archive_ort_android"])
+    def test_ort_qdc_android(self, plan: Plan) -> str:
+        return plan.add_step(
+            QdcTestsTask(
+                "Testing ONNX Runtime for Android in QDC",
+                self.__venv_path,
+                ["android"],
             )
         )
 

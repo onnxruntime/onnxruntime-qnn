@@ -942,6 +942,7 @@ struct RunOptions : detail::Base<OrtRunOptions> {
   const char* GetRunTag() const;               ///< Wraps OrtApi::RunOptionsGetRunTag
 
   RunOptions& AddConfigEntry(const char* config_key, const char* config_value);  ///< Wraps OrtApi::AddRunConfigEntry
+  const char* GetConfigEntry(const char* config_key);                            ///< Wraps OrtApi::GetRunConfigEntry
 
   /** \brief Terminates all currently executing Session::Run calls that were made using this RunOptions instance
    *
@@ -1160,6 +1161,8 @@ struct ModelCompilationOptions : detail::Base<OrtModelCompilationOptions> {
                                                                   size_t initializer_size_threshold);  ///< Wraps OrtApi::ModelCompilationOptions_SetOutputModelExternalInitializersFile
   ModelCompilationOptions& SetOutputModelBuffer(OrtAllocator* allocator, void** output_model_buffer_ptr,
                                                 size_t* output_model_buffer_size_ptr);  ///< Wraps OrtApi::ModelCompilationOptions_SetOutputModelBuffer
+  ModelCompilationOptions& SetEpContextBinaryInformation(const ORTCHAR_T* output_directory,
+                                                         const ORTCHAR_T* model_name);  ///< Wraps OrtApi::ModelCompilationOptions_SetEpContextBinaryInformation
   ModelCompilationOptions& SetFlags(size_t flags);                                      ///< Wraps OrtApi::ModelCompilationOptions_SetFlags
 };
 
@@ -1740,15 +1743,11 @@ struct ConstValueImpl : Base<T> {
   size_t GetStringTensorElementLength(size_t element_index) const;
 
   /// <summary>
-  /// Returns the total size of the tensor data in bytes.
+  /// Returns the total size of the tensor data in bytes. Throws an exception if the OrtValue
+  /// does not contain a tensor or if it contains a tensor that contains strings.
+  /// For numeric tensors, this is sizeof(element_type) * total_element_count.
   /// </summary>
   /// <returns>The total size of the tensor data in bytes</returns>
-  /// <exception>Throws an exception if the OrtValue does not contain a tensor or
-  /// if it contains a tensor that contains strings</exception>
-  /// <remarks>
-  /// For numeric tensors, this is sizeof(element_type) * total_element_count.
-  ///
-  /// </remarks>
   size_t GetTensorSizeInBytes() const;  ///< Wraps OrtApi::GetTensorSizeInBytes
 
 #if !defined(DISABLE_SPARSE_TENSORS)

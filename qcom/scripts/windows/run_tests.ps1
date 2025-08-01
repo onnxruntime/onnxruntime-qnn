@@ -23,13 +23,25 @@ $NewBuildDirectoryBackslashes = ($NewBuildDirectory -replace "/", "\\")
     -replace $OldBuildDirectoryBackslashesRegex, $NewBuildDirectoryBackslashes |
     Out-File -Encoding ascii $CTestTestFile
 
+$Failed = $false
+
 # Run CTest
 Push-Location $RootDir
 & $CTestExe --build-config $Config --verbose --timeout $TimeoutSec
 
-$Failed - $false
 if (-not $?) {
     $Failed = $true
+}
+else {
+    # Run ONNX model tests
+    & "$RootDir\$Config\onnx_test_runner.exe" `
+        -j 1 `
+        -e qnn `
+        -i "backend_type|cpu" `
+        "_deps\onnx-src\onnx/backend\test\data\node"
+    if (-not $?) {
+        $Failed = $true
+    }
 }
 
 # If it looks like we're running in QDC, copy logs to the directory they'll scan to find them.

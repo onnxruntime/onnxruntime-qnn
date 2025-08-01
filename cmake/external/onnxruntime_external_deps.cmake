@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the MIT License.
+
 message(STATUS "Loading Dependencies URLs ...")
 
 include(external/helper_functions.cmake)
@@ -363,25 +366,13 @@ if (CPUINFO_SUPPORTED)
   set(CPUINFO_BUILD_UNIT_TESTS OFF CACHE INTERNAL "")
   set(CPUINFO_BUILD_MOCK_TESTS OFF CACHE INTERNAL "")
   set(CPUINFO_BUILD_BENCHMARKS OFF CACHE INTERNAL "")
-  if (onnxruntime_target_platform STREQUAL "ARM64EC" OR onnxruntime_target_platform STREQUAL "ARM64")
-      message(STATUS "Applying a patch for Windows ARM64/ARM64EC in cpuinfo")
-      onnxruntime_fetchcontent_declare(
-        pytorch_cpuinfo
-        URL ${DEP_URL_pytorch_cpuinfo}
-        URL_HASH SHA1=${DEP_SHA1_pytorch_cpuinfo}
-        EXCLUDE_FROM_ALL
-        PATCH_COMMAND ${Patch_EXECUTABLE} -p1 < ${PROJECT_SOURCE_DIR}/patches/cpuinfo/9bb12d342fd9479679d505d93a478a6f9cd50a47.patch
-        FIND_PACKAGE_ARGS NAMES cpuinfo
-      )
-  else()
-      onnxruntime_fetchcontent_declare(
-        pytorch_cpuinfo
-        URL ${DEP_URL_pytorch_cpuinfo}
-        URL_HASH SHA1=${DEP_SHA1_pytorch_cpuinfo}
-        EXCLUDE_FROM_ALL
-        FIND_PACKAGE_ARGS NAMES cpuinfo
-      )
-  endif()
+  onnxruntime_fetchcontent_declare(
+    pytorch_cpuinfo
+    URL ${DEP_URL_pytorch_cpuinfo}
+    URL_HASH SHA1=${DEP_SHA1_pytorch_cpuinfo}
+    EXCLUDE_FROM_ALL
+    FIND_PACKAGE_ARGS NAMES cpuinfo
+  )
   set(ONNXRUNTIME_CPUINFO_PROJ pytorch_cpuinfo)
   onnxruntime_fetchcontent_makeavailable(${ONNXRUNTIME_CPUINFO_PROJ})
   if(TARGET cpuinfo::cpuinfo AND NOT TARGET cpuinfo)
@@ -567,7 +558,7 @@ if (onnxruntime_USE_XNNPACK)
      ENDIF()
      ADD_LIBRARY(xnnpack STATIC IMPORTED)
      find_library(xnnpack_LIBRARY NAMES XNNPACK)
-     find_library(microkernels_prod_LIBRARY NAMES microkernels-prod)
+     find_library(microkernels_prod_LIBRARY NAMES xnnpack-microkernels-prod)
      find_package(unofficial-pthreadpool CONFIG REQUIRED)
 
      target_include_directories(xnnpack INTERFACE "${XNNPACK_HDR}")
@@ -723,36 +714,28 @@ if (onnxruntime_USE_WEBGPU)
       )
     else()
       set(ONNXRUNTIME_Dawn_PATCH_COMMAND
-          # The dawn.patch contains the following changes:
+          # The dawn_destroy_buffer_on_destructor.patch contains the following changes:
           #
           # - (private) Allow WGPUBufferImpl class to destroy the buffer in the destructor
           #   In native implementation, wgpuBufferRelease will trigger the buffer destroy (if refcount decreased to 0). But
           #   in emwgpu implementation, the buffer destroy won't happen. This change adds a destructor to the buffer class
           #   to destroy the buffer when the refcount is 0 for non-external buffers.
           #
-          # - (private) Remove hard-coded CMAKE_OSX_DEPLOYMENT_TARGET in Dawn's CMake files
-          #   https://github.com/microsoft/onnxruntime/pull/23729
-          #
-          # - (private) Reduce unsafe buffer usage warning in aligned_storage.h
-          #   https://github.com/microsoft/onnxruntime/pull/24308
-          #   The patch disables the UNSAFE_BUFFER_USAGE warning around the AlignedStorage struct in aligned_storage.h. This is done
-          #   by using TINT_BEGIN_DISABLE_WARNING and TINT_END_DISABLE_WARNING macros, which helps in warnings related to unsafe buffer usage
-          #   usage when compiling the code, making the build process cleaner and faster.
-          #
-          ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${PROJECT_SOURCE_DIR}/patches/dawn/dawn.patch &&
+          ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${PROJECT_SOURCE_DIR}/patches/dawn/dawn_destroy_buffer_on_destructor.patch &&
 
           # The dawn_force_enable_f16_nvidia_vulkan.patch contains the following changes:
           #
           # - (private) Force enable f16 support for NVIDIA Vulkan
           #   Dawn disabled f16 support for NVIDIA Vulkan by default because of crashes in f16 CTS tests (crbug.com/tint/2164).
           #   Since the crashes are limited to specific GPU models, we patched Dawn to remove the restriction.
+          #
           ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${PROJECT_SOURCE_DIR}/patches/dawn/dawn_force_enable_f16_nvidia_vulkan.patch &&
 
-          # The dawn_fix_copy_dxil_dll.patch contains the following changes:
+          # The dawn_binskim.patch contains the following changes:
           #
-          # - (private) Fix copy of dxil.dll in Dawn
-          #   The patch ensures the copy of dxil.dll to be done after the build step of `dxcompiler` target.
-          ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${PROJECT_SOURCE_DIR}/patches/dawn/dawn_fix_copy_dxil_dll.patch)
+          # - (private) Fulfill the BinSkim requirements
+          #   Some build warnings are not allowed to be disabled in project level.
+          ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${PROJECT_SOURCE_DIR}/patches/dawn/dawn_binskim.patch)
 
       onnxruntime_fetchcontent_declare(
         dawn
@@ -780,6 +763,27 @@ if (onnxruntime_USE_WEBGPU)
   if (onnxruntime_ENABLE_PIX_FOR_WEBGPU_EP)
     list(APPEND onnxruntime_EXTERNAL_LIBRARIES webgpu_glfw glfw)
   endif()
+
+  if (NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten" AND onnxruntime_WGSL_TEMPLATE STREQUAL "dynamic")
+    if(onnxruntime_USE_VCPKG)
+      find_package(unofficial-duktape CONFIG REQUIRED)
+      add_library(duktape_static ALIAS unofficial::duktape::duktape)
+    else()
+      onnxruntime_fetchcontent_declare(
+        duktape
+        URL ${DEP_URL_duktape}
+        URL_HASH SHA1=${DEP_SHA1_duktape}
+        EXCLUDE_FROM_ALL
+      )
+      onnxruntime_fetchcontent_makeavailable(duktape)
+
+      if(NOT TARGET duktape_static)
+        add_library(duktape_static STATIC "${duktape_SOURCE_DIR}/src/duktape.c")
+        target_compile_features(duktape_static PRIVATE c_std_99)
+        target_include_directories(duktape_static INTERFACE $<BUILD_INTERFACE:${duktape_SOURCE_DIR}/src>)
+      endif()
+    endif()
+  endif()
 endif()
 
 if(onnxruntime_USE_COREML)
@@ -804,6 +808,14 @@ if(onnxruntime_USE_COREML)
   # we don't build directly so use Populate. selected files are built from onnxruntime_providers_coreml.cmake
   FetchContent_Populate(coremltools)
 
+endif()
+
+if(onnxruntime_USE_KLEIDIAI)
+  # Disable the KleidiAI tests
+  set(KLEIDIAI_BUILD_TESTS  OFF)
+
+  onnxruntime_fetchcontent_declare(kleidiai URL ${DEP_URL_kleidiai} URL_HASH SHA1=${DEP_SHA1_kleidiai} EXCLUDE_FROM_ALL)
+  onnxruntime_fetchcontent_makeavailable(kleidiai)
 endif()
 
 set(onnxruntime_LINK_DIRS)

@@ -44,7 +44,6 @@ if ($TargetPlatform -eq "android") {
     $CMakeGenerator = "Visual Studio 17 2022"
 }
 $BuildDir = (Join-Path $BuildRoot "$TargetPlatformArch")
-$ProtocPath = (Join-Path (Join-Path $BuildDir $Config) "Google.Protobuf.Tools.3.21.12\tools\windows_x64\protoc.exe")
 $ValidArchs = "arm64", "arm64ec", "x86_64"
 
 if ($PyVEnv -ne "") {
@@ -112,15 +111,16 @@ if (-Not ($ValidArchs -contains $Arch)) {
     throw "Invalid arch $Arch. Supported architectures: $ValidArchs"
 }
 
-$ArchArg = $null
+$ArchArgs = @()
 if ($Arch -eq "x86_64")
 {
     $HostArch = [System.Runtime.InteropServices.RuntimeInformation,mscorlib]::OSArchitecture
     if ($HostArch -ne "x64") {
         throw "Cross-compilation to $Arch is not supported on $HostArch host."
     }
+    $ArchArgs += "--build_wheel"
 } else {
-    $ArchArg = "--$Arch"
+    $ArchArgs += "--$Arch"
 }
 
 if (Test-UpdateNeeded) {
@@ -136,14 +136,18 @@ $CommonArgs = `
     "--cmake_generator", $CmakeGenerator, `
     "--config", $Config, `
     "--parallel", `
-    "--path_to_protoc", $ProtocPath
+    "--wheel_name_suffix", "qcom-internal", `
+    "--compile_no_warning_as_error"
 
 $Actions = @()
 $QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot"
 $MakeTestArchive = $false
+$RunTests = $false
+$TestRunner = $null
 
 switch ($TargetPlatform) {
     "windows" {
+        $TestRunner = "$RepoRoot\qcom\scripts\windows\run_tests.ps1"
         switch ($Mode) {
             "build" {
                 if ($BuildIsDirty) {
@@ -154,11 +158,7 @@ switch ($TargetPlatform) {
                 $PlatformArgs = $ArchArg
             }
             "test" {
-                $Actions += "--test"
-                if ($Arch -ne "arm64") {
-                    Write-Host "Disabling QNN tests on $Arch."
-                    $QnnArgs = @()
-                }
+                $RunTests = $true
             }
             "archive" {
                 $MakeTestArchive = $true
@@ -221,37 +221,66 @@ switch ($TargetPlatform) {
 $CmakeBinDir = (Get-PackageBinDir cmake_windows_x86_64)
 $env:Path = "$CmakeBinDir;" + $env:Path
 
+Optimize-ToolsDir
+
 Push-Location $RepoRoot
 
+$failed = $false
 if ($MakeTestArchive) {
     python.exe "$RepoRoot\qcom\scripts\all\archive_tests.py" `
-        "--cmake-bin-dir=$CmakeBinDir" `
         "--config=$Config" `
         "--qairt-sdk-root=$QairtSdkRoot" `
         "--target-platform=$TargetPlatformArch"
+    if (-not $?) {
+        $failed = $true
+    }
 }
 else {
-    if (!(Test-Path $ProtocPath)) {
-        Write-Host "$ProtocPath does not exist"
-        $Nuget = (Join-Path (Get-PackageBinDir nuget_win) "nuget.exe")
-        & $Nuget `
-            restore "$RepoRoot\packages.config" `
-            -PackagesDirectory "$BuildDir\$Config" `
-            -ConfigFile "$RepoRoot\NuGet.config"
-    }
-
     if ($CMakeGenerator -eq "Ninja") {
         $env:Path = "$(Get-PackageBinDir ninja_windows_x86_64);" + $env:Path
     }
 
-    .\build.bat `
-        $Actions `
-        $CommonArgs `
-        $QnnArgs `
-        $PlatformArgs
+    # This platform supports running tests on the host. Prep the build directory
+    # to run with our ctest wrapper
+    if ($TestRunner) {
+        New-Item -ItemType Directory "$BuildDir\$Config" -Force | Out-Null
+        Copy-Item -Path $TestRunner -Destination "$BuildDir\$Config"
+        Copy-Item "$CMakeBinDir\ctest.exe" -Destination "$BuildDir\$Config"
+    }
+
+    if ($Actions.Count -gt 0) {
+        try {
+            python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
+
+            .\build.bat `
+                $Actions `
+                $ArchArgs `
+                $CommonArgs `
+                $QnnArgs `
+                $PlatformArgs
+
+            if (-not $?) {
+                $failed = $true
+            }
+        }
+        finally {
+            # Whatever happens, blow away mirror to avoid it showing up in git; it's okay, it's
+            # very cheap to regenerate.
+            Remove-Item -Recurse -Force "$RepoRoot\mirror"
+        }
+    }
+
+    if ($RunTests) {
+        Push-Location "$BuildDir\$Config"
+        & .\run_tests.ps1
+
+        if (-not $?) {
+            $failed = $true
+        }
+    }
 }
 
-if (-not $?) {
+if ($failed) {
     throw "Build failure"
 }
 

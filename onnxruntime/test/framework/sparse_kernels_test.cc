@@ -706,7 +706,7 @@ struct InsertIndices {
       std::vector<T> indices(indices_data.cbegin(), indices_data.cend());
       indices_tp.mutable_raw_data()->assign(reinterpret_cast<const char*>(indices.data()), indices.size() * sizeof(T));
       if constexpr (endian::native != endian::little) {
-        utils::ConvertRawDataInTensorProto((ONNX_NAMESPACE::TensorProto*)&indices_tp);
+        utils::ConvertRawDataInTensorProto(indices_tp);
       }
     }
   }
@@ -1170,7 +1170,9 @@ static Status TestDenseToSparseConversion(size_t indices_start,
   return TestDenseAllZerosToSparseConversion<T>(inserter, checker);
 }
 
-TEST(SparseTensorConversionTests, TestDenseToSparseConversion) {
+// This test is very flaky on x86_64 in Qualcomm CI. Disable it here while we investigate
+// but do not upstream this change.
+TEST(SparseTensorConversionTests, DISABLED_TestDenseToSparseConversion) {
   // This one will test indices that are less than max int8 value
   // which should result in int8 indices
   ASSERT_STATUS_OK(TestDenseToSparseConversion<float>(

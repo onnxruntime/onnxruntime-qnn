@@ -78,26 +78,35 @@ fi
 common_args=(--cmake_generator "${cmake_generator}" \
              --config "${config}" \
              --use_cache --parallel \
-             --build_dir "${build_dir}")
+             --build_dir "${build_dir}" \
+             --wheel_name_suffix qcom-internal \
+             --compile_no_warning_as_error)
 
 action_args=()
 make_test_archive=
+run_tests=
+test_runner=
 
 case "${target_platform}" in
   linux)
-    if [ -n "${build_is_dirty}" ]; then
-      action_args+=("--update")
-    fi
-
     qnn_args=(--use_qnn --qnn_home "${qairt_sdk_root}")
-    platform_args=(--build_shared_lib)
+    platform_args=(--build_shared_lib
+                   --build_wheel)
+
+    test_runner="${REPO_ROOT}/qcom/scripts/linux/run_tests.sh"
 
     case "${mode}" in
       build)
         action_args+=("--build")
+        if [ -n "${build_is_dirty}" ]; then
+          action_args+=("--update")
+        fi
         ;;
       test)
-        action_args+=("--test")
+        run_tests=1
+        ;;
+      archive)
+        make_test_archive=1
         ;;
       *)
         die "Invalid mode '${mode}'."
@@ -146,17 +155,51 @@ case "${target_platform}" in
     die "Unknown target platform ${target_platform}."
 esac
 
+clean_tools_dir
+
+# Whatever happens, blow away mirror to avoid it showing up in git; it's okay, it's
+# very cheap to regenerate.
+function scrub_mirror() {
+  rm -fr "${REPO_ROOT}/mirror"
+}
+trap scrub_mirror EXIT
+
 if [ -n "${make_test_archive}" ]; then
   python "${REPO_ROOT}/qcom/scripts/all/archive_tests.py" \
-    "--cmake-bin-dir=${cmake_bindir}" \
     "--config=${config}" \
-    --target-platform=android \
+    "--target-platform=${target_platform}" \
     "--qairt-sdk-root=${qairt_sdk_root}"
 else
   cd "${REPO_ROOT}"
-  ./build.sh \
-    "${action_args[@]}" \
-    "${common_args[@]}" \
-    "${qnn_args[@]}" \
-    "${platform_args[@]}"
+
+  # This platform supports running tests on the host. Prep the build directory
+  # to run with our ctest wrapper.
+  if [ -n "${test_runner}" ]; then
+    cp "${test_runner}" "${build_dir}/${config}/"
+    cp "${cmake_bindir}/ctest" "${build_dir}/${config}/"
+  fi
+
+  if [ "${#action_args[@]}" -gt 0 ]; then
+
+    python "${REPO_ROOT}/qcom/scripts/all/fetch_cmake_deps.py"
+
+    ./build.sh \
+      "${action_args[@]}" \
+      "${common_args[@]}" \
+      "${qnn_args[@]}" \
+      "${platform_args[@]}"
+  fi
+
+  if [ -n "${run_tests}" ]; then
+    # Run tests using our ctest wrapper.
+    cd "${build_dir}/${config}/"
+    "./$(basename ${test_runner})"
+
+    # Run node module tests
+    "${build_dir}/${config}/onnx_test_runner" \
+        -j 1 \
+        -e qnn \
+        -i "backend_type|cpu" \
+        "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node"
+  fi
 fi

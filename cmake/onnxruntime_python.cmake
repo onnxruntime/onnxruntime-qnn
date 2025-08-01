@@ -537,6 +537,7 @@ set(onnxruntime_mobile_util_srcs
     ${REPO_ROOT}/tools/python/util/pytorch_export_helpers.py
     ${REPO_ROOT}/tools/python/util/reduced_build_config_parser.py
     ${REPO_ROOT}/tools/python/util/update_onnx_opset.py
+    ${REPO_ROOT}/tools/python/remove_initializer_from_input.py
 )
 file(GLOB onnxruntime_ort_format_model_srcs CONFIGURE_DEPENDS
     ${REPO_ROOT}/tools/python/util/ort_format_model/*.py
@@ -1067,12 +1068,10 @@ if (onnxruntime_USE_QNN)
         ${QNN_LIB_FILES}
         $<TARGET_FILE_DIR:${build_output_target}>/onnxruntime/capi/
   )
-  if (EXISTS "${onnxruntime_QNN_HOME}/Qualcomm AI Hub Proprietary License.pdf")
+  if (EXISTS "${onnxruntime_QNN_HOME}/LICENSE.pdf")
     add_custom_command(
       TARGET onnxruntime_pybind11_state POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy
-          "${onnxruntime_QNN_HOME}/Qualcomm AI Hub Proprietary License.pdf"
-          $<TARGET_FILE_DIR:${build_output_target}>/onnxruntime/
+        COMMAND ${CMAKE_COMMAND} -E copy "${onnxruntime_QNN_HOME}/LICENSE.pdf" $<TARGET_FILE_DIR:${build_output_target}>/onnxruntime/Qualcomm_LICENSE.pdf
     )
   endif()
 endif()

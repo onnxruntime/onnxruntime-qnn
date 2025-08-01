@@ -104,7 +104,7 @@ Status ModelBuilder::RegisterConstant(const onnx::TensorProto& tensor, emscripte
   const bool should_convert_int64_to_int32 = !IsInt64Supported() &&
                                              data_type == ONNX_NAMESPACE::TensorProto_DataType_INT64;
 
-  if (utils::HasExternalData(tensor)) {
+  if (utils::HasExternalData(tensor) && !utils::HasExternalDataInMemory(tensor)) {
     // Create WebNN Constant from external data.
     std::basic_string<ORTCHAR_T> external_file_path;
     onnxruntime::FileOffsetType data_offset;
@@ -127,7 +127,8 @@ Status ModelBuilder::RegisterConstant(const onnx::TensorProto& tensor, emscripte
     if (tensor.has_raw_data()) {
       tensor_ptr = reinterpret_cast<std::byte*>(const_cast<char*>(tensor.raw_data().c_str()));
     } else {
-      ORT_RETURN_IF_ERROR(onnxruntime::utils::UnpackInitializerData(tensor, unpacked_tensor));
+      ORT_RETURN_IF_NOT(UnpackInitializerData(tensor, unpacked_tensor, graph_viewer_, logger),
+                        "Failed to unpack initializer data for tensor: " + tensor.name());
       tensor_ptr = reinterpret_cast<std::byte*>(unpacked_tensor.data());
     }
 
@@ -183,7 +184,7 @@ Status ModelBuilder::RegisterConstant(const onnx::TensorProto& tensor, emscripte
     std::vector<int32_t> int32_data;
     if (should_convert_int64_to_int32) {
       try {
-        int32_data = GetNarrowedIntfromInt64<int32_t>(
+        int32_data = GetNarrowedIntFromInt64<int32_t>(
             gsl::span<const int64_t>(reinterpret_cast<int64_t*>(tensor_ptr), num_elements));
         LOGS(logger, VERBOSE) << "Initializer '" << tensor.name() << "' is converted from int64 to int32.";
       } catch (const std::exception& e) {
