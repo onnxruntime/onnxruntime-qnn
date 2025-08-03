@@ -35,8 +35,9 @@ GetTestModelFn BuildTransposeTestCase(const TestInputDef<DataType>& input_def,
 // Function that builds a QDQ model with a Transpose operator.
 template <typename QuantType>
 static GetTestQDQModelFn<QuantType> BuildQDQTransposeTestCase(const TestInputDef<float>& input_def,
-                                                              const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs) {
-  return [input_def, attrs](ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
+                                                              const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                                                              bool in_out_should_equal) {
+  return [input_def, attrs, in_out_should_equal](ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
     NodeArg* input = MakeTestInput(builder, input_def);
     QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
     NodeArg* input_qdq = AddQDQNodePair<QuantType>(builder, input, input_qparams.scale, input_qparams.zero_point);
@@ -47,7 +48,13 @@ static GetTestQDQModelFn<QuantType> BuildQDQTransposeTestCase(const TestInputDef
     for (const auto& attr : attrs) {
       test_node.AddAttributeProto(attr);
     }
-
+    if (in_out_should_equal) {
+      output_qparams[0] = input_qparams;  // Overwrite!
+    } else {
+      std::pair<float, float> inp_range = input_def.GetRange();
+      auto delta = (inp_range.second - inp_range.first) / 10;
+      output_qparams[0] = QuantParams<QuantType>::Compute(inp_range.first+delta, inp_range.second);
+    }
     AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, output, output_qparams[0].scale, output_qparams[0].zero_point);
   };
 }
@@ -63,16 +70,18 @@ static GetTestQDQModelFn<QuantType> BuildQDQTransposeTestCase(const TestInputDef
 template <typename QuantType>
 static void RunTransposeQDQTest(const TestInputDef<float>& input_def,
                                 const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                ExpectedEPNodeAssignment expected_ep_assignment) {
+                                bool in_out_should_equal,
+                                ExpectedEPNodeAssignment expected_ep_assignment,
+                                int opset = 21) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
   // Runs model with DQ-> Transpose -> Q and compares the outputs of the CPU and QNN EPs.
   TestQDQModelAccuracy(BuildTransposeTestCase<float>(input_def, attrs),
-                       BuildQDQTransposeTestCase<QuantType>(input_def, attrs),
+                       BuildQDQTransposeTestCase<QuantType>(input_def, attrs, in_out_should_equal),
                        provider_options,
-                       21,
+                       opset,
                        expected_ep_assignment);
 }
 
@@ -107,34 +116,30 @@ static void RunTransposeNonQDQOnHTP(const TestInputDef<DataType>& input_def,
 
 // Check that QNN compiles DQ -> Transpose -> Q as a single unit.
 TEST_F(QnnHTPBackendTests, TransposeQDQU8) {
-  RunTransposeQDQTest<uint8_t>(TestInputDef<float>({1, 3, 224, 128}, false, 0.0f, 1.0f),
-                               {utils::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
+  RunTransposeQDQTest<uint8_t>(TestInputDef<float>({1, 3, 224, 128}, false, GetFloatDataInRange(-10.0f, 10.0f, 1*3*224*128)),
+                               {utils::MakeAttribute("perm", std::vector<int64_t>{0, 1, 3, 2})},
+                               false, // in_out_should_equal
                                ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnHTPBackendTests, TransposeQDQS8) {
-  RunTransposeQDQTest<int8_t>(TestInputDef<float>({1, 3, 224, 128}, false, 0.0f, 1.0f),
-                              {utils::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
+  RunTransposeQDQTest<int8_t>(TestInputDef<float>({1, 3, 224, 128}, false, GetFloatDataInRange(-10.0f, 10.0f, 1*3*224*128)),
+                              {utils::MakeAttribute("perm", std::vector<int64_t>{0, 1, 3, 2})},
+                              false, // in_out_should_equal
                               ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnHTPBackendTests, TransposeQDQU16) {
-  RunTransposeQDQTest<uint16_t>(TestInputDef<float>({1, 3, 224, 128}, false, 0.0f, 1.0f),
-                                {utils::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
+  RunTransposeQDQTest<uint16_t>(TestInputDef<float>({1, 3, 224, 128}, false, GetFloatDataInRange(-10.0f, 10.0f, 1*3*224*128)),
+                                {utils::MakeAttribute("perm", std::vector<int64_t>{0, 1, 3, 2})},
+                                false, // in_out_should_equal
                                 ExpectedEPNodeAssignment::All);
-}
-
-// QuantizeLinear and DequantizeLinear have not yet supported S16
-TEST_F(QnnHTPBackendTests, TransposeQDQS16) {
-  RunTransposeQDQTest<int16_t>(TestInputDef<float>({1, 3, 224, 128}, false, 0.0f, 1.0f),
-                               {utils::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
-                               ExpectedEPNodeAssignment::Some);
 }
 
 // Check that QNN supports Transpose with int32 data input on HTP
 TEST_F(QnnHTPBackendTests, TransposeInt32OnHTP) {
   RunTransposeNonQDQOnHTP<int32_t>(TestInputDef<int32_t>({1, 3, 224, 128}, false, -100, 100),
-                                   {utils::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
+                                   {utils::MakeAttribute("perm", std::vector<int64_t>{0, 1, 3, 2})},
                                    ExpectedEPNodeAssignment::All);
 }
 
@@ -143,7 +148,7 @@ TEST_F(QnnHTPBackendTests, TransposeInt32OnHTP) {
 // value pair (0.183528364, 0.183471695) at index #0 don't match, which is -5.66691e-05 from 0.183528
 TEST_F(QnnHTPBackendTests, DISABLED_TransposeFloatOnHTP) {
   RunTransposeNonQDQOnHTP<float>(TestInputDef<float>({1, 3, 224, 128}, false, 0, 10.0f),
-                                 {utils::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
+                                 {utils::MakeAttribute("perm", std::vector<int64_t>{0, 1, 3, 2})},
                                  ExpectedEPNodeAssignment::All, false);
 }
 

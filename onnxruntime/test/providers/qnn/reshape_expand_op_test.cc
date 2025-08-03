@@ -139,6 +139,10 @@ GetTestQDQModelFn<QuantType> BuildQDQReshapeExpandTestCase(const std::string& op
     // NOTE: Input and output quantization parameters must be equal for Reshape.
     if (in_out_should_equal) {
       output_qparams[0] = input_qparams;  // Overwrite!
+    } else {
+      std::pair<float, float> inp_range = input_def.GetRange();
+      auto delta = (inp_range.second - inp_range.first) / 10;
+      output_qparams[0] = QuantParams<QuantType>::Compute(inp_range.first+delta, inp_range.second);
     }
     AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, reshape_output, output_qparams[0].scale,
                                                      output_qparams[0].zero_point, use_contrib_qdq);
@@ -212,7 +216,7 @@ TEST_F(QnnHTPBackendTests, Reshape_AllowZeroAttr_Unsupported) {
                                         19);                             // Opset
 }
 
-// Test 8-bit QDQ Reshape of rank 4 -> rank 2.
+// Test UFIXED 8-bit QDQ Reshape of rank 4 -> rank 2.
 TEST_F(QnnHTPBackendTests, Reshape_4D_u8) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Reshape",
                                         TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
@@ -223,7 +227,18 @@ TEST_F(QnnHTPBackendTests, Reshape_4D_u8) {
                                         19);  // Opset
 }
 
-// Test 16-bit QDQ Reshape of rank 4 -> rank 2.
+// Test SFIXED 8-bit QDQ Reshape of rank 4 -> rank 2.
+TEST_F(QnnHTPBackendTests, Reshape_4D_s8) {
+  RunQDQReshapeExpandTestOnHTP<int8_t>("Reshape",
+                                        TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+                                        TestInputDef<int64_t>({2}, true, {1, 48}),
+                                        {},     // Attributes
+                                        false,  // in_out_should_equal
+                                        ExpectedEPNodeAssignment::All,
+                                        19);  // Opset
+}
+
+// Test UFIXED 16-bit QDQ Reshape of rank 4 -> rank 2.
 TEST_F(QnnHTPBackendTests, Reshape_4D_u16) {
   RunQDQReshapeExpandTestOnHTP<uint16_t>("Reshape",
                                          TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),

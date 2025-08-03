@@ -107,8 +107,6 @@ Status TransposeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Outputs()[0].node_arg, output_shape),
                     "Cannot get shape");
 
-  const QnnTensorWrapper& input_tensor_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]);
-
   // If a cast to int64 is needed, add the cast node
   if (needs_int64_cast) {
     std::string cast_node_name = output_name + "_cast_int64";
@@ -126,15 +124,11 @@ Status TransposeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     cast_node_info_vec.push_back({cast_node_name, cast_input_name, cast_output_name});
   }
 
-  // Transpose output uses same data type and quantization parameter with input
-  // 1. In QDQ model, the optimization may create scenario like Q -> Transpose -> DQ, Transpose is single node
-  // Input tensor is created by previous node which is quantized tensor,
-  // so output just copy the same data type and quantization parameters
-  // 2. In QDQ model, Transpose also support non-quantized data like int32.
+  // In QDQ model, Transpose also support non-quantized data like int32.
   QnnTensorWrapper output_tensorwrapper(output_name,
                                         tensor_type,
-                                        input_tensor_wrapper.GetTensorDataType(),
-                                        input_tensor_wrapper.GetQnnQuantParams().Copy(),
+                                        output_info.qnn_data_type,
+                                        output_info.quant_param.Copy(),
                                         std::move(output_shape));
 
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");

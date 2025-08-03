@@ -180,9 +180,11 @@ bool DropQDQNodeGroupSelector::Check(const GraphViewer& graph_viewer, const Node
   }
 
   bool check_scale_val = true;
+  bool check_zp_val = true;
   if (node.GetExecutionProviderType() == kQnnExecutionProvider) {
     if ((node.OpType() == "Reshape") || (node.OpType() == "Transpose")) {
       check_scale_val = false;
+      check_zp_val = false;
     }
   }
 
@@ -192,8 +194,9 @@ bool DropQDQNodeGroupSelector::Check(const GraphViewer& graph_viewer, const Node
       dq_node,
       get_const_initializer,
       graph_viewer.ModelPath(),
-      true,            // check_op_type
-      check_scale_val  // check_scale_value
+      true,                 // check_op_type
+      check_scale_val,  // check_scale_value
+      check_zp_val         // check_zp_value
   );
 }
 
