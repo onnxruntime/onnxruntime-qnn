@@ -5,15 +5,15 @@
 
 namespace onnxruntime {
 namespace qnn {
-class CastQuantizeFusion : public IQnnNodeGroup {
+class CastLoneQDQFusion : public IQnnNodeGroup {
     public:
-    explicit CastQuantizeFusion(gsl::span<const NodeUnit* const> node_units) {
+    explicit CastLoneQDQFusion(gsl::span<const NodeUnit* const> node_units) {
         ORT_ENFORCE(node_units.size() == 2, "Pattern expect exactly 2 NodeUnits.");
         node_units_[0] = node_units[0];
         node_units_[1] = node_units[1];
     }
 
-    ORT_DISALLOW_COPY_AND_ASSIGNMENT(CastQuantizeFusion);
+    ORT_DISALLOW_COPY_AND_ASSIGNMENT(CastLoneQDQFusion);
 
     Status IsSupported(QnnModelWrapper& qnn_model_wrapper, const logging::Logger& logger) const override;
     Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const logging::Logger& logger) const override;
@@ -34,6 +34,7 @@ class CastQuantizeFusion : public IQnnNodeGroup {
 
     private:
         std::array<const NodeUnit*, 2> node_units_;
+        bool IsIntToFloatCast(const NodeUnit& node_unit) const;
 };
 
 }  // namespace qnn

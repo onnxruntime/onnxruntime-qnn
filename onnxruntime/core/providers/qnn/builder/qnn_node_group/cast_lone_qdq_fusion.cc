@@ -1,0 +1,116 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
+
+#include "core/providers/qnn/builder/qnn_node_group/cast_lone_qdq_fusion.h"
+#include "QnnTypes.h"
+#include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn/builder/qnn_node_group/utils.h"
+
+namespace onnxruntime {
+namespace qnn {
+
+constexpr char kOpCast[] = "Cast";
+constexpr char kOpQuantize[] = "QuantizeLinear";
+constexpr char kOpDeQuantize[] = "DequantizeLinear";
+
+Status CreateOrValidateOnQnn(
+    QnnModelWrapper* qnn_model_wrapper,
+    gsl::span<const NodeUnit* const> node_units,
+    [[maybe_unused]] const logging::Logger& logger,
+    bool validate) {
+  const NodeUnit* cast = node_units[0];
+  const NodeUnit* quantizeLinear = node_units[1];
+  {
+    // ProcessInputs
+    const auto& input_name = cast->Inputs()[0].node_arg.Name();
+    if (!qnn_model_wrapper->IsQnnTensorWrapperExist(input_name)) {
+      TensorInfo cast_node_input_info = {};
+      ORT_RETURN_IF_ERROR(qnn_model_wrapper->GetTensorInfo(cast->Inputs()[0], cast_node_input_info));
+      QnnTensorWrapper input_tensorwrapper(input_name,
+                                           QNN_TENSOR_TYPE_NATIVE, // TryFusion skips constant input
+                                           cast_node_input_info.qnn_data_type,
+                                           QnnQuantParamsWrapper(),
+                                           std::move(cast_node_input_info.shape));
+      ORT_RETURN_IF_NOT(qnn_model_wrapper->AddTensorWrapper(std::move(input_tensorwrapper)),
+                        "Failed to add input tensor for QNN Cast node.");
+    }
+  }
+  {
+    // ProcessAttributesAndOutputs
+    LOGS(logger, VERBOSE) << "Process output with Quantize";
+    TensorInfo q_node_output_info = {};
+    ORT_RETURN_IF_ERROR(qnn_model_wrapper->GetTensorInfo(quantizeLinear->Outputs()[0], q_node_output_info));
+    QnnTensorWrapper output_tensorwrapper(quantizeLinear->Outputs()[0].node_arg.Name(),
+                                          QNN_TENSOR_TYPE_NATIVE, // Cast is followed by QuantizeLinear
+                                          q_node_output_info.qnn_data_type,
+                                          std::move(q_node_output_info.quant_param),
+                                          std::move(q_node_output_info.shape));
+    ORT_RETURN_IF_NOT(qnn_model_wrapper->AddTensorWrapper(std::move(output_tensorwrapper)),
+                      "Failed to add output tensor for QNN Cast node.");
+    ORT_RETURN_IF_NOT(qnn_model_wrapper->CreateQnnNode(cast->Name(),
+                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                    QNN_OP_CAST,
+                                                    {cast->Inputs()[0].node_arg.Name()},
+                                                    {quantizeLinear->Outputs()[0].node_arg.Name()},
+                                                    {},
+                                                    validate),
+                      "Failed to add fused " + std::string(kOpCast) + " node.");
+  }
+  return Status::OK();
+}
+
+std::unique_ptr<IQnnNodeGroup> CastLoneQDQFusion::TryFusion(
+  QnnModelWrapper& qnn_model_wrapper,
+  const NodeUnit& cast_node_unit,
+  const std::unordered_map<const Node*, const NodeUnit*>& node_to_node_unit,
+  const std::unordered_map<const NodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
+  [[maybe_unused]] const logging::Logger& logger) {
+  if (cast_node_unit.OpType() != kOpCast || cast_node_unit.UnitType() != NodeUnit::Type::SingleNode) {
+      return nullptr;
+  }
+
+  // Pattern matching: Non-DQ -> Cast -> Q
+  const GraphViewer& graph_viewer = qnn_model_wrapper.GetGraphViewer();
+  const std::array<std::string_view, 1> child_op_types{kOpQuantize};
+  const NodeUnit* quantizeLinear = GetOnlyChildOfType(
+      graph_viewer, cast_node_unit, child_op_types,
+      node_to_node_unit, node_unit_to_qnn_node_group);
+  const std::array<std::string_view, 1> parent_op_types{kOpDeQuantize};
+  const NodeUnit* dequantizeLinear = GetParentOfType(
+      graph_viewer, cast_node_unit, parent_op_types,
+      node_to_node_unit, node_unit_to_qnn_node_group);
+
+  if (quantizeLinear == nullptr || dequantizeLinear != nullptr) {
+      return nullptr;
+  }
+
+  // Skip Constant cast
+  if (qnn_model_wrapper.IsConstantInput(cast_node_unit.Inputs()[0].node_arg.Name())) {
+    return nullptr;
+  }
+  std::array<const NodeUnit*, 2> node_unit_array{&cast_node_unit, quantizeLinear};
+  auto node_units = gsl::make_span<const NodeUnit*>(node_unit_array.data(), 2);
+
+  if (CreateOrValidateOnQnn(&qnn_model_wrapper, node_units, logger, /*validate=*/true) != Status::OK()) {
+    return nullptr;
+  }
+  return std::make_unique<CastLoneQDQFusion>(node_units);
+}
+
+gsl::span<const NodeUnit* const> CastLoneQDQFusion::GetNodeUnits() const {
+  return gsl::span<const NodeUnit* const>{node_units_.data(), node_units_.size()};
+}
+
+Status CastLoneQDQFusion::IsSupported(
+    QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const logging::Logger& logger) const {
+  return CreateOrValidateOnQnn(&qnn_model_wrapper, GetNodeUnits(), logger, true);
+}
+
+Status CastLoneQDQFusion::AddToModelBuilder(
+    QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const logging::Logger& logger) const {
+  return CreateOrValidateOnQnn(&qnn_model_wrapper, GetNodeUnits(), logger, false);
+}
+
+}  // namespace qnn
+}  // namespace onnxruntime
