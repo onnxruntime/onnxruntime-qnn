@@ -120,6 +120,8 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   helper.SetGraphOutputs();
   ASSERT_STATUS_OK(model.MainGraph().Resolve());
 
+  ASSERT_STATUS_OK(onnxruntime::Model::Save(model, ToPathString("cmp_accuracy.qdq.onnx")));
+
   // Serialize the model to a string.
   std::string model_data;
   model.ToProto().SerializeToString(&model_data);

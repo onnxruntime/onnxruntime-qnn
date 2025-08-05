@@ -41,26 +41,26 @@ Status CreateOrValidateOnQnn(
   ORT_RETURN_IF_ERROR(qnn_model_wrapper->MakeTensorWrapper(q_node_output_info, output_name, output_tensor_wrapper));
   ORT_RETURN_IF_NOT(qnn_model_wrapper->AddTensorWrapper(std::move(output_tensor_wrapper)),
                     "Failed to add output tensor for QNN Convert node.");
-  ORT_RETURN_IF_NOT(qnn_model_wrapper->CreateQnnNode(cast->Name()+"_ort_qnn_ep_convert",
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_CONVERT,
-                                                  {input_name},
-                                                  {output_name},
-                                                  {},
-                                                  validate),
+  ORT_RETURN_IF_NOT(qnn_model_wrapper->CreateQnnNode(cast->Name() + "_ort_qnn_ep_convert",
+                                                     QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                     QNN_OP_CONVERT,
+                                                     {input_name},
+                                                     {output_name},
+                                                     {},
+                                                     validate),
                     "Failed to add fused " + std::string(kOpConvert) + " node.");
 
   return Status::OK();
 }
 
 std::unique_ptr<IQnnNodeGroup> CastLoneQFusion::TryFusion(
-  QnnModelWrapper& qnn_model_wrapper,
-  const NodeUnit& cast_node_unit,
-  const std::unordered_map<const Node*, const NodeUnit*>& node_to_node_unit,
-  const std::unordered_map<const NodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
-  [[maybe_unused]] const logging::Logger& logger) {
+    QnnModelWrapper& qnn_model_wrapper,
+    const NodeUnit& cast_node_unit,
+    const std::unordered_map<const Node*, const NodeUnit*>& node_to_node_unit,
+    const std::unordered_map<const NodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
+    [[maybe_unused]] const logging::Logger& logger) {
   if (cast_node_unit.OpType() != kOpCast || cast_node_unit.UnitType() != NodeUnit::Type::SingleNode) {
-      return nullptr;
+    return nullptr;
   }
 
   // Transform the pattern Non-DQ Node -> Cast -> Q into Non-DQ Node -> Convert
@@ -75,7 +75,7 @@ std::unique_ptr<IQnnNodeGroup> CastLoneQFusion::TryFusion(
       node_to_node_unit, node_unit_to_qnn_node_group);
 
   if (quantizeLinear == nullptr || dequantizeLinear != nullptr) {
-      return nullptr;
+    return nullptr;
   }
 
   // Skip Constant cast
