@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn/builder/qnn_node_group/cast_lone_qdq_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/cast_lone_q_fusion.h"
 #include "QnnTypes.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
