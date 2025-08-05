@@ -25,6 +25,7 @@ void VerifyOutput(const std::string& output_name,
   ASSERT_TRUE(SpanEq(expected_tensor.Shape().GetDims(), tensor.Shape().GetDims()));
   ASSERT_EQ(expected_tensor.GetElementType(), tensor.GetElementType());
   auto element_type = expected_tensor.GetElementType();
+
   switch (element_type) {
     case ONNX_NAMESPACE::TensorProto_DataType_UINT32:
       EXPECT_TRUE(SpanEq(expected_tensor.DataAsSpan<uint32_t>(), tensor.DataAsSpan<uint32_t>()))
