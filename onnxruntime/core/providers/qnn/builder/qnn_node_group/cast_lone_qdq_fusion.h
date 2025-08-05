@@ -5,15 +5,15 @@
 
 namespace onnxruntime {
 namespace qnn {
-class CastLoneQDQFusion : public IQnnNodeGroup {
+class CastLoneQFusion : public IQnnNodeGroup {
     public:
-    explicit CastLoneQDQFusion(gsl::span<const NodeUnit* const> node_units) {
+    explicit CastLoneQFusion(gsl::span<const NodeUnit* const> node_units) {
         ORT_ENFORCE(node_units.size() == 2, "Pattern expect exactly 2 NodeUnits.");
         node_units_[0] = node_units[0];
         node_units_[1] = node_units[1];
     }
 
-    ORT_DISALLOW_COPY_AND_ASSIGNMENT(CastLoneQDQFusion);
+    ORT_DISALLOW_COPY_AND_ASSIGNMENT(CastLoneQFusion);
 
     Status IsSupported(QnnModelWrapper& qnn_model_wrapper, const logging::Logger& logger) const override;
     Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const logging::Logger& logger) const override;

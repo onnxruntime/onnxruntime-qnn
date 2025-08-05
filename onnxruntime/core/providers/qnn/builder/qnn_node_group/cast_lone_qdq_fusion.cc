@@ -13,6 +13,7 @@ namespace qnn {
 constexpr char kOpCast[] = "Cast";
 constexpr char kOpQuantize[] = "QuantizeLinear";
 constexpr char kOpDeQuantize[] = "DequantizeLinear";
+constexpr char kOpConvert[] = "Convert";
 
 Status CreateOrValidateOnQnn(
     QnnModelWrapper* qnn_model_wrapper,
@@ -30,7 +31,7 @@ Status CreateOrValidateOnQnn(
     QnnTensorWrapper input_tensor_wrapper;
     ORT_RETURN_IF_ERROR(qnn_model_wrapper->MakeTensorWrapper(cast_node_input_info, input_name, input_tensor_wrapper));
     ORT_RETURN_IF_NOT(qnn_model_wrapper->AddTensorWrapper(std::move(input_tensor_wrapper)),
-                      "Failed to add input tensor for QNN Cast node.");
+                      "Failed to add input tensor for QNN Convert node.");
   }
   // ProcessAttributesAndOutputs
   const auto& output_name = quantizeLinear->Outputs()[0].node_arg.Name();
@@ -39,20 +40,20 @@ Status CreateOrValidateOnQnn(
   QnnTensorWrapper output_tensor_wrapper;
   ORT_RETURN_IF_ERROR(qnn_model_wrapper->MakeTensorWrapper(q_node_output_info, output_name, output_tensor_wrapper));
   ORT_RETURN_IF_NOT(qnn_model_wrapper->AddTensorWrapper(std::move(output_tensor_wrapper)),
-                    "Failed to add output tensor for QNN Cast node.");
-  ORT_RETURN_IF_NOT(qnn_model_wrapper->CreateQnnNode(cast->Name(),
+                    "Failed to add output tensor for QNN Convert node.");
+  ORT_RETURN_IF_NOT(qnn_model_wrapper->CreateQnnNode(cast->Name()+"_ort_qnn_ep_convert",
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_CAST,
+                                                  QNN_OP_CONVERT,
                                                   {input_name},
                                                   {output_name},
                                                   {},
                                                   validate),
-                    "Failed to add fused " + std::string(kOpCast) + " node.");
+                    "Failed to add fused " + std::string(kOpConvert) + " node.");
 
   return Status::OK();
 }
 
-std::unique_ptr<IQnnNodeGroup> CastLoneQDQFusion::TryFusion(
+std::unique_ptr<IQnnNodeGroup> CastLoneQFusion::TryFusion(
   QnnModelWrapper& qnn_model_wrapper,
   const NodeUnit& cast_node_unit,
   const std::unordered_map<const Node*, const NodeUnit*>& node_to_node_unit,
@@ -62,8 +63,7 @@ std::unique_ptr<IQnnNodeGroup> CastLoneQDQFusion::TryFusion(
       return nullptr;
   }
 
-  // Pattern matching: Non-DQ -> Cast -> Q
-  // TODO: Support DQ -> Cast -> Non-Q when there is use case
+  // Transform the pattern Non-DQ Node -> Cast -> Q into Non-DQ Node -> Convert
   const GraphViewer& graph_viewer = qnn_model_wrapper.GetGraphViewer();
   const std::array<std::string_view, 1> child_op_types{kOpQuantize};
   const NodeUnit* quantizeLinear = GetOnlyChildOfType(
@@ -88,19 +88,19 @@ std::unique_ptr<IQnnNodeGroup> CastLoneQDQFusion::TryFusion(
   if (CreateOrValidateOnQnn(&qnn_model_wrapper, node_units, logger, /*validate=*/true) != Status::OK()) {
     return nullptr;
   }
-  return std::make_unique<CastLoneQDQFusion>(node_units);
+  return std::make_unique<CastLoneQFusion>(node_units);
 }
 
-gsl::span<const NodeUnit* const> CastLoneQDQFusion::GetNodeUnits() const {
+gsl::span<const NodeUnit* const> CastLoneQFusion::GetNodeUnits() const {
   return gsl::span<const NodeUnit* const>{node_units_.data(), node_units_.size()};
 }
 
-Status CastLoneQDQFusion::IsSupported(
+Status CastLoneQFusion::IsSupported(
     QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const logging::Logger& logger) const {
   return CreateOrValidateOnQnn(&qnn_model_wrapper, GetNodeUnits(), logger, true);
 }
 
-Status CastLoneQDQFusion::AddToModelBuilder(
+Status CastLoneQFusion::AddToModelBuilder(
     QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const logging::Logger& logger) const {
   return CreateOrValidateOnQnn(&qnn_model_wrapper, GetNodeUnits(), logger, false);
 }
