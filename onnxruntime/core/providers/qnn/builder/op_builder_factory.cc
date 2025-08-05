@@ -199,6 +199,9 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   {
     CreateCumSumOpBuilder("CumSum", *this);
   }
+  {
+    CreateModOpBuilder("Mod", *this);
+  }
 }
 
 const IOpBuilder* GetOpBuilder(const std::string& onnx_op_type) {
