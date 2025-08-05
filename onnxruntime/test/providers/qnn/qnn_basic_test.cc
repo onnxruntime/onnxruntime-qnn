@@ -1110,7 +1110,7 @@ TEST_F(QnnHTPBackendTests, ProfilingTest) {
                   0.008f);
 }
 
-TEST_F(QnnHTPBackendTests, CastAddHTPAccuracyTest) {
+TEST_F(QnnHTPBackendTests, CastAddQDQU8) {
   ProviderOptions provider_options;
 #if defined(_WIN32)
   provider_options["backend_path"] = "QnnHtp.dll";
@@ -1122,8 +1122,57 @@ TEST_F(QnnHTPBackendTests, CastAddHTPAccuracyTest) {
   TestQDQModelAccuracy<uint8_t>(BuildCastAddTestCase<uint8_t>(),
                                 BuildCastAddQDQTestCase<uint8_t, uint8_t>(),
                                 provider_options,
-                                13,
+                                21,
                                 ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, CastAddQDQU16) {
+  ProviderOptions provider_options;
+#if defined(_WIN32)
+  provider_options["backend_path"] = "QnnHtp.dll";
+#else
+  provider_options["backend_path"] = "libQnnHtp.so";
+#endif
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestQDQModelAccuracy<uint16_t>(BuildCastAddTestCase<uint8_t>(),
+                                 BuildCastAddQDQTestCase<uint8_t, uint16_t>(),
+                                 provider_options,
+                                 21,
+                                 ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, CastAddQDQS8) {
+  ProviderOptions provider_options;
+#if defined(_WIN32)
+  provider_options["backend_path"] = "QnnHtp.dll";
+#else
+  provider_options["backend_path"] = "libQnnHtp.so";
+#endif
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestQDQModelAccuracy<int8_t>(BuildCastAddTestCase<uint8_t>(),
+                               BuildCastAddQDQTestCase<uint8_t, int8_t>(),
+                               provider_options,
+                               21,
+                               ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, CastAddQDQS16) {
+  ProviderOptions provider_options;
+#if defined(_WIN32)
+  provider_options["backend_path"] = "QnnHtp.dll";
+#else
+  provider_options["backend_path"] = "libQnnHtp.so";
+#endif
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestQDQModelAccuracy<int16_t>(BuildCastAddTestCase<uint8_t>(),
+                                BuildCastAddQDQTestCase<uint8_t, int16_t>(),
+                                provider_options,
+                                21,
+                                // QNN has not yet supported S16 Quantize/Dequantize
+                                ExpectedEPNodeAssignment::Some);
 }
 
 // Test float32 model with FP16 precision
