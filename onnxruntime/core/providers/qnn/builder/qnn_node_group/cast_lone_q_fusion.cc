@@ -2,8 +2,6 @@
 // Licensed under the MIT License.
 
 #include "core/providers/qnn/builder/qnn_node_group/cast_lone_q_fusion.h"
-#include "QnnTypes.h"
-#include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_node_group/utils.h"
 
@@ -11,8 +9,6 @@ namespace onnxruntime {
 namespace qnn {
 
 constexpr char kOpCast[] = "Cast";
-constexpr char kOpQuantize[] = "QuantizeLinear";
-constexpr char kOpDeQuantize[] = "DequantizeLinear";
 constexpr char kOpConvert[] = "Convert";
 
 Status CreateOrValidateOnQnn(
@@ -65,11 +61,11 @@ std::unique_ptr<IQnnNodeGroup> CastLoneQFusion::TryFusion(
 
   // Transform the pattern Non-DQ Node -> Cast -> Q into Non-DQ Node -> Convert
   const GraphViewer& graph_viewer = qnn_model_wrapper.GetGraphViewer();
-  const std::array<std::string_view, 1> child_op_types{kOpQuantize};
+  const std::array<std::string_view, 1> child_op_types{QUANTIZE_LINEAR};
   const NodeUnit* quantizeLinear = GetOnlyChildOfType(
       graph_viewer, cast_node_unit, child_op_types,
       node_to_node_unit, node_unit_to_qnn_node_group);
-  const std::array<std::string_view, 1> parent_op_types{kOpDeQuantize};
+  const std::array<std::string_view, 1> parent_op_types{DEQUANTIZE_LINEAR};
   const NodeUnit* dequantizeLinear = GetParentOfType(
       graph_viewer, cast_node_unit, parent_op_types,
       node_to_node_unit, node_unit_to_qnn_node_group);
