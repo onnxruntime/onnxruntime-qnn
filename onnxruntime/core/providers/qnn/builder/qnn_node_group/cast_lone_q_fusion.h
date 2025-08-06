@@ -19,7 +19,7 @@ class CastLoneQFusion : public IQnnNodeGroup {
   Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const logging::Logger& logger) const override;
   gsl::span<const NodeUnit* const> GetNodeUnits() const override;
   const NodeUnit* GetTargetNodeUnit() const override { return node_units_[0]; }
-  std::string_view Type() const override { return "CastQuantizeFusion"; }
+  std::string_view Type() const override { return "CastLoneQFusion"; }
 
   /// <summary>
   /// Traverses graph to check if the given starting NodeUnit is part of a valid Cast -> Quantize sequence.
