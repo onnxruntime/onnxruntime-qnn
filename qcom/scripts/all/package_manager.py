@@ -28,6 +28,12 @@ DEFAULT_PACKAGE_CACHE_DIR = Path(
         str((Path("~") / ".ort-package-cache").expanduser()),
     )
 )
+DEFAULT_SUBMODULE_CACHE_DIR = Path(
+    os.environ.get(
+        "ORT_BUILD_SUBMODULE_CACHE_DIR",
+        str((Path("~") / ".ort-submodule-cache").expanduser()),
+    )
+)
 DEFAULT_MAX_CACHE_SIZE_BYTES = int(os.environ.get("ORT_BUILD_PACKAGE_CACHE_SIZE", f"{5 * 1024 * 1024 * 1024}"))  # 5 GiB
 
 CAFILE = os.environ.get("REQUESTS_CA_BUNDLE", certifi.where())
