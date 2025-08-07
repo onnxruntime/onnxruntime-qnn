@@ -220,7 +220,7 @@ Status SoftmaxOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_
     QnnTensorWrapper output_tensorwrapper(transpose_input_name, QNN_TENSOR_TYPE_NATIVE, output_info.qnn_data_type,
                                           output_info.quant_param.Copy(), std::vector<uint32_t>(transpose_input_shape));
     ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetNodeName(node_unit),
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(transpose_input_name,
                                                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                       GetQnnOpType(node_unit.OpType()),
                                                       std::move(input_names),
