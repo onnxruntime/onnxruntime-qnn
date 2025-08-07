@@ -33,7 +33,7 @@ from ep_build.tasks.build import (
     BuildEpWindowsTask,
     QdcTestsTask,
 )
-from ep_build.tasks.python import CreateVenvTask, RunLinterTask
+from ep_build.tasks.python import CreateVenvTask, RunLinterTask, FetchSubmodulesAndCacheTask
 from ep_build.util import (
     DEFAULT_PYTHON,
     REPO_ROOT,
@@ -348,6 +348,11 @@ class TaskLibrary:
                 REPO_ROOT / "build" / "windows-x86_64" / "RelWithDebInfo",
             )
         )
+
+    @public_task("Fetch submodule and cache")
+    @depends(["create_venv"])
+    def fetch_submodule(self, plan: Plan) -> str:
+        return plan.add_step(FetchSubmodulesAndCacheTask(self.__venv_path))
 
     @public_task("Run the source linter")
     @depends(["create_venv"])
