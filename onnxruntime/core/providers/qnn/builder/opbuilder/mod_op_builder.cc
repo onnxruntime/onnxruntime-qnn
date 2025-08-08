@@ -201,11 +201,11 @@ Status ModOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrap
     sub_input.push_back(input_a_name);
     sub_input.push_back(mul_output_name);
     std::string sub_name = onnxruntime::qnn::utils::GetNodeName(node_unit) + "_Sub";
-    std::string sub_output_name = is_cast_required ? sub_name + "_output" : org_output_name;    
+    std::string sub_output_name = is_cast_required ? sub_name + "_output" : org_output_name;
     QnnTensorWrapper mod_output(sub_output_name,
                                 is_cast_required ? QNN_TENSOR_TYPE_NATIVE : op_output_tensor_type,
                                 is_cast_required ? target_tensor_type : output_info.qnn_data_type,
-                                is_cast_required ? QnnQuantParamsWrapper(): output_info.quant_param.Copy(),
+                                is_cast_required ? QnnQuantParamsWrapper() : output_info.quant_param.Copy(),
                                 std::vector<uint32_t>(output_shape));
     ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(mod_output)),
                       "Failed to add Mod output tensor.");
