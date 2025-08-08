@@ -28,10 +28,10 @@ DEFAULT_PACKAGE_CACHE_DIR = Path(
         str((Path("~") / ".ort-package-cache").expanduser()),
     )
 )
-DEFAULT_SUBMODULE_CACHE_DIR = Path(
+DEFAULT_SUBMODULE_BUNDLE_DIR = Path(
     os.environ.get(
         "ORT_BUILD_SUBMODULE_CACHE_DIR",
-        str((Path("~") / ".ort-submodule-cache").expanduser()),
+        str(QCOM_ROOT / "submodule_bundles"),
     )
 )
 DEFAULT_MAX_CACHE_SIZE_BYTES = int(os.environ.get("ORT_BUILD_PACKAGE_CACHE_SIZE", f"{5 * 1024 * 1024 * 1024}"))  # 5 GiB

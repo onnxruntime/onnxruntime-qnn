@@ -3,12 +3,14 @@
 # SPDX-License-Identifier: MIT
 
 import os
+import re
 import argparse
 import logging
 import subprocess
 from pathlib import Path
+import tempfile
 
-from package_manager import DEFAULT_SUBMODULE_CACHE_DIR, FileCache
+from package_manager import DEFAULT_SUBMODULE_BUNDLE_DIR, FileCache
 
 from git import Repo
 
@@ -49,26 +51,58 @@ def _parse_gitmodules() -> list[SubmoduleConfig]:
         recurse(repo.submodules, ".")
     return all_submodules
 
+def _create_gitmodules_bundle(cache_dir: Path, sm_configs: list[SubmoduleConfig]) -> list[Path]:
+    """
+    Clones each submodule to a temporary directory and creates a Git bundle (.bundle)
+    from it, storing the bundle in the specified cache_dir.
+    """
+    cache_dir.mkdir(parents=True, exist_ok=True) # Ensure cache directory exists
+    all_bundle_paths = []
 
-def _create_gitmodules_cache(cache_dir, sm_configs: list[SubmoduleConfig]) -> list[str]:
-    all_cache_dests = []
     for sm_config in sm_configs:
-        dest_path = os.path.join(cache_dir / sm_config.path)
-        all_cache_dests.append(dest_path)
-        logging.info(f"Cloning '{sm_config.url}' to '{dest_path}' for external cache...")
-        try:
-            # Use GitPython's Repo.clone_from to clone the submodule's repository
-            # This creates a full working tree clone.
-            # We clone the default branch (usually 'main' or 'master').
-            if os.path.exists(dest_path):
-                logging.info(f"{sm_config.path} already exists in external cache {dest_path}")
-            else:
-                Repo.clone_from(sm_config.url, dest_path)
-                logging.info(f"Successfully cloned {sm_config.name} to external cache {dest_path}")
-        except Exception as e:
-            logging.error(f"Failed to clone {sm_config.name} to external cache: {e.stderr}")
+        # Use a hash of the URL and path to create a stable, unique bundle filename
+        # This helps avoid issues if multiple submodules have the same 'name' but different sources/paths.
+        sanitized_name = re.sub(r'[^\w\-_.]', '_', sm_config.name)
+        bundle_filename = f"{sanitized_name}.bundle"
+        bundle_path = cache_dir / bundle_filename
 
-    return all_cache_dests
+        # Create a temporary directory for cloning
+        with tempfile.TemporaryDirectory() as temp_clone_dir:
+            temp_clone_path = Path(temp_clone_dir) / sm_config.name
+            logging.info(f"Cloning '{sm_config.url}' to temporary location '{temp_clone_path}' to create bundle...")
+            try:
+                # Use subprocess to clone the repository to the temporary location
+                # `git clone --bare` is ideal for bundling as it's a "bare" repo, not a working copy, which is smaller.
+                # However, `git bundle create` generally expects a full repo or it can create from remote directly.
+                # Let's clone a full working copy for simplicity and robust bundling.
+                clone_cmd = [
+                    "git", "clone", "--depth", "1", # Use --depth 1 if you only need the latest state
+                    sm_config.url,
+                    str(temp_clone_path)
+                ]
+                subprocess.run(clone_cmd, capture_output=True, text=True, check=True)
+                logging.info(f"Successfully cloned '{sm_config.name}' to '{temp_clone_path}'.")
+
+                # Now, create the bundle from the temporary clone
+                bundle_create_cmd = [
+                    "git", "bundle", "create",
+                    str(bundle_path),
+                    "HEAD" # Bundle the HEAD of the cloned repository
+                ]
+                logging.info(f"Creating bundle for '{sm_config.name}' to '{bundle_path}'...")
+                subprocess.run(bundle_create_cmd, capture_output=True, text=True, check=True, cwd=str(temp_clone_path))
+                logging.info(f"Successfully created bundle for '{sm_config.name}' at '{bundle_path}'.")
+                all_bundle_paths.append(bundle_path)
+
+            except subprocess.CalledProcessError as e:
+                logging.error(f"Failed to process '{sm_config.name}' (URL: {sm_config.url}):")
+                logging.error(f"  Command: {' '.join(e.cmd)}")
+                logging.error(f"  Stdout: {e.stdout.strip()}")
+                logging.error(f"  Stderr: {e.stderr.strip()}")
+            except Exception as e:
+                logging.error(f"An unexpected error occurred for '{sm_config.name}': {e}")
+
+    return all_bundle_paths
 
 
 def _update_gitmodules_from_local(cache_dests: list[str]) -> None:
@@ -101,13 +135,13 @@ def main(cache_dir: Path) -> None:
         return
 
     # Clone submodules to local
-    cache_dests = _create_gitmodules_cache(cache_dir, submodules)
+    all_bundle_paths = _create_gitmodules_bundle(cache_dir, submodules)
 
-    if not cache_dests:
-        logging.info("No submodules local cache created.")
+    if not all_bundle_paths:
+        logging.info("No submodules bundle created.")
         return
 
-    _update_gitmodules_from_local(cache_dests)
+    # _update_gitmodules_from_local(cache_dests)
 
     return
 
@@ -120,7 +154,7 @@ def make_parser() -> argparse.ArgumentParser:
         "--cache-dir",
         "-d",
         type=Path,
-        default=DEFAULT_SUBMODULE_CACHE_DIR
+        default=DEFAULT_SUBMODULE_BUNDLE_DIR
     )
 
     return parser
