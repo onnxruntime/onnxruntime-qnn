@@ -10,8 +10,6 @@ import subprocess
 from pathlib import Path
 import tempfile
 
-from package_manager import DEFAULT_SUBMODULE_BUNDLE_DIR, FileCache
-
 from git import Repo
 
 # Assuming REPO_ROOT is the top-level directory of your main Git repository
@@ -105,56 +103,36 @@ def _create_gitmodules_bundle(cache_dir: Path, sm_configs: list[SubmoduleConfig]
     return all_bundle_paths
 
 
-def _update_gitmodules_from_local(cache_dests: list[str]) -> None:
-    # submodule sync
-    cmd = ["git", "submodule", "sync", "--recursive"]
-    logging.info(f"Syncing submodule...")
-    logging.info(f" ".join(cmd))
-    res = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    logging.info(res.stdout)
+def _update_gitmodules_from_local(sm_configs: list[SubmoduleConfig]) -> None:
+    # git rm --cached submodules
+    cmd = ["git", "rm", "--cached"]
+    for sm_config in sm_configs:
+        try:
+            logging.info(f"Remove dcached {sm_config}")
+            res = subprocess.run(cmd + [sm_config.path], capture_output=True, text=True, check=True)
+            print(res.stdout)
+            print(res.stderr)
+        except Exception as e:
+            print(e)
 
-    # submodule update
-    cmd = ["git", "submodule", "update", "--init", "--force", "--recursive"]
-    for cache_dest in cache_dests:
-        cmd += ["--reference", cache_dest]
-    logging.info(f"Updating submodule with local cache...")
-    logging.info(f" ".join(cmd))
-    res = subprocess.run(cmd, capture_output=True, text=True, check=True)
-    logging.info(res.stdout)
-
+    # remove the .git in the submodules
+    for sm_config in sm_configs:
+        print(sm_config.path)
+        os.rename(os.path.join(sm_config.path, ".git"), os.path.join(sm_config.path, "gitback"))
     return
 
-def main(cache_dir: Path) -> None:
+def main() -> None:
     """
     Main function to fetch and potentially 'cache' submodules.
     """
     submodules = _parse_gitmodules()
-
-    if not submodules:
-        logging.info("No submodules found or .gitmodules file is empty.")
-        return
-
-    # Clone submodules to local
-    all_bundle_paths = _create_gitmodules_bundle(cache_dir, submodules)
-
-    if not all_bundle_paths:
-        logging.info("No submodules bundle created.")
-        return
-
-    # _update_gitmodules_from_local(cache_dests)
+    _update_gitmodules_from_local(submodules)
 
     return
 
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Fetch and update Git submodules, optionally creating a flat mirror of their working trees."
-    )
-
-    parser.add_argument(
-        "--cache-dir",
-        "-d",
-        type=Path,
-        default=DEFAULT_SUBMODULE_BUNDLE_DIR
     )
 
     return parser
@@ -167,4 +145,4 @@ if __name__ == "__main__":
     parser = make_parser()
     args = parser.parse_args()
 
-    main(args.cache_dir)
+    main()
