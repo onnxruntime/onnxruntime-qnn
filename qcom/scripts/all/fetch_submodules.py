@@ -11,7 +11,7 @@ import tempfile
 import argparse
 
 # --- Configuration ---
-MS_REMOTE = "git@github.com:microsoft/onnxruntime.git"
+MS_REMOTE = "https://github.com/microsoft/onnxruntime.git"
 
 # Assuming REPO_ROOT is the top-level directory of your main Git repository
 REPO_ROOT = Path(__file__).parent.parent.parent.parent
@@ -35,7 +35,7 @@ def _run_cmd(cmd: List[str], cwd: Optional[Path] = None, check: bool = True) -> 
     if cwd is None:
         cwd = REPO_ROOT
 
-    logging.debug(f"Running command: {' '.join(cmd)} in {cwd}")
+    logging.info(f"Running command: {' '.join(cmd)} in {cwd}")
     try:
         res = subprocess.run(cmd, capture_output=True, text=True, check=check, cwd=cwd)
 
@@ -57,7 +57,7 @@ def _run_cmd(cmd: List[str], cwd: Optional[Path] = None, check: bool = True) -> 
 
 def is_submodule(path: Path):
     logging.info("Check submodule")
-    res = _run_cmd(f"git ls-files --stage {path}")
+    res = _run_cmd(f"git ls-files --stage {path}".split())
     if "160000" in res.stdout:
         return True
     return False
@@ -87,8 +87,8 @@ def main(args):
         logging.critical(f"Error: '{REPO_ROOT}' is not a valid Git repository. Exiting.")
         return
 
+    tmp_ort_str = str(TMP_ORT)
     try:
-        tmp_ort_str = str(TMP_ORT)
         if TMP_ORT.exists():
             logging.info(f"Found {tmp_ort_str} already exists, remove...")
             shutil.rmtree(TMP_ORT)
@@ -119,9 +119,9 @@ def main(args):
             src_sm_path = TMP_ORT / Path(config[section]["path"])
             if os.path.exists(tgt_sm_path):
                 if is_submodule(tgt_sm_path):
-                    # If the tgt_sm_path is a submodule, turn it into regular file with
-                    # git rm --cached
-                    logging.info(f"Run git rm --cached on submodule")
+                    # If the tgt_sm_path is a submodule, turn it into regular file
+                    cmd = f"git submodule deinit -f {tgt_sm_path}"
+                    _run_cmd(cmd.split())
                     cmd = f"git rm --cached {tgt_sm_path}"
                     _run_cmd(cmd.split())
                 else:
@@ -134,16 +134,16 @@ def main(args):
                 src_sm_path, tgt_sm_path,
                 ignore=ignore_git, dirs_exist_ok=True
             )
-
-        if TMP_ORT.exists():
-            logging.info(f"Remove {tmp_ort_str} ...")
-            shutil.rmtree(TMP_ORT)
         logging.info("Script segment completed successfully.")
 
     except subprocess.CalledProcessError:
         logging.error("A Git command failed. Please check the logs above for details.")
     except Exception as e:
         logging.critical(f"An unexpected error occurred: {e}")
+
+    if TMP_ORT.exists():
+        logging.info(f"Remove {tmp_ort_str} ...")
+        shutil.rmtree(TMP_ORT)
 
 if __name__ == "__main__":
     # Configure logging to show INFO messages and above by default.

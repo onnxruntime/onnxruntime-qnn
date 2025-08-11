@@ -51,6 +51,17 @@ jobs:
           git checkout --theirs .
           git add .
           git commit -m "[MERGE-UPSTREAM] Automated upstream merge for $TODAY"
+      - uses: actions/setup-python@v5
+        with: 
+          python-version: '3.12'
+      - name: Populate submodules files and directories
+        run: |
+          git checkout ${{ github.ref }} -- qcom/scripts/all/fetch_submodules.py
+          python qcom/scripts/all/fetch_submodules.py
+          git add .
+          if ! git commit -m "[MERGE-UPSTREAM] Automated populate submodules for $TODAY"; then
+            echo "No commit created for submodules."
+          fi
       - name: Authenticate service account with GitHub CLI
         run: |
           echo "${{ secrets.ORTQNNEPCI_PAT }}" | gh auth login --with-token -h github.qualcomm.com -p https
