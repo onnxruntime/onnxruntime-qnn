@@ -57,6 +57,7 @@ jobs:
       - name: Populate submodules files and directories
         run: |
           git checkout ${{ github.ref }} -- qcom/scripts/all/fetch_submodules.py
+          UPSTREAM_BRANCH_HEAD=$(git rev-parse upstream/$UPSTREAM_BRANCH)
           python qcom/scripts/all/fetch_submodules.py --upstream-branch $UPSTREAM_BRANCH_HEAD
           git add .
           if ! git commit -m "[MERGE-UPSTREAM] Automated populate submodules for $TODAY"; then

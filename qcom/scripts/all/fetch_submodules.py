@@ -18,6 +18,7 @@ GITMODULE_FILE = REPO_ROOT / ".gitmodules"
 QCOM_ROOT = Path(__file__).parent
 TMP_ORT = Path(__file__).parent / "tmp_ort"
 
+
 # --- Helper Function for Running Git Commands ---
 def _run_cmd(cmd: List[str], cwd: Optional[Path] = None, check: bool = True) -> subprocess.CompletedProcess:
     """
@@ -43,7 +44,7 @@ def _run_cmd(cmd: List[str], cwd: Optional[Path] = None, check: bool = True) -> 
                 logging.debug(f"STDOUT: {line}")
         if res.stderr:
             for line in res.stderr.strip().splitlines():
-                logging.debug(f"STDERR: {line}") # Git often sends warnings to stderr
+                logging.debug(f"STDERR: {line}")  # Git often sends warnings to stderr
 
         return res
     except subprocess.CalledProcessError as e:
@@ -52,7 +53,8 @@ def _run_cmd(cmd: List[str], cwd: Optional[Path] = None, check: bool = True) -> 
             logging.error(f"STDOUT:\n{e.stdout.strip()}")
         if e.stderr:
             logging.error(f"STDERR:\n{e.stderr.strip()}")
-        raise # Re-raise the exception to indicate failure
+        raise  # Re-raise the exception to indicate failure
+
 
 def is_submodule(path: Path):
     logging.info("Check submodule")
@@ -60,6 +62,7 @@ def is_submodule(path: Path):
     if "160000" in res.stdout:
         return True
     return False
+
 
 def make_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser()
@@ -71,6 +74,7 @@ def make_parser() -> argparse.ArgumentParser:
     )
 
     return parser
+
 
 # --- Main Logic (Translation of CMD segment) ---
 def main(args):
@@ -108,8 +112,10 @@ def main(args):
 
         config = configparser.ConfigParser()
         config.read(GITMODULE_FILE)
+
         def ignore_git(directory, files):
             return {f for f in files if f == ".git"}
+
         for section in config.sections():
             tgt_sm_path = Path(REPO_ROOT) / Path(config[section]["path"])
             src_sm_path = TMP_ORT / Path(config[section]["path"])
@@ -126,10 +132,7 @@ def main(args):
             logging.info(f"Make directories: {tgt_sm_path}")
             os.makedirs(tgt_sm_path, exist_ok=True)
             logging.info(f"Copy from {src_sm_path} to {tgt_sm_path}")
-            shutil.copytree(
-                src_sm_path, tgt_sm_path,
-                ignore=ignore_git, dirs_exist_ok=True
-            )
+            shutil.copytree(src_sm_path, tgt_sm_path, ignore=ignore_git, dirs_exist_ok=True)
         logging.info("Script segment completed successfully.")
 
     except subprocess.CalledProcessError:
@@ -140,6 +143,7 @@ def main(args):
     if TMP_ORT.exists():
         logging.info(f"Remove {tmp_ort_str} ...")
         shutil.rmtree(TMP_ORT)
+
 
 if __name__ == "__main__":
     # Configure logging to show INFO messages and above by default.
