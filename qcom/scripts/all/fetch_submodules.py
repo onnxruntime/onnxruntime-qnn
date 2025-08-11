@@ -1,13 +1,12 @@
 # fetch_submodule_files_segment.py
 
+import argparse
+import configparser
+import logging
 import os
 import shutil
 import subprocess
-import logging
 from pathlib import Path
-from typing import List, Optional
-import configparser
-import argparse
 
 # --- Configuration ---
 MS_REMOTE = "https://github.com/microsoft/onnxruntime.git"
@@ -20,7 +19,7 @@ TMP_ORT = Path(__file__).parent / "tmp_ort"
 
 
 # --- Helper Function for Running Git Commands ---
-def _run_cmd(cmd: List[str], cwd: Optional[Path] = None, check: bool = True) -> subprocess.CompletedProcess:
+def _run_cmd(cmd: list[str], cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess:
     """
     Helper to run a subprocess command (specifically Git commands) with logging.
 
@@ -78,9 +77,8 @@ def make_parser() -> argparse.ArgumentParser:
 
 # --- Main Logic (Translation of CMD segment) ---
 def main(args):
-    UPSTREAM_BRANCH = args.upstream_branch
     logging.info(f"Starting Git operations for repository at: {REPO_ROOT}")
-    logging.info(f"UPSTREAM_BRANCH: {UPSTREAM_BRANCH}")
+    logging.info(f"UPSTREAM_BRANCH: {args.upstream_branch}")
 
     try:
         # Verify REPO_ROOT is a Git repository
@@ -100,7 +98,7 @@ def main(args):
         _run_cmd(["git", "clone", MS_REMOTE, tmp_ort_str])
 
         # checkout to specific branch/sha in TMP_ORT
-        _run_cmd(["git", "-C", tmp_ort_str, "checkout", UPSTREAM_BRANCH])
+        _run_cmd(["git", "-C", tmp_ort_str, "checkout", args.upstream_branch])
 
         # git submodule sync --recursive in TMP_ORT
         cmd = f"git -C {tmp_ort_str} submodule sync --recursive"
