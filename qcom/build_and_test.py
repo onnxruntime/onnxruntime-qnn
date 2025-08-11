@@ -33,7 +33,7 @@ from ep_build.tasks.build import (
     BuildEpWindowsTask,
     QdcTestsTask,
 )
-from ep_build.tasks.python import CreateVenvTask, RunLinterTask
+from ep_build.tasks.python import CreateVenvTask, RunLinterTask, FetchCMakeDepsTask
 from ep_build.util import (
     DEFAULT_PYTHON,
     REPO_ROOT,
@@ -348,6 +348,11 @@ class TaskLibrary:
                 REPO_ROOT / "build" / "windows-x86_64" / "RelWithDebInfo",
             )
         )
+
+    @task
+    @depends(["create_venv"])
+    def fetch_cmake_deps(self, plan: Plan) -> str:
+        return plan.add_step(FetchCMakeDepsTask(self.__venv_path))
 
     @public_task("Run the source linter")
     @depends(["create_venv"])

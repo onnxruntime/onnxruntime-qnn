@@ -51,6 +51,17 @@ jobs:
           git checkout --theirs .
           git add .
           git commit -m "[MERGE-UPSTREAM] Automated upstream merge for $TODAY"
+      - uses: actions/setup-python@v5
+        with: 
+          python-version: '3.12'
+      - name: Populate cmake dependencies
+        run: |
+          git checkout ${{ github.ref }} -- qcom
+          python qcom/build_and_test.py fetch_cmake_deps
+          git add mirror
+          if ! git commit -m "[MERGE-UPSTREAM] Automated populate cmake dependencies for $TODAY"; then
+            echo "No commit created for cmake dependencies."
+          fi
       - name: Authenticate service account with GitHub CLI
         run: |
           echo "${{ secrets.ORTQNNEPCI_PAT }}" | gh auth login --with-token -h github.qualcomm.com -p https

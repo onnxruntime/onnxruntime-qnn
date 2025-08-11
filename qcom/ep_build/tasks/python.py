@@ -113,3 +113,23 @@ class RunLinterTask(CompositeTask):
                 )
             ],
         )
+
+
+class FetchCMakeDepsTask(CompositeTask):
+    def __init__(self, venv_path: Path) -> None:
+        fetch_cmd = [
+            "python",
+            str(REPO_ROOT / "qcom" / "scripts" / "all" / "fetch_cmake_deps.py"),
+            "--populate"
+        ]
+
+        super().__init__(
+            group_name="Run fetch submodules and cache",
+            tasks=[
+                RunExecutablesWithVenvTask(
+                    group_name=None,
+                    venv=venv_path,
+                    executables_and_args=[fetch_cmd],
+                )
+            ],
+        )
