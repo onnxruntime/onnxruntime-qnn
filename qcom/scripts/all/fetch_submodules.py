@@ -7,7 +7,6 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 import configparser
-import tempfile
 import argparse
 
 # --- Configuration ---
@@ -89,25 +88,22 @@ def main(args):
 
     tmp_ort_str = str(TMP_ORT)
     try:
+        # Clone an additional TMP_ORT to serve as source of submodules
         if TMP_ORT.exists():
             logging.info(f"Found {tmp_ort_str} already exists, remove...")
             shutil.rmtree(TMP_ORT)
-        # git clone
-        logging.info(f"Running: git clone {MS_REMOTE} {tmp_ort_str}")
+        # git clone TMP_ORT
         _run_cmd(["git", "clone", MS_REMOTE, tmp_ort_str])
 
-        # git -C temp_ort checkout %UPSTREAM_BRANCH% -f --recurse-submodules
-        logging.info(f"Checking out: {UPSTREAM_BRANCH}")
+        # checkout to specific branch/sha in TMP_ORT
         _run_cmd(["git", "-C", tmp_ort_str, "checkout", UPSTREAM_BRANCH])
 
-        # git -C temp_ort submodule sync --recursive
+        # git submodule sync --recursive in TMP_ORT
         cmd = f"git -C {tmp_ort_str} submodule sync --recursive"
-        logging.info(f"Running: {cmd}")
         _run_cmd(cmd.split())
 
-        # git submodule update --init --force --recursive
+        # git submodule update --init --force --recursive in TMP_ORT
         cmd = f"git -C {tmp_ort_str} submodule update --init --force --recursive"
-        logging.info(f"Running: {cmd}")
         _run_cmd(cmd.split())
 
         config = configparser.ConfigParser()
