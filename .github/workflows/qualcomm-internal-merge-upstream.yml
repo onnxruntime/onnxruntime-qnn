@@ -56,12 +56,20 @@ jobs:
           python-version: '3.12'
       - name: Populate submodules files and directories
         run: |
-          git checkout ${{ github.ref }} -- qcom/scripts/all/fetch_submodules.py
+          git checkout ${{ github.ref }} -- qcom
           UPSTREAM_BRANCH_HEAD=$(git rev-parse upstream/$UPSTREAM_BRANCH)
           python qcom/scripts/all/fetch_submodules.py --upstream-branch $UPSTREAM_BRANCH_HEAD
           git add .
           if ! git commit -m "[MERGE-UPSTREAM] Automated populate submodules for $TODAY"; then
             echo "No commit created for submodules."
+          fi
+      - name: Populate cmake dependencies
+        run: |
+          git checkout ${{ github.ref }} -- qcom
+          python qcom/build_and_test.py fetch_cmake_deps
+          git add mirror
+          if ! git commit -m "[MERGE-UPSTREAM] Automated populate cmake dependencies for $TODAY"; then
+            echo "No commit created for cmake dependencies."
           fi
       - name: Authenticate service account with GitHub CLI
         run: |
