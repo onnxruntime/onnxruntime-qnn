@@ -287,7 +287,7 @@ Status BaseOpBuilder::ProcessOutputs(QnnModelWrapper& qnn_model_wrapper,
     bool needs_int64_cast = false;
     if (is_graph_output) {
       for (const auto& input_name : input_names) {
-        if (input_name.find("_cast_int32") != std::string::npos) {
+        if (input_name.find("_cast_int32") != std::string::npos || output_info.qnn_data_type == QNN_DATATYPE_INT_64) {
           needs_int64_cast = true;
           break;
         }
