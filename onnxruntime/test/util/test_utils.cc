@@ -55,6 +55,18 @@ void VerifyOutput(const std::string& output_name,
           << " mismatch for " << output_name;
       break;
     case ONNX_NAMESPACE::TensorProto_DataType_FLOAT: {
+        
+      std::cout << "expected_tensor:" << std::endl;
+      for (int i = 0; i < expected_tensor.DataAsSpan<float>().size(); ++i) {
+          std::cout << expected_tensor.DataAsSpan<float>()[i] << " ";
+      }
+      std::cout << std::endl;
+      std::cout << "EP output tensor:" << std::endl;
+      for (int i = 0; i < tensor.DataAsSpan<float>().size(); ++i) {
+          std::cout << tensor.DataAsSpan<float>()[i] << " ";
+      }
+      std::cout << std::endl;
+
       EXPECT_THAT(expected_tensor.DataAsSpan<float>(),
                   ::testing::Pointwise(::testing::FloatNear(fp32_abs_err), tensor.DataAsSpan<float>()));
       break;
@@ -147,7 +159,7 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes, std::string
   std::vector<std::byte> model_data_buffer{};
   const auto model_data = GetModelBytes(model_path_or_bytes, model_data_buffer);
 
-  SessionOptions so;
+  SessionOptions so; so.session_log_severity_level = 0;
   if (session_options_updater) {
     session_options_updater(so);
   }

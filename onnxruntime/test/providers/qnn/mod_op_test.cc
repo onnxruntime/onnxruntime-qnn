@@ -132,6 +132,41 @@ TEST_F(QnnHTPBackendTests, Mod_static_Divisor) {
                       ExpectedEPNodeAssignment::All,
                       "htp");
 }
+TEST_F(QnnHTPBackendTests, Mod_test_2) {
+  const std::string path{"/local/mnt/workspace/onnxruntime_mlg_1/test_models/LiteHRNet/Mod.onnx"};
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  TryEnableQNNSaver(provider_options);
+  EPVerificationParams verification_params;
+  verification_params.ep_node_assignment = ExpectedEPNodeAssignment::All;
+  verification_params.fp32_abs_err = 1e-2f;
+  verification_params.graph_verifier = nullptr;
+  NameMLValMap feeds;
+  AllocatorPtr allocator = TestCPUExecutionProvider()->CreatePreferredAllocators()[0];
+  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+
+  const std::vector<int64_t> input_shape{17};
+  auto input_tokens = rand_gen_.Uniform<int64_t>(input_shape, 1.0f, 100.0f);
+
+  std::cout << "Input tokens:" << std::endl;
+  for (int i = 0; i < input_tokens.size(); ++i) {
+      std::cout << input_tokens[i] << " ";
+  }
+  std::cout << std::endl;
+
+  OrtValue input_token_value;
+  CreateMLValue<int64_t>(allocator, input_shape, std::move(input_tokens), &input_token_value);
+  feeds.insert(std::make_pair("/ArgMax_output_0", input_token_value));
+
+  RunAndVerifyOutputsWithEP(path, "QNN_EP_TestLogID",
+                            QnnExecutionProviderWithOptions(provider_options),
+                            /*feeds=*/feeds,
+                            /*params=*/verification_params,
+                            /*session_options_updater=*/{},
+                            /*verify_outputs=*/true);
+}
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 

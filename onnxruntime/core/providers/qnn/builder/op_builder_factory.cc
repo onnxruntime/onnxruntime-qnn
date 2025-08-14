@@ -202,6 +202,9 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   {
     CreateModOpBuilder("Mod", *this);
   }
+  {
+    CreateThresholdedReluOpBuilder("ThresholdedRelu", *this);
+  }
 }
 
 const IOpBuilder* GetOpBuilder(const std::string& onnx_op_type) {
