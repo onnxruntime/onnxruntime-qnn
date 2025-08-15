@@ -37,17 +37,16 @@ static void RunThresholdedReluTest(const std::vector<TestInputDef<DataType>>& in
 //
 // CPU tests:
 //
+TEST_F(QnnCPUBackendTests, ThresholdedRelu) {
+  // Test that ThresholdedRelu with fp32 input.
+    RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+    const std::vector<int64_t> dividend_shape{1, 4, 5};
+    auto input = rand_gen_.Uniform<float>(dividend_shape, -100.0f, 100.0f);
 
-// Test that ThresholdedRelu with fp32 input.
-TEST_F(QnnCPUBackendTests, ThresholdedRelu_fp32) {
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
-  const std::vector<int64_t> dividend_shape{1, 4, 5};
-  auto input = rand_gen_.Uniform<float>(dividend_shape, -100.0f, 100.0f);
-
-  RunThresholdedReluTest<float>({TestInputDef<float>({1, 4, 5}, false, input)},
-                                {utils::MakeAttribute("alpha", 4.5f)},
-                                ExpectedEPNodeAssignment::All);
-}
+    RunThresholdedReluTest<float>({TestInputDef<float>({1, 4, 5}, false, input)},
+                                  {utils::MakeAttribute("alpha", 4.5f)},
+                                  ExpectedEPNodeAssignment::All);
+  }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 //
