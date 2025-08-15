@@ -22,11 +22,15 @@ static void RunThresholdedReluTest(const std::vector<TestInputDef<DataType>>& in
                                    const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                    ExpectedEPNodeAssignment expected_ep_assignment,
                                    const std::string& backend_name = "cpu",
+                                   bool enable_htp_fp16_precision = false,
                                    int opset = 13) {
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
+  if (enable_htp_fp16_precision) {
+    provider_options["enable_htp_fp16_precision"] = "1";
+  }
 
   RunQnnModelTest(BuildOpTestCase<DataType>("ThresholdedRelu", input_defs, {}, attrs),
                   provider_options,
@@ -39,14 +43,14 @@ static void RunThresholdedReluTest(const std::vector<TestInputDef<DataType>>& in
 //
 TEST_F(QnnCPUBackendTests, ThresholdedRelu) {
   // Test that ThresholdedRelu with fp32 input.
-    RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
-    const std::vector<int64_t> dividend_shape{1, 4, 5};
-    auto input = rand_gen_.Uniform<float>(dividend_shape, -100.0f, 100.0f);
+  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+  const std::vector<int64_t> dividend_shape{1, 4, 5};
+  auto input = rand_gen_.Uniform<float>(dividend_shape, -100.0f, 100.0f);
 
-    RunThresholdedReluTest<float>({TestInputDef<float>({1, 4, 5}, false, input)},
-                                  {utils::MakeAttribute("alpha", 4.5f)},
-                                  ExpectedEPNodeAssignment::All);
-  }
+  RunThresholdedReluTest<float>({TestInputDef<float>({1, 4, 5}, false, input)},
+                                {utils::MakeAttribute("alpha", 4.5f)},
+                                ExpectedEPNodeAssignment::All);
+}
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 //
@@ -125,7 +129,8 @@ TEST_F(QnnHTPBackendTests, ThresholdedRelu_fp32) {
   RunThresholdedReluTest<float>({TestInputDef<float>({1, 4, 5}, false, input)},
                                 {utils::MakeAttribute("alpha", 4.5f)},
                                 ExpectedEPNodeAssignment::All,
-                                "htp");
+                                "htp",
+                                true);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
