@@ -19,10 +19,10 @@ namespace test {
 // and that inference outputs for QNN EP and CPU EP match.
 template <typename DataType>
 static void RunThresholdedReluTest(const std::vector<TestInputDef<DataType>>& input_defs,
-                       const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                       ExpectedEPNodeAssignment expected_ep_assignment,
-                       const std::string& backend_name = "cpu",
-                       int opset = 13) {
+                                   const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                                   ExpectedEPNodeAssignment expected_ep_assignment,
+                                   const std::string& backend_name = "cpu",
+                                   int opset = 13) {
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = backend_name;
@@ -57,15 +57,14 @@ TEST_F(QnnCPUBackendTests, ThresholdedRelu_fp32) {
 // Returns a function that builds a model with a QDQ ThresholdedRelu node.
 template <typename InputAQType, typename InputBQType>
 inline GetTestQDQModelFn<InputAQType> BuildQDQThresholdedReluTestCase(const std::vector<TestInputDef<float>>& input_defs,
-                                                           const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                                           bool use_contrib_qdq = false) {
+                                                                      const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                                                                      bool use_contrib_qdq = false) {
   return [input_defs, attrs, use_contrib_qdq](ModelTestBuilder& builder,
                                               std::vector<QuantParams<InputAQType>>& output_qparams) {
-
     const size_t num_inputs = input_defs.size();
     std::vector<NodeArg*> op_inputs;
     op_inputs.reserve(num_inputs);
-                                            
+
     // Process input 0
     NodeArg* input0 = MakeTestInput<float>(builder, input_defs[0]);
     QuantParams<InputAQType> input0_qparams = GetTestInputQuantParams<InputAQType>(input_defs[0]);
@@ -87,16 +86,15 @@ inline GetTestQDQModelFn<InputAQType> BuildQDQThresholdedReluTestCase(const std:
   };
 }
 
-
 // Runs a QDQ ThresholdedRelu model on the QNN (HTP) EP and the ORT CPU EP. Checks the graph node assignment and that inference
 // running the QDQ model on QNN EP is at least as accurate as on ORT CPU EP (compared to the baseline float32 model).
 template <typename InputAQType, typename InputBQType>
 static void RunQDQThresholdedReluTestOnHTP(const std::vector<TestInputDef<float>>& input_defs,
-                                const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                ExpectedEPNodeAssignment expected_ep_assignment,
-                                int opset = 13,
-                                bool use_contrib_qdq = false,
-                                QDQTolerance tolerance = QDQTolerance()) {
+                                           const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                                           ExpectedEPNodeAssignment expected_ep_assignment,
+                                           int opset = 13,
+                                           bool use_contrib_qdq = false,
+                                           QDQTolerance tolerance = QDQTolerance()) {
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = "htp";
@@ -113,12 +111,11 @@ static void RunQDQThresholdedReluTestOnHTP(const std::vector<TestInputDef<float>
 }
 
 TEST_F(QnnHTPBackendTests, ThresholdedRelu_qdq_fp32) {
-    std::vector<float> input = GetFloatDataInRange(-10.0f, 10.0f, 20);
-    RunQDQThresholdedReluTestOnHTP<uint8_t, uint8_t>({TestInputDef<float>({1, 4, 5}, false, input)},
-                                          {utils::MakeAttribute("alpha", 4.5f)},
-                                          ExpectedEPNodeAssignment::All);
-  }
-  
+  std::vector<float> input = GetFloatDataInRange(-10.0f, 10.0f, 20);
+  RunQDQThresholdedReluTestOnHTP<uint8_t, uint8_t>({TestInputDef<float>({1, 4, 5}, false, input)},
+                                                   {utils::MakeAttribute("alpha", 4.5f)},
+                                                   ExpectedEPNodeAssignment::All);
+}
 
 // Test that ThresholdedRelu with dynamic divisor.
 TEST_F(QnnHTPBackendTests, ThresholdedRelu_fp32) {
@@ -127,9 +124,9 @@ TEST_F(QnnHTPBackendTests, ThresholdedRelu_fp32) {
   auto input = rand_gen_.Uniform<float>(dividend_shape, -100.0f, 100.0f);
 
   RunThresholdedReluTest<float>({TestInputDef<float>({1, 4, 5}, false, input)},
-                    {utils::MakeAttribute("alpha", 4.5f)},
-                    ExpectedEPNodeAssignment::All,
-                  "htp");
+                                {utils::MakeAttribute("alpha", 4.5f)},
+                                ExpectedEPNodeAssignment::All,
+                                "htp");
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

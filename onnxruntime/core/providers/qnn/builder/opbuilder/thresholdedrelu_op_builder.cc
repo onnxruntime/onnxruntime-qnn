@@ -12,7 +12,7 @@ namespace onnxruntime {
 namespace qnn {
 class ThresholdedReluOpBuilder : public BaseOpBuilder {
  public:
- ThresholdedReluOpBuilder() : BaseOpBuilder("ThresholdedReluOpBuilder") {}
+  ThresholdedReluOpBuilder() : BaseOpBuilder("ThresholdedReluOpBuilder") {}
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(ThresholdedReluOpBuilder);
 
  protected:
@@ -27,7 +27,8 @@ class ThresholdedReluOpBuilder : public BaseOpBuilder {
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
-private:
+
+ private:
   Status ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit) const;
 };
 
@@ -37,15 +38,15 @@ Status ThresholdedReluOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapp
 
   // Greater op supporting input dtypes
   static const std::unordered_set<int> greater_op_support_dtypes = {
-    QNN_DATATYPE_FLOAT_16,
-    QNN_DATATYPE_FLOAT_32,
-    QNN_DATATYPE_UFIXED_POINT_16,
-    QNN_DATATYPE_SFIXED_POINT_16,
-    QNN_DATATYPE_UFIXED_POINT_8,
-    QNN_DATATYPE_SFIXED_POINT_8,
-    QNN_DATATYPE_INT_32};
+      QNN_DATATYPE_FLOAT_16,
+      QNN_DATATYPE_FLOAT_32,
+      QNN_DATATYPE_UFIXED_POINT_16,
+      QNN_DATATYPE_SFIXED_POINT_16,
+      QNN_DATATYPE_UFIXED_POINT_8,
+      QNN_DATATYPE_SFIXED_POINT_8,
+      QNN_DATATYPE_INT_32};
 
-  if (greater_op_support_dtypes.count(input_info.qnn_data_type) == 0){ 
+  if (greater_op_support_dtypes.count(input_info.qnn_data_type) == 0) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "ThresholdRelu input data type not supported.");
   }
 
@@ -53,9 +54,9 @@ Status ThresholdedReluOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapp
 }
 
 static Status SetAlphaByte(Qnn_DataType_t qnn_data_type,
-                      std::vector<uint8_t>& alpha_bytes,
-                      float alpha_value,
-                      int num_elements) {
+                           std::vector<uint8_t>& alpha_bytes,
+                           float alpha_value,
+                           int num_elements) {
   switch (qnn_data_type) {
     case QNN_DATATYPE_FLOAT_16: {
       MLFloat16 zero_fp16 = static_cast<MLFloat16>(alpha_value);
@@ -63,7 +64,7 @@ static Status SetAlphaByte(Qnn_DataType_t qnn_data_type,
 
       alpha_bytes.resize(num_elements * sizeof(uint16_t));
       for (size_t i = 0; i < num_elements; ++i) {
-          std::memcpy(alpha_bytes.data() + i * sizeof(uint16_t), &cast_value, sizeof(uint16_t));
+        std::memcpy(alpha_bytes.data() + i * sizeof(uint16_t), &cast_value, sizeof(uint16_t));
       }
       break;
     }
@@ -71,7 +72,7 @@ static Status SetAlphaByte(Qnn_DataType_t qnn_data_type,
       float cast_value = static_cast<float>(alpha_value);
       alpha_bytes.resize(num_elements * sizeof(float));
       for (size_t i = 0; i < num_elements; ++i) {
-          std::memcpy(alpha_bytes.data() + i * sizeof(float), &cast_value, sizeof(float));
+        std::memcpy(alpha_bytes.data() + i * sizeof(float), &cast_value, sizeof(float));
       }
       break;
     }
@@ -79,7 +80,7 @@ static Status SetAlphaByte(Qnn_DataType_t qnn_data_type,
       uint16_t cast_value = static_cast<uint16_t>(alpha_value);
       alpha_bytes.resize(num_elements * sizeof(uint16_t));
       for (size_t i = 0; i < num_elements; ++i) {
-          std::memcpy(alpha_bytes.data() + i * sizeof(uint16_t), &cast_value, sizeof(uint16_t));
+        std::memcpy(alpha_bytes.data() + i * sizeof(uint16_t), &cast_value, sizeof(uint16_t));
       }
       break;
     }
@@ -87,7 +88,7 @@ static Status SetAlphaByte(Qnn_DataType_t qnn_data_type,
       int16_t cast_value = static_cast<int16_t>(alpha_value);
       alpha_bytes.resize(num_elements * sizeof(int16_t));
       for (size_t i = 0; i < num_elements; ++i) {
-          std::memcpy(alpha_bytes.data() + i * sizeof(int16_t), &cast_value, sizeof(int16_t));
+        std::memcpy(alpha_bytes.data() + i * sizeof(int16_t), &cast_value, sizeof(int16_t));
       }
       break;
     }
@@ -95,7 +96,7 @@ static Status SetAlphaByte(Qnn_DataType_t qnn_data_type,
       uint8_t cast_value = static_cast<uint8_t>(alpha_value);
       alpha_bytes.resize(num_elements * sizeof(uint8_t));
       for (size_t i = 0; i < num_elements; ++i) {
-          std::memcpy(alpha_bytes.data() + i * sizeof(uint8_t), &cast_value, sizeof(uint8_t));
+        std::memcpy(alpha_bytes.data() + i * sizeof(uint8_t), &cast_value, sizeof(uint8_t));
       }
       break;
     }
@@ -103,7 +104,7 @@ static Status SetAlphaByte(Qnn_DataType_t qnn_data_type,
       int8_t cast_value = static_cast<int8_t>(alpha_value);
       alpha_bytes.resize(num_elements * sizeof(int8_t));
       for (size_t i = 0; i < num_elements; ++i) {
-          std::memcpy(alpha_bytes.data() + i * sizeof(int8_t), &cast_value, sizeof(int8_t));
+        std::memcpy(alpha_bytes.data() + i * sizeof(int8_t), &cast_value, sizeof(int8_t));
       }
       break;
     }
@@ -111,7 +112,7 @@ static Status SetAlphaByte(Qnn_DataType_t qnn_data_type,
       int32_t cast_value = static_cast<int32_t>(alpha_value);
       alpha_bytes.resize(num_elements * sizeof(int32_t));
       for (size_t i = 0; i < num_elements; ++i) {
-          std::memcpy(alpha_bytes.data() + i * sizeof(int32_t), &cast_value, sizeof(int32_t));
+        std::memcpy(alpha_bytes.data() + i * sizeof(int32_t), &cast_value, sizeof(int32_t));
       }
       break;
     }
@@ -120,12 +121,11 @@ static Status SetAlphaByte(Qnn_DataType_t qnn_data_type,
   return Status::OK();
 }
 
-
 Status ThresholdedReluOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                   const NodeUnit& node_unit,
-                                   const logging::Logger& logger,
-                                   std::vector<std::string>& input_names,
-                                   bool do_op_validation) const {
+                                               const NodeUnit& node_unit,
+                                               const logging::Logger& logger,
+                                               std::vector<std::string>& input_names,
+                                               bool do_op_validation) const {
   if (do_op_validation) {
     ORT_RETURN_IF_ERROR(ExplictOpCheck(qnn_model_wrapper, node_unit));
   }
@@ -140,10 +140,10 @@ Status ThresholdedReluOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrappe
 }
 
 Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                 const NodeUnit& node_unit,
-                                                 std::vector<std::string>&& input_names,
-                                                 const logging::Logger& logger,
-                                                 bool do_op_validation) const {
+                                                             const NodeUnit& node_unit,
+                                                             std::vector<std::string>&& input_names,
+                                                             const logging::Logger& logger,
+                                                             bool do_op_validation) const {
   TensorInfo input_info = {};
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
   TensorInfo output_info = {};
@@ -157,22 +157,21 @@ Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
   std::vector<uint32_t> output_shape = output_info.shape;
   Qnn_TensorType_t op_output_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
 
-
   // Create alpha tensor.
   // QNN sub gives memory error, use input + (-alpha) as input - alpha's work around.
-  float negtive_alpha = node_helper.Get("alpha", static_cast<float>(0))*-1;
-  size_t num_elements = std::accumulate(output_shape.begin(), output_shape.end(), 
+  float negtive_alpha = node_helper.Get("alpha", static_cast<float>(0)) * -1;
+  size_t num_elements = std::accumulate(output_shape.begin(), output_shape.end(),
                                         static_cast<size_t>(1), std::multiplies<size_t>());
   std::vector<uint8_t> alpha_bytes;
   SetAlphaByte(input_info.qnn_data_type, alpha_bytes, negtive_alpha, num_elements);
 
   std::string negtive_alpha_tensor_name = utils::GetUniqueName(node_unit, "_alpha");
   QnnTensorWrapper negtive_alpha_tensorwrapper(negtive_alpha_tensor_name,
-                                                QNN_TENSOR_TYPE_STATIC,
-                                                input_info.qnn_data_type,
-                                                QnnQuantParamsWrapper(),
-                                                std::vector<uint32_t>(output_shape),
-                                                std::move(alpha_bytes));
+                                               QNN_TENSOR_TYPE_STATIC,
+                                               input_info.qnn_data_type,
+                                               QnnQuantParamsWrapper(),
+                                               std::vector<uint32_t>(output_shape),
+                                               std::move(alpha_bytes));
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(negtive_alpha_tensorwrapper)), "Failed to add tensor.");
 
   // input -> add -> relu -> sign -> mul -> output
@@ -181,7 +180,7 @@ Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
   std::string add_name = utils::GetUniqueName(node_unit, "_Add");
   std::string add_output_name = utils::GetUniqueName(node_unit, "_Add_output");
   QnnTensorWrapper add_output(add_output_name,
-                              QNN_TENSOR_TYPE_NATIVE, 
+                              QNN_TENSOR_TYPE_NATIVE,
                               input_info.qnn_data_type,
                               QnnQuantParamsWrapper(),
                               std::vector<uint32_t>(output_shape));
@@ -196,16 +195,16 @@ Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
                                                     {},
                                                     do_op_validation),
                     "Failed to add ThresholdRelu - Sub node.");
-  
+
   // 2. Relu
   std::string relu_name = utils::GetUniqueName(node_unit, "_Relu");
   std::string relu_output_name = utils::GetUniqueName(node_unit, "_Relu_output");
 
   QnnTensorWrapper relu_output(relu_output_name,
-                              QNN_TENSOR_TYPE_NATIVE, 
-                              input_info.qnn_data_type,
-                              QnnQuantParamsWrapper(),
-                              std::vector<uint32_t>(output_shape));
+                               QNN_TENSOR_TYPE_NATIVE,
+                               input_info.qnn_data_type,
+                               QnnQuantParamsWrapper(),
+                               std::vector<uint32_t>(output_shape));
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(relu_output)),
                     "Failed to add ThresholdRelu - Relu output tensor.");
 
@@ -222,10 +221,10 @@ Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
   std::string sign_name = utils::GetUniqueName(node_unit, "_Sign");
   std::string sign_output_name = utils::GetUniqueName(node_unit, "_Sign_output");
   QnnTensorWrapper sign_output(sign_output_name,
-                              QNN_TENSOR_TYPE_NATIVE,
-                              input_info.qnn_data_type,
-                              QnnQuantParamsWrapper(),
-                              std::vector<uint32_t>(output_shape));
+                               QNN_TENSOR_TYPE_NATIVE,
+                               input_info.qnn_data_type,
+                               QnnQuantParamsWrapper(),
+                               std::vector<uint32_t>(output_shape));
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sign_output)),
                     "Failed to add ThresholdRelu - Sign output tensor.");
 
@@ -256,7 +255,6 @@ Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
                                                     {},
                                                     do_op_validation),
                     "Failed to add ThresholdRelu - Mul node.");
-  
 
   return Status::OK();
 }
