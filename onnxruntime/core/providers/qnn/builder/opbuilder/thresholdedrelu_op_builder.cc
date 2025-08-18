@@ -162,15 +162,16 @@ Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
   float negtive_alpha = node_helper.Get("alpha", static_cast<float>(0)) * -1;
   size_t num_elements = std::accumulate(output_shape.begin(), output_shape.end(),
                                         static_cast<size_t>(1), std::multiplies<size_t>());
+  std::vector<uint32_t> scalar_shape = {1};
   std::vector<uint8_t> alpha_bytes;
-  SetAlphaByte(input_info.qnn_data_type, alpha_bytes, negtive_alpha, num_elements);
+  SetAlphaByte(input_info.qnn_data_type, alpha_bytes, negtive_alpha, num_elements=1);
 
   std::string negtive_alpha_tensor_name = utils::GetUniqueName(node_unit, "_alpha");
   QnnTensorWrapper negtive_alpha_tensorwrapper(negtive_alpha_tensor_name,
                                                QNN_TENSOR_TYPE_STATIC,
                                                input_info.qnn_data_type,
                                                QnnQuantParamsWrapper(),
-                                               std::vector<uint32_t>(output_shape),
+                                               std::vector<uint32_t>(scalar_shape),
                                                std::move(alpha_bytes));
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(negtive_alpha_tensorwrapper)), "Failed to add tensor.");
 

@@ -924,6 +924,39 @@ TEST_F(QnnHTPBackendTests, TestNHWCResizeShapeInference_qdq_sizes_opset18) {
 }
 
 // Test that QNN Ir generates the expected file for a model meant to run on the QNN HTP backend.
+TEST_F(QnnHTPBackendTests, TempDumpDlcTest) {
+  const auto& logger = DefaultLoggingManager().DefaultLogger();
+  if (IsIRBackendSupported() == BackendSupport::UNSUPPORTED) {
+    LOGS(logger, WARNING) << "QNN IR backend is not available! Skipping test.";
+    GTEST_SKIP();
+  } else if (IsIRBackendSupported() == BackendSupport::SUPPORT_ERROR) {
+    LOGS(logger, ERROR) << "Failed to check if QNN IR backend is available.";
+    FAIL();
+  }
+
+  const std::filesystem::path qnn_dlc_dir = "dlc_output";
+
+  // Remove pre-existing QNN Ir output files. Note that fs::remove_all() can handle non-existing paths.
+  std::filesystem::remove_all(qnn_dlc_dir);
+  ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
+
+  InitNHWCResizeModel("/local/mnt/workspace/onnxruntime_mlg_1/test_models/theshoulded_relu.onnx",
+                      TestBackend::Htp,  // backend
+                      TestBackend::Ir);  // serializer backend
+
+  // File names are taken from graph node names. Just make sure that we got one .dlc
+  // in the expected directory.
+  ASSERT_TRUE(std::filesystem::exists(qnn_dlc_dir));
+
+  int file_count = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(qnn_dlc_dir)) {
+    EXPECT_TRUE(entry.is_regular_file());
+    EXPECT_EQ(entry.path().extension(), ".dlc");
+    ++file_count;
+  }
+  EXPECT_EQ(file_count, 1);
+}
+
 
 TEST_F(QnnHTPBackendTests, QnnIr_OutputFiles) {
   const auto& logger = DefaultLoggingManager().DefaultLogger();
