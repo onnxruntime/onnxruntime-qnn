@@ -100,6 +100,9 @@ static Status SetAlphaByte(Qnn_DataType_t qnn_data_type,
       std::memcpy(alpha_bytes.data(), &cast_value, sizeof(int32_t));
       break;
     }
+    default: {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Unsupported QNN Data type for thresholdedrelu.");
+    }
   }
 
   return Status::OK();
@@ -128,6 +131,7 @@ Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
                                                              std::vector<std::string>&& input_names,
                                                              const logging::Logger& logger,
                                                              bool do_op_validation) const {
+  ORT_UNUSED_PARAMETER(logger);
   TensorInfo input_info = {};
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
   TensorInfo output_info = {};
@@ -145,7 +149,7 @@ Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
   // QNN sub gives memory error, use input + (-alpha) as input - alpha's work around.
   float negtive_alpha = node_helper.Get("alpha", static_cast<float>(0)) * -1;
   std::vector<uint8_t> alpha_bytes;
-  SetAlphaByte(input_info.qnn_data_type, alpha_bytes, negtive_alpha);
+  ORT_RETURN_IF_ERROR(SetAlphaByte(input_info.qnn_data_type, alpha_bytes, negtive_alpha));
 
   std::string negtive_alpha_tensor_name = utils::GetUniqueName(node_unit, "_alpha");
   QnnTensorWrapper negtive_alpha_tensorwrapper(negtive_alpha_tensor_name,
