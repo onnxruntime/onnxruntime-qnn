@@ -87,8 +87,6 @@ inline GetTestQDQModelFn<InputAQType> BuildQDQThresholdedReluTestCase(const std:
   };
 }
 
-// Runs a QDQ ThresholdedRelu model on the QNN (HTP) EP and the ORT CPU EP. Checks the graph node assignment and that inference
-// running the QDQ model on QNN EP is at least as accurate as on ORT CPU EP (compared to the baseline float32 model).
 template <typename InputAQType, typename InputBQType>
 static void RunQDQThresholdedReluTestOnHTP(const std::vector<TestInputDef<float>>& input_defs,
                                            const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
@@ -111,14 +109,15 @@ static void RunQDQThresholdedReluTestOnHTP(const std::vector<TestInputDef<float>
                                     tolerance);
 }
 
-TEST_F(QnnHTPBackendTests, ThresholdedRelu_qdq_fp32) {
+// Test ThresholdedRelu QDQ.
+TEST_F(QnnHTPBackendTests, ThresholdedRelu_qdq) {
   std::vector<float> input = GetFloatDataInRange(-10.0f, 10.0f, 20);
   RunQDQThresholdedReluTestOnHTP<uint8_t, uint8_t>({TestInputDef<float>({1, 4, 5}, false, input)},
                                                    {utils::MakeAttribute("alpha", 4.5f)},
                                                    ExpectedEPNodeAssignment::All);
 }
 
-// Test that ThresholdedRelu with dynamic divisor.
+// Test ThresholdedRelu.
 TEST_F(QnnHTPBackendTests, ThresholdedRelu_fp32) {
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> dividend_shape{1, 4, 5};
