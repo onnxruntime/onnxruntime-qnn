@@ -55,65 +55,48 @@ Status ThresholdedReluOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapp
 
 static Status SetAlphaByte(Qnn_DataType_t qnn_data_type,
                            std::vector<uint8_t>& alpha_bytes,
-                           float alpha_value,
-                           int num_elements) {
+                           float alpha_value) {
   switch (qnn_data_type) {
     case QNN_DATATYPE_FLOAT_16: {
       MLFloat16 zero_fp16 = static_cast<MLFloat16>(alpha_value);
       uint16_t cast_value = *reinterpret_cast<uint16_t*>(&zero_fp16);
-
-      alpha_bytes.resize(num_elements * sizeof(uint16_t));
-      for (size_t i = 0; i < num_elements; ++i) {
-        std::memcpy(alpha_bytes.data() + i * sizeof(uint16_t), &cast_value, sizeof(uint16_t));
-      }
+      std::memcpy(alpha_bytes.data(), &cast_value, sizeof(uint16_t));
       break;
     }
     case QNN_DATATYPE_FLOAT_32: {
       float cast_value = static_cast<float>(alpha_value);
-      alpha_bytes.resize(num_elements * sizeof(float));
-      for (size_t i = 0; i < num_elements; ++i) {
-        std::memcpy(alpha_bytes.data() + i * sizeof(float), &cast_value, sizeof(float));
-      }
+      alpha_bytes.resize(sizeof(float));
+      std::memcpy(alpha_bytes.data(), &cast_value, sizeof(float));
       break;
     }
     case QNN_DATATYPE_UFIXED_POINT_16: {
       uint16_t cast_value = static_cast<uint16_t>(alpha_value);
-      alpha_bytes.resize(num_elements * sizeof(uint16_t));
-      for (size_t i = 0; i < num_elements; ++i) {
-        std::memcpy(alpha_bytes.data() + i * sizeof(uint16_t), &cast_value, sizeof(uint16_t));
-      }
+      alpha_bytes.resize(sizeof(uint16_t));
+      std::memcpy(alpha_bytes.data(), &cast_value, sizeof(uint16_t));
       break;
     }
     case QNN_DATATYPE_SFIXED_POINT_16: {
       int16_t cast_value = static_cast<int16_t>(alpha_value);
-      alpha_bytes.resize(num_elements * sizeof(int16_t));
-      for (size_t i = 0; i < num_elements; ++i) {
-        std::memcpy(alpha_bytes.data() + i * sizeof(int16_t), &cast_value, sizeof(int16_t));
-      }
+      alpha_bytes.resize(sizeof(int16_t));
+      std::memcpy(alpha_bytes.data(), &cast_value, sizeof(int16_t));
       break;
     }
     case QNN_DATATYPE_UFIXED_POINT_8: {
       uint8_t cast_value = static_cast<uint8_t>(alpha_value);
-      alpha_bytes.resize(num_elements * sizeof(uint8_t));
-      for (size_t i = 0; i < num_elements; ++i) {
-        std::memcpy(alpha_bytes.data() + i * sizeof(uint8_t), &cast_value, sizeof(uint8_t));
-      }
+      alpha_bytes.resize(sizeof(uint8_t));
+      std::memcpy(alpha_bytes.data(), &cast_value, sizeof(uint8_t));
       break;
     }
     case QNN_DATATYPE_SFIXED_POINT_8: {
       int8_t cast_value = static_cast<int8_t>(alpha_value);
-      alpha_bytes.resize(num_elements * sizeof(int8_t));
-      for (size_t i = 0; i < num_elements; ++i) {
-        std::memcpy(alpha_bytes.data() + i * sizeof(int8_t), &cast_value, sizeof(int8_t));
-      }
+      alpha_bytes.resize(sizeof(int8_t));
+      std::memcpy(alpha_bytes.data(), &cast_value, sizeof(int8_t));
       break;
     }
     case QNN_DATATYPE_INT_32: {
       int32_t cast_value = static_cast<int32_t>(alpha_value);
-      alpha_bytes.resize(num_elements * sizeof(int32_t));
-      for (size_t i = 0; i < num_elements; ++i) {
-        std::memcpy(alpha_bytes.data() + i * sizeof(int32_t), &cast_value, sizeof(int32_t));
-      }
+      alpha_bytes.resize(sizeof(int32_t));
+      std::memcpy(alpha_bytes.data(), &cast_value, sizeof(int32_t));
       break;
     }
   }
@@ -163,14 +146,14 @@ Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
   size_t num_elements = std::accumulate(output_shape.begin(), output_shape.end(),
                                         static_cast<size_t>(1), std::multiplies<size_t>());
   std::vector<uint8_t> alpha_bytes;
-  SetAlphaByte(input_info.qnn_data_type, alpha_bytes, negtive_alpha, num_elements);
+  SetAlphaByte(input_info.qnn_data_type, alpha_bytes, negtive_alpha);
 
   std::string negtive_alpha_tensor_name = utils::GetUniqueName(node_unit, "_alpha");
   QnnTensorWrapper negtive_alpha_tensorwrapper(negtive_alpha_tensor_name,
                                                QNN_TENSOR_TYPE_STATIC,
                                                input_info.qnn_data_type,
                                                QnnQuantParamsWrapper(),
-                                               std::vector<uint32_t>(output_shape),
+                                               std::vector<uint32_t>({1}),
                                                std::move(alpha_bytes));
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(negtive_alpha_tensorwrapper)), "Failed to add tensor.");
 
