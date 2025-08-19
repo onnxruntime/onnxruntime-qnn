@@ -60,6 +60,7 @@ static Status SetAlphaByte(Qnn_DataType_t qnn_data_type,
     case QNN_DATATYPE_FLOAT_16: {
       MLFloat16 zero_fp16 = static_cast<MLFloat16>(alpha_value);
       uint16_t cast_value = *reinterpret_cast<uint16_t*>(&zero_fp16);
+      alpha_bytes.resize(sizeof(uint16_t));
       std::memcpy(alpha_bytes.data(), &cast_value, sizeof(uint16_t));
       break;
     }
@@ -143,8 +144,6 @@ Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
   // Create alpha tensor.
   // QNN sub gives memory error, use input + (-alpha) as input - alpha's work around.
   float negtive_alpha = node_helper.Get("alpha", static_cast<float>(0)) * -1;
-  size_t num_elements = std::accumulate(output_shape.begin(), output_shape.end(),
-                                        static_cast<size_t>(1), std::multiplies<size_t>());
   std::vector<uint8_t> alpha_bytes;
   SetAlphaByte(input_info.qnn_data_type, alpha_bytes, negtive_alpha);
 
