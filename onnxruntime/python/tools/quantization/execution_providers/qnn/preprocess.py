@@ -15,6 +15,7 @@ from ....tools.remove_initializer_from_input import remove_initializer_from_inpu
 from ...fusions import FusionGelu, FusionLayerNormalization
 from ...onnx_model import ONNXModel
 from ...quant_utils import save_and_reload_model_with_shape_infer
+from .fusion_conv_bn import FusionConvBN
 from .fusion_lpnorm import FusionLpNormalization
 from .fusion_spacetodepth import FusionSpaceToDepth
 
@@ -96,6 +97,17 @@ def qnn_preprocess_model(
     model = save_and_reload_model_with_shape_infer(model)
     onnx_model = ONNXModel(model)
 
+    # Make sure all nodes have a name.
+    unnamed_node_prefix = "qnn_preproc_node_"
+    available_suffix = onnx_model.get_largest_node_name_suffix(unnamed_node_prefix) + 1
+    for node in onnx_model.model.graph.node:
+        if node.op_type != "Constant" and not node.name:
+            new_node_name = f"{unnamed_node_prefix}{available_suffix!s}"
+            available_suffix += 1
+            node.name = new_node_name
+            modified = True
+            logging.warning(f"Node of type {node.op_type} does not have a name. Renamed to {new_node_name}.")
+
     # Optionally, fix the dynamic input shapes.
     if dynamic_input_shapes:
         for input_name, input_shape_str in dynamic_input_shapes:
@@ -111,6 +123,11 @@ def qnn_preprocess_model(
     # Fuse Erf sequence into a single Gelu
     fusion_gelu = FusionGelu(onnx_model)
     if fusion_gelu.apply():
+        modified = True
+
+    # Fuse Conv Bn into a single Conv
+    fusion_conv_bn = FusionConvBN(onnx_model)
+    if fusion_conv_bn.apply():
         modified = True
 
     # Fuse ReduceL2 sequence into a single LpNormalization node with p == 2.
