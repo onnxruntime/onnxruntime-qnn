@@ -190,7 +190,7 @@ Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
 
   ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(add_name,
                                                     QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                    QNN_OP_ELEMENT_WISE_ADD,
+                                                    QNN_OP_ELEMENT_WISE_SUBTRACT,
                                                     {input_name, negtive_alpha_tensor_name},
                                                     {add_output_name},
                                                     {},
