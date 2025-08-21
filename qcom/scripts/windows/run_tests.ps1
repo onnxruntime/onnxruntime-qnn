@@ -45,9 +45,9 @@ $NewBuildDirectoryBackslashes = ($NewBuildDirectory -replace "/", "\\")
 
 # Figure out if HTP is available
 if ((Get-CimInstance Win32_operatingsystem).OSArchitecture -eq "ARM 64-bit Processor") {
-    $NpuBackend = "htp"
+    $QdqBackend = "htp"
 } else {
-    $NpuBackend = "cpu"
+    $QdqBackend = "cpu"
 }
 
 $Failed = $false
@@ -91,20 +91,20 @@ Write-Host "-=-=-=- Running onnx/models qdq tests -=-=-=-"
 & $OnnxTestRunnerExe `
     -j 1 `
     -e qnn `
-    -i "backend_type|$NpuBackend" `
+    -i "backend_type|$QdqBackend" `
     "testdata\qdq"
 if (-not $?) {
     $Failed = $true
 }
 
-if ($NpuBackend -ne "cpu") {
+if ($QdqBackend -ne "cpu") {
     Write-Host "-=-=-=- Running onnx/models qdq tests with context cache enabled -=-=-=-"
     # Scrub old context caches
     Get-ChildItem -Path "testdata\qdq-with-context-cache" -Recurse -Filter "*_ctx.onnx" | Remove-Item -Force
     & $OnnxTestRunnerExe `
         -j 1 `
         -e qnn `
-        -f -i "backend_type|$NpuBackend" `
+        -f -i "backend_type|$QdqBackend" `
         "testdata\qdq-with-context-cache"
     if (-not $?) {
         $Failed = $true
