@@ -10,11 +10,12 @@ from pathlib import Path
 
 import onnx
 
-from ....tools.onnx_model_utils import fix_output_shapes, make_input_shape_fixed
+from ....tools.onnx_model_utils import fix_output_shapes, make_input_shape_fixed, optimize_model
 from ....tools.remove_initializer_from_input import remove_initializer_from_input
 from ...fusions import FusionGelu, FusionLayerNormalization
 from ...onnx_model import ONNXModel
 from ...quant_utils import save_and_reload_model_with_shape_infer
+from .fusion_mul_add import FusionMulAdd
 from .fusion_lpnorm import FusionLpNormalization
 from .fusion_spacetodepth import FusionSpaceToDepth
 
@@ -111,6 +112,11 @@ def qnn_preprocess_model(
     # Fuse Erf sequence into a single Gelu
     fusion_gelu = FusionGelu(onnx_model)
     if fusion_gelu.apply():
+        modified = True
+
+    # Fuse Conv Bn into a single Conv
+    fusion_mul_add = FusionMulAdd(onnx_model)
+    if fusion_mul_add.apply():
         modified = True
 
     # Fuse ReduceL2 sequence into a single LpNormalization node with p == 2.
