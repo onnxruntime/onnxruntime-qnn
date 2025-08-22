@@ -209,6 +209,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   }
 
   {
+    CreateQuickGeluOpBuilder("QuickGelu", *this);
+  }
+
+  {
     CreateModOpBuilder("Mod", *this);
   }
 
