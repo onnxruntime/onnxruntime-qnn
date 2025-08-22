@@ -23,6 +23,7 @@
 // in test_main.cc
 extern bool dump_onnx;
 extern bool dump_json;
+extern bool dump_dlc;
 
 namespace onnxruntime {
 namespace test {

@@ -129,6 +129,14 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   }
 
   TryEnableQNNSaver(provider_options);
+  if (dump_dlc) {
+    provider_options.erase("backend_type");
+    #if defined(_WIN32)
+      provider_options["backend_path"] = "QnnIr.dll";
+    #else
+      provider_options["backend_path"] = "libQnnIr.so";
+    #endif  // defined(_WIN32)
+  }
   if (dump_json) {
     provider_options["dump_json_qnn_graph"] = "1";
   }

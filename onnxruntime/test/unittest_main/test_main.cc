@@ -40,6 +40,7 @@
 std::unique_ptr<Ort::Env> ort_env;
 bool dump_onnx = false;
 bool dump_json = false;
+bool dump_dlc = false;
 
 // define environment variable name constants here
 namespace env_var_names {
@@ -163,6 +164,10 @@ int TEST_MAIN(int argc, char** argv) {
       if (std::string(argv[i]) == "--dump_json") {
         std::cout << "[QNN only] Json QNN Graph dumping enabled." << std::endl;
         dump_json = true;
+      }
+      if (std::string(argv[i]) == "--dump_dlc") {
+        std::cout << "[QNN only] DLC dumping enabled." << std::endl;
+        dump_dlc = true;
       }
       if (std::string(argv[i]) == "--verbose") {
         std::cout << "Verbose enabled" << std::endl;
