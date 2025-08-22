@@ -606,6 +606,14 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
 
   bool is_qnn_ep = true;
   TryEnableQNNSaver(qnn_options);
+  if (dump_dlc) {
+    qnn_options.erase("backend_type");
+    #if defined(_WIN32)
+      qnn_options["backend_path"] = "QnnIr.dll";
+    #else
+      qnn_options["backend_path"] = "libQnnIr.so";
+    #endif  // defined(_WIN32)
+  }
   if (dump_json) {
     qnn_options["dump_json_qnn_graph"] = "1";
   }
