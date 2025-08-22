@@ -303,8 +303,10 @@ OrtStatus* CreateEpFactories(const char* /*registration_name*/, const OrtApiBase
   // Factory could use registration_name or define its own EP name.
 #if defined(_WIN32)
   std::string backend_path = "QnnHtp.dll";
+  std::string backend_path_gpu = "QnnGpu.dll";
 #else
   std::string backend_path = "libQnnHtp.so";
+  std::string backend_path_gpu = "libQnnGpu.so";
 #endif
 
   // Identify the path of the current dynamic library, and expect that backend_path is in the same directory.
@@ -314,21 +316,24 @@ OrtStatus* CreateEpFactories(const char* /*registration_name*/, const OrtApiBase
     backend_path = (parent_path / backend_path).string();
   }
 
-  auto factory_npu = std::make_unique<QnnEpFactory>(*ort_api, *default_logger,
-                                                    onnxruntime::kQnnExecutionProvider,
-                                                    OrtHardwareDeviceType_NPU,
-                                                    std::move(backend_path));
+  // auto factory_npu = std::make_unique<QnnEpFactory>(*ort_api, *default_logger,
+  //                                                   onnxruntime::kQnnExecutionProvider,
+  //                                                   OrtHardwareDeviceType_NPU,
+  //                                                   std::move(backend_path));
 
   // If want to support GPU, create a new factory instance because QNN EP is not currently setup to partition a single model
   // among heterogeneous devices.
-  // std::unique_ptr<OrtEpFactory> factory_gpu = std::make_unique<QnnEpFactory>(*ort_api, "QNNExecutionProvider_GPU", OrtHardwareDeviceType_GPU, "gpu");
+  auto factory_gpu = std::make_unique<QnnEpFactory>(*ort_api, *default_logger,
+                                                    onnxruntime::kQnnExecutionProvider,
+                                                    OrtHardwareDeviceType_GPU,
+                                                    std::move(backend_path_gpu));
 
   if (max_factories < 1) {
     return ort_api->CreateStatus(ORT_INVALID_ARGUMENT,
                                  "Not enough space to return EP factory. Need at least one.");
   }
 
-  factories[0] = factory_npu.release();
+  factories[0] = factory_gpu.release();
   *num_factories = 1;
 
   return nullptr;
