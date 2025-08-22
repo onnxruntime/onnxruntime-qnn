@@ -3,6 +3,7 @@
 #include "core/optimizer/double_qdq_pairs_remover.h"
 #include <cassert>
 #include <string>
+#include <iostream>
 
 #include "core/common/span_utils.h"
 #include "core/common/inlined_containers_fwd.h"
@@ -170,6 +171,8 @@ static bool TryReduceDoubleQDQSequence(Graph& graph, NodeIndex q1_index) {
     return false;
   }
 
+  std::cout << "DoubleQDQPairsRemover: Found potential Q1 node: " << q1->Name() << std::endl;
+
   // Ensure that dq1 is a DQ operator, has one parent and one child, and is not a graph output
   NodeIndex dq1_index = q1->OutputEdgesBegin()->GetNode().Index();
   const Node* dq1 = graph.GetNode(dq1_index);
@@ -178,16 +181,21 @@ static bool TryReduceDoubleQDQSequence(Graph& graph, NodeIndex q1_index) {
       dq1->GetInputEdgesCount() != 1 ||
       dq1->GetOutputEdgesCount() != 1 ||
       graph.NodeProducesGraphOutput(*dq1)) {
+    std::cout << "DoubleQDQPairsRemover: DQ1 validation failed for node: " << (dq1 ? dq1->Name() : "null") << std::endl;
     return false;
   }
 
+  std::cout << "DoubleQDQPairsRemover: Found DQ1 node: " << dq1->Name() << std::endl;
+
   // The Q1 and DQ1 nodes must have equal zero-point and scale values (scalar/constant).
   if (!QDQ::IsQDQPairSupported(graph, *q1, *dq1, get_constant_initializer, graph.ModelPath())) {
+    std::cout << "DoubleQDQPairsRemover: Q1-DQ1 pair not supported" << std::endl;
     return false;
   }
 
   auto q1_quant_type = ONNX_NAMESPACE::TensorProto_DataType_UNDEFINED;
   if (!GetQNodeZeroPointType(graph, *q1, q1_quant_type)) {
+    std::cout << "DoubleQDQPairsRemover: Failed to get Q1 zero point type" << std::endl;
     return false;
   }
 
@@ -202,8 +210,11 @@ static bool TryReduceDoubleQDQSequence(Graph& graph, NodeIndex q1_index) {
       graph.NodeProducesGraphOutput(*q2) ||
       !GetQNodeZeroPointType(graph, *q2, q2_quant_type) ||
       q1_quant_type != q2_quant_type) {
+    std::cout << "DoubleQDQPairsRemover: Q2 validation failed for node: " << (q2 ? q2->Name() : "null") << std::endl;
     return false;
   }
+
+  std::cout << "DoubleQDQPairsRemover: Found Q2 node: " << q2->Name() << std::endl;
 
   // All of q2's children should be DQ nodes with zero-point and scale values equal to those of q2.
   InlinedVector<gsl::not_null<Node*>> dq2_nodes;
@@ -215,15 +226,41 @@ static bool TryReduceDoubleQDQSequence(Graph& graph, NodeIndex q1_index) {
 
     if (dq2 == nullptr || dq2->OpType() != "DequantizeLinear") {
       // Child is not a DQ op.
+      std::cout << "DoubleQDQPairsRemover: DQ2 validation failed for node: " << (dq2 ? dq2->Name() : "null") << std::endl;
       return false;
     }
 
     // The Q2 and DQ2 nodes must have equal zero-point and scale values (scalar/constant).
     if (!QDQ::IsQDQPairSupported(graph, *q2, *dq2, get_constant_initializer, graph.ModelPath())) {
+      std::cout << "DoubleQDQPairsRemover: Q2-DQ2 pair not supported" << std::endl;
       return false;
     }
 
     dq2_nodes.push_back(dq2);
+    std::cout << "DoubleQDQPairsRemover: Found DQ2 node: " << dq2->Name() << std::endl;
+  }
+
+  // Check if this is a weight-related QDQ sequence
+  bool is_weight_related = false;
+  if (q1->InputDefs().size() > 0) {
+    std::string q1_input_name = q1->InputDefs()[0]->Name();
+    if (q1_input_name.find("weight") != std::string::npos ||
+        q1_input_name.find("conv") != std::string::npos) {
+      is_weight_related = true;
+      std::cout << "DoubleQDQPairsRemover: *** WEIGHT-RELATED QDQ SEQUENCE DETECTED ***" << std::endl;
+      std::cout << "DoubleQDQPairsRemover: Q1 input: " << q1_input_name << std::endl;
+      std::cout << "DoubleQDQPairsRemover: Q1 output: " << q1->OutputDefs()[0]->Name() << std::endl;
+      std::cout << "DoubleQDQPairsRemover: DQ1 output: " << dq1->OutputDefs()[0]->Name() << std::endl;
+      std::cout << "DoubleQDQPairsRemover: Q2 output: " << q2->OutputDefs()[0]->Name() << std::endl;
+      for (const auto& dq2 : dq2_nodes) {
+        std::cout << "DoubleQDQPairsRemover: DQ2 output: " << dq2->OutputDefs()[0]->Name() << std::endl;
+        // Check what consumes this DQ2 output
+        for (auto it = dq2->OutputEdgesBegin(); it != dq2->OutputEdgesEnd(); it++) {
+          const Node* consumer = graph.GetNode(it->GetNode().Index());
+          std::cout << "DoubleQDQPairsRemover: DQ2 consumer: " << consumer->Name() << " (type: " << consumer->OpType() << ")" << std::endl;
+        }
+      }
+    }
   }
 
   bool can_recompute = false;
@@ -234,11 +271,23 @@ static bool TryReduceDoubleQDQSequence(Graph& graph, NodeIndex q1_index) {
   } else if (q1_quant_type == ONNX_NAMESPACE::TensorProto_DataType_UINT16) {
     can_recompute = RecomputeOuterQDQZeroPointAndScale<uint16_t>(graph, *q1, *dq1, *q2, dq2_nodes);
   } else if (q1_quant_type == ONNX_NAMESPACE::TensorProto_DataType_INT16) {
-    can_recompute = RecomputeOuterQDQZeroPointAndScale<int16_t>(graph, *q1, *dq1, *q2, dq2_nodes);
+    can_recompute = RecomputeOuterQDQZeroPointAndScale<uint16_t>(graph, *q1, *dq1, *q2, dq2_nodes);
   }
 
   if (!can_recompute) {
+    std::cout << "DoubleQDQPairsRemover: Cannot recompute outer QDQ zero point and scale" << std::endl;
     return false;
+  }
+
+  if (is_weight_related) {
+    std::cout << "DoubleQDQPairsRemover: *** REMOVING WEIGHT-RELATED QDQ SEQUENCE ***" << std::endl;
+    std::cout << "DoubleQDQPairsRemover: Removing edge Q1(" << q1->Name() << ") -> DQ1(" << dq1->Name() << ")" << std::endl;
+    std::cout << "DoubleQDQPairsRemover: Removing edge DQ1(" << dq1->Name() << ") -> Q2(" << q2->Name() << ")" << std::endl;
+    for (const auto& dq2 : dq2_nodes) {
+      std::cout << "DoubleQDQPairsRemover: Removing edge Q2(" << q2->Name() << ") -> DQ2(" << dq2->Name() << ")" << std::endl;
+      std::cout << "DoubleQDQPairsRemover: Adding edge Q1(" << q1->Name() << ") -> DQ2(" << dq2->Name() << ")" << std::endl;
+    }
+    std::cout << "DoubleQDQPairsRemover: Removing nodes DQ1(" << dq1->Name() << ") and Q2(" << q2->Name() << ")" << std::endl;
   }
 
   graph.RemoveEdge(q1_index, dq1_index, 0, 0);  // Disconnect Q1 -> DQ1
@@ -254,6 +303,11 @@ static bool TryReduceDoubleQDQSequence(Graph& graph, NodeIndex q1_index) {
   graph.RemoveNode(q2_index);
   graph.RemoveNode(dq1_index);
 
+  if (is_weight_related) {
+    std::cout << "DoubleQDQPairsRemover: *** WEIGHT-RELATED QDQ SEQUENCE REMOVAL COMPLETE ***" << std::endl;
+    std::cout << "DoubleQDQPairsRemover: Final structure: Q1(" << q1->Name() << ") -> DQ2 nodes" << std::endl;
+  }
+
   return true;
 }
 
@@ -262,14 +316,21 @@ Status DoubleQDQPairsRemover::ApplyImpl(
     bool& modified,
     int /*graph_level*/,
     const logging::Logger& /*logger*/) const {
+  std::cout << "DoubleQDQPairsRemover::ApplyImpl called" << std::endl;
+
   const GraphViewer graph_viewer(graph);
   const auto& node_topology_list = graph_viewer.GetNodesInTopologicalOrder();
+
+  std::cout << "DoubleQDQPairsRemover: Processing " << node_topology_list.size() << " nodes in topological order" << std::endl;
 
   for (NodeIndex node_index : node_topology_list) {
     if (TryReduceDoubleQDQSequence(graph, node_index)) {
       modified = true;
+      std::cout << "DoubleQDQPairsRemover: Successfully reduced QDQ sequence starting at node " << node_index << std::endl;
     }
   }
+
+  std::cout << "DoubleQDQPairsRemover::ApplyImpl finished, modified = " << modified << std::endl;
   return Status::OK();
 }
 

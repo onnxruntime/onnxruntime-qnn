@@ -6,6 +6,7 @@
 #include <limits>
 #include <optional>
 #include <utility>
+#include <iostream>
 
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -40,23 +41,56 @@ std::unique_ptr<IQnnNodeGroup> DQQFusion::TryFusion(
   const GraphViewer& graph_viewer = qnn_model_wrapper.GetGraphViewer();
   const Node& dq_node = dq_node_unit.GetNode();
 
+  // Check if this is a weight-related DQ node
+  bool is_weight_related = false;
+  if (dq_node.InputDefs().size() > 0) {
+    std::string dq_input_name = dq_node.InputDefs()[0]->Name();
+    if (dq_input_name.find("weight") != std::string::npos ||
+        dq_input_name.find("conv") != std::string::npos) {
+      is_weight_related = true;
+      std::cout << "DQQFusion: *** WEIGHT-RELATED DQ NODE DETECTED ***" << std::endl;
+      std::cout << "DQQFusion: DQ node: " << dq_node.Name() << std::endl;
+      std::cout << "DQQFusion: DQ input: " << dq_input_name << std::endl;
+      std::cout << "DQQFusion: DQ output: " << dq_node.OutputDefs()[0]->Name() << std::endl;
+    }
+  }
+
   // DQ must have a single Q child (1 output edge) and must not produce a graph output.
   const std::array<std::string_view, 1> child_types = {QUANTIZE_LINEAR};
   const NodeUnit* q_node_unit = GetOnlyChildOfType(graph_viewer, dq_node_unit, child_types,
                                                    node_to_node_unit, node_unit_to_qnn_node_group);
 
   if (q_node_unit == nullptr) {
+    if (is_weight_related) {
+      std::cout << "DQQFusion: No Q child found for weight-related DQ node" << std::endl;
+    }
     return nullptr;
+  }
+
+  if (is_weight_related) {
+    std::cout << "DQQFusion: Found Q child: " << q_node_unit->GetNode().Name() << std::endl;
+    std::cout << "DQQFusion: Q output: " << q_node_unit->GetNode().OutputDefs()[0]->Name() << std::endl;
   }
 
   // DQ and Q must have equal scale type and different zp type.
   if (!IsDQQConversion(graph_viewer, dq_node, q_node_unit->GetNode())) {
+    if (is_weight_related) {
+      std::cout << "DQQFusion: DQ->Q conversion not supported for weight-related nodes" << std::endl;
+    }
     return nullptr;
   }
 
   if (Status status = ValidateOnQnn(qnn_model_wrapper, dq_node_unit, *q_node_unit);
       !status.IsOK()) {
+    if (is_weight_related) {
+      std::cout << "DQQFusion: QNN validation failed for weight-related DQ->Q sequence" << std::endl;
+    }
     return nullptr;
+  }
+
+  if (is_weight_related) {
+    std::cout << "DQQFusion: *** CREATING WEIGHT-RELATED DQ->Q FUSION ***" << std::endl;
+    std::cout << "DQQFusion: Will fuse DQ(" << dq_node.Name() << ") -> Q(" << q_node_unit->GetNode().Name() << ") into Convert op" << std::endl;
   }
 
   return std::make_unique<DQQFusion>(dq_node_unit, *q_node_unit);
@@ -73,6 +107,20 @@ Status DQQFusion::IsSupported(QnnModelWrapper& qmw, const logging::Logger& logge
 
 Status DQQFusion::AddToModelBuilder(QnnModelWrapper& qmw, const logging::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
+
+  // Check if this is a weight-related fusion
+  if (node_units_[0]->Inputs().size() > 0) {
+    std::string dq_input_name = node_units_[0]->Inputs()[0].node_arg.Name();
+    if (dq_input_name.find("weight") != std::string::npos ||
+        dq_input_name.find("conv") != std::string::npos) {
+      std::cout << "DQQFusion: *** APPLYING WEIGHT-RELATED DQ->Q FUSION ***" << std::endl;
+      std::cout << "DQQFusion: DQ input: " << dq_input_name << std::endl;
+      std::cout << "DQQFusion: DQ output: " << node_units_[0]->Outputs()[0].node_arg.Name() << std::endl;
+      std::cout << "DQQFusion: Q output: " << node_units_[1]->Outputs()[0].node_arg.Name() << std::endl;
+      std::cout << "DQQFusion: Creating Convert op from " << dq_input_name << " to " << node_units_[1]->Outputs()[0].node_arg.Name() << std::endl;
+    }
+  }
+
   return CreateOnQnn(qmw, *node_units_[0], *node_units_[1]);
 }
 

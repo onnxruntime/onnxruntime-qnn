@@ -203,7 +203,7 @@ Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
                                                   std::vector<std::string>&& input_names,
                                                   const logging::Logger& logger,
                                                   bool do_op_validation) const {
-  // FullyConnected dosen't support 2d bias with shape [N, M], In this case, decompose Gemm into FullyConnected + Add for compatibility.
+  // FullyConnected doesn't support 2d bias with shape [N, M], In this case, decompose Gemm into FullyConnected + Add for compatibility.
   bool split_gemm = false;
   if (node_unit.Inputs().size() == 3) {
     auto& input_c = node_unit.Inputs()[2];

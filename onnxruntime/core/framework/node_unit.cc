@@ -125,6 +125,23 @@ std::vector<NodeUnitIODef> GetQDQIODefs(const Node& target_node, const QDQ::Node
         // DQ is input to the target node, use the DstArgIndex
         auto idx = cur->GetDstArgIndex();
         // This is a DQ node, we are using x, x_scale, x_zp (input[0, 1, 2])
+
+        // Debug: Check if this is weight-related DQ resolution
+        std::string dq_output_name = node.OutputDefs()[0]->Name();
+        std::string dq_input_name = node_inputs[0]->Name();
+        if (dq_output_name.find("weight") != std::string::npos ||
+            dq_input_name.find("weight") != std::string::npos ||
+            dq_output_name.find("conv") != std::string::npos ||
+            dq_input_name.find("conv") != std::string::npos) {
+          std::cout << "NodeUnit: *** WEIGHT-RELATED DQ INPUT RESOLUTION ***" << std::endl;
+          std::cout << "NodeUnit: Target node: " << target_node.Name() << " (type: " << target_node.OpType() << ")" << std::endl;
+          std::cout << "NodeUnit: DQ node: " << node.Name() << " (type: " << node.OpType() << ")" << std::endl;
+          std::cout << "NodeUnit: DQ output (what Conv sees in ONNX): '" << dq_output_name << "'" << std::endl;
+          std::cout << "NodeUnit: DQ input (what NodeUnit returns): '" << dq_input_name << "'" << std::endl;
+          std::cout << "NodeUnit: Input index: " << idx << std::endl;
+          std::cout << "NodeUnit: *** TRANSPARENT DQ RESOLUTION APPLIED ***" << std::endl;
+        }
+
         quantized_io_defs.insert({idx, NodeUnitIODef{*node_inputs[0], quant_param}});
       } else {
         // Q is output of the target node, use the SrcArgIndex
@@ -143,6 +160,22 @@ std::vector<NodeUnitIODef> GetQDQIODefs(const Node& target_node, const QDQ::Node
     // If we can find the NodeUnitIODef for this index, this is a quantized input/output
     if (quantized_io_defs.find(i) != quantized_io_defs.cend()) {
       io_defs.push_back(std::move(quantized_io_defs.at(i)));
+
+      // Debug: Log the resolved input transformation
+      const auto& resolved_io_def = io_defs.back();
+      std::string resolved_name = resolved_io_def.node_arg.Name();
+      std::string original_name = target_node_io_defs[i]->Name();
+      if (resolved_name != original_name &&
+          (resolved_name.find("weight") != std::string::npos ||
+           resolved_name.find("conv") != std::string::npos ||
+           original_name.find("weight") != std::string::npos ||
+           original_name.find("conv") != std::string::npos)) {
+        std::cout << "NodeUnit: *** FINAL INPUT TRANSFORMATION ***" << std::endl;
+        std::cout << "NodeUnit: Target node: " << target_node.Name() << " input[" << i << "]" << std::endl;
+        std::cout << "NodeUnit: Original ONNX input: '" << original_name << "'" << std::endl;
+        std::cout << "NodeUnit: Resolved NodeUnit input: '" << resolved_name << "'" << std::endl;
+        std::cout << "NodeUnit: *** WEIGHT INPUT SUCCESSFULLY RESOLVED ***" << std::endl;
+      }
     } else {
       // This is a regular input
       io_defs.push_back({*target_node_io_defs[i], std::nullopt});
@@ -159,11 +192,32 @@ Status QDQ::NodeGroup::CanCreateNodeGroup(const GraphViewer& graph_viewer,
                                           const Node* redundant_clip_node,
                                           gsl::span<const Node* const> dq_nodes,
                                           gsl::span<const Node* const> q_nodes) {
+
+  // Debug: Log QDQ group validation attempt
+  std::cout << "NodeUnit: *** QDQ GROUP VALIDATION ATTEMPT ***" << std::endl;
+  std::cout << "NodeUnit: Target node: " << target_node.Name() << " (type: " << target_node.OpType() << ")" << std::endl;
+  std::cout << "NodeUnit: DQ nodes count: " << dq_nodes.size() << std::endl;
+  for (size_t i = 0; i < dq_nodes.size(); ++i) {
+    if (dq_nodes[i]) {
+      std::cout << "NodeUnit: DQ[" << i << "]: " << dq_nodes[i]->Name() << " (type: " << dq_nodes[i]->OpType() << ")" << std::endl;
+    }
+  }
+  std::cout << "NodeUnit: Q nodes count: " << q_nodes.size() << std::endl;
+  for (size_t i = 0; i < q_nodes.size(); ++i) {
+    if (q_nodes[i]) {
+      std::cout << "NodeUnit: Q[" << i << "]: " << q_nodes[i]->Name() << " (type: " << q_nodes[i]->OpType() << ")" << std::endl;
+    }
+  }
+  std::cout << "NodeUnit: Redundant clip node: " << (redundant_clip_node ? redundant_clip_node->Name() : "null") << std::endl;
+
   // Within a QDQ node group, a target node input is the only consumer of each DQ.
   // This should have been ensured by the EnsureUniqueDQForNodeUnit graph transformer, but other graph modifications
   // may have happened since. Verify that this is still true.
   for (const auto* dq_node : dq_nodes) {
     const bool dq_produces_graph_output = graph_viewer.NodeProducesGraphOutput(*dq_node);
+    std::cout << "NodeUnit: Checking DQ node: " << dq_node->Name() << std::endl;
+    std::cout << "NodeUnit: DQ produces graph output: " << (dq_produces_graph_output ? "YES" : "NO") << std::endl;
+
     ORT_RETURN_IF(dq_produces_graph_output,
                   "QDQ node group cannot have DQ node that produces a graph output. DQ node: ", dq_node->Name(),
                   ", target node: ", target_node.Name());
@@ -171,6 +225,14 @@ Status QDQ::NodeGroup::CanCreateNodeGroup(const GraphViewer& graph_viewer,
     const bool dq_has_single_output_edge_to_target =
         dq_node->GetOutputEdgesCount() == 1 &&
         dq_node->OutputEdgesBegin()->GetNode().Index() == target_node.Index();
+
+    std::cout << "NodeUnit: DQ output edges count: " << dq_node->GetOutputEdgesCount() << std::endl;
+    if (dq_node->GetOutputEdgesCount() > 0) {
+      std::cout << "NodeUnit: DQ first output edge to: " << dq_node->OutputEdgesBegin()->GetNode().Name()
+                << " (target: " << target_node.Name() << ")" << std::endl;
+    }
+    std::cout << "NodeUnit: DQ has single output edge to target: " << (dq_has_single_output_edge_to_target ? "YES" : "NO") << std::endl;
+
     ORT_RETURN_IF_NOT(dq_has_single_output_edge_to_target,
                       "QDQ node group cannot have DQ that doesn't have a single output edge to the target node. "
                       "DQ node: ",
@@ -200,6 +262,9 @@ Status QDQ::NodeGroup::CanCreateNodeGroup(const GraphViewer& graph_viewer,
   // e.g. TopK produces values and indices. The indices output won't be quantized, so even if we replace the TopK QDQ
   // node group with a quantized TopK, an int64_t indices value will be produced and can provide a graph output.
   if (!q_nodes.empty()) {
+    std::cout << "NodeUnit: *** VALIDATING TARGET NODE OUTPUTS ***" << std::endl;
+    std::cout << "NodeUnit: Target node has " << target_node.GetOutputEdgesCount() << " output edges" << std::endl;
+
     auto cur_edge = target_node.OutputEdgesBegin();
     auto end_edge = target_node.OutputEdgesEnd();
     std::vector<const Node*> output_consumers(target_node.OutputDefs().size(), nullptr);
@@ -208,6 +273,9 @@ Status QDQ::NodeGroup::CanCreateNodeGroup(const GraphViewer& graph_viewer,
       auto output_idx = cur_edge->GetSrcArgIndex();
       const Node& this_consumer = cur_edge->GetNode();
       const Node* existing_consumer = output_consumers[output_idx];
+
+      std::cout << "NodeUnit: Output[" << output_idx << "] consumer: " << this_consumer.Name()
+                << " (type: " << this_consumer.OpType() << ")" << std::endl;
 
       if (existing_consumer != nullptr) {
         // another edge for this output. either both are Q or both are not.
@@ -218,6 +286,10 @@ Status QDQ::NodeGroup::CanCreateNodeGroup(const GraphViewer& graph_viewer,
           valid = this_consumer.OpType() != "QuantizeLinear";
         }
 
+        std::cout << "NodeUnit: Multiple consumers for output[" << output_idx << "]: "
+                  << existing_consumer->Name() << " and " << this_consumer.Name() << std::endl;
+        std::cout << "NodeUnit: Validation result: " << (valid ? "PASS" : "FAIL") << std::endl;
+
         ORT_RETURN_IF_NOT(valid,
                           "QDQ node group cannot have an output from the target node being consumed by a Q node and "
                           "a non-Q node. target node: ",
@@ -227,16 +299,24 @@ Status QDQ::NodeGroup::CanCreateNodeGroup(const GraphViewer& graph_viewer,
       }
     }
 
-    const auto& graph_outputs = graph_viewer.GetOutputs();
+        const auto& graph_outputs = graph_viewer.GetOutputs();
+    std::cout << "NodeUnit: *** VALIDATING GRAPH OUTPUTS ***" << std::endl;
+    std::cout << "NodeUnit: Graph has " << graph_outputs.size() << " outputs" << std::endl;
+
     for (size_t idx = 0, end = output_consumers.size(); idx < end; ++idx) {
       // any output with a Q cannot be a graph output as it will disappear if the QDQ node unit is converted to
       // a quantized op.
       if (output_consumers[idx] != nullptr && output_consumers[idx]->OpType() == "QuantizeLinear") {
         const auto& output_name = target_node.OutputDefs()[idx]->Name();
         bool is_graph_output = std::any_of(graph_outputs.begin(), graph_outputs.end(),
-                                           [&output_name](const NodeArg* node_arg) {
-                                             return node_arg->Name() == output_name;
-                                           });
+                                         [&output_name](const NodeArg* node_arg) {
+                                           return node_arg->Name() == output_name;
+                                         });
+
+        std::cout << "NodeUnit: Output[" << idx << "] '" << output_name << "' consumed by Q node: "
+                  << output_consumers[idx]->Name() << std::endl;
+        std::cout << "NodeUnit: Output[" << idx << "] is graph output: " << (is_graph_output ? "YES" : "NO") << std::endl;
+
         ORT_RETURN_IF(is_graph_output,
                       "QDQ node group cannot have an output from the target node that is consumed by a Q node and "
                       "a graph output. target node: ",
@@ -245,6 +325,7 @@ Status QDQ::NodeGroup::CanCreateNodeGroup(const GraphViewer& graph_viewer,
     }
   }
 
+  std::cout << "NodeUnit: *** QDQ GROUP VALIDATION SUCCESSFUL ***" << std::endl;
   return Status::OK();
 }
 
@@ -267,8 +348,31 @@ NodeUnit::NodeUnit(const GraphViewer& graph_viewer, const QDQ::NodeGroup& node_g
       inputs_{GetQDQIODefs(target_node_, node_group, true /* is_input */)},
       outputs_{GetQDQIODefs((redundant_clip_node_ ? *redundant_clip_node_ : target_node_), node_group,
                             false /* is_input */)} {
-  ORT_THROW_IF_ERROR(
-      QDQ::NodeGroup::CanCreateNodeGroup(graph_viewer, target_node_, redundant_clip_node_, dq_nodes_, q_nodes_));
+
+  // Debug: Log QDQ NodeGroup creation
+  std::cout << "NodeUnit: Creating QDQ NodeGroup for target node: " << target_node_.Name()
+            << " (type: " << target_node_.OpType() << ")" << std::endl;
+  std::cout << "NodeUnit: DQ nodes count: " << dq_nodes_.size() << std::endl;
+  for (size_t i = 0; i < dq_nodes_.size(); ++i) {
+    if (dq_nodes_[i]) {
+      std::cout << "NodeUnit: DQ[" << i << "]: " << dq_nodes_[i]->Name() << std::endl;
+    }
+  }
+  std::cout << "NodeUnit: Q nodes count: " << q_nodes_.size() << std::endl;
+  for (size_t i = 0; i < q_nodes_.size(); ++i) {
+    if (q_nodes_[i]) {
+      std::cout << "NodeUnit: Q[" << i << "]: " << q_nodes_[i]->Name() << std::endl;
+    }
+  }
+  std::cout << "NodeUnit: *** ATTEMPTING QDQ GROUP VALIDATION ***" << std::endl;
+  Status validation_status = QDQ::NodeGroup::CanCreateNodeGroup(graph_viewer, target_node_, redundant_clip_node_, dq_nodes_, q_nodes_);
+  if (!validation_status.IsOK()) {
+    std::cout << "NodeUnit: *** QDQ GROUP VALIDATION FAILED ***" << std::endl;
+    std::cout << "NodeUnit: Error: " << validation_status.ErrorMessage() << std::endl;
+    ORT_THROW_IF_ERROR(validation_status);
+  } else {
+    std::cout << "NodeUnit: *** QDQ GROUP VALIDATION PASSED ***" << std::endl;
+  }
 
   input_edge_count_ = std::accumulate(dq_nodes_.cbegin(), dq_nodes_.cend(), size_t(0),
                                       [](size_t acc, const Node* node) { return acc + node->GetInputEdgesCount(); });

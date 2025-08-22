@@ -81,6 +81,8 @@ Status WeightBiasQuantization::ApplyImpl(Graph& graph, bool& modified, int graph
       continue;
     }
 
+    std::cout << "\nWeightBiasQuantization" << graph_level << std::endl;
+
     Node& dq_0 = *graph.GetNode(parent_node_0->Index());
     Node* dq_1 = nullptr;
     const ONNX_NAMESPACE::TensorProto* weight_proto = nullptr;
@@ -245,9 +247,21 @@ Status WeightBiasQuantization::ApplyImpl(Graph& graph, bool& modified, int graph
       graph.AddEdge(bias_dq_node.Index(), node.Index(), 0, 2);
     }
 
+    std::cout << "\nWeightBiasQuantization" << graph_level << " " << "modified!" << std::endl;
     modified = true;
   }
 
+  // Dump graph after WeightBiasQuantization pass
+  std::cout << "\nGraph dump after WeightBiasQuantization:" << std::endl;
+  for (const auto& node : graph.Nodes()) {
+    std::cout << "Node: " << node.Name() << ", OpType: " << node.OpType() << std::endl;
+    for (const auto* input : node.InputDefs()) {
+      std::cout << "  Input: " << input->Name() << std::endl;
+    }
+    for (const auto* output : node.OutputDefs()) {
+      std::cout << "  Output: " << output->Name() << std::endl;
+    }
+  }
   return Status::OK();
 }
 

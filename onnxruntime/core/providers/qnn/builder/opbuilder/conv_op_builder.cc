@@ -153,10 +153,11 @@ Status ConvOpBuilder::GetInputChannelNumber(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status ConvOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                    const NodeUnit& node_unit,
-                                    const logging::Logger& logger,
-                                    std::vector<std::string>& input_names,
-                                    bool do_op_validation) const {
+                                   const NodeUnit& node_unit,
+                                   const logging::Logger& logger,
+                                   std::vector<std::string>& input_names,
+                                   bool do_op_validation) const {
+  std::cout << "ConvOpBuilder::ProcessInputs called for node: " << node_unit.OpType() << std::endl;
   const auto& inputs = node_unit.Inputs();
   assert(inputs.size() >= 2);
 
@@ -165,8 +166,10 @@ Status ConvOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                     "QNN EP: Cannot get shape for first input");
 
   if (input0_shape.size() == 3) {
+    std::cout << "ConvOpBuilder: Routing to ProcessConv1DInputs (input shape size: " << input0_shape.size() << ")" << std::endl;
     return ProcessConv1DInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
   } else if (input0_shape.size() == 4 || input0_shape.size() == 5) {
+    std::cout << "ConvOpBuilder: Routing to ProcessConv2D3DInputs (input shape size: " << input0_shape.size() << ")" << std::endl;
     return ProcessConv2D3DInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
   }
 
@@ -178,6 +181,7 @@ Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
                                             const logging::Logger& logger,
                                             std::vector<std::string>& input_names,
                                             bool do_op_validation) const {
+  std::cout << "ConvOpBuilder::ProcessConv2D3DInputs called for node: " << node_unit.OpType() << std::endl;
   const auto& inputs = node_unit.Inputs();
   const size_t num_inputs = inputs.size();
   OnnxConvType conv_type = {};
@@ -195,10 +199,21 @@ Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
   //
   {
     const std::string& input1_name = inputs[1].node_arg.Name();
+    std::cout << "conv_op_builder: Weight input tensor name: '" << input1_name << "'" << std::endl;
+    std::cout << "conv_op_builder: inputs[1].node_arg details - Name: '" << inputs[1].node_arg.Name()
+              << "', Exists: " << inputs[1].node_arg.Exists() << std::endl;
     TensorInfo input_info = {};
     ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], input_info));
 
     std::string actual_name = input_info.is_initializer ? input1_name : utils::GetUniqueName(input1_name, "_transpose");
+    std::cout << "conv_op_builder line 202: Weight Is Initializer: " << input_info.is_initializer << std::endl;
+    std::cout << "#############"
+                 "#############"
+                 "#############"
+                 "#############"
+                 "#############"
+                 "#############"
+              << std::endl;
     input_names.push_back(actual_name);
 
     std::vector<uint32_t> actual_shape;
@@ -359,6 +374,7 @@ Status ConvOpBuilder::ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrapper,
                                           const logging::Logger& logger,
                                           std::vector<std::string>& input_names,
                                           bool do_op_validation) const {
+  std::cout << "ConvOpBuilder::ProcessConv1DInputs called for node: " << node_unit.OpType() << std::endl;
   const auto& inputs = node_unit.Inputs();
   const size_t num_inputs = inputs.size();
   OnnxConvType conv_type = {};

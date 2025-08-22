@@ -33,16 +33,38 @@ int NumActualValues(const Node& node, bool input) {
 }
 
 std::vector<const Node*> FindQDQNodes(const GraphViewer& graph_viewer, const Node& node, bool find_dq_nodes) {
+  std::cout << "FindQDQNodes: Looking for " << (find_dq_nodes ? "DQ" : "Q") << " nodes for node: " << node.Name() << std::endl;
+
   // First get all the upstream (DQ) or downstream (Q) nodes
   std::vector<const Node*> nodes = find_dq_nodes ? graph_utils::FindParentsByType(node, QDQ::DQOpName)
                                                  : graph_utils::FindChildrenByType(node, QDQ::QOpName);
 
+  std::cout << "FindQDQNodes: Found " << nodes.size() << " raw " << (find_dq_nodes ? "DQ" : "Q") << " nodes:" << std::endl;
+  for (size_t i = 0; i < nodes.size(); ++i) {
+    if (nodes[i]) {
+      std::cout << "FindQDQNodes:   Raw[" << i << "]: " << nodes[i]->Name() << " (type: " << nodes[i]->OpType() << ")" << std::endl;
+    }
+  }
+
   // Remove all the nodes which are not in the graph_viewer
+  size_t before_removal = nodes.size();
   nodes.erase(std::remove_if(nodes.begin(), nodes.end(),
                              [&graph_viewer](const Node* _node) {
                                return _node == nullptr || graph_viewer.GetNode(_node->Index()) == nullptr;
                              }),
               nodes.end());
+  size_t after_removal = nodes.size();
+
+  if (before_removal != after_removal) {
+    std::cout << "FindQDQNodes: Removed " << (before_removal - after_removal) << " nodes not in graph_viewer" << std::endl;
+  }
+
+  std::cout << "FindQDQNodes: Final " << (find_dq_nodes ? "DQ" : "Q") << " nodes count: " << nodes.size() << std::endl;
+  for (size_t i = 0; i < nodes.size(); ++i) {
+    if (nodes[i]) {
+      std::cout << "FindQDQNodes:   Final[" << i << "]: " << nodes[i]->Name() << " (type: " << nodes[i]->OpType() << ")" << std::endl;
+    }
+  }
 
   return nodes;
 }
@@ -52,51 +74,120 @@ bool NodeGroupSelector::CheckQDQNodes(const GraphViewer& graph_viewer, const Nod
                                       const Node* redundant_clip_node, const std::vector<const Node*>& dq_nodes,
                                       const std::vector<const Node*>& q_nodes, int num_dq_inputs,
                                       bool is_empty_q_nodes_allowed) const {
+  // Debug: Log QDQ node validation attempt
+  std::cout << "NodeGroupSelector::CheckQDQNodes: *** VALIDATING QDQ NODES ***" << std::endl;
+  std::cout << "NodeGroupSelector: Target node: " << node.Name() << " (type: " << node.OpType() << ")" << std::endl;
+  std::cout << "NodeGroupSelector: DQ nodes count: " << dq_nodes.size() << std::endl;
+  std::cout << "NodeGroupSelector: Q nodes count: " << q_nodes.size() << std::endl;
+  std::cout << "NodeGroupSelector: Redundant clip node: " << (redundant_clip_node ? redundant_clip_node->Name() : "null") << std::endl;
+
   if (num_dq_inputs == -1) {
     num_dq_inputs = NumActualValues(node, true);
   }
+  std::cout << "NodeGroupSelector: Expected DQ inputs: " << num_dq_inputs << std::endl;
 
   // The input is a Graph Viewer, so cannot use graph_utils or optimizer_utils
   if (num_dq_inputs != gsl::narrow_cast<int>(dq_nodes.size())) {
+    std::cout << "NodeGroupSelector: *** FAILED: DQ count mismatch ***" << std::endl;
+    std::cout << "NodeGroupSelector: Expected " << num_dq_inputs << " DQ nodes, but found " << dq_nodes.size() << std::endl;
     return false;
   }
+  std::cout << "NodeGroupSelector: DQ count check PASSED" << std::endl;
 
   if (const auto qdq_validation_status =
           NodeGroup::CanCreateNodeGroup(graph_viewer, node, redundant_clip_node, dq_nodes, q_nodes);
       !qdq_validation_status.IsOK()) {
+    std::cout << "NodeGroupSelector: *** FAILED: NodeGroup validation ***" << std::endl;
+    std::cout << "NodeGroupSelector: Error: " << qdq_validation_status.ErrorMessage() << std::endl;
     return false;
   }
+  std::cout << "NodeGroupSelector: NodeGroup validation PASSED" << std::endl;
 
   if (q_nodes.empty()) {
+    std::cout << "NodeGroupSelector: Q nodes empty, checking if allowed: " << is_empty_q_nodes_allowed << std::endl;
     return is_empty_q_nodes_allowed;
   }
 
-  int num_outputs = NumActualValues(node, false);  // number of outputs that exist
-  return (num_outputs == gsl::narrow_cast<int>(q_nodes.size())) && q_nodes.size() == node.GetOutputEdgesCount() &&
-         !graph_viewer.NodeProducesGraphOutput(node);
+    int num_outputs = NumActualValues(node, false);  // number of outputs that exist
+  size_t output_edges = node.GetOutputEdgesCount();
+  bool produces_graph_output = graph_viewer.NodeProducesGraphOutput(node);
+
+  std::cout << "NodeGroupSelector: Output validation:" << std::endl;
+  std::cout << "NodeGroupSelector:   - Actual outputs: " << num_outputs << std::endl;
+  std::cout << "NodeGroupSelector:   - Q nodes: " << q_nodes.size() << std::endl;
+  std::cout << "NodeGroupSelector:   - Output edges: " << output_edges << std::endl;
+  std::cout << "NodeGroupSelector:   - Produces graph output: " << (produces_graph_output ? "YES" : "NO") << std::endl;
+
+  bool output_count_match = (num_outputs == gsl::narrow_cast<int>(q_nodes.size()));
+  bool q_nodes_match_edges = (q_nodes.size() == output_edges);
+  bool no_graph_output = !produces_graph_output;
+
+  if (!output_count_match) {
+    std::cout << "NodeGroupSelector: *** FAILED: Output count mismatch ***" << std::endl;
+    std::cout << "NodeGroupSelector: Expected " << num_outputs << " outputs, but found " << q_nodes.size() << " Q nodes" << std::endl;
+  }
+  if (!q_nodes_match_edges) {
+    std::cout << "NodeGroupSelector: *** FAILED: Q nodes don't match output edges ***" << std::endl;
+    std::cout << "NodeGroupSelector: Q nodes: " << q_nodes.size() << ", Output edges: " << output_edges << std::endl;
+  }
+  if (!no_graph_output) {
+    std::cout << "NodeGroupSelector: *** FAILED: Node produces graph output ***" << std::endl;
+  }
+
+  bool result = output_count_match && q_nodes_match_edges && no_graph_output;
+  std::cout << "NodeGroupSelector: Final result: " << (result ? "PASS" : "FAIL") << std::endl;
+  return result;
 }
 
 std::optional<NodeGroup> NodeGroupSelector::GetQDQSelection(const GraphViewer& graph_viewer, const Node& node) const {
+  std::cout << "NodeGroupSelector::GetQDQSelection: *** ATTEMPTING QDQ SELECTION ***" << std::endl;
+  std::cout << "NodeGroupSelector: Target node: " << node.Name() << " (type: " << node.OpType() << ")" << std::endl;
+
   std::vector<const Node*> dq_nodes = FindQDQNodes(graph_viewer, node, true);
+  std::cout << "NodeGroupSelector: Found " << dq_nodes.size() << " DQ nodes:" << std::endl;
+  for (size_t i = 0; i < dq_nodes.size(); ++i) {
+    if (dq_nodes[i]) {
+      std::cout << "NodeGroupSelector:   DQ[" << i << "]: " << dq_nodes[i]->Name() << " (type: " << dq_nodes[i]->OpType() << ")" << std::endl;
+    }
+  }
 
   // For redundant clip node, currently only support node with only one output, which is consumed by Clip/Relu->Q.
   const Node* clip_node = nullptr;
   if (node.GetOutputEdgesCount() == 1) {
     const Node& next_node = *node.OutputNodesBegin();
+    std::cout << "NodeGroupSelector: Next node: " << next_node.Name() << " (type: " << next_node.OpType() << ")" << std::endl;
+    std::cout << "NodeGroupSelector: Next node output edges: " << next_node.GetOutputEdgesCount() << std::endl;
+    std::cout << "NodeGroupSelector: Next node produces graph output: " << (graph_viewer.NodeProducesGraphOutput(next_node) ? "YES" : "NO") << std::endl;
+
     if ((next_node.OpType() == "Relu" || next_node.OpType() == "Clip") && next_node.GetOutputEdgesCount() == 1 &&
         !graph_viewer.NodeProducesGraphOutput(next_node)) {
       clip_node = &next_node;
+      std::cout << "NodeGroupSelector: *** REDUNDANT CLIP NODE DETECTED ***" << std::endl;
+      std::cout << "NodeGroupSelector: Clip node: " << clip_node->Name() << std::endl;
     }
   }
 
   std::vector<const Node*> q_nodes = FindQDQNodes(graph_viewer, (clip_node ? *clip_node : node), false);
+  std::cout << "NodeGroupSelector: Found " << q_nodes.size() << " Q nodes:" << std::endl;
+  for (size_t i = 0; i < q_nodes.size(); ++i) {
+    if (q_nodes[i]) {
+      std::cout << "NodeGroupSelector:   Q[" << i << "]: " << q_nodes[i]->Name() << " (type: " << q_nodes[i]->OpType() << ")" << std::endl;
+    }
+  }
 
   if (clip_node && (q_nodes.size() != 1 || !IsClipMadeRedundantByQ(graph_viewer.GetGraph(), *clip_node, *q_nodes[0]))) {
+    std::cout << "NodeGroupSelector: *** CLIP VALIDATION FAILED ***" << std::endl;
+    std::cout << "NodeGroupSelector: Q nodes count: " << q_nodes.size() << std::endl;
+    if (q_nodes.size() == 1) {
+      std::cout << "NodeGroupSelector: IsClipMadeRedundantByQ result: " << (IsClipMadeRedundantByQ(graph_viewer.GetGraph(), *clip_node, *q_nodes[0]) ? "true" : "false") << std::endl;
+    }
     return std::nullopt;
   }
 
   // When here, if clip_node is not nullptr, it is redundant.
+  std::cout << "NodeGroupSelector: *** CALLING CHECK FUNCTION ***" << std::endl;
   if (!Check(graph_viewer, node, clip_node, dq_nodes, q_nodes)) {
+    std::cout << "NodeGroupSelector: *** CHECK FUNCTION FAILED ***" << std::endl;
     return std::nullopt;
   }
 
@@ -361,40 +452,74 @@ void SplitSelector::UpdateBuilder(NodesToOptimizeIndicesBuilder& builder) const 
 bool ConvNodeGroupSelector::Check(const GraphViewer& graph_viewer, const Node& node, const Node* redundant_clip_node,
                                   const std::vector<const Node*>& dq_nodes,
                                   const std::vector<const Node*>& q_nodes) const {
+  std::cout << "ConvNodeGroupSelector::Check: *** STARTING CONV-SPECIFIC VALIDATION ***" << std::endl;
+  std::cout << "ConvNodeGroupSelector::Check: Target node: " << node.Name() << " (type: " << node.OpType() << ")" << std::endl;
+  std::cout << "ConvNodeGroupSelector::Check: DQ nodes count: " << dq_nodes.size() << std::endl;
+  std::cout << "ConvNodeGroupSelector::Check: Q nodes count: " << q_nodes.size() << std::endl;
+  std::cout << "ConvNodeGroupSelector::Check: Redundant clip node: " << (redundant_clip_node ? redundant_clip_node->Name() : "null") << std::endl;
+
   if (!CheckQDQNodes(graph_viewer, node, redundant_clip_node, dq_nodes, q_nodes)) {
+    std::cout << "ConvNodeGroupSelector::Check: *** FAILED: CheckQDQNodes returned false ***" << std::endl;
     return false;
   }
+  std::cout << "ConvNodeGroupSelector::Check: CheckQDQNodes PASSED" << std::endl;
 
   // input and output types need to be same
   int32_t dt_input = dq_nodes[0]->InputDefs()[0]->TypeAsProto()->tensor_type().elem_type();
   int32_t dt_weight = dq_nodes[1]->InputDefs()[0]->TypeAsProto()->tensor_type().elem_type();
   int32_t dt_output = q_nodes[0]->OutputDefs()[0]->TypeAsProto()->tensor_type().elem_type();
+
+  std::cout << "ConvNodeGroupSelector::Check: Data types:" << std::endl;
+  std::cout << "ConvNodeGroupSelector::Check:   - Input (image): " << dt_input << std::endl;
+  std::cout << "ConvNodeGroupSelector::Check:   - Weight: " << dt_weight << std::endl;
+  std::cout << "ConvNodeGroupSelector::Check:   - Output: " << dt_output << std::endl;
+
   if (dt_input != dt_output) {
+    std::cout << "ConvNodeGroupSelector::Check: *** FAILED: Input/Output type mismatch ***" << std::endl;
+    std::cout << "ConvNodeGroupSelector::Check: Expected " << dt_input << " == " << dt_output << std::endl;
     return false;
   }
+  std::cout << "ConvNodeGroupSelector::Check: Input/Output type match PASSED" << std::endl;
 
   if (!allow_4bit_weight_ && Is4BitIntType(dt_weight)) {
+    std::cout << "ConvNodeGroupSelector::Check: *** FAILED: 4-bit weight not allowed ***" << std::endl;
+    std::cout << "ConvNodeGroupSelector::Check: allow_4bit_weight_ = " << allow_4bit_weight_ << std::endl;
     return false;
   }
+  std::cout << "ConvNodeGroupSelector::Check: 4-bit weight check PASSED" << std::endl;
 
   if (dt_input == ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_INT8) {
     if (!int8_allowed_ || dt_weight != dt_input) {
+      std::cout << "ConvNodeGroupSelector::Check: *** FAILED: INT8 validation ***" << std::endl;
+      std::cout << "ConvNodeGroupSelector::Check: int8_allowed_ = " << int8_allowed_ << std::endl;
+      std::cout << "ConvNodeGroupSelector::Check: weight type = " << dt_weight << ", input type = " << dt_input << std::endl;
       return false;
     }
+    std::cout << "ConvNodeGroupSelector::Check: INT8 validation PASSED" << std::endl;
   }
 
   if (dq_nodes.size() == 3) {  // has bias
     int32_t dt_bias = dq_nodes[2]->InputDefs()[0]->TypeAsProto()->tensor_type().elem_type();
+    std::cout << "ConvNodeGroupSelector::Check: Bias data type: " << dt_bias << std::endl;
     if (dt_bias != ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_INT32) {
+      std::cout << "ConvNodeGroupSelector::Check: *** FAILED: Bias type must be INT32 ***" << std::endl;
+      std::cout << "ConvNodeGroupSelector::Check: Expected INT32, got " << dt_bias << std::endl;
       return false;
     }
+    std::cout << "ConvNodeGroupSelector::Check: Bias type validation PASSED" << std::endl;
   }
 
   // 16-bit int types must be explicitly allowed.
   if (!allow_16bit_ && (Is16BitIntType(dt_input) || Is16BitIntType(dt_weight))) {
+    std::cout << "ConvNodeGroupSelector::Check: *** FAILED: 16-bit types not allowed ***" << std::endl;
+    std::cout << "ConvNodeGroupSelector::Check: allow_16bit_ = " << allow_16bit_ << std::endl;
+    std::cout << "ConvNodeGroupSelector::Check: Input is 16-bit: " << Is16BitIntType(dt_input) << std::endl;
+    std::cout << "ConvNodeGroupSelector::Check: Weight is 16-bit: " << Is16BitIntType(dt_weight) << std::endl;
     return false;
   }
+  std::cout << "ConvNodeGroupSelector::Check: 16-bit type check PASSED" << std::endl;
 
+  std::cout << "ConvNodeGroupSelector::Check: *** ALL VALIDATIONS PASSED ***" << std::endl;
   return true;
 }
 

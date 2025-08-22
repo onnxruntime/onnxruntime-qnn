@@ -141,6 +141,7 @@ static Status ConstantFoldIfNode(Graph& graph, Node& if_node, const logging::Log
 }
 
 Status ConstantFolding::ApplyImpl(Graph& graph, bool& modified, int graph_level, const logging::Logger& logger) const {
+  std::cout << "\nGraph Level" << graph_level << std::endl;
   bool have_updated_nodes = false;
   GraphViewer graph_viewer(graph);
   auto& order = graph_viewer.GetNodesInTopologicalOrder();
@@ -198,7 +199,10 @@ Status ConstantFolding::ApplyImpl(Graph& graph, bool& modified, int graph_level,
                 graph_utils::AllNodeInputsAreConstant(graph, n, constant_inputs, excluded_initializers_));
       };
 
+      std::cout << "ConstantFolding: visiting node op_type='" << node->OpType() << "' name='" << node->Name() << "'\n";
+
       if (!can_constant_fold_node(*node)) {
+        std::cout << "ConstantFolding: skipping node op_type='" << node->OpType() << "' name='" << node->Name() << "'\n";
         continue;
       }
 
@@ -329,6 +333,20 @@ Status ConstantFolding::ApplyImpl(Graph& graph, bool& modified, int graph_level,
           }
 
           constant_arg_out->SetShape(result_shape);
+
+          // Debug: Track when tensors become initializers
+          std::cout << "ConstantFolding: Converting tensor '" << constant_arg_out->Name()
+                    << "' to initializer (output of node '" << node->Name() << "' type '" << node->OpType() << "')" << std::endl;
+
+          // Debug: Show tensor relationships
+          if (node->OpType() == "QuantizeLinear" || node->OpType() == "DequantizeLinear") {
+            std::cout << "ConstantFolding: QDQ tensor '" << constant_arg_out->Name() << "' inputs: ";
+            for (const auto* input : node->InputDefs()) {
+              std::cout << "'" << input->Name() << "' ";
+            }
+            std::cout << std::endl;
+          }
+
           graph.AddInitializedTensor(out_tensorproto);
         }
       }
@@ -347,9 +365,22 @@ Status ConstantFolding::ApplyImpl(Graph& graph, bool& modified, int graph_level,
       }
 
       // Remove the output edges of the constant node and then remove the node itself.
+      std::cout << "ConstantFolding: Removing node '" << node->Name() << "' after constant folding" << std::endl;
       graph_utils::RemoveNodeOutputEdges(graph, *node);
       graph.RemoveNode(node->Index());
       modified = true;
+      std::cout << "ConstantFolding: modified\n";
+      // Dump graph after WeightBiasQuantization pass
+      std::cout << "\nGraph dump after ConstantFolding:" << std::endl;
+      for (const auto& node : graph.Nodes()) {
+        std::cout << "Node: " << node.Name() << ", OpType: " << node.OpType() << std::endl;
+        for (const auto* input : node.InputDefs()) {
+          std::cout << "  Input: " << input->Name() << std::endl;
+        }
+        for (const auto* output : node.OutputDefs()) {
+          std::cout << "  Output: " << output->Name() << std::endl;
+        }
+      }
       have_updated_nodes = true;
     }
   }

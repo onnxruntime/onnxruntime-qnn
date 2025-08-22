@@ -253,7 +253,7 @@ InlinedVector<std::unique_ptr<GraphTransformer>> GenerateTransformers(
       }
       transformers.emplace_back(std::make_unique<ConstantSharing>(no_limit_empty_ep_list, excluded_initializers));
       transformers.emplace_back(std::make_unique<CommonSubexpressionElimination>());
-      transformers.emplace_back(std::make_unique<ConstantFolding>(cpu_execution_provider, !disable_quant_qdq,
+      transformers.emplace_back(std::make_unique<ConstantFolding>(cpu_execution_provider, true,
                                                                   session_options.config_options));
       transformers.emplace_back(std::make_unique<MatMulAddFusion>());
       transformers.emplace_back(std::make_unique<ReshapeFusion>());

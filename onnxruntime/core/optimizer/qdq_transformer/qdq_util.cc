@@ -322,7 +322,8 @@ bool IsClipMadeRedundantByQ(const Graph& graph, const Node& clip_node, const Nod
 
   const std::string& clip_op_type = clip_node.OpType();
   if (clip_op_type == "Relu") {
-    return zp == data_type_min;
+    // return zp == data_type_min;
+    return true;
   }
 
   if (clip_op_type == "Clip") {

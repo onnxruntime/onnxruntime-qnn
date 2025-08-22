@@ -362,7 +362,16 @@ bool GraphViewer::IsSubgraph() const {
 }
 
 bool GraphViewer::IsConstantInitializer(const std::string& name, bool check_outer_scope) const {
-  return GetConstantInitializer(name, check_outer_scope) != nullptr;
+  bool result = GetConstantInitializer(name, check_outer_scope) != nullptr;
+  auto* initializer = GetConstantInitializer(name, check_outer_scope);
+  std::cout << "GraphViewer::IsConstantInitializer('" << name << "', " << check_outer_scope << ") = " << result;
+  if (initializer) {
+    std::cout << " (found initializer with " << initializer->raw_data().size() << " bytes)";
+  } else {
+    std::cout << " (not found)";
+  }
+  std::cout << std::endl;
+  return result;
 }
 
 bool GraphViewer::IsInitializedTensor(const std::string& name) const {

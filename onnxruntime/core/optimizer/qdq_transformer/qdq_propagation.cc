@@ -145,7 +145,7 @@ void LogQDQInsertion(const logging::Logger& logger, logging::Severity severity, 
 Status InsertQDQPairs(Graph& graph, gsl::span<const ExtendedGraphEdge> insertion_edges,
                       NodeArg& scale_initializer_nodearg, NodeArg* zp_initializer_nodearg_ptr,
                       const std::string& qdq_domain, const NodeAttributes& q_attrs, const NodeAttributes& dq_attrs,
-                      const logging::Logger& logger) {
+                      const logging::Logger& logger, const Node& dq_node) {
   ORT_RETURN_IF_ERROR(ValidateQDQInsertionEdges(graph, insertion_edges));
 
   const ExtendedGraphEdge& first_edge = insertion_edges[0];  // ValidateQDQInsertionEdges() guarantees at least one edge
@@ -155,6 +155,8 @@ Status InsertQDQPairs(Graph& graph, gsl::span<const ExtendedGraphEdge> insertion
   auto& base_node_arg = *graph.GetNodeArg(base_name);
 
   LogQDQInsertion(logger, logging::Severity::kVERBOSE, ORT_WHERE, graph, insertion_edges);
+
+  std::cout << "QDQPropagationTransformer: InsertQDQPairs base_name='" << base_name << "' for DQ node '" << dq_node.Name() << "'" << std::endl;
 
   auto make_q_or_dq_inputs = [](NodeArg& data, NodeArg& scale, NodeArg* zero_point) {
     return zero_point ? InlinedVector<NodeArg*>{&data, &scale, zero_point}
@@ -210,6 +212,11 @@ Status InsertQDQPairs(Graph& graph, gsl::span<const ExtendedGraphEdge> insertion
                                                                                                 edge_suffix)),
                                                            nullptr);
 
+    if (!insertion_edge.HasGraphOutput()) {
+      std::cout << "QDQPropagationTransformer: Generated post_dq tensor name '" << post_dq_nodearg.Name()
+                << "' from base_name '" << base_name << "'" << std::endl;
+    }
+
     auto& dq_node = graph.AddNode(graph.GenerateNodeName(MakeString(base_name, "_dq", edge_suffix)),
                                   QDQ::DQOpName,
                                   "Inserted by QDQPropagationTransformer",
@@ -230,6 +237,7 @@ Status InsertQDQPairs(Graph& graph, gsl::span<const ExtendedGraphEdge> insertion
 
     // Add edge from DQ to dst_node
     if (dst_node) {
+      // auto* old_input = dst_node->MutableInputDefs()[insertion_edge.dst->arg_idx];
       dst_node->MutableInputDefs()[insertion_edge.dst->arg_idx] = &post_dq_nodearg;
       graph.AddEdge(dq_node.Index(), dst_node->Index(), 0, insertion_edge.dst->arg_idx);
     }
@@ -342,6 +350,8 @@ Status PropagateDQForward(Graph& graph, gsl::span<const NodeIndex> node_indices,
       continue;
     }
 
+    std::cout << "[PropagateDQForward] Processing DQ node: " << dq_node.Name() << " (OpType: " << dq_node.OpType() << ")" << std::endl;
+
     bool dq_zero_point_exists = false;
     if (!QDQ::QOrDQNodeHasConstantScalarScaleAndZeroPoint(dq_node, GraphConstantInitializerGetter{graph},
                                                           dq_zero_point_exists)) {
@@ -354,7 +364,14 @@ Status PropagateDQForward(Graph& graph, gsl::span<const NodeIndex> node_indices,
                               : nullptr;
 
     const InlinedVector<ExtendedGraphEdge> edges_after_dq = GetNextEdges(graph, dq_node);
+    std::cout << "[PropagateDQForward] Edges after DQ node: " << edges_after_dq.size() << " edges" << std::endl;
+    for (const auto& edge : edges_after_dq) {
+      const auto* dst_node = edge.GetNodeAtEnd(graph, ExtendedGraphEdge::End::Destination);
+      std::cout << "  Edge to: " << (dst_node ? dst_node->Name() : "graph output") << std::endl;
+    }
+    std::cout << "[PropagateDQForward] Edges after DQ check: " << edges_after_dq.size() << " edges" << std::endl;
     if (edges_after_dq.size() != 1) {
+      std::cout << "[PropagateDQForward] Skipping - edges_after_dq.size() != 1" << std::endl;
       continue;
     }
 
@@ -385,17 +402,25 @@ Status PropagateDQForward(Graph& graph, gsl::span<const NodeIndex> node_indices,
       const InlinedVector<ExtendedGraphEdge> curr_edge_group = std::move(node_arg_edges.front());
       node_arg_edges.pop();
 
-      // Skip if edge group is empty. Also, to keep things simple, we do not yet handle edge groups in which
-      // one of the destination nodes is already a QuantizeLinear node. Ex:
-      //    DQ -> Transpose --+--> QuantizeLinear -> ...
-      //                      |
-      //                      +--> Slice -> ...
-      if (curr_edge_group.empty() || any_edge_ends_in_q(graph, curr_edge_group)) {
-        continue;
-      }
+          // Skip if edge group is empty. Also, to keep things simple, we do not yet handle edge groups in which
+    // one of the destination nodes is already a QuantizeLinear node. Ex:
+    //    DQ -> Transpose --+--> QuantizeLinear -> ...
+    //                      |
+    //                      +--> Slice -> ...
+    std::cout << "[PropagateDQForward] Edge group size: " << curr_edge_group.size() << std::endl;
+    std::cout << "[PropagateDQForward] Any edge ends in Q: " << any_edge_ends_in_q(graph, curr_edge_group) << std::endl;
+    if (curr_edge_group.empty() || any_edge_ends_in_q(graph, curr_edge_group)) {
+      std::cout << "[PropagateDQForward] Skipping - edge group empty or ends in Q" << std::endl;
+      continue;
+    }
 
+      std::cout << "[PropagateDQForward] Calling InsertQDQPairs for DQ node: " << dq_node.Name() << std::endl;
+      for (const auto& edge : curr_edge_group) {
+        const auto* dst_node = edge.GetNodeAtEnd(graph, ExtendedGraphEdge::End::Destination);
+        std::cout << "  Edge group: " << edge.arg_name << " -> " << (dst_node ? dst_node->Name() : "graph output") << std::endl;
+      }
       ORT_RETURN_IF_ERROR(InsertQDQPairs(graph, curr_edge_group, dq_scale, dq_zero_point, dq_node.Domain(),
-                                         MakeQAttrsFromDQ(dq_node), dq_node.GetAttributes(), logger));
+                                         MakeQAttrsFromDQ(dq_node), dq_node.GetAttributes(), logger, dq_node));
       modified = true;
 
       for (const auto& edge : curr_edge_group) {
@@ -449,7 +474,7 @@ Status PropagateQBackward(Graph& graph, gsl::span<const NodeIndex> node_indices,
       }
 
       ORT_RETURN_IF_ERROR(InsertQDQPairs(graph, InlinedVector<ExtendedGraphEdge>{*curr_edge}, q_scale, q_zero_point,
-                                         q_node.Domain(), q_node.GetAttributes(), MakeDQAttrsFromQ(q_node), logger));
+                                         q_node.Domain(), q_node.GetAttributes(), MakeDQAttrsFromQ(q_node), logger, q_node));
       modified = true;
     }
   }
@@ -460,6 +485,20 @@ Status PropagateQBackward(Graph& graph, gsl::span<const NodeIndex> node_indices,
 
 Status QDQPropagationTransformer::ApplyImpl(Graph& graph, bool& modified, int graph_level,
                                             const logging::Logger& logger) const {
+  std::cout << "QDQPropagationTransformer::ApplyImpl called (graph_level=" << graph_level << ")" << std::endl;
+
+  // Show initial Conv inputs
+  std::cout << "Initial Conv inputs before QDQPropagation:" << std::endl;
+  for (const auto& node : graph.Nodes()) {
+    if (node.OpType() == "Conv") {
+      std::cout << "Node: " << node.Name() << ", OpType: " << node.OpType() << std::endl;
+      for (size_t i = 0; i < node.InputDefs().size(); ++i) {
+        const auto* input = node.InputDefs()[i];
+        std::cout << "  Input[" << i << "]: " << input->Name() << std::endl;
+      }
+    }
+  }
+
   GraphViewer graph_viewer(graph);
   const auto node_indices = gsl::make_span(graph_viewer.GetNodesInTopologicalOrder());
 
@@ -468,14 +507,32 @@ Status QDQPropagationTransformer::ApplyImpl(Graph& graph, bool& modified, int gr
     if (node_ptr == nullptr)
       continue;  // node removed as part of an earlier fusion
 
+    std::cout << "QDQPropagationTransformer: Recursing on node '" << node_ptr->Name() << "' type '" << node_ptr->OpType() << "'" << std::endl;
     ORT_RETURN_IF_ERROR(Recurse(*node_ptr, modified, graph_level, logger));
   }
 
   const auto& compatible_eps = GetCompatibleExecutionProviders();
 
+  std::cout << "QDQPropagationTransformer: Starting PropagateQBackward" << std::endl;
   ORT_RETURN_IF_ERROR(PropagateQBackward(graph, node_indices, compatible_eps, logger, modified));
+  std::cout << "QDQPropagationTransformer: Finished PropagateQBackward, modified = " << modified << std::endl;
+
+  std::cout << "QDQPropagationTransformer: Starting PropagateDQForward" << std::endl;
   ORT_RETURN_IF_ERROR(PropagateDQForward(graph, node_indices, compatible_eps, logger, modified));
+  std::cout << "QDQPropagationTransformer: Finished PropagateDQForward, modified = " << modified << std::endl;
+
+  std::cout << "\nGraph dump after QDQPropagationTransformer:" << std::endl;
+  for (const auto& node : graph.Nodes()) {
+    if (node.OpType() == "Conv") {
+      std::cout << "Node: " << node.Name() << ", OpType: " << node.OpType() << std::endl;
+      for (size_t i = 0; i < node.InputDefs().size(); ++i) {
+        const auto* input = node.InputDefs()[i];
+        std::cout << "  Input[" << i << "]: " << input->Name() << std::endl;
+      }
+    }
+  }
 
   return Status::OK();
 }
+
 }  // namespace onnxruntime
