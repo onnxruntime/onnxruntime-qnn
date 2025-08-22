@@ -152,16 +152,21 @@ int TEST_MAIN(int argc, char** argv) {
 
   ORT_TRY {
     ortenv_setup();
+    ort_env->UpdateEnvWithCustomLogLevel(ORT_LOGGING_LEVEL_WARNING);
     ::testing::InitGoogleTest(&argc, argv);
     // Parse custom command-line arguments *after* InitGoogleTest
     for (int i = 1; i < argc; ++i) { // argv[0] is the program
       if (std::string(argv[i]) == "--dump_onnx") {
+        std::cout << "[QNN only] ONNX model dumping enabled." << std::endl;
         dump_onnx = true;
-        std::cout << "ONNX model dumping enabled." << std::endl;
       }
-      else if (std::string(argv[i]) == "--dump_json") {
+      if (std::string(argv[i]) == "--dump_json") {
+        std::cout << "[QNN only] Json QNN Graph dumping enabled." << std::endl;
         dump_json = true;
-        std::cout << "Json QNN Graph dumping enabled." << std::endl;
+      }
+      if (std::string(argv[i]) == "--verbose") {
+        std::cout << "Verbose enabled" << std::endl;
+        ort_env->UpdateEnvWithCustomLogLevel(ORT_LOGGING_LEVEL_VERBOSE);
       }
     }
 
