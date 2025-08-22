@@ -38,6 +38,8 @@
 #endif  // defined(TEST_MAIN_ENABLE_DYNAMIC_PLUGIN_EP_USAGE)
 
 std::unique_ptr<Ort::Env> ort_env;
+bool dump_onnx = false;
+bool dump_json = false;
 
 // define environment variable name constants here
 namespace env_var_names {
@@ -151,6 +153,17 @@ int TEST_MAIN(int argc, char** argv) {
   ORT_TRY {
     ortenv_setup();
     ::testing::InitGoogleTest(&argc, argv);
+    // Parse custom command-line arguments *after* InitGoogleTest
+    for (int i = 1; i < argc; ++i) { // argv[0] is the program
+      if (std::string(argv[i]) == "--dump_onnx") {
+        dump_onnx = true;
+        std::cout << "ONNX model dumping enabled." << std::endl;
+      }
+      else if (std::string(argv[i]) == "--dump_json") {
+        dump_json = true;
+        std::cout << "Json QNN Graph dumping enabled." << std::endl;
+      }
+    }
 
     status = RUN_ALL_TESTS();
   }

@@ -123,7 +123,15 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   // Serialize the model to a string.
   std::string model_data;
   model.ToProto().SerializeToString(&model_data);
+
+  if (dump_onnx) {
+    ASSERT_STATUS_OK(onnxruntime::Model::Save(model, ToPathString("cmp_accuracy.f32.onnx")));
+  }
+
   TryEnableQNNSaver(provider_options);
+  if (dump_json) {
+    provider_options["dump_json_qnn_graph"] = "1";
+  }
   RunAndVerifyOutputsWithEP(AsByteSpan(model_data.data(), model_data.size()), "QNN_EP_TestLogID",
                             QnnExecutionProviderWithOptions(provider_options),
                             helper.feeds_, verification_params,
