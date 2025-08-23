@@ -9,8 +9,9 @@ import logging
 from pathlib import Path
 
 import onnx
+import onnxruntime as ort
 
-from ....tools.onnx_model_utils import fix_output_shapes, make_input_shape_fixed, optimize_model
+from ....tools.onnx_model_utils import fix_output_shapes, make_input_shape_fixed, save_and_reload_optimize_model
 from ....tools.remove_initializer_from_input import remove_initializer_from_input
 from ...fusions import FusionGelu, FusionLayerNormalization
 from ...onnx_model import ONNXModel
@@ -94,6 +95,7 @@ def qnn_preprocess_model(
     """
     modified = False
     model = model_input if isinstance(model_input, onnx.ModelProto) else onnx.load_model(model_input)
+    model = save_and_reload_optimize_model(model)
     model = save_and_reload_model_with_shape_infer(model)
     onnx_model = ONNXModel(model)
 
@@ -114,7 +116,7 @@ def qnn_preprocess_model(
     if fusion_gelu.apply():
         modified = True
 
-    # Fuse Conv Bn into a single Conv
+    # Fuse Mul plus Add into a single Batchnorm
     fusion_mul_add = FusionMulAdd(onnx_model)
     if fusion_mul_add.apply():
         modified = True

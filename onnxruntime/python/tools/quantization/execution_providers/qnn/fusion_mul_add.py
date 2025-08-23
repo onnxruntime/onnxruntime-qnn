@@ -95,9 +95,9 @@ class FusionMulAdd(fusions.Fusion):
         num_channels = input_shape[1]
         rank = len(input_shape)
         expect_shape = [num_channels] + [1]* (rank - 2)
-        if not (scale_shape == expect_shape).all():
+        if scale_shape != expect_shape:
             return False
-        if not (bias_shape == expect_shape).all():
+        if bias_shape != expect_shape:
             return False
 
         # Create constant initializers for mean and var
