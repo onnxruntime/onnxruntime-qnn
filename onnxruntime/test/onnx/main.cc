@@ -28,6 +28,7 @@
 #include "providers.h"
 
 #include <google/protobuf/stubs/common.h>
+#include "core/graph/constants.h"
 #include "core/platform/path_lib.h"
 #include "core/session/onnxruntime_cxx_api.h"
 #include "core/optimizer/graph_transformer_level.h"
@@ -634,7 +635,53 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
 
         qnn_options[key] = value;
       }
-      sf.AppendExecutionProvider("QNN", qnn_options);
+
+      const OrtApi& c_api = Ort::GetApi();
+      const std::filesystem::path& library_path = "onnxruntime_providers_qnn.dll";
+      OrtStatusPtr status = c_api.RegisterExecutionProviderLibrary(env,
+                                                                   onnxruntime::kQnnExecutionProvider,
+                                                                   library_path.c_str());
+      if (status != nullptr) {
+        fprintf(stderr, "Failed to register execution provider library: %s\n",
+                Ort::GetApi().GetErrorMessage(status));
+        Ort::GetApi().ReleaseStatus(status);
+        return -1;
+      }
+
+      const OrtEpDevice* const* ep_devices = nullptr;
+      size_t num_devices;
+      status = c_api.GetEpDevices(env, &ep_devices, &num_devices);
+      if (status != nullptr) {
+        fprintf(stderr, "Failed to get EP devices: %s\n",
+                Ort::GetApi().GetErrorMessage(status));
+        Ort::GetApi().ReleaseStatus(status);
+        return -1;
+      }
+
+      auto target_hw_device_type = OrtHardwareDeviceType_CPU;
+      if ((qnn_options.find("backend_type") != qnn_options.end() && qnn_options.at("backend_type") == "htp") ||
+          (qnn_options.find("backend_path") != qnn_options.end() && qnn_options.at("backend_path") ==
+#if _WIN32
+                                                                        "QnnHtp.dll"
+#else
+                                                                        "libQnnHtp.so"
+#endif
+           )) {
+        target_hw_device_type = OrtHardwareDeviceType_NPU;
+      }
+
+      auto it = std::find_if(ep_devices, ep_devices + num_devices,
+                             [&c_api, &target_hw_device_type](const OrtEpDevice* ep_device) {
+                               return (c_api.EpDevice_EpName(ep_device) == onnxruntime::kQnnExecutionProvider &&
+                                       c_api.HardwareDevice_Type(c_api.EpDevice_Device(ep_device)) == target_hw_device_type);
+                             });
+
+      if (it == ep_devices + num_devices) {
+        fprintf(stderr, "Failed to find QNN test provider device\n");
+        return -1;
+      }
+
+      sf.AppendExecutionProvider_V2(env, {Ort::ConstEpDevice(*it)}, qnn_options);
 #else
       fprintf(stderr, "QNN is not supported in this build");
       return -1;
@@ -983,6 +1030,14 @@ select from 'TF8', 'TF16', 'UINT8', 'FLOAT', 'ITENSOR'. \n)");
   for (const auto& p : stat.GetFailedTest()) {
     fprintf(stderr, "test %s failed, please fix it\n", p.first.c_str());
     result = -1;
+  }
+  if (enable_qnn) {
+    auto status = Ort::GetApi().UnregisterExecutionProviderLibrary(env, onnxruntime::kQnnExecutionProvider);
+    if (status != nullptr) {
+      fprintf(stderr, "Failed to unregister execution provider library: %s\n",
+              Ort::GetApi().GetErrorMessage(status));
+      Ort::GetApi().ReleaseStatus(status);
+    }
   }
   return result;
 }

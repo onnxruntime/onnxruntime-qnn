@@ -163,7 +163,10 @@ if (onnxruntime_USE_JSEP)
 endif()
 
 if (onnxruntime_USE_QNN)
-  include(onnxruntime_providers_qnn.cmake)
+  if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
+   include(onnxruntime_providers_qnn.cmake)
+   include(onnxruntime_providers_qnn_simulation.cmake)
+  endif()
 endif()
 
 if (onnxruntime_USE_RKNPU)

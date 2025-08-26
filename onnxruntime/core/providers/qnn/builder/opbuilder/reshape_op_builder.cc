@@ -16,12 +16,12 @@ class ReshapeOpBuilder : public BaseOpBuilder {
 
  protected:
   Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger,
                        std::vector<std::string>& input_names,
                        bool do_op_validation) const override ORT_MUST_USE_RESULT;
   Status OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
-                                  const NodeUnit& node_unit,
+                                  const OrtNodeUnit& node_unit,
                                   const logging::Logger& logger,
                                   const std::vector<std::string>& input_names,
                                   size_t output_index,
@@ -30,12 +30,12 @@ class ReshapeOpBuilder : public BaseOpBuilder {
 };
 
 Status ReshapeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                       const NodeUnit& node_unit,
+                                       const OrtNodeUnit& node_unit,
                                        const logging::Logger& logger,
                                        std::vector<std::string>& input_names,
                                        bool do_op_validation) const {
   if (do_op_validation) {
-    NodeAttrHelper node_helper(node_unit);
+    OrtNodeAttrHelper node_helper(qnn_model_wrapper.GetOrtApi(), node_unit);
     auto allowzero = node_helper.Get("allowzero", static_cast<int64_t>(0));
     if (0 != allowzero) {
       return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN Reshape doesn't support dynamic shape!");
@@ -49,7 +49,7 @@ Status ReshapeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status ReshapeOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
-                                                  const NodeUnit& node_unit,
+                                                  const OrtNodeUnit& node_unit,
                                                   const logging::Logger& logger,
                                                   const std::vector<std::string>& input_names,
                                                   size_t output_index,

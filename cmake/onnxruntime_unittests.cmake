@@ -715,15 +715,13 @@ endif()
 
 # QNN EP tests require CPU EP op implementations for accuracy evaluation, so disable on minimal
 # or reduced op builds.
-if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_REDUCED_OPS_BUILD)
+if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_REDUCED_OPS_BUILD AND NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/optimizer/*)
   list(APPEND onnxruntime_test_framework_libs onnxruntime_providers_qnn)
   list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn)
-  if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
-    list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_shared)
-  endif()
+  list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_shared)
 endif()
 
 if(onnxruntime_USE_SNPE)
@@ -1637,8 +1635,10 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
 
         # also copy other library dependencies that may be required by tests to native-test
         if(onnxruntime_USE_QNN)
-          add_custom_command(TARGET onnxruntime_providers_qnn POST_BUILD
-              COMMAND ${CMAKE_COMMAND} -E copy ${QNN_LIB_FILES} ${JAVA_NATIVE_TEST_DIR})
+          if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
+            add_custom_command(TARGET onnxruntime_providers_qnn POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy ${QNN_LIB_FILES} ${JAVA_NATIVE_TEST_DIR})
+          endif()
         endif()
 	if (WIN32)
           set(EXAMPLE_PLUGIN_EP_DST_FILE_NAME $<IF:$<BOOL:${WIN32}>,$<TARGET_FILE_NAME:example_plugin_ep>,$<TARGET_LINKER_FILE_NAME:example_plugin_ep>>)

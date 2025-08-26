@@ -7,9 +7,9 @@
 #include <vector>
 
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
-#include "core/providers/qnn/builder/op_builder_factory.h"
-#include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn/builder/op_builder_factory.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -20,17 +20,17 @@ class PoolOpBuilder : public BaseOpBuilder {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(PoolOpBuilder);
 
   Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger) const override ORT_MUST_USE_RESULT;
 
  protected:
   Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
   Status OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
-                                  const NodeUnit& node_unit,
+                                  const OrtNodeUnit& node_unit,
                                   const logging::Logger& logger,
                                   const std::vector<std::string>& input_names,
                                   size_t output_index,
@@ -38,7 +38,7 @@ class PoolOpBuilder : public BaseOpBuilder {
                                   QnnQuantParamsWrapper& quant_param) const override ORT_MUST_USE_RESULT;
 
  private:
-  Status SetCommonPoolParams(const NodeAttrHelper& node_helper,
+  Status SetCommonPoolParams(const OrtNodeAttrHelper& node_helper,
                              std::vector<uint32_t>& filter_size,
                              std::vector<uint32_t>& stride,
                              std::vector<uint32_t>& pad_amount,
@@ -53,15 +53,15 @@ class PoolOpBuilder : public BaseOpBuilder {
 // Need to do op validation in 1st call of GetCapability
 // TODO: Check if node domain == kMSInternalNHWCDomain to determine if the layout has been transformed.
 Status PoolOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                                    const NodeUnit& node_unit,
+                                    const OrtNodeUnit& node_unit,
                                     const logging::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
 
   const auto& inputs = node_unit.Inputs();
-  ORT_RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, inputs[0].node_arg.Type()));
+  ORT_RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, inputs[0].type, ""));
 
   std::vector<uint32_t> input_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].node_arg, input_shape), "Cannot get shape");
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape");
 
   size_t rank = input_shape.size();
   ORT_RETURN_IF_NOT(rank == 3 || rank == 4 || rank == 5, "QNN Pool only supports rank 3, 4, or 5!");
@@ -69,7 +69,7 @@ Status PoolOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   // ONNX MaxPool may have two outputs.
   ORT_RETURN_IF(node_unit.Outputs().size() > 1, "QNN Pool only supports 1 output!");
 
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(qnn_model_wrapper.GetOrtApi(), node_unit);
   auto dilations = node_helper.Get("dilations", std::vector<uint32_t>(rank - 2, 1));
   ORT_RETURN_IF_NOT(dilations == std::vector<uint32_t>(rank - 2, 1), "QNN Pool only supports dilations 1!");
 
@@ -108,11 +108,9 @@ Status AmendOutputShapeForRank3Pool(
   const uint32_t H = input_shape[1];
   const uint32_t W = input_shape[2];
   const uint32_t C = input_shape[3];
-
   // pad the spatial dims
   uint32_t padded_H = H + pads[0] + pads[2];
   uint32_t padded_W = W + pads[1] + pads[3];
-
   // floor-mode on NHWC
   uint32_t out_H = (padded_H < kernel_shape[0])
                        ? 0
@@ -130,7 +128,7 @@ Status AmendOutputShapeForRank3Pool(
   return Status::OK();
 }
 
-Status PoolOpBuilder::SetCommonPoolParams(const NodeAttrHelper& node_helper,
+Status PoolOpBuilder::SetCommonPoolParams(const OrtNodeAttrHelper& node_helper,
                                           std::vector<uint32_t>& filter_size,
                                           std::vector<uint32_t>& stride,
                                           std::vector<uint32_t>& pad_amount,
@@ -207,7 +205,7 @@ Status PoolOpBuilder::SetCommonPoolParams(const NodeAttrHelper& node_helper,
   return Status::OK();
 }
 
-bool SetPoolParam(const NodeUnit& node_unit,
+bool SetPoolParam(const OrtNodeUnit& node_unit,
                   const std::string& param_name,
                   std::vector<uint32_t>&& parm_shape,
                   std::vector<uint32_t>&& parm_data,
@@ -223,15 +221,15 @@ bool SetPoolParam(const NodeUnit& node_unit,
 }
 
 Status PoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                  const NodeUnit& node_unit,
+                                                  const OrtNodeUnit& node_unit,
                                                   std::vector<std::string>&& input_names,
                                                   const logging::Logger& logger,
                                                   bool do_op_validation) const {
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(qnn_model_wrapper.GetOrtApi(), node_unit);
   // Get the NCHW from input data, use HW for the pool filter size and pool stride
   const auto& inputs = node_unit.Inputs();
   std::vector<uint32_t> input_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].node_arg, input_shape), "Cannot get shape");
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape");
 
   // Reshape 3D input to 4D if necessary.
   const auto& reshape_input = node_unit.Inputs()[0];
@@ -358,7 +356,7 @@ Status PoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
   if (op_type == "MaxPool" || op_type == "AveragePool") {
     const auto& outputs = node_unit.Outputs();
     std::vector<uint32_t> output_shape;
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(outputs[0].node_arg, output_shape), "Cannot get shape");
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(outputs[0].shape, output_shape), "Cannot get shape");
 
     ORT_RETURN_IF_ERROR(SetCommonPoolParams(node_helper,
                                             filter_size,
@@ -442,7 +440,7 @@ Status PoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
 
   // Calculate rank-4 output shape for rank-3 input.
   std::vector<uint32_t> onnx_in_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].node_arg, onnx_in_shape), "Cannot get shape");
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, onnx_in_shape), "Cannot get shape");
   if (onnx_in_shape.size() == 3) {
     onnx_in_shape = {onnx_in_shape[0], 1, onnx_in_shape[1], onnx_in_shape[2]};
   }
@@ -450,7 +448,7 @@ Status PoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
   ORT_RETURN_IF_ERROR(AmendOutputShapeForRank3Pool(onnx_in_shape, filter_size, stride, pad_amount, pooled_shape));
 
   const auto& outputs = node_unit.Outputs();
-  const std::string real_out = outputs[0].node_arg.Name();
+  const std::string real_out = outputs[0].name;
   const std::string pool_out = utils::GetUniqueName(real_out, "_reshape_after");
   TensorInfo output_info{};
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
@@ -501,7 +499,7 @@ Status PoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
 }
 
 Status PoolOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
-                                               const NodeUnit& node_unit,
+                                               const OrtNodeUnit& node_unit,
                                                const logging::Logger& logger,
                                                const std::vector<std::string>& input_names,
                                                size_t output_index,

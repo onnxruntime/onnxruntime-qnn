@@ -15,19 +15,19 @@ class ReciprocalOpBuilder : public BaseOpBuilder {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(ReciprocalOpBuilder);
 
   Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger) const override final ORT_MUST_USE_RESULT;
 
  protected:
   Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
 };
 
 Status ReciprocalOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                                          const NodeUnit& node_unit,
+                                          const OrtNodeUnit& node_unit,
                                           const logging::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
 
@@ -38,13 +38,13 @@ Status ReciprocalOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   ORT_RETURN_IF_NOT(outputs.size() == 1, "Reciprocal operator must have exactly 1 output.");
 
   // Check input type is float for CPU.
-  ORT_RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, inputs[0].node_arg.Type()));
+  ORT_RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, inputs[0].type, ""));
 
   return Status::OK();
 }
 
 Status ReciprocalOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                        const NodeUnit& node_unit,
+                                                        const OrtNodeUnit& node_unit,
                                                         std::vector<std::string>&& input_names,
                                                         const logging::Logger& logger,
                                                         bool do_op_validation) const {
@@ -84,7 +84,7 @@ Status ReciprocalOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
 
   // Create the Div node
   const auto& outputs = node_unit.Outputs();
-  const std::string& output_name = outputs[0].node_arg.Name();
+  const std::string& output_name = outputs[0].name;
   bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
   Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
   TensorInfo output_info{};

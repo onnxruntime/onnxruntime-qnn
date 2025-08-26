@@ -33,22 +33,22 @@ class TopKOpBuilder : public BaseOpBuilder {
   }
 
   Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger,
                        std::vector<std::string>& input_names,
                        bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
   Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
  private:
-  Status ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit) const;
+  Status ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const;
 };
 
-Status TopKOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit) const {
+Status TopKOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const {
   size_t input_count = node_unit.Inputs().size();
   size_t output_count = node_unit.Outputs().size();
   ORT_RETURN_IF_NOT(input_count >= TOPK_MIN_INPUT && input_count <= TOPK_MAX_INPUT,
@@ -56,11 +56,11 @@ Status TopKOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const N
   ORT_RETURN_IF_NOT(output_count == 2, "QNN TopK expects exactly 2 outputs.");
 
   // Skip the first input. The second input needs to be an initializer.
-  const auto& input_1 = node_unit.Inputs()[1].node_arg.Name();
+  const auto& input_1 = node_unit.Inputs()[1].name;
   if (!qnn_model_wrapper.IsConstantInput(input_1)) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "The number of top elements to retrieve must be specified as constant input.");
   }
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(qnn_model_wrapper.GetOrtApi(), node_unit);
   auto largest = node_helper.Get("largest", 1);
   auto sorted = node_helper.Get("sorted", 1);
   if (0 == sorted) {
@@ -74,7 +74,7 @@ Status TopKOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const N
 }
 
 Status TopKOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                    const NodeUnit& node_unit,
+                                    const OrtNodeUnit& node_unit,
                                     const logging::Logger& logger,
                                     std::vector<std::string>& input_names,
                                     bool do_op_validation) const {
@@ -90,7 +90,7 @@ Status TopKOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
 
   size_t input_rank = input_info.shape.size();
-  int32_t axis = NodeAttrHelper(node_unit).Get("axis", -1);
+  int32_t axis = OrtNodeAttrHelper(qnn_model_wrapper.GetOrtApi(), node_unit).Get("axis", -1);
   if (axis == -1 || axis == static_cast<int32_t>(input_rank - 1)) {
     return Status::OK();
   }
@@ -123,17 +123,18 @@ Status TopKOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                  const NodeUnit& node_unit,
+                                                  const OrtNodeUnit& node_unit,
                                                   std::vector<std::string>&& input_names,
                                                   const logging::Logger& logger,
                                                   bool do_op_validation) const {
-  auto& input_name = node_unit.Inputs()[1].node_arg.Name();
+  auto& input_name = node_unit.Inputs()[1].name;
   uint32_t k = 0;  // The number of elements to extract from the input tensor at each position.
   bool is_constant_input = qnn_model_wrapper.IsConstantInput(input_name);
   if (is_constant_input) {
     std::vector<uint8_t> unpacked_tensor;
     const auto& input_tensor = qnn_model_wrapper.GetConstantTensor(input_name);
-    ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*input_tensor, unpacked_tensor));
+    ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(const_cast<OrtValueInfo&>(*input_tensor),
+                                                                unpacked_tensor));
     const int64_t* tensor_data = reinterpret_cast<const int64_t*>(unpacked_tensor.data());
     k = static_cast<uint32_t>(*tensor_data);
   } else {
@@ -152,7 +153,7 @@ Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
 
   size_t input_rank = input_info.shape.size();
-  int32_t axis = NodeAttrHelper(node_unit).Get("axis", -1);
+  int32_t axis = OrtNodeAttrHelper(qnn_model_wrapper.GetOrtApi(), node_unit).Get("axis", -1);
   if (axis == -1 || axis == static_cast<int32_t>(input_rank - 1)) {
     ORT_RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper,
                                        node_unit,
@@ -174,7 +175,7 @@ Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
 
     // Since user may not be aware of the additional Transpose, the original output name of TopK node must be used by
     // the additional Transpose node which has the same output as original TopK node.
-    const std::string& output_name = output.node_arg.Name();
+    const std::string& output_name = output.name;
     const std::string transpose_input_name = utils::GetUniqueName(output_name, "_transpose");
     transpose_input_names.push_back(std::move(transpose_input_name));
 
@@ -208,7 +209,7 @@ Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
   // Add Transpose nodes for each output to permute back.
   for (size_t output_idx = 0; output_idx < 2; ++output_idx) {
     const auto& output = outputs[output_idx];
-    const std::string& output_name = output.node_arg.Name();
+    const std::string& output_name = output.name;
 
     TensorInfo output_info = {};
     ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(output, output_info));

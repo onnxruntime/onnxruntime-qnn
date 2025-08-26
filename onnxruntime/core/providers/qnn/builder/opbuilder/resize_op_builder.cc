@@ -19,24 +19,24 @@ class ResizeOpBuilder : public BaseOpBuilder {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(ResizeOpBuilder);
 
   Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger) const override final ORT_MUST_USE_RESULT;
 
  protected:
   Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger,
                        std::vector<std::string>& input_names,
                        bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
   Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
   Status OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
-                                  const NodeUnit& node_unit,
+                                  const OrtNodeUnit& node_unit,
                                   const logging::Logger& logger,
                                   const std::vector<std::string>& input_names,
                                   size_t output_index,
@@ -110,14 +110,14 @@ static bool IsOnnxAttrModeSupported(const std::unordered_map<std::string, uint32
 // The nodes from 2nd call of GetCapability get layout transformer applied, it's NHWC
 // Need to do op validation in 1st call of GetCapability
 Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                                      const NodeUnit& node_unit,
+                                      const OrtNodeUnit& node_unit,
                                       const logging::Logger& logger) const {
   if (node_unit.Domain() == kMSInternalNHWCDomain) {
     return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
   }
 
   const bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(qnn_model_wrapper.GetOrtApi(), node_unit);
 
   // QNN doesn't support anti-aliasing (added in opset 18)
   if (node_unit.SinceVersion() >= 18) {
@@ -137,7 +137,7 @@ Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 
   const auto& input_0 = node_unit.Inputs()[0];
   std::vector<uint32_t> input_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_0.node_arg, input_shape),
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_0.shape, input_shape),
                     "QNN EP: Cannot get shape for Resize input");
   const size_t input_rank = input_shape.size();
 
@@ -209,7 +209,7 @@ Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 
   const auto& output_0 = node_unit.Outputs()[0];
   std::vector<uint32_t> output_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output_0.node_arg, output_shape),
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output_0.shape, output_shape),
                     "QNN EP: Cannot get shape for Resize output");
 
   // Check that only the spatial dimensions (width, height) are resized. The batch_size (N) and channels (C) should
@@ -219,19 +219,16 @@ Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   ORT_RETURN_IF_NOT(input_shape[0] == output_shape[0] && input_shape[1] == output_shape[1],
                     "QNN EP: Resize may only change the spatial dimensions.");
 
-  const bool is_cpu_backend = IsCpuBackend(qnn_model_wrapper.GetQnnBackendType());
-  if (is_cpu_backend) {
-    ONNX_NAMESPACE::DataType input_data_type = input_0.node_arg.Type();
-    ORT_RETURN_IF(input_data_type != ONNX_NAMESPACE::Utils::DataTypeUtils::ToType("float"),
-                  "QNN EP: Data type ", input_data_type->c_str(),
-                  " is not supported for Resize operator in CPU backend.");
-  }
+  ONNXTensorElementDataType input_data_type = input_0.type;
+  std::string error_msg = "QNN EP: Data type " + std::to_string(static_cast<int>(input_data_type)) +
+                          " is not supported for Resize operator in CPU backend.";
+  ORT_RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, input_data_type, error_msg));
 
   return Status::OK();
 }
 
 Status ResizeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                      const NodeUnit& node_unit,
+                                      const OrtNodeUnit& node_unit,
                                       const logging::Logger& logger,
                                       std::vector<std::string>& input_names,
                                       bool do_op_validation) const {
@@ -246,16 +243,16 @@ Status ResizeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status ResizeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                    const NodeUnit& node_unit,
+                                                    const OrtNodeUnit& node_unit,
                                                     std::vector<std::string>&& input_names,
                                                     const logging::Logger& logger,
                                                     bool do_op_validation) const {
   std::vector<std::string> param_tensor_names;
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(qnn_model_wrapper.GetOrtApi(), node_unit);
 
   const auto& input_0 = node_unit.Inputs()[0];
   std::vector<uint32_t> input_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_0.node_arg, input_shape),
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_0.shape, input_shape),
                     "QNN EP: Cannot get shape for Resize input");
   const size_t input_rank = input_shape.size();
   const std::string interp_mode = GetOnnxAttr(node_helper, onnx_mode_attr);
@@ -372,7 +369,7 @@ Status ResizeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_w
 }
 
 Status ResizeOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
-                                                 const NodeUnit& node_unit,
+                                                 const OrtNodeUnit& node_unit,
                                                  const logging::Logger& logger,
                                                  const std::vector<std::string>& input_names,
                                                  size_t output_index,

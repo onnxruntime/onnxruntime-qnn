@@ -16,24 +16,24 @@ class LayerNormOpBuilder : public BaseOpBuilder {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(LayerNormOpBuilder);
 
   Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger) const override final ORT_MUST_USE_RESULT;
 
  protected:
   Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger,
                        std::vector<std::string>& input_names,
                        bool do_op_validation) const override ORT_MUST_USE_RESULT;
   Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
 };
 
 Status LayerNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                                         const NodeUnit& node_unit,
+                                         const OrtNodeUnit& node_unit,
                                          const logging::Logger& logger) const {
   // Also check output type is float for CPU.
   const auto& outputs = node_unit.Outputs();
@@ -45,7 +45,7 @@ Status LayerNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   if (is_npu_backend) {
     std::vector<uint32_t> input_shape;
     const auto& inputs = node_unit.Inputs();
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].node_arg, input_shape), "Cannot get shape of input 0");
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape of input 0");
     const size_t input_rank = input_shape.size();
     int32_t default_axis = -1;
     Qnn_Scalar_t axis_qnn_scalar = QNN_SCALAR_INIT;
@@ -57,7 +57,7 @@ Status LayerNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status LayerNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                         const NodeUnit& node_unit,
+                                         const OrtNodeUnit& node_unit,
                                          const logging::Logger& logger,
                                          std::vector<std::string>& input_names,
                                          bool do_op_validation) const {
@@ -76,7 +76,7 @@ Status LayerNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[SCALE_IDX], logger, input_names));
 
   // Input[2] (bias, optional)
-  const bool has_bias_input = input_count > BIAS_IDX && inputs[BIAS_IDX].node_arg.Exists();
+  const bool has_bias_input = input_count > BIAS_IDX && inputs[BIAS_IDX].Exists();
   if (has_bias_input) {
     ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[BIAS_IDX], logger, input_names));
   }
@@ -104,11 +104,11 @@ Status LayerNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status LayerNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                       const NodeUnit& node_unit,
+                                                       const OrtNodeUnit& node_unit,
                                                        std::vector<std::string>&& input_names,
                                                        const logging::Logger& logger,
                                                        bool do_op_validation) const {
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(qnn_model_wrapper.GetOrtApi(), node_unit);
   std::vector<std::string> param_tensor_names;
 
   const float epsilon = node_helper.Get("epsilon", 1e-05f);  // Default is 1e-05 according to ONNX spec.
@@ -123,7 +123,7 @@ Status LayerNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   qnn_model_wrapper.AddParamWrapper(std::move(epsilon_param_wrapper));
 
   std::vector<uint32_t> input_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].node_arg, input_shape), "Cannot get shape of input 0");
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, input_shape), "Cannot get shape of input 0");
   const size_t input_rank = input_shape.size();
   int32_t default_axis = -1;
   Qnn_Scalar_t axis_qnn_scalar = QNN_SCALAR_INIT;

@@ -1,16 +1,126 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include "core/providers/qnn/builder/op_builder_factory.h"
+
 #include <vector>
 #include <unordered_map>
 #include <string>
-
-#include "op_builder_factory.h"
 
 namespace onnxruntime {
 namespace qnn {
 
 OpBuilderRegistrations::OpBuilderRegistrations() {
+  {
+    CreateArgMaxMinOpBuilder("ArgMax", *this);
+    CreateArgMaxMinOpBuilder("ArgMin", *this);
+  }
+
+  {
+    CreateBatchNormOpBuilder("BatchNormalization", *this);
+  }
+
+  {
+    CreateCastOpBuilder("Cast", *this);
+  }
+
+  {
+    CreateClipOpBuilder("Clip", *this);
+  }
+
+  {
+    CreateConvOpBuilder("Conv", *this);
+    CreateConvOpBuilder("ConvTranspose", *this);
+  }
+
+  {
+    CreateCumSumOpBuilder("CumSum", *this);
+  }
+
+  {
+    CreateEinsumOpBuilder("Einsum", *this);
+  }
+
+  {
+    CreateExpandOpBuilder("Expand", *this);
+  }
+
+  {
+    CreateGatherNDOpBuilder("GatherND", *this);
+  }
+
+  {
+    CreateGatherOpBuilder("Gather", *this);
+    CreateGatherOpBuilder("GatherElements", *this);
+  }
+
+  {
+    CreateGemmOpBuilder("Gemm", *this);
+  }
+
+  {
+    CreateInstanceNormOpBuilder("InstanceNormalization", *this);
+  }
+
+  {
+    CreateLayerNormOpBuilder("LayerNormalization", *this);
+  }
+
+  {
+    CreateLRNOpBuilder("LRN", *this);
+  }
+
+  {
+    CreateLSTMOpBuilder("LSTM", *this);
+  }
+
+  {
+    CreateMatMulOpBuilder("MatMul", *this);
+  }
+
+  {
+    CreateMeanOpBuilder("Mean", *this);
+  }
+
+  {
+    CreateModOpBuilder("Mod", *this);
+  }
+
+  {
+    CreatePadOpBuilder("Pad", *this);
+  }
+
+  {
+    CreatePoolOpBuilder("GlobalAveragePool", *this);
+    CreatePoolOpBuilder("AveragePool", *this);
+    CreatePoolOpBuilder("MaxPool", *this);
+    CreatePoolOpBuilder("GlobalMaxPool", *this);
+  }
+
+  {
+    CreateReciprocalOpBuilder("Reciprocal", *this);
+  }
+
+  {
+    CreateReduceOpBuilder("ReduceMax", *this);
+    CreateReduceOpBuilder("ReduceMean", *this);
+    CreateReduceOpBuilder("ReduceMin", *this);
+    CreateReduceOpBuilder("ReduceProd", *this);
+    CreateReduceOpBuilder("ReduceSum", *this);
+    CreateReduceOpBuilder("ReduceL2", *this);
+  }
+
+  {
+    CreateReshapeOpBuilder("Reshape", *this);
+    CreateReshapeOpBuilder("Flatten", *this);
+    CreateReshapeOpBuilder("Squeeze", *this);
+    CreateReshapeOpBuilder("Unsqueeze", *this);
+  }
+
+  {
+    CreateResizeOpBuilder("Resize", *this);
+  }
+
   {
     CreateSimpleOpBuilder("Add", *this);
     CreateSimpleOpBuilder("Asin", *this);
@@ -43,6 +153,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
     CreateSimpleOpBuilder("Elu", *this);
     CreateSimpleOpBuilder("Round", *this);
     CreateSimpleOpBuilder("Where", *this);
+    CreateSimpleOpBuilder("ScatterElements", *this);
     CreateSimpleOpBuilder("ScatterND", *this);
     CreateSimpleOpBuilder("Sigmoid", *this);
     CreateSimpleOpBuilder("Sin", *this);
@@ -65,8 +176,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
     CreateSimpleOpBuilder("GridSample", *this);
 
     CreateSimpleOpBuilder("LpNormalization", *this);
+  }
 
-    CreateSimpleOpBuilder("ScatterElements", *this);
+  {
+    CreateSliceOpBuilder("Slice", *this);
   }
 
   {
@@ -75,73 +188,11 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   }
 
   {
-    CreateCastOpBuilder("Cast", *this);
-  }
-
-  {
-    CreateReduceOpBuilder("ReduceMax", *this);
-    CreateReduceOpBuilder("ReduceMean", *this);
-    CreateReduceOpBuilder("ReduceMin", *this);
-    CreateReduceOpBuilder("ReduceProd", *this);
-    CreateReduceOpBuilder("ReduceSum", *this);
-    CreateReduceOpBuilder("ReduceL2", *this);
-  }
-
-  {
-    CreateConvOpBuilder("Conv", *this);
-    CreateConvOpBuilder("ConvTranspose", *this);
-  }
-
-  {
-    CreatePoolOpBuilder("GlobalAveragePool", *this);
-    CreatePoolOpBuilder("AveragePool", *this);
-    CreatePoolOpBuilder("MaxPool", *this);
-    CreatePoolOpBuilder("GlobalMaxPool", *this);
-  }
-
-  {
-    CreateReshapeOpBuilder("Reshape", *this);
-    CreateReshapeOpBuilder("Flatten", *this);
-    CreateReshapeOpBuilder("Squeeze", *this);
-    CreateReshapeOpBuilder("Unsqueeze", *this);
-  }
-
-  {
-    CreateGemmOpBuilder("Gemm", *this);
-  }
-
-  {
-    CreateGatherOpBuilder("Gather", *this);
-    CreateGatherOpBuilder("GatherElements", *this);
-  }
-
-  {
-    CreateArgMaxMinOpBuilder("ArgMax", *this);
-    CreateArgMaxMinOpBuilder("ArgMin", *this);
-  }
-
-  {
-    CreateClipOpBuilder("Clip", *this);
-  }
-
-  {
-    CreateSliceOpBuilder("Slice", *this);
-  }
-
-  {
     CreateSplitOpBuilder("Split", *this);
   }
 
   {
-    CreateResizeOpBuilder("Resize", *this);
-  }
-
-  {
-    CreateUpsampleOpBuilder("Upsample", *this);
-  }
-
-  {
-    CreateTopKOpBuilder("TopK", *this);
+    CreateThresholdedReluOpBuilder("ThresholdedRelu", *this);
   }
 
   {
@@ -149,19 +200,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   }
 
   {
-    CreateInstanceNormOpBuilder("InstanceNormalization", *this);
-  }
-
-  {
-    CreateBatchNormOpBuilder("BatchNormalization", *this);
-  }
-
-  {
-    CreateLayerNormOpBuilder("LayerNormalization", *this);
-  }
-
-  {
-    CreateLRNOpBuilder("LRN", *this);
+    CreateTopKOpBuilder("TopK", *this);
   }
 
   {
@@ -169,47 +208,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   }
 
   {
-    CreateReciprocalOpBuilder("Reciprocal", *this);
-  }
-
-  {
-    CreatePadOpBuilder("Pad", *this);
-  }
-
-  {
-    CreateExpandOpBuilder("Expand", *this);
-  }
-
-  {
-    CreateEinsumOpBuilder("Einsum", *this);
-  }
-
-  {
-    CreateMatMulOpBuilder("MatMul", *this);
-  }
-
-  {
-    CreateMeanOpBuilder("Mean", *this);
-  }
-
-  {
-    CreateLSTMOpBuilder("LSTM", *this);
-  }
-
-  {
-    CreateCumSumOpBuilder("CumSum", *this);
-  }
-
-  {
-    CreateGatherNDOpBuilder("GatherND", *this);
-  }
-
-  {
-    CreateModOpBuilder("Mod", *this);
-  }
-
-  {
-    CreateThresholdedReluOpBuilder("ThresholdedRelu", *this);
+    CreateUpsampleOpBuilder("Upsample", *this);
   }
 }
 

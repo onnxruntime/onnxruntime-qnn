@@ -2,16 +2,20 @@
 // Licensed under the MIT License.
 
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+
 #include <utility>
+#include <unordered_set>
+
+#include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
 
 namespace {
-bool IsOptionalNodeUnitIODef(const NodeUnitIODef& node_io_def) {
-  const NodeArg& arg = node_io_def.node_arg;
-  return !arg.Exists() || arg.Name().empty();
+bool IsOptionalOrtNodeUnitIODef(const OrtNodeUnitIODef& node_io_def) {
+  return !node_io_def.Exists();
 }
 }  // namespace
 
@@ -21,7 +25,7 @@ std::string BaseOpBuilder::GetOpBuilderType() const {
 
 // Add operator related
 Status BaseOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                                    const NodeUnit& node_unit,
+                                    const OrtNodeUnit& node_unit,
                                     const logging::Logger& logger) const {
   // General Datatype checks on various QNN backend (HTP, CPU, GPU)
   ORT_RETURN_IF_ERROR(ProcessDataTypes(qnn_model_wrapper, node_unit));
@@ -30,7 +34,7 @@ Status BaseOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 
 // Add operator related
 Status BaseOpBuilder::AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper,
-                                        const NodeUnit& node_unit,
+                                        const OrtNodeUnit& node_unit,
                                         const logging::Logger& logger,
                                         bool do_op_validation) const {
   LOGS(logger, VERBOSE) << "QNN node builder is trying to add node. Onnx node name: [" << node_unit.Name()
@@ -47,13 +51,13 @@ Status BaseOpBuilder::AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status BaseOpBuilder::ProcessDataTypes(QnnModelWrapper& qnn_model_wrapper,
-                                       const NodeUnit& node_unit) const {
+                                       const OrtNodeUnit& node_unit) const {
   std::vector<Qnn_DataType_t> input_qnn_dtypes;
   std::vector<Qnn_DataType_t> output_qnn_dtypes;
   const auto& inputs = node_unit.Inputs();
   const auto& outputs = node_unit.Outputs();
   for (auto input : inputs) {
-    if (IsOptionalNodeUnitIODef(input)) {
+    if (IsOptionalOrtNodeUnitIODef(input)) {
       continue;
     }
     TensorInfo tensor_info = {};
@@ -62,7 +66,7 @@ Status BaseOpBuilder::ProcessDataTypes(QnnModelWrapper& qnn_model_wrapper,
     input_qnn_dtypes.push_back(qnn_data_type);
   }
   for (auto output : outputs) {
-    if (IsOptionalNodeUnitIODef(output)) {
+    if (IsOptionalOrtNodeUnitIODef(output)) {
       continue;
     }
     TensorInfo tensor_info = {};
@@ -94,10 +98,10 @@ Status BaseOpBuilder::CheckGpuDataTypes(const std::vector<Qnn_DataType_t>,
 }
 
 Status BaseOpBuilder::ProcessInput(QnnModelWrapper& qnn_model_wrapper,
-                                   const NodeUnitIODef& input,
+                                   const OrtNodeUnitIODef& input,
                                    const logging::Logger& logger,
                                    std::vector<std::string>& input_names) const {
-  const auto& input_name = input.node_arg.Name();
+  const std::string& input_name = input.name;
 
   if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_name)) {
     LOGS(logger, VERBOSE) << "Tensor already added, skip it: " << input_name;
@@ -114,7 +118,7 @@ Status BaseOpBuilder::ProcessInput(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status BaseOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                    const NodeUnit& node_unit,
+                                    const OrtNodeUnit& node_unit,
                                     const logging::Logger& logger,
                                     std::vector<std::string>& input_names,
                                     bool do_op_validation) const {
@@ -122,8 +126,8 @@ Status BaseOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 
   const auto& inputs = node_unit.Inputs();
   const auto input_count = GetInputCountQnnRequired(node_unit);
-  for (size_t input_i = 0; input_i < input_count; ++input_i) {
-    ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[input_i], logger, input_names));
+  for (size_t input_idx = 0; input_idx < input_count; ++input_idx) {
+    ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[input_idx], logger, input_names));
   }
 
   return Status::OK();
@@ -188,7 +192,7 @@ Status BaseOpBuilder::AddZeroBiasInput(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status BaseOpBuilder::ProcessInt64Tensors(QnnModelWrapper& qnn_model_wrapper,
-                                          const NodeUnit& node_unit,
+                                          const OrtNodeUnit& node_unit,
                                           std::vector<std::string>& input_names) const {
   if (input_names.size() < 1) {
     return Status::OK();
@@ -207,8 +211,8 @@ Status BaseOpBuilder::ProcessInt64Tensors(QnnModelWrapper& qnn_model_wrapper,
         Qnn_DataType_t qnn_data_type = QNN_DATATYPE_INT_32;
         const auto& input_i = node_unit.Inputs()[i];
         std::vector<uint32_t> output_shape;
-        ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_i.node_arg, output_shape),
-                          "QNN EP: Cannot get input shape for ", input_i.node_arg.Name().c_str());
+        ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_i.shape, output_shape),
+                          "QNN EP: Cannot get input shape for ", input_i.name.c_str());
         QnnTensorWrapper output_tensorwrapper(cast_output_name,
                                               tensor_type,
                                               qnn_data_type,
@@ -234,7 +238,7 @@ Status BaseOpBuilder::ProcessInt64Tensors(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status BaseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                  const NodeUnit& node_unit,
+                                                  const OrtNodeUnit& node_unit,
                                                   std::vector<std::string>&& input_names,
                                                   const logging::Logger& logger,
                                                   bool do_op_validation) const {
@@ -247,17 +251,14 @@ Status BaseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
 }
 
 Status BaseOpBuilder::ProcessOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      std::vector<std::string>&& param_tensor_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation,
                                      const std::string& qnn_op_type) const {
   ORT_UNUSED_PARAMETER(logger);
-  // Add output
-  // Output part is common for all Ops, only difference is the Op attribute
-  const auto& outputs = node_unit.Outputs();
-  std::vector<std::string> output_names;
+
   struct CastNodeInfo {
     std::string node_name;
     std::string input_name;
@@ -268,19 +269,22 @@ Status BaseOpBuilder::ProcessOutputs(QnnModelWrapper& qnn_model_wrapper,
   if (true == qnn_model_wrapper.GetModelSettings().htp_shared_memory) {
     mem_type = QNN_TENSORMEMTYPE_MEMHANDLE;
   }
+
+  std::vector<std::string> output_names;
+  const auto& outputs = node_unit.Outputs();
   const auto output_count = GetOutputCountQnnRequired(node_unit);
-  for (size_t output_i = 0; output_i < output_count; ++output_i) {
-    const auto& output_name = outputs[output_i].node_arg.Name();
+  for (size_t output_idx = 0; output_idx < output_count; ++output_idx) {
+    const std::string& output_name = outputs[output_idx].name;
 
     TensorInfo output_info = {};
-    ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[output_i], output_info));
+    ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[output_idx], output_info));
 
     if (output_info.quant_param.IsQuantized()) {
       ORT_RETURN_IF_ERROR(OverrideOutputQuantParam(qnn_model_wrapper, node_unit, logger, input_names,
-                                                   output_i, output_info.qnn_data_type, output_info.quant_param));
+                                                   output_idx, output_info.qnn_data_type, output_info.quant_param));
     }
 
-    Qnn_DataType_t supported_qnn_data_type = GetSupportedOutputDataType(output_i, output_info.qnn_data_type);
+    Qnn_DataType_t supported_qnn_data_type = GetSupportedOutputDataType(output_idx, output_info.qnn_data_type);
     bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
 
     // Check if we need to add a cast node for int64
@@ -357,7 +361,7 @@ Status BaseOpBuilder::ProcessOutputs(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status BaseOpBuilder::SetOutputQParamEqualToInputIfNearlyEqual(QnnModelWrapper& qnn_model_wrapper,
-                                                               const NodeUnit& node_unit,
+                                                               const OrtNodeUnit& node_unit,
                                                                const logging::Logger& logger,
                                                                const std::vector<std::string>& input_names,
                                                                size_t input_index,
@@ -397,20 +401,20 @@ Status BaseOpBuilder::SetOutputQParamEqualToInputIfNearlyEqual(QnnModelWrapper& 
 }
 
 Status BaseOpBuilder::ProcessAxisAttribute(const QnnModelWrapper& qnn_model_wrapper,
-                                           const NodeUnit& node_unit,
+                                           const OrtNodeUnit& node_unit,
                                            Qnn_Scalar_t& axis_qnn_scalar,
                                            int32_t& default_axis_value) const {
   const auto& inputs = node_unit.Inputs();
   std::vector<uint32_t> input_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].node_arg, input_shape), "Cannot get shape");
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape");
 
   auto rank = static_cast<int32_t>(input_shape.size());
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(qnn_model_wrapper.GetOrtApi(), node_unit);
   int32_t onnx_axis = node_helper.Get("axis", default_axis_value);
   if (onnx_axis < 0) {
     onnx_axis += rank;
   }
-  ORT_RETURN_IF_NOT((onnx_axis >= 0 && onnx_axis < static_cast<int32_t>(input_shape.size())), "QNN requires axis range [0, rank-1].");
+  ORT_RETURN_IF_NOT((onnx_axis >= 0 && onnx_axis < rank), "QNN requires axis range [0, rank-1].");
   default_axis_value = onnx_axis;
 
   bool is_gather_op = (node_unit.OpType() == "Gather");
@@ -425,12 +429,17 @@ Status BaseOpBuilder::ProcessAxisAttribute(const QnnModelWrapper& qnn_model_wrap
   return Status::OK();
 }
 
-Status DataTypeCheckForCpuBackend(QnnModelWrapper& qnn_model_wrapper, ONNX_NAMESPACE::DataType onnx_tensor_data_type) {
+Status DataTypeCheckForCpuBackend(QnnModelWrapper& qnn_model_wrapper,
+                                  ONNXTensorElementDataType onnx_tensor_data_type,
+                                  std::string error_msg = "") {
   // TODO: Retire the DataTypeCheckForCpuBackend once all Ops transition to using BaseOpBuilder::ProcessDataTypes
   // Due to varying datatype support for each op in Qnn CPU backend, we need to implement CheckCpuDataTypes for each op.
-  const auto float_elem_type = ONNX_NAMESPACE::Utils::DataTypeUtils::ToType("float");
-  bool is_cpu_backend = (qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::CPU);
-  ORT_RETURN_IF(is_cpu_backend && onnx_tensor_data_type != float_elem_type, "QNN CPU backend only support float data type.");
+  if (error_msg.empty()) {
+    error_msg = "QNN CPU backend only support float data type.";
+  }
+  const auto float_elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT;
+  bool is_cpu_backend = IsCpuBackend(qnn_model_wrapper.GetQnnBackendType());
+  ORT_RETURN_IF(is_cpu_backend && onnx_tensor_data_type != float_elem_type, error_msg);
 
   return Status::OK();
 }

@@ -17,13 +17,13 @@ class ModOpBuilder : public BaseOpBuilder {
 
  protected:
   Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger,
                        std::vector<std::string>& input_names,
                        bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
   Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
@@ -41,12 +41,12 @@ bool IsCastRequired(int target_tensor_type) {
 }
 
 Status ModOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                   const NodeUnit& node_unit,
+                                   const OrtNodeUnit& node_unit,
                                    const logging::Logger& logger,
                                    std::vector<std::string>& input_names,
                                    bool do_op_validation) const {
   ORT_UNUSED_PARAMETER(do_op_validation);
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(qnn_model_wrapper.GetOrtApi(), node_unit);
   int64_t fmod = node_helper.Get("fmod", static_cast<int64_t>(0));  // 0=integer mod. 1=float mod.
   if (1 == fmod) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN Mod Op only support fmod == 0 for now.");
@@ -62,7 +62,7 @@ Status ModOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status ModOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                 const NodeUnit& node_unit,
+                                                 const OrtNodeUnit& node_unit,
                                                  std::vector<std::string>&& input_names,
                                                  const logging::Logger& logger,
                                                  bool do_op_validation) const {
@@ -72,12 +72,12 @@ Status ModOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrap
   TensorInfo output_info = {};
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
 
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(qnn_model_wrapper.GetOrtApi(), node_unit);
   int64_t fmod = node_helper.Get("fmod", static_cast<int64_t>(0));
   std::string& input_a_name = input_names[0];
   std::string& input_b_name = input_names[1];
 
-  const std::string& org_output_name = node_unit.Outputs()[0].node_arg.Name();
+  const std::string& org_output_name = node_unit.Outputs()[0].name;
   const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(org_output_name);
 
   std::vector<uint32_t> output_shape = output_info.shape;

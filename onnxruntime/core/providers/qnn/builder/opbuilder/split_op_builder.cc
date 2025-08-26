@@ -16,19 +16,19 @@ class SplitOpBuilder : public BaseOpBuilder {
 
  protected:
   Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger,
                        std::vector<std::string>& input_names,
                        bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
   Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
   Status OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
-                                  const NodeUnit& node_unit,
+                                  const OrtNodeUnit& node_unit,
                                   const logging::Logger& logger,
                                   const std::vector<std::string>& input_names,
                                   size_t output_index,
@@ -37,7 +37,7 @@ class SplitOpBuilder : public BaseOpBuilder {
 };
 
 Status SplitOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      const logging::Logger& logger,
                                      std::vector<std::string>& input_names,
                                      bool do_op_validation) const {
@@ -65,7 +65,7 @@ static void ConvertSplitLengthsToSplitIndices(gsl::span<const int64_t> split_len
 }
 
 Status SplitOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                   const NodeUnit& node_unit,
+                                                   const OrtNodeUnit& node_unit,
                                                    std::vector<std::string>&& input_names,
                                                    const logging::Logger& logger,
                                                    bool do_op_validation) const {
@@ -79,12 +79,13 @@ Status SplitOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wr
 
   std::vector<uint32_t> split_index;
   if (node_unit.Inputs().size() > 1) {
-    auto& input_name = node_unit.Inputs()[1].node_arg.Name();
+    auto& input_name = node_unit.Inputs()[1].name;
     bool is_constant_input = qnn_model_wrapper.IsConstantInput(input_name);
     if (is_constant_input) {
       std::vector<uint8_t> unpacked_tensor;
       const auto& input_tensor = qnn_model_wrapper.GetConstantTensor(input_name);
-      ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*input_tensor, unpacked_tensor));
+      ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(const_cast<OrtValueInfo&>(*input_tensor),
+                                                                  unpacked_tensor));
       const int64_t* tensor_data = reinterpret_cast<const int64_t*>(unpacked_tensor.data());
       size_t tensor_byte_size = unpacked_tensor.size();
       size_t size = tensor_byte_size / sizeof(int64_t);
@@ -93,7 +94,7 @@ Status SplitOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wr
       return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN doesn't support dynamic split");
     }
   } else {
-    NodeAttrHelper node_helper(node_unit);
+    OrtNodeAttrHelper node_helper(qnn_model_wrapper.GetOrtApi(), node_unit);
     if (node_helper.HasAttr("split")) {
       auto split_lengths = node_helper.Get("split", std::vector<int64_t>{0});
       ConvertSplitLengthsToSplitIndices(split_lengths, split_index);
@@ -103,7 +104,7 @@ Status SplitOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wr
   // Get the length according to axis and split it equally
   if (split_index.size() == 0) {
     std::vector<uint32_t> input_shape;
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].node_arg, input_shape),
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, input_shape),
                       "Cannot get shape");
     ORT_RETURN_IF_NOT(static_cast<int32_t>(input_shape.size()) > axis_value, "axis not valid!");
     ORT_RETURN_IF_NOT(input_shape.at(axis_value) > 0, "Shape value not valid!");
@@ -140,7 +141,7 @@ Status SplitOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wr
 }
 
 Status SplitOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
-                                                const NodeUnit& node_unit,
+                                                const OrtNodeUnit& node_unit,
                                                 const logging::Logger& logger,
                                                 const std::vector<std::string>& input_names,
                                                 size_t output_index,

@@ -231,10 +231,6 @@ set(onnxruntime_INTERNAL_PROVIDER_LIBRARIES
   ${PROVIDERS_INTERNAL_TESTING}
 )
 
-if (onnxruntime_BUILD_QNN_EP_STATIC_LIB)
-  list(APPEND onnxruntime_INTERNAL_PROVIDER_LIBRARIES onnxruntime_providers_qnn)
-endif()
-
 # This list is a reversed topological ordering of library dependencies.
 # Earlier entries may depend on later ones. Later ones should not depend on earlier ones.
 set(onnxruntime_INTERNAL_LIBRARIES

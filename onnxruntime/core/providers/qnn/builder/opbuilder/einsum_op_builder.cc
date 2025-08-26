@@ -240,14 +240,14 @@ bool IsEquationReduceSumMulBroadcastX(const Equation& equation) {
  * @brief Sets the parameter tensor names for a MatMul op.
  *
  * @param qnn_model_wrapper Pointer to the QnnModelWrapper instance that manages the QNN model.
- * @param node_unit Reference to the NodeUnit representing the ONNX node for which the parameters are being set.
+ * @param node_unit Reference to the OrtNodeUnit representing the ONNX node for which the parameters are being set.
  * @param transpose_in0 Boolean flag indicating whether the 1st input tensor should be transposed (default: false).
  * @param transpose_in1 Boolean flag indicating whether the 2nd input tensor should be transposed (default: false).
  * @return A vector of strings containing the names of the parameter tensors added to the QNN model.
  */
 std::vector<std::string> SetMatMulParamTensorNames(
     onnxruntime::qnn::QnnModelWrapper* qnn_model_wrapper,
-    const onnxruntime::NodeUnit& node_unit,
+    const onnxruntime::OrtNodeUnit& node_unit,
     bool transpose_in0 = false,
     bool transpose_in1 = false) {
   std::vector<std::string> param_tensor_names;
@@ -271,13 +271,13 @@ std::vector<std::string> SetMatMulParamTensorNames(
  * @brief Creates a MatMul operation with transposed inputs and output in a QNN model.
  *
  * @param qnn_model_wrapper Pointer to the QnnModelWrapper instance used to manage the QNN model.
- * @param node_unit The NodeUnit representing the ONNX node to be converted.
+ * @param node_unit The OrtNodeUnit representing the ONNX node to be converted.
  * @param do_op_validation A boolean flag indicating whether to perform operation validation.
  * @return Status indicating success or failure of the operation.
  */
 Status CreateMatMulTransposeAll(
     onnxruntime::qnn::QnnModelWrapper* qnn_model_wrapper,
-    const onnxruntime::NodeUnit& node_unit,
+    const onnxruntime::OrtNodeUnit& node_unit,
     std::vector<std::string>&& input_names,
     bool do_op_validation) {
   onnxruntime::qnn::TensorInfo input_info0{}, input_info1{};
@@ -337,15 +337,15 @@ Status CreateMatMulTransposeAll(
   ORT_RETURN_IF_ERROR(qnn_model_wrapper->AddTransposeNode(
       /*node_index=*/node_unit.Index(),
       /*input_name=*/matmul_output_name,
-      /*output_name=*/output.node_arg.Name(),
+      /*output_name=*/output.name,
       /*input_shape=*/std::move(matmul_output_shape),
       /*transpose_perm=*/transpose_perm,
       /*output_shape=*/matmul_output_info.shape,
       /*tensor_data_type=*/matmul_output_info.qnn_data_type,
       /*quantize_param=*/matmul_output_info.quant_param.Copy(),
       /*do_op_validation=*/do_op_validation,
-      /*is_for_input=*/qnn_model_wrapper->IsGraphInput(output.node_arg.Name()),
-      /*is_for_output=*/qnn_model_wrapper->IsGraphOutput(output.node_arg.Name())));
+      /*is_for_input=*/qnn_model_wrapper->IsGraphInput(output.name),
+      /*is_for_output=*/qnn_model_wrapper->IsGraphOutput(output.name)));
   return Status::OK();
 }
 
@@ -353,13 +353,13 @@ Status CreateMatMulTransposeAll(
  * @brief Creates a ReduceSum, Multiply on broadcasted input X and original input Y.
  *
  * @param qnn_model_wrapper Pointer to the QnnModelWrapper instance used to manage the QNN model.
- * @param node_unit The NodeUnit representing the ONNX node to be converted.
+ * @param node_unit The OrtNodeUnit representing the ONNX node to be converted.
  * @param do_op_validation A boolean flag indicating whether to perform operation validation.
  * @return Status indicating success or failure of the operation.
  */
 Status CreateReduceSumMulBroadcastX(
     onnxruntime::qnn::QnnModelWrapper* qnn_model_wrapper,
-    const onnxruntime::NodeUnit& node_unit,
+    const onnxruntime::OrtNodeUnit& node_unit,
     std::vector<std::string>&& input_names,
     bool do_op_validation) {
   // Reshape in0 to shape (b, h, w, 1, c) to expand dimension before the contraction axis 'c'.
@@ -433,7 +433,7 @@ Status CreateReduceSumMulBroadcastX(
   ORT_RETURN_IF_NOT(qnn_model_wrapper->AddParamWrapper(std::move(param_keep_dims)),
                     "CreateReduceSumMulBroadcastX: failed to add param keep_dims");
 
-  const std::string out_name = node_unit.Outputs()[0].node_arg.Name();
+  const std::string out_name = node_unit.Outputs()[0].name;
   Qnn_TensorType_t out_tensor_type = qnn_model_wrapper->IsGraphOutput(out_name) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
   onnxruntime::qnn::QnnTensorWrapper tensor_wrapper_out(out_name,
                                                         out_tensor_type,
@@ -467,24 +467,24 @@ class EinsumOpBuilder : public BaseOpBuilder {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(EinsumOpBuilder);
 
   Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger) const override ORT_MUST_USE_RESULT;
 
  protected:
   Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger,
                        std::vector<std::string>& input_names,
                        bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
   Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
   Status OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
-                                  const NodeUnit& node_unit,
+                                  const OrtNodeUnit& node_unit,
                                   const logging::Logger& logger,
                                   const std::vector<std::string>& input_names,
                                   size_t output_index,
@@ -493,12 +493,12 @@ class EinsumOpBuilder : public BaseOpBuilder {
 };
 
 Status EinsumOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                                      const NodeUnit& node_unit,
+                                      const OrtNodeUnit& node_unit,
                                       const logging::Logger& logger) const {
   if (node_unit.Inputs().size() < 2) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, node_unit.OpType() + " requires at least 2 inputs.");
   }
-  NodeAttrHelper node_helper{node_unit};
+  OrtNodeAttrHelper node_helper(qnn_model_wrapper.GetOrtApi(), node_unit);
   const std::string equation = node_helper.Get("equation", std::string(""));
   std::optional<Equation> parsed_equation = ParseEquation(equation);
   if (!parsed_equation.has_value()) {
@@ -525,7 +525,7 @@ Status EinsumOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status EinsumOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                      const NodeUnit& node_unit,
+                                      const OrtNodeUnit& node_unit,
                                       const logging::Logger& logger,
                                       std::vector<std::string>& input_names,
                                       bool do_op_validation) const {
@@ -537,11 +537,11 @@ Status EinsumOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status EinsumOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                    const NodeUnit& node_unit,
+                                                    const OrtNodeUnit& node_unit,
                                                     std::vector<std::string>&& input_names,
                                                     const logging::Logger& logger,
                                                     bool do_op_validation) const {
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(qnn_model_wrapper.GetOrtApi(), node_unit);
   const std::string equation = node_helper.Get("equation", std::string(""));
   std::optional<Equation> parsed_equation = ParseEquation(equation);
   if (IsEquationMatMul(parsed_equation.value())) {
@@ -582,7 +582,7 @@ Status EinsumOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_w
 }
 
 Status EinsumOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
-                                                 const NodeUnit& node_unit,
+                                                 const OrtNodeUnit& node_unit,
                                                  const logging::Logger& logger,
                                                  const std::vector<std::string>& input_names,
                                                  size_t output_index,

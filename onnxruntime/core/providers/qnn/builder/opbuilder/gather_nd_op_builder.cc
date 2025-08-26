@@ -18,13 +18,13 @@ class GatherNDOpBuilder : public BaseOpBuilder {
 
  protected:
   Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger,
                        std::vector<std::string>& input_names,
                        bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
   Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
@@ -68,7 +68,7 @@ bool FixStaticIndicesForGatherND(const std::vector<uint8_t>& onnx_bytes,
 }
 
 Status GatherNDOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                        const NodeUnit& node_unit,
+                                        const OrtNodeUnit& node_unit,
                                         const logging::Logger& logger,
                                         std::vector<std::string>& input_names,
                                         bool do_op_validation) const {
@@ -78,7 +78,7 @@ Status GatherNDOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 
   const auto& data_input = inputs[0];
   const auto& indices_input = inputs[1];
-  const auto& indices_tensor_name = indices_input.node_arg.Name();
+  const auto& indices_tensor_name = indices_input.name;
 
   TensorInfo indices_info = {};
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(indices_input, indices_info));
@@ -90,11 +90,11 @@ Status GatherNDOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
     ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*indices_info.initializer_tensor, onnx_indices_bytes));
 
     std::vector<uint32_t> data_shape;
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(data_input.node_arg, data_shape),
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(data_input.shape, data_shape),
                       "Failed to get data shape for GatherND.");
 
     std::vector<uint32_t> indices_shape;
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(indices_input.node_arg, indices_shape),
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(indices_input.shape, indices_shape),
                       "Failed to get indices shape for GatherND.");
 
     if (indices_shape.empty()) {
@@ -102,7 +102,7 @@ Status GatherNDOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
     }
 
     // Get batch_dims for proper index processing
-    NodeAttrHelper node_helper(node_unit);
+    OrtNodeAttrHelper node_helper(qnn_model_wrapper.GetOrtApi(), node_unit);
     int64_t batch_dims = node_helper.Get("batch_dims", static_cast<int64_t>(0));
 
     if (indices_info.qnn_data_type == QNN_DATATYPE_INT_64) {
@@ -161,20 +161,20 @@ Status GatherNDOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                      const NodeUnit& node_unit,
+                                                      const OrtNodeUnit& node_unit,
                                                       std::vector<std::string>&& input_names,
                                                       const logging::Logger& logger,
                                                       bool do_op_validation) const {
   ORT_UNUSED_PARAMETER(logger);
   const auto& output = node_unit.Outputs()[0];
-  const std::string& output_name = output.node_arg.Name();
+  const std::string& output_name = output.name;
 
   QnnQuantParamsWrapper quant_params;
-  ORT_RETURN_IF_ERROR(quant_params.Init(qnn_model_wrapper, output));
+  ORT_RETURN_IF_ERROR(quant_params.Init(qnn_model_wrapper.GetOrtApi(), qnn_model_wrapper, output));
 
-  const auto* type_proto = output.node_arg.TypeAsProto();
+  ONNXTensorElementDataType output_type = output.type;
   Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
-  ORT_RETURN_IF_ERROR(utils::GetQnnDataType(quant_params.IsQuantized(), type_proto, qnn_data_type));
+  ORT_RETURN_IF_ERROR(utils::GetQnnDataType(quant_params.IsQuantized(), output_type, qnn_data_type));
 
   if (quant_params.IsPerTensor()) {
     // Make sure the output quantization parameters are equal to the input.
@@ -183,7 +183,7 @@ Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
                                                                  quant_params));
   }
 
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(qnn_model_wrapper.GetOrtApi(), node_unit);
   int64_t batch_dims = node_helper.Get("batch_dims", static_cast<int64_t>(0));
 
   Qnn_Scalar_t batch_dims_scalar = QNN_SCALAR_INIT;
@@ -225,7 +225,7 @@ Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
   }
 
   std::vector<uint32_t> target_output_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output.node_arg, target_output_shape),
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output.shape, target_output_shape),
                     "Cannot get target output shape");
 
   bool reshape_required = (qnn_output_shape.size() != target_output_shape.size());

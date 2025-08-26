@@ -3,14 +3,17 @@
 
 #include "core/providers/qnn/qnn_allocator.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cstddef>
-#include <algorithm>
+#include <gsl/gsl>
+#include <optional>
 #include <shared_mutex>
 
-#include <gsl/gsl>
+#include "SafeInt.hpp"
 
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/rpcmem_library.h"
 
 namespace onnxruntime::qnn {
 
@@ -114,21 +117,14 @@ AllocationTracker& GlobalAllocationTracker() {
 
 OrtMemoryInfo HtpSharedMemoryAllocator::AssociatedMemoryInfo() {
   return OrtMemoryInfo{QNN_HTP_SHARED, OrtAllocatorType::OrtDeviceAllocator,
-                       // QNN EP registers with OrtDevice::CPU so we use that for HOST_ACCESSIBLE as well
                        OrtDevice{OrtDevice::CPU, OrtDevice::MemType::HOST_ACCESSIBLE, OrtDevice::VendorIds::QUALCOMM,
                                  /*device_id*/ 0},
                        OrtMemTypeDefault};
 }
 
-HtpSharedMemoryAllocator::HtpSharedMemoryAllocator(std::shared_ptr<RpcMemLibrary> rpcmem_lib,
-                                                   const logging::Logger* logger)
-    : IAllocator{AssociatedMemoryInfo()},
-      rpcmem_lib_{std::move(rpcmem_lib)},
-      logger_(logger != nullptr ? *logger : logging::LoggingManager::DefaultLogger()) {
-  ORT_ENFORCE(rpcmem_lib_ != nullptr);
-}
+void* ORT_API_CALL HtpSharedMemoryAllocator::AllocImpl(struct OrtAllocator* this_, size_t requested_size) {
+  HtpSharedMemoryAllocator* allocator = static_cast<HtpSharedMemoryAllocator*>(this_);
 
-void* HtpSharedMemoryAllocator::Alloc(size_t requested_size) {
   const size_t shared_memory_block_size_in_bytes = requested_size;
 
   // rpcmem_alloc() has an int size parameter. make sure we don't overflow.
@@ -137,10 +133,11 @@ void* HtpSharedMemoryAllocator::Alloc(size_t requested_size) {
   const SafeInt<int> shared_memory_block_size_in_bytes_int = shared_memory_block_size_in_bytes;
 
   // allocate shared memory
-  void* shared_memory_raw = rpcmem_lib_->Api().alloc(rpcmem::RPCMEM_HEAP_ID_SYSTEM, rpcmem::RPCMEM_DEFAULT_FLAGS,
-                                                     shared_memory_block_size_in_bytes_int);
+  void* shared_memory_raw = allocator->rpcmem_lib_->Api().alloc(rpcmem::RPCMEM_HEAP_ID_SYSTEM,
+                                                                rpcmem::RPCMEM_DEFAULT_FLAGS,
+                                                                shared_memory_block_size_in_bytes_int);
   ORT_ENFORCE(shared_memory_raw != nullptr, "rpcmem_alloc() failed to allocate and returned nullptr.");
-  auto shared_memory = WrapSharedMemoryWithUniquePtr(shared_memory_raw, rpcmem_lib_->Api());
+  auto shared_memory = WrapSharedMemoryWithUniquePtr(shared_memory_raw, allocator->rpcmem_lib_->Api());
 
   const size_t allocation_alignment = AllocationAlignment();
   ORT_ENFORCE(IsAligned(shared_memory_raw, allocation_alignment),
@@ -148,7 +145,7 @@ void* HtpSharedMemoryAllocator::Alloc(size_t requested_size) {
               allocation_alignment, " bytes).");
 
   // get shared memory fd
-  const auto shared_memory_fd = rpcmem_lib_->Api().to_fd(shared_memory.get());
+  const auto shared_memory_fd = allocator->rpcmem_lib_->Api().to_fd(shared_memory.get());
   ORT_ENFORCE(shared_memory_fd != -1, "rpcmem_to_fd() returned invalid file descriptor.");
 
   std::byte* allocation_address = reinterpret_cast<std::byte*>(shared_memory_raw);
@@ -163,8 +160,8 @@ void* HtpSharedMemoryAllocator::Alloc(size_t requested_size) {
     AllocationRecord allocation_record{};
     allocation_record.shared_memory_info = std::move(shared_memory_info);
 
-    std::scoped_lock g{allocations_mutex_};
-    const bool inserted = allocations_.emplace(allocation_address, std::move(allocation_record)).second;
+    std::scoped_lock g{allocator->allocations_mutex_};
+    const bool inserted = allocator->allocations_.emplace(allocation_address, std::move(allocation_record)).second;
     ORT_ENFORCE(inserted, "Allocation record already exists for address (", allocation_address, ").");
   }
 
@@ -172,7 +169,7 @@ void* HtpSharedMemoryAllocator::Alloc(size_t requested_size) {
   {
     const bool registered = GlobalAllocationTracker().RegisterAllocation(allocation_address,
                                                                          shared_memory_block_size_in_bytes,
-                                                                         *this);
+                                                                         *allocator);
 
     ORT_ENFORCE(registered, "Attempted to register allocation but it is already tracked for address (",
                 allocation_address, ").");
@@ -182,14 +179,16 @@ void* HtpSharedMemoryAllocator::Alloc(size_t requested_size) {
   return allocation_address;
 }
 
-void HtpSharedMemoryAllocator::Free(void* allocation_address) {
+void ORT_API_CALL HtpSharedMemoryAllocator::FreeImpl(struct OrtAllocator* this_, void* allocation_address) {
+  HtpSharedMemoryAllocator* allocator = static_cast<HtpSharedMemoryAllocator*>(this_);
+
   if (allocation_address == nullptr) {
     return;
   }
 
-  const auto allocation_node = [this, allocation_address]() {
-    std::scoped_lock g{allocations_mutex_};
-    return allocations_.extract(allocation_address);
+  const auto allocation_node = [allocator, allocation_address]() {
+    std::scoped_lock g{allocator->allocations_mutex_};
+    return allocator->allocations_.extract(allocation_address);
   }();
 
   ORT_ENFORCE(!allocation_node.empty(), "Failed to get allocation info for address (", allocation_address, ").");
@@ -198,14 +197,14 @@ void HtpSharedMemoryAllocator::Free(void* allocation_address) {
   // Avoid throwing exceptions as this may be running from a destructor.
   try {
     // take ownership of shared memory and free at end of scope
-    auto shared_memory = WrapSharedMemoryWithUniquePtr(allocation_address, rpcmem_lib_->Api());
+    auto shared_memory = WrapSharedMemoryWithUniquePtr(allocation_address, allocator->rpcmem_lib_->Api());
 
     // unregister with global allocation tracker
     {
       const bool unregistered = GlobalAllocationTracker().UnregisterAllocation(allocation_address);
       if (!unregistered) {
-        LOGS(logger_, ERROR) << "Attempted to deregister allocation but it is untracked for address ("
-                             << allocation_address << ").";
+        LOGS(allocator->logger_, ERROR) << "Attempted to deregister allocation but it is untracked for address ("
+                                        << allocation_address << ").";
       }
     }
 
@@ -216,12 +215,13 @@ void HtpSharedMemoryAllocator::Free(void* allocation_address) {
       try {
         clean_up_fn(allocation_address);
       } catch (const std::exception& e) {
-        LOGS(logger_, ERROR) << "Caught exception while running clean up callback for address (" << allocation_address
-                             << "): " << e.what();
+        LOGS(allocator->logger_, ERROR) << "Caught exception while running clean up callback for address ("
+                                        << allocation_address
+                                        << "): " << e.what();
       }
     }
   } catch (const std::exception& e) {
-    LOGS(logger_, ERROR) << "Caught exception while freeing address (" << allocation_address << "): " << e.what();
+    LOGS(allocator->logger_, ERROR) << "Caught exception while freeing address (" << allocation_address << "): " << e.what();
   }
 }
 

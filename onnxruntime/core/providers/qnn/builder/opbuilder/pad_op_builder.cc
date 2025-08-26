@@ -15,20 +15,20 @@ class PadOpBuilder : public BaseOpBuilder {
 
  protected:
   Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger,
                        std::vector<std::string>& input_names,
                        bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
   Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
 };
 
 Status PadOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                   const NodeUnit& node_unit,
+                                   const OrtNodeUnit& node_unit,
                                    const logging::Logger& logger,
                                    std::vector<std::string>& input_names,
                                    bool do_op_validation) const {
@@ -39,14 +39,14 @@ Status PadOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
     ORT_RETURN_IF(inputs.size() < 2, "QNN Pad requires the pads input.");
 
     std::vector<uint32_t> input_shape;
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].node_arg, input_shape), "Cannot get shape of input 0.");
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape of input 0.");
     ORT_RETURN_IF(input_shape.size() > 5, "QNN Pad doesn't support more than 5 dimension");
 
-    auto& pads_input_name = inputs[1].node_arg.Name();
+    auto& pads_input_name = inputs[1].name;
     ORT_RETURN_IF_NOT(qnn_model_wrapper.IsConstantInput(pads_input_name),
                       "Qnn doesn't support dynamic pad input");
-    if (inputs.size() > 2 && inputs[2].node_arg.Exists()) {
-      auto& constant_value_input_name = inputs[2].node_arg.Name();
+    if (inputs.size() > 2 && inputs[2].Exists()) {
+      auto& constant_value_input_name = inputs[2].name;
       ORT_RETURN_IF_NOT(qnn_model_wrapper.IsConstantInput(constant_value_input_name),
                         "Qnn doesn't support dynamic constant_value input");
     }
@@ -59,8 +59,8 @@ Status PadOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 
 Status ProcessConstantValue(QnnModelWrapper& qnn_model_wrapper,
                             std::vector<std::string>& param_tensor_names,
-                            const NodeUnit& node_unit,
-                            const NodeUnitIODef& input) {
+                            const OrtNodeUnit& node_unit,
+                            const OrtNodeUnitIODef& input) {
   TensorInfo input_info = {};
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input, input_info));
   std::vector<uint8_t> unpacked_tensor;
@@ -170,7 +170,7 @@ Status ProcessConstantValue(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                 const NodeUnit& node_unit,
+                                                 const OrtNodeUnit& node_unit,
                                                  std::vector<std::string>&& input_names,
                                                  const logging::Logger& logger,
                                                  bool do_op_validation) const {
@@ -178,11 +178,11 @@ Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrap
   // Process pads input
   // Already confirmed pads input is initializer in ProcessInputs()
   const auto& inputs = node_unit.Inputs();
-  const auto& pads_input_name = inputs[1].node_arg.Name();
+  const auto& pads_input_name = inputs[1].name;
 
   std::vector<uint8_t> unpacked_tensor;
   const auto& input_tensor = qnn_model_wrapper.GetConstantTensor(pads_input_name);
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*input_tensor, unpacked_tensor));
+  ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(const_cast<OrtValueInfo&>(*input_tensor), unpacked_tensor));
   // Onnx Pads are int64, Qnn use uint32
   const int64_t* tensor_data = reinterpret_cast<const int64_t*>(unpacked_tensor.data());
   size_t tensor_byte_size = unpacked_tensor.size();
@@ -199,15 +199,14 @@ Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrap
   std::vector<uint32_t> pad_amount;
   std::transform(tensor_data, tensor_data + size, std::back_inserter(pad_amount),
                  [](int64_t item) { return item < 0 ? SafeInt<uint32_t>(0) : SafeInt<uint32_t>(item); });
-
   // Onnx format is begin_0, begin_1, ..., end_0, end_1, ...
   // Qnn format is begin_0, end_0, begin_1, end_1, ...
   ReArrangePads(pad_amount);
 
   std::vector<uint32_t> input_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].node_arg, input_shape), "Cannot get shape of input 0.");
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape of input 0.");
 
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(qnn_model_wrapper.GetOrtApi(), node_unit);
   std::string mode = node_helper.Get("mode", "constant");
 
   if ("reflect" == mode && has_negative) {
@@ -241,7 +240,7 @@ Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrap
   qnn_model_wrapper.AddParamWrapper(std::move(pad_amount_param));
 
   // Process optional input constant_value
-  if (inputs.size() > 2 && inputs[2].node_arg.Exists()) {
+  if (inputs.size() > 2 && inputs[2].Exists()) {
     ORT_RETURN_IF_ERROR(ProcessConstantValue(qnn_model_wrapper, param_tensor_names, node_unit, inputs[2]));
   }  // constant_value
 
@@ -290,7 +289,7 @@ Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrap
     TensorInfo output_info = {};
     ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
 
-    const std::string& org_output_name = node_unit.Outputs()[0].node_arg.Name();
+    const std::string& org_output_name = node_unit.Outputs()[0].name;
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(org_output_name);
     Qnn_TensorType_t op_output_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
 

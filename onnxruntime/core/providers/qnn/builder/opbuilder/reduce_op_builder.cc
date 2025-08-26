@@ -51,15 +51,15 @@ class ReduceOpBuilder : public BaseOpBuilder {
   ReduceOpBuilder() : BaseOpBuilder("ReduceOpBuilder") {}
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(ReduceOpBuilder);
 
-  Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit,
+  Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
                        const logging::Logger& logger) const override final ORT_MUST_USE_RESULT;
 
  protected:
-  Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit, const logging::Logger& logger,
+  Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit, const logging::Logger& logger,
                        std::vector<std::string>& input_names,
                        bool do_op_validation = false) const override ORT_MUST_USE_RESULT;
 
-  Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit,
+  Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names, const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
@@ -67,7 +67,7 @@ class ReduceOpBuilder : public BaseOpBuilder {
   using AxesOnnxIntType = int64_t;
   using AxesQnnIntType = uint32_t;
 
-  Status GetAxesSet(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit,
+  Status GetAxesSet(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
                     std::set<AxesOnnxIntType>& axes_set) const;
 
   // Maps an operator type to the opset in which "axes" became an input instead of an attribute.
@@ -83,7 +83,7 @@ const std::array<int, REDUCE_OP_TYPE_COUNT> ReduceOpBuilder::opset_with_axes_as_
     18,  // ReduceL2
 };
 
-Status ReduceOpBuilder::GetAxesSet(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit,
+Status ReduceOpBuilder::GetAxesSet(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
                                    std::set<AxesOnnxIntType>& axes_set) const {
   ReduceOpType reduce_op_type = GetReduceOpType(node_unit.OpType());
   if (reduce_op_type == ReduceOpType::REDUCE_OP_TYPE_UNKNOWN) {
@@ -92,14 +92,14 @@ Status ReduceOpBuilder::GetAxesSet(QnnModelWrapper& qnn_model_wrapper, const Nod
 
   const auto& inputs = node_unit.Inputs();
   std::vector<uint32_t> input_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].node_arg, input_shape), "Cannot get shape");
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape");
   const size_t input_rank = input_shape.size();
 
   std::vector<AxesOnnxIntType> reduce_axes;
 
   const int opset_axes_as_input = ReduceOpBuilder::opset_with_axes_as_input[reduce_op_type];
   const int opset = node_unit.SinceVersion();
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(qnn_model_wrapper.GetOrtApi(), node_unit);
 
   // Extract the axes values from either the attribute or initializer input (depending on opset).
   if (opset < opset_axes_as_input) {  // Axes is in ONNX node attribute.
@@ -108,7 +108,7 @@ Status ReduceOpBuilder::GetAxesSet(QnnModelWrapper& qnn_model_wrapper, const Nod
     const auto& axes_input = inputs[1];
 
     std::vector<uint32_t> axes_shape;
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(axes_input.node_arg, axes_shape),
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(axes_input.shape, axes_shape),
                       "Cannot get shape of axes input");
 
     if (axes_shape.size() != 1) {
@@ -124,7 +124,7 @@ Status ReduceOpBuilder::GetAxesSet(QnnModelWrapper& qnn_model_wrapper, const Nod
 
     // Empty axes means to use default axes (when noop_with_empty_axes is 0).
     if (axes_shape[0] > 0) {
-      const std::string& axes_input_name = inputs[1].node_arg.Name();
+      const std::string& axes_input_name = inputs[1].name;
 
       // Check that the axes input is an initializer.
       if (!qnn_model_wrapper.IsConstantInput(axes_input_name)) {
@@ -135,7 +135,7 @@ Status ReduceOpBuilder::GetAxesSet(QnnModelWrapper& qnn_model_wrapper, const Nod
       const auto& axes_tensor = qnn_model_wrapper.GetConstantTensor(axes_input_name);
       std::vector<uint8_t> axes_bytes;
 
-      ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*axes_tensor, axes_bytes));
+      ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(const_cast<OrtValueInfo&>(*axes_tensor), axes_bytes));
       ORT_RETURN_IF_NOT(input_rank * sizeof(AxesOnnxIntType) >= axes_bytes.size(),
                         "Expect QNN Reduce* operator to have at most rank(input[0]) axes elements.");
       reduce_axes.resize(axes_bytes.size() / sizeof(AxesOnnxIntType));
@@ -168,7 +168,7 @@ Status ReduceOpBuilder::GetAxesSet(QnnModelWrapper& qnn_model_wrapper, const Nod
   return Status::OK();
 }
 
-Status ReduceOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit,
+Status ReduceOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
                                       const logging::Logger& logger) const {
   ReduceOpType reduce_op_type = GetReduceOpType(node_unit.OpType());
   if (reduce_op_type == ReduceOpType::REDUCE_OP_TYPE_UNKNOWN) {
@@ -189,7 +189,7 @@ Status ReduceOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper, const 
   return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
 }
 
-Status ReduceOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit,
+Status ReduceOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
                                       const logging::Logger& logger, std::vector<std::string>& input_names,
                                       bool do_op_validation) const {
   ORT_UNUSED_PARAMETER(do_op_validation);
@@ -203,10 +203,10 @@ Status ReduceOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper, const 
   return Status::OK();
 }
 
-Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit,
+Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
                                                     std::vector<std::string>&& input_names,
                                                     const logging::Logger& logger, bool do_op_validation) const {
-  NodeAttrHelper node_attr_helper(node_unit);
+  OrtNodeAttrHelper node_attr_helper(qnn_model_wrapper.GetOrtApi(), node_unit);
   std::vector<std::string> param_tensor_names;
 
   //
@@ -245,13 +245,13 @@ Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_w
     const auto& input = node_unit.Inputs()[0];
     const auto& output = node_unit.Outputs()[0];
     std::vector<uint32_t> input_shape;
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input.node_arg, input_shape), "Cannot get input shape.");
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input.shape, input_shape), "Cannot get input shape.");
     std::vector<uint32_t> output_shape;
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output.node_arg, output_shape), "Cannot get output shape.");
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output.shape, output_shape), "Cannot get output shape.");
     ORT_ENFORCE(!input.quant_param.has_value(), "Input tensor must not be quantized.");
-    const auto* type_proto = output.node_arg.TypeAsProto();
+    ONNXTensorElementDataType output_type = output.type;
     Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
-    ORT_RETURN_IF_ERROR(utils::GetQnnDataType(false, type_proto, qnn_data_type));
+    ORT_RETURN_IF_ERROR(utils::GetQnnDataType(false, output_type, qnn_data_type));
     const std::string input_name = input_names[0];
 
     // Step 1: y_pow2 = x * x, using ElementWiseMultiply instead of ElementWisePower so we don't need to add a new
@@ -287,15 +287,15 @@ Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_w
 
     // Step 3: y = Sqrt(y_pow2_sum)
     Qnn_TensorType_t output_tensor_type =
-        qnn_model_wrapper.IsGraphOutput(output.node_arg.Name()) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
-    QnnTensorWrapper sqrt_tensorwrapper(output.node_arg.Name(), output_tensor_type, qnn_data_type,
+        qnn_model_wrapper.IsGraphOutput(output.name) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+    QnnTensorWrapper sqrt_tensorwrapper(output.name, output_tensor_type, qnn_data_type,
                                         QnnQuantParamsWrapper(), std::move(output_shape));
     ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sqrt_tensorwrapper)), "AddTensorWrapper failed");
     ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit, QNN_OP_ELEMENT_WISE_SQUARE_ROOT),
                                                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                       QNN_OP_ELEMENT_WISE_SQUARE_ROOT,
                                                       {reduce_output_name},
-                                                      {output.node_arg.Name()},
+                                                      {output.name},
                                                       {},
                                                       do_op_validation),
                       "CreateQnnNode failed");
