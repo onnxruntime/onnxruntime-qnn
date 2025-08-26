@@ -67,7 +67,7 @@ TEST_F(QnnCPUBackendTests, Mod_dynamic_Divisor) {
 //     The sign of the result is that of the divisor."
 //  Where the result from QNN EP is correct (same sign and same value from python.)
 // Therefore, this test is disabled.
-TEST_F(QnnCPUBackendTests, DISABLE_Fmod_dynamic_Divisor) {
+TEST_F(QnnCPUBackendTests, DISABLED_Fmod_dynamic_Divisor) {
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> dividend_shape{1, 4, 5};
   auto dividend = rand_gen_.Uniform<float>(dividend_shape, -100.0f, 100.0f);
