@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn-abi/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -16,12 +16,12 @@ class IOpBuilder {
 
   // Check whether the operator is supported or not
   virtual Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                               const NodeUnit& node,
+                               const OrtNodeUnit& node,
                                const logging::Logger& logger) const ORT_MUST_USE_RESULT = 0;
 
   // Add the operator to QNN model
   virtual Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper,
-                                   const NodeUnit& node,
+                                   const OrtNodeUnit& node,
                                    const logging::Logger& logger,
                                    bool do_op_validation = false) const ORT_MUST_USE_RESULT = 0;
 

@@ -10,7 +10,7 @@
 
 #include "core/graph/node_attr_utils.h"
 #include "core/graph/onnx_protobuf.h"
-#include "test/providers/qnn/qnn_test_utils.h"
+#include "test/providers/qnn-abi/qnn_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
@@ -46,10 +46,10 @@ static void RunTopKTestOnCPU(const TestInputDef<DataType>& input_def,
 
   provider_options["backend_type"] = "cpu";
 
-  RunQnnModelTest(BuildTopKTestCase<DataType>(input_def, k_def, attrs),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildTopKTestCase<DataType>(input_def, k_def, attrs),
+                     provider_options,
+                     opset,
+                     expected_ep_assignment);
 }
 
 //
@@ -57,7 +57,7 @@ static void RunTopKTestOnCPU(const TestInputDef<DataType>& input_def,
 //
 
 // Test that TopK with a dynamic K input is not supported by QNN EP.
-TEST_F(QnnCPUBackendTests, TopK_DynamicK_Unsupported) {
+TEST_F(QnnABICPUBackendTests, TopK_DynamicK_Unsupported) {
   RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                           TestInputDef<int64_t>({1}, false /* is_initializer */, {2}),
                           {},                               // Attributes
@@ -65,7 +65,7 @@ TEST_F(QnnCPUBackendTests, TopK_DynamicK_Unsupported) {
 }
 
 // Test that TopK with an axis attribute that is not the last dimension.
-TEST_F(QnnCPUBackendTests, TopK_NonLastAxis) {
+TEST_F(QnnABICPUBackendTests, TopK_NonLastAxis) {
   RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                           TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                           {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
@@ -73,7 +73,7 @@ TEST_F(QnnCPUBackendTests, TopK_NonLastAxis) {
 }
 
 // Test that TopK that returns the top k minimum values is not supported by QNN EP.
-TEST_F(QnnCPUBackendTests, TopK_MinValues_Unsupported) {
+TEST_F(QnnABICPUBackendTests, TopK_MinValues_Unsupported) {
   RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                           TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                           {utils::MakeAttribute("largest", static_cast<int64_t>(0))},
@@ -81,7 +81,7 @@ TEST_F(QnnCPUBackendTests, TopK_MinValues_Unsupported) {
 }
 
 // Test TopK on CPU backend: top 2 largest floats from last axis
-TEST_F(QnnCPUBackendTests, TopK_LargestFloats_LastAxis) {
+TEST_F(QnnABICPUBackendTests, TopK_LargestFloats_LastAxis) {
   RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                           TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                           {},  // Attributes
@@ -89,7 +89,7 @@ TEST_F(QnnCPUBackendTests, TopK_LargestFloats_LastAxis) {
 }
 
 // Test TopK on CPU backend: top 2 largest int32s from last axis
-TEST_F(QnnCPUBackendTests, TopK_LargestInt32s_LastAxis) {
+TEST_F(QnnABICPUBackendTests, TopK_LargestInt32s_LastAxis) {
   std::vector<int32_t> input_data = {-6, -5, -4, -3, -2, 0, 1, 2, 3, 4, 5, 6};
   RunTopKTestOnCPU<int32_t>(TestInputDef<int32_t>({1, 2, 2, 3}, false, input_data),
                             TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
@@ -151,15 +151,15 @@ static void RunQDQTopKTestOnHTP(const TestInputDef<float>& input_def,
 
   auto f32_model_builder = BuildTopKTestCase<float>(input_def, k_def, attrs);
   auto qdq_model_builder = BuildQDQTopKTestCase<QType>(input_def, k_def, attrs, use_contrib_qdq);
-  TestQDQModelAccuracy(f32_model_builder,
-                       qdq_model_builder,
-                       provider_options,
-                       opset,
-                       expected_ep_assignment);
+  TestQDQModelAccuracyABI(f32_model_builder,
+                          qdq_model_builder,
+                          provider_options,
+                          opset,
+                          expected_ep_assignment);
 }
 
 // Test 8-bit QDQ TopK on HTP backend: top 2 largest floats from last axis
-TEST_F(QnnHTPBackendTests, TopK_LargestFloats_U8_LastAxis) {
+TEST_F(QnnABIHTPBackendTests, TopK_LargestFloats_U8_LastAxis) {
   RunQDQTopKTestOnHTP<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                                TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                                {},  // Attributes
@@ -167,7 +167,7 @@ TEST_F(QnnHTPBackendTests, TopK_LargestFloats_U8_LastAxis) {
 }
 
 // Test 8-bit QDQ TopK on HTP backend: non-last axis
-TEST_F(QnnHTPBackendTests, TopK_U8_NonLastAxis) {
+TEST_F(QnnABIHTPBackendTests, TopK_U8_NonLastAxis) {
   RunQDQTopKTestOnHTP<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                                TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                                {utils::MakeAttribute("axis", static_cast<int64_t>(1))},  // Attributes
@@ -175,7 +175,7 @@ TEST_F(QnnHTPBackendTests, TopK_U8_NonLastAxis) {
 }
 
 // Test 16-bit QDQ TopK on HTP backend: top 2 largest floats from last axis
-TEST_F(QnnHTPBackendTests, TopK_LargestFloats_U16_LastAxis) {
+TEST_F(QnnABIHTPBackendTests, TopK_LargestFloats_U16_LastAxis) {
   RunQDQTopKTestOnHTP<uint16_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-20.0f, 20.0f, 48)),
                                 TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                                 {},  // Attributes
@@ -184,7 +184,7 @@ TEST_F(QnnHTPBackendTests, TopK_LargestFloats_U16_LastAxis) {
 }
 
 // Test 16-bit QDQ TopK on HTP backend: non-last axis
-TEST_F(QnnHTPBackendTests, TopK_U16_NonLastAxis) {
+TEST_F(QnnABIHTPBackendTests, TopK_U16_NonLastAxis) {
   RunQDQTopKTestOnHTP<uint16_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-20.0f, 20.0f, 48)),
                                 TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                                 {utils::MakeAttribute("axis", static_cast<int64_t>(1))},  // Attributes

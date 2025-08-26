@@ -1,16 +1,17 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License
 
-#include "core/providers/qnn/rpcmem_library.h"
+#include "core/providers/qnn-abi/rpcmem_library.h"
 
 #if defined(_WIN32)
 #include <filesystem>
 
+#include <Windows.h>
 #include <sysinfoapi.h>
 #include <winsvc.h>
 #endif  // defined(_WIN32)
 
-#include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn-abi/ort_api.h"
 
 namespace onnxruntime::qnn {
 
@@ -21,8 +22,7 @@ void DynamicLibraryHandleDeleter::operator()(void* library_handle) noexcept {
     return;
   }
 
-  const auto& env = GetDefaultEnv();
-  const auto unload_status = env.UnloadDynamicLibrary(library_handle);
+  const auto unload_status = OrtUnloadDynamicLibrary(library_handle);
 
   if (!unload_status.IsOK()) {
     LOGS_DEFAULT(WARNING) << "Failed to unload dynamic library. Error: " << unload_status.ErrorMessage();
@@ -129,9 +129,8 @@ Status GetRpcMemDynamicLibraryPath(PathString& path_out) {
 
 Status LoadDynamicLibrary(const PathString& path, bool global_symbols,
                           UniqueDynamicLibraryHandle& library_handle_out) {
-  const auto& env = GetDefaultEnv();
   void* library_handle_raw = nullptr;
-  ORT_RETURN_IF_ERROR(env.LoadDynamicLibrary(path, global_symbols, &library_handle_raw));
+  ORT_RETURN_IF_ERROR(OrtLoadDynamicLibrary(path, global_symbols, &library_handle_raw));
 
   library_handle_out = UniqueDynamicLibraryHandle{library_handle_raw};
   return Status::OK();
@@ -158,12 +157,11 @@ UniqueDynamicLibraryHandle GetRpcMemDynamicLibraryHandle() {
 RpcMemApi CreateApi(void* library_handle) {
   RpcMemApi api{};
 
-  const auto& env = GetDefaultEnv();
-  ORT_THROW_IF_ERROR(env.GetSymbolFromLibrary(library_handle, "rpcmem_alloc", (void**)&api.alloc));
+  ORT_THROW_IF_ERROR(OrtGetSymbolFromLibrary(library_handle, "rpcmem_alloc", (void**)&api.alloc));
 
-  ORT_THROW_IF_ERROR(env.GetSymbolFromLibrary(library_handle, "rpcmem_free", (void**)&api.free));
+  ORT_THROW_IF_ERROR(OrtGetSymbolFromLibrary(library_handle, "rpcmem_free", (void**)&api.free));
 
-  ORT_THROW_IF_ERROR(env.GetSymbolFromLibrary(library_handle, "rpcmem_to_fd", (void**)&api.to_fd));
+  ORT_THROW_IF_ERROR(OrtGetSymbolFromLibrary(library_handle, "rpcmem_to_fd", (void**)&api.to_fd));
 
   return api;
 }

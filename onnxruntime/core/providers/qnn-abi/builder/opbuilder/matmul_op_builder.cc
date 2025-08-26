@@ -1,11 +1,11 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn/ort_api.h"
-#include "core/providers/qnn/builder/op_builder_factory.h"
-#include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
-#include "core/providers/qnn/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/ort_api.h"
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
+#include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn-abi/builder/qnn_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -24,23 +24,23 @@ class MatMulOpBuilder : public BaseOpBuilder {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(MatMulOpBuilder);
 
  protected:
-  Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit, const logging::Logger& logger,
+  Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit, const logging::Logger& logger,
                        std::vector<std::string>& input_names, bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
-  Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit,
+  Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names, const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
  private:
   Status ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_model_wrapper,
-                                   const NodeUnit& node_unit,
+                                   const OrtNodeUnit& node_unit,
                                    const TensorInfo& input_info_0,
                                    const TensorInfo& input_info_1,
                                    const logging::Logger& logger,
                                    std::vector<std::string>& input_names,
                                    bool do_op_validation) const ORT_MUST_USE_RESULT;
   Status ProcessInputsForQnnFullyConnected(QnnModelWrapper& qnn_model_wrapper,
-                                           const NodeUnit& node_unit,
+                                           const OrtNodeUnit& node_unit,
                                            const TensorInfo& input_info_0,
                                            const TensorInfo& input_info_1,
                                            const logging::Logger& logger,
@@ -53,8 +53,8 @@ inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
   return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 || qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
 }
 
-Status CheckInputs(const QnnModelWrapper& qnn_model_wrapper, const NodeUnitIODef& input_def_0,
-                   const NodeUnitIODef& input_def_1, TensorInfo& input_info_0, TensorInfo& input_info_1,
+Status CheckInputs(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef& input_def_0,
+                   const OrtNodeUnitIODef& input_def_1, TensorInfo& input_info_0, TensorInfo& input_info_1,
                    bool& use_fully_connected) {
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input_def_0, input_info_0));
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input_def_1, input_info_1));
@@ -129,7 +129,7 @@ Status ProcessInput0(QnnModelWrapper& qnn_model_wrapper,
 
 // Process operator inputs. Dispatches to other processing functions depending on whether we're
 // translating an ONNX MatMul to a QNN MatMul or a QNN FullyConnected.
-Status MatMulOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit,
+Status MatMulOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
                                       const logging::Logger& logger, std::vector<std::string>& input_names,
                                       bool do_op_validation) const {
   const auto& inputs = node_unit.Inputs();
@@ -158,7 +158,7 @@ Status MatMulOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper, const 
 }
 
 Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_model_wrapper,
-                                                  const NodeUnit& node_unit,
+                                                  const OrtNodeUnit& node_unit,
                                                   const TensorInfo& input_info_0,
                                                   const TensorInfo& input_info_1,
                                                   const logging::Logger& logger,
@@ -167,12 +167,12 @@ Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_model_wra
   const auto& inputs = node_unit.Inputs();
   const bool reshape_input_1 = input_info_1.shape.size() == 1;
 
-  const std::string& org_input_0_name = inputs[0].node_arg.Name();
+  const std::string& org_input_0_name = inputs[0].name;
   ORT_RETURN_IF_ERROR(ProcessInput0(qnn_model_wrapper, input_info_0, org_input_0_name, input_names,
                                     logger, do_op_validation));
 
   // Process input 1.
-  const std::string& org_input_1_name = inputs[1].node_arg.Name();
+  const std::string& org_input_1_name = inputs[1].name;
   std::string input_1_name = org_input_1_name;
   if (reshape_input_1) {
     // Input[1] is a rank 1 tensor that needs to be reshaped.
@@ -273,7 +273,7 @@ Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_model_wra
 }
 
 Status MatMulOpBuilder::ProcessInputsForQnnFullyConnected(QnnModelWrapper& qnn_model_wrapper,
-                                                          const NodeUnit& node_unit,
+                                                          const OrtNodeUnit& node_unit,
                                                           const TensorInfo& input_info_0,
                                                           const TensorInfo& input_info_1,
                                                           const logging::Logger& logger,
@@ -282,12 +282,12 @@ Status MatMulOpBuilder::ProcessInputsForQnnFullyConnected(QnnModelWrapper& qnn_m
   const auto& inputs = node_unit.Inputs();
   const bool reshape_input_1 = input_info_1.shape.size() == 1;
 
-  const std::string& org_input_0_name = inputs[0].node_arg.Name();
+  const std::string& org_input_0_name = inputs[0].name;
   ORT_RETURN_IF_ERROR(ProcessInput0(qnn_model_wrapper, input_info_0, org_input_0_name, input_names,
                                     logger, do_op_validation));
 
   // Process input 1.
-  const std::string& org_input_1_name = inputs[1].node_arg.Name();
+  const std::string& org_input_1_name = inputs[1].name;
   std::string input_1_name = org_input_1_name;
   std::vector<uint32_t> shape_2d;
   QnnQuantParamsWrapper quant_param_2d = input_info_1.quant_param.Copy();
@@ -377,7 +377,7 @@ Status MatMulOpBuilder::ProcessInputsForQnnFullyConnected(QnnModelWrapper& qnn_m
   return Status::OK();
 }
 
-Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit,
+Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
                                                     std::vector<std::string>&& input_names,
                                                     const logging::Logger& /*logger*/, bool do_op_validation) const {
   const auto& inputs = node_unit.Inputs();
@@ -408,7 +408,7 @@ Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_w
     qnn_model_wrapper.AddParamWrapper(std::move(transpose_in1_param));
   }
 
-  const std::string& org_output_name = node_unit.Outputs()[0].node_arg.Name();
+  const std::string& org_output_name = node_unit.Outputs()[0].name;
   std::string op_output_name = org_output_name;
   TensorInfo output_info{};
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));

@@ -1,10 +1,10 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
-#include "core/providers/qnn/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn/builder/op_builder_factory.h"
-#include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
+#include "core/providers/qnn-abi/builder/qnn_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -33,34 +33,34 @@ class ConvOpBuilder : public BaseOpBuilder {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(ConvOpBuilder);
 
   Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger) const override final ORT_MUST_USE_RESULT;
 
  protected:
   Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger,
                        std::vector<std::string>& input_names,
                        bool do_op_validation) const override ORT_MUST_USE_RESULT;
   Status ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrapper,
-                             const NodeUnit& node_unit,
+                             const OrtNodeUnit& node_unit,
                              const logging::Logger& logger,
                              std::vector<std::string>& input_names,
                              bool do_op_validation) const ORT_MUST_USE_RESULT;
   Status ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
-                               const NodeUnit& node_unit,
+                               const OrtNodeUnit& node_unit,
                                const logging::Logger& logger,
                                std::vector<std::string>& input_names,
                                bool do_op_validation) const ORT_MUST_USE_RESULT;
   Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
  private:
   Status GetInputChannelNumber(QnnModelWrapper& qnn_model_wrapper,
-                               const NodeUnit& node_unit,
+                               const OrtNodeUnit& node_unit,
                                uint32_t& input_channel_number) const;
 };
 
@@ -69,7 +69,7 @@ class ConvOpBuilder : public BaseOpBuilder {
 // The nodes from 2nd call of GetCapability get layout transformer applied, it's NHWC
 // Need to do op validation in 1st call of GetCapability
 Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                                    const NodeUnit& node_unit,
+                                    const OrtNodeUnit& node_unit,
                                     const logging::Logger& logger) const {
   if (node_unit.Domain() == kMSInternalNHWCDomain) {  // Use QNN validation API if layout is NHWC.
     return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
@@ -80,18 +80,17 @@ Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 
   const auto& input_0 = inputs[0];
   std::vector<uint32_t> input_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_0.node_arg, input_shape), "Cannot get shape");
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_0.shape, input_shape), "Cannot get shape");
   if (input_shape.size() != 5 && input_shape.size() != 4 && input_shape.size() != 3) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN Conv only supports 3D(rank 5), 2D (rank 4) or 1D (rank 3) inputs.");
   }
 
-  ONNX_NAMESPACE::DataType input_data_type = input_0.node_arg.Type();
-  bool is_cpu_backend = IsCpuBackend(qnn_model_wrapper.GetQnnBackendType());
-  ORT_RETURN_IF(is_cpu_backend && input_data_type != ONNX_NAMESPACE::Utils::DataTypeUtils::ToType("float"),
-                "QNN EP: Data type ", input_data_type->c_str(),
-                " is not supported for Conv operator in CPU backend.");
+  ONNXTensorElementDataType input_data_type = input_0.type;
+  std::string error_msg = "QNN EP: Data type " + std::to_string(static_cast<int>(input_data_type)) +
+                          " is not supported for Conv operator in CPU backend.";
+  ORT_RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, input_data_type, error_msg));
 
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(node_unit);
   auto auto_pad = node_helper.Get("auto_pad", std::string("NOTSET"));
   ORT_RETURN_IF(auto_pad != "NOTSET" && auto_pad != "SAME_LOWER" && auto_pad != "SAME_UPPER" && auto_pad != "VALID",
                 "QNN Conv operators do not support 'auto_pad' value: ", auto_pad.c_str());
@@ -119,6 +118,13 @@ Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
     ORT_RETURN_IF_ERROR(qnn_model_wrapper.IsPerChannelQuantized(input_1, is_per_axis_quant, quant_axis));
 
     if (is_per_axis_quant) {
+      ONNXTensorElementDataType elem_data_type = input_1.type;
+
+      const bool is_signed_type = (elem_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4) ||
+                                  (elem_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) ||
+                                  (elem_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16);
+      ORT_RETURN_IF_NOT(is_signed_type, "Conv weights must be of a signed quantized type if quantized per-channel");
+
       if (conv_type == OnnxConvType::kConvTranspose) {
         ORT_RETURN_IF_NOT(quant_axis == 1,
                           "ConvTranspose's input[1] must be use axis == 1 for per-channel quantization");
@@ -132,12 +138,12 @@ Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status ConvOpBuilder::GetInputChannelNumber(QnnModelWrapper& qnn_model_wrapper,
-                                            const NodeUnit& node_unit,
+                                            const OrtNodeUnit& node_unit,
                                             uint32_t& input_channel_number) const {
   const auto& input_0 = node_unit.Inputs()[0];
   input_channel_number = 0;
   std::vector<uint32_t> input_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_0.node_arg, input_shape), "Cannot get shape");
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_0.shape, input_shape), "Cannot get shape");
   // Conv input 0 is NHWC layout now, get the channel data from the last dim.
   input_channel_number = input_shape.back();
 
@@ -145,7 +151,7 @@ Status ConvOpBuilder::GetInputChannelNumber(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status ConvOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                    const NodeUnit& node_unit,
+                                    const OrtNodeUnit& node_unit,
                                     const logging::Logger& logger,
                                     std::vector<std::string>& input_names,
                                     bool do_op_validation) const {
@@ -153,7 +159,7 @@ Status ConvOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   assert(inputs.size() >= 2);
 
   std::vector<uint32_t> input0_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].node_arg, input0_shape),
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input0_shape),
                     "QNN EP: Cannot get shape for first input");
 
   if (input0_shape.size() == 3) {
@@ -162,11 +168,11 @@ Status ConvOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
     return ProcessConv2D3DInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
   }
 
-  return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN Conv only supports 3D (rank 5), 2D (rank 4) or 1D (rank 3) inputs.");
+  return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN Conv only supports 3D(rank 5), 2D (rank 4) or 1D (rank 3) inputs.");
 }
 
 Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
-                                            const NodeUnit& node_unit,
+                                            const OrtNodeUnit& node_unit,
                                             const logging::Logger& logger,
                                             std::vector<std::string>& input_names,
                                             bool do_op_validation) const {
@@ -186,7 +192,7 @@ Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
   // Input 1: weight. This input must be transposed manually by QNN EP.
   //
   {
-    const std::string& input1_name = inputs[1].node_arg.Name();
+    const std::string& input1_name = inputs[1].name;
     TensorInfo input_info = {};
     ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], input_info));
 
@@ -353,10 +359,11 @@ Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status ConvOpBuilder::ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrapper,
-                                          const NodeUnit& node_unit,
+                                          const OrtNodeUnit& node_unit,
                                           const logging::Logger& logger,
                                           std::vector<std::string>& input_names,
                                           bool do_op_validation) const {
+  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
   const auto& inputs = node_unit.Inputs();
   const size_t num_inputs = inputs.size();
   OnnxConvType conv_type = {};
@@ -369,7 +376,7 @@ Status ConvOpBuilder::ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrapper,
   //
 
   {
-    const std::string& input0_name = inputs[0].node_arg.Name();
+    const std::string& input0_name = inputs[0].name;
     TensorInfo input0_info = {};
     ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input0_info));
 
@@ -427,7 +434,7 @@ Status ConvOpBuilder::ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrapper,
   // Next, we have to transpose the weight because ORT layout transformations do not change the weight layout.
   //
   {
-    const std::string& input1_name = inputs[1].node_arg.Name();
+    const std::string& input1_name = inputs[1].name;
     TensorInfo input_info = {};
     ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], input_info));
 
@@ -482,8 +489,15 @@ Status ConvOpBuilder::ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrapper,
       ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*input_info.initializer_tensor,
                                                                   original_tensor_bytes));
       unpacked_tensor.resize(original_tensor_bytes.size());
-      const size_t elem_byte_size = qnn::utils::GetElementSizeByType(
-          static_cast<ONNX_NAMESPACE::TensorProto_DataType>(input_info.initializer_tensor->data_type()));
+
+      const OrtTypeInfo* type_info = nullptr;
+      RETURN_STATUS_IF_ERROR(ort_api.GetValueInfoTypeInfo(static_cast<const OrtValueInfo*>(input_info.initializer_tensor), &type_info), ort_api);
+
+      const OrtTensorTypeAndShapeInfo* type_shape = nullptr;
+      RETURN_STATUS_IF_ERROR(ort_api.CastTypeInfoToTensorInfo(type_info, &type_shape), ort_api);
+      ONNXTensorElementDataType elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+      RETURN_STATUS_IF_ERROR(ort_api.GetTensorElementType(type_shape, &elem_type), ort_api);
+      const size_t elem_byte_size = qnn::utils::GetElementSizeByType(elem_type);
       ORT_RETURN_IF(elem_byte_size == 0, "Can't get element byte size from given ONNX type for initializer ",
                     input1_name.c_str());
 
@@ -568,29 +582,29 @@ Status ConvOpBuilder::ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                  const NodeUnit& node_unit,
+                                                  const OrtNodeUnit& node_unit,
                                                   std::vector<std::string>&& input_names,
                                                   const logging::Logger& logger,
                                                   bool do_op_validation) const {
   const auto& outputs = node_unit.Outputs();
 
   std::vector<uint32_t> output_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(outputs[0].node_arg, output_shape), "Cannot get shape");
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(outputs[0].shape, output_shape), "Cannot get shape");
   const bool is_1d_conv = output_shape.size() == 3;
   const bool is_3d_conv = output_shape.size() == 5;
 
   OnnxConvType conv_type = {};
   ORT_RETURN_IF_ERROR(GetOnnxConvType(node_unit.OpType(), conv_type));
 
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(node_unit);
   std::vector<std::string> param_tensor_names;
 
   const auto& input_0 = node_unit.Inputs()[0];
   const auto& input_1 = node_unit.Inputs()[1];
   std::vector<uint32_t> input_0_shape;  // NHW[D]C
   std::vector<uint32_t> input_1_shape;  // NCHW[D]
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_0.node_arg, input_0_shape), "Cannot get shape");
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_1.node_arg, input_1_shape), "Cannot get shape");
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_0.shape, input_0_shape), "Cannot get shape");
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_1.shape, input_1_shape), "Cannot get shape");
 
   // Kernel shape
   std::vector<uint32_t> kernel_shape;
@@ -756,14 +770,14 @@ Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
   }
 
   QnnQuantParamsWrapper output_quantize_param;
-  ORT_RETURN_IF_ERROR(output_quantize_param.Init(qnn_model_wrapper, outputs[0]));
+  ORT_RETURN_IF_ERROR(output_quantize_param.Init(qnn_model_wrapper.GetOrtApi(), qnn_model_wrapper, outputs[0]));
   bool is_quantized_tensor = outputs[0].quant_param.has_value();
 
-  const auto* type_proto = outputs[0].node_arg.TypeAsProto();
+  ONNXTensorElementDataType output_type = outputs[0].type;
   Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
-  ORT_RETURN_IF_ERROR(utils::GetQnnDataType(is_quantized_tensor, type_proto, qnn_data_type));
+  ORT_RETURN_IF_ERROR(utils::GetQnnDataType(is_quantized_tensor, output_type, qnn_data_type));
 
-  const auto& output_name = outputs[0].node_arg.Name();
+  const auto& output_name = outputs[0].name;
   if (is_1d_conv) {
     const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
     std::vector<uint32_t> output_shape_2d = {

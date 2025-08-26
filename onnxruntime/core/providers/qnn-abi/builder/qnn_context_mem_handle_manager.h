@@ -9,7 +9,7 @@
 
 #include "QnnInterface.h"
 
-#include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn-abi/ort_api.h"
 
 namespace onnxruntime::qnn {
 

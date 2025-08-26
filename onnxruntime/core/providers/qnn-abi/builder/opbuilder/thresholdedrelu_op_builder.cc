@@ -2,10 +2,10 @@
 // Licensed under the MIT License.
 
 #include <unordered_set>
-#include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
-#include "core/providers/qnn/builder/qnn_utils.h"
-#include "core/providers/qnn/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn-abi/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/cpu/tensor/slice_helper.h"
 
 namespace onnxruntime {
@@ -17,22 +17,22 @@ class ThresholdedReluOpBuilder : public BaseOpBuilder {
 
  protected:
   Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger,
                        std::vector<std::string>& input_names,
                        bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
   Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
  private:
-  Status ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit) const;
+  Status ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const;
 };
 
-Status ThresholdedReluOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit) const {
+Status ThresholdedReluOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const {
   TensorInfo input_info = {};
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
 
@@ -109,14 +109,14 @@ static Status SetAlphaByte(Qnn_DataType_t qnn_data_type,
 }
 
 Status ThresholdedReluOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                               const NodeUnit& node_unit,
+                                               const OrtNodeUnit& node_unit,
                                                const logging::Logger& logger,
                                                std::vector<std::string>& input_names,
                                                bool do_op_validation) const {
   if (do_op_validation) {
     ORT_RETURN_IF_ERROR(ExplictOpCheck(qnn_model_wrapper, node_unit));
   }
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(node_unit);
   const auto& inputs = node_unit.Inputs();
   const auto input_count = GetInputCountQnnRequired(node_unit);
   for (size_t input_i = 0; input_i < input_count; ++input_i) {
@@ -127,7 +127,7 @@ Status ThresholdedReluOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrappe
 }
 
 Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                             const NodeUnit& node_unit,
+                                                             const OrtNodeUnit& node_unit,
                                                              std::vector<std::string>&& input_names,
                                                              const logging::Logger& logger,
                                                              bool do_op_validation) const {
@@ -137,9 +137,9 @@ Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
   TensorInfo output_info = {};
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
 
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(node_unit);
   std::string& input_name = input_names[0];
-  const std::string& org_output_name = node_unit.Outputs()[0].node_arg.Name();
+  const std::string& org_output_name = node_unit.Outputs()[0].name;
   const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(org_output_name);
 
   std::vector<uint32_t> output_shape = output_info.shape;

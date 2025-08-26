@@ -7,10 +7,10 @@
 #include <string>
 #include <vector>
 
-#include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
-#include "core/providers/qnn/builder/op_builder_factory.h"
-#include "core/providers/qnn/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
+#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn-abi/builder/qnn_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -21,12 +21,12 @@ class MeanOpBuilder : public BaseOpBuilder {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(MeanOpBuilder);
 
  protected:
-  Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit,
+  Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names, const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
 };
 
-Status MeanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit,
+Status MeanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit,
                                                   std::vector<std::string>&& input_names, const logging::Logger& logger,
                                                   bool do_op_validation) const {
   ORT_UNUSED_PARAMETER(logger);
@@ -47,7 +47,7 @@ Status MeanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
   for (size_t i = 1; i < input_names.size(); ++i) {
     // Get output shape
     std::vector<uint32_t> output_shape;
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output.node_arg, output_shape), "Failed to get output shape.");
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output.shape, output_shape), "Failed to get output shape.");
     std::vector<uint8_t> unpackage_data(sizeof(float));
 
     const std::string add_output = utils::GetUniqueName(sum_output, "_add" + std::to_string(i));
@@ -81,12 +81,12 @@ Status MeanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(divisor_tensor)), "AddTensorWrapper Failed");
 
   // Final step - Division
-  const std::string output_name = output.node_arg.Name();
+  const std::string output_name = output.name;
   std::vector<uint32_t> output_shape;
   TensorInfo output_info = {};
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(output, output_info));
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output.node_arg, output_shape), "Failed to get output shape.");
-  Qnn_TensorType_t output_tensor_type = qnn_model_wrapper.IsGraphOutput(output.node_arg.Name()) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output.shape, output_shape), "Failed to get output shape.");
+  Qnn_TensorType_t output_tensor_type = qnn_model_wrapper.IsGraphOutput(output.name) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
   QnnTensorWrapper output_tensor(output_name, output_tensor_type, output_info.qnn_data_type,
                                  output_info.quant_param.Copy(), std::move(output_shape));
 

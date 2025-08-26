@@ -5,11 +5,10 @@
 
 #include <gsl/gsl>
 #include <memory>
-#include <string>
 #include <unordered_map>
 #include <vector>
 
-#include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn-abi/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -31,7 +30,7 @@ class IQnnNodeGroup {
   virtual Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const logging::Logger& logger) const = 0;
 
   // Returns a list of NodeUnits contained by this IQnnNodeGroup.
-  virtual gsl::span<const NodeUnit* const> GetNodeUnits() const = 0;
+  virtual gsl::span<const OrtNodeUnit* const> GetNodeUnits() const = 0;
 
   /// <summary>
   /// Returns the "target" NodeUnit of the group. This is important for topological ordering of IQnnNodeGroups.
@@ -43,14 +42,11 @@ class IQnnNodeGroup {
   ///    input1 -> DQ ----+
   /// </summary>
   /// <returns>Target NodeUnit in IQnnNodeGroup</returns>
-  virtual const NodeUnit* GetTargetNodeUnit() const = 0;
+  virtual const OrtNodeUnit* GetTargetNodeUnit() const = 0;
 
   // Returns a string representation of the IQnnNodeGroup's type.
   virtual std::string_view Type() const = 0;
 };
-
-/// Function to register fusion for QDQ
-void registerUDO(const std::string& node_type, const std::string& op_package);
 
 /// <summary>
 /// Traverses the ONNX graph to create IQnnNodeGroup objects, each containing one or more NodeUnits.
@@ -64,7 +60,7 @@ void registerUDO(const std::string& node_type, const std::string& op_package);
 /// <returns>Status with potential error</returns>
 Status GetQnnNodeGroups(/*out*/ std::vector<std::unique_ptr<IQnnNodeGroup>>& qnn_node_groups,
                         QnnModelWrapper& qnn_model_wrapper,
-                        const std::unordered_map<const Node*, const NodeUnit*>& node_to_node_unit,
+                        const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
                         size_t num_node_units,
                         const logging::Logger& logger);
 }  // namespace qnn

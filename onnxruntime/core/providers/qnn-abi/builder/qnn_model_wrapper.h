@@ -5,16 +5,15 @@
 
 #include <map>
 #include <string>
-#include <utility>
 #include <vector>
 
 #include "QnnInterface.h"
 #include "nlohmann/json.hpp"
 
-#include "core/providers/qnn/ort_api.h"
-#include "core/providers/qnn/builder/qnn_def.h"
-#include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
-#include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/ort_api.h"
+#include "core/providers/qnn-abi/builder/qnn_def.h"
+#include "core/providers/qnn-abi/builder/qnn_quant_params_wrapper.h"
+#include "core/providers/qnn-abi/builder/qnn_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -26,7 +25,7 @@ struct TensorInfo {
   Qnn_DataType_t qnn_data_type;
   QnnQuantParamsWrapper quant_param;
   bool is_initializer;
-  const ONNX_NAMESPACE::TensorProto* initializer_tensor;
+  OrtValueInfo* initializer_tensor;
 };
 
 struct ModelSettings {
@@ -36,7 +35,8 @@ struct ModelSettings {
 
 class QnnModelWrapper {
  public:
-  QnnModelWrapper(const GraphViewer& graph_viewer,
+  QnnModelWrapper(const OrtGraph& ort_graph,
+                  const ApiPtrs& api_ptrs,
                   const logging::Logger& logger,
                   const QNN_INTERFACE_VER_TYPE& qnn_interface,
                   const Qnn_BackendHandle_t& backend_handle,
@@ -44,14 +44,15 @@ class QnnModelWrapper {
                   const std::unordered_map<std::string, size_t>& output_index_map,
                   QnnBackendType qnn_backend_type,
                   const ModelSettings& model_settings)
-      : graph_viewer_(graph_viewer),
+      : ort_graph_(ort_graph),
         logger_(logger),
         qnn_interface_(qnn_interface),
         backend_handle_(backend_handle),
         input_index_map_(input_index_map),
         output_index_map_(output_index_map),
         qnn_backend_type_(qnn_backend_type),
-        model_settings_(model_settings) {
+        model_settings_(model_settings),
+        api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}) {
   }
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
@@ -64,7 +65,7 @@ class QnnModelWrapper {
                       const QnnGraph_Config_t** graph_configs = nullptr);
 
   // Make a QnnTensorWrapper from an onnx input or output.
-  Status MakeTensorWrapper(const NodeUnitIODef& tensor, QnnTensorWrapper& tensor_wrapper) const;
+  Status MakeTensorWrapper(const OrtNodeUnitIODef& tensor, QnnTensorWrapper& tensor_wrapper) const;
   Status MakeTensorWrapper(const TensorInfo& tensor_info,
                            const std::string& tensor_name,
                            QnnTensorWrapper& tensor_wrapper) const;
@@ -113,17 +114,89 @@ class QnnModelWrapper {
     return std::move(model_output_tensor_wrappers_);
   }
 
-  const InitializedTensorSet& GetInitializerTensors() const { return graph_viewer_.GetAllInitializedTensors(); }
-
-  const ONNX_NAMESPACE::TensorProto* GetConstantTensor(const std::string& tensor_name) const {
-    return graph_viewer_.GetConstantInitializer(tensor_name);
+  Status GetInitializerTensors(gsl::span<const OrtValueInfo*> initializers) const {
+    RETURN_STATUS_IF_ERROR(api_ptrs_.ort_api.Graph_GetInitializers(&ort_graph_,
+                                                                   initializers.data(),
+                                                                   initializers.size()),
+                           api_ptrs_.ort_api);
+    return Status::OK();
   }
 
-  bool IsConstantInput(std::string input_name) const {
-    return graph_viewer_.IsConstantInitializer(input_name, true);
+  // Find an initializer by name
+  Status FindInitializer(const std::string& tensor_name,
+                         const OrtValueInfo** found_value_info = nullptr) const {
+    size_t num_initializers = 0;
+    OrtStatus* status = api_ptrs_.ort_api.Graph_GetNumInitializers(&ort_graph_, &num_initializers);
+    if (status != nullptr) {
+      api_ptrs_.ort_api.ReleaseStatus(status);
+      return Status(common::ONNXRUNTIME, common::FAIL, "Failed to get number of initializers");
+    }
+
+    std::vector<const OrtValueInfo*> initializers(num_initializers);
+    Status ort_status = GetInitializerTensors(initializers);
+    if (!ort_status.IsOK()) {
+      return ort_status;
+    }
+
+    for (const OrtValueInfo* value_info : initializers) {
+      const char* value_info_name = nullptr;
+      status = api_ptrs_.ort_api.GetValueInfoName(value_info, &value_info_name);
+      if (status != nullptr) {
+        api_ptrs_.ort_api.ReleaseStatus(status);
+        return Status(common::ONNXRUNTIME, common::FAIL, "Failed to get value info name");
+      }
+
+      if (std::string(value_info_name) == tensor_name) {
+        *found_value_info = value_info;
+        return Status::OK();
+      }
+    }
+
+    return Status(common::ONNXRUNTIME, common::FAIL, "Initializer not found");
   }
 
-  static bool GetOnnxShape(const NodeArg& node_arg, std::vector<uint32_t>& shape);
+  const OrtValueInfo* GetConstantTensor(const std::string& tensor_name) const {
+    const OrtValueInfo* value_info = nullptr;
+    Status status = FindInitializer(tensor_name, &value_info);
+    if (!status.IsOK() || value_info == nullptr) {
+      return nullptr;
+    }
+
+    bool is_constant_initializer = false;
+    OrtStatus* ort_status = api_ptrs_.ort_api.ValueInfo_IsConstantInitializer(value_info, &is_constant_initializer);
+    if (ort_status != nullptr) {
+      api_ptrs_.ort_api.ReleaseStatus(ort_status);
+      return nullptr;
+    }
+
+    if (!is_constant_initializer) {
+      return nullptr;
+    }
+
+    return value_info;
+  }
+
+  // This function aims to check if the input to a node is an initializer.
+  // Note: the `input` here refers to the input of the node, not the input of the graph.
+  bool IsConstantInput(const std::string& input_name) const {
+    const OrtValueInfo* value_info = nullptr;
+    Status status = FindInitializer(input_name, &value_info);
+    if (!status.IsOK() || value_info == nullptr) {
+      return false;
+    }
+
+    bool is_constant_initializer = false;
+    OrtStatus* ort_status = api_ptrs_.ort_api.ValueInfo_IsConstantInitializer(value_info, &is_constant_initializer);
+    if (ort_status != nullptr) {
+      api_ptrs_.ort_api.ReleaseStatus(ort_status);
+      return false;
+    }
+
+    return is_constant_initializer;
+  }
+
+  // static bool GetOnnxShape(const NodeArg& node_arg, std::vector<uint32_t>& shape);
+  static bool GetOnnxShape(const std::vector<int64_t>& onnx_shape, std::vector<uint32_t>& shape);
 
   bool IsQnnTensorWrapperExist(const std::string& tensor_name) const;
 
@@ -151,7 +224,7 @@ class QnnModelWrapper {
     }
   }
 
-  Status GetTensorInfo(const NodeUnitIODef& input, TensorInfo& input_info) const;
+  Status GetTensorInfo(const OrtNodeUnitIODef& tensor, TensorInfo& tensor_info) const;
 
   Status AddReshapeNode(const std::string& input_name,
                         const std::string& output_name,
@@ -236,59 +309,30 @@ class QnnModelWrapper {
                             tensor_data_type, quantize_param, do_op_validation, is_for_input, is_for_output);
   }
 
-  Status UnpackInitializerData(const ONNX_NAMESPACE::TensorProto& initializer,
+  Status UnpackInitializerData(OrtValueInfo& initializer,
                                std::vector<uint8_t>& unpacked_tensor) const;
+
+  // Perform a 2D matrix transpose on a tensor
+  Status TransposeTensor(std::vector<uint32_t>& data_shape,
+                         const OrtValueInfo& initializer,
+                         std::vector<uint8_t>& transposed_data) const;
 
   QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
 
-  const GraphViewer& GetGraphViewer() const { return graph_viewer_; }
+  const OrtGraph& GetOrtGraph() const { return ort_graph_; }
 
-  // Unpack scales from initializer (1 scale for per-tensor, > 1 for per-axis or per-block).
-  // Template parameter T allows handling both float and uint8_t scale types.
-  template <typename T = float>
-  Status UnpackScales(const std::string& initializer_name, std::vector<T>& scales) const {
-    const auto& graph_initializers = GetInitializerTensors();
-    auto iter = graph_initializers.find(initializer_name);
-    ORT_RETURN_IF(iter == graph_initializers.end(), "Unable to find initializer for scale(s): ",
-                  initializer_name.c_str());
-    gsl::not_null<const onnx::TensorProto*> scale_tensor_proto = iter->second;
+  const OrtApi& GetOrtApi() const { return api_ptrs_.ort_api; }
 
-    ORT_RETURN_IF_NOT(scale_tensor_proto->has_data_type(), "Expected scale initializer ", initializer_name.c_str(),
-                      " to have a proto data type.");
-
-    // Handle float scales
-    if constexpr (std::is_same_v<T, float>) {
-      // Verify data type for float scales
-      ORT_RETURN_IF_NOT(scale_tensor_proto->data_type() == ONNX_NAMESPACE::TensorProto_DataType_FLOAT,
-                        "Expected float scale initializer to be of type FLOAT");
-
-      std::vector<uint8_t> initializer_bytes;
-      ORT_RETURN_IF_ERROR(UnpackInitializerData(*scale_tensor_proto, initializer_bytes));
-      gsl::span<const float> src = gsl::make_span(reinterpret_cast<const float*>(initializer_bytes.data()),
-                                                  initializer_bytes.size() / sizeof(float));
-      scales.insert(scales.end(), src.begin(), src.end());
-    }
-    // Handle uint8_t scales (for block quantization)
-    else if constexpr (std::is_same_v<T, uint8_t>) {
-      // Verify data type for uint8_t scales
-      ORT_RETURN_IF_NOT(scale_tensor_proto->data_type() == ONNX_NAMESPACE::TensorProto_DataType_UINT8,
-                        "Expected uint8_t scale initializer to be of type UINT8");
-
-      ORT_RETURN_IF_ERROR(UnpackInitializerData(*scale_tensor_proto, scales));
-    } else {
-      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Scale ONNX data type `", typeid(T).name(),
-                             "` is not supported for unpacking.");
-    }
-    return Status::OK();
-  }
+  // Unpack float scales from initializer (1 scale for per-tensor, > 1 for per-axis).
+  Status UnpackScales(const std::string& initializer_name, std::vector<float>& scales) const;
 
   // Unpack zero-points from initializer and convert to int32_t (1 zero-point for per-tensor, > 1 for per-channel).
   Status UnpackZeroPoints(const std::string& initializer_name,
                           /*out*/ std::vector<int32_t>& zero_points,
-                          /*out*/ int32_t& onnx_data_type) const;
+                          /*out*/ ONNXTensorElementDataType& onnx_data_type) const;
 
-  // Checks if a tensor in the ONNX graph is per-channel quantized.
-  Status IsPerChannelQuantized(const onnxruntime::NodeUnitIODef& io_def,
+  // // Checks if a tensor in the ONNX graph is per-channel quantized.
+  Status IsPerChannelQuantized(const OrtNodeUnitIODef& io_def,
                                /*out*/ bool& is_per_channel,
                                /*out*/ int64_t& axis) const;
 
@@ -323,7 +367,7 @@ class QnnModelWrapper {
   void GetGraphInputOutputTensorWrapper(const std::vector<std::string>& names,
                                         std::vector<QnnTensorWrapper>& wrappers_list);
 
-  const GraphViewer& graph_viewer_;
+  const OrtGraph& ort_graph_;
   const logging::Logger& logger_;
   const QNN_INTERFACE_VER_TYPE& qnn_interface_;
   const Qnn_BackendHandle_t& backend_handle_;
@@ -349,54 +393,8 @@ class QnnModelWrapper {
   QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;
   ModelSettings model_settings_ = {};
   utils::QnnJSONGraph json_qnn_graph_;
+  const ApiPtrs api_ptrs_;
 };  // QnnModelWrapper
-
-template <typename T>
-inline Status AddQnnScalar(QnnModelWrapper& qnn_model_wrapper,
-                           const NodeIndex& node_index,
-                           const std::string& node_name,
-                           const T& scalar,
-                           const std::string& qnn_scalar_param_name,
-                           std::vector<std::string>& param_names) {
-  Qnn_Scalar_t qnn_scalar = QNN_SCALAR_INIT;
-  if (std::is_same<T, float>::value) {
-    qnn_scalar.dataType = QNN_DATATYPE_FLOAT_32;
-    qnn_scalar.floatValue = static_cast<float>(scalar);
-  } else if (std::is_same<T, uint32_t>::value) {
-    qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
-    qnn_scalar.uint32Value = static_cast<uint32_t>(scalar);
-  } else if (std::is_same<T, int32_t>::value) {
-    qnn_scalar.dataType = QNN_DATATYPE_INT_32;
-    qnn_scalar.int32Value = static_cast<int32_t>(scalar);
-  } else if (std::is_same<T, int64_t>::value) {
-    qnn_scalar.dataType = QNN_DATATYPE_INT_64;
-    qnn_scalar.int64Value = static_cast<int64_t>(scalar);
-  } else if (std::is_same<T, bool>::value) {
-    qnn_scalar.dataType = QNN_DATATYPE_BOOL_8;
-    qnn_scalar.bool8Value = static_cast<uint8_t>(scalar);
-  } else {
-    ORT_RETURN_IF(true, "QNN EP: Unsupported scalar dtype");
-  }
-  QnnParamWrapper qnn_param_wrapper(node_index, node_name, qnn_scalar_param_name, qnn_scalar);
-  param_names.push_back(qnn_param_wrapper.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(qnn_param_wrapper));
-  return Status::OK();
-}
-
-inline Status AddQnnScalar(QnnModelWrapper& qnn_model_wrapper,
-                           const NodeIndex& node_index,
-                           const std::string& node_name,
-                           const std::string& scalar,
-                           const std::string& qnn_scalar_param_name,
-                           std::vector<std::string>& param_names) {
-  Qnn_Scalar_t qnn_scalar = QNN_SCALAR_INIT;
-  qnn_scalar.dataType = QNN_DATATYPE_STRING;
-  qnn_scalar.stringValue = scalar.c_str();
-  QnnParamWrapper qnn_param_wrapper(node_index, node_name, qnn_scalar_param_name, qnn_scalar);
-  param_names.push_back(qnn_param_wrapper.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(qnn_param_wrapper));
-  return Status::OK();
-}
 
 }  // namespace qnn
 }  // namespace onnxruntime
