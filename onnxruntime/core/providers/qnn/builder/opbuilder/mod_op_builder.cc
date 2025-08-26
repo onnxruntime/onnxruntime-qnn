@@ -47,7 +47,6 @@ Status ModOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                    bool do_op_validation) const {
   ORT_UNUSED_PARAMETER(do_op_validation);
   NodeAttrHelper node_helper(node_unit);
-  ORT_UNUSED_PARAMETER(do_op_validation);
 
   const auto& inputs = node_unit.Inputs();
   const auto input_count = GetInputCountQnnRequired(node_unit);
