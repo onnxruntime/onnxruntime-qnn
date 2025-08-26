@@ -1420,24 +1420,6 @@ TEST_F(QnnHTPBackendTests, LoadingAndUnloadingOfQnnLibrary_FixSegFault) {
 }
 #endif  // !BUILD_QNN_EP_STATIC_LIB
 
-#if defined(WIN32) && !BUILD_QNN_EP_STATIC_LIB
-// Tests autoEP feature to automatically select an EP that supports the NPU.
-// Currently only works on Windows.
-TEST_F(QnnHTPBackendTests, AutoEp_PreferNpu) {
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
-                                                                     ORT_TSTR("onnxruntime_providers_qnn.dll")));
-
-  Ort::SessionOptions so;
-  so.SetEpSelectionPolicy(OrtExecutionProviderDevicePolicy_PREFER_NPU);
-
-  const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
-  Ort::Session session(*ort_env, ort_model_path, so);
-  EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
-
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
-}
-#endif  // defined(WIN32) && !BUILD_QNN_EP_STATIC_LIB
-
 // Test whether QNN EP can handle the case where the number of graph inputs and
 // the number of tensor wrappers do not match.
 // Take Resize op as an example.

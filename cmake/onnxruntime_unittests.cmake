@@ -719,8 +719,13 @@ if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_RED
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/optimizer/*)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn-abi/*)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn-abi/qnn_node_group/*)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn-abi/optimizer/*)
   list(APPEND onnxruntime_test_framework_libs onnxruntime_providers_qnn)
   list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn)
+  list(APPEND onnxruntime_test_framework_libs onnxruntime_providers_qnn_abi)
+  list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn_abi)
   if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
     list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_shared)
   endif()
@@ -1638,6 +1643,8 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
         # also copy other library dependencies that may be required by tests to native-test
         if(onnxruntime_USE_QNN)
           add_custom_command(TARGET onnxruntime_providers_qnn POST_BUILD
+              COMMAND ${CMAKE_COMMAND} -E copy ${QNN_LIB_FILES} ${JAVA_NATIVE_TEST_DIR})
+          add_custom_command(TARGET onnxruntime_providers_qnn_abi POST_BUILD
               COMMAND ${CMAKE_COMMAND} -E copy ${QNN_LIB_FILES} ${JAVA_NATIVE_TEST_DIR})
         endif()
 	if (WIN32)
