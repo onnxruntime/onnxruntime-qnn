@@ -48,6 +48,7 @@ class QnnNodeUnitWrapper : public IQnnNodeGroup {
                                           node_unit_->Name() + "` will not be assigned to QNN EP.")
                                              .c_str());
 
+    printf("\033[1;31m%s[%d] call IsNodeSupported for %s \033[0m\n", __FILE__, __LINE__, node_unit_->Name().c_str());
     return op_builder->IsOpSupported(qmw, *node_unit_, logger);
   }
 

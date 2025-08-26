@@ -880,6 +880,112 @@ bool OrtEinsumNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
   return true;
 }
 
+bool OrtLSTMNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
+                                     const OrtNode* redundant_clip_node,
+                                     const std::vector<const OrtNode*>& dq_nodes,
+                                     const std::vector<const OrtNode*>& q_nodes) const {
+  printf("\033[1;31m%s[%d] num_dq_nodes: %zu\033[0m\n", __FILE__, __LINE__, dq_nodes.size());
+  printf("\033[1;31m%s[%d] num_q_nodes: %zu \033[0m\n", __FILE__, __LINE__, q_nodes.size());
+
+  if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes, /*num_dq_inputs=*/dq_nodes.size(),
+                     /*is_empty_q_nodes_allowed=*/true)) {
+    return false;
+  }
+  // QNN LSTM inputs/outputs:
+  // QNN in[0] = ONNX in[0]
+  // QNN in[1] = ONNX in[1][direction, 2*hidden_size:3*hidden_size, :], support QNN_DATATYPE_UFIXED_POINT_8
+  // QNN in[2] = ONNX in[1][direction, 3*hidden_size:4*hidden_size, :], support QNN_DATATYPE_UFIXED_POINT_8
+  // QNN in[3] = ONNX in[1][direction, 1*hidden_size:2*hidden_size, :], support QNN_DATATYPE_UFIXED_POINT_8
+  // QNN in[4] = ONNX in[2][direction, 2*hidden_size:3*hidden_size, :], support QNN_DATATYPE_UFIXED_POINT_8, QNN_DATATYPE_SFIXED_POINT_8
+  // QNN in[5] = ONNX in[2][direction, 3*hidden_size:4*hidden_size, :], support QNN_DATATYPE_UFIXED_POINT_8, QNN_DATATYPE_SFIXED_POINT_8
+  // QNN in[6] = ONNX in[2][direction, 1*hidden_size:2*hidden_size, :], support QNN_DATATYPE_UFIXED_POINT_8, QNN_DATATYPE_SFIXED_POINT_8
+  // QNN in[7] = ONNX in[3][direction, 2*hidden_size:3*hidden_size] + in[3][direction, 6*hidden_size:7*hidden_size], QNN_DATATYPE_SFIXED_POINT_32
+  // QNN in[8] = ONNX in[3][direction, 3*hidden_size:4*hidden_size] + in[3][direction, 7*hidden_size:8*hidden_size], QNN_DATATYPE_SFIXED_POINT_32
+  // QNN in[9] = ONNX in[3][direction, 1*hidden_size:4*hidden_size] + in[3][direction, 5*hidden_size:6*hidden_size], QNN_DATATYPE_SFIXED_POINT_32
+  // QNN in[10] = ONNX in[5][direction], support QNN_DATATYPE_UFIXED_POINT_8
+  // QNN in[11] = ONNX in[6][direction], support QNN_DATATYPE_SFIXED_POINT_16
+  // QNN in[16] = ONNX in[1][direction, 0*hidden_size:1*hidden_size, :], support QNN_DATATYPE_UFIXED_POINT_8
+  // QNN in[17] = ONNX in[2][direction, 0*hidden_size:1*hidden_size, :], support QNN_DATATYPE_UFIXED_POINT_8, allow QNN_DATATYPE_SFIXED_POINT_8
+  // QNN in[18] = ONNX in[7][direction, 0*hidden_size:1*hidden_size], support QNN_DATATYPE_SFIXED_POINT_16
+  // QNN in[19] = ONNX in[7][direction, 2*hidden_size:3*hidden_size], support QNN_DATATYPE_SFIXED_POINT_16
+  // QNN in[20] = ONNX in[7][direction, 1*hidden_size:2*hidden_size], support QNN_DATATYPE_SFIXED_POINT_16
+  // QNN in[21] = ONNX in[3][direction, 0*hidden_size:1*hidden_size] + in[3][direction, 4*hidden_size:5*hidden_size], support QNN_DATATYPE_SFIXED_POINT_32
+  // QNN out[0] = ONNX out[0], support QNN_DATATYPE_UFIXED_POINT_8
+  // QNN out[1] = ONNX out[2], support QNN_DATATYPE_SFIXED_POINT_16
+  // QNN out[2] = ONNX out[1], support QNN_DATATYPE_UFIXED_POINT_8
+  // a map records dtypes constraint for inputs
+  OrtStatus* status;
+  std::vector<std::unordered_set<int32_t>> input_constraints = {
+    {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8},
+    {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8},
+    {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8},
+    {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32},
+    {}, // not used
+    {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8},
+    {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16},
+    {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16}
+  };
+
+  // get map mapping from name to dq_nodes index
+  std::map<std::string, size_t> name_to_index;
+  for(size_t i = 0 ; i < dq_nodes.size(); i++){
+    // number of dq_node output suppose to be 1, just check once
+    size_t output_count = 0;
+    OrtStatus* status = ort_api.Node_GetNumOutputs(dq_nodes[i], &output_count);
+    if (status != nullptr) {
+      ort_api.ReleaseStatus(status);
+      return false;
+    }
+    // Get the outputs as OrtValueInfo instances
+    std::vector<const OrtValueInfo*> outputs(output_count);
+    status = ort_api.Node_GetOutputs(dq_nodes[i], outputs.data(), outputs.size());
+    const char* info_name;
+    ort_api.GetValueInfoName(outputs[0], &info_name);
+    name_to_index[std::string(info_name)] = i;
+    printf("\033[1;31m%s[%d] name_to_index['%s'] = %d\033[0m\n", __FILE__, __LINE__, info_name, i);
+  }
+
+  size_t num_inputs = 0;
+  status = ort_api.Node_GetNumInputs(node, &num_inputs);
+  if (status != nullptr) {
+    ort_api.ReleaseStatus(status);
+    return false;
+  }
+  std::vector<const OrtValueInfo*> inputs(num_inputs);
+  status = ort_api.Node_GetInputs(node, inputs.data(), inputs.size());
+  if (status != nullptr) {
+    ort_api.ReleaseStatus(status);
+    return false;
+  }
+
+  // For each input, check constraint
+  for (size_t i = 0; i < num_inputs; ++i) {
+    const OrtValueInfo* value_info = inputs[i];
+    if (value_info == nullptr) {
+      printf("\033[1;31m%s[%d] value_info == nullptr\033[0m\n", __FILE__, __LINE__);
+      continue;
+    }
+    // printf("\033[1;31m%s[%d]\033[0m\n", __FILE__, __LINE__);
+    const char* info_name;
+    ort_api.GetValueInfoName(value_info, &info_name);
+
+
+    int32_t input_dtype = GetNodeIODataType(dq_nodes[name_to_index[std::string(info_name)]], ort_api, true, 0);
+    // ort_api.Node_GetName(dq_nodes[name_to_index[info_name]], &node_name);
+    // printf("\033[1;31m%s[%d] in0: %s\033[0m\n", __FILE__, __LINE__, node_name);
+    printf("\033[1;31m%s[%d] input[%d] name: %s dtype: %zu\033[0m\n", __FILE__, __LINE__, i, info_name, input_dtype);
+    if (input_constraints[i].find(input_dtype) == input_constraints[i].end()) {
+      // printf("\033[1;31m%s[%d] input %d has type %d.\033[0m\n", __FILE__, __LINE__, input_dtypei);
+      printf("\033[1;31m%s[%d] return here \033[0m\n", __FILE__, __LINE__);
+      return false;
+    }
+
+  }
+  ort_api.ReleaseStatus(status);
+  printf("\033[1;31m%s[%d] return true \033[0m\n", __FILE__, __LINE__);
+  return true;
+}
+
 bool OrtReciprocalNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
                                            const OrtNode* redundant_clip_node,
                                            const std::vector<const OrtNode*>& dq_nodes,
@@ -1872,6 +1978,11 @@ void OrtSelectorManager::CreateSelectors() {
   OrtOpVersionsAndSelector::OpVersionsMap einsum_ops = {
       {"Einsum", {}}};
   ort_selectors_.RegisterSelector(einsum_ops, std::make_unique<OrtEinsumNodeGroupSelector>());
+
+  // Register LSTM ops
+  OrtOpVersionsAndSelector::OpVersionsMap lstm_ops = {
+      {"LSTM", {}}};
+  ort_selectors_.RegisterSelector(lstm_ops, std::make_unique<OrtLSTMNodeGroupSelector>());
 
   // Register reciprocal ops
   OrtOpVersionsAndSelector::OpVersionsMap reciprocal_ops = {

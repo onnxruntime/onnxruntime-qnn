@@ -1039,6 +1039,7 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
   }
 
   for (const std::unique_ptr<qnn::IQnnNodeGroup>& qnn_node_group : qnn_node_groups) {
+    printf("\033[1;31m%s[%d] call IsSupported \033[0m\n", __FILE__, __LINE__);
     Ort::Status support_status = qnn_node_group->IsSupported(qnn_model_wrapper, logger_);
     const bool supported = support_status.IsOK();
 

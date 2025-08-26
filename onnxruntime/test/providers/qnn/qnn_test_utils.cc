@@ -846,6 +846,7 @@ Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests
         out.soc_model = oc.socModel;
         out.dlbc_supported = oc.dlbcSupport;
         out.htp_arch = oc.arch;
+        printf("\033[1;31m%s[%d] htp_arch: %d \033[0m\n", __FILE__, __LINE__, (int32_t) oc.arch);
         break;
       }
     }
