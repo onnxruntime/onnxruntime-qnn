@@ -6,26 +6,41 @@
 #include <memory>
 #include <mutex>
 
-#include "core/providers/qnn/ort_api.h"
-#include "core/providers/qnn/rpcmem_library.h"
+#include "core/providers/qnn-abi/ort_api.h"
+#include "core/providers/qnn-abi/rpcmem_library.h"
 
 namespace onnxruntime::qnn {
 
-class HtpSharedMemoryAllocator : public IAllocator {
+class HtpSharedMemoryAllocator : public OrtAllocator {
  public:
   // Gets the OrtMemoryInfo value that is associated with this allocator type.
   static OrtMemoryInfo AssociatedMemoryInfo();
 
-  HtpSharedMemoryAllocator(std::shared_ptr<RpcMemLibrary> rpcmem_lib,
-                           const logging::Logger* logger = nullptr);
+  HtpSharedMemoryAllocator(const OrtMemoryInfo* mem_info,
+                           std::shared_ptr<RpcMemLibrary> rpcmem_lib,
+                           const logging::Logger* logger = nullptr)
+      : memory_info_{mem_info},
+        rpcmem_lib_{std::move(rpcmem_lib)},
+        logger_(logger != nullptr ? *logger : logging::LoggingManager::DefaultLogger()) {
+    ORT_ENFORCE(rpcmem_lib_ != nullptr);
+
+    Alloc = AllocImpl;
+    Free = FreeImpl;
+    Info = InfoImpl;
+    Reserve = AllocImpl;
+  }
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(HtpSharedMemoryAllocator);
 
-  // IAllocator overrides
+  // OrtAllocator implementations.
+  static void* ORT_API_CALL AllocImpl(struct OrtAllocator* this_, size_t size);
 
-  void* Alloc(size_t size) override;
-  void Free(void* p) override;
-  // void GetStats(AllocatorStats* stats) override;  // TODO override
+  static void ORT_API_CALL FreeImpl(struct OrtAllocator* this_, void* p);
+
+  static const struct OrtMemoryInfo* ORT_API_CALL InfoImpl(const struct OrtAllocator* this_) {
+    const HtpSharedMemoryAllocator& impl = *static_cast<const HtpSharedMemoryAllocator*>(this_);
+    return impl.memory_info_;
+  }
 
   struct SharedMemoryInfo {
     int fd;
@@ -65,8 +80,8 @@ class HtpSharedMemoryAllocator : public IAllocator {
   InlinedHashMap<const void*, AllocationRecord> allocations_;
   std::mutex allocations_mutex_;  // synchronize access to allocations_
 
+  const OrtMemoryInfo* memory_info_;
   std::shared_ptr<RpcMemLibrary> rpcmem_lib_;
-
   const logging::Logger& logger_;
 };
 

@@ -1,12 +1,13 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// // Copyright (c) Microsoft Corporation. All rights reserved.
+// // Licensed under the MIT License.
 
 #pragma once
+
+#include <gsl/gsl>
 #include <memory>
 #include <vector>
-#include <gsl/gsl>
 
-#include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn-abi/ort_api.h"
 #include "QnnTypes.h"
 
 namespace onnxruntime {
@@ -30,19 +31,15 @@ class QnnQuantParamsWrapper {
   // Construct a per-channel quantization param.
   QnnQuantParamsWrapper(gsl::span<const float> scales, gsl::span<const int32_t> offsets, int32_t axis, bool is_int4);
 
-  // Construct a LPBQ quantization param.
-  QnnQuantParamsWrapper(gsl::span<const float> per_channel_float_scales, gsl::span<const uint8_t> per_block_int_scales,
-                        gsl::span<const int32_t> offsets, int64_t axis, int64_t block_size, bool is_int4);
-
   Qnn_QuantizeParams_t& Get() { return params_; }
   const Qnn_QuantizeParams_t& Get() const { return params_; }
 
   // Initialize this object from a raw Qnn_QuantizeParam_t object.
-  Status Init(const Qnn_QuantizeParams_t& params, const size_t lpbq_num_scaleoffsets = 0);
+  Status Init(const Qnn_QuantizeParams_t& params);
 
   // Initialize this object from a (potentially) quantized ONNX tensor.
   // QnnModelWrapper provides utilities for unpacking scale and zero-point ONNX initializers.
-  Status Init(const QnnModelWrapper& qnn_model_wrapper, const NodeUnitIODef& io_def);
+  Status Init(const OrtApi& ort_api, const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef& io_def);
 
   QnnQuantParamsWrapper Copy() const;
 
@@ -60,11 +57,6 @@ class QnnQuantParamsWrapper {
     return params_.encodingDefinition == QNN_DEFINITION_DEFINED &&
            (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET ||
             (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET));
-  }
-
-  bool IsLPBQ() const {
-    return params_.encodingDefinition == QNN_DEFINITION_DEFINED &&
-           (params_.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BLOCKWISE_EXPANSION);
   }
 
   // Get a copy of scales. Works for both per-tensor and per-channel.
@@ -157,12 +149,6 @@ class QnnQuantParamsWrapper {
   // - QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET: array of scale/zp pairs [{scale0, zp0}, {scale1, zp1}, ...]
   // - QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET: parallel arrays for scales and zps [scale0, ...] [zp0, zp1, ...]
   std::unique_ptr<char[]> per_channel_data_;
-
-  // Stores LowPowerBlockQuant encodings meta like number of per_channel_scales, per-block scales,
-  // and blockwise_expansion_data
-  uint32_t per_channel_scales_size_;
-  std::unique_ptr<uint8_t[]> block_scales_data_;
-  std::unique_ptr<char[]> blockwise_expansion_data_;
 };
 
 }  // namespace qnn

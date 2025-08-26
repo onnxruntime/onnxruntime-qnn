@@ -1,10 +1,10 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
-#include "core/providers/qnn/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn/builder/op_builder_factory.h"
-#include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
+#include "core/providers/qnn-abi/builder/qnn_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -16,17 +16,17 @@ class ExpandOpBuilder : public BaseOpBuilder {
 
  protected:
   Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger,
                        std::vector<std::string>& input_names,
                        bool do_op_validation) const override ORT_MUST_USE_RESULT;
   Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
   Status OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
-                                  const NodeUnit& node_unit,
+                                  const OrtNodeUnit& node_unit,
                                   const logging::Logger& logger,
                                   const std::vector<std::string>& input_names,
                                   size_t output_index,
@@ -45,7 +45,7 @@ void FillShapeInputData(std::vector<uint8_t>& shape_data, int shape_size, T ini_
 // Get the shape data, and create a initializer input with value 1 and same shape
 // input[0] * input[1]
 Status ExpandOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                      const NodeUnit& node_unit,
+                                      const OrtNodeUnit& node_unit,
                                       const logging::Logger& logger,
                                       std::vector<std::string>& input_names,
                                       bool do_op_validation) const {
@@ -55,16 +55,17 @@ Status ExpandOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
 
   // Process shape input
-  const auto& input_name = inputs[1].node_arg.Name();
+  const auto& input_name = inputs[1].name;
   bool is_constant_input = qnn_model_wrapper.IsConstantInput(input_name);
   ORT_RETURN_IF_NOT(is_constant_input, "QNN doesn't support dynamic shape.");
 
   std::vector<uint32_t> shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[1].node_arg, shape), "Cannot get shape");
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[1].shape, shape), "Cannot get shape");
   uint32_t shape_rank = shape[0];
   std::vector<uint8_t> unpacked_tensor;
   const auto& input_tensor = qnn_model_wrapper.GetConstantTensor(input_name);
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*input_tensor, unpacked_tensor));
+  ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(const_cast<OrtValueInfo&>(*input_tensor),
+                                                              unpacked_tensor));
   const int64_t* shape_data_int64 = reinterpret_cast<const int64_t*>(unpacked_tensor.data());
   std::vector<uint32_t> input_shape(shape_rank, 0);
   std::transform(shape_data_int64, shape_data_int64 + shape_rank, input_shape.begin(),
@@ -74,10 +75,10 @@ Status ExpandOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   std::vector<uint8_t> shape_data;
   bool is_quantized_tensor = inputs[0].quant_param.has_value();
   Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
-  const auto* type_proto = inputs[0].node_arg.TypeAsProto();
+  ONNXTensorElementDataType input_type = inputs[0].type;
   QnnQuantParamsWrapper quantize_param;
   if (is_quantized_tensor) {
-    ORT_RETURN_IF_ERROR(utils::GetQnnDataType(true, type_proto, qnn_data_type));
+    ORT_RETURN_IF_ERROR(utils::GetQnnDataType(true, input_type, qnn_data_type));
     float scale = 0.0f;
     int32_t zero_point = 0;
     float rmax = 1.0f;
@@ -108,7 +109,7 @@ Status ExpandOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
         return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Type not supported.");
     }  // switch
   } else {
-    ORT_RETURN_IF_ERROR(utils::GetQnnDataType(false, type_proto, qnn_data_type));
+    ORT_RETURN_IF_ERROR(utils::GetQnnDataType(false, input_type, qnn_data_type));
     switch (qnn_data_type) {
       case QNN_DATATYPE_FLOAT_32: {
         FillShapeInputData(shape_data, shape_size, static_cast<float>(1.0));
@@ -137,7 +138,7 @@ Status ExpandOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
     }  // switch
   }  // if-else
 
-  const std::string& output_name = node_unit.Outputs()[0].node_arg.Name();
+  const std::string& output_name = node_unit.Outputs()[0].name;
   std::string shape_input_name = utils::GetUniqueName(input_name, output_name);
   QnnTensorWrapper input_tensorwrapper(shape_input_name, QNN_TENSOR_TYPE_STATIC, qnn_data_type,
                                        std::move(quantize_param), std::move(input_shape),
@@ -149,16 +150,16 @@ Status ExpandOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status ExpandOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                    const NodeUnit& node_unit,
+                                                    const OrtNodeUnit& node_unit,
                                                     std::vector<std::string>&& input_names,
                                                     const logging::Logger& logger,
                                                     bool do_op_validation) const {
   if (input_names.size() < 1) {
     return Status::OK();
   }
-  const auto* input_proto = node_unit.Inputs()[0].node_arg.TypeAsProto();
+  ONNXTensorElementDataType input_type = node_unit.Inputs()[0].type;
   Qnn_DataType_t qnn_data_type{};
-  ORT_RETURN_IF_ERROR(utils::GetQnnDataType(false, input_proto, qnn_data_type));
+  ORT_RETURN_IF_ERROR(utils::GetQnnDataType(false, input_type, qnn_data_type));
   // Boolean expand is implemented as an element-wise and operation, element-wise multiply otherwise.
   const std::string target_op = qnn_data_type == QNN_DATATYPE_BOOL_8 ? "And" : node_unit.OpType();
   ORT_RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit, std::move(input_names), {},
@@ -167,7 +168,7 @@ Status ExpandOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_w
 }
 
 Status ExpandOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
-                                                 const NodeUnit& node_unit,
+                                                 const OrtNodeUnit& node_unit,
                                                  const logging::Logger& logger,
                                                  const std::vector<std::string>& input_names,
                                                  size_t output_index,

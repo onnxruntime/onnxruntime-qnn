@@ -1,10 +1,10 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
-#include "core/providers/qnn/builder/qnn_utils.h"
-#include "core/providers/qnn/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn-abi/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -21,7 +21,7 @@ class ArgMaxMinOpBuilder : public BaseOpBuilder {
                                             Qnn_DataType_t qnn_data_type) const override ORT_MUST_USE_RESULT;
 
   Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
@@ -42,7 +42,7 @@ Qnn_DataType_t ArgMaxMinOpBuilder::GetSupportedOutputDataType(size_t index, Qnn_
 }
 
 Status ArgMaxMinOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                       const NodeUnit& node_unit,
+                                                       const OrtNodeUnit& node_unit,
                                                        std::vector<std::string>&& input_names,
                                                        const logging::Logger& logger,
                                                        bool do_op_validation) const {
@@ -54,7 +54,7 @@ Status ArgMaxMinOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   param_tensor_names.push_back(axis_param.GetParamTensorName());
   qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
 
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(node_unit);
   auto select_last_index = node_helper.Get("select_last_index", static_cast<int32_t>(0));
   if (select_last_index != 0) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN ArgMax/ArgMin only support select_last_index=0.");

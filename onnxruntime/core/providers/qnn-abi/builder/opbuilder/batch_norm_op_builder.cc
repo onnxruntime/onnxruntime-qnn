@@ -5,10 +5,10 @@
 #include <cmath>
 #include <utility>
 
-#include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
-#include "core/providers/qnn/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn/builder/qnn_utils.h"
-#include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn-abi/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -18,13 +18,13 @@ class BatchNormOpBuilder : public BaseOpBuilder {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(BatchNormOpBuilder);
 
   Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger,
                        std::vector<std::string>& input_names,
                        bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
   Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger) const override final ORT_MUST_USE_RESULT;
 
   inline Status GetValueOnQnnDataType(const Qnn_DataType_t qnn_data_type,
@@ -441,7 +441,7 @@ class BatchNormOpBuilder : public BaseOpBuilder {
 // The nodes from 1st call of GetCapability do not get layout transformer applied, it's still NCHW
 // The nodes from 2nd call of GetCapability get layout transformer applied, it's NHWC
 Status BatchNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                                         const NodeUnit& node_unit,
+                                         const OrtNodeUnit& node_unit,
                                          const logging::Logger& logger) const {
   if (node_unit.Domain() == kMSInternalNHWCDomain) {
     // It's useless to fallback the node after layout transformation because CPU EP can't support it anyway
@@ -455,7 +455,7 @@ Status BatchNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
     ORT_RETURN_IF_NOT(inputs.size() == 5, "5 input expected per BatchNorm Onnx Spec.");
 
     std::vector<uint32_t> input_shape;
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].node_arg, input_shape), "Cannot get shape of input 0.");
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape of input 0.");
     const size_t input_rank = input_shape.size();
 
     ORT_RETURN_IF(input_rank > 4, "QNN BatchNorm only supports input ranks of size <= 4.");
@@ -463,32 +463,32 @@ Status BatchNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
     const uint32_t num_channels = input_shape[1];
 
     std::vector<uint32_t> scale_shape;
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[1].node_arg, scale_shape), "Cannot get shape of input 1 (scale).");
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.IsConstantInput(inputs[1].node_arg.Name()),
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[1].shape, scale_shape), "Cannot get shape of input 1 (scale).");
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.IsConstantInput(inputs[1].name),
                       "QNN BatchNorm doesn't support dynamic scale.");
     ORT_RETURN_IF(scale_shape.size() != 1 || scale_shape[0] != num_channels,
                   "QNN BatchNorm input 1 (scale) must have 1D shape [channel].");
 
     std::vector<uint32_t> bias_shape;
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[2].node_arg, bias_shape), "Cannot get shape of input 2 (bias).");
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.IsConstantInput(inputs[2].node_arg.Name()),
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[2].shape, bias_shape), "Cannot get shape of input 2 (bias).");
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.IsConstantInput(inputs[2].name),
                       "QNN BatchNorm doesn't support dynamic bias.");
 
     ORT_RETURN_IF(bias_shape.size() != 1 || bias_shape[0] != num_channels,
                   "QNN BatchNorm input 2 (bias) must have 1D shape [channel].");
 
     std::vector<uint32_t> mean_shape;
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[3].node_arg, mean_shape), "Cannot get shape of input 3 (mean).");
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[3].shape, mean_shape), "Cannot get shape of input 3 (mean).");
     ORT_RETURN_IF(mean_shape.size() != 1 || mean_shape[0] != num_channels,
                   "QNN BatchNorm input 3 (mean) must have 1D shape [channel].");
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.IsConstantInput(inputs[3].node_arg.Name()),
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.IsConstantInput(inputs[3].name),
                       "QNN BatchNorm doesn't support dynamic mean.");
 
     std::vector<uint32_t> var_shape;
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[4].node_arg, var_shape), "Cannot get shape of input 4 (var).");
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[4].shape, var_shape), "Cannot get shape of input 4 (var).");
     ORT_RETURN_IF(var_shape.size() != 1 || var_shape[0] != num_channels,
                   "QNN BatchNorm input 4 (var) must have 1D shape [channel].");
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.IsConstantInput(inputs[4].node_arg.Name()),
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.IsConstantInput(inputs[4].name),
                       "QNN BatchNorm doesn't support dynamic var.");
 
     ORT_RETURN_IF(node_unit.Outputs().size() > 1, "QNN BatchNorm only support 1 output.");
@@ -498,7 +498,7 @@ Status BatchNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status BatchNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                         const NodeUnit& node_unit,
+                                         const OrtNodeUnit& node_unit,
                                          const logging::Logger& logger,
                                          std::vector<std::string>& input_names,
                                          bool do_op_validation) const {
@@ -517,8 +517,8 @@ Status BatchNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   // QNN only accept 3 input. We need to first combine mean and variance into scale and bias.
   //
   {
-    const std::string& scale_name = inputs[1].node_arg.Name();
-    const std::string& bias_name = inputs[2].node_arg.Name();
+    const std::string& scale_name = inputs[1].name;
+    const std::string& bias_name = inputs[2].name;
     TensorInfo var_info = {};
     TensorInfo mean_info = {};
     TensorInfo scale_info = {};
@@ -548,7 +548,7 @@ Status BatchNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
     std::vector<double> scale_double_tensor;
     std::vector<double> bias_double_tensor;
 
-    NodeAttrHelper node_helper(node_unit);
+    OrtNodeAttrHelper node_helper(node_unit);
     const float epsilon = node_helper.Get("epsilon", 1e-05f);  // Default is 1e-05 according to ONNX spec.
 
     double scale_rmax = std::numeric_limits<double>::min();

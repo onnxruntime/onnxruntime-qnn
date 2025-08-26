@@ -5,7 +5,7 @@
 
 #include <string>
 
-#include "test/providers/qnn/qnn_test_utils.h"
+#include "test/providers/qnn-abi/qnn_test_utils.h"
 #include "core/graph/node_attr_utils.h"
 
 #include "core/graph/onnx_protobuf.h"
@@ -28,10 +28,10 @@ static void RunReshapeExpandTestOnCPU(const std::string& op_type,
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<DataType, int64_t>(op_type, {input_def}, {shape_def}, attrs),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildOpTestCase<DataType, int64_t>(op_type, {input_def}, {shape_def}, attrs),
+                     provider_options,
+                     opset,
+                     expected_ep_assignment);
 }
 
 //
@@ -39,7 +39,7 @@ static void RunReshapeExpandTestOnCPU(const std::string& op_type,
 //
 
 // Test that Reshape with a dynamic shape input is not supported by QNN EP.
-TEST_F(QnnCPUBackendTests, Reshape_DynamicShape_Unsupported) {
+TEST_F(QnnABICPUBackendTests, Reshape_DynamicShape_Unsupported) {
   RunReshapeExpandTestOnCPU("Reshape",
                             TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
                             TestInputDef<int64_t>({2}, false /* is_initializer */, {1, 48}),
@@ -49,7 +49,7 @@ TEST_F(QnnCPUBackendTests, Reshape_DynamicShape_Unsupported) {
 }
 
 // Test that Reshape with an enabled 'allowzero' attribute is not supported by QNN EP.
-TEST_F(QnnCPUBackendTests, Reshape_AllowZeroAttr_Unsupported) {
+TEST_F(QnnABICPUBackendTests, Reshape_AllowZeroAttr_Unsupported) {
   RunReshapeExpandTestOnCPU("Reshape", TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
                             TestInputDef<int64_t>({2}, true, {1, 48}),
                             {utils::MakeAttribute("allowzero", static_cast<int64_t>(1))},
@@ -58,7 +58,7 @@ TEST_F(QnnCPUBackendTests, Reshape_AllowZeroAttr_Unsupported) {
 }
 
 // Test Reshape of rank 4 -> rank 2.
-TEST_F(QnnCPUBackendTests, Reshape_4D_f32) {
+TEST_F(QnnABICPUBackendTests, Reshape_4D_f32) {
   RunReshapeExpandTestOnCPU("Reshape", TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                             TestInputDef<int64_t>({2}, true, {1, 48}),
                             {},  // Attributes
@@ -67,7 +67,7 @@ TEST_F(QnnCPUBackendTests, Reshape_4D_f32) {
 }
 
 // Test Expand with non-initializer shape input, not supported.
-TEST_F(QnnCPUBackendTests, Expand_NonIniShape) {
+TEST_F(QnnABICPUBackendTests, Expand_NonIniShape) {
   RunReshapeExpandTestOnCPU("Expand", TestInputDef<float>({1}, false, {1.0f}),
                             TestInputDef<int64_t>({2}, false, {2, 2}),
                             {},  // Attributes
@@ -76,7 +76,7 @@ TEST_F(QnnCPUBackendTests, Expand_NonIniShape) {
 }
 
 // Test Expand with initializer shape input.
-TEST_F(QnnCPUBackendTests, Expand_IniShape) {
+TEST_F(QnnABICPUBackendTests, Expand_IniShape) {
   RunReshapeExpandTestOnCPU("Expand", TestInputDef<float>({1}, false, {1.0f}),
                             TestInputDef<int64_t>({2}, true, {2, 3}),
                             {},  // Attributes
@@ -85,7 +85,7 @@ TEST_F(QnnCPUBackendTests, Expand_IniShape) {
 }
 
 // Test Expand with initializer shape input.
-TEST_F(QnnCPUBackendTests, Expand_Uint32) {
+TEST_F(QnnABICPUBackendTests, Expand_Uint32) {
   RunReshapeExpandTestOnCPU("Expand", TestInputDef<uint32_t>({1}, false, {1}),
                             TestInputDef<int64_t>({2}, true, {2, 3}),
                             {},  // Attributes
@@ -94,7 +94,7 @@ TEST_F(QnnCPUBackendTests, Expand_Uint32) {
 }
 
 // Test Expand with 6D output.
-TEST_F(QnnCPUBackendTests, Expand_6D) {
+TEST_F(QnnABICPUBackendTests, Expand_6D) {
   RunReshapeExpandTestOnCPU("Expand", TestInputDef<float>({3}, false, {1.0f, 2.0f, 3.0f}),
                             TestInputDef<int64_t>({6}, true, {1, 2, 3, 4, 5, 3}),
                             {},  // Attributes
@@ -156,10 +156,10 @@ static void RunReshapeExpandTestOnHTP(const std::string& op_type,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<DataType, int64_t>(op_type, {input_def}, {shape_def}, attrs),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildOpTestCase<DataType, int64_t>(op_type, {input_def}, {shape_def}, attrs),
+                     provider_options,
+                     opset,
+                     expected_ep_assignment);
 }
 
 // Runs a QDQ Reshape model on the QNN (HTP) EP and the ORT CPU EP. Checks the graph node assignment and that inference
@@ -179,15 +179,15 @@ static void RunQDQReshapeExpandTestOnHTP(const std::string& op_type,
 
   auto f32_model_builder = BuildOpTestCase<float, int64_t>(op_type, {input_def}, {shape_def}, attrs);
   auto qdq_model_builder = BuildQDQReshapeExpandTestCase<QType>(op_type, input_def, shape_def, attrs, use_contrib_qdq);
-  TestQDQModelAccuracy(f32_model_builder,
-                       qdq_model_builder,
-                       provider_options,
-                       opset,
-                       expected_ep_assignment);
+  TestQDQModelAccuracyABI(f32_model_builder,
+                          qdq_model_builder,
+                          provider_options,
+                          opset,
+                          expected_ep_assignment);
 }
 
 // Test that QDQ Reshape with a dynamic shape input is not supported by QNN EP.
-TEST_F(QnnHTPBackendTests, Reshape_DynamicShape_Unsupported) {
+TEST_F(QnnABIHTPBackendTests, Reshape_DynamicShape_Unsupported) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Reshape",
                                         TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
                                         TestInputDef<int64_t>({2}, false /* is_initializer */, {1, 48}),
@@ -197,7 +197,7 @@ TEST_F(QnnHTPBackendTests, Reshape_DynamicShape_Unsupported) {
 }
 
 // Test that QDQ Reshape with an enabled 'allowzero' attribute is not supported by QNN EP.
-TEST_F(QnnHTPBackendTests, Reshape_AllowZeroAttr_Unsupported) {
+TEST_F(QnnABIHTPBackendTests, Reshape_AllowZeroAttr_Unsupported) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Reshape",
                                         TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
                                         TestInputDef<int64_t>({2}, true, {1, 48}),
@@ -207,7 +207,7 @@ TEST_F(QnnHTPBackendTests, Reshape_AllowZeroAttr_Unsupported) {
 }
 
 // Test 8-bit QDQ Reshape of rank 4 -> rank 2.
-TEST_F(QnnHTPBackendTests, Reshape_4D_u8) {
+TEST_F(QnnABIHTPBackendTests, Reshape_4D_u8) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Reshape",
                                         TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                                         TestInputDef<int64_t>({2}, true, {1, 48}),
@@ -217,7 +217,7 @@ TEST_F(QnnHTPBackendTests, Reshape_4D_u8) {
 }
 
 // Test 16-bit QDQ Reshape of rank 4 -> rank 2.
-TEST_F(QnnHTPBackendTests, Reshape_4D_u16) {
+TEST_F(QnnABIHTPBackendTests, Reshape_4D_u16) {
   RunQDQReshapeExpandTestOnHTP<uint16_t>("Reshape",
                                          TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                                          TestInputDef<int64_t>({2}, true, {1, 48}),
@@ -228,7 +228,7 @@ TEST_F(QnnHTPBackendTests, Reshape_4D_u16) {
 }
 
 // Test that int32 Reshape runs on HTP backend.
-TEST_F(QnnHTPBackendTests, Reshape_4D_int32) {
+TEST_F(QnnABIHTPBackendTests, Reshape_4D_int32) {
   std::vector<int32_t> input_data = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
   RunReshapeExpandTestOnHTP<int32_t>("Reshape",
                                      TestInputDef<int32_t>({1, 3, 2, 2}, false, input_data),
@@ -239,7 +239,7 @@ TEST_F(QnnHTPBackendTests, Reshape_4D_int32) {
 }
 
 // Test that int64 Reshape runs on HTP backend.
-TEST_F(QnnHTPBackendTests, Reshape_4D_int64) {
+TEST_F(QnnABIHTPBackendTests, Reshape_4D_int64) {
   std::vector<int64_t> input_data = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
   RunReshapeExpandTestOnHTP<int64_t>("Reshape",
                                      TestInputDef<int64_t>({1, 3, 2, 2}, false, input_data),
@@ -250,7 +250,7 @@ TEST_F(QnnHTPBackendTests, Reshape_4D_int64) {
 }
 
 // Test QDQ Reshape with a shape value of 0 (copy dimension from input)
-TEST_F(QnnHTPBackendTests, Reshape_4D_0MeansCopy) {
+TEST_F(QnnABIHTPBackendTests, Reshape_4D_0MeansCopy) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Reshape",
                                         TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                                         TestInputDef<int64_t>({3}, true, {1, 0, 16}),  // zero means copy => '(1, 3, 16)'
@@ -260,7 +260,7 @@ TEST_F(QnnHTPBackendTests, Reshape_4D_0MeansCopy) {
 }
 
 // Test QDQ Reshape with a shape value of -1 (dimension is inferred from the expected number of elements)
-TEST_F(QnnHTPBackendTests, Reshape_4D_Neg1MeansInfer) {
+TEST_F(QnnABIHTPBackendTests, Reshape_4D_Neg1MeansInfer) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Reshape",
                                         TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                                         TestInputDef<int64_t>({3}, true, {1, 3, -1}),  // -1 means infer => '(1, 3, 16)'
@@ -270,7 +270,7 @@ TEST_F(QnnHTPBackendTests, Reshape_4D_Neg1MeansInfer) {
 }
 
 // Test that int32 Expand runs on HTP backend.
-TEST_F(QnnHTPBackendTests, Expand_HTP_int32) {
+TEST_F(QnnABIHTPBackendTests, Expand_HTP_int32) {
   RunReshapeExpandTestOnHTP<int32_t>("Expand",
                                      TestInputDef<int32_t>({1}, false, {1}),
                                      TestInputDef<int64_t>({3}, true, {1, 2, 3}),
@@ -280,7 +280,7 @@ TEST_F(QnnHTPBackendTests, Expand_HTP_int32) {
 }
 
 // Test that int64 Expand runs on HTP backend.
-TEST_F(QnnHTPBackendTests, Expand_HTP_int64) {
+TEST_F(QnnABIHTPBackendTests, Expand_HTP_int64) {
   RunReshapeExpandTestOnHTP<int64_t>("Expand",
                                      TestInputDef<int64_t>({1}, false, {1}),
                                      TestInputDef<int64_t>({3}, true, {1, 2, 3}),
@@ -290,7 +290,7 @@ TEST_F(QnnHTPBackendTests, Expand_HTP_int64) {
 }
 
 // Test that bool Expand runs on HTP backend.
-TEST_F(QnnHTPBackendTests, Expand_HTP_bool) {
+TEST_F(QnnABIHTPBackendTests, Expand_HTP_bool) {
   RunReshapeExpandTestOnHTP<bool>("Expand",
                                   TestInputDef<bool>({1}, false, {true}),
                                   TestInputDef<int64_t>({3}, true, {1, 2, 3}),
@@ -300,7 +300,7 @@ TEST_F(QnnHTPBackendTests, Expand_HTP_bool) {
 }
 
 // Test QDQ Expand
-TEST_F(QnnHTPBackendTests, Expand_4D) {
+TEST_F(QnnABIHTPBackendTests, Expand_4D) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Expand",
                                         TestInputDef<float>({3}, false, {1.0f, 2.0f, 3.0f}),
                                         TestInputDef<int64_t>({4}, true, {3, 2, 2, 1}),
@@ -310,7 +310,7 @@ TEST_F(QnnHTPBackendTests, Expand_4D) {
 }
 
 // Test QDQ Expand
-TEST_F(QnnHTPBackendTests, Expand_5D) {
+TEST_F(QnnABIHTPBackendTests, Expand_5D) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Expand",
                                         TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}),
                                         TestInputDef<int64_t>({5}, true, {3, 2, 2, 2, 1}),
@@ -320,7 +320,7 @@ TEST_F(QnnHTPBackendTests, Expand_5D) {
 }
 
 // Test QDQ Expand 6D not supported for HTP backend according to QNN doc
-TEST_F(QnnHTPBackendTests, Expand_6D) {
+TEST_F(QnnABIHTPBackendTests, Expand_6D) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Expand",
                                         TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}),
                                         TestInputDef<int64_t>({6}, true, {3, 2, 2, 2, 2, 1}),
