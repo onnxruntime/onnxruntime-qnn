@@ -1,10 +1,10 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
-#include "core/providers/qnn/builder/qnn_utils.h"
-#include "core/providers/qnn/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn-abi/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 
 #include "QnnOpDef.h"  // From QNN SDK: contains QNN constants (e.g., op names, param values).
 
@@ -17,12 +17,12 @@ class LRNOpBuilder : public BaseOpBuilder {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(LRNOpBuilder);
 
   Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger) const override final ORT_MUST_USE_RESULT;
 
  protected:
   Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
@@ -44,7 +44,7 @@ const OnnxAttrInfo<int64_t> LRNOpBuilder::onnx_size_attr = {"size", 0};
 // The nodes from 2nd call of GetCapability get their layout transformed to NHWC.
 // Therefore, we need to check the node domain to determine if the layout has been transformed.
 Status LRNOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                                   const NodeUnit& node_unit,
+                                   const OrtNodeUnit& node_unit,
                                    const logging::Logger& logger) const {
   if (node_unit.Domain() == kMSInternalNHWCDomain) {
     return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
@@ -59,21 +59,21 @@ Status LRNOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   const auto& input = inputs[0];
   const auto& output = outputs[0];
   // Check input type is float for CPU. Can't use Qnn Op validation API since it's before layout transformation
-  ORT_RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, inputs[0].node_arg.Type()));
+  ORT_RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, inputs[0].type, ""));
 
   // Check that the input and output have the same shape.
   std::vector<uint32_t> input_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input.node_arg, input_shape), "Cannot get shape of input 0");
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input.shape, input_shape), "Cannot get shape of input 0");
   const size_t input_rank = input_shape.size();
 
   ORT_RETURN_IF(input_rank <= 2 || input_rank > 4, "QNN EP: LRN operator only supports input ranks of size 3 or 4.");
 
   std::vector<uint32_t> output_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output.node_arg, output_shape), "Cannot get shape of output 0");
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output.shape, output_shape), "Cannot get shape of output 0");
 
   ORT_RETURN_IF(output_shape != input_shape, "QNN EP: LRN operator's output must have the same shape as the input.");
 
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(node_unit);
 
   // 'size' attribute must be odd and > 0.
   const int64_t onnx_size = GetOnnxAttr(node_helper, onnx_size_attr);
@@ -91,12 +91,12 @@ Status LRNOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status LRNOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                 const NodeUnit& node_unit,
+                                                 const OrtNodeUnit& node_unit,
                                                  std::vector<std::string>&& input_names,
                                                  const logging::Logger& logger,
                                                  bool do_op_validation) const {
   std::vector<std::string> param_tensor_names;
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(node_unit);
 
   const int64_t onnx_size = GetOnnxAttr(node_helper, onnx_size_attr);
 

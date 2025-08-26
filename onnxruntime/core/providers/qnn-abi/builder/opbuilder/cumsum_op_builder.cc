@@ -1,16 +1,16 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
-#include "core/providers/qnn/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn/builder/qnn_utils.h"
-#include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn-abi/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 
 namespace onnxruntime {
 namespace qnn {
 namespace {
 
-Status GetOnnxAxis(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit, uint32_t& onnx_axis) {
+Status GetOnnxAxis(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit, uint32_t& onnx_axis) {
   const auto& inputs = node_unit.Inputs();
   TensorInfo axis_input_info = {};
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], axis_input_info));
@@ -28,7 +28,7 @@ Status GetOnnxAxis(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit
   }
 
   std::vector<uint32_t> input_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].node_arg, input_shape), "Cannot get shape");
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape");
 
   auto rank = static_cast<int32_t>(input_shape.size());
   if (axis < 0) {
@@ -50,30 +50,30 @@ class CumSumOpBuilder : public BaseOpBuilder {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(CumSumOpBuilder);
 
   Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger) const override ORT_MUST_USE_RESULT;
 
   Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger,
                        std::vector<std::string>& input_names,
                        bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
   Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
 };
 
 Status CumSumOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                                      const NodeUnit& node_unit,
+                                      const OrtNodeUnit& node_unit,
                                       const logging::Logger& logger) const {
   const auto& inputs = node_unit.Inputs();
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.IsConstantInput(inputs[1].node_arg.Name()),
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.IsConstantInput(inputs[1].name),
                     "QNN CumSum needs axis as a param, hence input[1] must be a constant.");
 
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(node_unit);
   int64_t exclusive = node_helper.Get("exclusive", static_cast<int64_t>(0));
   int64_t reverse = node_helper.Get("reverse", static_cast<int64_t>(0));
 
@@ -86,7 +86,7 @@ Status CumSumOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status CumSumOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                      const NodeUnit& node_unit,
+                                      const OrtNodeUnit& node_unit,
                                       const logging::Logger& logger,
                                       std::vector<std::string>& input_names,
                                       bool do_op_validation) const {
@@ -97,7 +97,7 @@ Status CumSumOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status CumSumOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                    const NodeUnit& node_unit,
+                                                    const OrtNodeUnit& node_unit,
                                                     std::vector<std::string>&& input_names,
                                                     const logging::Logger& logger,
                                                     bool do_op_validation) const {
@@ -116,7 +116,7 @@ Status CumSumOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_w
   qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
 
   // Add exclusive param
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(node_unit);
   int64_t exclusive = node_helper.Get("exclusive", static_cast<int64_t>(0));
   Qnn_Scalar_t exclusive_qnn_scalar = QNN_SCALAR_INIT;
   exclusive_qnn_scalar.dataType = QNN_DATATYPE_BOOL_8;

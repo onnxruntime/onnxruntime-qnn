@@ -1,14 +1,14 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn/builder/qnn_context_mem_handle_manager.h"
+#include "core/providers/qnn-abi/builder/qnn_context_mem_handle_manager.h"
 
 #include "HTP/QnnHtpMem.h"
 
-#include "core/providers/qnn/ort_api.h"
-#include "core/providers/qnn/builder/qnn_def.h"
-#include "core/providers/qnn/builder/qnn_utils.h"
-#include "core/providers/qnn/qnn_allocator.h"
+#include "core/providers/qnn-abi/ort_api.h"
+#include "core/providers/qnn-abi/builder/qnn_def.h"
+#include "core/providers/qnn-abi/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/qnn_allocator.h"
 
 namespace onnxruntime::qnn {
 

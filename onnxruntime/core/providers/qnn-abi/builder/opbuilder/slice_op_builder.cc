@@ -1,10 +1,10 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
-#include "core/providers/qnn/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn/builder/op_builder_factory.h"
-#include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
+#include "core/providers/qnn-abi/builder/qnn_utils.h"
 #include "core/providers/cpu/tensor/slice_helper.h"
 
 namespace onnxruntime {
@@ -17,26 +17,26 @@ class SliceOpBuilder : public BaseOpBuilder {
 
  protected:
   Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger,
                        std::vector<std::string>& input_names,
                        bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
   Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
  private:
-  Status ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit) const;
-  void GetDataFromAttribute(const NodeUnit& node_unit,
-                            TensorShapeVector& raw_starts,
-                            TensorShapeVector& raw_ends,
-                            TensorShapeVector& raw_axes) const;
+  Status ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const;
+  void GetDataFromAttribute(const OrtNodeUnit& node_unit,
+                            std::vector<int64_t>& raw_starts,
+                            std::vector<int64_t>& raw_ends,
+                            std::vector<int64_t>& raw_axes) const;
 };
 
-Status SliceOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit) const {
+Status SliceOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const {
   size_t input_count = node_unit.Inputs().size();
 
   // Opset < 10: Only has 1 data input. The starts, ends, and axes values are attributes.
@@ -44,7 +44,7 @@ Status SliceOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const 
   if (input_count > 1) {
     // Skip the first input. All other input need to be initializer
     for (size_t i = 1; i < input_count; i++) {
-      const auto& next_input = node_unit.Inputs()[i].node_arg.Name();
+      const auto& next_input = node_unit.Inputs()[i].name;
       if (!qnn_model_wrapper.IsConstantInput(next_input)) {
         return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN doesn't support dynamic slice.");
       }
@@ -54,11 +54,11 @@ Status SliceOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const 
   return Status::OK();
 }
 
-void SliceOpBuilder::GetDataFromAttribute(const NodeUnit& node_unit,
-                                          TensorShapeVector& raw_starts,
-                                          TensorShapeVector& raw_ends,
-                                          TensorShapeVector& raw_axes) const {
-  NodeAttrHelper node_helper(node_unit);
+void SliceOpBuilder::GetDataFromAttribute(const OrtNodeUnit& node_unit,
+                                          std::vector<int64_t>& raw_starts,
+                                          std::vector<int64_t>& raw_ends,
+                                          std::vector<int64_t>& raw_axes) const {
+  OrtNodeAttrHelper node_helper(node_unit);
   auto starts = node_helper.Get("starts", std::vector<int64_t>{0});
   raw_starts.assign(starts.begin(), starts.end());
   auto ends = node_helper.Get("ends", std::vector<int64_t>{0});
@@ -69,35 +69,33 @@ void SliceOpBuilder::GetDataFromAttribute(const NodeUnit& node_unit,
   }
 }
 
-// Gets the data from initializer inputs (e.g., starts, ends, axes, or steps) as a TensorShapeVector.
-static Status GetInitializerInputData(const NodeUnitIODef& input, const QnnModelWrapper& qnn_model_wrapper,
-                                      TensorShapeVector& output) {
-  const auto& input_name = input.node_arg.Name();
+// Gets the data from initializer inputs (e.g., starts, ends, axes, or steps) as a std::vector<int64_t>.
+static Status GetInitializerInputData(const OrtNodeUnitIODef& input, const QnnModelWrapper& qnn_model_wrapper,
+                                      std::vector<int64_t>& output) {
+  const auto& input_name = input.name;
   const bool is_constant = qnn_model_wrapper.IsConstantInput(input_name);
   ORT_RETURN_IF_NOT(is_constant, "Expected input ", input_name.c_str(), " to be an initializer.");
-  gsl::not_null<const ONNX_NAMESPACE::TensorProto*> initializer_proto = qnn_model_wrapper
-                                                                            .GetInitializerTensors()
-                                                                            .at(input_name);
-  ORT_RETURN_IF_NOT(initializer_proto->has_data_type(), "Expected initializer ", input_name.c_str(),
-                    " to have a proto data type.");
+  const OrtValueInfo* initializer_valueinfo = nullptr;
+  ORT_RETURN_IF_ERROR(qnn_model_wrapper.FindInitializer(input_name, &initializer_valueinfo));
 
   // Deserialize initializer into byte buffer
   std::vector<uint8_t> initializer_bytes;
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*initializer_proto, initializer_bytes));
+  ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(const_cast<OrtValueInfo&>(*initializer_valueinfo),
+                                                              initializer_bytes));
 
   Status status;
 
   // Copy Tensor of int32_t or int64_t elems into output (int64_ts).
-  auto onnx_type = static_cast<ONNX_NAMESPACE::TensorProto_DataType>(initializer_proto->data_type());
-  if (onnx_type == ONNX_NAMESPACE::TensorProto_DataType_INT64) {
+  ONNXTensorElementDataType onnx_type = input.type;
+  if (onnx_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) {
     gsl::span<const int64_t> tensor_elems = ReinterpretAsSpan<int64_t, uint8_t>(initializer_bytes);
     output.insert(output.end(), tensor_elems.begin(), tensor_elems.end());
-  } else if (onnx_type == ONNX_NAMESPACE::TensorProto_DataType_INT32) {
+  } else if (onnx_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32) {
     gsl::span<const int32_t> tensor_elems = ReinterpretAsSpan<int32_t, uint8_t>(initializer_bytes);
     output.insert(output.end(), tensor_elems.begin(), tensor_elems.end());
   } else {
     status = ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Data type ", onnx_type,
-                             " is not supported for Slice initializer input ", input.node_arg.Name().c_str());
+                             " is not supported for Slice initializer input ", input.name.c_str());
   }
 
   return status;
@@ -105,7 +103,7 @@ static Status GetInitializerInputData(const NodeUnitIODef& input, const QnnModel
 
 // Note: For ONNX Slice operation the expected number of inputs is between 3 and 5
 Status SliceOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      const logging::Logger& logger,
                                      std::vector<std::string>& input_names,
                                      bool do_op_validation) const {
@@ -119,15 +117,15 @@ Status SliceOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status SliceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                   const NodeUnit& node_unit,
+                                                   const OrtNodeUnit& node_unit,
                                                    std::vector<std::string>&& input_names,
                                                    const logging::Logger& logger,
                                                    bool do_op_validation) const {
   // Extract starts, ends, axes, and steps data from attributes (opset < 10) or initializer inputs (opset >= 10).
-  TensorShapeVector raw_starts;
-  TensorShapeVector raw_ends;
-  TensorShapeVector raw_axes;
-  TensorShapeVector raw_steps;
+  std::vector<int64_t> raw_starts;
+  std::vector<int64_t> raw_ends;
+  std::vector<int64_t> raw_axes;
+  std::vector<int64_t> raw_steps;
 
   const auto& inputs = node_unit.Inputs();
   const size_t input_count = inputs.size();
@@ -148,21 +146,21 @@ Status SliceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wr
     ORT_RETURN_IF_ERROR(GetInitializerInputData(inputs[ends_index], qnn_model_wrapper, raw_ends));
 
     // Axes input (optional).
-    if (input_count > axes_index && !inputs[axes_index].node_arg.Name().empty()) {
+    if (input_count > axes_index && inputs[axes_index].Exists()) {
       ORT_RETURN_IF_ERROR(GetInitializerInputData(inputs[axes_index], qnn_model_wrapper, raw_axes));
     }
 
     // Steps input (optional).
-    if (input_count > steps_index && !inputs[steps_index].node_arg.Name().empty()) {
+    if (input_count > steps_index && inputs[steps_index].Exists()) {
       ORT_RETURN_IF_ERROR(GetInitializerInputData(inputs[steps_index], qnn_model_wrapper, raw_steps));
     }
   }
 
   std::vector<uint32_t> input0_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].node_arg, input0_shape),
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input0_shape),
                     "Cannot get shape for Slice input 0.");
 
-  TensorShapeVector input_dimensions(input0_shape.cbegin(), input0_shape.cend());
+  std::vector<int64_t> input_dimensions(input0_shape.cbegin(), input0_shape.cend());
   onnxruntime::SliceOp::PrepareForComputeMetadata compute_metadata(input_dimensions);
   ORT_RETURN_IF_ERROR(SliceOp::PrepareForComputeHelper(raw_starts, raw_ends, raw_axes, raw_steps, compute_metadata));
 

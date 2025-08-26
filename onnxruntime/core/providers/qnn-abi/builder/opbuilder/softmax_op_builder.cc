@@ -7,10 +7,10 @@
 #include <utility>
 #include <vector>
 
-#include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
-#include "core/providers/qnn/builder/qnn_utils.h"
-#include "core/providers/qnn/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn-abi/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -22,13 +22,13 @@ class SoftmaxOpBuilder : public BaseOpBuilder {
 
  protected:
   Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const NodeUnit& node_unit,
+                       const OrtNodeUnit& node_unit,
                        const logging::Logger& logger,
                        std::vector<std::string>& input_names,
                        bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
   Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
@@ -57,13 +57,13 @@ std::vector<uint32_t> FlattenShapeFromAxis(const std::vector<uint32_t>& input_sh
 }
 
 Status SoftmaxOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                       const NodeUnit& node_unit,
+                                       const OrtNodeUnit& node_unit,
                                        const logging::Logger& logger,
                                        std::vector<std::string>& input_names,
                                        bool do_op_validation) const {
   const bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
   const auto& inputs = node_unit.Inputs();
-  const std::string& input_name = inputs[0].node_arg.Name();
+  const std::string& input_name = inputs[0].name;
   assert(inputs.size() == 1);
 
   const int opset_version = node_unit.SinceVersion();
@@ -148,14 +148,14 @@ Status SoftmaxOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status SoftmaxOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                     const NodeUnit& node_unit,
+                                                     const OrtNodeUnit& node_unit,
                                                      std::vector<std::string>&& input_names,
                                                      const logging::Logger& logger,
                                                      bool do_op_validation) const {
   const bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
   const std::string& op_type = node_unit.OpType();
   const auto& outputs = node_unit.Outputs();
-  const std::string& orig_output_name = outputs[0].node_arg.Name();
+  const std::string& orig_output_name = outputs[0].name;
   assert(outputs.size() == 1);
 
   const int opset_version = node_unit.SinceVersion();

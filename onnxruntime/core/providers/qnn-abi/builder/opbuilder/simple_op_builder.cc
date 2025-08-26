@@ -1,10 +1,10 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
-#include "core/providers/qnn/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn/builder/op_builder_factory.h"
-#include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
+#include "core/providers/qnn-abi/builder/qnn_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -17,12 +17,12 @@ class SimpleOpBuilder : public BaseOpBuilder {
 
  protected:
   Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
+                                     const OrtNodeUnit& node_unit,
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override ORT_MUST_USE_RESULT;
   Status OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
-                                  const NodeUnit& node_unit,
+                                  const OrtNodeUnit& node_unit,
                                   const logging::Logger& logger,
                                   const std::vector<std::string>& input_names,
                                   size_t output_index,
@@ -30,9 +30,9 @@ class SimpleOpBuilder : public BaseOpBuilder {
                                   QnnQuantParamsWrapper& quant_param) const override ORT_MUST_USE_RESULT;
 
  private:
-  Status ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit) const;
+  Status ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const;
   Status ProcessSigmoidOrTanhOutput(QnnModelWrapper& qnn_model_wrapper,
-                                    const NodeUnit& node_unit,
+                                    const OrtNodeUnit& node_unit,
                                     std::vector<std::string>&& input_names,
                                     std::vector<std::string>&& param_tensor_names,
                                     const logging::Logger& logger,
@@ -45,11 +45,11 @@ class SimpleOpBuilder : public BaseOpBuilder {
 };
 
 Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
-                                        const NodeUnit& node_unit) const {
+                                        const OrtNodeUnit& node_unit) const {
   const std::string& op_type = node_unit.OpType();
 
   if (op_type == "GridSample") {
-    NodeAttrHelper node_helper(node_unit);
+    OrtNodeAttrHelper node_helper(node_unit);
     std::string mode = node_helper.Get("mode", "linear");
     ORT_RETURN_IF_NOT(utils::ArrayHasString(gridsample_supported_modes, mode), "GridSample does not support mode ",
                       mode.c_str());
@@ -86,7 +86,7 @@ Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
     ORT_RETURN_IF(is_per_chan_quant, "QNN EP does not support a standalone DQ op with per-channel quantization");
 
     if (qnn_model_wrapper.GetModelSettings().offload_graph_io_quantization) {
-      ORT_RETURN_IF(qnn_model_wrapper.IsGraphOutput(node_unit.Outputs()[0].node_arg.Name()),
+      ORT_RETURN_IF(qnn_model_wrapper.IsGraphOutput(node_unit.Outputs()[0].name),
                     "QNN EP is configured to not take DQ nodes that generate a graph output.");
     }
   }
@@ -98,14 +98,14 @@ Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
     ORT_RETURN_IF(is_per_chan_quant, "QNN EP does not support a standalone Q op with per-channel quantization");
 
     if (qnn_model_wrapper.GetModelSettings().offload_graph_io_quantization) {
-      ORT_RETURN_IF(qnn_model_wrapper.IsGraphInput(node_unit.Inputs()[0].node_arg.Name()),
+      ORT_RETURN_IF(qnn_model_wrapper.IsGraphInput(node_unit.Inputs()[0].name),
                     "QNN EP is configured to not take Q nodes that consume a graph input.");
     }
   }
 
   // QNN ScatterND doesn't support MAX, MIN reduction
   if (op_type == "ScatterND") {
-    NodeAttrHelper node_helper(node_unit);
+    OrtNodeAttrHelper node_helper(node_unit);
     std::string reduction = node_helper.Get("reduction", "none");
     ORT_RETURN_IF_NOT(utils::ArrayHasString(scatternd_supported_reduction, reduction), "ScatterND does not support reduction ",
                       reduction.c_str());
@@ -113,7 +113,7 @@ Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
 
   // QNN ScatterElements doesn't support MIN reduction
   if (op_type == "ScatterElements") {
-    NodeAttrHelper node_helper(node_unit);
+    OrtNodeAttrHelper node_helper(node_unit);
     std::string reduction = node_helper.Get("reduction", "none");
     ORT_RETURN_IF_NOT(utils::ArrayHasString(scatterelements_supported_reduction, reduction), "ScatterElements does not support reduction ",
                       reduction.c_str());
@@ -124,12 +124,12 @@ Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
 
 // Limit to float type for now
 Status ProcessNodeAttribute(QnnModelWrapper& qnn_model_wrapper,
-                            const NodeUnit& node_unit,
+                            const OrtNodeUnit& node_unit,
                             const std::string& onnx_attr_key,
                             const std::string& qnn_param_key,
                             std::vector<std::string>& param_tensor_names,
                             const float default_value = 1.0f) {
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(node_unit);
   float attr_value = node_helper.Get(onnx_attr_key, default_value);
   Qnn_Scalar_t attr_qnn_scalar = QNN_SCALAR_INIT;
   attr_qnn_scalar.dataType = QNN_DATATYPE_FLOAT_32;
@@ -143,9 +143,9 @@ Status ProcessNodeAttribute(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status ProcessBlockSizeAttribute(QnnModelWrapper& qnn_model_wrapper,
-                                 const NodeUnit& node_unit,
+                                 const OrtNodeUnit& node_unit,
                                  std::vector<std::string>& param_tensor_names) {
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(node_unit);
   uint32_t block_size = node_helper.Get("blocksize", static_cast<uint32_t>(0));
   std::vector<uint32_t> block_size_shape{2};
   std::vector<uint32_t> block_size_data(2, block_size);
@@ -158,9 +158,9 @@ Status ProcessBlockSizeAttribute(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status ProcessModeAttribute(QnnModelWrapper& qnn_model_wrapper,
-                            const NodeUnit& node_unit,
+                            const OrtNodeUnit& node_unit,
                             std::vector<std::string>& param_tensor_names) {
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(node_unit);
   std::string mode = node_helper.Get("mode", "DCR");
   Qnn_Scalar_t mode_qnn_scalar = QNN_SCALAR_INIT;
   mode_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
@@ -181,9 +181,9 @@ Status ProcessModeAttribute(QnnModelWrapper& qnn_model_wrapper,
 
 // Process alpha attribute as input for Qnn LeakyRelu
 Status ProcessAlphaAttributeAsInput(QnnModelWrapper& qnn_model_wrapper,
-                                    const NodeUnit& node_unit,
+                                    const OrtNodeUnit& node_unit,
                                     const std::string input_name) {
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(node_unit);
   QnnQuantParamsWrapper quantize_param;
   Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
   union {
@@ -228,9 +228,9 @@ Status ProcessAlphaAttributeAsInput(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status ProcessGridSampleAttributes(QnnModelWrapper& qnn_model_wrapper,
-                                   const NodeUnit& node_unit,
+                                   const OrtNodeUnit& node_unit,
                                    std::vector<std::string>& param_tensor_names) {
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(node_unit);
   int64_t align_corners = node_helper.Get("align_corners", static_cast<int64_t>(0));
   Qnn_Scalar_t align_corners_qnn_scalar = QNN_SCALAR_INIT;
   align_corners_qnn_scalar.dataType = QNN_DATATYPE_BOOL_8;
@@ -274,9 +274,9 @@ Status ProcessGridSampleAttributes(QnnModelWrapper& qnn_model_wrapper,
 
 // Process Reduction attribute of ScatterND op
 Status ProcessScatterNDReductionAttribute(QnnModelWrapper& qnn_model_wrapper,
-                                          const NodeUnit& node_unit,
+                                          const OrtNodeUnit& node_unit,
                                           std::vector<std::string>& param_tensor_names) {
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(node_unit);
   std::string reduction = node_helper.Get("reduction", "none");
   Qnn_Scalar_t reduction_qnn_scalar = QNN_SCALAR_INIT;
   reduction_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
@@ -299,9 +299,9 @@ Status ProcessScatterNDReductionAttribute(QnnModelWrapper& qnn_model_wrapper,
 
 // Process Reduction attribute of ScatterElements op
 Status ProcessReductionAttribute(QnnModelWrapper& qnn_model_wrapper,
-                                 const NodeUnit& node_unit,
+                                 const OrtNodeUnit& node_unit,
                                  std::vector<std::string>& param_tensor_names) {
-  NodeAttrHelper node_helper(node_unit);
+  OrtNodeAttrHelper node_helper(node_unit);
   std::string reduction = node_helper.Get("reduction", "none");
   Qnn_Scalar_t reduction_qnn_scalar = QNN_SCALAR_INIT;
   reduction_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
@@ -325,7 +325,7 @@ Status ProcessReductionAttribute(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                    const NodeUnit& node_unit,
+                                                    const OrtNodeUnit& node_unit,
                                                     std::vector<std::string>&& input_names,
                                                     const logging::Logger& logger,
                                                     bool do_op_validation) const {
@@ -378,7 +378,7 @@ Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_w
     param_tensor_names.push_back(axis_param.GetParamTensorName());
     qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
 
-    NodeAttrHelper node_helper(node_unit);
+    OrtNodeAttrHelper node_helper(node_unit);
     int64_t norm_p_order = node_helper.Get("p", static_cast<int64_t>(2));
     ORT_RETURN_IF(norm_p_order != 2, "QNN EP only supports LpNormalization with 'p' attribute equal to 2.");
   }
@@ -395,9 +395,6 @@ Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_w
   }
 
   if (op_type == "HardSigmoid") {
-    int32_t onnx_data_type = 0;
-    ORT_RETURN_IF_ERROR(utils::GetOnnxTensorElemDataType(node_unit.Inputs()[0].node_arg, onnx_data_type));
-
     ORT_RETURN_IF_ERROR(ProcessNodeAttribute(qnn_model_wrapper, node_unit, "alpha",
                                              QNN_OP_ELEMENT_WISE_NEURON_PARAM_ALPHA,
                                              param_tensor_names, 0.2f));
@@ -500,7 +497,7 @@ static bool OverrideQuantParams(const std::string& op_type, Qnn_DataType_t qnn_d
 }
 
 Status SimpleOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
-                                                 const NodeUnit& node_unit,
+                                                 const OrtNodeUnit& node_unit,
                                                  const logging::Logger& logger,
                                                  const std::vector<std::string>& input_names,
                                                  size_t output_index,
@@ -518,7 +515,7 @@ Status SimpleOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrap
                       "Invalid output index in OverrideOutputQuantParam for op ", op_type.c_str());
 
     const auto& output = node_unit.Outputs()[0];
-    const std::string& output_name = output.node_arg.Name();
+    const std::string& output_name = output.name;
 
     if (quant_param.IsPerTensor(/*include_bw*/ false)) {
       if (OverrideQuantParams(op_type, qnn_data_type, quant_param.Get().scaleOffsetEncoding)) {
