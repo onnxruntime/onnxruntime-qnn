@@ -641,6 +641,7 @@ void VerifyQDQOutput(const std::vector<OrtValue>& cpu_qdq_outputs,
  * \param log_severity The logger's severity setting.
  * \param ep_graph_checker Function called on the Graph generated for the QNN EP's session. Used to check node
  *                         EP assignment.
+ * \param run_abi_test Run testing on QNN-ABI.
  */
 template <typename QuantType>
 inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTestQDQModelFn<QuantType>& qdq_model_fn,
@@ -650,7 +651,8 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
                                  logging::Severity log_severity = logging::Severity::kERROR,
                                  const std::string& qnn_ctx_model_path = "",
                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
-                                 std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr) {
+                                 std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr,
+                                 bool run_abi_test = true) {
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
@@ -756,62 +758,64 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
 
 #if !BUILD_QNN_EP_STATIC_LIB
   // Run with QNN-ABI.
-  std::vector<OrtValue> qnn_abi_qdq_outputs;
-  if (!qnn_ctx_model_path.empty()) {
-    onnx::ModelProto model_proto;
-    onnxruntime::Model qnn_ctx_model;
-    ASSERT_STATUS_OK(qnn_ctx_model.Load(ToPathString(qnn_ctx_model_path), model_proto));
-    std::string qnn_ctx_model_data;
-    model_proto.SerializeToString(&qnn_ctx_model_data);
-    InferenceModelABI(qnn_ctx_model_data,
-                      "qnn_abi_ctx_model_logger",
-                      qnn_options,
-                      expected_ep_assignment,
-                      qdq_helper.feeds_,
-                      qnn_abi_qdq_outputs,
-                      session_option_pairs);
-  } else {
-    // Create modified session options for ABI to use different context file path
-    std::unordered_map<std::string, std::string> abi_session_option_pairs = session_option_pairs;
-    std::string abi_context_file_path;
+  if (run_abi_test) {
+    std::vector<OrtValue> qnn_abi_qdq_outputs;
+    if (!qnn_ctx_model_path.empty()) {
+      onnx::ModelProto model_proto;
+      onnxruntime::Model qnn_ctx_model;
+      ASSERT_STATUS_OK(qnn_ctx_model.Load(ToPathString(qnn_ctx_model_path), model_proto));
+      std::string qnn_ctx_model_data;
+      model_proto.SerializeToString(&qnn_ctx_model_data);
+      InferenceModelABI(qnn_ctx_model_data,
+                        "qnn_abi_ctx_model_logger",
+                        qnn_options,
+                        expected_ep_assignment,
+                        qdq_helper.feeds_,
+                        qnn_abi_qdq_outputs,
+                        session_option_pairs);
+    } else {
+      // Create modified session options for ABI to use different context file path
+      std::unordered_map<std::string, std::string> abi_session_option_pairs = session_option_pairs;
+      std::string abi_context_file_path;
 
-    // If context generation is enabled, modify the file path for ABI to avoid conflicts
-    auto context_enable_it = abi_session_option_pairs.find(kOrtSessionOptionEpContextEnable);
-    auto context_path_it = abi_session_option_pairs.find(kOrtSessionOptionEpContextFilePath);
+      // If context generation is enabled, modify the file path for ABI to avoid conflicts
+      auto context_enable_it = abi_session_option_pairs.find(kOrtSessionOptionEpContextEnable);
+      auto context_path_it = abi_session_option_pairs.find(kOrtSessionOptionEpContextFilePath);
 
-    if (context_enable_it != abi_session_option_pairs.end() &&
-        context_enable_it->second == "1" &&
-        context_path_it != abi_session_option_pairs.end()) {
-      // Modify the context file path to add "_abi" suffix
-      std::string original_path = context_path_it->second;
-      size_t dot_pos = original_path.find_last_of('.');
-      if (dot_pos != std::string::npos) {
-        abi_context_file_path = original_path.substr(0, dot_pos) + "_abi" + original_path.substr(dot_pos);
-        abi_session_option_pairs[kOrtSessionOptionEpContextFilePath] = abi_context_file_path;
+      if (context_enable_it != abi_session_option_pairs.end() &&
+          context_enable_it->second == "1" &&
+          context_path_it != abi_session_option_pairs.end()) {
+        // Modify the context file path to add "_abi" suffix
+        std::string original_path = context_path_it->second;
+        size_t dot_pos = original_path.find_last_of('.');
+        if (dot_pos != std::string::npos) {
+          abi_context_file_path = original_path.substr(0, dot_pos) + "_abi" + original_path.substr(dot_pos);
+          abi_session_option_pairs[kOrtSessionOptionEpContextFilePath] = abi_context_file_path;
 
-        // Clean up any existing ABI context file to prevent conflicts
-        std::filesystem::remove(abi_context_file_path);
+          // Clean up any existing ABI context file to prevent conflicts
+          std::filesystem::remove(abi_context_file_path);
+        }
       }
+
+      InferenceModelABI(qdq_model_data,
+                        "qdq_abi_model_logger",
+                        qnn_options,
+                        expected_ep_assignment,
+                        qdq_helper.feeds_,
+                        qnn_abi_qdq_outputs,
+                        abi_session_option_pairs,
+                        qnn_ep_graph_checker);
     }
 
-    InferenceModelABI(qdq_model_data,
-                      "qdq_abi_model_logger",
-                      qnn_options,
-                      expected_ep_assignment,
-                      qdq_helper.feeds_,
+    if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
+      VerifyQDQOutput(cpu_qdq_outputs,
                       qnn_abi_qdq_outputs,
-                      abi_session_option_pairs,
-                      qnn_ep_graph_checker);
-  }
-
-  if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
-    VerifyQDQOutput(cpu_qdq_outputs,
-                    qnn_abi_qdq_outputs,
-                    cpu_f32_outputs,
-                    output_qparams,
-                    output_vals,
-                    output_types,
-                    tolerance);
+                      cpu_f32_outputs,
+                      output_qparams,
+                      output_vals,
+                      output_types,
+                      tolerance);
+    }
   }
 #endif  // !BUILD_QNN_EP_STATIC_LIB
 }
@@ -1310,13 +1314,15 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
  * \param verify_outputs True to verify that the outputs match (within tolerance).
  * \param ep_graph_checker Function called on the Graph generated for the EP's session. Used to check node
  *                         EP assignment.
+ * \param run_abi_test Run testing on QNN-ABI.
  */
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                      float fp32_abs_err = 1e-5f,
                      logging::Severity log_severity = logging::Severity::kERROR,
                      bool verify_outputs = true,
-                     std::function<void(const Graph&)>* ep_graph_checker = nullptr);
+                     std::function<void(const Graph&)>* ep_graph_checker = nullptr,
+                     bool run_abi_test = true);
 
 enum class BackendSupport {
   SUPPORT_UNKNOWN,

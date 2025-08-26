@@ -22,6 +22,19 @@ using Equation = std::tuple<std::string, std::string, std::string>;
  */
 std::optional<Equation> ParseEquation(std::string_view equation_string) {
   std::string equation(equation_string);
+
+  // Replace Q and K to lower case if q and k not in the equation.
+  if (equation.find('q') == std::string::npos && equation.find('k') == std::string::npos) {
+    for (char& c : equation) {
+      if (c == 'Q') {
+        c = 'q';
+      }
+      if (c == 'K') {
+        c = 'k';
+      }
+    }
+  }
+
   equation.erase(std::remove(equation.begin(), equation.end(), ' '),
                  equation.end());
   if (equation.empty()) {

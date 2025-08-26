@@ -50,7 +50,8 @@ static void RunQnnEinsum(
     const TestInputDef<DataType>& in0,
     const TestInputDef<DataType>& in1,
     const std::string& equation,
-    const float tolerance) {
+    const float tolerance,
+    bool run_abi_test = true) {
   ProviderOptions provider_options;
   provider_options[kQnnBackendType] = backend;
   provider_options[kOffloadGraphIoQuantization] = kOffloadGraphIoQuantizationDisable;
@@ -63,7 +64,11 @@ static void RunQnnEinsum(
       /*provider_options=*/provider_options,
       /*opset_version=*/12,
       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-      /*tolerance=*/tolerance);
+      /*tolerance=*/tolerance,
+      /*log_severity=*/onnxruntime::logging::Severity::kERROR,
+      /*verify_outputs=*/true,
+      /*ep_graph_checker=*/nullptr,
+      /*run_abi_test=*/run_abi_test);
 }
 
 template <typename InputAQType, typename InputBQType>
@@ -108,7 +113,8 @@ template <typename InputAQType, typename InputBQType>
 static void RunQnnHtpQdqEinsum(const TestInputDef<float>& in0,
                                const TestInputDef<float>& in1,
                                const std::string& equation,
-                               QDQTolerance tolerance) {
+                               QDQTolerance tolerance,
+                               bool run_abi_test = true) {
   ProviderOptions provider_options;
   provider_options[kQnnBackendType] = kQnnBackendTypeHtp;
   provider_options[kOffloadGraphIoQuantization] = kOffloadGraphIoQuantizationDisable;
@@ -125,7 +131,12 @@ static void RunQnnHtpQdqEinsum(const TestInputDef<float>& in0,
                                     /*qnn_options=*/provider_options,
                                     /*opset_version=*/12,
                                     /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                                    /*tolerance=*/tolerance);
+                                    /*tolerance=*/tolerance,
+                                    /*log_severity=*/onnxruntime::logging::Severity::kERROR,
+                                    /*qnn_ctx_model_path=*/"",
+                                    /*session_option_pairs=*/{},
+                                    /*ep_graph_checker=*/nullptr,
+                                    /*run_abi_test=*/run_abi_test);
 }
 
 }  // namespace
@@ -148,6 +159,33 @@ TEST_F(QnnCPUBackendTests, EinsumRank2) {
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
       /*equation=*/"ab,bc->ac",
       /*tolerance=*/1e-4f);
+}
+
+TEST_F(QnnCPUBackendTests, EinsumRank3MatMul) {
+  const std::vector<int64_t> shape0{4, 5, 6};
+  const std::vector<int64_t> shape1{4, 6, 5};
+  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  RunQnnEinsum<float>(
+      /*backend=*/kQnnBackendTypeCpu,
+      /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
+      /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
+      /*equation=*/"hij,hjk->hik",
+      /*tolerance=*/1e-4f);
+}
+
+TEST_F(QnnCPUBackendTests, EinsumRank3MatMul_QK) {
+  const std::vector<int64_t> shape0{4, 5, 6};
+  const std::vector<int64_t> shape1{4, 6, 5};
+  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  RunQnnEinsum<float>(
+      /*backend=*/kQnnBackendTypeCpu,
+      /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
+      /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
+      /*equation=*/"hQK,hKd->hQd",
+      /*tolerance=*/1e-4f,
+      /*run_abi_test=*/false);
 }
 
 TEST_F(QnnCPUBackendTests, EinsumRank4MatMul) {
@@ -174,6 +212,20 @@ TEST_F(QnnCPUBackendTests, EinsumRank4MatMulTransposeY) {
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
       /*equation=*/"bhid,bhjd->bhij",
       /*tolerance=*/1e-4f);
+}
+
+TEST_F(QnnCPUBackendTests, EinsumRank4MatMulTransposeY_QK) {
+  const std::vector<int64_t> shape0{2, 3, 4, 6};
+  const std::vector<int64_t> shape1{2, 3, 5, 6};
+  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  RunQnnEinsum<float>(
+      /*backend=*/kQnnBackendTypeCpu,
+      /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
+      /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
+      /*equation=*/"bnQd,bnKd->bnQK",
+      /*tolerance=*/1e-4f,
+      /*run_abi_test=*/false);
 }
 
 TEST_F(QnnCPUBackendTests, EinsumRank4MatMulTransposeAll1) {
@@ -273,6 +325,20 @@ TEST_F(QnnHTPBackendTests, EinsumF16Rank4MatMulTransposeY) {
       /*tolerance=*/1e-2f);
 }
 
+TEST_F(QnnHTPBackendTests, EinsumF16Rank4MatMulTransposeY_QK) {
+  const std::vector<int64_t> shape0{2, 3, 4, 2};
+  const std::vector<int64_t> shape1{2, 3, 5, 2};
+  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  RunQnnEinsum<float>(
+      /*backend=*/kQnnBackendTypeHtp,
+      /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
+      /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
+      /*equation=*/"bnQd,bnKd->bnQK",
+      /*tolerance=*/1e-2f,
+      /*run_abi_test=*/false);
+}
+
 TEST_F(QnnHTPBackendTests, EinsumRank3MatMulTransposeY) {
   const std::vector<int64_t> shape0{2, 4, 2};
   const std::vector<int64_t> shape1{2, 5, 2};
@@ -286,7 +352,21 @@ TEST_F(QnnHTPBackendTests, EinsumRank3MatMulTransposeY) {
       /*tolerance=*/1e-2f);
 }
 
-TEST_F(QnnHTPBackendTests, EinsumRank3MatMul) {
+TEST_F(QnnHTPBackendTests, EinsumRank3MatMulTransposeY_QK) {
+  const std::vector<int64_t> shape0{2, 4, 2};
+  const std::vector<int64_t> shape1{2, 5, 2};
+  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  RunQnnEinsum<float>(
+      /*backend=*/kQnnBackendTypeHtp,
+      /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
+      /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
+      /*equation=*/"bQd,bKd->bQK",
+      /*tolerance=*/1e-2f,
+      /*run_abi_test=*/false);
+}
+
+TEST_F(QnnHTPBackendTests, EinsumRank3MatMul_QK) {
   const std::vector<int64_t> shape0{4, 5, 6};
   const std::vector<int64_t> shape1{4, 6, 5};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
@@ -295,8 +375,9 @@ TEST_F(QnnHTPBackendTests, EinsumRank3MatMul) {
       /*backend=*/kQnnBackendTypeHtp,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
-      /*equation=*/"hij,hjk->hik",
-      /*tolerance=*/1e-2f);
+      /*equation=*/"hQK,hKd->hQd",
+      /*tolerance=*/1e-2f,
+      /*run_abi_test=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, EinsumF16Rank4MatMulTransposeAll1) {
@@ -391,6 +472,19 @@ TEST_F(QnnHTPBackendTests, EinsumQdqRank4MatMulTransposeY) {
       /*tolerance=*/QDQTolerance());
 }
 
+TEST_F(QnnHTPBackendTests, EinsumQdqRank4MatMulTransposeY_QK) {
+  const std::vector<int64_t> shape0{2, 3, 4, 2};
+  const std::vector<int64_t> shape1{2, 3, 5, 2};
+  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  RunQnnHtpQdqEinsum<uint8_t, uint8_t>(
+      /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
+      /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
+      /*equation=*/"bnQd,bnKd->bnQK",
+      /*tolerance=*/QDQTolerance(),
+      /*run_abi_test=*/false);
+}
+
 TEST_F(QnnHTPBackendTests, EinsumQdqRank3MatMulTransposeY) {
   const std::vector<int64_t> shape0{2, 4, 2};
   const std::vector<int64_t> shape1{2, 5, 2};
@@ -403,6 +497,19 @@ TEST_F(QnnHTPBackendTests, EinsumQdqRank3MatMulTransposeY) {
       /*tolerance=*/QDQTolerance());
 }
 
+TEST_F(QnnHTPBackendTests, EinsumQdqRank3MatMulTransposeY_QK) {
+  const std::vector<int64_t> shape0{2, 4, 2};
+  const std::vector<int64_t> shape1{2, 5, 2};
+  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  RunQnnHtpQdqEinsum<uint8_t, uint8_t>(
+      /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
+      /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
+      /*equation=*/"bQd,bKd->bQK",
+      /*tolerance=*/QDQTolerance(),
+      /*run_abi_test=*/false);
+}
+
 TEST_F(QnnHTPBackendTests, EinsumQdqRank3MatMul) {
   const std::vector<int64_t> shape0{4, 5, 6};
   const std::vector<int64_t> shape1{4, 6, 5};
@@ -413,6 +520,19 @@ TEST_F(QnnHTPBackendTests, EinsumQdqRank3MatMul) {
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
       /*equation=*/"hij,hjk->hik",
       /*tolerance=*/QDQTolerance());
+}
+
+TEST_F(QnnHTPBackendTests, EinsumQdqRank3MatMul_QK) {
+  const std::vector<int64_t> shape0{4, 5, 6};
+  const std::vector<int64_t> shape1{4, 6, 5};
+  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  RunQnnHtpQdqEinsum<uint8_t, uint8_t>(
+      /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
+      /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
+      /*equation=*/"hQK,hKd->hQd",
+      /*tolerance=*/QDQTolerance(),
+      /*run_abi_test=*/false);
 }
 
 TEST_F(QnnHTPBackendTests, EinsumQdqRank4MatMulTransposeAll1) {

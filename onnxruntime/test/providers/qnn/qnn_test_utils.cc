@@ -169,7 +169,7 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                      float fp32_abs_err, logging::Severity log_severity, bool verify_outputs,
-                     std::function<void(const Graph&)>* ep_graph_checker) {
+                     std::function<void(const Graph&)>* ep_graph_checker, bool run_abi_test) {
   EPVerificationParams verification_params;
   verification_params.ep_node_assignment = expected_ep_assignment;
   verification_params.fp32_abs_err = fp32_abs_err;
@@ -200,19 +200,22 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
 
 #if !BUILD_QNN_EP_STATIC_LIB
   // Run with QNN-ABI.
-  std::cout << "DEBUG: ABI Test" << std::endl;
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string& registration_name = "QnnAbiTestProvider";
-  Ort::SessionOptions session_options;
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
+  if (run_abi_test) {
+    std::cout << "DEBUG: ABI Test" << std::endl;
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    const std::string& registration_name = "QnnAbiTestProvider";
+    Ort::SessionOptions session_options;
+    RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
 
-  RunAndVerifyOutputsWithEPABI(AsByteSpan(model_data.data(), model_data.size()),
-                               session_options,
-                               registration_name,
-                               "QNN_EP_ABI_TestLogID",
-                               helper.feeds_,
-                               verification_params,
-                               verify_outputs);
+    RunAndVerifyOutputsWithEPABI(AsByteSpan(model_data.data(), model_data.size()),
+                                 session_options,
+                                 registration_name,
+                                 "QNN_EP_ABI_TestLogID",
+                                 helper.feeds_,
+                                 verification_params,
+                                 verify_outputs);
+  }
+
 #endif  // !BUILD_QNN_EP_STATIC_LIB
 }
 
