@@ -101,6 +101,12 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                      float fp32_abs_err, logging::Severity log_severity, bool verify_outputs,
                      std::function<void(const Graph&)>* ep_graph_checker) {
+  std::string test_suite_name = ::testing::UnitTest::GetInstance()->current_test_info()->test_suite_name();
+  std::string test_name = ::testing::UnitTest::GetInstance()->current_test_info()->name();
+  std::filesystem::path output_dir = std::filesystem::current_path() / (test_suite_name + "_" + test_name);
+  if (dump_onnx || dump_dlc || dump_json) {
+    std::filesystem::create_directories(output_dir);
+  }
   EPVerificationParams verification_params;
   verification_params.ep_node_assignment = expected_ep_assignment;
   verification_params.fp32_abs_err = fp32_abs_err;
@@ -125,20 +131,22 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   model.ToProto().SerializeToString(&model_data);
 
   if (dump_onnx) {
-    ASSERT_STATUS_OK(onnxruntime::Model::Save(model, ToPathString("cmp_accuracy.f32.onnx")));
+    ASSERT_STATUS_OK(onnxruntime::Model::Save(model, output_dir / ToPathString("cmp_accuracy.f32.onnx")));
   }
 
   TryEnableQNNSaver(provider_options);
   if (dump_dlc) {
-    provider_options.erase("backend_type");
+    provider_options["dump_qnn_ir_dlc"] = "1";
+    provider_options["dump_qnn_ir_dlc_dir"] = output_dir.string();
     #if defined(_WIN32)
-      provider_options["backend_path"] = "QnnIr.dll";
+      provider_options["qnn_ir_backend_path"] = "QnnIr.dll";
     #else
-      provider_options["backend_path"] = "libQnnIr.so";
+      provider_options["qnn_ir_backend_path"] = "libQnnIr.so";
     #endif  // defined(_WIN32)
   }
   if (dump_json) {
     provider_options["dump_json_qnn_graph"] = "1";
+    provider_options["json_qnn_graph_dir"] = output_dir.string();
   }
   RunAndVerifyOutputsWithEP(AsByteSpan(model_data.data(), model_data.size()), "QNN_EP_TestLogID",
                             QnnExecutionProviderWithOptions(provider_options),

@@ -534,6 +534,12 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
                                  const std::string& qnn_ctx_model_path = "",
                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                                  std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr) {
+  std::string test_suite_name = ::testing::UnitTest::GetInstance()->current_test_info()->test_suite_name();
+  std::string test_name = ::testing::UnitTest::GetInstance()->current_test_info()->name();
+  std::filesystem::path output_dir = std::filesystem::current_path() / (test_suite_name + "_" + test_name);
+  if (dump_onnx || dump_dlc || dump_json) {
+    std::filesystem::create_directories(output_dir);
+  }
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
@@ -557,7 +563,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
   f32_model.ToProto().SerializeToString(&f32_model_data);
 
   if (dump_onnx) {
-    ASSERT_STATUS_OK(onnxruntime::Model::Save(f32_model, ToPathString("cmp_accuracy.f32.onnx")));
+    ASSERT_STATUS_OK(onnxruntime::Model::Save(f32_model, output_dir / ToPathString("cmp_accuracy.f32.onnx")));
   }
 
   // Run f32 model on CPU EP and collect outputs.
@@ -601,21 +607,23 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
   qdq_model.ToProto().SerializeToString(&qdq_model_data);
 
   if (dump_onnx) {
-    ASSERT_STATUS_OK(onnxruntime::Model::Save(qdq_model, ToPathString("cmp_accuracy.qdq.onnx")));
+    ASSERT_STATUS_OK(onnxruntime::Model::Save(qdq_model, output_dir / ToPathString("cmp_accuracy.qdq.onnx")));
   }
 
   bool is_qnn_ep = true;
   TryEnableQNNSaver(qnn_options);
   if (dump_dlc) {
-    qnn_options.erase("backend_type");
+    qnn_options["dump_qnn_ir_dlc"] = "1";
+    qnn_options["dump_qnn_ir_dlc_dir"] = output_dir.string();
     #if defined(_WIN32)
-      qnn_options["backend_path"] = "QnnIr.dll";
+      qnn_options["qnn_ir_backend_path"] = "QnnIr.dll";
     #else
-      qnn_options["backend_path"] = "libQnnIr.so";
+      qnn_options["qnn_ir_backend_path"] = "libQnnIr.so";
     #endif  // defined(_WIN32)
   }
   if (dump_json) {
     qnn_options["dump_json_qnn_graph"] = "1";
+    qnn_options["json_qnn_graph_dir"] = output_dir.string();
   }
   std::vector<OrtValue> qnn_qdq_outputs;
   if (!qnn_ctx_model_path.empty()) {
