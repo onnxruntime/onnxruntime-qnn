@@ -10,7 +10,7 @@ from pathlib import Path
 
 import onnx
 
-from ....tools.onnx_model_utils import fix_output_shapes, make_input_shape_fixed
+from ....tools.onnx_model_utils import fix_output_shapes, make_input_shape_fixed, save_and_reload_optimize_model
 from ....tools.remove_initializer_from_input import remove_initializer_from_input
 from ...fusions import FusionGelu, FusionLayerNormalization
 from ...onnx_model import ONNXModel
@@ -93,6 +93,7 @@ def qnn_preprocess_model(
     """
     modified = False
     model = model_input if isinstance(model_input, onnx.ModelProto) else onnx.load_model(model_input)
+    model = save_and_reload_optimize_model(model)
     model = save_and_reload_model_with_shape_infer(model)
     onnx_model = ONNXModel(model)
 

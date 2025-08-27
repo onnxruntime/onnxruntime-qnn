@@ -176,6 +176,32 @@ class ONNXModel:
 
         return None
 
+    def get_tensor_shape(self, tensor_name):
+        """Get shape for given tensor name."""
+        tensor = self.get_initializer(tensor_name)
+        if tensor:
+            return list(tensor.dims)
+        tensor_type = self.get_tensor_type(tensor_name)
+        if not tensor_type:
+            return None
+
+        tensor_shape = self.tensor_shape_to_list(tensor_type)
+        if not tensor_shape:
+            return None
+
+        return tensor_shape
+
+    def tensor_shape_to_list(self, tensor_type) -> list[int]:
+        shape_list = []
+        for d in tensor_type.shape.dim:
+            if d.HasField("dim_value"):
+                shape_list.append(d.dim_value)  # known dimension
+            elif d.HasField("dim_param"):
+                shape_list.append(d.dim_param)  # unknown dimension with symbolic name
+            else:
+                shape_list.append("?")  # shall not happen
+        return shape_list
+
     def get_constant_value(self, output_name):
         for node in self.model.graph.node:
             if node.op_type == "Constant":
