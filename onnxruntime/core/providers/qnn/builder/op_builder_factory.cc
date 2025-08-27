@@ -199,10 +199,11 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   {
     CreateCumSumOpBuilder("CumSum", *this);
   }
+#ifdef RANDOM_UNIFORM_LIKE
   {
     CreateRandomUniformLikeOpBuilder("RandomUniformLike", *this);
   }
-
+#endif
   {
     CreateGatherNDOpBuilder("GatherND", *this);
   }

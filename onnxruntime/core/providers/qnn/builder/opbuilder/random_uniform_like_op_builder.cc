@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#ifdef RANDOM_UNIFORM_LIKE
+
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -35,30 +37,20 @@ Status RandomUniformLikeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrap
                                                  bool do_op_validation) const {
   ORT_UNUSED_PARAMETER(do_op_validation);
 
+  NodeAttrHelper node_helper(node_unit);
   const auto& inputs = node_unit.Inputs();
-
-  ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
-
-  // Get the original input tensor
   const auto& input_tensor = inputs[0];
   const std::string& input_tensor_name = input_tensor.node_arg.Name();
 
-  // Get the shape of the original input tensor
   std::vector<uint32_t> input_shape;
   ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_tensor.node_arg, input_shape),
                     "Failed to get shape for input tensor: ", input_tensor_name);
 
-  // Create a new tensor name for the shape tensor
   const std::string shape_tensor_name = utils::GetUniqueName(input_tensor_name, "_shape");
-
-  // Create a static tensor containing the shape information as uint32
   std::vector<uint8_t> shape_data(input_shape.size() * sizeof(uint32_t));
   memcpy(shape_data.data(), input_shape.data(), shape_data.size());
-
-  // Create a 1D tensor shape for the shape tensor
   std::vector<uint32_t> shape_tensor_shape = {static_cast<uint32_t>(input_shape.size())};
 
-  // Create and add the shape tensor wrapper (always as a static tensor)
   QnnTensorWrapper shape_tensor_wrapper(shape_tensor_name,
                                         QNN_TENSOR_TYPE_STATIC,
                                         QNN_DATATYPE_UINT_32,
@@ -69,34 +61,27 @@ Status RandomUniformLikeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrap
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(shape_tensor_wrapper)),
                     "Failed to add shape tensor.");
 
-  // Add the shape tensor as the only input
-  input_names[0] = shape_tensor_name;
 
-  LOGS(logger, VERBOSE) << "Created shape tensor " << shape_tensor_name
-                        << " for RandomUniformLike input " << input_tensor_name;
 
-  NodeAttrHelper node_helper(node_unit);
-  // Extract 'seed' attribute and create tensor input if provided
+  input_names.push_back(shape_tensor_name);
+
+  // --- If seed attribute is present, add it as second input ---
   if (node_helper.HasAttr("seed")) {
     float seed_value = node_helper.Get("seed", 0.0f);
 
-    // Create scalar tensor data
     std::vector<uint32_t> scalar_shape = {1};
     std::vector<uint8_t> seed_data(sizeof(float));
     memcpy(seed_data.data(), &seed_value, sizeof(float));
 
-    // Create seed tensor name
-    const std::string seed_tensor_name = utils::GetUniqueName(shape_tensor_name, "_ort_qnn_ep_seed");
+    const std::string seed_tensor_name = utils::GetUniqueName(input_tensor_name, "_ort_qnn_ep_seed");
 
-    // Create QnnTensorWrapper for seed
     QnnTensorWrapper seed_tensor(seed_tensor_name, QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_FLOAT_32,
                                  QnnQuantParamsWrapper(), std::move(scalar_shape), std::move(seed_data));
 
-    // Add to model wrapper
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(seed_tensor)), "Failed to add seed tensor");
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(seed_tensor)),
+                      "Failed to add seed tensor");
 
-    // Add to input names for QNN node creation
-    input_names.push_back(seed_tensor_name);
+    input_names.push_back(seed_tensor_name);  // Seed is always second
   }
   return Status::OK();
 }
@@ -159,7 +144,6 @@ Status RandomUniformLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& 
     int32_t zero_point = 0;
     ORT_RETURN_IF_ERROR(utils::GetQuantParams(low, high, QNN_DATATYPE_UFIXED_POINT_8, scale, zero_point));
 
-    // Create the intermediate uint8 output tensor with quantization parameters
     QnnTensorWrapper intermediate_output_wrapper(intermediate_output_name,
                                                  QNN_TENSOR_TYPE_NATIVE,
                                                  QNN_DATATYPE_UFIXED_POINT_8,
@@ -232,3 +216,4 @@ void CreateRandomUniformLikeOpBuilder(const std::string& op_type, OpBuilderRegis
 
 }  // namespace qnn
 }  // namespace onnxruntime
+#endif
