@@ -61,8 +61,6 @@ Status RandomUniformLikeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrap
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(shape_tensor_wrapper)),
                     "Failed to add shape tensor.");
 
-
-
   input_names.push_back(shape_tensor_name);
 
   // --- If seed attribute is present, add it as second input ---
