@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import logging
 import pathlib
-import tempfile
 
 import onnx
-from onnx import ModelProto, version_converter
+from onnx import version_converter
 
 import onnxruntime as ort
 
@@ -89,15 +88,6 @@ def update_onnx_opset(
             logger.info("Saved updated model to %s", out_path)
 
     return new_model
-
-
-def save_and_reload_optimize_model(model: ModelProto) -> ModelProto:
-    with tempfile.TemporaryDirectory(prefix="ort.qnn_preproc.") as qnn_preproc_tmp_dir:
-        model_in_path = pathlib.Path(qnn_preproc_tmp_dir).joinpath("qnn_proc_input.onnx")
-        model_out_path = pathlib.Path(qnn_preproc_tmp_dir).joinpath("qnn_proc_output.onnx")
-        onnx.save_model(model, model_in_path, save_as_external_data=True)
-        optimize_model(model_in_path, model_out_path)
-        return onnx.load_model(model_out_path)
 
 
 def optimize_model(

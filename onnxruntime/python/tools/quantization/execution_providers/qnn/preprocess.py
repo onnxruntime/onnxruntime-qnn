@@ -5,10 +5,9 @@
 # --------------------------------------------------------------------------
 from __future__ import annotations
 
-import copy
 import logging
-from pathlib import Path
 import tempfile
+from pathlib import Path
 
 import onnx
 
