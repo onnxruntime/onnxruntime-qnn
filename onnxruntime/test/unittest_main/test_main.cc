@@ -156,7 +156,7 @@ int TEST_MAIN(int argc, char** argv) {
     ort_env->UpdateEnvWithCustomLogLevel(ORT_LOGGING_LEVEL_WARNING);
     ::testing::InitGoogleTest(&argc, argv);
     // Parse custom command-line arguments *after* InitGoogleTest
-    for (int i = 1; i < argc; ++i) { // argv[0] is the program
+    for (int i = 1; i < argc; ++i) {  // argv[0] is the program
       if (std::string(argv[i]) == "--dump_onnx") {
         std::cout << "[QNN only] ONNX model dumping enabled." << std::endl;
         dump_onnx = true;

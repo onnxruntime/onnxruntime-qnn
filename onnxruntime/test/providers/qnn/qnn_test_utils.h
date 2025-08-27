@@ -615,11 +615,11 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
   if (dump_dlc) {
     qnn_options["dump_qnn_ir_dlc"] = "1";
     qnn_options["dump_qnn_ir_dlc_dir"] = output_dir.string();
-    #if defined(_WIN32)
-      qnn_options["qnn_ir_backend_path"] = "QnnIr.dll";
-    #else
-      qnn_options["qnn_ir_backend_path"] = "libQnnIr.so";
-    #endif  // defined(_WIN32)
+#if defined(_WIN32)
+    qnn_options["qnn_ir_backend_path"] = "QnnIr.dll";
+#else
+    qnn_options["qnn_ir_backend_path"] = "libQnnIr.so";
+#endif  // defined(_WIN32)
   }
   if (dump_json) {
     qnn_options["dump_json_qnn_graph"] = "1";

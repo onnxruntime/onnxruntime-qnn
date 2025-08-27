@@ -138,11 +138,11 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   if (dump_dlc) {
     provider_options["dump_qnn_ir_dlc"] = "1";
     provider_options["dump_qnn_ir_dlc_dir"] = output_dir.string();
-    #if defined(_WIN32)
-      provider_options["qnn_ir_backend_path"] = "QnnIr.dll";
-    #else
-      provider_options["qnn_ir_backend_path"] = "libQnnIr.so";
-    #endif  // defined(_WIN32)
+#if defined(_WIN32)
+    provider_options["qnn_ir_backend_path"] = "QnnIr.dll";
+#else
+    provider_options["qnn_ir_backend_path"] = "libQnnIr.so";
+#endif  // defined(_WIN32)
   }
   if (dump_json) {
     provider_options["dump_json_qnn_graph"] = "1";
