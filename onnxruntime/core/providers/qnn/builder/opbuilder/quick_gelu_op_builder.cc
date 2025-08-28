@@ -67,19 +67,21 @@ Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
 
   // Create intermediate tensor wrappers
   // 1. alpha_mul_output: result of alpha * x
+  // Using default quantization parameters for intermediate tensors as per guideline
   QnnTensorWrapper alpha_mul_output_tensor_wrapper(alpha_mul_output_name,
                                                    QNN_TENSOR_TYPE_NATIVE,
                                                    input_info.qnn_data_type,
-                                                   input_info.quant_param.Copy(),
+                                                   QnnQuantParamsWrapper(),
                                                    std::vector<uint32_t>(input_info.shape));
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(alpha_mul_output_tensor_wrapper)),
                     "Failed to add alpha_mul_output tensor.");
 
   // 2. sigmoid_output: result of sigmoid(alpha * x)
+  // Using default quantization parameters for intermediate tensors as per guideline
   QnnTensorWrapper sigmoid_output_tensor_wrapper(sigmoid_output_name,
                                                  QNN_TENSOR_TYPE_NATIVE,
                                                  input_info.qnn_data_type,
-                                                 input_info.quant_param.Copy(),
+                                                 QnnQuantParamsWrapper(),
                                                  std::vector<uint32_t>(input_info.shape));
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sigmoid_output_tensor_wrapper)),
                     "Failed to add sigmoid_output tensor.");
