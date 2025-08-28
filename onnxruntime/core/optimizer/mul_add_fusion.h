@@ -3,7 +3,6 @@
 
 #pragma once
 
-
 #include "core/optimizer/graph_transformer.h"
 
 namespace onnxruntime {

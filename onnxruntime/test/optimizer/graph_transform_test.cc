@@ -2757,14 +2757,14 @@ TEST_F(GraphTransformationTests, MatMulAddFusion_PreserveAttentionPattern) {
 // Test case for MulAddFusion: Mul followed by Add can fuse into BatchNormalization
 TEST_F(GraphTransformationTests, MulAddFusion_ToBatchNormalization) {
   // Input shape (N, C, H, W) for the test
-  const std::vector<int64_t> input_shape = {{4, 8, 32, 32}}; // N, C, H, W for example
+  const std::vector<int64_t> input_shape = {{4, 8, 32, 32}};  // N, C, H, W for example
 
   auto build_test_case = [&](ModelTestBuilder& builder) {
     auto* input_arg = builder.MakeInput<float>(input_shape);
     // Scale for Mul: should have same dimensions as input or be broadcastable
     // For BatchNormalization, scale/bias typically match the channel dimension
-    auto* mul_scale_arg = builder.MakeInitializer<float>({1, 8, 1, 1}, 0.0f, 1.0f); // Scale for each channel
-    auto* add_bias_arg = builder.MakeInitializer<float>({1, 8, 1, 1}, 0.0f, 1.0f); // Bias for each channel
+    auto* mul_scale_arg = builder.MakeInitializer<float>({1, 8, 1, 1}, 0.0f, 1.0f);  // Scale for each channel
+    auto* add_bias_arg = builder.MakeInitializer<float>({1, 8, 1, 1}, 0.0f, 1.0f);   // Bias for each channel
     auto* mul_out = builder.MakeIntermediate();
     auto* output_arg = builder.MakeOutput();
 
@@ -2777,7 +2777,7 @@ TEST_F(GraphTransformationTests, MulAddFusion_ToBatchNormalization) {
     std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
     TEST_RETURN_IF_NOT(op_to_count["Mul"] == 1);
     TEST_RETURN_IF_NOT(op_to_count["Add"] == 1);
-    TEST_RETURN_IF_NOT(op_to_count["BatchNormalization"] == 0); // Should not have BN initially
+    TEST_RETURN_IF_NOT(op_to_count["BatchNormalization"] == 0);  // Should not have BN initially
     return Status::OK();
   };
 
@@ -2786,7 +2786,7 @@ TEST_F(GraphTransformationTests, MulAddFusion_ToBatchNormalization) {
     std::map<std::string, int> op_to_count = CountOpsInGraph(graph);
     TEST_RETURN_IF_NOT(op_to_count["Mul"] == 0);
     TEST_RETURN_IF_NOT(op_to_count["Add"] == 0);
-    TEST_RETURN_IF_NOT(op_to_count["BatchNormalization"] == 1); // Should have BN after fusion
+    TEST_RETURN_IF_NOT(op_to_count["BatchNormalization"] == 1);  // Should have BN after fusion
 
     // Additional checks for the fused BatchNormalization node
     for (const Node& node : graph.Nodes()) {
@@ -2808,14 +2808,13 @@ TEST_F(GraphTransformationTests, MulAddFusion_ToBatchNormalization) {
   // Instantiate the MulAddFusion transformer
   std::unique_ptr<GraphTransformer> transformer = std::make_unique<MulAddFusion>();
   ASSERT_STATUS_OK(TestGraphTransformer(
-    build_test_case, 7,
-    *logger_,
-    std::move(transformer),
-    TransformerLevel::Level1, 
-    1,
-    pre_graph_checker,
-    post_graph_checker)
-  );
+      build_test_case, 7,
+      *logger_,
+      std::move(transformer),
+      TransformerLevel::Level1,
+      1,
+      pre_graph_checker,
+      post_graph_checker));
 }
 
 #ifndef DISABLE_CONTRIB_OPS

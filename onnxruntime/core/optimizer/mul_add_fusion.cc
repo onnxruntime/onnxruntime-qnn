@@ -8,7 +8,7 @@
 #include "core/optimizer/utils.h"
 #include "core/common/logging/logging.h"
 #include "core/framework/data_types.h"
-#include "core/framework/tensorprotoutils.h" // For utilities like TensorProtoToMLFloat16 etc.
+#include "core/framework/tensorprotoutils.h"  // For utilities like TensorProtoToMLFloat16 etc.
 
 using namespace ONNX_NAMESPACE;
 using namespace onnxruntime::common;
@@ -55,10 +55,10 @@ Status MulAddFusion::FuseMulAdd(Node& node, Graph& graph, bool& modified, const 
   Node& add_node = *graph.GetNode(mul_node.OutputNodesBegin()->Index());
   bool is_const_mul_in0 = graph_utils::NodeArgIsConstant(graph, *mul_node.InputDefs()[0]);
   bool is_const_add_in0 = graph_utils::NodeArgIsConstant(graph, *add_node.InputDefs()[0]);
-  auto mul_const_idx = is_const_mul_in0? 0 : 1;
-  auto add_const_idx = is_const_add_in0? 0 : 1;
+  auto mul_const_idx = is_const_mul_in0 ? 0 : 1;
+  auto add_const_idx = is_const_add_in0 ? 0 : 1;
   // Before layout transform, channel is the 1st dimension
-  int64_t num_channel = mul_node.InputDefs()[1-mul_const_idx]->Shape()->dim(1).dim_value();
+  int64_t num_channel = mul_node.InputDefs()[1 - mul_const_idx]->Shape()->dim(1).dim_value();
 
   // Process scale and bias. Should be {num_channel}
   const auto* scale_tensor_proto = graph_utils::GetConstantInitializer(graph, mul_node.InputDefs()[mul_const_idx]->Name());
@@ -68,48 +68,43 @@ Status MulAddFusion::FuseMulAdd(Node& node, Graph& graph, bool& modified, const 
   ONNX_NAMESPACE::TensorProto reshaped_scale_proto = *scale_tensor_proto;
   ONNX_NAMESPACE::TensorProto reshaped_bias_tensor_proto = *bias_tensor_proto;
   reshaped_scale_proto.clear_dims();
-  reshaped_scale_proto.set_name(scale_tensor_proto->name()+ "_reshaped");
+  reshaped_scale_proto.set_name(scale_tensor_proto->name() + "_reshaped");
   reshaped_scale_proto.add_dims(num_channel);
   reshaped_bias_tensor_proto.clear_dims();
-  reshaped_bias_tensor_proto.set_name(bias_tensor_proto->name()+ "_reshaped");
+  reshaped_bias_tensor_proto.set_name(bias_tensor_proto->name() + "_reshaped");
   reshaped_bias_tensor_proto.add_dims(num_channel);
   NodeArg& reshaped_scale_node_arg = graph_utils::AddInitializer(graph, reshaped_scale_proto);
   NodeArg& reshaped_bias_node_arg = graph_utils::AddInitializer(graph, reshaped_bias_tensor_proto);
 
   Initializer mean_init(
-    static_cast<ONNX_NAMESPACE::TensorProto_DataType>(mul_node.InputDefs()[1-mul_const_idx]->TypeAsProto()->tensor_type().elem_type()),
-    graph.GenerateNodeArgName(mul_node.Name() + "_mul_add_fusion_mean"),
-    gsl::span<const int64_t>({num_channel})
-  );
+      static_cast<ONNX_NAMESPACE::TensorProto_DataType>(mul_node.InputDefs()[1 - mul_const_idx]->TypeAsProto()->tensor_type().elem_type()),
+      graph.GenerateNodeArgName(mul_node.Name() + "_mul_add_fusion_mean"),
+      gsl::span<const int64_t>({num_channel}));
   ONNX_NAMESPACE::TensorProto mean_tensor_proto;
   mean_init.ToProto(mean_tensor_proto);
   NodeArg& mean_init_node_arg = graph_utils::AddInitializer(graph, mean_tensor_proto);
 
   Initializer var_init(
-    static_cast<ONNX_NAMESPACE::TensorProto_DataType>(mul_node.InputDefs()[1-mul_const_idx]->TypeAsProto()->tensor_type().elem_type()),
-    graph.GenerateNodeArgName(add_node.Name() + "_mul_add_fusion_var"),
-    gsl::span<const int64_t>({num_channel})
-  );
+      static_cast<ONNX_NAMESPACE::TensorProto_DataType>(mul_node.InputDefs()[1 - mul_const_idx]->TypeAsProto()->tensor_type().elem_type()),
+      graph.GenerateNodeArgName(add_node.Name() + "_mul_add_fusion_var"),
+      gsl::span<const int64_t>({num_channel}));
   var_init.add(1);
   ONNX_NAMESPACE::TensorProto var_tensor_proto;
   var_init.ToProto(var_tensor_proto);
   NodeArg& var_init_node_arg = graph_utils::AddInitializer(graph, var_tensor_proto);
 
   Node& bn_node = graph.AddNode(
-    graph.GenerateNodeName(mul_node.Name() + "/MulAddFusion"),
-    "BatchNormalization",
-    "fused Mul and Add",
-    gsl::span<NodeArg* const>({
-      mul_node.MutableInputDefs()[1-mul_const_idx],
-      &reshaped_scale_node_arg,
-      &reshaped_bias_node_arg,
-      &mean_init_node_arg,
-      &var_init_node_arg}),
-    gsl::span<NodeArg* const>({
-      add_node.MutableOutputDefs()[0]}),
+      graph.GenerateNodeName(mul_node.Name() + "/MulAddFusion"),
+      "BatchNormalization",
+      "fused Mul and Add",
+      gsl::span<NodeArg* const>({mul_node.MutableInputDefs()[1 - mul_const_idx],
+                                 &reshaped_scale_node_arg,
+                                 &reshaped_bias_node_arg,
+                                 &mean_init_node_arg,
+                                 &var_init_node_arg}),
+      gsl::span<NodeArg* const>({add_node.MutableOutputDefs()[0]}),
       nullptr,
-      kOnnxDomainAlias
-  );
+      kOnnxDomainAlias);
   bn_node.SetExecutionProviderType(mul_node.GetExecutionProviderType());
   constexpr float eps = 0.0f;
   constexpr float momentum = 0.0f;
@@ -122,12 +117,12 @@ Status MulAddFusion::FuseMulAdd(Node& node, Graph& graph, bool& modified, const 
   auto mul_input_edges = graph_utils::GraphEdge::GetNodeInputEdges(mul_node);
   auto add_input_edges = graph_utils::GraphEdge::GetNodeInputEdges(add_node);
   LOGS(logger, VERBOSE) << "AddEdge mul_input_edges[0]";
-  if (!graph_utils::IsGraphInput(graph, mul_node.InputDefs()[1-mul_const_idx])) {
+  if (!graph_utils::IsGraphInput(graph, mul_node.InputDefs()[1 - mul_const_idx])) {
     graph.AddEdge(
-      mul_input_edges[1-mul_const_idx].src_node,
-      bn_node.Index(),
-      mul_input_edges[1-mul_const_idx].src_arg_index,
-      0);
+        mul_input_edges[1 - mul_const_idx].src_node,
+        bn_node.Index(),
+        mul_input_edges[1 - mul_const_idx].src_arg_index,
+        0);
   }
 
   graph_utils::GraphEdge::RemoveGraphEdges(graph, mul_input_edges);
