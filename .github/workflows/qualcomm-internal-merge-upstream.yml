@@ -6,19 +6,29 @@ on:
   # Allows the workflow to be ran manually from the Actions tab
   workflow_dispatch:
 
+env:
+  ORIGIN_BRANCH: main
+  UPSTREAM_URL: https://github.com/microsoft/onnxruntime.git
+  UPSTREAM_BRANCH: main
+
 jobs:
   merge-upstream:
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
-    env:
-      ORIGIN_BRANCH: main
-      UPSTREAM_URL: https://github.com/microsoft/onnxruntime.git
-      UPSTREAM_BRANCH: main
+    outputs:
+      pr-branch: ${{ steps.setup-vars.outputs.pr-branch }}
+      today: ${{ steps.setup-vars.outputs.today }}
+      merge-base: ${{ steps.merge-base.outputs.merge-base }}
+      merge-needed: ${{ steps.check-merge.outputs.merge-needed }}
     steps:
       - name: Setup dynamic environment variables
+        id: setup-vars
         run: |
           TODAY=$(date +%Y%m%d)
+          PR_BRANCH="merge-upstream-$TODAY"
           echo "TODAY=$TODAY" >> $GITHUB_ENV
-          echo "PR_BRANCH=$(echo merge-upstream-$TODAY)" >> $GITHUB_ENV
+          echo "PR_BRANCH=$PR_BRANCH" >> $GITHUB_ENV
+          echo "today=$TODAY" >> $GITHUB_OUTPUT
+          echo "pr-branch=$PR_BRANCH" >> $GITHUB_OUTPUT
       - name: Checkout internal ORT QNN EP repository
         uses: actions/checkout@v4
         with:
@@ -35,11 +45,27 @@ jobs:
           git remote set-url upstream "$UPSTREAM_URL" || git remote add upstream "$UPSTREAM_URL"
           git fetch upstream
       - name: Determine merge base
+        id: merge-base
         run: |
           ORIGIN_BRANCH_HEAD=$(git rev-parse origin/$ORIGIN_BRANCH)
           UPSTREAM_BRANCH_HEAD=$(git rev-parse upstream/$UPSTREAM_BRANCH)
-          echo "MERGE_BASE=$(git merge-base $ORIGIN_BRANCH_HEAD $UPSTREAM_BRANCH_HEAD)" >> $GITHUB_ENV
+          MERGE_BASE=$(git merge-base $ORIGIN_BRANCH_HEAD $UPSTREAM_BRANCH_HEAD)
+          echo "MERGE_BASE=$MERGE_BASE" >> $GITHUB_ENV
+          echo "merge-base=$MERGE_BASE" >> $GITHUB_OUTPUT
+      - name: Check if merge is needed
+        id: check-merge
+        run: |
+          ORIGIN_BRANCH_HEAD=$(git rev-parse origin/$ORIGIN_BRANCH)
+          UPSTREAM_BRANCH_HEAD=$(git rev-parse upstream/$UPSTREAM_BRANCH)
+          if [ "$ORIGIN_BRANCH_HEAD" = "$UPSTREAM_BRANCH_HEAD" ]; then
+            echo "No new changes in upstream. Skipping merge."
+            echo "merge-needed=false" >> $GITHUB_OUTPUT
+          else
+            echo "New changes detected in upstream. Proceeding with merge."
+            echo "merge-needed=true" >> $GITHUB_OUTPUT
+          fi
       - name: Merge upstream into origin
+        if: steps.check-merge.outputs.merge-needed == 'true'
         run: |
           git checkout -b $PR_BRANCH origin/$ORIGIN_BRANCH
           # Don't auto-commit the merge to allow for binary file removal and conflict resolution
@@ -47,32 +73,85 @@ jobs:
             echo "Merge conflicts detected. Will be resolved in the next step."
           fi
       - name: Resolve conflicts automatically and commit
+        if: steps.check-merge.outputs.merge-needed == 'true'
         run: |
           git checkout --theirs .
           git add .
           git commit -m "[MERGE-UPSTREAM] Automated upstream merge for $TODAY"
+      - name: Push branch to origin
+        if: steps.check-merge.outputs.merge-needed == 'true'
+        run: |
+          git remote set-url origin https://x-access-token:${{ secrets.ORTQNNEPCI_PAT }}@github.qualcomm.com/onnxruntime/onnxruntime-qnn-ep.git
+          git push origin $PR_BRANCH
+
+  validate-ci:
+    needs: merge-upstream
+    if: needs.merge-upstream.outputs.merge-needed == 'true'
+    uses: ./.github/workflows/qualcomm-internal-build-and-test.yml
+    secrets: inherit
+    with:
+      do_all: true
+
+  create-pr-on-ci-failure:
+    needs: [merge-upstream, validate-ci]
+    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+    if: always() && needs.merge-upstream.result == 'success' && needs.validate-ci.result == 'failure'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.ORTQNNEPCI_PAT }}
       - name: Authenticate service account with GitHub CLI
         run: |
           echo "${{ secrets.ORTQNNEPCI_PAT }}" | gh auth login --with-token -h github.qualcomm.com -p https
-      - name: Push branch to origin
+      - name: Create pull request for CI failures
         run: |
-          git push origin $PR_BRANCH
-      - name: Raise a pull request on PR branch
-        run: |
-          PR_TITLE="[MERGE-UPSTREAM] Automated upstream merge for $TODAY"
+          PR_TITLE="[MERGE-UPSTREAM] Automated upstream merge for ${{ needs.merge-upstream.outputs.today }} - CI Failed"
           PR_BODY="This PR merges the latest changes from \`microsoft/onnxruntime\` into the \`onnxruntime-qnn-ep\` repository.
+
+          > :warning: **CI Validation Failed:** This PR was created because the CI validation failed after merging upstream changes. Manual review and fixes are required.
 
           > :warning: **Warning:** To properly preserve the history of this repository, please use \"Merge commit\" when merging this PR.
 
+          ## CI Failure Details
+          The automated CI validation detected issues with the merged changes. Please review the failed CI run and address any issues before merging.
+
+          ## Merge Base Information
           The following is the merge base for this action:
 
-          $(git log -1 $MERGE_BASE)
+          \`\`\`
+          $(git log -1 ${{ needs.merge-upstream.outputs.merge-base }})
+          \`\`\`
 
-          Created by ortqnnepci through GitHub Actions."
+          Created by ortqnnepci through GitHub Actions due to CI validation failure."
 
           gh pr create \
-          -B $ORIGIN_BRANCH \
-          -H $PR_BRANCH \
+          -B ${{ env.ORIGIN_BRANCH }} \
+          -H ${{ needs.merge-upstream.outputs.pr-branch }} \
           --title "$PR_TITLE" \
           --body "$PR_BODY" \
           --reviewer jkilpat,kromero,muchhsu,tirupath
+
+  report-success:
+    needs: [merge-upstream, validate-ci]
+    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+    if: always() && needs.merge-upstream.result == 'success' && needs.validate-ci.result == 'success'
+    steps:
+      - name: Report successful merge
+        run: |
+          echo "✅ Upstream merge completed successfully!"
+          echo "📊 CI validation passed - no PR needed"
+          echo "🔄 Branch ${{ needs.merge-upstream.outputs.pr-branch }} can be safely merged to main"
+          echo "📅 Merge date: ${{ needs.merge-upstream.outputs.today }}"
+          echo "🔗 Merge base: ${{ needs.merge-upstream.outputs.merge-base }}"
+
+  cleanup-on-no-changes:
+    needs: merge-upstream
+    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+    if: always() && needs.merge-upstream.result == 'success' && needs.merge-upstream.outputs.merge-needed == 'false'
+    steps:
+      - name: Report no changes
+        run: |
+          echo "ℹ️  No new changes detected in upstream"
+          echo "✅ Repository is already up to date"
+          echo "📅 Check date: ${{ needs.merge-upstream.outputs.today }}"
