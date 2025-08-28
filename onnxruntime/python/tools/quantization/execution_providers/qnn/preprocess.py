@@ -191,7 +191,7 @@ def save_and_reload_optimize_model(model: onnx.ModelProto, shape_infer: bool) ->
         ret_model = onnx.load_model(model_out_path)
         ret_metaprops = {"onnx.infer": "onnxruntime.tools.qnn.preprocess"}
         if ret_model.metadata_props:
-            ret_metaprops.update(model.metadata_props)
+            ret_metaprops.update(ret_model.metadata_props)
         onnx.helper.set_model_props(ret_model, ret_metaprops)
         return ret_model
 
