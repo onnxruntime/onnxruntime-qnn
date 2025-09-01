@@ -17,8 +17,8 @@ using namespace onnxruntime::common;
 namespace onnxruntime {
 
 bool IsPatternBatchnorm(const NodeArg* inp,
-  const ONNX_NAMESPACE::TensorProto* scale,
-  const ONNX_NAMESPACE::TensorProto* bias) {
+                        const ONNX_NAMESPACE::TensorProto* scale,
+                        const ONNX_NAMESPACE::TensorProto* bias) {
   int inp_rank = inp->Shape()->dim_size();
   int scale_rank = scale->dims_size();
   int bias_rank = bias->dims_size();
@@ -40,7 +40,7 @@ bool IsPatternBatchnorm(const NodeArg* inp,
   }
   // All the following dimensions of scale and bias should be 1's
   for (int idx = 2; idx < broadcast_rank; idx += 1) {
-    if (broadcast_scale[idx] != 1 || broadcast_bias[idx] != 1){
+    if (broadcast_scale[idx] != 1 || broadcast_bias[idx] != 1) {
       return false;
     }
   }
@@ -80,10 +80,9 @@ bool MulAddFusion::SatisfyCondition(const Graph& graph, const Node& node, const 
   auto mul_const_idx = is_const_mul_in0 ? 0 : 1;
   auto add_const_idx = is_const_add_in0 ? 0 : 1;
   return IsPatternBatchnorm(
-    mul_node.InputDefs()[1 - mul_const_idx],
-    graph_utils::GetConstantInitializer(graph, mul_node.InputDefs()[mul_const_idx]->Name()),
-    graph_utils::GetConstantInitializer(graph, add_node.InputDefs()[add_const_idx]->Name())
-  );
+      mul_node.InputDefs()[1 - mul_const_idx],
+      graph_utils::GetConstantInitializer(graph, mul_node.InputDefs()[mul_const_idx]->Name()),
+      graph_utils::GetConstantInitializer(graph, add_node.InputDefs()[add_const_idx]->Name()));
 }
 
 Status MulAddFusion::FuseMulAdd(Node& node, Graph& graph, bool& modified, const logging::Logger&) const {
