@@ -5,6 +5,7 @@
 #include "core/graph/graph_utils.h"
 #include "core/optimizer/initializer.h"
 #include "core/optimizer/mul_add_fusion.h"
+#include <deque>
 #include "core/optimizer/utils.h"
 #include "core/common/logging/logging.h"
 #include "core/framework/data_types.h"
@@ -15,8 +16,38 @@ using namespace onnxruntime::common;
 
 namespace onnxruntime {
 
-bool MulAddFusion::SatisfyCondition(const Graph& graph, const Node& node, const logging::Logger& logger) const {
-  LOGS(logger, VERBOSE) << "Start SatisfyCondition";
+bool IsPatternBatchnorm(const NodeArg* inp,
+  const ONNX_NAMESPACE::TensorProto* scale,
+  const ONNX_NAMESPACE::TensorProto* bias) {
+  int inp_rank = inp->Shape()->dim_size();
+  int scale_rank = scale->dims_size();
+  int bias_rank = bias->dims_size();
+  int broadcast_rank = std::max({inp_rank, scale_rank, bias_rank});
+  std::deque<int> broadcast_inp = {};
+  std::deque<int> broadcast_scale = {};
+  std::deque<int> broadcast_bias = {};
+  for (int idx = 0; idx < broadcast_rank; idx += 1) {
+    broadcast_inp.push_front(inp->Shape()->dim(inp_rank - 1 - idx).dim_value());
+    broadcast_scale.push_front(scale->dims(scale_rank - 1 - idx));
+    broadcast_bias.push_front(bias->dims(bias_rank - 1 - idx));
+  }
+  int64_t num_channel = broadcast_inp[1];
+  if ((broadcast_scale[0] != 1) || (broadcast_scale[1] != 1 && broadcast_scale[1] != num_channel)) {
+    return false;
+  }
+  if ((broadcast_bias[0] != 1) || (broadcast_bias[1] != 1 && broadcast_bias[1] != num_channel)) {
+    return false;
+  }
+  // All the following dimensions of scale and bias should be 1's
+  for (int idx = 2; idx < broadcast_rank; idx += 1) {
+    if (broadcast_scale[idx] != 1 || broadcast_bias[idx] != 1){
+      return false;
+    }
+  }
+  return true;
+}
+
+bool MulAddFusion::SatisfyCondition(const Graph& graph, const Node& node, const logging::Logger&) const {
   auto& mul_node = node;
   if (!graph_utils::IsSupportedOptypeVersionAndDomain(mul_node, "Mul", {7}) ||
       mul_node.GetOutputEdgesCount() != 1) {
@@ -46,11 +77,16 @@ bool MulAddFusion::SatisfyCondition(const Graph& graph, const Node& node, const 
     return false;
   }
 
-  return true;
+  auto mul_const_idx = is_const_mul_in0 ? 0 : 1;
+  auto add_const_idx = is_const_add_in0 ? 0 : 1;
+  return IsPatternBatchnorm(
+    mul_node.InputDefs()[1 - mul_const_idx],
+    graph_utils::GetConstantInitializer(graph, mul_node.InputDefs()[mul_const_idx]->Name()),
+    graph_utils::GetConstantInitializer(graph, add_node.InputDefs()[add_const_idx]->Name())
+  );
 }
 
-Status MulAddFusion::FuseMulAdd(Node& node, Graph& graph, bool& modified, const logging::Logger& logger) const {
-  LOGS(logger, VERBOSE) << "Start FuseMulAdd";
+Status MulAddFusion::FuseMulAdd(Node& node, Graph& graph, bool& modified, const logging::Logger&) const {
   auto& mul_node = node;
   Node& add_node = *graph.GetNode(mul_node.OutputNodesBegin()->Index());
   bool is_const_mul_in0 = graph_utils::NodeArgIsConstant(graph, *mul_node.InputDefs()[0]);
@@ -111,12 +147,9 @@ Status MulAddFusion::FuseMulAdd(Node& node, Graph& graph, bool& modified, const 
   bn_node.SetSinceVersion(9);
   bn_node.AddAttribute("epsilon", eps);
   bn_node.AddAttribute("momentum", momentum);
-  LOGS(logger, VERBOSE) << "bn_node.SinceVersion()" << bn_node.SinceVersion();
-  LOGS(logger, VERBOSE) << "bn_node.Domain()" << bn_node.Domain();
 
   auto mul_input_edges = graph_utils::GraphEdge::GetNodeInputEdges(mul_node);
   auto add_input_edges = graph_utils::GraphEdge::GetNodeInputEdges(add_node);
-  LOGS(logger, VERBOSE) << "AddEdge mul_input_edges[0]";
   if (!graph_utils::IsGraphInput(graph, mul_node.InputDefs()[1 - mul_const_idx])) {
     graph.AddEdge(
         mul_input_edges[1 - mul_const_idx].src_node,
