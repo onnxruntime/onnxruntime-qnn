@@ -22,7 +22,7 @@ class MulAddFusion : public GraphTransformer {
   Status ApplyImpl(Graph& graph, bool& modified, int graph_level, const logging::Logger& logger) const override;
 
   bool SatisfyCondition(const Graph& graph, const Node& node, const logging::Logger&) const;
-  Status FuseMulAdd(Node& node, Graph& graph, bool& modified, const logging::Logger& logger) const;
+  Status FuseMulAdd(Node& node, Graph& graph, bool& modified, const logging::Logger&) const;
 };
 
 }  // namespace onnxruntime

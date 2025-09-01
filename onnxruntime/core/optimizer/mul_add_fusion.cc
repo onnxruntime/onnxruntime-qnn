@@ -5,7 +5,6 @@
 #include "core/graph/graph_utils.h"
 #include "core/optimizer/initializer.h"
 #include "core/optimizer/mul_add_fusion.h"
-#include <deque>
 #include "core/optimizer/utils.h"
 #include "core/common/logging/logging.h"
 #include "core/framework/data_types.h"
@@ -22,14 +21,15 @@ bool IsPatternBatchnorm(const NodeArg* inp,
   int inp_rank = inp->Shape()->dim_size();
   int scale_rank = scale->dims_size();
   int bias_rank = bias->dims_size();
-  int broadcast_rank = std::max({inp_rank, scale_rank, bias_rank});
-  std::deque<int> broadcast_inp = {};
-  std::deque<int> broadcast_scale = {};
-  std::deque<int> broadcast_bias = {};
-  for (int idx = 0; idx < broadcast_rank; idx += 1) {
-    broadcast_inp.push_front(inp->Shape()->dim(inp_rank - 1 - idx).dim_value());
-    broadcast_scale.push_front(scale->dims(scale_rank - 1 - idx));
-    broadcast_bias.push_front(bias->dims(bias_rank - 1 - idx));
+  int max_rank = std::max({inp_rank, scale_rank, bias_rank});
+  std::vector<int> broadcast_inp(max_rank);
+  std::vector<int> broadcast_scale(max_rank);
+  std::vector<int> broadcast_bias(max_rank);
+  for (int idx = 0; idx < max_rank; idx += 1) {
+    auto broad_idx = inp_rank - 1 - idx;
+    broadcast_inp[broad_idx] = (idx < inp_rank) ? inp->Shape()->dim(inp_rank - 1 - idx).dim_value() : 1;
+    broadcast_scale[broad_idx] = (idx < scale_rank) ? scale->dims(scale_rank - 1 - idx) : 1;
+    broadcast_bias[broad_idx] = (idx < bias_rank) ? bias->dims(bias_rank - 1 - idx) : 1;
   }
   int64_t num_channel = broadcast_inp[1];
   if ((broadcast_scale[0] != 1) || (broadcast_scale[1] != 1 && broadcast_scale[1] != num_channel)) {
@@ -39,7 +39,7 @@ bool IsPatternBatchnorm(const NodeArg* inp,
     return false;
   }
   // All the following dimensions of scale and bias should be 1's
-  for (int idx = 2; idx < broadcast_rank; idx += 1) {
+  for (int idx = 2; idx < max_rank; idx += 1) {
     if (broadcast_scale[idx] != 1 || broadcast_bias[idx] != 1) {
       return false;
     }
