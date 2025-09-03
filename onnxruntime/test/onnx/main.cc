@@ -28,6 +28,7 @@
 #include "providers.h"
 
 #include <google/protobuf/stubs/common.h>
+#include "core/graph/constants.h"
 #include "core/platform/path_lib.h"
 #include "core/session/onnxruntime_cxx_api.h"
 #include "core/optimizer/graph_transformer_level.h"
@@ -642,7 +643,7 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
       if (enable_qnn_abi) {
         const OrtApi& c_api = Ort::GetApi();
         const std::filesystem::path& library_path = "onnxruntime_providers_qnn_abi.dll";
-        registration_name = "QnnAbiTestProvider";
+        registration_name = onnxruntime::kQnnABIExecutionProvider;
         OrtStatusPtr status = c_api.RegisterExecutionProviderLibrary(env,
                                                                      registration_name.c_str(),
                                                                      library_path.c_str());

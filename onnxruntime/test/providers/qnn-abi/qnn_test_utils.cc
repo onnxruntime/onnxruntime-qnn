@@ -15,6 +15,7 @@
 #include "core/framework/compute_capability.h"
 #include "core/framework/error_code_helper.h"
 #include "core/graph/ep_api_types.h"
+#include "core/graph/constants.h"
 #include "core/graph/graph.h"
 #include "core/session/abi_devices.h"
 #include "core/session/abi_ep_types.h"
@@ -201,7 +202,7 @@ void RunQnnModelTestABI(const GetTestModelFn& build_test_case, ProviderOptions p
   // Run with QNN-ABI.
   std::cout << "DEBUG: ABI Test" << std::endl;
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string& registration_name = "QnnAbiTestProvider";
+  const std::string& registration_name = onnxruntime::kQnnABIExecutionProvider;
   Ort::SessionOptions session_options;
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
 
@@ -222,9 +223,8 @@ void InferenceModelABI(const std::string& model_data,
                        std::vector<OrtValue>& output_vals,
                        const std::unordered_map<std::string, std::string>& session_option_pairs,
                        std::function<void(const Graph&)>* graph_checker) {
-  std::cout << "DEBUG: ABI InferenceModel" << std::endl;
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string& registration_name = "QnnAbiTestProvider";
+  const std::string& registration_name = onnxruntime::kQnnABIExecutionProvider;
   Ort::SessionOptions session_options;
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
 
@@ -345,7 +345,7 @@ static BackendSupport GetHTPSupport(const onnxruntime::logging::Logger& logger) 
   OrtEpGraphSupportInfo graph_support_info(*ep_graph);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string& registration_name = "QnnAbiTestProvider";
+  const std::string& registration_name = onnxruntime::kQnnABIExecutionProvider;
   Ort::SessionOptions session_options;
   ProviderOptions provider_options = {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}};
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
@@ -417,7 +417,7 @@ static BackendSupport GetGPUSupport(const onnxruntime::logging::Logger& logger) 
   OrtEpGraphSupportInfo graph_support_info(*ep_graph);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string& registration_name = "QnnAbiTestProvider";
+  const std::string& registration_name = onnxruntime::kQnnABIExecutionProvider;
   Ort::SessionOptions session_options;
   ProviderOptions provider_options = {{"backend_type", "gpu"}, {"offload_graph_io_quantization", "0"}};
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
@@ -507,7 +507,7 @@ static BackendSupport GetCPUSupport(const onnxruntime::logging::Logger& logger, 
   OrtEpGraphSupportInfo graph_support_info(*ep_graph);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string& registration_name = "QnnAbiTestProvider";
+  const std::string& registration_name = onnxruntime::kQnnABIExecutionProvider;
   Ort::SessionOptions session_options;
   ProviderOptions provider_options = {{"backend_type", backend_type}, {"offload_graph_io_quantization", "0"}};
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);

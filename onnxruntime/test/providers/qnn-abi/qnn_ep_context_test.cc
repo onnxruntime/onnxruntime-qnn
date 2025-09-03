@@ -166,7 +166,7 @@ void QnnContextBinaryMultiPartitionTestBodyABI(bool single_ep_node = true) {
     so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
 
     RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
     Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
 
@@ -198,7 +198,7 @@ void QnnContextBinaryMultiPartitionTestBodyABI(bool single_ep_node = true) {
     so2.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
 
     RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so2, "QnnAbiTestProvider", provider_options);
+    RegisterQnnEpLibrary(registered_ep_device, so2, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
     std::string ctx_model_data;
     ctx_model->ToProto().SerializeToString(&ctx_model_data);
@@ -308,7 +308,7 @@ TEST_F(QnnABIHTPBackendTests, CompileApi_DisableEpCompile_ThenCompileExplicitly)
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   so.AddConfigEntry(kOrtSessionOptionsDisableModelCompile, "1");  // Disable model compilation!
 
@@ -320,7 +320,7 @@ TEST_F(QnnABIHTPBackendTests, CompileApi_DisableEpCompile_ThenCompileExplicitly)
     OrtErrorCode error_code = excpt.GetOrtErrorCode();
     std::string_view error_msg = excpt.what();
     ASSERT_EQ(error_code, ORT_MODEL_REQUIRES_COMPILATION);
-    ASSERT_THAT(error_msg, testing::HasSubstr("QnnAbiTestProvider"));
+    ASSERT_THAT(error_msg, testing::HasSubstr(onnxruntime::kQnnABIExecutionProvider));
   }
 
   // Session creation failed because the model was not pre-compiled.
@@ -366,7 +366,7 @@ TEST_F(QnnABIHTPBackendTests, CompileApi_FromSessionOptions_InputModelFromPath) 
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   // Create model compilation options from the session options.
   Ort::ModelCompilationOptions compile_options(*ort_env, so);
@@ -405,7 +405,7 @@ TEST_F(QnnABIHTPBackendTests, CompileApi_FromSessionOptions_InputModelAsBuffer_E
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   // Create model compilation options from the session options.
   Ort::ModelCompilationOptions compile_options(*ort_env, so);
@@ -444,7 +444,7 @@ TEST_F(QnnABIHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer) {
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   // Create model compilation options from the session options. Output model is stored in a buffer.
   Ort::ModelCompilationOptions compile_options(*ort_env, so);
@@ -488,7 +488,7 @@ TEST_F(QnnABIHTPBackendTests, CompileApi_FromSessionOptions_InputAndOutputModels
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions session_options;
-  RegisterQnnEpLibrary(registered_ep_device, session_options, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, session_options, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   Ort::AllocatorWithDefaultOptions allocator;
 
@@ -582,7 +582,7 @@ TEST_F(QnnABIHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer_Ou
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   // Create model compilation options from the session options. Output model is stored in a buffer.
   Ort::ModelCompilationOptions compile_options(*ort_env, so);
@@ -651,7 +651,7 @@ TEST_F(QnnABIHTPBackendTests, CompileApi_SetFlags_ErrorIfOutputFileAlreadyExists
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions session_options;
-  RegisterQnnEpLibrary(registered_ep_device, session_options, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, session_options, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   // Compile with QNN EP. Should succeed the first time.
   {
@@ -692,7 +692,7 @@ TEST_F(QnnABIHTPBackendTests, CompileApi_ErrorIfCompilingACompiledModel) {
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions session_options;
-  RegisterQnnEpLibrary(registered_ep_device, session_options, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, session_options, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   // Compile with QNN EP. Should succeed the first time.
   {
@@ -761,7 +761,7 @@ TEST_F(QnnABIHTPBackendTests, QnnContextBinary_OriginalCompileApproach_IgnoreCom
     so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, output_model_file);
 
     RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", qnn_options);
+    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, qnn_options);
 
     Ort::Session session(*ort_env, input_model_file, so);
     ASSERT_TRUE(std::filesystem::exists(output_model_file));  // check compiled model was generated.
@@ -777,7 +777,7 @@ TEST_F(QnnABIHTPBackendTests, QnnContextBinary_OriginalCompileApproach_IgnoreCom
     so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, new_output_model_file);
 
     RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", qnn_options);
+    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, qnn_options);
 
     // TODO
     // Check what is the expected failure.
@@ -839,7 +839,7 @@ void EpCtxCpuNodeWithExternalIniFileTestBodyABI(bool expect_external_ini_file, b
   so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   const std::string ep_context_model_file = "./qnn_ctx_part_external_ini_ctx.onnx";
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ep_context_model_file.c_str());
@@ -934,7 +934,7 @@ TEST_F(QnnABIHTPBackendTests, QnnContextBinaryGenerationFolderPathNotExpected) {
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ep_context_onnx_file.c_str());
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   try {
     Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
@@ -980,7 +980,7 @@ TEST_F(QnnABIHTPBackendTests, QnnContextBinaryGenerationFolderPathNotExpected2) 
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ep_context_onnx_file.c_str());
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   try {
     Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
@@ -1030,7 +1030,7 @@ TEST_F(QnnABIHTPBackendTests, QnnContextBinaryGenerationNoOverWrite) {
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ep_context_onnx_file.c_str());
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   Ort::Session session1(*ort_env, model_data_span.data(), model_data_span.size(), so);
 
@@ -1139,7 +1139,7 @@ TEST_F(QnnABIHTPBackendTests, QnnContextBinaryGeneration2InputTypes) {
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
 
@@ -1173,7 +1173,7 @@ TEST_F(QnnABIHTPBackendTests, QnnContextGeneration2InputsOrderIssue) {
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   Ort::Session session(*ort_env, ORT_TSTR("testdata/qnn_ctx_2_inputs_order_test.onnx"), so);
 
@@ -1213,7 +1213,7 @@ TEST_F(QnnABIHTPBackendTests, DISABLED_QnnContextGenerationNodeNamePrefix) {
   so.AddConfigEntry(kOrtSessionOptionEpContextNodeNamePrefix, node_name_prefix.c_str());
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   Ort::Session session(*ort_env, ORT_TSTR("testdata/qnn_ctx_2_inputs_order_test.onnx"), so);
 
@@ -1349,7 +1349,7 @@ TEST_F(QnnABIHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
 
   Ort::SessionOptions so;  // No need to set the context file path in so since it's load from file
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 #ifdef _WIN32
   std::wstring ctx_model_file(context_binary_file_abi.begin(), context_binary_file_abi.end());
 #else
@@ -1416,7 +1416,7 @@ TEST_F(QnnABIHTPBackendTests, QnnContextBinaryCache_InvalidGraph) {
   so.SetLogId("logger0");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   auto* ort_so = static_cast<OrtSessionOptions*>(so);
   InferenceSessionWrapper session_object{ort_so->value, GetEnvironment()};
@@ -1466,7 +1466,7 @@ TEST_F(QnnABIHTPBackendTests, QnnContextBinaryRelativePathTest) {
   so.SetLogId("qnn_ctx_model_logger");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   auto* ort_so = static_cast<OrtSessionOptions*>(so);
   InferenceSessionWrapper session_object{ort_so->value, GetEnvironment()};
@@ -1495,7 +1495,7 @@ TEST_F(QnnABIHTPBackendTests, QnnContextBinaryAbsolutePathTest) {
   so.SetLogId("qnn_ctx_model_logger");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   auto* ort_so = static_cast<OrtSessionOptions*>(so);
   InferenceSessionWrapper session_object{ort_so->value, GetEnvironment()};
@@ -1520,7 +1520,7 @@ TEST_F(QnnABIHTPBackendTests, QnnContextBinaryFileNotExistTest) {
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, "./qnn_context_not_exist.onnx");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   auto* ort_so = static_cast<OrtSessionOptions*>(so);
   InferenceSessionWrapper session_object{ort_so->value, GetEnvironment()};
@@ -1545,7 +1545,7 @@ TEST_F(QnnABIHTPBackendTests, QnnContextBinaryFileEmptyStringTest) {
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, "./test_ctx.onnx");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   auto* ort_so = static_cast<OrtSessionOptions*>(so);
   InferenceSessionWrapper session_object{ort_so->value, GetEnvironment()};
@@ -1672,7 +1672,7 @@ TEST_F(QnnABIHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphN
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file_abi.c_str());
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   auto* ort_so = static_cast<OrtSessionOptions*>(so);
   InferenceSessionWrapper session_object{ort_so->value, GetEnvironment()};
@@ -1693,7 +1693,7 @@ TEST_F(QnnABIHTPBackendTests, QnnMultiContextEmbeded) {
 
   Ort::SessionOptions so;
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   Ort::Session session(*ort_env, ORT_TSTR("testdata/qnn_ctx/qnn_multi_ctx_embed.onnx"), so);
 }
@@ -1706,7 +1706,7 @@ TEST_F(QnnABIHTPBackendTests, QnnMultiContextExternal) {
 
   Ort::SessionOptions so;
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   Ort::Session session(*ort_env, ORT_TSTR("testdata/qnn_ctx/qnn_multi_ctx_external.onnx"), so);
 }
@@ -1743,7 +1743,7 @@ static void DumpModelWithSharedCtx(ProviderOptions provider_options,
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   if (use_abi) {
-    RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
   } else {
     so.AppendExecutionProvider("QNN", provider_options);
   }
@@ -1834,7 +1834,7 @@ TEST_F(QnnABIHTPBackendTests, QnnContextShareAcrossSessions) {
   so1.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so1, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so1, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   Ort::SessionOptions so2;
   so2.SetLogId("so2");
@@ -1941,7 +1941,7 @@ TEST_F(QnnABIHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
   so1.SetLogId("so1");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so1, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so1, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   Ort::SessionOptions so2;
   so2.SetLogId("so2");
@@ -2087,7 +2087,7 @@ TEST_F(QnnABIHTPBackendTests, LoadFromArrayWithQnnEpContextGenPathValidation) {
   so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   ORT_TRY {
     Ort::Session session1(*ort_env, model_data_span.data(), model_data_span.size(), so);
@@ -2120,7 +2120,7 @@ TEST_F(QnnABIHTPBackendTests, QnnEpDynamicOptions) {
   so.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QnnAbiTestProvider", provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   Ort::Session session(*ort_env, ORT_TSTR("testdata/qnn_ctx/qnn_multi_ctx_embed.onnx"), so);
 

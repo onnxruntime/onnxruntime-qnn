@@ -444,7 +444,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                    FormatEPConfigKey("backend_path"),
                                    "",
                                    backend_path_option);
-    std::cout << "DEBUG: BackendType " << backend_type << std::endl;
 
     // Check if both options are provided
     if (!backend_type.empty() && !backend_path_option.empty()) {
@@ -1150,7 +1149,6 @@ static void GetContextOnnxModelFilePath(const std::string& user_context_cache_pa
 OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                  const OrtGraph* graph,
                                                  OrtEpGraphSupportInfo* graph_support_info) noexcept {
-  std::cout << "DEBUG: QnnEp::GetCapabilityImpl" << std::endl;
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
   const OrtNode* parent_node = nullptr;
@@ -1248,7 +1246,6 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   std::unordered_map<const OrtNode*, const OrtNodeUnit*> node_unit_map;
 
   std::tie(node_unit_holder, node_unit_map) = GetAllOrtNodeUnits(ep->ort_api, graph, ep->logger_in_);
-  std::cout << "DEBUG: #nodes: " << node_unit_holder.size() << std::endl;
 
   // Analyze nodes for QNN support
   std::vector<const OrtNode*> supported_nodes;
@@ -1320,7 +1317,6 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     LOGS(ep->logger_in_, ERROR) << "Unsupported nodes in QNN EP: " << get_unsupported_node_names();
   }
 
-  std::cout << "DEBUG: #supported nodes " << num_of_supported_nodes << std::endl;
   return nullptr;
 }
 
@@ -1547,7 +1543,6 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
                                            _In_ size_t count,
                                            _Out_writes_all_(count) OrtNodeComputeInfo** node_compute_infos,
                                            _Out_writes_(count) OrtNode** ep_context_nodes) noexcept {
-  std::cout << "DEBUG: QnnEp::CompileImpl" << std::endl;
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
   if (qnn::IsOrtGraphHasCtxNode(graphs, count, ep->ort_api)) {
@@ -1630,7 +1625,6 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     RETURN_IF_ERROR(ep->CreateEPContextNodes(graphs[0], fused_nodes, count, ep_context_nodes));
   }
 
-  std::cout << "DEBUG: QnnEp::CompileImpl complete" << std::endl;
   return nullptr;
 }
 
