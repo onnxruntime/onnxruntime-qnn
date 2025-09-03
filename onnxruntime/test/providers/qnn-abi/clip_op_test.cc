@@ -34,10 +34,10 @@ static void RunClipTest(const TestInputDef<DataType>& input_def,
     }
   }
 
-  RunQnnModelTest(BuildOpTestCase<DataType, DataType>("Clip", {input_def}, min_max_defs, {}),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildOpTestCase<DataType, DataType>("Clip", {input_def}, min_max_defs, {}),
+                     provider_options,
+                     opset,
+                     expected_ep_assignment);
 }
 
 //
@@ -116,10 +116,10 @@ static void RunQDQClipTestOnHTP(const TestInputDef<float>& input_def,
                                                             kOnnxDomain, use_contrib_qdq);
 
   TestQDQModelAccuracyABI(f32_model_builder,
-                       qdq_model_builder,
-                       provider_options,
-                       opset,
-                       expected_ep_assignment);
+                          qdq_model_builder,
+                          provider_options,
+                          opset,
+                          expected_ep_assignment);
 }
 
 // Test 8-bit QDQ Clip with default min/max.
@@ -195,10 +195,10 @@ TEST_F(QnnABIHTPBackendTests, Clip_U8_Rank5) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(model_fn,
-                  provider_options,
-                  13,  // opset
-                  ExpectedEPNodeAssignment::All);
+  RunQnnModelTestABI(model_fn,
+                     provider_options,
+                     13,  // opset
+                     ExpectedEPNodeAssignment::All);
 }
 
 // Test FP16 Clip with min (FP16)
@@ -227,11 +227,11 @@ TEST_F(QnnABIHTPBackendTests, Clip_FP16) {
   int opset = 13;
   ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All;
 
-  TestFp16ModelAccuracy(f32_model_builder,
-                        f16_model_builder,
-                        provider_options,
-                        opset,
-                        expected_ep_assignment);
+  TestFp16ModelAccuracyABI(f32_model_builder,
+                           f16_model_builder,
+                           provider_options,
+                           opset,
+                           expected_ep_assignment);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

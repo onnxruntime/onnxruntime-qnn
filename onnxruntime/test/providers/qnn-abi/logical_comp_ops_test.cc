@@ -71,10 +71,10 @@ static void RunCPULogicalOpTest(const std::string& op_type, const std::vector<in
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildLogicalOpTestCase(op_type, shape),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildLogicalOpTestCase(op_type, shape),
+                     provider_options,
+                     opset,
+                     expected_ep_assignment);
 }
 
 // Runs a model with a logical operator on the QNN HTP backend. Checks the graph node assignment, and that inference
@@ -87,10 +87,10 @@ static void RunQDQLogicalOpTest(const std::string& op_type, const std::vector<in
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildQDQLogicalOpTestCase<QuantType>(op_type, shape),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildQDQLogicalOpTestCase<QuantType>(op_type, shape),
+                     provider_options,
+                     opset,
+                     expected_ep_assignment);
 }
 
 //
@@ -174,11 +174,11 @@ TEST_F(QnnABIHTPBackendTests, EqualToCast4D) {
                            static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT));
   };
 
-  RunQnnModelTest(build_qdq_equal_to_cast,
-                  provider_options,
-                  17,  // opset
-                  ExpectedEPNodeAssignment::All,
-                  1);  // expected nodes in graph
+  RunQnnModelTestABI(build_qdq_equal_to_cast,
+                     provider_options,
+                     17,  // opset
+                     ExpectedEPNodeAssignment::All,
+                     1);  // expected nodes in graph
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

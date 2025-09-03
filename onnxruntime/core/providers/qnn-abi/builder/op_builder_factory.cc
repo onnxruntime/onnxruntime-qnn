@@ -85,6 +85,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   }
 
   {
+    CreateModOpBuilder("Mod", *this);
+  }
+
+  {
     CreatePadOpBuilder("Pad", *this);
   }
 
@@ -187,6 +191,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
 
   {
     CreateSplitOpBuilder("Split", *this);
+  }
+
+  {
+    CreateThresholdedReluOpBuilder("ThresholdedRelu", *this);
   }
 
   {

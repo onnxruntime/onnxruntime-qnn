@@ -28,10 +28,10 @@ static void RunModTest(const std::vector<TestInputDef<DataType>>& input_defs,
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<DataType>("Mod", input_defs, {}, attrs),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildOpTestCase<DataType>("Mod", input_defs, {}, attrs),
+                     provider_options,
+                     opset,
+                     expected_ep_assignment);
 }
 
 //

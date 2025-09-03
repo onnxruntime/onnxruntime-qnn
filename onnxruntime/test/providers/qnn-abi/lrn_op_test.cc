@@ -71,11 +71,11 @@ static void RunCPULRNOpTest(const TestInputDef<float>& input_def, int64_t size,
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildLRNTestCase(input_def, size, alpha, beta, bias),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+  RunQnnModelTestABI(BuildLRNTestCase(input_def, size, alpha, beta, bias),
+                     provider_options,
+                     opset,
+                     expected_ep_assignment,
+                     fp32_abs_err);
 }
 
 // Runs an LRN model on the QNN HTP backend. Checks the graph node assignment, and that inference
@@ -90,11 +90,11 @@ static void RunQDQLRNOpTest(const TestInputDef<float>& input_def, int64_t size,
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracyABI(BuildLRNTestCase(input_def, size, alpha, beta, bias),
-                       BuildQDQLRNTestCase<QuantType>(input_def, size, alpha, beta, bias),
-                       provider_options,
-                       opset,
-                       expected_ep_assignment,
-                       tolerance);
+                          BuildQDQLRNTestCase<QuantType>(input_def, size, alpha, beta, bias),
+                          provider_options,
+                          opset,
+                          expected_ep_assignment,
+                          tolerance);
 }
 
 //

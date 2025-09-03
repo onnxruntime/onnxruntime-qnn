@@ -30,10 +30,10 @@ static void RunOpTestOnCPU(const std::string& op_type,
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<InputType>(op_type, input_defs, {}, attrs, op_domain),
-                  provider_options,
-                  opset_version,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildOpTestCase<InputType>(op_type, input_defs, {}, attrs, op_domain),
+                     provider_options,
+                     opset_version,
+                     expected_ep_assignment);
 }
 
 template <typename InputType1, typename InputType2 = int64_t>
@@ -49,10 +49,10 @@ static void RunOpTestOnCPU(const std::string& op_type,
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
-                  provider_options,
-                  opset_version,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildOpTestCase<InputType1, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
+                     provider_options,
+                     opset_version,
+                     expected_ep_assignment);
 }
 
 // Test float DepthToSpace on the QNN CPU backend.
@@ -146,11 +146,11 @@ static void RunQDQOpTest(const std::string& op_type,
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracyABI(BuildOpTestCase<float>(op_type, input_defs, {}, attrs, op_domain),
-                       BuildQDQOpTestCase<InputQType>(op_type, input_defs, {}, attrs, op_domain, use_contrib_qdq),
-                       provider_options,
-                       opset_version,
-                       expected_ep_assignment,
-                       tolerance);
+                          BuildQDQOpTestCase<InputQType>(op_type, input_defs, {}, attrs, op_domain, use_contrib_qdq),
+                          provider_options,
+                          opset_version,
+                          expected_ep_assignment,
+                          tolerance);
 }
 // Tests the accuracy of a QDQ model with indices inputs on QNN EP by comparing to CPU EP, which runs
 // both the fp32 model and the QDQ model.
@@ -170,12 +170,12 @@ static void RunQDQOpTest(const std::string& op_type,
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracyABI(BuildOpTestCase<float, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
-                       BuildQDQOpTestCase<InputQType, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs,
-                                                                  op_domain, use_contrib_qdq),
-                       provider_options,
-                       opset_version,
-                       expected_ep_assignment,
-                       tolerance);
+                          BuildQDQOpTestCase<InputQType, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs,
+                                                                     op_domain, use_contrib_qdq),
+                          provider_options,
+                          opset_version,
+                          expected_ep_assignment,
+                          tolerance);
 }
 
 // Runs a non-QDQ model on HTP and compares output to CPU EP.
@@ -196,11 +196,11 @@ static void RunOpTest(const std::string& op_type,
   }
 
   // Runs model with a Q/DQ binary op and compares the outputs of the CPU and QNN EPs.
-  RunQnnModelTest(BuildOpTestCase<InputType>(op_type, input_defs, {}, attrs, op_domain),
-                  provider_options,
-                  opset_version,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+  RunQnnModelTestABI(BuildOpTestCase<InputType>(op_type, input_defs, {}, attrs, op_domain),
+                     provider_options,
+                     opset_version,
+                     expected_ep_assignment,
+                     fp32_abs_err);
 }
 
 // Runs a non-QDQ model with indices inputs (int64) on HTP and compares output to CPU EP.
@@ -223,11 +223,11 @@ static void RunOpTest(const std::string& op_type,
   }
 
   // Runs model with a Q/DQ binary op and compares the outputs of the CPU and QNN EPs.
-  RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
-                  provider_options,
-                  opset_version,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+  RunQnnModelTestABI(BuildOpTestCase<InputType1, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
+                     provider_options,
+                     opset_version,
+                     expected_ep_assignment,
+                     fp32_abs_err);
 }
 
 // Runs an FP16 model on the QNN HTP backend and compares QNN EP's accuracy to CPU EP.
@@ -251,12 +251,12 @@ static void RunFP16OpTest(const std::string& op_type,
   auto model_fp32_fn = BuildOpTestCase<float>(op_type, input_defs, {}, attrs, op_domain);
   auto model_fp16_fn = BuildOpTestCase<MLFloat16>(op_type, input_fp16_defs, {}, attrs, op_domain);
 
-  TestFp16ModelAccuracy(model_fp32_fn,
-                        model_fp16_fn,
-                        provider_options,
-                        opset_version,
-                        expected_ep_assignment,
-                        tolerance);
+  TestFp16ModelAccuracyABI(model_fp32_fn,
+                           model_fp16_fn,
+                           provider_options,
+                           opset_version,
+                           expected_ep_assignment,
+                           tolerance);
 }
 
 // Test the accuracy of QDQ Sigmoid.
@@ -862,10 +862,10 @@ TEST_F(QnnABIHTPBackendTests, QuantAccuracyTest) {
 
   // Runs model with DQ-> Atan-> Q and compares the outputs of the CPU and QNN EPs.
   // 1st run will generate the Qnn context cache binary file
-  RunQnnModelTest(builder_func,
-                  provider_options,
-                  13,
-                  ExpectedEPNodeAssignment::All);
+  RunQnnModelTestABI(builder_func,
+                     provider_options,
+                     13,
+                     ExpectedEPNodeAssignment::All);
 }
 
 // Test 8-bit QDQ Add
@@ -1611,10 +1611,10 @@ TEST_F(QnnABIHTPBackendTests, Add_U8_U16_Convert) {
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracyABI(BuildOpTestCase<float>("Add", {input0_def, input1_def}, {}, {}, kOnnxDomain),
-                       BuildQDQConvertAddTestCase(input0_def, input1_def),
-                       provider_options,
-                       18,
-                       ExpectedEPNodeAssignment::All);
+                          BuildQDQConvertAddTestCase(input0_def, input1_def),
+                          provider_options,
+                          18,
+                          ExpectedEPNodeAssignment::All);
 }
 
 // Builds a graph where a (DQ -> Q) sequence at the graph's output is fuse into a QNN Convert operator.
@@ -1676,16 +1676,16 @@ TEST_F(QnnABIHTPBackendTests, DQ_Q_ConvertFusion_SameType) {
   QuantParams<uint16_t> out_qparams_u16 = {1.0f, 32768};
 
   // QNN Convert op converts uint8 to uint8 at the graph output. Slightly different scale values.
-  RunQnnModelTest(BuildDQQConvertAtOutputTestCase<uint8_t, uint8_t>(input0_def, input1_def, out_qparams_u8),
-                  provider_options,
-                  21,
-                  ExpectedEPNodeAssignment::All);
+  RunQnnModelTestABI(BuildDQQConvertAtOutputTestCase<uint8_t, uint8_t>(input0_def, input1_def, out_qparams_u8),
+                     provider_options,
+                     21,
+                     ExpectedEPNodeAssignment::All);
 
   // QNN Convert op converts uint16 to uint16 at the graph output. Slightly different scale values.
-  RunQnnModelTest(BuildDQQConvertAtOutputTestCase<uint16_t, uint16_t>(input0_def, input1_def, out_qparams_u16),
-                  provider_options,
-                  21,
-                  ExpectedEPNodeAssignment::All);
+  RunQnnModelTestABI(BuildDQQConvertAtOutputTestCase<uint16_t, uint16_t>(input0_def, input1_def, out_qparams_u16),
+                     provider_options,
+                     21,
+                     ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnABIHTPBackendTests, UnaryOp_HardSigmoid_QU8) {
@@ -1808,11 +1808,11 @@ TEST_F(QnnABIHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP32_as_FP16) {
   constexpr float beta = 0.5f;
   auto model_fn = BuildHardSigmoidFusionTestCase<float>(input_def, alpha, beta);
 
-  RunQnnModelTest(model_fn,
-                  provider_options,
-                  18,  // opset
-                  ExpectedEPNodeAssignment::All,
-                  0.01f);  // abs err. Comparing fp16 (QNN) vs fp32 (CPU EP) so can't expect too much.
+  RunQnnModelTestABI(model_fn,
+                     provider_options,
+                     18,  // opset
+                     ExpectedEPNodeAssignment::All,
+                     0.01f);  // abs err. Comparing fp16 (QNN) vs fp32 (CPU EP) so can't expect too much.
 }
 
 // Test FP16 fusion of HardSigmoid into HardSwish on the HTP backend.
@@ -1832,11 +1832,11 @@ TEST_F(QnnABIHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP16) {
   auto model_fp32_fn = BuildHardSigmoidFusionTestCase<float>(input_def, alpha, beta);
   auto model_fp16_fn = BuildHardSigmoidFusionTestCase<MLFloat16>(input_fp16_def, alpha, beta);
 
-  TestFp16ModelAccuracy(model_fp32_fn,
-                        model_fp16_fn,
-                        provider_options,
-                        18,  // opset
-                        ExpectedEPNodeAssignment::All);
+  TestFp16ModelAccuracyABI(model_fp32_fn,
+                           model_fp16_fn,
+                           provider_options,
+                           18,  // opset
+                           ExpectedEPNodeAssignment::All);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

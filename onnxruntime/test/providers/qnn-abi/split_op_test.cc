@@ -63,10 +63,10 @@ static void RunSplitOpTestOnCPU(const TestInputDef<DataType>& input_def,
   provider_options["backend_type"] = "cpu";
 
   const bool split_is_input = opset >= 13;
-  RunQnnModelTest(BuildSplitTestCase<DataType>(input_def, split, split_is_input, axis, num_outputs),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildSplitTestCase<DataType>(input_def, split, split_is_input, axis, num_outputs),
+                     provider_options,
+                     opset,
+                     expected_ep_assignment);
 }
 
 //
@@ -246,10 +246,10 @@ static void RunSplitOpTestOnHTP(const TestInputDef<DataType>& input_def,
   provider_options["backend_type"] = "htp";
 
   const bool split_is_input = opset >= 13;
-  RunQnnModelTest(BuildSplitTestCase<DataType>(input_def, split, split_is_input, axis, num_outputs),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildSplitTestCase<DataType>(input_def, split, split_is_input, axis, num_outputs),
+                     provider_options,
+                     opset,
+                     expected_ep_assignment);
 }
 
 // Runs a QDQ Split operator on the HTP backend.
@@ -271,10 +271,10 @@ static void RunQDQSplitOpTestOnHTP(const TestInputDef<float>& input_def,
   auto qdq_model_builder = BuildQDQSplitTestCase<QuantType>(input_def, split, split_is_input, axis, num_outputs,
                                                             use_contrib_qdq);
   TestQDQModelAccuracyABI<QuantType>(f32_model_builder,
-                                  qdq_model_builder,
-                                  provider_options,
-                                  opset,
-                                  expected_ep_assignment);
+                                     qdq_model_builder,
+                                     provider_options,
+                                     opset,
+                                     expected_ep_assignment);
 }
 
 // Test that HTP can run non-QDQ Split (int32 input).

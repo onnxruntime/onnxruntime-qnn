@@ -1145,16 +1145,6 @@ static void GetContextOnnxModelFilePath(const std::string& user_context_cache_pa
   } else if (!model_path_string.empty()) {  // model loaded from file
     context_model_path = model_path_string;
   }
-
-  // For InferenceModelABI (QnnAbiTestProvider), modify the context model path to use _abi.onnx suffix
-  if (!context_model_path.empty()) {
-    auto pos = context_model_path.find_last_of(ORT_TSTR("."));
-    if (pos != std::string::npos) {
-      context_model_path = context_model_path.substr(0, pos) + ToPathString("_abi.onnx");
-    } else {
-      context_model_path = context_model_path + ToPathString("_abi.onnx");
-    }
-  }
 }
 
 OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
@@ -1230,8 +1220,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   context_bin_map.clear();
 
   if (Status::OK() != rt) {
-    LOGS(ep->logger_in_, ERROR) << "QNN SetupBackend failed " << rt.ErrorMessage();
-    return nullptr;
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, ("QNN SetupBackend failed " + rt.ErrorMessage()).c_str());
   }
 
   if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType())) {
@@ -1242,13 +1231,11 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   // Report error if QNN CPU backend is loaded while CPU fallback is disabled
   if (ep->disable_cpu_ep_fallback_ && ep->qnn_backend_manager_->GetQnnBackendType() == qnn::QnnBackendType::CPU) {
-    LOGS(ep->logger_in_, ERROR) << "Qnn CPU backend is loaded while CPU fallback is disabled.";
-    return nullptr;
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Qnn CPU backend is loaded while CPU fallback is disabled.");
   }
 
   if ((ep->context_cache_enabled_ || is_qnn_ctx_model) && !qnn::IsQpuBackend(ep->qnn_backend_manager_->GetQnnBackendType())) {
-    LOGS(ep->logger_in_, ERROR) << "Qnn context cache only works for HTP/DSP/GPU backend.";
-    return nullptr;
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Qnn context cache only works for HTP/DSP/GPU backend.");
   }
 
   if (is_qnn_ctx_model) {
