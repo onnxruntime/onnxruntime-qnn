@@ -14,7 +14,6 @@ namespace onnxruntime {
 
 // OrtEpApi infrastructure to be able to use the QNN EP as an OrtEpFactory for auto EP selection.
 QnnEpFactory::QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in) : ApiPtrs(ort_api_in), ep_name_{ep_name} {
-  std::cout << "DEBUG: QnnEpFactory constructor - ep_name=" << ep_name << std::endl;
   ort_version_supported = ORT_API_VERSION;  // set to the ORT version we were compiled with.
   GetName = GetNameImpl;
   GetVendor = GetVendorImpl;
@@ -89,7 +88,6 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
                                                               OrtEpDevice** ep_devices,
                                                               size_t max_ep_devices,
                                                               size_t* p_num_ep_devices) noexcept {
-  std::cout << "DEBUG: QNN GetSupportedDevicesImpl called with " << num_devices << " devices" << std::endl;
   size_t& num_ep_devices = *p_num_ep_devices;
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
 
@@ -97,13 +95,8 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
     const OrtHardwareDevice& device = *devices[idx];
     auto device_type = factory->ort_api.HardwareDevice_Type(&device);
     auto vendor_id = factory->ort_api.HardwareDevice_VendorId(&device);
-    std::cout << "DEBUG: Device " << idx
-              << " type=" << device_type << " vendor=" << vendor_id
-              << " factory_vendor=" << factory->vendor_id_
-              << std::endl;
 
     if (vendor_id == factory->vendor_id_ || device_type == OrtHardwareDeviceType_CPU) {
-      std::cout << "DEBUG: Device " << idx << " matches! Creating EpDevice..." << std::endl;
       RETURN_IF_ERROR(factory->ep_api.CreateEpDevice(factory,
                                                      &device,
                                                      nullptr,
@@ -122,7 +115,6 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
                                                    _In_ const OrtSessionOptions* session_options,
                                                    _In_ const OrtLogger* logger,
                                                    _Out_ OrtEp** ep) noexcept {
-  std::cout << "DEBUG: QNN CreateEpImpl called!" << std::endl;
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
   *ep = nullptr;
 
@@ -153,7 +145,6 @@ void ORT_API_CALL QnnEpFactory::ReleaseEpImpl(OrtEpFactory* /*this_ptr*/, OrtEp*
 
 OrtStatus* ORT_API_CALL QnnEpFactory::CreateDataTransferImpl(OrtEpFactory* /* this_ptr */,
                                                              OrtDataTransferImpl** data_transfer) noexcept {
-  std::cout << "DEBUG: QNN CreateDataTransferImpl called!" << std::endl;
   *data_transfer = nullptr;
 
   return nullptr;
@@ -175,7 +166,6 @@ OrtStatus* CreateEpFactories(const char* /*registration_name*/,
                              OrtEpFactory** factories,
                              size_t max_factories,
                              size_t* num_factories) {
-  std::cout << "DEBUG: QNN-ABI CreateEpFactories called!" << std::endl;
 
   if (ort_api_base == nullptr) {
     return nullptr;  // Cannot create status without API base
@@ -209,7 +199,7 @@ OrtStatus* CreateEpFactories(const char* /*registration_name*/,
   // Factory could use registration_name or define its own EP name.
   std::unique_ptr<onnxruntime::QnnEpFactory> factory;
   try {
-    factory = std::make_unique<onnxruntime::QnnEpFactory>("QnnAbiTestProvider",
+    factory = std::make_unique<onnxruntime::QnnEpFactory>(onnxruntime::kQnnABIExecutionProvider,
                                                           onnxruntime::ApiPtrs{*ort_api,
                                                                                *ep_api,
                                                                                *model_editor_api});
