@@ -39,8 +39,8 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQInstanceNormTestCase(const Tes
                                         use_contrib_qdq);
 
     // bias (as int32) => DQ =>
-    NodeArg* bias_qdq = MakeTestQDQBiasInput(builder, bias_def, input_qparams.scale * scale_qparams.scale,
-                                             use_contrib_qdq);
+    NodeArg* bias_qdq = MakeTestQDQBiasInputABI(builder, bias_def, input_qparams.scale * scale_qparams.scale,
+                                                use_contrib_qdq);
 
     // InstanceNormalization operator.
     auto* instance_norm_output = builder.MakeIntermediate();
@@ -79,10 +79,10 @@ static void RunInstanceNormQDQTest(const TestInputDef<float>& input_def,
 
   // Runs model with DQ-> InstanceNorm -> Q and compares the outputs of the CPU and QNN EPs.
   TestQDQModelAccuracyABI(BuildOpTestCase<float>("InstanceNormalization", {input_def, scale_def, bias_def}, {}, attrs),
-                       BuildQDQInstanceNormTestCase<ActivationQType, ScaleQType>(input_def, scale_def, bias_def, attrs, use_contrib_qdq),
-                       provider_options,
-                       18,
-                       expected_ep_assignment);
+                          BuildQDQInstanceNormTestCase<ActivationQType, ScaleQType>(input_def, scale_def, bias_def, attrs, use_contrib_qdq),
+                          provider_options,
+                          18,
+                          expected_ep_assignment);
 }
 
 // Check that QNN compiles DQ -> InstanceNormalization -> Q as a single unit.

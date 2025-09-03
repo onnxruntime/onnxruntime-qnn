@@ -25,10 +25,10 @@ static void RunFlattenTest(const TestInputDef<DataType>& input_def,
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
 
-  RunQnnModelTest(BuildOpTestCase<DataType>("Flatten", {input_def}, {}, attrs),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildOpTestCase<DataType>("Flatten", {input_def}, {}, attrs),
+                     provider_options,
+                     opset,
+                     expected_ep_assignment);
 }
 
 //
@@ -71,10 +71,10 @@ static void RunFlattenTestOnHTP(const TestInputDef<DataType>& input_def,
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
-  RunQnnModelTest(BuildOpTestCase<DataType>("Flatten", {input_def}, {}, attrs),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildOpTestCase<DataType>("Flatten", {input_def}, {}, attrs),
+                     provider_options,
+                     opset,
+                     expected_ep_assignment);
 }
 
 // Runs a QDQ Flatten model on the QNN (HTP) EP and the ORT CPU EP. Checks the graph node assignment and that inference
@@ -92,10 +92,10 @@ static void RunQDQFlattenTestOnHTP(const TestInputDef<float>& input_def,
   auto f32_model_builder = BuildOpTestCase<float>("Flatten", {input_def}, {}, attrs);
   auto qdq_model_builder = BuildQDQOpTestCase<QType>("Flatten", {input_def}, {}, attrs, kOnnxDomain, use_contrib_qdq);
   TestQDQModelAccuracyABI(f32_model_builder,
-                       qdq_model_builder,
-                       provider_options,
-                       opset,
-                       expected_ep_assignment);
+                          qdq_model_builder,
+                          provider_options,
+                          opset,
+                          expected_ep_assignment);
 }
 
 // Test 8-bit QDQ Flatten input (rank4) with axis == 0.
@@ -156,10 +156,10 @@ TEST_F(QnnABIHTPBackendTests, Flatten_QDQ8bit_Rank5) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(model_fn,
-                  provider_options,
-                  13,  // opset
-                  ExpectedEPNodeAssignment::All);
+  RunQnnModelTestABI(model_fn,
+                     provider_options,
+                     13,  // opset
+                     ExpectedEPNodeAssignment::All);
 }
 
 // Test that int32 non-QDQ Flatten runs on HTP backend.

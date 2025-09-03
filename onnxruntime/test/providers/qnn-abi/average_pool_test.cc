@@ -29,10 +29,10 @@ static void RunAveragePoolOpTest(const std::string& op_type,
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<float>(op_type, input_defs, {}, attrs),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildOpTestCase<float>(op_type, input_defs, {}, attrs),
+                     provider_options,
+                     opset,
+                     expected_ep_assignment);
 }
 
 // Runs a QDQ AveragePool model on the QNN HTP backend. Checks the graph node assignment, and that accuracy
@@ -49,11 +49,11 @@ static void RunQDQAveragePoolOpTest(const std::string& op_type,
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracyABI(BuildOpTestCase<float>(op_type, input_defs, {}, attrs),
-                       BuildQDQOpTestCase<QuantType>(op_type, input_defs, {}, attrs),
-                       provider_options,
-                       opset,
-                       expected_ep_assignment,
-                       tolerance);
+                          BuildQDQOpTestCase<QuantType>(op_type, input_defs, {}, attrs),
+                          provider_options,
+                          opset,
+                          expected_ep_assignment,
+                          tolerance);
 }
 
 //

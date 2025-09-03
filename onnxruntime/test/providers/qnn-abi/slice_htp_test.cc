@@ -46,10 +46,10 @@ TEST_F(QnnABICPUBackendTests, Slice_SharedInitializersBugFix) {
 
   provider_options["backend_type"] = "cpu";
 
-  RunQnnModelTest(model_fn,
-                  provider_options,
-                  13,  // opset
-                  ExpectedEPNodeAssignment::All);
+  RunQnnModelTestABI(model_fn,
+                     provider_options,
+                     13,  // opset
+                     ExpectedEPNodeAssignment::All);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -82,11 +82,11 @@ static void RunSliceQDQTest(const TestInputDef<float>& data_def,
   const std::vector<TestInputDef<int64_t>> int64_inputs = {starts_def, ends_def, axes_def, steps_def};
 
   TestQDQModelAccuracyABI(BuildOpTestCase<float, int64_t>("Slice", f32_inputs, int64_inputs, {}),
-                       BuildQDQOpTestCase<QuantType, int64_t>("Slice", f32_inputs, int64_inputs, {}, kOnnxDomain,
-                                                              use_contrib_qdq),
-                       provider_options,
-                       18,
-                       expected_ep_assignment);
+                          BuildQDQOpTestCase<QuantType, int64_t>("Slice", f32_inputs, int64_inputs, {}, kOnnxDomain,
+                                                                 use_contrib_qdq),
+                          provider_options,
+                          18,
+                          expected_ep_assignment);
 }
 
 /**
@@ -111,10 +111,10 @@ static void RunSliceNonQDQOnHTP(const TestInputDef<DataType>& data_def,
   provider_options["backend_type"] = "htp";
   auto f32_model_builder = BuildOpTestCase<DataType, int64_t>("Slice", {data_def},
                                                               {starts_def, ends_def, axes_def, steps_def}, {});
-  RunQnnModelTest(f32_model_builder,
-                  provider_options,
-                  13,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(f32_model_builder,
+                     provider_options,
+                     13,
+                     expected_ep_assignment);
 }
 
 // Check that QNN compiles DQ -> Slice -> Q as a single unit.

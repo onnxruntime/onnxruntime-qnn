@@ -66,11 +66,11 @@ ProviderOptions GetProviderOptions() {
 
 TEST_F(QnnABIHTPBackendTests, ChannelShuffleFusion) {
   ProviderOptions provider_options = GetProviderOptions();
-  RunQnnModelTest(BuildTestCase(),
-                  provider_options,
-                  /*opset_version=*/10,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+  RunQnnModelTestABI(BuildTestCase(),
+                     provider_options,
+                     /*opset_version=*/10,
+                     /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                     /*fp32_abs_err=*/1e-2f);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

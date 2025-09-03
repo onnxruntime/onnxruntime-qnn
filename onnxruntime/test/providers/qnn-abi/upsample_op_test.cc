@@ -31,15 +31,15 @@ static void RunUpsampleTestOnCPU(const TestInputDef<DataType>& input_def,
     const std::vector<float>& scales = scales_def.GetRawData();
     attrs.push_back(utils::MakeAttribute("scales", scales));
 
-    RunQnnModelTest(BuildOpTestCase<DataType>("Upsample", {input_def}, {}, attrs),
-                    provider_options,
-                    opset,
-                    expected_ep_assignment);
+    RunQnnModelTestABI(BuildOpTestCase<DataType>("Upsample", {input_def}, {}, attrs),
+                       provider_options,
+                       opset,
+                       expected_ep_assignment);
   } else {
-    RunQnnModelTest(BuildOpTestCase<DataType, float>("Upsample", {input_def}, {scales_def}, attrs),
-                    provider_options,
-                    opset,
-                    expected_ep_assignment);
+    RunQnnModelTestABI(BuildOpTestCase<DataType, float>("Upsample", {input_def}, {scales_def}, attrs),
+                       provider_options,
+                       opset,
+                       expected_ep_assignment);
   }
 }
 

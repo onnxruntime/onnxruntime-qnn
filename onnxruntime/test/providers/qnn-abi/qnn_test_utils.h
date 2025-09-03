@@ -643,14 +643,15 @@ void VerifyQDQOutput(const std::vector<OrtValue>& cpu_qdq_outputs,
  *                         EP assignment.
  */
 template <typename QuantType>
-inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn, const GetTestQDQModelFn<QuantType>& qdq_model_fn,
-                                 ProviderOptions qnn_options, int opset_version,
-                                 ExpectedEPNodeAssignment expected_ep_assignment,
-                                 QDQTolerance tolerance = QDQTolerance(),
-                                 logging::Severity log_severity = logging::Severity::kERROR,
-                                 const std::string& qnn_ctx_model_path = "",
-                                 const std::unordered_map<std::string, std::string>& session_option_pairs = {},
-                                 std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr) {
+inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn,
+                                    const GetTestQDQModelFn<QuantType>& qdq_model_fn,
+                                    ProviderOptions qnn_options, int opset_version,
+                                    ExpectedEPNodeAssignment expected_ep_assignment,
+                                    QDQTolerance tolerance = QDQTolerance(),
+                                    logging::Severity log_severity = logging::Severity::kERROR,
+                                    const std::string& qnn_ctx_model_path = "",
+                                    const std::unordered_map<std::string, std::string>& session_option_pairs = {},
+                                    std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr) {
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
@@ -724,37 +725,8 @@ inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn, const Ge
   InferenceModel(qdq_model_data, "qdq_model_logger", {}, ExpectedEPNodeAssignment::All,
                  qdq_helper.feeds_, cpu_qdq_outputs);
 
-  bool is_qnn_ep = true;
   TryEnableQNNSaver(qnn_options);
-  std::vector<OrtValue> qnn_qdq_outputs;
-  if (!qnn_ctx_model_path.empty()) {
-    onnx::ModelProto model_proto;
-    onnxruntime::Model qnn_ctx_model;
-    // Load the QNN context cache model from path specified
-    ASSERT_STATUS_OK(qnn_ctx_model.Load(ToPathString(qnn_ctx_model_path), model_proto));
-    std::string qnn_ctx_model_data;
-    model_proto.SerializeToString(&qnn_ctx_model_data);
-    // Run QNN context cache model on QNN EP and collect outputs.
-    InferenceModel(qnn_ctx_model_data, "qnn_ctx_model_logger", qnn_options,
-                   expected_ep_assignment, qdq_helper.feeds_, qnn_qdq_outputs, is_qnn_ep, session_option_pairs);
-  } else {
-    // Run QDQ model on QNN EP and collect outputs.
-    // Only need to apply the extra session options to this QDQ model inference on QNN EP
-    InferenceModel(qdq_model_data, "qdq_model_logger", qnn_options, expected_ep_assignment,
-                   qdq_helper.feeds_, qnn_qdq_outputs, is_qnn_ep, session_option_pairs, qnn_ep_graph_checker);
-  }
 
-  if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
-    VerifyQDQOutput(cpu_qdq_outputs,
-                    qnn_qdq_outputs,
-                    cpu_f32_outputs,
-                    output_qparams,
-                    output_vals,
-                    output_types,
-                    tolerance);
-  }
-
-#if !BUILD_QNN_EP_STATIC_LIB
   // Run with QNN-ABI.
   std::vector<OrtValue> qnn_abi_qdq_outputs;
   if (!qnn_ctx_model_path.empty()) {
@@ -771,36 +743,13 @@ inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn, const Ge
                       qnn_abi_qdq_outputs,
                       session_option_pairs);
   } else {
-    // Create modified session options for ABI to use different context file path
-    std::unordered_map<std::string, std::string> abi_session_option_pairs = session_option_pairs;
-    std::string abi_context_file_path;
-
-    // If context generation is enabled, modify the file path for ABI to avoid conflicts
-    auto context_enable_it = abi_session_option_pairs.find(kOrtSessionOptionEpContextEnable);
-    auto context_path_it = abi_session_option_pairs.find(kOrtSessionOptionEpContextFilePath);
-
-    if (context_enable_it != abi_session_option_pairs.end() &&
-        context_enable_it->second == "1" &&
-        context_path_it != abi_session_option_pairs.end()) {
-      // Modify the context file path to add "_abi" suffix
-      std::string original_path = context_path_it->second;
-      size_t dot_pos = original_path.find_last_of('.');
-      if (dot_pos != std::string::npos) {
-        abi_context_file_path = original_path.substr(0, dot_pos) + "_abi" + original_path.substr(dot_pos);
-        abi_session_option_pairs[kOrtSessionOptionEpContextFilePath] = abi_context_file_path;
-
-        // Clean up any existing ABI context file to prevent conflicts
-        std::filesystem::remove(abi_context_file_path);
-      }
-    }
-
     InferenceModelABI(qdq_model_data,
                       "qdq_abi_model_logger",
                       qnn_options,
                       expected_ep_assignment,
                       qdq_helper.feeds_,
                       qnn_abi_qdq_outputs,
-                      abi_session_option_pairs,
+                      session_option_pairs,
                       qnn_ep_graph_checker);
   }
 
@@ -813,7 +762,6 @@ inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn, const Ge
                     output_types,
                     tolerance);
   }
-#endif  // !BUILD_QNN_EP_STATIC_LIB
 }
 
 inline void VerifyFp16Output(const std::vector<OrtValue>& cpu_f16_outputs,
@@ -916,15 +864,15 @@ inline void VerifyFp16Output(const std::vector<OrtValue>& cpu_f16_outputs,
  *                  on CPU EP. This tolerance is a percentage of the output range.
  * \param log_severity The logger's severity setting.
  */
-inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
-                                  const GetTestModelFn& f16_model_fn,
-                                  ProviderOptions qnn_options,
-                                  int opset_version,
-                                  ExpectedEPNodeAssignment expected_ep_assignment,
-                                  float tolerance = 0.004,
-                                  logging::Severity log_severity = logging::Severity::kERROR,
-                                  const std::string& qnn_ctx_model_path = "",
-                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
+inline void TestFp16ModelAccuracyABI(const GetTestModelFn& f32_model_fn,
+                                     const GetTestModelFn& f16_model_fn,
+                                     ProviderOptions qnn_options,
+                                     int opset_version,
+                                     ExpectedEPNodeAssignment expected_ep_assignment,
+                                     float tolerance = 0.004,
+                                     logging::Severity log_severity = logging::Severity::kERROR,
+                                     const std::string& qnn_ctx_model_path = "",
+                                     const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
@@ -983,31 +931,8 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   InferenceModel(f16_model_data, "fp16_model_logger", {}, ExpectedEPNodeAssignment::All,
                  f16_helper.feeds_, cpu_f16_outputs);
 
-  bool is_qnn_ep = true;
   TryEnableQNNSaver(qnn_options);
-  std::vector<OrtValue> qnn_f16_outputs;
-  if (!qnn_ctx_model_path.empty()) {
-    onnx::ModelProto model_proto;
-    onnxruntime::Model qnn_ctx_model;
-    // Load the QNN context cache model from path specified
-    ASSERT_STATUS_OK(qnn_ctx_model.Load(ToPathString(qnn_ctx_model_path), model_proto));
-    std::string qnn_ctx_model_data;
-    model_proto.SerializeToString(&qnn_ctx_model_data);
-    // Run QNN context cache model on QNN EP and collect outputs.
-    InferenceModel(qnn_ctx_model_data, "qnn_ctx_model_logger", qnn_options,
-                   expected_ep_assignment, f16_helper.feeds_, qnn_f16_outputs, is_qnn_ep, session_option_pairs);
-  } else {
-    // Run QDQ model on QNN EP and collect outputs.
-    // Only need to apply the extra session options to this QDQ model inference on QNN EP
-    InferenceModel(f16_model_data, "fp16_model_logger", qnn_options, expected_ep_assignment,
-                   f16_helper.feeds_, qnn_f16_outputs, is_qnn_ep, session_option_pairs);
-  }
 
-  if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
-    VerifyFp16Output(cpu_f16_outputs, qnn_f16_outputs, output_vals, output_types, tolerance);
-  }
-
-#if !BUILD_QNN_EP_STATIC_LIB
   // Run with QNN-ABI.
   std::vector<OrtValue> qnn_abi_f16_outputs;
   if (!qnn_ctx_model_path.empty()) {
@@ -1036,7 +961,6 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
     VerifyFp16Output(cpu_f16_outputs, qnn_abi_f16_outputs, output_vals, output_types, tolerance);
   }
-#endif  // !BUILD_QNN_EP_STATIC_LIB
 }
 
 /**
@@ -1108,8 +1032,8 @@ inline NodeArg* MakeTestInput(ModelTestBuilder& builder, const TestInputDef<bool
 // See quantization tool: onnx_quantizer.py::quantize_bias_static()
 //
 // i.e., initial bias => manual quantization (int32) => DQ => final float bias
-NodeArg* MakeTestQDQBiasInput(ModelTestBuilder& builder, const TestInputDef<float>& bias_def, float bias_scale,
-                              bool use_contrib_qdq = false);
+NodeArg* MakeTestQDQBiasInputABI(ModelTestBuilder& builder, const TestInputDef<float>& bias_def, float bias_scale,
+                                 bool use_contrib_qdq = false);
 
 /**
  * Returns a function that builds a model with a single operator with N inputs type InputType1 and M inputs
@@ -1311,12 +1235,12 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
  * \param ep_graph_checker Function called on the Graph generated for the EP's session. Used to check node
  *                         EP assignment.
  */
-void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
-                     int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
-                     float fp32_abs_err = 1e-5f,
-                     logging::Severity log_severity = logging::Severity::kERROR,
-                     bool verify_outputs = true,
-                     std::function<void(const Graph&)>* ep_graph_checker = nullptr);
+void RunQnnModelTestABI(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
+                        int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
+                        float fp32_abs_err = 1e-5f,
+                        logging::Severity log_severity = logging::Severity::kERROR,
+                        bool verify_outputs = true,
+                        std::function<void(const Graph&)>* ep_graph_checker = nullptr);
 
 enum class BackendSupport {
   SUPPORT_UNKNOWN,
@@ -1376,7 +1300,7 @@ class QnnABIIRBackendTests : public ::testing::Test {
  *
  * \return True if "axes" is an input, or false if "axes" is an attribute.
  */
-bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
+bool ReduceOpHasAxesInputABI(const std::string& op_type, int opset_version);
 
 }  // namespace test
 }  // namespace onnxruntime

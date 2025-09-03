@@ -110,10 +110,10 @@ static void RunPadOpTest(const TestInputDef<float>& data_def,
     provider_options["enable_htp_fp16_precision"] = "1";
   }
 
-  RunQnnModelTest(BuildPadTestCase(data_def, pads_def, constant_value_def, attrs, has_constant_value),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment, f32_abs_err);
+  RunQnnModelTestABI(BuildPadTestCase(data_def, pads_def, constant_value_def, attrs, has_constant_value),
+                     provider_options,
+                     opset,
+                     expected_ep_assignment, f32_abs_err);
 }
 
 // Runs a QDQ Pad model on the QNN HTP backend. Checks the graph node assignment, and that inference
@@ -132,11 +132,11 @@ static void RunQDQPadOpTest(const TestInputDef<float>& data_def,
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracyABI(BuildPadTestCase(data_def, pads_def, constant_value_def, attrs),
-                       BuildPadQDQTestCase<QuantType>(data_def, pads_def, constant_value_def, attrs,
-                                                      has_constant_value, constant_value_quantized),
-                       provider_options,
-                       opset,
-                       expected_ep_assignment);
+                          BuildPadQDQTestCase<QuantType>(data_def, pads_def, constant_value_def, attrs,
+                                                         has_constant_value, constant_value_quantized),
+                          provider_options,
+                          opset,
+                          expected_ep_assignment);
 }
 
 //

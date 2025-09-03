@@ -28,7 +28,7 @@ using onnxruntime::test::MakeTestInput;
 using onnxruntime::test::ModelTestBuilder;
 using onnxruntime::test::QDQTolerance;
 using onnxruntime::test::QuantParams;
-using onnxruntime::test::RunQnnModelTest;
+using onnxruntime::test::RunQnnModelTestABI;
 using onnxruntime::test::TestInputDef;
 using onnxruntime::test::TestQDQModelAccuracyABI;
 using onnxruntime::utils::MakeAttribute;
@@ -54,7 +54,7 @@ static void RunQnnEinsum(
   ProviderOptions provider_options;
   provider_options[kQnnBackendType] = backend;
   provider_options[kOffloadGraphIoQuantization] = kOffloadGraphIoQuantizationDisable;
-  RunQnnModelTest(
+  RunQnnModelTestABI(
       /*build_test_case=*/BuildOpTestCase<DataType, DataType>(
           /*op_type=*/kEinsumOp,
           /*input_defs_1=*/{in0, in1},
@@ -121,11 +121,11 @@ static void RunQnnHtpQdqEinsum(const TestInputDef<float>& in0,
   auto qdq_model_builder = BuildTestCaseQdq<InputAQType, InputBQType>(
       /*input_defs=*/{in0, in1}, /*attrs=*/attrs, /*use_contrib_qdq=*/false);
   TestQDQModelAccuracyABI<InputAQType>(/*f32_model_fn=*/f32_model_builder,
-                                    /*qdq_model_fn=*/qdq_model_builder,
-                                    /*qnn_options=*/provider_options,
-                                    /*opset_version=*/12,
-                                    /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                                    /*tolerance=*/tolerance);
+                                       /*qdq_model_fn=*/qdq_model_builder,
+                                       /*qnn_options=*/provider_options,
+                                       /*opset_version=*/12,
+                                       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                                       /*tolerance=*/tolerance);
 }
 
 }  // namespace

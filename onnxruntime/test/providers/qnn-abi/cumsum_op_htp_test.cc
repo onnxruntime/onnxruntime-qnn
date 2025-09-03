@@ -29,11 +29,11 @@ static void RunCumSumOpTest(const std::string& op_type,
   provider_options["offload_graph_io_quantization"] = "0";
 
   // Runs model with a Q/DQ binary op and compares the outputs of the CPU and QNN EPs.
-  RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>(op_type, {input_def_1}, {input_def_2}, attrs),
-                  provider_options,
-                  opset_version,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+  RunQnnModelTestABI(BuildOpTestCase<InputType1, InputType2>(op_type, {input_def_1}, {input_def_2}, attrs),
+                     provider_options,
+                     opset_version,
+                     expected_ep_assignment,
+                     fp32_abs_err);
 }
 
 // Non-QDQ model, CumSum with float input and axis input as initializer with axis 0
@@ -111,10 +111,10 @@ static void RunQDQCumSumOpTest(const TestInputDef<float>& input_def,
                                                                        use_contrib_qdq);
 
   TestQDQModelAccuracyABI<QuantType>(f32_model_builder,
-                                  qdq_model_builder,
-                                  provider_options,
-                                  opset,
-                                  expected_ep_assignment);
+                                     qdq_model_builder,
+                                     provider_options,
+                                     opset,
+                                     expected_ep_assignment);
 }
 
 // Test creates a DQ -> CumSum -> Q -> DQ graph, and checks that all

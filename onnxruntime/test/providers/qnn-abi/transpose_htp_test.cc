@@ -70,10 +70,10 @@ static void RunTransposeQDQTest(const TestInputDef<float>& input_def,
 
   // Runs model with DQ-> Transpose -> Q and compares the outputs of the CPU and QNN EPs.
   TestQDQModelAccuracyABI(BuildTransposeTestCase<float>(input_def, attrs),
-                       BuildQDQTransposeTestCase<QuantType>(input_def, attrs),
-                       provider_options,
-                       18,
-                       expected_ep_assignment);
+                          BuildQDQTransposeTestCase<QuantType>(input_def, attrs),
+                          provider_options,
+                          18,
+                          expected_ep_assignment);
 }
 
 /**
@@ -98,11 +98,11 @@ static void RunTransposeNonQDQOnHTP(const TestInputDef<DataType>& input_def,
     provider_options["enable_htp_fp16_precision"] = "0";
   }
 
-  RunQnnModelTest(BuildTransposeTestCase<DataType>(input_def, attrs),
-                  provider_options,
-                  13,
-                  expected_ep_assignment,
-                  1e-5f);
+  RunQnnModelTestABI(BuildTransposeTestCase<DataType>(input_def, attrs),
+                     provider_options,
+                     13,
+                     expected_ep_assignment,
+                     1e-5f);
 }
 
 // Check that QNN compiles DQ -> Transpose -> Q as a single unit.

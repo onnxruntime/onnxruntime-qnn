@@ -106,6 +106,8 @@ void CreateMatMulOpBuilder(const std::string& op_type, OpBuilderRegistrations& o
 
 void CreateMeanOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
+void CreateModOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+
 void CreatePadOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
 void CreatePoolOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
@@ -125,6 +127,8 @@ void CreateSliceOpBuilder(const std::string& op_type, OpBuilderRegistrations& op
 void CreateSoftmaxOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
 void CreateSplitOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+
+void CreateThresholdedReluOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
 void CreateTileOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 

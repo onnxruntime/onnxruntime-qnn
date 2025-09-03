@@ -18,8 +18,8 @@ namespace test {
 
 // Function that builds a float32 model with a Where operator.
 GetTestModelFn BuildWhereTestCaseABI(const TestInputDef<bool>& condition_def,
-                                  const TestInputDef<float>& x_def,
-                                  const TestInputDef<float>& y_def) {
+                                     const TestInputDef<float>& x_def,
+                                     const TestInputDef<float>& y_def) {
   return [condition_def, x_def, y_def](ModelTestBuilder& builder) {
     NodeArg* condition = MakeTestInput(builder, condition_def);
     NodeArg* x = MakeTestInput(builder, x_def);
@@ -79,10 +79,10 @@ static void RunWhereQDQTest(const TestInputDef<bool>& condition_def,
 
   // Runs model with DQ-> Where -> Q and compares the outputs of the CPU and QNN EPs.
   TestQDQModelAccuracyABI(BuildWhereTestCaseABI(condition_def, x_def, y_def),
-                       BuildQDQWhereTestCase<QuantType>(condition_def, x_def, y_def),
-                       provider_options,
-                       18,
-                       expected_ep_assignment);
+                          BuildQDQWhereTestCase<QuantType>(condition_def, x_def, y_def),
+                          provider_options,
+                          18,
+                          expected_ep_assignment);
 }
 
 // Check that QNN compiles DQ -> Where -> Q as a single unit.

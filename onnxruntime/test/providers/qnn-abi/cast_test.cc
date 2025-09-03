@@ -64,10 +64,10 @@ static void RunCastOpTest(const std::vector<int64_t>& shape, ONNX_NAMESPACE::Ten
     }
   }
 
-  RunQnnModelTest(BuildCastTestCase<InputType>(shape, dst_type),
-                  provider_options,
-                  13,  // opset
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildCastTestCase<InputType>(shape, dst_type),
+                     provider_options,
+                     13,  // opset
+                     expected_ep_assignment);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -91,7 +91,7 @@ static void RunCastFP16HTPTest(const std::vector<int64_t>& shape,
     cast_node.AddAttribute("to", static_cast<int64_t>(dst_type));
   };
 
-  RunQnnModelTest(testcase, provider_options, /* opset */ 13, expected_ep_assignment);
+  RunQnnModelTestABI(testcase, provider_options, /* opset */ 13, expected_ep_assignment);
 }
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 

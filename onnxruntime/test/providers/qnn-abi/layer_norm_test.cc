@@ -26,10 +26,10 @@ static void RunLayerNormCpuTest(const TestInputDef<float>& input_def,
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<float>("LayerNormalization", {input_def, scale_def}, {}, attrs),
-                  provider_options,
-                  17,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildOpTestCase<float>("LayerNormalization", {input_def, scale_def}, {}, attrs),
+                     provider_options,
+                     17,
+                     expected_ep_assignment);
 }
 
 TEST_F(QnnABICPUBackendTests, LayerNorm) {
@@ -111,7 +111,7 @@ GetTestQDQModelFn<InputQType> BuildQDQLayerNormTestCase(const TestInputDef<float
 
     if (!bias_def.GetShape().empty()) {
       const float bias_scale = input_qparams.scale * scale_qparams.scale;
-      layer_norm_inputs.push_back(MakeTestQDQBiasInput(builder, bias_def, bias_scale, use_contrib_qdq_ops));
+      layer_norm_inputs.push_back(MakeTestQDQBiasInputABI(builder, bias_def, bias_scale, use_contrib_qdq_ops));
     }
 
     // LayerNormalization
@@ -142,11 +142,11 @@ static void RunLayerNormQDQTest(const TestInputDef<float>& input_def,
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracyABI(BuildOpTestCase<float>("LayerNormalization", {input_def, scale_def}, {}, attrs),
-                       BuildQDQLayerNormTestCase<InputQType, ScaleQType>(input_def, scale_def, bias_def, attrs,
-                                                                         use_contrib_qdq_ops),
-                       provider_options,
-                       17,  // opset
-                       expected_ep_assignment);
+                          BuildQDQLayerNormTestCase<InputQType, ScaleQType>(input_def, scale_def, bias_def, attrs,
+                                                                            use_contrib_qdq_ops),
+                          provider_options,
+                          17,  // opset
+                          expected_ep_assignment);
 }
 
 // Test that QNN HTP only supports axis = -1 (i.e., last dimension).

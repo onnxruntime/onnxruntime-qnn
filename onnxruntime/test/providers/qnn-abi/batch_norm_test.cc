@@ -122,7 +122,7 @@ GetTestQDQModelFn<InputQType> BuildQDQBatchNormTestCase(const TestInputDef<float
 
     NodeArg* bias_qdq;
     // bias (as int32) => DQ =>
-    bias_qdq = MakeTestQDQBiasInput(builder, bias_def, input_qparams.scale * scale_qparams.scale, true);
+    bias_qdq = MakeTestQDQBiasInputABI(builder, bias_def, input_qparams.scale * scale_qparams.scale, true);
 
     std::vector<float> mean_vals(num_channels);
     std::vector<float> var_vals(num_channels);
@@ -158,11 +158,11 @@ static void RunBatchNormQDQTestOnCPU(const TestInputDef<float>& input_def,
 
   // Runs model with DQ-> InstanceNorm -> Q and compares the outputs of the CPU and QNN EPs.
   TestQDQModelAccuracyABI(BuildBatchNormTestCase(input_def, scale_def, bias_def),
-                       BuildQDQBatchNormTestCase<InputQType, ScaleQType>(input_def, scale_def, bias_def),
-                       provider_options,
-                       21,
-                       expected_ep_assignment,
-                       tolerance);
+                          BuildQDQBatchNormTestCase<InputQType, ScaleQType>(input_def, scale_def, bias_def),
+                          provider_options,
+                          21,
+                          expected_ep_assignment,
+                          tolerance);
 }
 
 TEST_F(QnnABICPUBackendTests, BatchNorm2D_fp32) {
@@ -173,7 +173,7 @@ TEST_F(QnnABICPUBackendTests, BatchNorm2D_fp32) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
 
-  RunQnnModelTest(
+  RunQnnModelTestABI(
       BuildBatchNormTestCase(
           TestInputDef<float>({2, num_channels, 2, 2}, false, input_data),  // Input data
           TestInputDef<float>({num_channels}, true, {1.0f, 2.0f}),          // Scale initializer
@@ -218,11 +218,11 @@ static void RunBatchNormQDQTest(const TestInputDef<float>& input_def,
 
   // Runs model with DQ-> InstanceNorm -> Q and compares the outputs of the CPU and QNN EPs.
   TestQDQModelAccuracyABI(BuildBatchNormTestCase(input_def, scale_def, bias_def),
-                       BuildQDQBatchNormTestCase<InputQType, ScaleQType>(input_def, scale_def, bias_def),
-                       provider_options,
-                       21,
-                       expected_ep_assignment,
-                       tolerance);
+                          BuildQDQBatchNormTestCase<InputQType, ScaleQType>(input_def, scale_def, bias_def),
+                          provider_options,
+                          21,
+                          expected_ep_assignment,
+                          tolerance);
 }
 
 static void RunBatchNormFP16Test(const TestInputDef<float>& input_def,
@@ -238,11 +238,11 @@ static void RunBatchNormFP16Test(const TestInputDef<float>& input_def,
   TestInputDef<MLFloat16> bias_fp16_def = ConvertToFP16InputDef(bias_def);
 
   // Runs model with DQ-> InstanceNorm -> Q and compares the outputs of the CPU and QNN EPs.
-  TestFp16ModelAccuracy(BuildBatchNormTestCase<float>(input_def, scale_def, bias_def),
-                        BuildBatchNormTestCase<MLFloat16>(input_fp16_def, scale_fp16_def, bias_fp16_def),
-                        provider_options,
-                        11,
-                        expected_ep_assignment);
+  TestFp16ModelAccuracyABI(BuildBatchNormTestCase<float>(input_def, scale_def, bias_def),
+                           BuildBatchNormTestCase<MLFloat16>(input_fp16_def, scale_fp16_def, bias_fp16_def),
+                           provider_options,
+                           11,
+                           expected_ep_assignment);
 }
 
 // BatchNor QDQ model, input with rank 2.
@@ -392,11 +392,11 @@ TEST_F(QnnABIHTPBackendTests, BatchNorm_FP32_as_FP16) {
   auto bias_def = TestInputDef<float>({num_channels}, true, {1.1f, 2.1f});
   auto model_fn = BuildBatchNormTestCase<float>(input_def, scale_def, bias_def);
 
-  RunQnnModelTest(model_fn,
-                  provider_options,
-                  13,  // opset
-                  ExpectedEPNodeAssignment::All,
-                  0.01f);  // abs err
+  RunQnnModelTestABI(model_fn,
+                     provider_options,
+                     13,  // opset
+                     ExpectedEPNodeAssignment::All,
+                     0.01f);  // abs err
 }
 
 // Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.

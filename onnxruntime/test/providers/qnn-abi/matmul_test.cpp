@@ -35,10 +35,10 @@ static void RunMatMulOpTest(const std::vector<int64_t>& shape_0,
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildMatMulOpTestCase(
-                      TestInputDef<float>(shape_0, is_initializer_0, GetSequentialFloatData(shape_0, 0.01f, 0.02f)),
-                      TestInputDef<float>(shape_1, is_initializer_1, GetSequentialFloatData(shape_1, 0.02f, 0.02f))),
-                  provider_options, opset, expected_ep_assignment, f32_abs_err);
+  RunQnnModelTestABI(BuildMatMulOpTestCase(
+                         TestInputDef<float>(shape_0, is_initializer_0, GetSequentialFloatData(shape_0, 0.01f, 0.02f)),
+                         TestInputDef<float>(shape_1, is_initializer_1, GetSequentialFloatData(shape_1, 0.02f, 0.02f))),
+                     provider_options, opset, expected_ep_assignment, f32_abs_err);
 }
 
 // Returns a function that creates a graph with a QDQ MatMul operator.
@@ -176,9 +176,9 @@ static void RunQDQPerChannelMatMulOpTest(
                                                               static_cast<int64_t>(1), std::multiplies<int64_t>()))));
 
   TestQDQModelAccuracyABI(BuildMatMulOpTestCase(input_def, weight_def),
-                       BuildQDQPerChannelMatMulTestCase<InputQType, WeightQType, OutputQType>(
-                           input_def, weight_def, weight_quant_axis, use_contrib_qdq),
-                       provider_options, opset, expected_ep_assignment, tolerance);
+                          BuildQDQPerChannelMatMulTestCase<InputQType, WeightQType, OutputQType>(
+                              input_def, weight_def, weight_quant_axis, use_contrib_qdq),
+                          provider_options, opset, expected_ep_assignment, tolerance);
 }
 
 //

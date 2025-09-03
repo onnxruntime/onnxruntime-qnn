@@ -59,10 +59,10 @@ static void RunPoolOpTest(const std::string& op_type,
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<float>(op_type, {input_def}, {}, attrs),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildOpTestCase<float>(op_type, {input_def}, {}, attrs),
+                     provider_options,
+                     opset,
+                     expected_ep_assignment);
 }
 
 // Runs a QDQ MaxPool model on the QNN HTP backend. Checks the graph node assignment, and that inference
@@ -80,11 +80,11 @@ static void RunQDQPoolOpTest(const std::string& op_type,
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracyABI(BuildOpTestCase<float>(op_type, {input_def}, {}, attrs),
-                       BuildPoolQDQTestCase<QuantType>(op_type, input_def, attrs, use_contrib_qdq_ops),
-                       provider_options,
-                       opset,
-                       expected_ep_assignment,
-                       tolerance);
+                          BuildPoolQDQTestCase<QuantType>(op_type, input_def, attrs, use_contrib_qdq_ops),
+                          provider_options,
+                          opset,
+                          expected_ep_assignment,
+                          tolerance);
 }
 
 //
@@ -220,32 +220,23 @@ TEST_F(QnnABIHTPBackendTests, MaxPool1D_ReshapeNodesPresent) {
     maxpool_node.AddAttribute("auto_pad", "NOTSET");
   };
 
-  // Build and serialize the model
-  auto& logging_manager = DefaultLoggingManager();
-  onnxruntime::Model model("maxpool1d", false, ModelMetaData(), PathString(), IOnnxRuntimeOpSchemaRegistryList(), {}, {},
-                           logging_manager.DefaultLogger());
-  ModelTestBuilder builder(model.MainGraph());
-  build_test_case(builder);
-  builder.SetGraphOutputs();
-  ASSERT_STATUS_OK(model.MainGraph().Resolve());
-  std::string model_data;
-  model.ToProto().SerializeToString(&model_data);
-
-  // Setup session options and register QNN HTP EP
-  SessionOptions so;
   ProviderOptions options;
   options["backend_type"] = "htp";
 
-  InferenceSessionWrapper session{so, GetEnvironment()};
-  auto qnn_ep = QnnExecutionProviderWithOptions(options, &so);
-  ASSERT_STATUS_OK(session.RegisterExecutionProvider(std::move(qnn_ep)));
-  ASSERT_STATUS_OK(session.Load(model_data.data(), static_cast<int>(model_data.size())));
-  ASSERT_STATUS_OK(session.Initialize());
-  const Graph& graph = session.GetGraph();
-  int number_of_nodes = graph.NumberOfNodes();
+  std::function<void(const Graph&)> check_num_nodes = [](const Graph& graph) {
+    int number_of_nodes = graph.NumberOfNodes();
+    // The Reshape -> Pool -> Reshape gets fused to a single QNN node
+    EXPECT_EQ(number_of_nodes, 1) << "Expected 1 QNN fused node for MaxPool rank-3 input.";
+  };
 
-  // The Reshape -> Pool -> Reshape gets fused to a single QNN node
-  EXPECT_EQ(number_of_nodes, 1) << "Expected 1 QNN fused node for MaxPool rank-3 input.";
+  RunQnnModelTestABI(build_test_case,
+                     options,
+                     18,
+                     ExpectedEPNodeAssignment::All,
+                     1e-5,
+                     logging::Severity::kERROR,
+                     true,
+                     &check_num_nodes);
 }
 
 // 1-D MaxPool HTP test for rank-3 without ceil

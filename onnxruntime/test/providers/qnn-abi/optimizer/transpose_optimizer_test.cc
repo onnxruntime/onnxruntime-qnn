@@ -19,10 +19,10 @@ namespace onnxruntime {
 namespace test {
 
 static void TestTransposeReshapeTransposeABI(const std::vector<int64_t>& input_shape,
-                                          const std::vector<int64_t>& transpose1_perm,
-                                          const std::vector<int64_t>& reshape_shape,
-                                          const std::vector<int64_t>& transpose2_perm,
-                                          const bool expected_optimized = true) {
+                                             const std::vector<int64_t>& transpose1_perm,
+                                             const std::vector<int64_t>& reshape_shape,
+                                             const std::vector<int64_t>& transpose2_perm,
+                                             const bool expected_optimized = true) {
   auto build_test_case = [&](ModelTestBuilder& builder) {
     auto* input_arg = builder.MakeInput<float>(input_shape, 0.0, 1.0);
     auto* reshape_shape_value = builder.MakeInitializer<int64_t>({int64_t(reshape_shape.size())}, reshape_shape);

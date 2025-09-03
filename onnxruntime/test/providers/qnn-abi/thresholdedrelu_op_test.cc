@@ -29,11 +29,11 @@ static void RunThresholdedReluTest(const std::vector<TestInputDef<DataType>>& in
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<DataType>("ThresholdedRelu", input_defs, {}, attrs),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+  RunQnnModelTestABI(BuildOpTestCase<DataType>("ThresholdedRelu", input_defs, {}, attrs),
+                     provider_options,
+                     opset,
+                     expected_ep_assignment,
+                     fp32_abs_err);
 }
 
 //
@@ -102,11 +102,11 @@ static void RunQDQThresholdedReluTestOnHTP(const std::vector<TestInputDef<float>
   auto f32_model_builder = BuildOpTestCase<float>("ThresholdedRelu", input_defs, {}, attrs);
   auto qdq_model_builder = BuildQDQThresholdedReluTestCase<InputAQType, InputBQType>(input_defs, attrs, use_contrib_qdq);
   TestQDQModelAccuracyABI<InputAQType>(f32_model_builder,
-                                    qdq_model_builder,
-                                    provider_options,
-                                    opset,
-                                    expected_ep_assignment,
-                                    tolerance);
+                                       qdq_model_builder,
+                                       provider_options,
+                                       opset,
+                                       expected_ep_assignment,
+                                       tolerance);
 }
 
 // Test ThresholdedRelu QDQ.
