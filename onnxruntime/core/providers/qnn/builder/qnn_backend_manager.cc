@@ -558,6 +558,38 @@ bool QnnBackendManager::IsDevicePropertySupported() {
   return true;
 }
 
+namespace {
+
+struct PlatformInfoDeleter {
+  PlatformInfoDeleter(const QNN_INTERFACE_VER_TYPE& qnn_interface, const Qnn_LogHandle_t log_handle)
+      : qnn_interface_(&qnn_interface), log_handle_(log_handle) {}
+
+  void operator()(const QnnDevice_PlatformInfo_t* p) {
+    if (p) {
+      qnn_interface_->deviceFreePlatformInfo(log_handle_, p);
+    }
+  }
+
+ private:
+  const QNN_INTERFACE_VER_TYPE* qnn_interface_;
+  Qnn_LogHandle_t log_handle_;
+};
+
+using DevicePlatformInfoPtr = std::unique_ptr<const QnnDevice_PlatformInfo_t, PlatformInfoDeleter>;
+
+std::pair<DevicePlatformInfoPtr, Qnn_ErrorHandle_t> GetDevicePlatformInfo(
+    const QNN_INTERFACE_VER_TYPE& qnn_interface,
+    const Qnn_LogHandle_t log_handle) {
+  const QnnDevice_PlatformInfo_t* platformInfoRawPtr = nullptr;
+  PlatformInfoDeleter deleter(qnn_interface, log_handle);
+  Qnn_ErrorHandle_t status = qnn_interface.deviceGetPlatformInfo(log_handle, &platformInfoRawPtr);
+
+  // If deviceGetPlatformInfo failed, return nullptr with appropriate status
+  return std::make_pair(DevicePlatformInfoPtr(platformInfoRawPtr, deleter), status);
+}
+
+}  // namespace
+
 Status QnnBackendManager::CreateDevice() {
   if (true == device_created_) {
     LOGS_DEFAULT(INFO) << "Device initialized already.";
@@ -572,6 +604,12 @@ Status QnnBackendManager::CreateDevice() {
 
   qnn::QnnConfigsBuilder<QnnDevice_Config_t, QnnHtpDevice_CustomConfig_t> device_configs_builder(QNN_DEVICE_CONFIG_INIT,
                                                                                                  {});
+
+  // These will hold device selection data when device_id_ != 0
+  DevicePlatformInfoPtr device_platform_info(nullptr, PlatformInfoDeleter(qnn_interface_, log_handle_));
+  std::unique_ptr<QnnDevice_PlatformInfo_t> device_platform_info_config;
+  std::unique_ptr<QnnDevice_Config_t> device_platform_info_std_config;
+
   if (qnn_backend_type_ == QnnBackendType::HTP) {
     // Set SoC Model. The *enum* Qnn_SocModel_t is deprecated and will not be updated in the future. Therefore,
     // must use the latest SDK documentation to get the SoC model of the latest HW.
@@ -596,11 +634,70 @@ Status QnnBackendManager::CreateDevice() {
       device_config->option = QNN_DEVICE_CONFIG_OPTION_CUSTOM;
       device_config->customConfig = custom_config;
     }
+
+    QnnDevice_HardwareDeviceInfo_t* selected_device = nullptr;
+
+    if (device_id_ != 0) {
+      Qnn_ErrorHandle_t result;
+      std::tie(device_platform_info, result) = GetDevicePlatformInfo(qnn_interface_, log_handle_);
+      if (QNN_SUCCESS != result) {
+        return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to get platform info. Error: ", QnnErrorHandleToString(result));
+      }
+
+      if (device_platform_info->version != QNN_DEVICE_PLATFORM_INFO_VERSION_1) {
+        return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Unsupported device platform info.");
+      }
+
+      LOGS_DEFAULT(INFO) << "QNN Found " << device_platform_info->v1.numHwDevices << " HTP devices.";
+
+      for (uint32_t deviceIdx = 0; deviceIdx < device_platform_info->v1.numHwDevices; ++deviceIdx) {
+        auto& hwDevice = device_platform_info->v1.hwDevices[deviceIdx];
+        if (device_id_ == hwDevice.v1.deviceId) {
+          selected_device = &hwDevice;
+          break;
+        }
+      }
+
+      if (!selected_device) {
+        return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Could not find device with ID = ", device_id_);
+      }
+
+      device_platform_info_config = std::make_unique<QnnDevice_PlatformInfo_t>();
+      device_platform_info_config->version = QNN_DEVICE_PLATFORM_INFO_VERSION_1;
+      device_platform_info_config->v1.numHwDevices = 1;
+      device_platform_info_config->v1.hwDevices = selected_device;
+
+      device_platform_info_std_config = std::make_unique<QnnDevice_Config_t>();
+      device_platform_info_std_config->option = QNN_DEVICE_CONFIG_OPTION_PLATFORM_INFO;
+      device_platform_info_std_config->hardwareInfo = device_platform_info_config.get();
+    }
   }
+
+  // Consolidate device configs of all types
+  std::vector<const QnnDevice_Config_t*> all_device_configs;
+
+  // Reserve enough for HTP configs, platform config, and null terminator
+  all_device_configs.reserve(device_configs_builder.GetSize() + (device_platform_info_std_config ? 2 : 1));
+
+  // Add HTP configs
+  const QnnDevice_Config_t** htp_configs = device_configs_builder.GetQnnConfigs();
+  if (htp_configs) {
+    for (const QnnDevice_Config_t** config = htp_configs; *config; ++config) {
+      all_device_configs.push_back(*config);
+    }
+  }
+
+  if (device_platform_info_std_config) {
+    // Add platform info config
+    all_device_configs.push_back(device_platform_info_std_config.get());
+  }
+
+  // Null terminator
+  all_device_configs.push_back(nullptr);
 
   LOGS_DEFAULT(INFO) << "Create device.";
   if (nullptr != qnn_interface_.deviceCreate) {
-    Qnn_ErrorHandle_t result = qnn_interface_.deviceCreate(log_handle_, device_configs_builder.GetQnnConfigs(), &device_handle_);
+    Qnn_ErrorHandle_t result = qnn_interface_.deviceCreate(log_handle_, all_device_configs.data(), &device_handle_);
     if (QNN_SUCCESS != result) {
       return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to create device. Error: ", QnnErrorHandleToString(result));
     }
