@@ -413,6 +413,7 @@ else:
     libs.extend(["onnxruntime_providers_migraphx.dll"])
     libs.extend(["onnxruntime_providers_vitisai.dll"])
     libs.extend(["onnxruntime_providers_qnn.dll"])
+    libs.extend(["onnxruntime_providers_qnn_abi.dll"])
     # DirectML Libs
     libs.extend(["DirectML.dll"])
     # WebGPU/Dawn Libs

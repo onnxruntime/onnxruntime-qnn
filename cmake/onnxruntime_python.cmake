@@ -1072,6 +1072,7 @@ if (onnxruntime_USE_QNN)
       TARGET onnxruntime_pybind11_state POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy
         $<TARGET_FILE:onnxruntime_providers_qnn>
+        $<TARGET_FILE:onnxruntime_providers_qnn_abi>
         $<TARGET_FILE:onnxruntime_providers_shared>
         $<TARGET_FILE_DIR:${build_output_target}>/onnxruntime/capi/
     )
