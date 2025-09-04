@@ -1812,7 +1812,8 @@ TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP32_as_FP16) {
                   provider_options,
                   18,  // opset
                   ExpectedEPNodeAssignment::All,
-                  0.01f);  // abs err. Comparing fp16 (QNN) vs fp32 (CPU EP) so can't expect too much.
+                  0.01f,
+                  logging::Severity::kVERBOSE);  // abs err. Comparing fp16 (QNN) vs fp32 (CPU EP) so can't expect too much.
 }
 
 // Test FP16 fusion of HardSigmoid into HardSwish on the HTP backend.
@@ -1836,7 +1837,9 @@ TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP16) {
                         model_fp16_fn,
                         provider_options,
                         18,  // opset
-                        ExpectedEPNodeAssignment::All);
+                        ExpectedEPNodeAssignment::All,
+                        0.004,
+                        logging::Severity::kVERBOSE);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
