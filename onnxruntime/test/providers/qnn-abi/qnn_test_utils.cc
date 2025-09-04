@@ -200,7 +200,6 @@ void RunQnnModelTestABI(const GetTestModelFn& build_test_case, ProviderOptions p
   TryEnableQNNSaverABI(provider_options);
 
   // Run with QNN-ABI.
-  std::cout << "DEBUG: ABI Test" << std::endl;
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = onnxruntime::kQnnABIExecutionProvider;
   Ort::SessionOptions session_options;

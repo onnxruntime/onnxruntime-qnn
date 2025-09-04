@@ -1246,7 +1246,7 @@ Status QnnBackendManager::SetupBackend(bool load_from_cached_context,
   }
 
   if (status.IsOK()) {
-    // ORT_RETURN_IF_ERROR(LoadOpPackage());
+    ORT_RETURN_IF_ERROR(LoadOpPackage());
     LOGS(logger_, VERBOSE) << "LoadOpPackage succeed.";
   }
 

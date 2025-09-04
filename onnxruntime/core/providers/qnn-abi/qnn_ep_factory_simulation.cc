@@ -122,7 +122,6 @@ OrtStatus* CreateEpFactories(const char* registration_name,
                              OrtEpFactory** factories,
                              size_t max_factories,
                              size_t* num_factories) {
-
   if (ort_api_base == nullptr) {
     return nullptr;  // Cannot create status without API base
   }
