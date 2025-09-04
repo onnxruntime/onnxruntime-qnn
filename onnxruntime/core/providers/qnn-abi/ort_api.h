@@ -37,23 +37,17 @@
 #include "core/graph/basic_types.h"
 #include "core/graph/model.h"
 #include "core/graph/graph_viewer.h"
-// #include "core/optimizer/qdq_transformer/selectors_actions/qdq_selectors.h"
-// #include "core/optimizer/qdq_transformer/selectors_actions/shared/utils.h"
 #include "core/providers/common.h"
 #include "core/providers/partitioning_utils.h"
 #include "core/session/abi_logger.h"
 #include "core/graph/abi_graph_types.h"
 #include "core/session/abi_session_options_impl.h"
 
-// #define ORT_API_MANUAL_INIT
 #include "core/session/onnxruntime_c_api.h"
-// #endif
 
 #include "core/common/inlined_containers.h"
 #include "core/session/onnxruntime_session_options_config_keys.h"
 #include "core/session/onnxruntime_run_options_config_keys.h"
-
-// #include "core/session/onnxruntime_cxx_api.h"
 
 #include <functional>
 #include <memory>
@@ -147,44 +141,6 @@ struct DeferOrtRelease {
   std::function<void(T*)> release_func_ = nullptr;
 };
 
-// inline void InitOrtCppApi() {
-//   // Call util function in provider bridge that initializes the global api_ object.
-//   InitProviderOrtApi();
-// }
-
-// /// <summary>
-// /// Creates an onnxruntime or onnx object. Works for both static and shared library builds of QNN EP.
-// /// <!-- Example: auto model = Factory<Model>::Create(/* args ... */); -->
-// /// Example: auto model = Factory&lt;Model&gt;::Create(/* args ... */);
-// /// </summary>
-// /// <typeparam name="T">Type of the object to create</typeparam>
-// template <typename T>
-// struct Factory {
-//   template <typename... Params>
-//   static inline std::unique_ptr<T> Create(Params&&... params) {
-//     return T::Create(std::forward<Params>(params)...);
-//   }
-// };
-
-// inline const ConfigOptions& RunOptions__GetConfigOptions(const RunOptions& run_options) {
-//   return run_options.GetConfigOptions();
-// }
-
-// inline std::unique_ptr<IndexedSubGraph>& ComputeCapability__SubGraph(ComputeCapability& compute_cability) {
-//   return compute_cability.SubGraph();
-// }
-
-// inline std::vector<NodeIndex>& IndexedSubGraph__Nodes(IndexedSubGraph& indexed_sub_graph) {
-//   return indexed_sub_graph.Nodes();
-// }
-
-// std::vector<const Node*> Graph__Nodes(const Graph& graph);
-
-// inline std::pair<std::vector<std::unique_ptr<NodeUnit>>, std::unordered_map<const Node*, const NodeUnit*>>
-// GetQDQNodeUnits(const GraphViewer& graph_viewer, const logging::Logger& logger) {
-//   return QDQ::GetAllNodeUnits(&graph_viewer, logger);
-// }
-
 namespace QDQ {
 
 // Define NodeGroup structure similar to the one in shared/utils.h
@@ -224,10 +180,6 @@ class OrtNodeUnit {
  public:
   explicit OrtNodeUnit(const OrtNode* node, const OrtApi& ort_api);
   explicit OrtNodeUnit(const OrtGraph* graph, const QDQ::OrtNodeGroup& node_group, const OrtApi& ort_api);
-  // NodeUnit(gsl::span<const Node* const> dq_nodes, const Node& target_node, const Node* redundant_clip_node,
-  //          gsl::span<const Node* const> q_nodes, Type unit_type,
-  //          gsl::span<const NodeUnitIODef> inputs, gsl::span<const NodeUnitIODef> outputs,
-  //          size_t input_edge_count, Node::EdgeSet output_edges);
 
   Type UnitType() const noexcept { return type_; }
 
@@ -247,8 +199,6 @@ class OrtNodeUnit {
   }
   // TODO: Id is in fact not equal to index.
   size_t Index() const noexcept { return target_node_->GetId(); }
-  // const std::filesystem::path& ModelPath() const noexcept;
-  // ProviderType GetExecutionProviderType() const noexcept;
 
   const OrtNode& GetNode() const noexcept { return *target_node_; }
   const OrtNode* GetRedundantClipNode() const noexcept { return redundant_clip_node_; }
@@ -281,11 +231,6 @@ class OrtNodeUnit {
 
   std::vector<OrtNodeUnitIODef> inputs_;
   std::vector<OrtNodeUnitIODef> outputs_;
-
-  // size_t input_edge_count_;  // total number of input edges
-
-  // // output edges, hiding any Q nodes involved. src_idx will be value from target node. only used for QDQ node group.
-  // Node::EdgeSet output_edges_;
 };
 
 /**

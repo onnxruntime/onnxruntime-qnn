@@ -68,7 +68,8 @@ class OpBuilderRegistrations {
   // <Op_builder_type, IOpBuilder*>
   std::unordered_map<std::string, const IOpBuilder*> builder_type_builder_map_;
 };
-// void RegisterUDOBuilder(const std::string& op_type, const std::string& op_package);
+
+void RegisterUDOBuilder(const std::string& op_type, const std::string& op_package);
 
 const IOpBuilder* GetOpBuilder(const std::string& onnx_op_type);
 
