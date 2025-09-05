@@ -33,14 +33,14 @@ static void TestTransposeReshapeTransposeABI(const std::vector<int64_t>& input_s
 
     auto& transpose1 = builder.AddNode("Transpose", {input_arg}, {transpose1_out});
     transpose1.AddAttribute("perm", transpose1_perm);
-    transpose1.SetExecutionProviderType(kQnnExecutionProvider);
+    transpose1.SetExecutionProviderType(kQnnABIExecutionProvider);
 
     auto& reshape = builder.AddNode("Reshape", {transpose1_out, reshape_shape_value}, {reshape_out});
-    reshape.SetExecutionProviderType(kQnnExecutionProvider);
+    reshape.SetExecutionProviderType(kQnnABIExecutionProvider);
 
     auto& transpose2 = builder.AddNode("Transpose", {reshape_out}, {transpose2_out});
     transpose2.AddAttribute("perm", transpose2_perm);
-    transpose2.SetExecutionProviderType(kQnnExecutionProvider);
+    transpose2.SetExecutionProviderType(kQnnABIExecutionProvider);
   };
 
   auto& logger = DefaultLoggingManager().DefaultLogger();
@@ -52,7 +52,7 @@ static void TestTransposeReshapeTransposeABI(const std::vector<int64_t>& input_s
   ASSERT_STATUS_OK(graph.Resolve());
 
   std::unique_ptr<TransposeOptimizer> optimizer = std::make_unique<TransposeOptimizer>(CPUAllocator::DefaultInstance(),
-                                                                                       kQnnExecutionProvider);
+                                                                                       kQnnABIExecutionProvider);
   bool modified = false;
   ASSERT_STATUS_OK(optimizer->Apply(graph, modified, logger));
   ASSERT_EQ(modified, expected_optimized);
