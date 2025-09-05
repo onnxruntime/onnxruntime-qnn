@@ -331,15 +331,6 @@ class QnnCompatibilityOverrides:
 
         if not self.per_channel:
             self._make_static_inputs_use_default_weight_type(node)
-            return
-
-        has_weight_no_overrides = node.input[1] in self.initializers and node.input[1] not in self.overrides
-        has_bias_no_overrides = (
-            len(node.input) > 2
-            and node.input[2]
-            and node.input[2] in self.initializers
-            and node.input[2] not in self.overrides
-        )
 
     def _process_sigmoid(self, node: onnx.NodeProto):
         """
