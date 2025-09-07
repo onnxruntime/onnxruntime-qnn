@@ -1741,7 +1741,12 @@ def run_onnxruntime_tests(args, source_dir, ctest_path, build_dir, configs):
             if is_windows():
                 cwd = os.path.join(cwd, config)
 
-            if args.enable_transformers_tool_test and not args.disable_contrib_ops and not args.use_rocm:
+            if (
+                (not args.skip_pip_install)
+                and args.enable_transformers_tool_test
+                and not args.disable_contrib_ops
+                and not args.use_rocm
+            ):
                 # PyTorch is required for transformers tests, and optional for some python tests.
                 # Install cpu only version of torch when cuda is not enabled in Linux.
                 extra = [] if args.use_cuda and is_linux() else ["--index-url", "https://download.pytorch.org/whl/cpu"]
@@ -1819,7 +1824,7 @@ def run_onnxruntime_tests(args, source_dir, ctest_path, build_dir, configs):
                     run_subprocess(
                         [sys.executable, "-m", "unittest", "discover", "-s", "quantization"], cwd=cwd, dll_path=dll_path
                     )
-                    if args.enable_transformers_tool_test:
+                    if (not args.skip_pip_install) and args.enable_transformers_tool_test:
                         import google.protobuf  # noqa: PLC0415
                         import numpy  # noqa: PLC0415
 
@@ -2527,7 +2532,7 @@ def main():
             log.info("Activating emsdk...")
             run_subprocess([emsdk_file, "activate", emsdk_version], cwd=emsdk_dir)
 
-        if args.enable_pybind and is_windows():
+        if (not args.skip_pip_install) and args.enable_pybind and is_windows():
             run_subprocess(
                 [sys.executable, "-m", "pip", "install", "-r", "requirements/pybind/requirements.txt"],
                 cwd=SCRIPT_DIR,
