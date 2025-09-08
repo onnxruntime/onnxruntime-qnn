@@ -1742,7 +1742,7 @@ def run_onnxruntime_tests(args, source_dir, ctest_path, build_dir, configs):
                 cwd = os.path.join(cwd, config)
 
             if (
-                (not args.skip_pip_install)
+                not args.skip_pip_install
                 and args.enable_transformers_tool_test
                 and not args.disable_contrib_ops
                 and not args.use_rocm
@@ -1824,27 +1824,29 @@ def run_onnxruntime_tests(args, source_dir, ctest_path, build_dir, configs):
                     run_subprocess(
                         [sys.executable, "-m", "unittest", "discover", "-s", "quantization"], cwd=cwd, dll_path=dll_path
                     )
-                    if (not args.skip_pip_install) and args.enable_transformers_tool_test:
+                    if args.enable_transformers_tool_test:
                         import google.protobuf  # noqa: PLC0415
                         import numpy  # noqa: PLC0415
 
                         numpy_init_version = numpy.__version__
                         pb_init_version = google.protobuf.__version__
-                        run_subprocess(
-                            [
-                                sys.executable,
-                                "-m",
-                                "pip",
-                                "install",
-                                "-r",
-                                "requirements/transformers-test/requirements.txt",
-                            ],
-                            cwd=SCRIPT_DIR,
-                        )
+                        if not args.skip_pip_install:
+                            run_subprocess(
+                                [
+                                    sys.executable,
+                                    "-m",
+                                    "pip",
+                                    "install",
+                                    "-r",
+                                    "requirements/transformers-test/requirements.txt",
+                                ],
+                                cwd=SCRIPT_DIR,
+                            )
                         run_subprocess([sys.executable, "-m", "pytest", "--durations=0", "transformers"], cwd=cwd)
-                        # Restore initial numpy/protobuf version in case other tests use it
-                        run_subprocess([sys.executable, "-m", "pip", "install", "numpy==" + numpy_init_version])
-                        run_subprocess([sys.executable, "-m", "pip", "install", "protobuf==" + pb_init_version])
+                        if not args.skip_pip_install:
+                            # Restore initial numpy/protobuf version in case other tests use it
+                            run_subprocess([sys.executable, "-m", "pip", "install", "numpy==" + numpy_init_version])
+                            run_subprocess([sys.executable, "-m", "pip", "install", "protobuf==" + pb_init_version])
 
                 if not args.disable_ml_ops:
                     run_subprocess(
@@ -2532,7 +2534,7 @@ def main():
             log.info("Activating emsdk...")
             run_subprocess([emsdk_file, "activate", emsdk_version], cwd=emsdk_dir)
 
-        if (not args.skip_pip_install) and args.enable_pybind and is_windows():
+        if not args.skip_pip_install and args.enable_pybind and is_windows():
             run_subprocess(
                 [sys.executable, "-m", "pip", "install", "-r", "requirements/pybind/requirements.txt"],
                 cwd=SCRIPT_DIR,
