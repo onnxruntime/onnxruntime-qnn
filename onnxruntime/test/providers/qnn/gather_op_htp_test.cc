@@ -226,7 +226,7 @@ TEST_F(QnnHTPBackendTests, GatherOp_InputIndicesInt64) {
   RunOpTest<int64_t, int64_t>("Gather",
                               TestInputDef<int64_t>({3, 2}, false, {1, 2, 3, 4, 5, 6}),
                               TestInputDef<int64_t>({2, 2}, true, {0, 1, 1, 2}),
-                              {utils::MakeAttribute("axis", static_cast<int64_t>(0))},  // Attributes
+                              {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
                               13,
                               ExpectedEPNodeAssignment::All);
 }
