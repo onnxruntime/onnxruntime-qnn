@@ -330,6 +330,7 @@ TEST_F(QnnABIHTPBackendTests, CompileApi_DisableEpCompile_ThenCompileExplicitly)
   Ort::ModelCompilationOptions compile_options(*ort_env, so);
   compile_options.SetInputModelPath(input_model_file);
   compile_options.SetOutputModelPath(output_model_file);
+  compile_options.SetGraphOptimizationLevel(ORT_ENABLE_BASIC);
 
   // Compile the model.
   Ort::Status status = Ort::CompileModel(*ort_env, compile_options);
@@ -372,6 +373,7 @@ TEST_F(QnnABIHTPBackendTests, CompileApi_FromSessionOptions_InputModelFromPath) 
   Ort::ModelCompilationOptions compile_options(*ort_env, so);
   compile_options.SetInputModelPath(input_model_file);
   compile_options.SetOutputModelPath(output_model_file);
+  compile_options.SetGraphOptimizationLevel(ORT_ENABLE_BASIC);
 
   // Compile the model.
   Ort::Status status = Ort::CompileModel(*ort_env, compile_options);
@@ -412,6 +414,7 @@ TEST_F(QnnABIHTPBackendTests, CompileApi_FromSessionOptions_InputModelAsBuffer_E
   compile_options.SetInputModelFromBuffer(reinterpret_cast<const void*>(model_data.data()), model_data.size());
   compile_options.SetOutputModelPath(output_model_file);
   compile_options.SetEpContextEmbedMode(true);
+  compile_options.SetGraphOptimizationLevel(ORT_ENABLE_BASIC);
 
   // Compile the model.
   Ort::Status status = Ort::CompileModel(*ort_env, compile_options);
@@ -449,6 +452,7 @@ TEST_F(QnnABIHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer) {
   // Create model compilation options from the session options. Output model is stored in a buffer.
   Ort::ModelCompilationOptions compile_options(*ort_env, so);
   compile_options.SetInputModelPath(input_model_file);
+  compile_options.SetGraphOptimizationLevel(ORT_ENABLE_BASIC);
 
   Ort::AllocatorWithDefaultOptions allocator;
   void* output_model_buffer = nullptr;
@@ -502,6 +506,7 @@ TEST_F(QnnABIHTPBackendTests, CompileApi_FromSessionOptions_InputAndOutputModels
     compile_options.SetInputModelFromBuffer(reinterpret_cast<const void*>(model_data.data()), model_data.size());
     compile_options.SetOutputModelBuffer(allocator, &output_model_buffer, &output_model_buffer_size);
     compile_options.SetEpContextEmbedMode(true);
+    compile_options.SetGraphOptimizationLevel(ORT_ENABLE_BASIC);
 
     // Compile the model.
     Ort::Status status = Ort::CompileModel(*ort_env, compile_options);
@@ -535,6 +540,7 @@ TEST_F(QnnABIHTPBackendTests, CompileApi_FromSessionOptions_InputAndOutputModels
     std::string bin_file_name = model_name.substr(0, pos) + "_qnn.bin";
     compile_options.SetEpContextBinaryInformation(ToWideString(target_dir).c_str(), ToWideString(model_name).c_str());
     compile_options.SetEpContextEmbedMode(false);
+    compile_options.SetGraphOptimizationLevel(ORT_ENABLE_BASIC);
 
     // Compile the model.
     Ort::Status status = Ort::CompileModel(*ort_env, compile_options);
@@ -594,6 +600,7 @@ TEST_F(QnnABIHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer_Ou
   compile_options.SetOutputModelBuffer(allocator, &output_model_buffer, &output_model_buffer_size);
   compile_options.SetOutputModelExternalInitializersFile(output_initializers_file, 0);
   compile_options.SetEpContextEmbedMode(true);
+  compile_options.SetGraphOptimizationLevel(ORT_ENABLE_BASIC);
 
   // Compile the model.
   Ort::Status status = Ort::CompileModel(*ort_env, compile_options);
