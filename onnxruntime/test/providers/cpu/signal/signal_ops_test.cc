@@ -230,7 +230,7 @@ TEST(SignalOpsTest, STFTFloat) {
       16.000f, 0.000f, 0.0000f, 0.000f, 0.0000f, 0.000f, 0.0000f, 0.000f, 0.0000f, 0.000f, 0.0000f, 0.000f,
       0.0000f, 0.000f, 0.0000f, 0.000f, 0.0000f, 0.000f};
   test.AddOutput<float>("output", output_shape, expected_output);
-  test.Run();
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kQnnExecutionProvider});
 }
 
 TEST(SignalOpsTest, HannWindowFloat) {
