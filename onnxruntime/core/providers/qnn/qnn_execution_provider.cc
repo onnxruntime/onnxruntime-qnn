@@ -8,6 +8,7 @@
 #include <string_view>
 #include <unordered_set>
 
+#include "QnnTypes.h"
 #include "core/common/string_utils.h"
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -1341,6 +1342,17 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
       ORT_RETURN_IF_NOT(SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_),
                         "Failed to set shared QnnBackendManager.");
     }
+  }
+  for (const auto& pair : qnn_models_) {
+    auto graph_name = pair.second->GetGraphInfo()->Name();
+    auto graph_handle = pair.second->GetGraphInfo()->Graph();
+    auto context_handle = pair.second->GetGraphInfo()->GraphContext();
+    LOGS(logger, VERBOSE) << "graph name: " << graph_name;
+    Qnn_ContextBinarySize_t bsize = 0;
+    qnn_backend_manager_->GetQnnInterface().contextGetBinarySize(context_handle, &bsize);
+    LOGS(logger, VERBOSE) << "bsize: " << bsize;
+    QnnContext_Property_t* properties;
+    qnn_backend_manager_->GetQnnInterface().contextGetProperty(context_handle, &properties);
   }
   return Status::OK();
 }
