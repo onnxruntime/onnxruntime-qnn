@@ -6,27 +6,27 @@ param (
                HelpMessage = "The architecture for which to build.")]
     [string]$Arch,
 
-    [Parameter(Mandatory = $true,
-               HelpMessage = "The platform for which to build.")]
-    [string]$TargetPlatform,
-
     [Parameter(Mandatory = $false,
                HelpMessage = "Path to QAIRT SDK.")]
     [string]$QairtSdkRoot,
 
     [Parameter(Mandatory = $false,
-               HelpMessage = "What to do: build|test.")]
-    [string]$Mode = "Build",
+               HelpMessage = "What to do: build|test|generate_sln.")]
+    [string]$Mode = "build",
 
     [Parameter(Mandatory = $false,
                HelpMessage = "The configuration to build.")]
-    [string]$Config = "RelWithDebInfo",
+    [string]$Config = "Release",
 
     [Parameter(Mandatory = $false,
                HelpMessage = "Force regeneration of build system.")]
     [bool]$Update = $false,
 
     [Parameter(Mandatory = $false,
+               HelpMessage = "Path to a target-native python executable.")]
+    [string]$TargetPyExe,
+
+    [Parameter(Mandatory = $true,
                HelpMessage = "Python virtual environment to activate.")]
     [string]$PyVEnv
 )
@@ -34,101 +34,57 @@ param (
 $RepoRoot = (Resolve-Path -Path "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)\..\..\..").Path
 
 . "$RepoRoot\qcom\scripts\windows\tools.ps1"
+. "$RepoRoot\qcom\scripts\windows\utils.ps1"
 
 $BuildRoot = (Join-Path $RepoRoot "build")
-if ($TargetPlatform -eq "android") {
-    $TargetPlatformArch = $TargetPlatform
-    $CMakeGenerator = "Ninja"
-} else {
-    $TargetPlatformArch = "$TargetPlatform-$Arch"
-    $CMakeGenerator = "Visual Studio 17 2022"
-}
-$BuildDir = (Join-Path $BuildRoot "$TargetPlatformArch")
-$ProtocPath = (Join-Path (Join-Path $BuildDir $Config) "Google.Protobuf.Tools.3.21.12\tools\windows_x64\protoc.exe")
-$ValidArchs = "arm64", "arm64ec", "x86_64"
 
-if ($PyVEnv -ne "") {
-    . (Join-Path $PyVEnv "Scripts\Activate.ps1")
-}
-
-if ($QairtSdkRoot -eq "") {
-    $QairtSdkRoot = (Get-PackageContentDir qairt)
+if ($Mode -eq "generate_sln") {
+    $BuildDir = (Join-Path $BuildRoot "vs")
 }
 else {
-    $QairtSdkRoot = Resolve-Path -Path $QairtSdkRoot
+    $BuildDir = (Join-Path $BuildRoot "windows-$Arch")
 }
 
-function Get-QairtSdkFilePath() {
-    "$BuildDir\qairt-sdk-path-$Config.txt"
-}
-
-function Save-QairtSdkFilePath() {
-    $SdkFilePath = (Get-QairtSdkFilePath)
-    if (-Not (Test-Path "$SdkFilePath\..")) {
-        New-Item -Path "$SdkFilePath\.." -ItemType Directory | Out-Null
-    }
-    $QairtSdkRoot | Out-File -FilePath $SdkFilePath
-}
-
-function Test-QairtSdkDiffers() {
-    $QairtSdkPathPath = Get-QairtSdkFilePath
-    if (-Not (Test-Path -Path $QairtSdkPathPath)) {
-        return $True
-    }
-
-    $LastSdkPath = Get-Content -Path $QairtSdkPathPath
-    return $LastSdkPath -ne $QairtSdkRoot
-}
-function Test-UpdateNeeded() {
-    if ($Update) {
-        Write-Host "Build system update was requested."
-        return $True
-    }
-
-    if ($CMakeGenerator -eq "Ninja") {
-        $BuildNinjaPath = "$BuildDir\$Config\build.ninja"
-        if (-Not (Test-Path -Path $BuildNinjaPath)) {
-            Write-Host "$BuildNinjaPath does not exist."
-            return $True
-        }
-    } else {
-        $SlnPath = "$BuildDir\$Config\onnxruntime.sln"
-        if (-Not (Test-Path -Path $SlnPath)) {
-            Write-Host "VS Solution $SlnPath does not exist."
-            return $True
-        }
-    }
-
-    if (Test-QairtSdkDiffers) {
-        Write-Host "Previous build used a different QAIRT SDK."
-        return $True
-    }
-
-    Write-Host "No need to update build system."
-    return $False
-}
+$ValidArchs = "aarch64", "arm64", "arm64ec", "x86_64"
 
 if (-Not ($ValidArchs -contains $Arch)) {
     throw "Invalid arch $Arch. Supported architectures: $ValidArchs"
 }
 
-$ArchArgs = @()
-if ($Arch -eq "x86_64")
-{
-    $HostArch = [System.Runtime.InteropServices.RuntimeInformation,mscorlib]::OSArchitecture
-    if ($HostArch -ne "x64") {
-        throw "Cross-compilation to $Arch is not supported on $HostArch host."
-    }
-    $ArchArgs += "--build_wheel"
-} else {
-    $ArchArgs += "--$Arch"
+Enter-PyVenv $PyVEnv
+
+if ($QairtSdkRoot -eq "") {
+    $QairtSdkRoot = (Get-QairtRoot)
+}
+else {
+    $QairtSdkRoot = Resolve-Path -Path $QairtSdkRoot
 }
 
-if (Test-UpdateNeeded) {
+if ($Mode -eq "generate_sln") {
+    $CMakeGenerator = "Visual Studio 17 2022"
     $BuildIsDirty = $true
-    Save-QairtSdkFilePath
-} else {
-    $BuildIsDirty = $false
+}
+else {
+    $CMakeGenerator = (Get-DefaultCMakeGenerator -Arch $Arch)
+
+    if (Test-UpdateNeeded -BuildDir $BuildDir -Config $Config -CMakeGenerator $CMakeGenerator -Update $Update) {
+        $BuildIsDirty = $true
+        Save-QairtSdkFilePath -BuildDir $BuildDir -Config $Config
+    } else {
+        $BuildIsDirty = $false
+    }
+}
+
+$ArchArgs = @()
+if ($CMakeGenerator -eq "Ninja") {
+    # We don't have Visual Studio to set up the build environment so do it
+    # manually with somthing akin to vcvarsall.bat.
+    Enter-MsvcEnv -TargetArch $Arch
+} elseif ($Arch -ne "x86_64") {
+    # Tell the EP build that we're cross-compiling to ARM64.
+    # We do not do this when using Ninja because our fake vcvars handles
+    # cross-compilation flags.
+    $ArchArgs += "--$Arch"
 }
 
 $CommonArgs = `
@@ -137,138 +93,166 @@ $CommonArgs = `
     "--cmake_generator", $CmakeGenerator, `
     "--config", $Config, `
     "--parallel", `
-    "--path_to_protoc", $ProtocPath, `
-    "--wheel_name_suffix", "qcom-internal"
+    "--compile_no_warning_as_error"
 
-$Actions = @()
 $QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot"
+$GenerateBuild = $false
+$DoBuild = $false
+$BuildWheel = $false
 $MakeTestArchive = $false
 $RunTests = $false
-$TestRunner = $null
+$TestRunner = "$RepoRoot\qcom\scripts\windows\run_tests.ps1"
 
-switch ($TargetPlatform) {
-    "windows" {
-        $TestRunner = "$RepoRoot\qcom\scripts\windows\run_tests.ps1"
-        switch ($Mode) {
-            "build" {
-                if ($BuildIsDirty) {
-                    $Actions += "--update"
-                }
+if ($CMakeGenerator -eq "Ninja") {
+    $CommonArgs += "--use_cache"
+    $env:Path = "$(Get-CCacheBinDir);" + $env:Path
+}
 
-                $Actions += "--build"
-                $PlatformArgs = $ArchArg
-            }
-            "test" {
-                $RunTests = $true
-            }
-            "archive" {
-                $MakeTestArchive = $true
-            }
-            default {
-                throw "Unknown build mode $Mode."
-            }
+if ($TargetPyExe -ne "")
+{
+    # Wheels only supported when we can run Python for the target arch.
+    $BuildWheel = $true
+    $ArchArgs += "--enable_pybind"
+    $BuildVEnv = (Join-Path $BuildDir "venv.build")
+    Write-Host "Building Python wheel using $TargetPyExe"
+}
+else {
+    $BuildVEnv = $PyVEnv
+    Write-Host "Not building a Python wheel"
+}
+
+# The ORT build incorrectly enables use of Kleidiai when using Ninja on Windows,
+# even if ArmNN is not requested. Manually turn it off.
+$PlatformArgs = @("--no_kleidiai")
+
+if ($CMakeGenerator -eq "Ninja") {
+    # The default somehow gives us paths that are too long in CI
+    $PlatformArgs += "--cmake_extra_defines", "CMAKE_OBJECT_PATH_MAX=240"
+}
+
+switch ($Mode) {
+    "build" {
+        if ($BuildIsDirty) {
+            $GenerateBuild = $true
         }
+
+        $DoBuild = $true
     }
-    "android" {
-        if ($BuildIsDirty -and (Test-Path "$BuildDir\$Config")) {
-            # The ORT Android build doesn't seem to support --update, but our QNN root has changed
-            # so we really want to re-run cmake. Blow away the build.
-            Write-Host "Build is dirty: blowing away $BuildDir\$Config"
-            Remove-Item -Recurse -Force "$BuildDir\$Config"
-            if (-not $?) {
-                throw "Failed to scrub $BuildDir\$Config"
-            }
-        }
-
-        $env:Path = "$(Get-PackageBinDir java_windows_x86_64);" + $env:Path
-        $env:Path = "$(Get-PackageBinDir ccache_windows_x86_64);" + $env:Path
-
-        if ($null -ne $env:ANDROID_HOME -and $null -ne $env:ANDROID_NDK_HOME) {
-            $AndroidSdkPath = $env:ANDROID_HOME
-            $AndroidNdkPath = $env:ANDROID_NDK_HOME
-        }
-        else {
-            $AndroidSdkPath = (Get-AndroidSdkRoot)
-            $AndroidNdkPath = (Get-AndroidNdkRoot)
-        }
-
-        $QnnArgs = "--use_qnn", "static_lib", "--qnn_home", "$QairtSdkRoot"
-        $PlatformArgs = "--use_cache", `
-            "--android_sdk_path", $AndroidSdkPath, `
-            "--android_ndk_path", $AndroidNdkPath, `
-            "--android_abi", "arm64-v8a", `
-            "--android_api", "27"
-
-        switch ($Mode) {
-            "build" {
-                $Actions += "--android"
-            }
-            "test" {
-                throw "-Mode test not supported with -TargetPlatform $TargetPlatform."
-            }
-            "archive" {
-                $MakeTestArchive = $true
-            }
-            default {
-                throw "Invalid mode '$Mode'."
-            }
-        }
+    "generate_sln" {
+        $GenerateBuild = $true
+    }
+    "test" {
+        $RunTests = $true
+    }
+    "archive" {
+        $MakeTestArchive = $true
     }
     default {
-        throw "Unknown target platform $TargetPlatform."
+        throw "Unknown build mode $Mode."
     }
 }
 
-$CmakeBinDir = (Get-PackageBinDir cmake_windows_x86_64)
+$CmakeBinDir = (Get-CMakeBinDir)
 $env:Path = "$CmakeBinDir;" + $env:Path
 
 Optimize-ToolsDir
 
 Push-Location $RepoRoot
 
+$failed = $false
 if ($MakeTestArchive) {
     python.exe "$RepoRoot\qcom\scripts\all\archive_tests.py" `
         "--config=$Config" `
         "--qairt-sdk-root=$QairtSdkRoot" `
-        "--target-platform=$TargetPlatformArch"
+        "--target-platform=windows-$Arch"
+    if (-not $?) {
+        $failed = $true
+    }
 }
 else {
-    if (!(Test-Path $ProtocPath)) {
-        Write-Host "$ProtocPath does not exist"
-        $Nuget = (Join-Path (Get-PackageBinDir nuget_win) "nuget.exe")
-        & $Nuget `
-            restore "$RepoRoot\packages.config" `
-            -PackagesDirectory "$BuildDir\$Config" `
-            -ConfigFile "$RepoRoot\NuGet.config"
-    }
-
     if ($CMakeGenerator -eq "Ninja") {
-        $env:Path = "$(Get-PackageBinDir ninja_windows_x86_64);" + $env:Path
+        $env:Path = "$(Get-NinjaBinDir);" + $env:Path
     }
 
     # This platform supports running tests on the host. Prep the build directory
     # to run with our ctest wrapper
     if ($TestRunner) {
-        Copy-Item -Path $TestRunner -Destination "$BuildDir\$Config"
-        Copy-Item "$CMakeBinDir\ctest.exe" -Destination "$BuildDir\$Config"
+        if (-not (Test-Path (Join-Path $BuildDir $Config))) {
+            New-Item -ItemType Directory (Join-Path $BuildDir $Config) | Out-Null
+        }
+        Copy-Item -Path $TestRunner -Destination (Join-Path $BuildDir $Config)
+        Copy-Item (Join-Path $CMakeBinDir "ctest.exe") -Destination (Join-Path $BuildDir $Config)
     }
 
-    if ($Actions.Count -gt 0) {
-        .\build.bat `
-            $Actions `
-            $ArchArgs `
-            $CommonArgs `
-            $QnnArgs `
-            $PlatformArgs
+    if ($GenerateBuild -or $DoBuild) {
+        try {
+            python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
+
+            if ($GenerateBuild) {
+                if (-not (Test-Path $BuildVEnv)) {
+                    & $TargetPyExe -m venv $BuildVEnv
+                    if (-not $?) {
+                        throw "Failed to create build virtual environment"
+                    }
+                }
+
+                Invoke-PyVenv -PyVenv $BuildVEnv {
+                    & python.exe -m pip install uv
+                    & uv.exe pip install -r "$RepoRoot\tools\ci_build\github\windows\python\requirements.txt"
+                    .\build.bat --update $ArchArgs $CommonArgs $QnnArgs $PlatformArgs
+                    if (-not $?) {
+                        throw "Failed to generate build"
+                    }
+                }
+            }
+
+            if ($DoBuild) {
+                & cmake --build (Join-Path $BuildDir $Config) --config $Config
+                if (-not $?) {
+                    throw "Failed to build"
+                }
+
+                if ($BuildWheel) {
+                    $BuildOutputDir = (Join-Path $BuildDir $Config)
+                    if ($CmakeGenerator -eq "Visual Studio 17 2022") {
+                        $BuildOutputDir = (Join-Path $BuildOutputDir $Config)
+                    }
+
+                    if ($env:ORT_NIGHTLY_BUILD) {
+                        $PyNightlyArg = "--nightly_build"
+                    }
+                    Invoke-PyVenv -PyVenv $BuildVEnv {
+                        Invoke-Directory -Path $BuildOutputDir {
+                            & python.exe (Join-Path $RepoRoot "setup.py") `
+                                bdist_wheel --wheel_name_suffix=qnn_qcom_internal $PyNightlyArg
+                            if (-not $?) {
+                                throw "Failed to build wheel"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        finally {
+            # Whatever happens, blow away mirror to avoid it showing up in git; it's okay, it's
+            # very cheap to regenerate.
+            Remove-Item -Recurse -Force (Join-Path $RepoRoot "mirror")
+        }
     }
 
     if ($RunTests) {
-        Push-Location "$BuildDir\$Config"
-        & .\run_tests.ps1
+
+        Push-Location (Join-Path $BuildDir $Config)
+        $OnnxModelsRoot = (Get-OnnxModelsRoot)
+        & .\run_tests.ps1 -OnnxModelsRoot $OnnxModelsRoot
+
+        if (-not $?) {
+            $failed = $true
+        }
     }
 }
 
-if (-not $?) {
+if ($failed) {
     throw "Build failure"
 }
 

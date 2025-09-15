@@ -16,7 +16,37 @@ fi
 
 set -x
 
-sudo apt install libc++-dev python3.10-dev python3.10-venv
+# Add keys and apt source to install more recent clang versions
+apt_gpg_file=/etc/apt/trusted.gpg.d/apt.llvm.org.asc
+if [ ! -x "${apt_gpg_file}" ]; then
+    wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee "${apt_gpg_file}" > /dev/null
+else
+    echo "llvm apt gpg file already exists."
+fi
+
+# This is an awkward filename because of historical reasons, which matches the script based here:
+# https://apt.llvm.org/llvm.sh
+apt_source_file=/etc/apt/sources.list.d/archive_uri-http_apt_llvm_org_jammy_-jammy.list
+if [ ! -x "${apt_source_file}" ]; then
+    echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-16 main" | sudo tee "${apt_source_file}" > /dev/null
+else
+    echo "llvm apt repo already exists."
+fi
+
+sudo apt-get update
+
+sudo apt install clang-16 lld-16 libc++-dev python3.10-dev python3.10-venv
+
+# Configure GPG keyrings and other dependencies for GitHub CLI
+(type -p wget >/dev/null || (sudo apt update && sudo apt-get install wget -y)) \
+	&& sudo mkdir -p -m 755 /etc/apt/keyrings \
+        && out=$(mktemp) && wget -nv -O$out https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        && cat $out | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
+	&& sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+	&& sudo mkdir -p -m 755 /etc/apt/sources.list.d \
+	&& echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+	&& sudo apt update \
+	&& sudo apt install gh -y
 
 sudo -u ortqnnepci mkdir -p "${runner_home}"
 

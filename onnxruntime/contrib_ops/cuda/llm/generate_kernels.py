@@ -223,19 +223,22 @@ def get_file_content(launcher_inl_files, operations):
         instantiate_operation(insts_list, op)
     instantiations = "\n".join(insts_list)
 
-    file_content = f"""{includes}
-namespace onnxruntime::llm
-{{
-namespace kernels
-{{
-namespace cutlass_kernels
-{{
+    file_content = f"""
+#if USE_FPA_INTB_GEMM
+#ifndef EXCLUDE_SM_90
+{includes}
+
+namespace onnxruntime::llm {{
+namespace kernels {{
+namespace cutlass_kernels {{
 
 {instantiations}
 
-}} // namespace cutlass_kernels
-}} // namespace kernels
-}} // namespace onnxruntime::llm
+}}  // namespace cutlass_kernels
+}}  // namespace kernels
+}}  // namespace onnxruntime::llm
+#endif  // EXCLUDE_SM_90
+#endif  // USE_FPA_INTB_GEMM
 """
     return file_content
 

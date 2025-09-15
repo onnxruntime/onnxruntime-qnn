@@ -97,7 +97,7 @@ class ListTasksTask(Task):
         return False
 
     def run_task(self) -> None:
-        from . import plan
+        from . import plan  # noqa: PLC0415
 
         for task_name in sorted(self.tasks):
             print(task_name)
@@ -176,7 +176,7 @@ class RunExecutablesWithVenvTask(Task):
         self.__venv = venv
         self.__executables_and_args = executables_and_args
         self.__env = env
-        self.__cwd = cwd if cwd is not None else REPO_ROOT
+        self.__cwd = cwd
 
     def does_work(self) -> bool:
         return True
@@ -291,3 +291,16 @@ class ConditionalTask(Task):
             self.true_task.run()
         else:
             self.false_task.run()
+
+
+class PyTestTask(RunExecutablesWithVenvTask):
+    def __init__(
+        self,
+        group_name: str | None,
+        venv: Path | None,
+        files_or_dirs: list[str],
+        env: Mapping[str, str] | None = None,
+        cwd: Path | None = None,
+    ):
+        cmd = [["pytest", *files_or_dirs]]
+        super().__init__(group_name, venv, cmd, env, cwd)

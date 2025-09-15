@@ -1,5 +1,12 @@
 # VM Setup
 
+## Existing VMs
+
+A list of current VMs can be found on the repo's
+[runner configuration page](https://github.qualcomm.com/MLG/onnxruntime-qnn-ep/settings/actions/runners). Windows runner
+hostnames are always `$RunnerName.na.qualcomm.com`. For example, `QCOM-N38FTQLTX0` is `QCOM-N38FTQLTX0.na.qualcomm.com`.
+Linux VMs do are not on `.na` and can generally be accessed via their bare hostname, e.g., `ssh ort-ep-lin-01`.
+
 ## Access Groups
 
 Before proceeding, please join the following:
@@ -85,13 +92,16 @@ Run the installer, ensuring to add the following:
 
 #### Other Software
 
-* [Python 3.12.10 for Windows](https://www.python.org/downloads/windows/)
+* [Python 3.12.10 for Windows (64-bit)](https://www.python.org/downloads/windows/)
   * Note: Uses the same version of Python as Microsoft's external CI
+  * Install the 64-bit (AMD64) version, _even on ARM64 runners_.
   * Check `Add python.exe to PATH`
   * Customize Installation
     * `for all users (requires admin privileges)`
     * `Install Python 3.12 for all users` (yes, a second time on the second page)
   * (After files are copied): `Disable path length limit`
+* _ARM64 only_: Python 3.12.10 for ARM64
+  * Same as above, except **do not `Add python.exe to PATH`**.
 * [Git for Windows](https://git-scm.com/download/win)
   * Select "Git from the command line and also from 3rd-party software" during install.
   * Use bundled OpenSSH.
@@ -110,7 +120,11 @@ The GitHub runner runs as a Windows service. Log in as the local administrator a
 
 #### Build Configuration
 
-Set the environment variable `ORT_BUILD_TOOLS_PATH` to `C:\Users\OrtQnnEpCi\.ort-build-tools`.
+* Set the environment variable `ORT_BUILD_TOOLS_PATH` to `C:\Users\OrtQnnEpCi\.ort-build-tools`.
+* Set `REQUESTS_CA_BUNDLE` to the location of the Netskope combined certificate as
+  [described here](https://qualcomm.sharepoint.com/teams/cloudproxy/SitePages/Certificate-Management.aspx). We've seen
+  `%ProgramData%\Netskope\STAgent\download\nscacert_combined.pem` disappear unexpectedly on a WoS CI machine so
+  consider putting this file somewhere else, such as `C:\certificates\nscacert_combined.pem`.
 
 ## Linux
 
@@ -128,7 +142,7 @@ five VMs, four of which we actually wanted. In case it comes up again, here's th
 * Memory Size (GBs): `32`
 * Data Drive Size (GBs): `100`
 * Number of Servers: up to you
-* Server Name 1: `ort-ep-win-XX`
+* Server Name 1: `ort-ep-lin-XX`
 * Lease Duration (months): `12 months` (or more if possible)
 * Backup: `No Backup`
 * Admin Contact Group: `ort-qnn-ep-ci-admin-contacts`

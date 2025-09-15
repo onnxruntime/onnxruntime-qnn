@@ -21,6 +21,7 @@ import tqdm
 import yaml
 
 QCOM_ROOT = Path(__file__).parent.parent.parent
+REPO_ROOT = QCOM_ROOT.parent
 PACKAGE_CONFIG = QCOM_ROOT / "packages.yml"
 DEFAULT_PACKAGE_CACHE_DIR = Path(
     os.environ.get(
@@ -29,6 +30,10 @@ DEFAULT_PACKAGE_CACHE_DIR = Path(
     )
 )
 DEFAULT_MAX_CACHE_SIZE_BYTES = int(os.environ.get("ORT_BUILD_PACKAGE_CACHE_SIZE", f"{5 * 1024 * 1024 * 1024}"))  # 5 GiB
+
+DEFAULT_TOOLS_DIR = Path(os.environ.get("ORT_BUILD_TOOLS_PATH", REPO_ROOT / "build" / "tools"))
+
+CAFILE = os.environ.get("REQUESTS_CA_BUNDLE", certifi.where())
 
 
 class FileCache:
@@ -41,7 +46,14 @@ class FileCache:
         self.__cache_dir.mkdir(exist_ok=True)
         self.__max_cache_size_bytes = max_cache_size_bytes
 
-    def fetch(self, cache_key: str, url: str, expected_sha256: str | None) -> Path:
+    def fetch(
+        self,
+        cache_key: str,
+        url: str,
+        expected_sha256: str | None = None,
+        expected_sha1: str | None = None,
+        expected_md5: str | None = None,
+    ) -> Path:
         """
         Get path to a local copy of the given URL.
 
@@ -58,10 +70,11 @@ class FileCache:
 
             # Defer writing the final file so we don't leave partial downloads if we get killed.
             with tempfile.SpooledTemporaryFile(mode="wr+b") as tmp_file:
-                with urllib.request.urlopen(
-                    url, context=ssl.create_default_context(cafile=certifi.where())
-                ) as response:
-                    length = int(response.getheader("content-length")) / 1024 / 1024
+                with urllib.request.urlopen(url, context=ssl.create_default_context(cafile=CAFILE)) as response:
+                    content_length = response.getheader("content-length")
+                    length = (
+                        int(response.getheader("content-length")) / 1024 / 1024 if content_length is not None else 0
+                    )
                     with tqdm.tqdm(
                         total=length,
                         unit="MiB",
@@ -75,14 +88,19 @@ class FileCache:
                             pbar.update(len(chunk) / 1024 / 1024)
 
                 # Make sure the download's hash matches
-                if expected_sha256 is not None:
-                    tmp_file.seek(0)
-                    actual_sha256 = hashlib.sha256()
-                    for bytes in iter(lambda: tmp_file.read(32768), b""):
-                        actual_sha256.update(bytes)
-                    logging.debug(f"SHA256 hash for {cache_file_path.name}: {actual_sha256.hexdigest()}")
-                    if expected_sha256 != actual_sha256.hexdigest():
-                        raise ValueError(f"sha256 mismatch for {cache_file_path.name}")
+                for expected_sha, sha_name, sha_fn in [
+                    (expected_sha1, "SHA1", hashlib.sha1),
+                    (expected_sha256, "SHA256", hashlib.sha256),
+                    (expected_md5, "MD5", hashlib.md5),
+                ]:
+                    if expected_sha is not None:
+                        tmp_file.seek(0)
+                        actual_sha = sha_fn()
+                        for bytes in iter(lambda: tmp_file.read(32768), b""):
+                            actual_sha.update(bytes)
+                        logging.debug(f"{sha_name} hash for {cache_file_path.name}: {actual_sha.hexdigest()}")
+                        if expected_sha != actual_sha.hexdigest():
+                            raise ValueError(f"{sha_name} mismatch for {cache_file_path.name}")
 
                 # Write the final file. Note that SpooledTemporaryFile doesn't necessarily create a file
                 # so there's a good chance we're writing to disk for the first time.
@@ -126,14 +144,14 @@ class PackageManager:
     A simple package manager.
     """
 
-    def __init__(self, package: str, package_root: Path) -> None:
+    def __init__(self, package: str, package_root: Path | None = None) -> None:
         full_config = self.__parse_config(PACKAGE_CONFIG)
         if package not in full_config:
             raise ValueError(f"Unknown package {package}.")
         self.__cache = FileCache()
         self.__config = full_config[package]
         self.__package = package
-        self.__package_root = package_root
+        self.__package_root = package_root if package_root is not None else DEFAULT_TOOLS_DIR
         self.__package_root.mkdir(parents=True, exist_ok=True)
 
     @classmethod
@@ -199,7 +217,13 @@ class PackageManager:
         # Fetch the package archive
         cache_key = str(self.get_rel_package_dir())
         url = self.__format(self.__config["url"])
-        package_path = self.__cache.fetch(cache_key, url, self.__config.get("sha256", None))
+        package_path = self.__cache.fetch(
+            cache_key,
+            url,
+            self.__config.get("sha256", None),
+            self.__config.get("sha1", None),
+            self.__config.get("md5", None),
+        )
 
         # Similar to downloads, we extract to a temporary directory and rename on
         # success to avoid partial extrations if we get killed.
@@ -262,7 +286,6 @@ def make_parser() -> argparse.ArgumentParser:
         "--package-root",
         action="store",
         help="Path to the package installation directory",
-        required=True,
         type=Path,
     )
 

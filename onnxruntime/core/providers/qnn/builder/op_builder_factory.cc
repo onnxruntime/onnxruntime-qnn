@@ -65,6 +65,8 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
     CreateSimpleOpBuilder("GridSample", *this);
 
     CreateSimpleOpBuilder("LpNormalization", *this);
+
+    CreateSimpleOpBuilder("ScatterElements", *this);
   }
 
   {
@@ -187,11 +189,27 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   }
 
   {
+    CreateMeanOpBuilder("Mean", *this);
+  }
+
+  {
     CreateLSTMOpBuilder("LSTM", *this);
   }
 
   {
     CreateCumSumOpBuilder("CumSum", *this);
+  }
+
+  {
+    CreateGatherNDOpBuilder("GatherND", *this);
+  }
+
+  {
+    CreateModOpBuilder("Mod", *this);
+  }
+
+  {
+    CreateThresholdedReluOpBuilder("ThresholdedRelu", *this);
   }
 }
 

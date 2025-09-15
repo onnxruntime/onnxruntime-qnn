@@ -537,6 +537,7 @@ set(onnxruntime_mobile_util_srcs
     ${REPO_ROOT}/tools/python/util/pytorch_export_helpers.py
     ${REPO_ROOT}/tools/python/util/reduced_build_config_parser.py
     ${REPO_ROOT}/tools/python/util/update_onnx_opset.py
+    ${REPO_ROOT}/tools/python/remove_initializer_from_input.py
 )
 file(GLOB onnxruntime_ort_format_model_srcs CONFIGURE_DEPENDS
     ${REPO_ROOT}/tools/python/util/ort_format_model/*.py
@@ -737,6 +738,21 @@ if (onnxruntime_USE_OPENVINO)
         ${onnxruntime_python_openvino_python_srcs}
         $<TARGET_FILE_DIR:${build_output_target}>/onnxruntime/tools/
   )
+endif()
+
+if (onnxruntime_USE_MIGRAPHX)
+  if (CMAKE_HOST_SYSTEM_NAME STREQUAL "Windows")
+    add_custom_command(
+            TARGET onnxruntime_pybind11_state POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy
+            ${MIGRAPHX_LIB_FILES}
+            $<TARGET_FILE_DIR:${build_output_target}>/onnxruntime/capi/)
+    add_custom_command(
+            TARGET onnxruntime_pybind11_state POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy
+            ${HIPSDK_LIB_FILES}
+            $<TARGET_FILE_DIR:${build_output_target}>/onnxruntime/capi/)
+  endif()
 endif()
 
 if (onnxruntime_ENABLE_EXTERNAL_CUSTOM_OP_SCHEMAS)
@@ -1067,12 +1083,10 @@ if (onnxruntime_USE_QNN)
         ${QNN_LIB_FILES}
         $<TARGET_FILE_DIR:${build_output_target}>/onnxruntime/capi/
   )
-  if (EXISTS "${onnxruntime_QNN_HOME}/Qualcomm AI Hub Proprietary License.pdf")
+  if (EXISTS "${onnxruntime_QNN_HOME}/LICENSE.pdf")
     add_custom_command(
       TARGET onnxruntime_pybind11_state POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy
-          "${onnxruntime_QNN_HOME}/Qualcomm AI Hub Proprietary License.pdf"
-          $<TARGET_FILE_DIR:${build_output_target}>/onnxruntime/
+        COMMAND ${CMAKE_COMMAND} -E copy "${onnxruntime_QNN_HOME}/LICENSE.pdf" $<TARGET_FILE_DIR:${build_output_target}>/onnxruntime/Qualcomm_LICENSE.pdf
     )
   endif()
 endif()
@@ -1101,7 +1115,7 @@ if (onnxruntime_USE_WEBGPU)
       )
     endif()
   endif()
-  if (onnxruntime_BUILD_DAWN_MONOLITHIC_LIBRARY)
+  if (onnxruntime_BUILD_DAWN_SHARED_LIBRARY)
     add_custom_command(
       TARGET onnxruntime_pybind11_state POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy

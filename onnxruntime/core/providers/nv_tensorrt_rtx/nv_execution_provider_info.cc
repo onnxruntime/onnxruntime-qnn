@@ -17,6 +17,7 @@ NvExecutionProviderInfo NvExecutionProviderInfo::FromProviderOptions(const Provi
   NvExecutionProviderInfo info{};
   void* user_compute_stream = nullptr;
   void* onnx_bytestream = nullptr;
+  void* external_data_bytestream = nullptr;
   ORT_THROW_IF_ERROR(
       ProviderOptionsParser{}
           .AddValueParser(
@@ -48,34 +49,41 @@ NvExecutionProviderInfo NvExecutionProviderInfo::FromProviderOptions(const Provi
           .AddAssignmentToReference(nv::provider_option_names::kProfilesMaxShapes, info.profile_max_shapes)
           .AddAssignmentToReference(nv::provider_option_names::kProfilesOptShapes, info.profile_opt_shapes)
           .AddAssignmentToReference(nv::provider_option_names::kCudaGraphEnable, info.cuda_graph_enable)
+          .AddAssignmentToReference(nv::provider_option_names::kUseExternalDataInitializer, info.use_external_data_initializer)
           .AddAssignmentToReference(nv::provider_option_names::kMultiProfileEnable, info.multi_profile_enable)
-          .AddValueParser(
-              nv::provider_option_names::kONNXBytestream,
-              [&onnx_bytestream](const std::string& value_str) -> Status {
-                size_t address;
-                ORT_RETURN_IF_ERROR(ParseStringWithClassicLocale(value_str, address));
-                onnx_bytestream = reinterpret_cast<void*>(address);
-                return Status::OK();
-              })
-          .AddAssignmentToReference(nv::provider_option_names::kONNXBytestreamSize, info.onnx_bytestream_size)
+          .AddAssignmentToReference(nv::provider_option_names::kRuntimeCacheFile, info.runtime_cache_path)
           .Parse(options));  // add new provider option here.
 
   info.user_compute_stream = user_compute_stream;
   info.has_user_compute_stream = (user_compute_stream != nullptr);
   info.onnx_bytestream = onnx_bytestream;
+  info.external_data_bytestream = external_data_bytestream;
 
   // EP context settings
-  const auto embed_enable = session_options.GetConfigOrDefault(kOrtSessionOptionEpContextEnable, "0");
-  if (embed_enable == "0") {
+  // when EP context is enabled, default is to embed the engine in the context model
+  // weight stripped engine is always enabled when EP context is enabled
+
+  const auto ep_context_enable = session_options.GetConfigOrDefault(kOrtSessionOptionEpContextEnable, "0");
+  if (ep_context_enable == "0") {
     info.dump_ep_context_model = false;
-  } else if (embed_enable == "1") {
+  } else if (ep_context_enable == "1") {
     info.dump_ep_context_model = true;
+    // We want to reenable weightless engines as soon constant initializers are supported as inputs
+    info.weight_stripped_engine_enable = false;
   } else {
     ORT_THROW("Invalid ", kOrtSessionOptionEpContextEnable, " must 0 or 1");
   }
   info.ep_context_file_path = session_options.GetConfigOrDefault(kOrtSessionOptionEpContextFilePath, "");
 
-  const auto embed_mode = std::stoi(session_options.GetConfigOrDefault(kOrtSessionOptionEpContextEmbedMode, "1"));
+  // If embed mode is not specified, default to 1 if dump_ep_context_model is true, otherwise 0
+  auto embed_mode = std::stoi(session_options.GetConfigOrDefault(kOrtSessionOptionEpContextEmbedMode, "-1"));
+  if (embed_mode == -1) {
+    if (info.dump_ep_context_model)
+      embed_mode = 1;
+    else
+      embed_mode = 0;
+  }
+
   if (0 <= embed_mode || embed_mode < 2) {
     info.ep_context_embed_mode = embed_mode;
   } else {
@@ -98,9 +106,8 @@ ProviderOptions NvExecutionProviderInfo::ToProviderOptions(const NvExecutionProv
       {nv::provider_option_names::kProfilesMaxShapes, MakeStringWithClassicLocale(info.profile_max_shapes)},
       {nv::provider_option_names::kProfilesOptShapes, MakeStringWithClassicLocale(info.profile_opt_shapes)},
       {nv::provider_option_names::kCudaGraphEnable, MakeStringWithClassicLocale(info.cuda_graph_enable)},
-      {nv::provider_option_names::kONNXBytestream, MakeStringWithClassicLocale(info.onnx_bytestream)},
-      {nv::provider_option_names::kONNXBytestreamSize, MakeStringWithClassicLocale(info.onnx_bytestream_size)},
-  };
+      {nv::provider_option_names::kUseExternalDataInitializer, MakeStringWithClassicLocale(info.use_external_data_initializer)},
+      {nv::provider_option_names::kRuntimeCacheFile, MakeStringWithClassicLocale(info.runtime_cache_path)}};
   return options;
 }
 }  // namespace onnxruntime

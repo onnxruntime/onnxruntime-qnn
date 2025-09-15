@@ -10,6 +10,7 @@
 #include <type_traits>
 
 #include "core/framework/customregistry.h"
+#include "core/framework/float4.h"
 #include "core/framework/prepacked_weights_container.h"
 #include "core/framework/run_options.h"
 #include "core/framework/tensor.h"
@@ -39,6 +40,7 @@ class BaseTester {
           ONNX_NAMESPACE::OpSchemaRegistry::DomainToVersionRange().Map().at(ONNX_NAMESPACE::ONNX_DOMAIN).second;
       opset_version_ = latest_onnx_version;
     }
+    number_of_nodes_ = 0;
   }
 
   // Derived class to implement to provide the model to test.
@@ -621,6 +623,8 @@ class BaseTester {
     test_allow_released_onnx_opset_only_ = false;
   }
 
+  int GetNumberOfNodesAfterRun() const;
+
  protected:
   //// if the derived class is caching the model this helper can be called in CreateModelToTest to reset the nodes
   // static void ClearEpsForAllNodes(Graph& graph);
@@ -695,7 +699,15 @@ class BaseTester {
           const int64_t expected_values_count = T::CalcNumInt4Pairs(shape.Size());
           ORT_ENFORCE(expected_values_count == values_count, values_count,
                       " input values doesn't match tensor size of ", expected_values_count);
-        } else {
+        }
+#if !defined(DISABLE_FLOAT4_TYPES)
+        else if constexpr (std::is_same_v<T, Float4E2M1x2>) {
+          const int64_t expected_values_count = T::CalcNumFloat4Pairs(shape.Size());
+          ORT_ENFORCE(expected_values_count == values_count, values_count,
+                      " input values doesn't match tensor size of ", expected_values_count);
+        }
+#endif
+        else {
           ORT_ENFORCE(shape.Size() == values_count, values_count, " input values doesn't match tensor size of ",
                       shape.Size());
         }
@@ -767,6 +779,7 @@ class BaseTester {
   std::vector<Data> input_data_;
   std::vector<Data> output_data_;
   std::vector<OrtValue> fetches_;
+  int number_of_nodes_;
 
   bool testing_function_called_{};  // has the function that performs the actual testing been called yet?
 
