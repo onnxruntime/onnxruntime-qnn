@@ -36,8 +36,7 @@ struct QNNProviderFactory : IExecutionProviderFactory {
 
     for (const auto& [key, value] : config_options_map) {
       if (key.rfind(key_prefix, 0) == 0) {
-        // Do not overwrite the provider option if already present.
-        provider_options.insert({key.substr(key_prefix.size()), value});
+        provider_options[key.substr(key_prefix.size())] = value;
       }
     }
 
@@ -88,26 +87,6 @@ struct QNN_Provider : Provider {
                                   const OrtSessionOptions& session_options,
                                   const OrtLogger& logger,
                                   std::unique_ptr<IExecutionProvider>& ep) override {
-    if (num_devices == 0) {
-      return Status(common::ONNXRUNTIME, ORT_EP_FAIL, "No devices were provided to QNN EP.");
-    } else if (num_devices > 1) {
-      // Currently, QNN EP does not handle partitioning across multiple backends. For now, we choose
-      // to default to HTP if multiple EP devices are provided.
-      LOGS_DEFAULT(WARNING) << "QNN EP only supports one device. Only the NPU device will be used.";
-      auto backend_path_it = provider_options.find("backend_path");
-      if (backend_path_it != provider_options.end()) {
-        const std::filesystem::path parent_path = std::filesystem::path{backend_path_it->second}.parent_path();
-#ifdef _WIN32
-        const auto htp_backend_lib = "QnnHtp.dll";
-#else
-        const auto htp_backend_lib = "libQnnHtp.so";
-#endif
-        backend_path_it->second = (parent_path / htp_backend_lib).string();
-      } else {
-        return Status(common::ONNXRUNTIME, ORT_EP_FAIL, "Failed to find \"backend_path\" in QNN provider_options.");
-      }
-    }
-
     const ConfigOptions* config_options = &session_options.GetConfigOptions();
 
     std::array<const void*, 2> configs_array = {&provider_options, config_options};
@@ -192,7 +171,7 @@ struct QnnEpFactory : OrtEpFactory {
   }
 
   // Returns the name for the EP. Each unique factory configuration must have a unique name.
-  // Ex: a factory that supports NPU should have a different name than a factory that supports GPU.
+  // Ex: a factory that supports NPU should have a different than a factory that supports GPU.
   static const char* GetNameImpl(const OrtEpFactory* this_ptr) noexcept {
     const auto* factory = static_cast<const QnnEpFactory*>(this_ptr);
     return factory->ep_name.c_str();
@@ -214,9 +193,9 @@ struct QnnEpFactory : OrtEpFactory {
 
   // Creates and returns OrtEpDevice instances for all OrtHardwareDevices that this factory supports.
   // An EP created with this factory is expected to be able to execute a model with *all* supported
-  // hardware devices at once. QNN EP is not currently setup to partition a model among multiple
-  // different QNN backends at once (e.g, npu, cpu, gpu), and although this factory handles multiple
-  // backends, execution will default to npu if multiple devices are provided during session-creation.
+  // hardware devices at once. A single instance of QNN EP is not currently setup to partition a model among
+  // multiple different QNN backends at once (e.g, npu, cpu, gpu), so currently this factory instance is set
+  // to pick the last specified backend only.
   static OrtStatus* GetSupportedDevicesImpl(OrtEpFactory* this_ptr,
                                             const OrtHardwareDevice* const* devices,
                                             size_t num_devices,
