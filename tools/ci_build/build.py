@@ -374,6 +374,8 @@ def generate_build_tree(
     types_to_disable = args.disable_types
     # enable/disable float 8 types
     disable_float8_types = args.android or ("float8" in types_to_disable)
+    # enable/disable float 4 type
+    disable_float4_types = args.android or args.use_rocm or ("float4" in types_to_disable)
     disable_optional_type = "optional" in types_to_disable
     disable_sparse_tensors = "sparsetensor" in types_to_disable
     if is_windows():
@@ -512,6 +514,7 @@ def generate_build_tree(
         "-Donnxruntime_USE_WEBNN=" + ("ON" if args.use_webnn else "OFF"),
         "-Donnxruntime_USE_CANN=" + ("ON" if args.use_cann else "OFF"),
         "-Donnxruntime_DISABLE_FLOAT8_TYPES=" + ("ON" if disable_float8_types else "OFF"),
+        "-Donnxruntime_DISABLE_FLOAT4_TYPES=" + ("ON" if disable_float4_types else "OFF"),
         "-Donnxruntime_DISABLE_SPARSE_TENSORS=" + ("ON" if disable_sparse_tensors else "OFF"),
         "-Donnxruntime_DISABLE_OPTIONAL_TYPE=" + ("ON" if disable_optional_type else "OFF"),
         "-Donnxruntime_CUDA_MINIMAL=" + ("ON" if args.enable_cuda_minimal_build else "OFF"),
@@ -831,8 +834,6 @@ def generate_build_tree(
 
     if is_macOS() and not args.android:
         add_default_definition(cmake_extra_defines, "CMAKE_OSX_ARCHITECTURES", args.osx_arch)
-        if args.apple_deploy_target:
-            cmake_args += ["-DCMAKE_OSX_DEPLOYMENT_TARGET=" + args.apple_deploy_target]
         # Code sign the binaries, if the code signing development identity and/or team id are provided
         if args.xcode_code_signing_identity:
             cmake_args += ["-DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY=" + args.xcode_code_signing_identity]
@@ -923,7 +924,6 @@ def generate_build_tree(
         cmake_args += [
             "-Donnxruntime_BUILD_SHARED_LIB=ON",
             "-DCMAKE_OSX_SYSROOT=" + args.apple_sysroot,
-            "-DCMAKE_OSX_DEPLOYMENT_TARGET=" + args.apple_deploy_target,
             # we do not need protoc binary for ios cross build
             "-Dprotobuf_BUILD_PROTOC_BINARIES=OFF",
             "-DPLATFORM_NAME=" + platform_name,
@@ -939,16 +939,15 @@ def generate_build_tree(
         if args.macos == "Catalyst":
             macabi_target = f"{args.osx_arch}-apple-ios{args.apple_deploy_target}-macabi"
             cmake_args += [
-                "-DCMAKE_CXX_COMPILER_TARGET=" + macabi_target,
-                "-DCMAKE_C_COMPILER_TARGET=" + macabi_target,
-                "-DCMAKE_CC_COMPILER_TARGET=" + macabi_target,
                 f"-DCMAKE_CXX_FLAGS=--target={macabi_target}",
-                f"-DCMAKE_CXX_FLAGS_RELEASE=-O3 -DNDEBUG --target={macabi_target}",
                 f"-DCMAKE_C_FLAGS=--target={macabi_target}",
-                f"-DCMAKE_C_FLAGS_RELEASE=-O3 -DNDEBUG --target={macabi_target}",
-                f"-DCMAKE_CC_FLAGS=--target={macabi_target}",
-                f"-DCMAKE_CC_FLAGS_RELEASE=-O3 -DNDEBUG --target={macabi_target}",
+                f"-DCMAKE_ASM_FLAGS=--target={macabi_target}",
             ]
+        else:
+            cmake_args += [
+                "-DCMAKE_OSX_DEPLOYMENT_TARGET=" + args.apple_deploy_target,
+            ]
+
         if args.visionos:
             cmake_args += [
                 "-DCMAKE_SYSTEM_NAME=visionOS",
@@ -1515,8 +1514,8 @@ def run_android_tests(args, source_dir, build_dir, config, cwd):
     def adb_shell(*args, **kwargs):
         return run_subprocess([sdk_tool_paths.adb, "shell", *args], **kwargs)
 
-    def adb_install(*args, **kwargs):
-        return run_subprocess([sdk_tool_paths.adb, "install", *args], **kwargs)
+    def adb_logcat(*args, **kwargs):
+        return run_subprocess([sdk_tool_paths.adb, "logcat", *args], **kwargs)
 
     def run_adb_shell(cmd):
         # GCOV_PREFIX_STRIP specifies the depth of the directory hierarchy to strip and
@@ -1541,6 +1540,17 @@ def run_android_tests(args, source_dir, build_dir, config, cwd):
                 )
             )
             context_stack.callback(android.stop_emulator, emulator_proc)
+
+        all_android_tests_passed = False
+
+        def dump_logs_on_failure():
+            if not all_android_tests_passed:
+                log.warning("Android test failed. Dumping logs.")
+                adb_logcat("-d")  # dump logs
+
+        context_stack.callback(dump_logs_on_failure)
+
+        adb_logcat("-c")  # clear logs
 
         adb_push("testdata", device_dir, cwd=cwd)
         if is_linux() and os.path.exists("/data/onnx"):
@@ -1592,6 +1602,8 @@ def run_android_tests(args, source_dir, build_dir, config, cwd):
             run_adb_shell(
                 f"LD_LIBRARY_PATH=$LD_LIBRARY_PATH:{device_dir} {device_dir}/onnxruntime_customopregistration_test"
             )
+
+        all_android_tests_passed = True
 
 
 def run_ios_tests(args, source_dir, config, cwd):
@@ -1695,8 +1707,10 @@ def run_onnxruntime_tests(args, source_dir, ctest_path, build_dir, configs):
             run_ios_tests(args, source_dir, config, cwd)
             continue
         dll_path_list = []
-        if args.use_tensorrt or args.use_nv_tensorrt_rtx:
+        if args.use_tensorrt:
             dll_path_list.append(os.path.join(args.tensorrt_home, "lib"))
+        if args.use_nv_tensorrt_rtx:
+            dll_path_list.append(os.path.join(args.tensorrt_rtx_home, "lib"))
 
         dll_path = None
         if len(dll_path_list) > 0:

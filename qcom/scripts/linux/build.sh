@@ -47,6 +47,10 @@ for i in "$@"; do
       target_platform="${i#*=}"
       shift
       ;;
+    --target-arch=*)
+      target_arch="${i#*=}"
+      shift
+      ;;
     *)
       die "Unknown option: $i"
       ;;
@@ -56,7 +60,7 @@ done
 cmake_generator="Ninja"
 
 build_root="${REPO_ROOT}/build"
-build_dir="${build_root}/${target_platform}"
+build_dir="${build_root}/${target_platform}-${target_arch}"
 
 qairt_sdk_file_path="${build_dir}/qairt-sdk-path-${config}.txt"
 
@@ -90,8 +94,7 @@ test_runner=
 case "${target_platform}" in
   linux)
     qnn_args=(--use_qnn --qnn_home "${qairt_sdk_root}")
-    platform_args=(--build_shared_lib
-                   --build_wheel)
+    platform_args=(--build_shared_lib)
 
     test_runner="${REPO_ROOT}/qcom/scripts/linux/run_tests.sh"
 
@@ -100,6 +103,20 @@ case "${target_platform}" in
         action_args+=("--build")
         if [ -n "${build_is_dirty}" ]; then
           action_args+=("--update")
+        fi
+        if [ "${target_arch}" == "aarch64-oe-gcc11.2" ]; then
+          toolchain_root="$(get_linux_oe_gcc112_toolchain_root)"
+          toolchain_cmake="${REPO_ROOT}/qcom/scripts/linux/linux-aarch64-gcc11.toolchain.cmake"
+
+          # We need $toolchain_root from the toolchain.cmake, but the toolchain.cmake is sometimes
+          # evaluated without the project's CMakeCache.txt entries. Pass it through the environment :-/
+          export ORT_BUILD_LINUX_TOOLCHAIN_ROOT="${toolchain_root}"
+
+          platform_args+=(--cmake_extra_defines
+                          CMAKE_TOOLCHAIN_FILE:FILEPATH="${toolchain_cmake}"
+                          ARM64:BOOL=TRUE)
+        else
+          platform_args+=(--build_wheel)
         fi
         ;;
       test)
@@ -167,7 +184,7 @@ trap scrub_mirror EXIT
 if [ -n "${make_test_archive}" ]; then
   python "${REPO_ROOT}/qcom/scripts/all/archive_tests.py" \
     "--config=${config}" \
-    "--target-platform=${target_platform}" \
+    "--target-platform=${target_platform}-${target_arch}" \
     "--qairt-sdk-root=${qairt_sdk_root}"
 else
   cd "${REPO_ROOT}"
@@ -191,15 +208,43 @@ else
   fi
 
   if [ -n "${run_tests}" ]; then
-    # Run tests using our ctest wrapper.
+    onnx_models_root="$(get_onnx_models_dir)"
+
     cd "${build_dir}/${config}/"
+
+    # Run tests using our ctest wrapper.
+    log_info "-=-=-=- Running unit tests -=-=-=-=-"
     "./$(basename ${test_runner})"
 
-    # Run node module tests
+    log_info "-=-=-=- Running ONNX model tests -=-=-=-=-"
     "${build_dir}/${config}/onnx_test_runner" \
         -j 1 \
         -e qnn \
         -i "backend_type|cpu" \
-        "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node"
+        "${build_dir}/${config}/_deps/onnx-src/onnx/backend/test/data/node"
+
+    log_info "-=-=-=- Running onnx/models float32 tests -=-=-=-=-"
+    cd "${onnx_models_root}"
+    "${build_dir}/${config}/onnx_test_runner" \
+        -j 1 \
+        -e qnn \
+        -i "backend_type|cpu" \
+        "testdata/float32"
+
+    log_info "-=-=-=- Running onnx/models qdq tests -=-=-=-=-"
+    "${build_dir}/${config}/onnx_test_runner" \
+        -j 1 \
+        -e qnn \
+        -i "backend_type|htp" \
+        "testdata/qdq"
+
+    log_info "-=-=-=- Running onnx/models qdq tests with context cache enabled -=-=-=-=-"
+    log_debug "Scrubbing old context caches"
+    find "testdata/qdq-with-context-cache" -name "*_ctx.onnx" -print -delete
+    "${build_dir}/${config}/onnx_test_runner" \
+        -j 1 \
+        -e qnn \
+        -f -i "backend_type|htp" \
+        "testdata/qdq-with-context-cache"
   fi
 fi

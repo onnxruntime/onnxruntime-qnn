@@ -69,11 +69,19 @@ function get_java_bindir() {
   fi
 }
 
+function get_linux_oe_gcc112_toolchain_root() {
+    get_package_contentdir "linux_oe_gcc112_toolchain"
+}
+
 #
 # Get the directory containing ninja, installing it if necessary.
 #
 function get_ninja_bindir() {
     get_package_bindir ninja_$(get_host_platform)
+}
+
+function get_onnx_models_dir() {
+    get_package_contentdir "onnx_models"
 }
 
 function get_package_bindir() {
@@ -91,7 +99,7 @@ function get_package_contentdir() {
 }
 
 #
-# Get the root of the managed QAIRT installtion.
+# Get the root of the managed QAIRT installation.
 #
 function get_qairt_contentdir() {
     get_package_contentdir qairt
