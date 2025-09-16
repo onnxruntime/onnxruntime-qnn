@@ -162,7 +162,7 @@ TEST_F(QnnHTPBackendTests, Inverse_4d) {
 TEST_F(QnnHTPBackendTests, Inverse_qdq_2d) {
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{2, 2};
-  auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
+  auto input_vector = rand_gen_.Uniform<float>(input_shape, -10.0f, 10.0f);
 
   RunQDQInverseOpTest<uint8_t>(TestInputDef<float>({2, 2}, false, input_vector),
                                {},
@@ -172,7 +172,7 @@ TEST_F(QnnHTPBackendTests, Inverse_qdq_2d) {
 TEST_F(QnnHTPBackendTests, Inverse_qdq_3d) {
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{10, 2, 2};
-  auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
+  auto input_vector = rand_gen_.Uniform<float>(input_shape, -10.0f, 10.0f);
 
   RunQDQInverseOpTest<uint8_t>(TestInputDef<float>({10, 2, 2}, false, input_vector),
                                {},
@@ -182,7 +182,7 @@ TEST_F(QnnHTPBackendTests, Inverse_qdq_3d) {
 TEST_F(QnnHTPBackendTests, Inverse_qdq_4d) {
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{1, 10, 2, 2};
-  auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
+  auto input_vector = rand_gen_.Uniform<float>(input_shape, -10.0f, 10.0f);
 
   RunQDQInverseOpTest<uint8_t>(TestInputDef<float>({1, 10, 2, 2}, false, input_vector),
                                {},

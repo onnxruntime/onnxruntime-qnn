@@ -41,7 +41,7 @@ Status InverseOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
     ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
     Qnn_DataType_t target_tensor_type = input_info.qnn_data_type;
 
-    if (QNN_DATATYPE_FLOAT_32 != target_tensor_type){
+    if (QNN_DATATYPE_FLOAT_32 != target_tensor_type) {
       return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN Inverser Op support only float input tensor.");
     }
 
@@ -117,49 +117,49 @@ Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_
   // Slice 2x2 matrix to a, b, c, d.
   constexpr uint32_t kReshapedRank = 2;
   constexpr uint32_t kSliceParamNum = 3;
-  
+
   const std::vector<std::string>& sliced_output_names = {
-    utils::GetUniqueName(node_unit, "_slice_00_output"),
-    utils::GetUniqueName(node_unit, "_slice_01_output"),
-    utils::GetUniqueName(node_unit, "_slice_10_output"),
-    utils::GetUniqueName(node_unit, "_slice_11_output"),
+      utils::GetUniqueName(node_unit, "_slice_00_output"),
+      utils::GetUniqueName(node_unit, "_slice_01_output"),
+      utils::GetUniqueName(node_unit, "_slice_10_output"),
+      utils::GetUniqueName(node_unit, "_slice_11_output"),
   };
-  for (uint32_t i = 0; i < 4; ++i){
+  for (uint32_t i = 0; i < 4; ++i) {
     const std::string& param_name = utils::GetUniqueName(node_unit, "slice_param");
     QnnParamWrapper ranges_paramwrapper(node_unit.Index(),
-                                          param_name,
-                                          QNN_OP_STRIDED_SLICE_PARAM_RANGES,
-                                          {kReshapedRank, kSliceParamNum},    // [rank, len(start, end, step)]
-                                          {0, 0, 1, i, i+1, 1},     // [ignore, ignore, step_0, start_1, end_1, step_1]
-                                          true);
+                                        param_name,
+                                        QNN_OP_STRIDED_SLICE_PARAM_RANGES,
+                                        {kReshapedRank, kSliceParamNum},  // [rank, len(start, end, step)]
+                                        {0, 0, 1, i, i + 1, 1},           // [ignore, ignore, step_0, start_1, end_1, step_1]
+                                        true);
     std::vector<std::string>&& slice_param_tensor_name{ranges_paramwrapper.GetParamTensorName()};
     ORT_RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(ranges_paramwrapper)), "Failed to add param.");
 
     const std::string& slice_name = utils::GetUniqueName(node_unit, "_slice");
     // begin_mask
-    uint32_t  begin_mask = 0b01U; // ignore dim = 0
+    uint32_t begin_mask = 0b01U;  // ignore dim = 0
     ORT_RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper,
-                            node_unit.Index(),
-                            slice_name,
-                            begin_mask,
-                            QNN_OP_STRIDED_SLICE_PARAM_BEGIN_MASK, 
-                            slice_param_tensor_name));
+                                               node_unit.Index(),
+                                               slice_name,
+                                               begin_mask,
+                                               QNN_OP_STRIDED_SLICE_PARAM_BEGIN_MASK,
+                                               slice_param_tensor_name));
 
     // end_mask
-    uint32_t  end_mask = 0b01U; // ignore dim = 0
+    uint32_t end_mask = 0b01U;  // ignore dim = 0
     ORT_RETURN_IF_ERROR(AddQnnScalar<uint32_t>(
-                            qnn_model_wrapper,
-                            node_unit.Index(),
-                            slice_name,
-                            end_mask,
-                            QNN_OP_STRIDED_SLICE_PARAM_END_MASK,
-                            slice_param_tensor_name));
+        qnn_model_wrapper,
+        node_unit.Index(),
+        slice_name,
+        end_mask,
+        QNN_OP_STRIDED_SLICE_PARAM_END_MASK,
+        slice_param_tensor_name));
 
     QnnTensorWrapper slice_output(sliced_output_names[i],
-                                    QNN_TENSOR_TYPE_NATIVE,
-                                    input_info.qnn_data_type,
-                                    QnnQuantParamsWrapper(),
-                                    std::vector<uint32_t>(sliced_shape));
+                                  QNN_TENSOR_TYPE_NATIVE,
+                                  input_info.qnn_data_type,
+                                  QnnQuantParamsWrapper(),
+                                  std::vector<uint32_t>(sliced_shape));
     ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(slice_output)), "Failed to add tensor.");
 
     ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(slice_name,
@@ -170,7 +170,7 @@ Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_
                                                       std::move(slice_param_tensor_name),
                                                       do_op_validation),
                       "Failed to add Inverse - slice node.");
-    }
+  }
 
   // det([[a, b], [c, d]]) = ad - bc
   const std::string& det_mul_0_name = utils::GetUniqueName(node_unit, "_det_mul_0");
@@ -233,7 +233,7 @@ Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_
   // adj([[a, b], [c, d]]) = [d, b, a, c] * [1, -1, -1, 1]
   const std::string& adj_cat_name = utils::GetUniqueName(node_unit, "_adj_concat");
   const std::string& adj_cat_output_name = utils::GetUniqueName(node_unit, "_adj_concat_output");
-  std::vector<std::string> concat_param_name; // Will be modified in AddQnnScalar
+  std::vector<std::string> concat_param_name;  // Will be modified in AddQnnScalar
   ORT_RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), adj_cat_output_name, static_cast<uint32_t>(1), QNN_OP_CONCAT_PARAM_AXIS, concat_param_name));
 
   QnnTensorWrapper adj_cat_output(adj_cat_output_name,
