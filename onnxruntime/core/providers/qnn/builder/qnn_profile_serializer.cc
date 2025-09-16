@@ -1,8 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#pragma once
-
 #include "qnn_profile_serializer.h"
 #include "core/providers/qnn/qnn_telemetry.h"
 

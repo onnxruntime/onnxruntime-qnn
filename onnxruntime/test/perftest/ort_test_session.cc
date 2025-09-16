@@ -310,9 +310,9 @@ OnnxRuntimeTestSession::OnnxRuntimeTestSession(Ort::Env& env, std::random_device
           ORT_THROW("Please provide the valid file path.");
         }
       } else if (key == "profiling_level") {
-        std::set<std::string> supported_profiling_level = {"off", "basic", "detailed"};
+        std::set<std::string> supported_profiling_level = {"off", "basic", "detailed", "optrace"};
         if (supported_profiling_level.find(value) == supported_profiling_level.end()) {
-          ORT_THROW("Supported profiling_level: off, basic, detailed");
+          ORT_THROW("Supported profiling_level: off, basic, detailed", "optrace");
         }
       } else if (key == "backend_type" || key == "rpc_control_latency" || key == "vtcm_mb" || key == "soc_model" ||
                  key == "device_id") {
