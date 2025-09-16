@@ -1,8 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#ifdef RANDOM_UNIFORM_LIKE
-
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -138,14 +136,15 @@ Status RandomUniformLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& 
     const std::string intermediate_output_name = utils::GetUniqueName(output_name, "_uint8");
 
     // Calculate quantization parameters based on low and high values
+    QnnQuantParamsWrapper quantize_param;
     float scale = 0.0f;
     int32_t zero_point = 0;
     ORT_RETURN_IF_ERROR(utils::GetQuantParams(low, high, QNN_DATATYPE_UFIXED_POINT_8, scale, zero_point));
-
+    quantize_param = QnnQuantParamsWrapper(scale, zero_point);
     QnnTensorWrapper intermediate_output_wrapper(intermediate_output_name,
                                                  QNN_TENSOR_TYPE_NATIVE,
                                                  QNN_DATATYPE_UFIXED_POINT_8,
-                                                 QnnQuantParamsWrapper(scale, zero_point),
+                                                 std::move(quantize_param),
                                                  std::vector<uint32_t>(output_info.shape));
 
     ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(intermediate_output_wrapper)),
@@ -214,4 +213,3 @@ void CreateRandomUniformLikeOpBuilder(const std::string& op_type, OpBuilderRegis
 
 }  // namespace qnn
 }  // namespace onnxruntime
-#endif
