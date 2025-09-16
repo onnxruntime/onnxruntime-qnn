@@ -1685,6 +1685,11 @@ OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const O
     LOGS(ep->logger_in_, VERBOSE) << "rpc_control_latency: " << rpc_control_latency;
   }
 
+  uint32_t rpc_polling_time = 0;
+  if (qnn::HtpPerformanceMode::kHtpBurst != htp_performance_mode) {
+    rpc_polling_time = 9999;
+  }
+
   if (ep->GetPerThreadContext().IsHtpPowerConfigIdValid()) {
     if (qnn::HtpPerformanceMode::kHtpDefault != htp_performance_mode) {
       RETURN_IF_NOT_OK(ep->qnn_backend_manager_->SetHtpPowerConfig(ep->GetPerThreadContext().GetHtpPowerConfigId(),
@@ -1692,9 +1697,10 @@ OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const O
                        ep->ort_api);
     }
 
-    if (rpc_control_latency > 0) {
-      RETURN_IF_NOT_OK(ep->qnn_backend_manager_->SetRpcControlLatency(ep->GetPerThreadContext().GetHtpPowerConfigId(),
-                                                                      rpc_control_latency),
+    if (rpc_control_latency > 0 || rpc_polling_time > 0) {
+      RETURN_IF_NOT_OK(ep->qnn_backend_manager_->SetRpcPowerConfigs(ep->GetPerThreadContext().GetHtpPowerConfigId(),
+                                                                    rpc_control_latency,
+                                                                    rpc_polling_time),
                        ep->ort_api);
     }
   }
@@ -1771,7 +1777,8 @@ QnnEp::PerThreadContext::PerThreadContext(qnn::QnnBackendManager* qnn_backend_ma
                                           uint32_t device_id,
                                           uint32_t core_id,
                                           qnn::HtpPerformanceMode default_htp_performance_mode,
-                                          uint32_t default_rpc_control_latency)
+                                          uint32_t default_rpc_control_latency,
+                                          uint32_t default_rpc_polling_time)
     : qnn_backend_manager_(qnn_backend_manager) {
   Status rt = qnn_backend_manager_->CreateHtpPowerCfgId(device_id, core_id, htp_power_config_id_);
   is_htp_power_config_id_valid_ = rt.IsOK();
@@ -1783,9 +1790,10 @@ QnnEp::PerThreadContext::PerThreadContext(qnn::QnnBackendManager* qnn_backend_ma
       ORT_IGNORE_RETURN_VALUE(qnn_backend_manager_->SetHtpPowerConfig(htp_power_config_id_,
                                                                       default_htp_performance_mode));
     }
-    if (default_rpc_control_latency > 0) {
-      ORT_IGNORE_RETURN_VALUE(qnn_backend_manager_->SetRpcControlLatency(htp_power_config_id_,
-                                                                         default_rpc_control_latency));
+    if (default_rpc_control_latency > 0 || default_rpc_polling_time > 0) {
+      ORT_IGNORE_RETURN_VALUE(qnn_backend_manager_->SetRpcPowerConfigs(htp_power_config_id_,
+                                                                       default_rpc_control_latency,
+                                                                       default_rpc_polling_time));
     }
   }
 }
@@ -1817,7 +1825,8 @@ QnnEp::PerThreadContext& QnnEp::GetPerThreadContext() {
     if (context_state_.retired_context_pool.empty()) {
       uint32_t core_id = 0;
       context = std::make_shared<PerThreadContext>(qnn_backend_manager_.get(), device_id_, core_id,
-                                                   default_htp_performance_mode_, default_rpc_control_latency_);
+                                                   default_htp_performance_mode_, default_rpc_control_latency_,
+                                                   default_rpc_polling_time_);
     } else {
       context = context_state_.retired_context_pool.back();
       context_state_.retired_context_pool.pop_back();

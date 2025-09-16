@@ -120,7 +120,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
     PerThreadContext(qnn::QnnBackendManager* qnn_backend_manager,
                      uint32_t device_id, uint32_t core_id,
                      qnn::HtpPerformanceMode default_htp_performance_mode,
-                     uint32_t default_rpc_control_latency);
+                     uint32_t default_rpc_control_latency,
+                     uint32_t default_rpc_polling_time);
     ~PerThreadContext();
     ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(PerThreadContext);
 
@@ -197,7 +198,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // Configurations for HTP backend.
   uint32_t device_id_{0};
   qnn::HtpPerformanceMode default_htp_performance_mode_{qnn::HtpPerformanceMode::kHtpDefault};
-  uint32_t default_rpc_control_latency_{0};
+  uint32_t default_rpc_control_latency_ = 0;
+  uint32_t default_rpc_polling_time_ = 0;
   qnn::ModelSettings model_settings_ = {};
   qnn::HtpGraphFinalizationOptimizationMode htp_graph_finalization_opt_mode_ = qnn::HtpGraphFinalizationOptimizationMode::kDefault;
   int32_t vtcm_size_in_mb_ = 0;
