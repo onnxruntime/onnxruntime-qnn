@@ -220,7 +220,7 @@ TEST(AutoEpSelection, WebGpuEP) {
 }
 #endif
 
-#if defined(USE_QNN)
+#if defined(USE_QNN) && (defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__))
 TEST(AutoEpSelection, QnnEP) {
   Ort::KeyValuePairs provider_options;
 
