@@ -82,7 +82,7 @@ struct QNN_Provider : Provider {
 
   Status CreateIExecutionProvider(const OrtHardwareDevice* const* /*devices*/,
                                   const OrtKeyValuePairs* const* /*ep_metadata*/,
-                                  size_t num_devices,
+                                  size_t /*num_devices*/,
                                   ProviderOptions& provider_options,
                                   const OrtSessionOptions& session_options,
                                   const OrtLogger& logger,

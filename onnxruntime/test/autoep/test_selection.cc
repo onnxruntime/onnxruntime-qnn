@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include "core/graph/constants.h"
+#include "core/session/abi_devices.h"
 #include "core/session/abi_key_value_pairs.h"
 #include "core/session/abi_session_options_impl.h"
 #include "core/session/onnxruntime_cxx_api.h"
@@ -216,6 +217,47 @@ TEST(AutoEpSelection, DmlEP) {
 #if defined(USE_WEBGPU)
 TEST(AutoEpSelection, WebGpuEP) {
   RunBasicTest(kWebGpuExecutionProvider, std::nullopt);
+}
+#endif
+
+#if defined(USE_QNN)
+TEST(AutoEpSelection, QnnEP) {
+  Ort::KeyValuePairs provider_options;
+
+  const auto select_device = [](OrtHardwareDeviceType device_type) {
+    return [device_type](std::vector<const OrtEpDevice*>& devices) {
+      const OrtApi* c_api = &Ort::GetApi();
+      const OrtEpDevice* const* ep_devices = nullptr;
+      size_t num_devices = 0;
+
+      std::vector<OrtEpDevice*> selected_ep_device;
+      ASSERT_ORTSTATUS_OK(c_api->GetEpDevices(*ort_env, &ep_devices, &num_devices));
+      for (size_t i = 0; i < num_devices; ++i) {
+        const OrtEpDevice* ep_device = ep_devices[i];
+        if (strcmp(c_api->EpDevice_EpName(ep_device), kQnnExecutionProvider) == 0) {
+          const auto* device = c_api->EpDevice_Device(ep_device);
+
+          if (device->type == device_type) {
+            devices.push_back(ep_device);
+          }
+        }
+      }
+
+      ASSERT_TRUE(!devices.empty()) << "Unable to find QNN device of type: "
+                                    << ((device_type == OrtHardwareDeviceType_NPU) ? "NPU" : "GPU");
+    };
+  };
+
+#ifdef _WIN32
+  const std::filesystem::path qnn_provider_library_name = "onnxruntime_providers_qnn.dll";
+#else
+  const std::filesystem::path qnn_provider_library_name = "libonnxruntime_providers_qnn.so";
+#endif
+  const auto library_path = Env::Default().GetRuntimePath() / qnn_provider_library_name;
+
+  RunBasicTest(kQnnExecutionProvider, library_path);
+  RunBasicTest(kQnnExecutionProvider, library_path, provider_options, select_device(OrtHardwareDeviceType_NPU));
+  RunBasicTest(kQnnExecutionProvider, library_path, provider_options, select_device(OrtHardwareDeviceType_GPU));
 }
 #endif
 
