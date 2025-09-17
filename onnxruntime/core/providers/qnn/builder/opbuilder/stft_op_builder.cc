@@ -28,8 +28,8 @@ class STFTOpBuilder : public BaseOpBuilder {
                                      bool do_op_validation) const override;
 
   Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                                      const NodeUnit& node_unit,
-                                      const logging::Logger& logger) const override;
+                       const NodeUnit& node_unit,
+                       const logging::Logger& logger) const override;
 };
 
 // Checks if the given input is a window input (float type).
