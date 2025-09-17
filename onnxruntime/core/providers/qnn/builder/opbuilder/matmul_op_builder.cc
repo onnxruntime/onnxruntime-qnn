@@ -209,66 +209,6 @@ Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_model_wra
   }
   input_names.emplace_back(input_1_name);
 
-  // Workaround that inserts a QNN Convert op before input[1] (converts from quantized uint16 to quantized uint8
-  // OR converts from asymmetric quantized uint16 to symmetric quantized uint16)
-  // to avoid a QNN validation failure.
-  //
-  // QNN graph WITHOUT workaround (fails validation):
-  //     input_0_uint16 ---> MatMul ---> output_uint16
-  //                         ^
-  //                         |
-  //     input_1_uint16 -----+
-  //
-  // For Dynamic weights, QNN graph WITH workaround (passes validation):
-  //     input_0_uint16 ----------------------> MatMul ---> output_uint16
-  //                                            ^
-  //                                            |
-  //     input_1_uint16 --> Convert(to uint8) --+
-  //
-  // For Static weights, QNN graph WITH workaround (passes validation):
-  //     input_0_uint16 ------------------------------> MatMul ---> output_uint16
-  //                                                      ^
-  //                                                      |
-  //     input_1_uint16 --> Convert(to symmetric int16) --+
-  if (!input_info_0.is_initializer &&
-      input_info_0.qnn_data_type == input_info_1.qnn_data_type &&
-      input_info_0.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) {
-    ORT_RETURN_IF_NOT(input_info_1.quant_param.IsPerTensor(),
-                      "MatMul's activation inputs only support per-tensor quantization");
-    const Qnn_QuantizeParams_t& quant_param = input_info_1.quant_param.Get();
-    // insert Convert op after input1
-    std::string convert_input_name = input_names.back();
-    input_names.pop_back();
-    const std::string convert_output_name = utils::GetUniqueName(convert_input_name, "_convert");
-    std::vector<uint32_t> input_1_shape = input_info_1.shape;
-    if (reshape_input_1) {
-      input_1_shape = {input_info_1.shape[0], 1};
-    }
-    if (!input_info_1.is_initializer) {
-      ORT_RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper,
-                                                 convert_input_name,
-                                                 convert_output_name,
-                                                 input_info_1.qnn_data_type,
-                                                 QNN_DATATYPE_UFIXED_POINT_8,
-                                                 quant_param.scaleOffsetEncoding.offset,
-                                                 quant_param.scaleOffsetEncoding.scale,
-                                                 input_1_shape,
-                                                 false,  // asymmetric
-                                                 do_op_validation));
-    } else {
-      ORT_RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper,
-                                                 convert_input_name,
-                                                 convert_output_name,
-                                                 input_info_1.qnn_data_type,
-                                                 QNN_DATATYPE_SFIXED_POINT_16,
-                                                 quant_param.scaleOffsetEncoding.offset,
-                                                 quant_param.scaleOffsetEncoding.scale,
-                                                 input_1_shape,
-                                                 true,  // symmetric
-                                                 do_op_validation));
-    }
-    input_names.push_back(convert_output_name);
-  }
   return Status::OK();
 }
 
