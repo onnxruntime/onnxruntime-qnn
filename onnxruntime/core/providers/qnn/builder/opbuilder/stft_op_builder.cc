@@ -26,11 +26,26 @@ class STFTOpBuilder : public BaseOpBuilder {
                                      std::vector<std::string>&& input_names,
                                      const logging::Logger& logger,
                                      bool do_op_validation) const override;
+
+  Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
+                                      const NodeUnit& node_unit,
+                                      const logging::Logger& logger) const override;
 };
 
 // Checks if the given input is a window input (float type).
 static bool IsWindowInput(const NodeUnitIODef& input) {
   return input.node_arg.TypeAsProto()->tensor_type().elem_type() == ONNX_NAMESPACE::TensorProto_DataType_FLOAT;
+}
+
+Status STFTOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
+                                    const NodeUnit& node_unit,
+                                    const logging::Logger& logger) const {
+  // TODO: STFT seg faults on QNN CPU
+  bool is_cpu_backend = IsCpuBackend(qnn_model_wrapper.GetQnnBackendType());
+  ORT_RETURN_IF(is_cpu_backend, "QNN EP: STFT Op disabled in CPU backend.");
+  // General Datatype checks on various QNN backend (HTP, CPU, GPU)
+  ORT_RETURN_IF_ERROR(ProcessDataTypes(qnn_model_wrapper, node_unit));
+  return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
 }
 
 Status STFTOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
