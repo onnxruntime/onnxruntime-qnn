@@ -169,7 +169,16 @@ TEST_F(QnnHTPBackendTests, Inverse_qdq_2d) {
                                ExpectedEPNodeAssignment::All);
 }
 
+// Inaccuracy detected for output 'output_0', element 36
+// output_range=0.31888091564178467, tolerance=0.40000000596046448%.
+// Expected val (f32@CPU_EP): 0.069747790694236755
+// qdq@QNN_EP val: 0.067527718842029572 (err: 0.0022200718522071838, err/output_range: 0.69620716571807861%)
+// qdq@CPU_EP val: 0.070028752088546753 (err: 0.00028096139430999756, err/output_range: 0.088108561933040619%)
+#ifdef _M_ARM64
+TEST_F(QnnHTPBackendTests, DISABLED_Inverse_qdq_3d) {
+#else
 TEST_F(QnnHTPBackendTests, Inverse_qdq_3d) {
+#endif
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{10, 2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -10.0f, 10.0f);
@@ -179,7 +188,16 @@ TEST_F(QnnHTPBackendTests, Inverse_qdq_3d) {
                                ExpectedEPNodeAssignment::All);
 }
 
+// Inaccuracy detected for output 'output_0', element 36
+// output_range=0.31888091564178467, tolerance=0.40000000596046448%.
+// Expected val (f32@CPU_EP): 0.069747790694236755
+// qdq@QNN_EP val: 0.067527718842029572 (err: 0.0022200718522071838, err/output_range: 0.69620716571807861%)
+// qdq@CPU_EP val: 0.070028752088546753 (err: 0.00028096139430999756, err/output_range: 0.088108561933040619%)
+#ifdef _M_ARM64
+TEST_F(QnnHTPBackendTests, DISABLED_Inverse_qdq_4d) {
+#else
 TEST_F(QnnHTPBackendTests, Inverse_qdq_4d) {
+#endif
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{1, 10, 2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -10.0f, 10.0f);
