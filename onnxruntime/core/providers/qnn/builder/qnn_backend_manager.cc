@@ -1074,6 +1074,9 @@ Status QnnBackendManager::LoadCachedQnnContextFromBuffer(char* buffer, uint64_t 
   bool result = nullptr == qnn_sys_interface_.systemContextCreate ||
                 nullptr == qnn_sys_interface_.systemContextGetBinaryInfo ||
                 nullptr == qnn_sys_interface_.systemContextFree;
+  LOGS(*logger_, VERBOSE) << "[SSR Handling]: systemContextCreate " << (nullptr == qnn_sys_interface_.systemContextCreate);
+  LOGS(*logger_, VERBOSE) << "[SSR Handling]: systemContextGetBinaryInfo " << (nullptr == qnn_sys_interface_.systemContextGetBinaryInfo);
+  LOGS(*logger_, VERBOSE) << "[SSR Handling]: systemContextFree " << (nullptr == qnn_sys_interface_.systemContextFree);
   ORT_RETURN_IF(result, "Failed to get valid function pointer.");
 
   QnnSystemContext_Handle_t sys_ctx_handle = nullptr;

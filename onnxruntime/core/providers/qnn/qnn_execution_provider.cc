@@ -8,6 +8,7 @@
 #include <string_view>
 #include <unordered_set>
 
+#include "QnnCommon.h"
 #include "QnnTypes.h"
 #include "core/common/string_utils.h"
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
@@ -942,8 +943,9 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
   // It will load the QnnSystem lib if is_qnn_ctx_model=true, and
   // delay the Qnn context creation to Compile() using the cached context binary
   // or generate context cache enable, need to use use QnnSystem lib to parse the binary to get the max spill fill buffer size
+  // TODO: Specify need_load_system_lib only when we specify the provider_option qnn_handle_ssr|1
   auto rt = qnn_backend_manager_->SetupBackend(logger, is_qnn_ctx_model,
-                                               context_cache_enabled_ && enable_spill_fill_buffer_,
+                                               true,
                                                share_ep_contexts_,
                                                enable_vtcm_backup_buffer_sharing_,
                                                context_bin_map);
@@ -1101,10 +1103,26 @@ Status QNNExecutionProvider::CreateComputeFunc(std::vector<NodeComputeInfo>& nod
     ORT_UNUSED_PARAMETER(state);
   };
 
-  compute_info.compute_func = [&logger](FunctionState state, const OrtApi*, OrtKernelContext* context) {
+  compute_info.compute_func = [&logger, this](FunctionState state, const OrtApi*, OrtKernelContext* context) {
     Ort::KernelContext ctx(context);
     qnn::QnnModel* model = reinterpret_cast<qnn::QnnModel*>(state);
     Status result = model->ExecuteGraph(ctx, logger);
+    LOGS(logger, VERBOSE) << "[SSR Handling]: During Execute " << qnn_save_buffer_;
+    // Customer Recover Routines
+    qnn::QnnModelLookupTable qnn_models;
+    // TODO: Deal with the max_spill_fill_size
+    Status ssr_result = qnn_backend_manager_->LoadCachedQnnContextFromBuffer(
+      reinterpret_cast<char*>(qnn_save_buffer_.get()),
+      qnn_save_buffer_size_,
+      "ssr_binary_name",
+      qnn_models,
+      qnn_save_buffer_size_);
+    LOGS(logger, VERBOSE) << "[SSR Handling]: After Execute " << ssr_result;
+    qnn_models_.clear();
+    for (auto& qnn_model: qnn_models) {
+      LOGS(logger, VERBOSE) << "[SSR Handling]: qnn_model.first " << qnn_model.first;
+      qnn_models_.emplace(qnn_model.first, std::move(qnn_model.second));
+    }
     return result;
   };
 
@@ -1348,11 +1366,23 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
     auto graph_handle = pair.second->GetGraphInfo()->Graph();
     auto context_handle = pair.second->GetGraphInfo()->GraphContext();
     LOGS(logger, VERBOSE) << "graph name: " << graph_name;
-    Qnn_ContextBinarySize_t bsize = 0;
-    qnn_backend_manager_->GetQnnInterface().contextGetBinarySize(context_handle, &bsize);
-    LOGS(logger, VERBOSE) << "bsize: " << bsize;
-    QnnContext_Property_t* properties;
-    qnn_backend_manager_->GetQnnInterface().contextGetProperty(context_handle, &properties);
+    Qnn_ErrorHandle_t res = QNN_CONTEXT_NO_ERROR;
+    Qnn_ContextBinarySize_t requiredBufferSize = 0;
+    res = qnn_backend_manager_->GetQnnInterface().contextGetBinarySize(context_handle, 
+                                                              &requiredBufferSize);
+    if (QNN_CONTEXT_NO_ERROR != res) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, ENGINE_ERROR, "[SSR Handling] error_contextGetBinarySize", res);
+    }
+    LOGS(logger, VERBOSE) << "requiredBufferSize: " << requiredBufferSize;
+    // QnnContext_Property_t* properties;
+    // qnn_backend_manager_->GetQnnInterface().contextGetProperty(context_handle, &properties);
+    // TODO: Save the binary only when we specify the provider_option qnn_handle_ssr|1
+    uint64_t writtenBufferSize{0};
+    // TODO: Handle multiple qnn_models_ into qnn_save_buffers_
+    qnn_save_buffer_ = qnn_backend_manager_->GetContextBinaryBuffer(writtenBufferSize);
+    qnn_save_buffer_size_ = writtenBufferSize;
+    LOGS(logger, VERBOSE) << "qnn_save_buffer_size_: " << qnn_save_buffer_size_;
+    LOGS(logger, VERBOSE) << "qnn_save_buffer_: " << qnn_save_buffer_;
   }
   return Status::OK();
 }
