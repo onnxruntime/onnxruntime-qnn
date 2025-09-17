@@ -95,8 +95,6 @@ class QNNExecutionProvider : public IExecutionProvider {
   int32_t vtcm_size_in_mb_ = 0;
   bool enable_vtcm_backup_buffer_sharing_ = false;
   std::unique_ptr<onnxruntime::Model> qnn_ep_context_model_;
-  std::unique_ptr<unsigned char[]> qnn_save_buffer_;
-  uint64_t qnn_save_buffer_size_;
   std::unique_ptr<ModelMetadefIdGenerator> metadef_id_generator_;
   uint32_t device_id_ = 0;
   qnn::HtpPerformanceMode default_htp_performance_mode_ = qnn::HtpPerformanceMode::kHtpDefault;

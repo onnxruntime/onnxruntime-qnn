@@ -10,6 +10,7 @@
 
 #include "QnnCommon.h"
 #include "QnnTypes.h"
+#include "core/common/common.h"
 #include "core/common/string_utils.h"
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -1107,22 +1108,27 @@ Status QNNExecutionProvider::CreateComputeFunc(std::vector<NodeComputeInfo>& nod
     Ort::KernelContext ctx(context);
     qnn::QnnModel* model = reinterpret_cast<qnn::QnnModel*>(state);
     Status result = model->ExecuteGraph(ctx, logger);
-    LOGS(logger, VERBOSE) << "[SSR Handling]: During Execute " << qnn_save_buffer_;
+    LOGS(logger, VERBOSE) << "[SSR Handling]: During Execute " << model->GetSaveBufferSize();
     // Customer Recover Routines
     qnn::QnnModelLookupTable qnn_models;
+    LOGS(logger, VERBOSE) << "[SSR Handling]: model->Name() " << model->Name();
     // TODO: Deal with the max_spill_fill_size
     Status ssr_result = qnn_backend_manager_->LoadCachedQnnContextFromBuffer(
-      reinterpret_cast<char*>(qnn_save_buffer_.get()),
-      qnn_save_buffer_size_,
-      "ssr_binary_name",
+      reinterpret_cast<char*>(model->GetSaveBuffer().get()),
+      model->GetSaveBufferSize(),
+      model->Name(),
       qnn_models,
-      qnn_save_buffer_size_);
-    LOGS(logger, VERBOSE) << "[SSR Handling]: After Execute " << ssr_result;
-    qnn_models_.clear();
-    for (auto& qnn_model: qnn_models) {
-      LOGS(logger, VERBOSE) << "[SSR Handling]: qnn_model.first " << qnn_model.first;
-      qnn_models_.emplace(qnn_model.first, std::move(qnn_model.second));
-    }
+      model->GetSaveBufferSize());
+
+    LOGS(logger, VERBOSE) << "[SSR Handling]: LoadCachedQnnContextFromBuffer " << ssr_result;
+    LOGS(logger, VERBOSE) << "[SSR Handling]: qnn_models.size()" << qnn_models.size();
+    ORT_RETURN_IF_NOT(qnn_models.size() == 1, "There must be only one qnn_model");
+
+    auto new_qnn_model = std::move(qnn_models.begin()->second);
+    model->GetGraphInfo()->SetGraph(new_qnn_model->GetGraphInfo()->Graph());
+    model->GetGraphInfo()->SetGraphContext(new_qnn_model->GetGraphInfo()->GraphContext());
+    result = model->ExecuteGraph(ctx, logger);
+    LOGS(logger, VERBOSE) << "[SSR Handling]: After Recover " << result;
     return result;
   };
 
@@ -1221,6 +1227,7 @@ Status QNNExecutionProvider::CompileFromOrtGraph(const std::vector<FusedNodeAndG
                                                 all_graph_configs_ptr, json_graph_filepath));
     ORT_RETURN_IF_ERROR(qnn_model->FinalizeGraphs(logger));
     ORT_RETURN_IF_ERROR(qnn_model->SetupQnnInputOutput(logger));
+    ORT_RETURN_IF_ERROR(qnn_model->SaveContextToBinary(logger));
 
     LOGS(logger, VERBOSE) << "fused node name: " << fused_node.Name();
     qnn_models_.emplace(fused_node.Name(), std::move(qnn_model));
@@ -1362,27 +1369,8 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
     }
   }
   for (const auto& pair : qnn_models_) {
-    auto graph_name = pair.second->GetGraphInfo()->Name();
-    auto graph_handle = pair.second->GetGraphInfo()->Graph();
-    auto context_handle = pair.second->GetGraphInfo()->GraphContext();
-    LOGS(logger, VERBOSE) << "graph name: " << graph_name;
-    Qnn_ErrorHandle_t res = QNN_CONTEXT_NO_ERROR;
-    Qnn_ContextBinarySize_t requiredBufferSize = 0;
-    res = qnn_backend_manager_->GetQnnInterface().contextGetBinarySize(context_handle, 
-                                                              &requiredBufferSize);
-    if (QNN_CONTEXT_NO_ERROR != res) {
-      return ORT_MAKE_STATUS(ONNXRUNTIME, ENGINE_ERROR, "[SSR Handling] error_contextGetBinarySize", res);
-    }
-    LOGS(logger, VERBOSE) << "requiredBufferSize: " << requiredBufferSize;
-    // QnnContext_Property_t* properties;
-    // qnn_backend_manager_->GetQnnInterface().contextGetProperty(context_handle, &properties);
-    // TODO: Save the binary only when we specify the provider_option qnn_handle_ssr|1
-    uint64_t writtenBufferSize{0};
-    // TODO: Handle multiple qnn_models_ into qnn_save_buffers_
-    qnn_save_buffer_ = qnn_backend_manager_->GetContextBinaryBuffer(writtenBufferSize);
-    qnn_save_buffer_size_ = writtenBufferSize;
-    LOGS(logger, VERBOSE) << "qnn_save_buffer_size_: " << qnn_save_buffer_size_;
-    LOGS(logger, VERBOSE) << "qnn_save_buffer_: " << qnn_save_buffer_;
+    LOGS(logger, VERBOSE) << "qnn_save_buffer_size_: " << pair.second->GetSaveBufferSize();
+    LOGS(logger, VERBOSE) << "qnn_save_buffer_: " << pair.second->GetSaveBuffer();
   }
   return Status::OK();
 }

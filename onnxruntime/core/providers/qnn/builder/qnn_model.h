@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstddef>
 #include <mutex>
 #include <vector>
 
@@ -11,6 +12,7 @@
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/rpcmem_library.h"
+#include "core/providers/shared_library/provider_wrappedtypes.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -41,6 +43,8 @@ class QnnModel {
   Status FinalizeGraphs(const logging::Logger& logger);
 
   Status SetupQnnInputOutput(const logging::Logger& logger);
+
+  Status SaveContextToBinary(const logging::Logger& logger);
 
   Status ExecuteGraph(const Ort::KernelContext& context,
                       const logging::Logger& logger);
@@ -107,6 +111,10 @@ class QnnModel {
 
   const std::unique_ptr<GraphInfo>& GetGraphInfo() const { return graph_info_; }
 
+  const std::unique_ptr<unsigned char[]>& GetSaveBuffer() const { return qnn_save_buffer_; }
+
+  const uint64_t& GetSaveBufferSize() const { return qnn_save_buffer_size_; }
+
   const std::string& Name() const { return graph_info_->Name(); }
 
  private:
@@ -115,7 +123,7 @@ class QnnModel {
   bool GetGraphInfoFromModel(QnnModelWrapper& model_wrapper, const logging::Logger& logger);
 
   Status SetupTensors(std::vector<QnnTensorInfo>& tensors, const std::vector<QnnTensorWrapper>& tensor_wrappers,
-                      bool is_input = true);
+                      bool is_input = true, const logging::Logger* logger = nullptr);
 
   QnnBackendType GetQnnBackendType() { return qnn_backend_type_; }
 
@@ -127,6 +135,8 @@ class QnnModel {
 
  private:
   std::unique_ptr<GraphInfo> graph_info_;
+  std::unique_ptr<unsigned char[]> qnn_save_buffer_;
+  uint64_t qnn_save_buffer_size_;
   QnnBackendManager* qnn_backend_manager_ = nullptr;
   // <input_name, input_index>, initializer inputs are excluded, keep the input index here
   std::unordered_map<std::string, size_t> model_input_index_map_;
