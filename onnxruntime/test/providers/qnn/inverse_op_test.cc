@@ -177,7 +177,7 @@ TEST_F(QnnHTPBackendTests, Inverse_qdq_3d) {
   // Expected val (f32@CPU_EP): 0.069747790694236755
   // qdq@QNN_EP val: 0.067527718842029572 (err: 0.0022200718522071838, err/output_range: 0.69620716571807861%)
   // qdq@CPU_EP val: 0.070028752088546753 (err: 0.00028096139430999756, err/output_range: 0.088108561933040619%)
-  QDQTolerance tolerance = 2 * QDQTolerance();
+  QDQTolerance tolerance = QDQTolerance(0.008f);  // 2x of default 0.4%
 #else
   QDQTolerance tolerance = QDQTolerance();  // Default 0.4%
 #endif
@@ -197,7 +197,7 @@ TEST_F(QnnHTPBackendTests, Inverse_qdq_4d) {
   // Expected val (f32@CPU_EP): 0.069747790694236755
   // qdq@QNN_EP val: 0.067527718842029572 (err: 0.0022200718522071838, err/output_range: 0.69620716571807861%)
   // qdq@CPU_EP val: 0.070028752088546753 (err: 0.00028096139430999756, err/output_range: 0.088108561933040619%)
-  QDQTolerance tolerance = 2 * QDQTolerance();
+  QDQTolerance tolerance = QDQTolerance(0.008f);
 #else
   QDQTolerance tolerance = QDQTolerance();  // Default 0.4%
 #endif
