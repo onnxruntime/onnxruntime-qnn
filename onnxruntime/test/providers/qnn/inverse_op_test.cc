@@ -111,6 +111,7 @@ template <typename QuantType>
 static void RunQDQInverseOpTest(const TestInputDef<float>& input_defs,
                                 const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                 ExpectedEPNodeAssignment expected_ep_assignment,
+                                QDQTolerance tolerance = QDQTolerance(),  // Default 0.4%
                                 int opset = 18) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -120,7 +121,8 @@ static void RunQDQInverseOpTest(const TestInputDef<float>& input_defs,
                        BuildQDQInverseTestCase<QuantType>({input_defs}, attrs, true),
                        provider_options,
                        opset,
-                       expected_ep_assignment);
+                       expected_ep_assignment,
+                       tolerance);
 }
 
 TEST_F(QnnHTPBackendTests, Inverse_2d) {
@@ -169,15 +171,15 @@ TEST_F(QnnHTPBackendTests, Inverse_qdq_2d) {
                                ExpectedEPNodeAssignment::All);
 }
 
-// Inaccuracy detected for output 'output_0', element 36
-// output_range=0.31888091564178467, tolerance=0.40000000596046448%.
-// Expected val (f32@CPU_EP): 0.069747790694236755
-// qdq@QNN_EP val: 0.067527718842029572 (err: 0.0022200718522071838, err/output_range: 0.69620716571807861%)
-// qdq@CPU_EP val: 0.070028752088546753 (err: 0.00028096139430999756, err/output_range: 0.088108561933040619%)
-#ifdef _M_ARM64
-TEST_F(QnnHTPBackendTests, DISABLED_Inverse_qdq_3d) {
-#else
 TEST_F(QnnHTPBackendTests, Inverse_qdq_3d) {
+#ifdef _M_ARM64
+  // output_range=0.31888091564178467, tolerance=0.40000000596046448%.
+  // Expected val (f32@CPU_EP): 0.069747790694236755
+  // qdq@QNN_EP val: 0.067527718842029572 (err: 0.0022200718522071838, err/output_range: 0.69620716571807861%)
+  // qdq@CPU_EP val: 0.070028752088546753 (err: 0.00028096139430999756, err/output_range: 0.088108561933040619%)
+  QDQTolerance tolerance = 2 * QDQTolerance();
+#else
+  QDQTolerance tolerance = QDQTolerance();  // Default 0.4%
 #endif
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{10, 2, 2};
@@ -185,18 +187,19 @@ TEST_F(QnnHTPBackendTests, Inverse_qdq_3d) {
 
   RunQDQInverseOpTest<uint8_t>(TestInputDef<float>({10, 2, 2}, false, input_vector),
                                {},
-                               ExpectedEPNodeAssignment::All);
+                               ExpectedEPNodeAssignment::All,
+                               tolerance);
 }
 
-// Inaccuracy detected for output 'output_0', element 36
-// output_range=0.31888091564178467, tolerance=0.40000000596046448%.
-// Expected val (f32@CPU_EP): 0.069747790694236755
-// qdq@QNN_EP val: 0.067527718842029572 (err: 0.0022200718522071838, err/output_range: 0.69620716571807861%)
-// qdq@CPU_EP val: 0.070028752088546753 (err: 0.00028096139430999756, err/output_range: 0.088108561933040619%)
-#ifdef _M_ARM64
-TEST_F(QnnHTPBackendTests, DISABLED_Inverse_qdq_4d) {
-#else
 TEST_F(QnnHTPBackendTests, Inverse_qdq_4d) {
+#ifdef _M_ARM64
+  // output_range=0.31888091564178467, tolerance=0.40000000596046448%.
+  // Expected val (f32@CPU_EP): 0.069747790694236755
+  // qdq@QNN_EP val: 0.067527718842029572 (err: 0.0022200718522071838, err/output_range: 0.69620716571807861%)
+  // qdq@CPU_EP val: 0.070028752088546753 (err: 0.00028096139430999756, err/output_range: 0.088108561933040619%)
+  QDQTolerance tolerance = 2 * QDQTolerance();
+#else
+  QDQTolerance tolerance = QDQTolerance();  // Default 0.4%
 #endif
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{1, 10, 2, 2};
@@ -204,7 +207,8 @@ TEST_F(QnnHTPBackendTests, Inverse_qdq_4d) {
 
   RunQDQInverseOpTest<uint8_t>(TestInputDef<float>({1, 10, 2, 2}, false, input_vector),
                                {},
-                               ExpectedEPNodeAssignment::All);
+                               ExpectedEPNodeAssignment::All,
+                               tolerance);
 }
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
