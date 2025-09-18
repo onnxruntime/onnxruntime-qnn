@@ -236,6 +236,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
   bool ProfilingEnabled() { return profiling_enabled_; }
 #endif
+  Status ReleaseContext();
 
  private:
   Status LoadBackend();
@@ -256,8 +257,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
                                                                         std::unique_ptr<std::vector<std::string>>>& context_bin_map);
-
-  Status ReleaseContext();
 
   // Sets the ORT logger and creates a corresponding QNN logger with the same log level.
   // NOTE: caller must lock the `logger_recursive_mutex_` before calling this function.

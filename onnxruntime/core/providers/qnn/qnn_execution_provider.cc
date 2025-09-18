@@ -1107,11 +1107,14 @@ Status QNNExecutionProvider::CreateComputeFunc(std::vector<NodeComputeInfo>& nod
   compute_info.compute_func = [&logger, this](FunctionState state, const OrtApi*, OrtKernelContext* context) {
     Ort::KernelContext ctx(context);
     qnn::QnnModel* model = reinterpret_cast<qnn::QnnModel*>(state);
+    // std::system(R"(..\ssr_test_app\SSRTestApp.exe CDSP -ErrorFatal)");
     Status result = model->ExecuteGraph(ctx, logger);
     LOGS(logger, VERBOSE) << "[SSR Handling]: During Execute " << model->GetSaveBufferSize();
     // Customer Recover Routines
     qnn::QnnModelLookupTable qnn_models;
     LOGS(logger, VERBOSE) << "[SSR Handling]: model->Name() " << model->Name();
+    // ReleaseContext helps contextFree with custom deleter
+    ORT_RETURN_IF_ERROR(qnn_backend_manager_->ReleaseContext());
     // TODO: Deal with the max_spill_fill_size
     Status ssr_result = qnn_backend_manager_->LoadCachedQnnContextFromBuffer(
       reinterpret_cast<char*>(model->GetSaveBuffer().get()),
@@ -1125,8 +1128,8 @@ Status QNNExecutionProvider::CreateComputeFunc(std::vector<NodeComputeInfo>& nod
     ORT_RETURN_IF_NOT(qnn_models.size() == 1, "There must be only one qnn_model");
 
     auto new_qnn_model = std::move(qnn_models.begin()->second);
-    model->GetGraphInfo()->SetGraph(new_qnn_model->GetGraphInfo()->Graph());
     model->GetGraphInfo()->SetGraphContext(new_qnn_model->GetGraphInfo()->GraphContext());
+    model->GetGraphInfo()->SetGraph(new_qnn_model->GetGraphInfo()->Graph());
     result = model->ExecuteGraph(ctx, logger);
     LOGS(logger, VERBOSE) << "[SSR Handling]: After Recover " << result;
     return result;
