@@ -1864,11 +1864,11 @@ TEST_F(QnnHTPBackendTests, RandomUniformLikeAddTest) {
   provider_options["backend_type"] = "htp";
 
   // Run the test - we expect both RandomUniformLike and Add to be assigned to QNN EP
-  RunQnnModelTest(build_test_case,
-                  provider_options,
-                  14,
-                  ExpectedEPNodeAssignment::All,
-                  0.5f);
+  // Using the NoVerify version since RandomUniformLike randomness algo differs from ORT CPU
+  RunQnnModelTestHTPNoVerify(build_test_case,
+                             provider_options,
+                             14,
+                             ExpectedEPNodeAssignment::All);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
