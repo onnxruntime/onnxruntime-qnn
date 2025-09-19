@@ -537,6 +537,8 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
   // Add this option because this feature requires QnnSystem lib and it's no supported for Windows x86_64 platform
   enable_spill_fill_buffer_ = ParseBoolOption("enable_htp_spill_fill_buffer", false, provider_options_map);
 
+  enable_ssr_handling_ = ParseBoolOption("enable_ssr_handling", false, provider_options_map);
+
   model_settings_.offload_graph_io_quantization = ParseBoolOption("offload_graph_io_quantization", true,
                                                                   provider_options_map);
 
@@ -1107,31 +1109,35 @@ Status QNNExecutionProvider::CreateComputeFunc(std::vector<NodeComputeInfo>& nod
   compute_info.compute_func = [&logger, this](FunctionState state, const OrtApi*, OrtKernelContext* context) {
     Ort::KernelContext ctx(context);
     qnn::QnnModel* model = reinterpret_cast<qnn::QnnModel*>(state);
-    // std::system(R"(..\ssr_test_app\SSRTestApp.exe CDSP -ErrorFatal)");
+    if (enable_ssr_handling_) {
+      std::system(R"(..\ssr_test_app\SSRTestApp.exe CDSP -ErrorFatal)");
+      std::this_thread::sleep_for(std::chrono::milliseconds(20000));
+    }
     Status result = model->ExecuteGraph(ctx, logger);
-    LOGS(logger, VERBOSE) << "[SSR Handling]: During Execute " << model->GetSaveBufferSize();
-    // Customer Recover Routines
-    qnn::QnnModelLookupTable qnn_models;
-    LOGS(logger, VERBOSE) << "[SSR Handling]: model->Name() " << model->Name();
-    // ReleaseContext helps contextFree with custom deleter
-    ORT_RETURN_IF_ERROR(qnn_backend_manager_->ReleaseContext());
-    // TODO: Deal with the max_spill_fill_size
-    Status ssr_result = qnn_backend_manager_->LoadCachedQnnContextFromBuffer(
-      reinterpret_cast<char*>(model->GetSaveBuffer().get()),
-      model->GetSaveBufferSize(),
-      model->Name(),
-      qnn_models,
-      model->GetSaveBufferSize());
+    if (enable_ssr_handling_) {
+      LOGS(logger, VERBOSE) << "[SSR Handling]: Before Recover " << result;
+      // Customer Recover Routines
+      qnn::QnnModelLookupTable qnn_models;
+      LOGS(logger, VERBOSE) << "[SSR Handling]: model->Name() " << model->Name();
+      // ReleaseContext helps contextFree with custom deleter
+      ORT_RETURN_IF_ERROR(qnn_backend_manager_->ReleaseContext());
+      // TODO: Deal with the max_spill_fill_size
+      Status ssr_result = qnn_backend_manager_->LoadCachedQnnContextFromBuffer(
+        reinterpret_cast<char*>(model->GetSaveBuffer().get()),
+        model->GetSaveBufferSize(),
+        model->Name(),
+        qnn_models,
+        model->GetSaveBufferSize());
 
-    LOGS(logger, VERBOSE) << "[SSR Handling]: LoadCachedQnnContextFromBuffer " << ssr_result;
-    LOGS(logger, VERBOSE) << "[SSR Handling]: qnn_models.size()" << qnn_models.size();
-    ORT_RETURN_IF_NOT(qnn_models.size() == 1, "There must be only one qnn_model");
-
-    auto new_qnn_model = std::move(qnn_models.begin()->second);
-    model->GetGraphInfo()->SetGraphContext(new_qnn_model->GetGraphInfo()->GraphContext());
-    model->GetGraphInfo()->SetGraph(new_qnn_model->GetGraphInfo()->Graph());
-    result = model->ExecuteGraph(ctx, logger);
-    LOGS(logger, VERBOSE) << "[SSR Handling]: After Recover " << result;
+      LOGS(logger, VERBOSE) << "[SSR Handling]: LoadCachedQnnContextFromBuffer " << ssr_result;
+      LOGS(logger, VERBOSE) << "[SSR Handling]: qnn_models.size()" << qnn_models.size();
+      ORT_RETURN_IF_NOT(qnn_models.size() == 1, "There must be only one qnn_model");
+      auto new_qnn_model = std::move(qnn_models.begin()->second);
+      model->GetGraphInfo()->SetGraphContext(new_qnn_model->GetGraphInfo()->GraphContext());
+      model->GetGraphInfo()->SetGraph(new_qnn_model->GetGraphInfo()->Graph());
+      result = model->ExecuteGraph(ctx, logger);
+      LOGS(logger, VERBOSE) << "[SSR Handling]: After Recover " << result;
+    }
     return result;
   };
 
