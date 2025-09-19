@@ -370,7 +370,7 @@ class TaskLibrary:
                             "Release",
                             self.__qairt_sdk_root,
                             "build",
-                            True,
+                            build_as_x=True,
                         ),
                         BuildEpWindowsTask(
                             "Building ARM64ec slice of ONNX Runtime for Windows on ARM64x",
@@ -379,7 +379,7 @@ class TaskLibrary:
                             "Release",
                             self.__qairt_sdk_root,
                             "build",
-                            True,
+                            build_as_x=True,
                         ),
                     ],
                 )
@@ -486,7 +486,7 @@ class TaskLibrary:
     def list_public(self, plan: Plan) -> str:
         return plan.add_step(ListTasksTask(PUBLIC_TASKS))
 
-    if is_host_linux() or is_host_mac():
+    if is_host_linux() or is_host_windows():
 
         @public_task("Test ONNX Runtime")
         @depends(
