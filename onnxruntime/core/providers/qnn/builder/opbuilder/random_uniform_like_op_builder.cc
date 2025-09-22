@@ -34,6 +34,7 @@ Status RandomUniformLikeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrap
                                                  std::vector<std::string>& input_names,
                                                  bool do_op_validation) const {
   ORT_UNUSED_PARAMETER(do_op_validation);
+  ORT_UNUSED_PARAMETER(logger);
 
   NodeAttrHelper node_helper(node_unit);
   const auto& inputs = node_unit.Inputs();
