@@ -63,7 +63,7 @@ Status RandomUniformLikeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrap
 
   // --- If seed attribute is present, add it as second input ---
   if (node_helper.HasAttr("seed")) {
-    float seed_value = node_helper.Get("seed", 0.0f);
+    auto seed_value = node_helper.GetFloat("seed");
 
     std::vector<uint32_t> scalar_shape = {1};
     std::vector<uint8_t> seed_data(sizeof(float));
