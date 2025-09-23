@@ -153,36 +153,6 @@ GetTestQDQModelFn<QuantType> BuildQDQTopKTestCase(const TestInputDef<float>& inp
   };
 }
 
-// Unit test to load a model and run.
-TEST_F(QnnHTPBackendTests, topk_model_test) {
-  const std::string path{"/local/mnt/workspace/0922_topk_model.onnx"};
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-  provider_options["dump_json_qnn_graph"] = "1";
-  TryEnableQNNSaver(provider_options);
-  EPVerificationParams verification_params;
-  verification_params.ep_node_assignment = ExpectedEPNodeAssignment::All;
-  verification_params.fp32_abs_err = 1e-2f;
-  verification_params.graph_verifier = nullptr;
-  NameMLValMap feeds;
-  AllocatorPtr allocator = TestCPUExecutionProvider()->CreatePreferredAllocators()[0];
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{1414}};
-
-  const std::vector<int64_t> input_shape{249216};
-  auto input_tokens = rand_gen_.Uniform<float>(input_shape, -1000.0f, 1000.0f);
-  OrtValue input_token_value;
-  CreateMLValue<float>(allocator, input_shape, std::move(input_tokens), &input_token_value);
-  feeds.insert(std::make_pair("/img_view_transformer/Reshape_11_output_0", input_token_value));
-
-  RunAndVerifyOutputsWithEP(path, "QNN_EP_TestLogID",
-                            QnnExecutionProviderWithOptions(provider_options),
-                            /*feeds=*/feeds,
-                            /*params=*/verification_params,
-                            /*session_options_updater=*/{},
-                            /*verify_outputs=*/true);
-}
-
 // Runs a QDQ TopK model on the QNN (HTP) EP and the ORT CPU EP. Checks the graph node assignment and that inference
 // running the QDQ model on QNN EP is at least as accurate as on ORT CPU EP (compared to the baseline float32 model).
 template <typename QType>
