@@ -61,7 +61,6 @@ Status TopKOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const N
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "The number of top elements to retrieve must be specified as constant input.");
   }
   NodeAttrHelper node_helper(node_unit);
-  auto largest = node_helper.Get("largest", 1);
   auto sorted = node_helper.Get("sorted", 1);
   if (0 == sorted) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN TopK output is always sorted");
