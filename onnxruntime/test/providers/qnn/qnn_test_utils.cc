@@ -204,6 +204,7 @@ void InferenceModel(const std::string& model_data, const char* log_id,
                     ExpectedEPNodeAssignment expected_ep_assignment, const NameMLValMap& feeds,
                     std::vector<OrtValue>& output_vals,
                     bool is_qnn_ep,
+                    bool trigger_ssr,
                     const std::unordered_map<std::string, std::string>& session_option_pairs,
                     std::function<void(const Graph&)>* graph_checker) {
   SessionOptions so;
@@ -224,6 +225,11 @@ void InferenceModel(const std::string& model_data, const char* log_id,
   }
   ASSERT_STATUS_OK(session_object.Load(model_data.data(), static_cast<int>(model_data.size())));
   ASSERT_STATUS_OK(session_object.Initialize());
+
+  if (trigger_ssr) {
+    std::system(R"(.\SSRTestApp.exe CDSP -ErrorFatal)");
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+  }
 
   const auto& graph = session_object.GetGraph();
 

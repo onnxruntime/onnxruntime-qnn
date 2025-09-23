@@ -1109,35 +1109,29 @@ Status QNNExecutionProvider::CreateComputeFunc(std::vector<NodeComputeInfo>& nod
   compute_info.compute_func = [&logger, this](FunctionState state, const OrtApi*, OrtKernelContext* context) {
     Ort::KernelContext ctx(context);
     qnn::QnnModel* model = reinterpret_cast<qnn::QnnModel*>(state);
-    if (enable_ssr_handling_) {
-      std::system(R"(..\ssr_test_app\SSRTestApp.exe CDSP -ErrorFatal)");
-      std::this_thread::sleep_for(std::chrono::milliseconds(20000));
-    }
     Status result = model->ExecuteGraph(ctx, logger);
-    if (enable_ssr_handling_) {
-      LOGS(logger, VERBOSE) << "[SSR Handling]: Before Recover " << result;
+    LOGS(logger, VERBOSE) << "[SSR Handling]: Before Recover " << result;
+    if (enable_ssr_handling_ &&
+        result.ErrorMessage().find(std::to_string(QNN_COMMON_ERROR_SYSTEM_COMMUNICATION)) != std::string::npos) {
       // Customer Recover Routines
       qnn::QnnModelLookupTable qnn_models;
-      LOGS(logger, VERBOSE) << "[SSR Handling]: model->Name() " << model->Name();
       // ReleaseContext helps contextFree with custom deleter
       ORT_RETURN_IF_ERROR(qnn_backend_manager_->ReleaseContext());
       // TODO: Deal with the max_spill_fill_size
-      Status ssr_result = qnn_backend_manager_->LoadCachedQnnContextFromBuffer(
+      Status recover_status = qnn_backend_manager_->LoadCachedQnnContextFromBuffer(
         reinterpret_cast<char*>(model->GetSaveBuffer().get()),
         model->GetSaveBufferSize(),
         model->Name(),
         qnn_models,
         model->GetSaveBufferSize());
-
-      LOGS(logger, VERBOSE) << "[SSR Handling]: LoadCachedQnnContextFromBuffer " << ssr_result;
-      LOGS(logger, VERBOSE) << "[SSR Handling]: qnn_models.size()" << qnn_models.size();
+      ORT_RETURN_IF_ERROR(recover_status);
       ORT_RETURN_IF_NOT(qnn_models.size() == 1, "There must be only one qnn_model");
       auto new_qnn_model = std::move(qnn_models.begin()->second);
       model->GetGraphInfo()->SetGraphContext(new_qnn_model->GetGraphInfo()->GraphContext());
       model->GetGraphInfo()->SetGraph(new_qnn_model->GetGraphInfo()->Graph());
       result = model->ExecuteGraph(ctx, logger);
-      LOGS(logger, VERBOSE) << "[SSR Handling]: After Recover " << result;
     }
+    LOGS(logger, VERBOSE) << "[SSR Handling]: After Recover " << result;
     return result;
   };
 
