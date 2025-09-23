@@ -144,7 +144,7 @@ Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
   std::vector<std::string> param_tensor_names{k_param_name};
 
   // Add largest to TopK attr
-  uint8_t largest = NodeAttrHelper(node_unit).Get("largest", 1);
+  uint8_t largest = static_cast<uint8_t>(NodeAttrHelper(node_unit).Get("largest", 1));
   Qnn_Scalar_t qnn_largest_k = QNN_SCALAR_INIT;
   qnn_largest_k.dataType = QNN_DATATYPE_BOOL_8;
   qnn_largest_k.bool8Value = largest;
