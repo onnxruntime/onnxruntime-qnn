@@ -101,16 +101,15 @@ TEST_F(QnnCPUBackendTests, TopK_LargestFloats_LastAxis_Largest_0) {
                           ExpectedEPNodeAssignment::All);
 }
 
-// Test TopK on CPU backend: top 2 largest floats from last axis. Set largest to 0.
+// Test TopK on CPU backend: top 2 largest floats from last axis. Set largest to 0. Set sorted to false.
 TEST_F(QnnCPUBackendTests, TopK_LargestFloats_LastAxis_Largest_0_Sorted) {
-  std::vector<int32_t> input_data = {-6, -5, -4, -3, -2, 0, 1, 2, 3, 4, 5, 6};
-  RunTopKTestOnCPU<int32_t>(TestInputDef<float>({1, 2, 2, 3}, false, input_data),
-                            TestInputDef<float>({1}, true /* is_initializer */, {2}),
-                            {utils::MakeAttribute("largest", static_cast<int64_t>(0)),
-                             utils::MakeAttribute("sorted", static_cast<int64_t>(0))},  // Attributes
-                            ExpectedEPNodeAssignment::All,
-                            /*opset*/ 19,
-                            /*verify_outputs*/ false);  // Disable verify output. Unsorted doesn't guarentee output sequence
+  RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+                          TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
+                          {utils::MakeAttribute("largest", static_cast<int64_t>(0)),
+                           utils::MakeAttribute("sorted", static_cast<int64_t>(0))},  // Attributes
+                          ExpectedEPNodeAssignment::All,
+                          /*opset*/ 19,
+                          /*verify_outputs*/ false);  // Disable verify output. Unsorted doesn't guarantee output sequence
 }
 
 // Test TopK on CPU backend: top 2 largest int32s from last axis
@@ -131,7 +130,7 @@ TEST_F(QnnCPUBackendTests, TopK_LargestInt32s_LastAxis_Largest_0) {
                             ExpectedEPNodeAssignment::All);
 }
 
-// Test TopK on CPU backend: top 2 largest int32s from last axis. Set largest to 0.
+// Test TopK on CPU backend: top 2 largest int32s from last axis. Set largest to 0. Set sorted to false.
 TEST_F(QnnCPUBackendTests, TopK_LargestInt32s_LastAxis_Largest_0_Sorted) {
   std::vector<int32_t> input_data = {-6, -5, -4, -3, -2, 0, 1, 2, 3, 4, 5, 6};
   RunTopKTestOnCPU<int32_t>(TestInputDef<int32_t>({1, 2, 2, 3}, false, input_data),
@@ -140,7 +139,7 @@ TEST_F(QnnCPUBackendTests, TopK_LargestInt32s_LastAxis_Largest_0_Sorted) {
                              utils::MakeAttribute("sorted", static_cast<int64_t>(0))},  // Attributes
                             ExpectedEPNodeAssignment::All,
                             /*opset*/ 19,
-                            /*verify_outputs*/ false);  // Disable verify output. Unsorted doesn't guarentee output sequence
+                            /*verify_outputs*/ false);  // Disable verify output. Unsorted doesn't guarantee output sequence
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
