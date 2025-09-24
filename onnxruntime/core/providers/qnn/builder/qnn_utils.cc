@@ -1538,7 +1538,9 @@ Status RequantizeBiasTensor(const std::vector<uint8_t>& original_bias_data,
 
   // Calculate per-channel bias scales: bias_scale[i] = weights_scale[i] * activation_scale
   for (size_t i = 0; i < broadcast_dim; ++i) {
-    new_scales[i] = weights_scales[i] * activation_scale;
+    // Use the corresponding weight scale if available, otherwise use the first one
+    float weight_scale = (i < weights_scales.size()) ? weights_scales[i] : weights_scales[0];
+    new_scales[i] = weight_scale * activation_scale;
     new_offsets[i] = 0;  // Bias is typically symmetric (offset = 0)
   }
 
