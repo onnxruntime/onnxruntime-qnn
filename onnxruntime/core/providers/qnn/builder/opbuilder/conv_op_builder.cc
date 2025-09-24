@@ -375,9 +375,6 @@ Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
             // Need to requantize the bias tensor
             float expected_scale = weights_scales[0] * activation_scale;
             LOGS(logger, VERBOSE) << "Per-tensor bias quantization parameters don't match, performing requantization";
-            LOGS(logger, VERBOSE) << "  Current bias scale: " << bias_scale << ", offset: " << bias_offset;
-            LOGS(logger, VERBOSE) << "  Expected bias scale: " << expected_scale << ", offset: 0";
-            LOGS(logger, VERBOSE) << "  Weight scale: " << weights_scales[0] << ", activation scale: " << activation_scale;
 
             // Get current bias data and requantize
             std::vector<uint8_t> original_bias_data;
@@ -420,13 +417,7 @@ Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
               }
 
               // Calculate expected scale for this channel
-              float expected_scale = activation_scale;
-              if (i < weights_scales.size()) {
-                expected_scale = weights_scales[i] * activation_scale;
-              } else {
-                // Fallback to first weight scale if we don't have enough weight scales
-                expected_scale = weights_scales[0] * activation_scale;
-              }
+              float expected_scale = weights_scales[i] * activation_scale;
 
               if (!utils::CheckBiasScaleMatch(bias_quant_params.axisScaleOffsetEncoding.scaleOffset[i].scale,
                                               expected_scale, 1.0f)) {
@@ -440,9 +431,6 @@ Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
             } else {
               // Need to requantize per-channel bias
               LOGS(logger, VERBOSE) << "Per-channel bias quantization parameters don't match, performing requantization";
-              LOGS(logger, VERBOSE) << "  Activation scale: " << activation_scale;
-              LOGS(logger, VERBOSE) << "  Number of bias channels: " << bias_quant_params.axisScaleOffsetEncoding.numScaleOffsets;
-              LOGS(logger, VERBOSE) << "  Number of weight scales: " << weights_scales.size();
 
               // Extract current scales and offsets and log them
               std::vector<float> current_scales;
@@ -454,12 +442,7 @@ Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
                 current_offsets.push_back(current_offset);
 
                 // Calculate expected scale for this channel
-                float expected_scale = activation_scale;
-                if (i < weights_scales.size()) {
-                  expected_scale = weights_scales[i] * activation_scale;
-                } else {
-                  expected_scale = weights_scales[0] * activation_scale;
-                }
+                float expected_scale = weights_scales[i] * activation_scale;
 
                 LOGS(logger, VERBOSE) << "  Channel " << i << ": current scale=" << current_scale
                                       << ", offset=" << current_offset << ", expected scale=" << expected_scale;
