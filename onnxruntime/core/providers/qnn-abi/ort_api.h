@@ -8,6 +8,8 @@
 // The preprocessor macro `BUILD_QNN_EP_STATIC_LIB` is defined and set to 1 if QNN EP
 // is built as a static library.
 
+#if BUILD_QNN_EP_STATIC_LIB
+// Includes when building QNN EP statically
 #ifdef _WIN32
 #include <Windows.h>
 #include <winmeta.h>
@@ -17,12 +19,12 @@
 
 #include "core/common/common.h"
 #include "core/common/status.h"
-#include "core/common/string_utils.h"
 #include "core/common/safeint.h"
 #include "core/common/logging/logging.h"
 #include "core/common/logging/capture.h"
 #include "core/common/path_string.h"
 #include "core/graph/onnx_protobuf.h"
+#include "core/platform/env.h"
 #include "core/framework/data_types.h"
 #include "core/framework/float16.h"
 #include "core/framework/run_options.h"
@@ -37,11 +39,18 @@
 #include "core/graph/basic_types.h"
 #include "core/graph/model.h"
 #include "core/graph/graph_viewer.h"
+#include "core/optimizer/qdq_transformer/selectors_actions/qdq_selectors.h"
+#include "core/optimizer/qdq_transformer/selectors_actions/shared/utils.h"
 #include "core/providers/common.h"
 #include "core/providers/partitioning_utils.h"
-#include "core/session/abi_logger.h"
-#include "core/graph/abi_graph_types.h"
 #include "core/session/abi_session_options_impl.h"
+#include "core/session/onnxruntime_cxx_api.h"
+#else
+// Includes when building QNN EP as a shared library
+#include "core/providers/shared_library/provider_api.h"
+#define ORT_API_MANUAL_INIT
+#include "core/session/onnxruntime_cxx_api.h"
+#endif
 
 #include "core/session/onnxruntime_c_api.h"
 
@@ -141,6 +150,18 @@ struct DeferOrtRelease {
   std::function<void(T*)> release_func_ = nullptr;
 };
 
+template <typename T>
+struct Factory {
+  template <typename... Params>
+  static inline std::unique_ptr<T> Create(Params&&... params) {
+#if BUILD_QNN_EP_STATIC_LIB
+    return std::make_unique<T>(std::forward<Params>(params)...);
+#else
+    return T::Create(std::forward<Params>(params)...);
+#endif
+  }
+};
+
 namespace QDQ {
 
 // Define NodeGroup structure similar to the one in shared/utils.h
@@ -186,19 +207,12 @@ class OrtNodeUnit {
   const std::vector<OrtNodeUnitIODef>& Inputs() const noexcept { return inputs_; }
   const std::vector<OrtNodeUnitIODef>& Outputs() const noexcept { return outputs_; }
 
-  const std::string& Domain() const noexcept { return target_node_->GetDomain(); }
-  const std::string& OpType() const noexcept { return target_node_->GetOpType(); }
-  const std::string& Name() const noexcept { return target_node_->GetName(); }
-  int SinceVersion() const noexcept {
-    int since_version;
-    Status status = target_node_->GetSinceVersion(since_version);
-    if (!status.IsOK()) {
-      since_version = -1;
-    }
-    return since_version;
-  }
+  std::string Domain() const noexcept { return Ort::ConstNode(target_node_).GetDomain(); }
+  std::string OpType() const noexcept { return Ort::ConstNode(target_node_).GetOperatorType(); }
+  std::string Name() const noexcept { return Ort::ConstNode(target_node_).GetName(); }
+  int SinceVersion() const noexcept { return Ort::ConstNode(target_node_).GetSinceVersion(); }
   // TODO: Id is in fact not equal to index.
-  size_t Index() const noexcept { return target_node_->GetId(); }
+  size_t Index() const noexcept { return Ort::ConstNode(target_node_).GetId(); }
 
   const OrtNode& GetNode() const noexcept { return *target_node_; }
   const OrtNode* GetRedundantClipNode() const noexcept { return redundant_clip_node_; }
@@ -253,7 +267,7 @@ class OrtNodeAttrHelper {
   int64_t Get(const std::string& key, int64_t def_val) const;
   std::vector<int64_t> Get(const std::string& key, const std::vector<int64_t>& def_val) const;
 
-  const std::string& Get(const std::string& key, const std::string& def_val) const;
+  std::string Get(const std::string& key, std::string def_val) const;
   std::vector<std::string> Get(const std::string& key, const std::vector<std::string>& def_val) const;
 
   // Convert the i() or ints() of the attribute from int64_t to int32_t
@@ -289,6 +303,22 @@ OrtStatus* GetSessionConfigEntryOrDefault(const OrtApi& ort_api,
                                           /*out*/ std::string& config_val);
 
 PathString GetModelPathString(const OrtGraph* graph, const OrtApi& ort_api);
+
+/**
+ * Returns a lowercase version of the input string.
+ * /param str The string to lowercase.
+ * /return The lowercased string.
+ */
+inline std::string GetLowercaseString(std::string str) {
+  // https://en.cppreference.com/w/cpp/string/byte/tolower
+  // The behavior of tolower from <cctype> is undefined if the argument is neither representable as unsigned char
+  // nor equal to EOF. To use tolower safely with a plain char (or signed char), the argument must be converted to
+  // unsigned char.
+  std::transform(str.begin(), str.end(), str.begin(), [](unsigned char c) {
+    return static_cast<char>(std::tolower(c));
+  });
+  return str;
+}
 
 // Refer to OrtSessionOptions::GetProviderOptionPrefix.
 std::string GetProviderOptionPrefix(const std::string& provider_name);

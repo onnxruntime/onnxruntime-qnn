@@ -94,13 +94,14 @@ class QnnModel {
   bool IsConstantInitializer(const OrtGraph& ort_graph,
                              const std::string& tensor_name) const {
     size_t num_initializers = 0;
-    OrtStatusPtr status = api_ptrs_.ort_api.Graph_GetNumInitializers(&ort_graph, &num_initializers);
+    OrtStatus* status = api_ptrs_.ort_api.Graph_GetNumInitializers(&ort_graph, &num_initializers);
     if (status != nullptr) {
       return false;  // Return false on error
     }
     std::vector<const OrtValueInfo*> initializers(num_initializers);
-    Status ort_status = ort_graph.GetInitializers(initializers);
-    if (!ort_status.IsOK()) {
+    status = api_ptrs_.ort_api.Graph_GetInitializers(&ort_graph, initializers.data(), initializers.size());
+    if (status != nullptr) {
+      api_ptrs_.ort_api.ReleaseStatus(status);
       return false;
     }
 

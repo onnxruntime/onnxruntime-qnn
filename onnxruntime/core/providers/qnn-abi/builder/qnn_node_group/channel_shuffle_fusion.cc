@@ -149,7 +149,9 @@ Status CreateOrValidateOnQnn(
         ort_api.Node_GetInputs(&transpose_head->GetNode(), transpose_head_inputs.data(), transpose_head_inputs.size()),
         ort_api);
     const OrtValueInfo* transpose_head_input_info = transpose_head_inputs[0];
-    const OrtTypeInfo* transpose_head_input_type_info = transpose_head_input_info->GetTypeInfo();
+    const OrtTypeInfo* transpose_head_input_type_info = nullptr;
+    RETURN_STATUS_IF_ERROR(ort_api.GetValueInfoTypeInfo(transpose_head_input_info, &transpose_head_input_type_info),
+                           ort_api);
     const OrtTensorTypeAndShapeInfo* transpose_head_input_tensor_info = nullptr;
     RETURN_STATUS_IF_ERROR(
         ort_api.CastTypeInfoToTensorInfo(transpose_head_input_type_info, &transpose_head_input_tensor_info),
@@ -166,7 +168,7 @@ Status CreateOrValidateOnQnn(
     Qnn_Scalar_t axis_scalar = QNN_SCALAR_INIT;
     axis_scalar.dataType = QNN_DATATYPE_UINT_32;
     axis_scalar.uint32Value = channel_axis;
-    QnnParamWrapper param_wrapper(transpose_tail->GetNode().GetId(),
+    QnnParamWrapper param_wrapper(transpose_tail->Index(),
                                   transpose_tail->Name(),
                                   QNN_OP_CHANNEL_SHUFFLE_PARAM_AXIS,
                                   axis_scalar);
@@ -185,7 +187,8 @@ Status CreateOrValidateOnQnn(
         ort_api.Node_GetOutputs(&reshape1->GetNode(), reshape1_outputs.data(), reshape1_outputs.size()),
         ort_api);
     const OrtValueInfo* reshape1_output_info = reshape1_outputs[0];
-    const OrtTypeInfo* reshape1_output_type_info = reshape1_output_info->GetTypeInfo();
+    const OrtTypeInfo* reshape1_output_type_info = nullptr;
+    RETURN_STATUS_IF_ERROR(ort_api.GetValueInfoTypeInfo(reshape1_output_info, &reshape1_output_type_info), ort_api);
     const OrtTensorTypeAndShapeInfo* reshape1_output_tensor_info = nullptr;
     RETURN_STATUS_IF_ERROR(ort_api.CastTypeInfoToTensorInfo(reshape1_output_type_info, &reshape1_output_tensor_info),
                            ort_api);
@@ -203,7 +206,7 @@ Status CreateOrValidateOnQnn(
     Qnn_Scalar_t num_groups_scalar = QNN_SCALAR_INIT;
     num_groups_scalar.dataType = QNN_DATATYPE_UINT_32;
     num_groups_scalar.uint32Value = static_cast<uint32_t>(reshape1_output_dims[1]);
-    QnnParamWrapper param_wrapper(transpose_tail->GetNode().GetId(),
+    QnnParamWrapper param_wrapper(transpose_tail->Index(),
                                   transpose_tail->Name(),
                                   QNN_OP_CHANNEL_SHUFFLE_PARAM_NUM_GROUPS,
                                   num_groups_scalar);
@@ -270,7 +273,9 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusion(
       ort_api.Node_GetInputs(&reshape1->GetNode(), reshape1_inputs.data(), reshape1_inputs.size()),
       ort_api, nullptr);
   const OrtValueInfo* reshape1_input_info = reshape1_inputs[0];
-  const OrtTypeInfo* reshape1_input_type_info = reshape1_input_info->GetTypeInfo();
+  const OrtTypeInfo* reshape1_input_type_info = nullptr;
+  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetValueInfoTypeInfo(reshape1_input_info, &reshape1_input_type_info),
+                              ort_api, nullptr);
   const OrtTensorTypeAndShapeInfo* reshape1_input_tensor_info = nullptr;
   QNN_RETURN_IF_STATUS_NOT_OK(ort_api.CastTypeInfoToTensorInfo(reshape1_input_type_info, &reshape1_input_tensor_info),
                               ort_api, nullptr);
@@ -284,7 +289,9 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusion(
       ort_api.Node_GetOutputs(&reshape2->GetNode(), reshape2_outputs.data(), reshape2_outputs.size()),
       ort_api, nullptr);
   const OrtValueInfo* reshape2_output_info = reshape2_outputs[0];
-  const OrtTypeInfo* reshape2_output_type_info = reshape2_output_info->GetTypeInfo();
+  const OrtTypeInfo* reshape2_output_type_info = nullptr;
+  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetValueInfoTypeInfo(reshape2_output_info, &reshape2_output_type_info),
+                              ort_api, nullptr);
   const OrtTensorTypeAndShapeInfo* reshape2_output_tensor_info = nullptr;
   QNN_RETURN_IF_STATUS_NOT_OK(
       ort_api.CastTypeInfoToTensorInfo(reshape2_output_type_info, &reshape2_output_tensor_info),
@@ -325,7 +332,9 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusion(
       ort_api.Node_GetOutputs(&reshape1->GetNode(), reshape1_outputs.data(), reshape1_outputs.size()),
       ort_api, nullptr);
   const OrtValueInfo* reshape1_output_info = reshape1_outputs[0];
-  const OrtTypeInfo* reshape1_output_type_info = reshape1_output_info->GetTypeInfo();
+  const OrtTypeInfo* reshape1_output_type_info = nullptr;
+  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetValueInfoTypeInfo(reshape1_output_info, &reshape1_output_type_info),
+                              ort_api, nullptr);
   const OrtTensorTypeAndShapeInfo* reshape1_output_tensor_info = nullptr;
   QNN_RETURN_IF_STATUS_NOT_OK(ort_api.CastTypeInfoToTensorInfo(reshape1_output_type_info, &reshape1_output_tensor_info),
                               ort_api, nullptr);

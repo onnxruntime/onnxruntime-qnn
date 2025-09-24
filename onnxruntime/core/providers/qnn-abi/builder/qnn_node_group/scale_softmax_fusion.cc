@@ -50,8 +50,10 @@ std::optional<size_t> GetMulScalarInputIndex(const OrtNodeUnit& mul, const OrtAp
   const OrtValueInfo* mul_y = inputs[1];
 
   // Get type info for inputs
-  const OrtTypeInfo* x_type_info = mul_x->GetTypeInfo();
-  const OrtTypeInfo* y_type_info = mul_y->GetTypeInfo();
+  const OrtTypeInfo* x_type_info = nullptr;
+  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetValueInfoTypeInfo(mul_x, &x_type_info), ort_api, std::nullopt);
+  const OrtTypeInfo* y_type_info = nullptr;
+  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetValueInfoTypeInfo(mul_y, &y_type_info), ort_api, std::nullopt);
 
   // Cast to tensor info
   const OrtTensorTypeAndShapeInfo* x_tensor_info = nullptr;
@@ -102,7 +104,8 @@ std::optional<uint32_t> GetPositiveSoftmaxAxis(const OrtNodeUnit& mul, const Ort
                                 std::nullopt);
 
     const OrtValueInfo* other_input = inputs[input_other_index];
-    const OrtTypeInfo* type_info = other_input->GetTypeInfo();
+    const OrtTypeInfo* type_info = nullptr;
+    QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetValueInfoTypeInfo(other_input, &type_info), ort_api, std::nullopt);
     const OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
     QNN_RETURN_IF_STATUS_NOT_OK(ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info), ort_api, std::nullopt);
 
@@ -152,10 +155,7 @@ std::optional<float> ExtractScalarValueFromMul(const QnnModelWrapper& qnn_model_
 
   // Get the value
   const OrtValue* value = nullptr;
-  Status ort_status = scalar_tensor->GetInitializerValue(value);
-  if (!ort_status.IsOK() || value == nullptr) {
-    return std::nullopt;
-  }
+  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.ValueInfo_GetInitializerValue(scalar_tensor, &value), ort_api, std::nullopt);
 
   // Check if it's a float tensor
   ONNXTensorElementDataType element_type;
@@ -207,7 +207,7 @@ Status CreateOrValidateOnQnn(
       Qnn_Scalar_t axis_scalar = QNN_SCALAR_INIT;
       axis_scalar.dataType = QNN_DATATYPE_UINT_32;
       axis_scalar.uint32Value = axis.value();
-      QnnParamWrapper param_wrapper(softmax_node_unit.GetNode().GetId(),
+      QnnParamWrapper param_wrapper(softmax_node_unit.Index(),
                                     softmax_node_unit.Name(),
                                     QNN_OP_SOFTMAX_PARAM_AXIS,
                                     axis_scalar);
@@ -222,7 +222,7 @@ Status CreateOrValidateOnQnn(
     Qnn_Scalar_t beta_scalar = QNN_SCALAR_INIT;
     beta_scalar.dataType = QNN_DATATYPE_FLOAT_32;
     beta_scalar.floatValue = scale * beta;
-    QnnParamWrapper param_wrapper(softmax_node_unit.GetNode().GetId(),
+    QnnParamWrapper param_wrapper(softmax_node_unit.Index(),
                                   softmax_node_unit.Name(),
                                   QNN_OP_SOFTMAX_PARAM_BETA,
                                   beta_scalar);

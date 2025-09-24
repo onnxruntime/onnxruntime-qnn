@@ -181,23 +181,27 @@ static bool IsDQQConversion(const QnnModelWrapper& qnn_model_wrapper, const OrtN
   const OrtValue* q_scale_value = nullptr;
   const OrtValue* q_zero_point_value = nullptr;
 
-  Status init_status = dq_scale->GetInitializerValue(dq_scale_value);
-  if (!init_status.IsOK() || dq_scale_value == nullptr) {
+  OrtStatus* status = ort_api.ValueInfo_GetInitializerValue(dq_scale, &dq_scale_value);
+  if (status != nullptr) {
+    ort_api.ReleaseStatus(status);
     return false;
   }
 
-  init_status = dq_zero_point->GetInitializerValue(dq_zero_point_value);
-  if (!init_status.IsOK() || dq_zero_point_value == nullptr) {
+  status = ort_api.ValueInfo_GetInitializerValue(dq_zero_point, &dq_zero_point_value);
+  if (status != nullptr) {
+    ort_api.ReleaseStatus(status);
     return false;
   }
 
-  init_status = q_scale->GetInitializerValue(q_scale_value);
-  if (!init_status.IsOK() || q_scale_value == nullptr) {
+  status = ort_api.ValueInfo_GetInitializerValue(q_scale, &q_scale_value);
+  if (status != nullptr) {
+    ort_api.ReleaseStatus(status);
     return false;
   }
 
-  init_status = q_zero_point->GetInitializerValue(q_zero_point_value);
-  if (!init_status.IsOK() || q_zero_point_value == nullptr) {
+  status = ort_api.ValueInfo_GetInitializerValue(q_zero_point, &q_zero_point_value);
+  if (status != nullptr) {
+    ort_api.ReleaseStatus(status);
     return false;
   }
 

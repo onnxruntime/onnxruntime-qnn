@@ -119,7 +119,8 @@ const OrtValue* GetConstantInitializer(const OrtGraph* graph, const OrtApi& ort_
   OrtStatus* status = ort_api.Graph_GetNumInitializers(graph, &num_initializers);
   if (status == nullptr) {
     std::vector<const OrtValueInfo*> initializers(num_initializers);
-    if (graph->GetInitializers(initializers).IsOK()) {
+    status = ort_api.Graph_GetInitializers(graph, initializers.data(), num_initializers);
+    if (status == nullptr) {
       // Find the initializer with the given name
       for (size_t i = 0; i < num_initializers; ++i) {
         const OrtValueInfo* value_info = initializers[i];
@@ -127,7 +128,8 @@ const OrtValue* GetConstantInitializer(const OrtGraph* graph, const OrtApi& ort_
         status = ort_api.GetValueInfoName(value_info, &initializer_name);
         if (status == nullptr && strcmp(initializer_name, name) == 0) {
           // Found the initializer, get its value
-          if (value_info->GetInitializerValue(initializer).IsOK()) {
+          status = ort_api.ValueInfo_GetInitializerValue(value_info, &initializer);
+          if (status == nullptr) {
             break;
           }
         }
@@ -139,6 +141,8 @@ const OrtValue* GetConstantInitializer(const OrtGraph* graph, const OrtApi& ort_
       if (status != nullptr) {
         ort_api.ReleaseStatus(status);
       }
+    } else {
+      ort_api.ReleaseStatus(status);
     }
   }
 
@@ -1507,7 +1511,7 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
     }
 
     // Check if this is a DQ node
-    if (producer_node->GetOpType() == "DequantizeLinear") {
+    if (Ort::ConstNode(producer_node).GetOperatorType() == "DequantizeLinear") {
       dq_nodes.push_back(producer_node);
     }
   }
@@ -1554,7 +1558,8 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
       }
 
       // Check if it's a Relu or Clip node
-      if (next_node->GetOpType() == "Relu" || next_node->GetOpType() == "Clip") {
+      const std::string next_node_op_type = Ort::ConstNode(next_node).GetOperatorType();
+      if (next_node_op_type == "Relu" || next_node_op_type == "Clip") {
         // Get the outputs of the next node to check count
         size_t next_output_count = 0;
         status = ort_api.Node_GetNumOutputs(next_node, &next_output_count);
@@ -1658,7 +1663,7 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
         const OrtNode* consumer_node = consumer_nodes_vec[j];
 
         // Check if this is a Q node
-        if (consumer_node->GetOpType() == "QuantizeLinear") {
+        if (Ort::ConstNode(consumer_node).GetOperatorType() == "QuantizeLinear") {
           q_nodes.push_back(consumer_node);
         }
       }
@@ -1895,7 +1900,7 @@ std::vector<OrtNodeGroup> OrtSelectorManager::GetOrtQDQSelections(const OrtGraph
     const OrtNode* node = nodes[i];
 
     // Get node op type
-    const char* op_type = node->GetOpType().c_str();
+    std::string op_type = Ort::ConstNode(node).GetOperatorType();
 
     // Get node domain
     const char* domain = nullptr;

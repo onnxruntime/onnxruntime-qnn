@@ -4,9 +4,8 @@
   add_compile_definitions(USE_QNN=1)
 
 
-remove_definitions(-DBUILD_QNN_EP_STATIC_LIB)
-add_compile_definitions(BUILD_QNN_EP_STATIC_LIB=0)
-# add_compile_definitions(QNN_ABI_SHARED_LIBRARY_ONLY=1)
+  remove_definitions(-DBUILD_QNN_EP_STATIC_LIB)
+  add_compile_definitions(BUILD_QNN_EP_STATIC_LIB=0)
 
   file(GLOB_RECURSE
        onnxruntime_providers_qnn_abi_ep_srcs CONFIGURE_DEPENDS
@@ -17,9 +16,6 @@ add_compile_definitions(BUILD_QNN_EP_STATIC_LIB=0)
   list(REMOVE_ITEM onnxruntime_providers_qnn_abi_ep_srcs
        "${ONNXRUNTIME_ROOT}/core/providers/qnn-abi/qnn_ep_factory.h"
        "${ONNXRUNTIME_ROOT}/core/providers/qnn-abi/qnn_ep_factory.cc")
-
-
-  set(example_plugin_ep_utils_srcs "${ONNXRUNTIME_ROOT}/test/autoep/library/example_plugin_ep_utils.cc")
 
   function(extract_qnn_sdk_version_from_yaml QNN_SDK_YAML_FILE QNN_VERSION_OUTPUT)
     file(READ "${QNN_SDK_YAML_FILE}" QNN_SDK_YAML_CONTENT)
@@ -49,11 +45,9 @@ add_compile_definitions(BUILD_QNN_EP_STATIC_LIB=0)
   )
 
   set(onnxruntime_providers_qnn_abi_srcs ${onnxruntime_providers_qnn_abi_ep_srcs}
-                                  #  ${onnxruntime_providers_qnn_shared_lib_srcs}
-                                          ${example_plugin_ep_utils_srcs})
+                                         ${onnxruntime_providers_qnn_shared_lib_srcs})
 
-  source_group(TREE ${ONNXRUNTIME_ROOT}/core FILES ${onnxruntime_providers_qnn_abi_ep_srcs}) # ${onnxruntime_providers_qnn_shared_lib_srcs})
-  source_group(TREE ${ONNXRUNTIME_ROOT}/test FILES ${example_plugin_ep_utils_srcs})
+  source_group(TREE ${ONNXRUNTIME_ROOT}/core FILES ${onnxruntime_providers_qnn_abi_srcs})
 
   set(onnxruntime_providers_qnn_abi_all_srcs ${onnxruntime_providers_qnn_abi_srcs})
   if(WIN32)
@@ -63,9 +57,9 @@ add_compile_definitions(BUILD_QNN_EP_STATIC_LIB=0)
 
   onnxruntime_add_shared_library_module(onnxruntime_providers_qnn_abi_simulation ${onnxruntime_providers_qnn_abi_all_srcs})
   onnxruntime_add_include_to_target(onnxruntime_providers_qnn_abi_simulation ${ONNXRUNTIME_PROVIDERS_SHARED} ${GSL_TARGET} onnx
-                                                                             onnx_proto ${PROTOBUF_LIB} flatbuffers::flatbuffers onnxruntime_common Boost::mp11 safeint_interface
+                                                                             onnxruntime_common Boost::mp11 safeint_interface
                                                                              nlohmann_json::nlohmann_json)
-  target_link_libraries(onnxruntime_providers_qnn_abi_simulation PRIVATE ${ONNXRUNTIME_PROVIDERS_SHARED} ${ABSEIL_LIBS} ${CMAKE_DL_LIBS} onnxruntime_common ${PROTOBUF_LIB} onnx_proto)
+  target_link_libraries(onnxruntime_providers_qnn_abi_simulation PRIVATE ${ONNXRUNTIME_PROVIDERS_SHARED} ${ABSEIL_LIBS} ${CMAKE_DL_LIBS})
 
   # Link cpuinfo if supported - needed for CPU feature detection
   if (CPUINFO_SUPPORTED)
@@ -73,17 +67,12 @@ add_compile_definitions(BUILD_QNN_EP_STATIC_LIB=0)
     target_link_libraries(onnxruntime_providers_qnn_abi_simulation PRIVATE cpuinfo::cpuinfo ${ONNXRUNTIME_CLOG_TARGET_NAME})
   endif()
 
-  add_dependencies(onnxruntime_providers_qnn_abi_simulation onnxruntime_providers_shared onnx onnx_proto ${onnxruntime_EXTERNAL_DEPENDENCIES})
+  add_dependencies(onnxruntime_providers_qnn_abi_simulation onnxruntime_providers_shared ${onnxruntime_EXTERNAL_DEPENDENCIES})
   target_include_directories(onnxruntime_providers_qnn_abi_simulation PRIVATE ${ONNXRUNTIME_ROOT}
                                                                               ${CMAKE_CURRENT_BINARY_DIR}
                                                                               ${onnxruntime_QNN_HOME}/include/QNN
                                                                               ${onnxruntime_QNN_HOME}/include)
 
-
-  target_compile_definitions(onnxruntime_providers_qnn PRIVATE
-    BUILD_QNN_EP_STATIC_LIB=0
-    SHARED_PROVIDER=1
-  )
   # Set preprocessor definitions used in onnxruntime_providers_qnn_abi_simulation.rc
   if(WIN32)
     if(NOT QNN_SDK_VERSION)
@@ -136,7 +125,7 @@ add_compile_definitions(BUILD_QNN_EP_STATIC_LIB=0)
       COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_abi_simulation_target}>
       COMMENT "Creating QNN library destination directory"
     )
-    
+
     # Copy QNN library files with better error handling
     if(QNN_LIB_FILES)
       foreach(QNN_LIB_FILE ${QNN_LIB_FILES})
@@ -154,11 +143,3 @@ add_compile_definitions(BUILD_QNN_EP_STATIC_LIB=0)
       COMMAND ${CMAKE_COMMAND} -E copy "${onnxruntime_QNN_HOME}/Qualcomm AI Hub Proprietary License.pdf" $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_abi_simulation_target}>
       )
   endif()
-
-if (NOT onnxruntime_BUILD_SHARED_LIB)
-  install(TARGETS onnxruntime_providers_qnn_abi_simulation EXPORT ${PROJECT_NAME}Targets
-          ARCHIVE   DESTINATION ${CMAKE_INSTALL_LIBDIR}
-          LIBRARY   DESTINATION ${CMAKE_INSTALL_LIBDIR}
-          RUNTIME   DESTINATION ${CMAKE_INSTALL_BINDIR}
-          FRAMEWORK DESTINATION ${CMAKE_INSTALL_BINDIR})
-endif()

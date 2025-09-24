@@ -35,7 +35,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   QnnEp(QnnEpFactory& factory,
         const std::string& name,
         const OrtSessionOptions& session_options,
-        const OrtLogger& logger);
+        const OrtLogger* logger);
   ~QnnEp();
 
  private:
@@ -59,9 +59,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                                                   _In_z_ const char* op_type,
                                                                   _In_ OrtEpDataLayout target_data_layout,
                                                                   _Outptr_ int* should_convert) noexcept;
-  static OrtStatus* ORT_API_CALL OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const OrtRunOptions* run_options) noexcept;
+  static OrtStatus* ORT_API_CALL OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const ::OrtRunOptions* run_options) noexcept;
   static OrtStatus* ORT_API_CALL OnRunEndImpl(_In_ OrtEp* this_ptr,
-                                              _In_ const OrtRunOptions* run_options,
+                                              _In_ const ::OrtRunOptions* run_options,
                                               _In_ bool sync_stream) noexcept;
   static OrtStatus* ORT_API_CALL SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
                                                        _In_reads_(num_options) const char* const* option_keys,

@@ -423,11 +423,11 @@ void QnnLogging(const char* format,
   const auto data_type = ::onnxruntime::logging::DataType::SYSTEM;
 
   if (logger.OutputIsEnabled(severity, data_type)) {
-    auto log_capture = std::make_unique<logging::Capture>(logger,
-                                                          severity,
-                                                          logging::Category::onnxruntime,
-                                                          data_type,
-                                                          ORT_WHERE);
+    auto log_capture = Factory<logging::Capture>::Create(logger,
+                                                         severity,
+                                                         logging::Category::onnxruntime,
+                                                         data_type,
+                                                         ORT_WHERE);
     log_capture->ProcessPrintf(format, argument_parameter);
   }
 }
@@ -1797,18 +1797,8 @@ void QnnBackendManager::LogQnnProfileEventAsTraceLogging(
     const std::string& timingSource,
     const std::string& eventLevel,
     const char* eventIdentifier) {
-  TraceLoggingWrite(
-      telemetry_provider_handle,
-      "QNNProfilingEvent",
-      TraceLoggingKeyword(static_cast<uint64_t>(onnxruntime::logging::ORTTraceLoggingKeyword::Profiling)),
-      TraceLoggingLevel(WINEVENT_LEVEL_VERBOSE),
-      TraceLoggingValue(timestamp, "Timestamp"),
-      TraceLoggingString(message.c_str(), "Message"),
-      TraceLoggingString(qnnScalarValue.c_str(), "Value"),
-      TraceLoggingString(unit.c_str(), "Unit of Measurement"),
-      TraceLoggingString(timingSource.c_str(), "Timing Source"),
-      TraceLoggingString(eventLevel.c_str(), "Event Level"),
-      TraceLoggingString(eventIdentifier, "Event Identifier"));
+  QnnTelemetry& qnn_telemetry = QnnTelemetry::Instance();
+  qnn_telemetry.LogQnnProfileEvent(timestamp, message, qnnScalarValue, unit, timingSource, eventLevel, eventIdentifier);
 }
 #endif
 

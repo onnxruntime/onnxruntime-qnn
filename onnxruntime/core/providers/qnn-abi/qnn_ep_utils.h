@@ -11,7 +11,6 @@
 
 #include "ort_api.h"
 #include "qnn_ep.h"
-#include "core/graph/abi_graph_types.h"
 
 // Forward declaration of OrtNode
 struct OrtNode;

@@ -23,7 +23,7 @@ const OrtNodeUnit* GetReshapeNodeUnit(
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const OrtNode& gemm_node) {
-  if (gemm_node.GetOpType() != "Gemm") {
+  if (Ort::ConstNode(&gemm_node).GetOperatorType() != "Gemm") {
     return nullptr;
   }
 
@@ -41,17 +41,12 @@ const OrtNodeUnit* GetReshapeNodeUnit(
   const OrtValueInfo* input_value_info = inputs[0];
 
   // Get the producer of this input
-  OrtValueInfo::ProducerInfo producer_info;
-  Status ort_status = input_value_info->GetProducerInfo(producer_info);
-
-  if (!ort_status.IsOK() || producer_info.node == nullptr) {
-    return nullptr;
-  }
-
-  const OrtNode* reshape_node = producer_info.node;
+  const OrtNode* reshape_node = nullptr;
+  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.ValueInfo_GetValueProducer(input_value_info, &reshape_node, nullptr),
+                              ort_api, nullptr);
 
   // Check if it's a Reshape node
-  if (reshape_node->GetOpType() == "Reshape") {
+  if (reshape_node != nullptr && Ort::ConstNode(reshape_node).GetOperatorType() == "Reshape") {
     // Check if reshape node produces graph output
     size_t num_outputs = 0;
     if (num_outputs != 1) {
@@ -65,15 +60,13 @@ const OrtNodeUnit* GetReshapeNodeUnit(
     const OrtValueInfo* output_info = reshape_outputs[0];
 
     bool is_graph_output = false;
-    ort_status = output_info->IsGraphOutput(is_graph_output);
+    QNN_RETURN_IF_STATUS_NOT_OK(ort_api.ValueInfo_IsGraphOutput(output_info, &is_graph_output), ort_api, nullptr);
 
-    if (ort_status.IsOK() && !is_graph_output) {
-      // Check if this reshape node has only one consumer (the gemm node)
-      std::vector<OrtValueInfo::ConsumerInfo> consumer_infos;
-      ort_status = output_info->GetConsumerInfos(consumer_infos);
-
-      if (ort_status.IsOK() && consumer_infos.size() == 1) {
-        // Find the NodeUnit for this reshape node
+    if (!is_graph_output) {
+      size_t num_consumers;
+      QNN_RETURN_IF_STATUS_NOT_OK(ort_api.ValueInfo_GetValueNumConsumers(output_info, &num_consumers),
+                                  ort_api, nullptr);
+      if (num_consumers == 1) {
         const auto it = node_to_node_unit.find(reshape_node);
         if (it != node_to_node_unit.end()) {
           const OrtNodeUnit* reshape_node_unit = it->second;
@@ -107,8 +100,10 @@ bool CheckShape(const QnnModelWrapper& qnn_model_wrapper, const OrtNode& reshape
   const OrtValueInfo* output_info = outputs[0];
 
   // Get type info for input and output
-  const OrtTypeInfo* input_type_info = input_info->GetTypeInfo();
-  const OrtTypeInfo* output_type_info = output_info->GetTypeInfo();
+  const OrtTypeInfo* input_type_info = nullptr;
+  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetValueInfoTypeInfo(input_info, &input_type_info), ort_api, false);
+  const OrtTypeInfo* output_type_info = nullptr;
+  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetValueInfoTypeInfo(output_info, &output_type_info), ort_api, false);
 
   if (!input_type_info || !output_type_info) {
     return false;

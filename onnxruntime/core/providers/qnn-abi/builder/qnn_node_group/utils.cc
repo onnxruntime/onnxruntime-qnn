@@ -34,31 +34,32 @@ const OrtNodeUnit* GetOnlyChildOfType(const QnnModelWrapper& qnn_model_wrapper,
   const OrtValueInfo* output_info = outputs[0];
 
   bool is_graph_output = false;
-  Status ort_status = output_info->IsGraphOutput(is_graph_output);
-  if (ort_status.IsOK() && is_graph_output) {
+  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.ValueInfo_IsGraphOutput(output_info, &is_graph_output), ort_api, nullptr);
+
+  // We should have exactly one consumer
+  size_t num_consumers = 0;
+  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.ValueInfo_GetValueNumConsumers(output_info, &num_consumers), ort_api, nullptr);
+  if (num_consumers != 1) {
     return nullptr;
   }
 
   // Get the consumers of this output
-  std::vector<OrtValueInfo::ConsumerInfo> consumer_infos;
-  ort_status = output_info->GetConsumerInfos(consumer_infos);
-  if (!ort_status.IsOK() || consumer_infos.empty()) {
-    return nullptr;
-  }
-
-  // We should have exactly one consumer
-  if (consumer_infos.size() != 1) {
-    return nullptr;
-  }
+  std::vector<const OrtNode*> consumers(num_consumers);
+  std::vector<int64_t> input_indices(num_consumers);
+  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.ValueInfo_GetValueConsumers(output_info,
+                                                                  consumers.data(),
+                                                                  input_indices.data(),
+                                                                  num_consumers),
+                              ort_api, nullptr);
 
   // Get the child node
-  const OrtNode* child_node_ptr = consumer_infos[0].node;
+  const OrtNode* child_node_ptr = consumers[0];
   if (child_node_ptr == nullptr) {
     return nullptr;
   }
 
   // Child must be of a valid type.
-  const std::string& child_type = child_node_ptr->GetOpType();
+  const std::string& child_type = Ort::ConstNode(child_node_ptr).GetOperatorType();
   bool is_valid_child_type = false;
 
   for (const auto& valid_op_type : child_op_types) {

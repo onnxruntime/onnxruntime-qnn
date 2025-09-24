@@ -198,8 +198,8 @@ static void ParseHtpArchitecture(const std::string& htp_arch_string,
 static void ParseOpPackages(const std::string& op_packages_string,
                             std::vector<onnxruntime::qnn::OpPackage>& op_packages,
                             const logging::Logger& logger) {
-  for (const auto& op_package : utils::SplitString(op_packages_string, ",", true)) {
-    auto splitStrings = utils::SplitString(op_package, ":", true);
+  for (const auto& op_package : qnn::utils::SplitString(op_packages_string, ",", true)) {
+    auto splitStrings = qnn::utils::SplitString(op_package, ":", true);
     if (splitStrings.size() < 3 || splitStrings.size() > 4) {
       LOGS(logger, WARNING) << "Invalid op_package passed, "
                             << "expected <OpType>:<PackagePath>:<InterfaceSymbolName>[:<Target>], got "
@@ -338,13 +338,13 @@ std::unique_ptr<qnn::QnnSerializerConfig> QnnEp::InitQnnSerializerConfig() const
 QnnEp::QnnEp(QnnEpFactory& factory,
              const std::string& name,
              const OrtSessionOptions& session_options,
-             const OrtLogger& logger)
+             const OrtLogger* logger)
     : OrtEp{},
       ApiPtrs{static_cast<const ApiPtrs&>(factory)},
       factory_{factory},
       name_{name},
-      logger_{logger},
-      logger_in_{*(logger_.ToInternal())},
+      logger_{*logger},
+      logger_in_{*reinterpret_cast<const logging::Logger*>(logger)},
       session_options_{session_options} {
   GetName = GetNameImpl;
   GetCapability = GetCapabilityImpl;
@@ -853,9 +853,10 @@ static void LogNodeSupport(const logging::Logger& logger,
   std::ostringstream oss;
   for (const OrtNodeUnit* node_unit : qnn_node_group.GetNodeUnits()) {
     for (const OrtNode* node : node_unit->GetAllNodesInGroup()) {
-      size_t node_id = node->GetId();
-      const std::string& op_type = node->GetOpType();
-      const std::string& name = node->GetName();
+      Ort::ConstNode const_node(node);
+      size_t node_id = const_node.GetId();
+      const std::string& op_type = const_node.GetOperatorType();
+      const std::string& name = const_node.GetName();
 
       oss << "\tOperator type: " << op_type
           << " Node name: " << name
@@ -1520,7 +1521,7 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
                                              context_model_path,
                                              qnn_context_embed_mode_,
                                              max_spill_fill_buffer_size,
-                                             *(logger_.ToInternal()),
+                                             logger_in_,
                                              share_ep_contexts_,
                                              stop_share_ep_contexts_,
                                              name_),
@@ -1662,7 +1663,7 @@ OrtStatus* ORT_API_CALL QnnEp::ShouldConvertDataLayoutForOpImpl(_In_ OrtEp* this
   return nullptr;
 }
 
-OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const OrtRunOptions* run_options) noexcept {
+OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const ::OrtRunOptions* run_options) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
   auto backend_type = ep->qnn_backend_manager_->GetQnnBackendType();
@@ -1716,7 +1717,7 @@ OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const O
 }
 
 OrtStatus* ORT_API_CALL QnnEp::OnRunEndImpl(_In_ OrtEp* this_ptr,
-                                            _In_ const OrtRunOptions* run_options,
+                                            _In_ const ::OrtRunOptions* run_options,
                                             _In_ bool sync_stream) noexcept {
   ORT_UNUSED_PARAMETER(sync_stream);
 

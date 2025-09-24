@@ -24,34 +24,6 @@ QnnEpFactory::QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in) : ApiPtrs(or
   ReleaseEp = ReleaseEpImpl;
   CreateDataTransfer = CreateDataTransferImpl;
   IsStreamAware = IsStreamAwareImpl;
-
-  // // setup the OrtMemoryInfo instances required by the EP.
-  // // NPU allocator OrtMemoryInfo
-  // OrtMemoryInfo* mem_info = nullptr;
-  // auto* status = ort_api.CreateMemoryInfo_V2("ExampleEP NPU", OrtMemoryInfoDeviceType_NPU,
-  //                                            /*vendor*/ vendor_id_, /* device_id */ 0,
-  //                                            OrtDeviceMemoryType_DEFAULT,
-  //                                            /*alignment*/ 0,
-  //                                            OrtAllocatorType::OrtDeviceAllocator,
-  //                                            &mem_info);
-  // assert(status == nullptr);  // should never fail.
-  // default_npu_memory_info_ = MemoryInfoUniquePtr(mem_info, ort_api.ReleaseMemoryInfo);
-
-  // // HOST_ACCESSIBLE memory should use the non-CPU device type
-  // mem_info = nullptr;
-  // status = ort_api.CreateMemoryInfo_V2("ExampleEP NPU pinned", OrtMemoryInfoDeviceType_NPU,
-  //                                      /*vendor*/ vendor_id_, /* device_id */ 0,
-  //                                      OrtDeviceMemoryType_HOST_ACCESSIBLE,
-  //                                      /*alignment*/ 0,
-  //                                      OrtAllocatorType::OrtDeviceAllocator,
-  //                                      &mem_info);
-  // assert(status == nullptr);  // should never fail.
-
-  // // if we were to use NPU we'd create it like this
-  // data_transfer_impl_ = std::make_unique<QnnDataTransfer>(
-  //     ort_api_in,
-  //     ep_api.MemoryInfo_GetMemoryDevice(default_npu_memory_info_.get())  // device memory
-  // );
 }
 
 // Returns the name for the EP. Each unique factory configuration must have a unique name.
@@ -125,7 +97,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
 
   std::unique_ptr<QnnEp> qnn_ep;
   try {
-    qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *session_options, *logger);
+    qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *session_options, logger);
   } catch (const std::runtime_error& e) {
     return factory->ort_api.CreateStatus(ORT_FAIL, e.what());
   }
@@ -160,7 +132,7 @@ extern "C" {
 //
 // Public symbols
 //
-OrtStatus* CreateEpFactories(const char* /*registration_name*/,
+OrtStatus* CreateEpFactories(const char* registration_name,
                              const OrtApiBase* ort_api_base,
                              const OrtLogger* /*default_logger*/,
                              OrtEpFactory** factories,
@@ -174,6 +146,9 @@ OrtStatus* CreateEpFactories(const char* /*registration_name*/,
   if (ort_api == nullptr) {
     return nullptr;  // Cannot create status without ORT API
   }
+
+  // Manual init for the C++ API
+  Ort::InitApi(ort_api);
 
   if (max_factories < 1) {
     return ort_api->CreateStatus(ORT_INVALID_ARGUMENT,
@@ -198,7 +173,7 @@ OrtStatus* CreateEpFactories(const char* /*registration_name*/,
   // Factory could use registration_name or define its own EP name.
   std::unique_ptr<onnxruntime::QnnEpFactory> factory;
   try {
-    factory = std::make_unique<onnxruntime::QnnEpFactory>(onnxruntime::kQnnABIExecutionProvider,
+    factory = std::make_unique<onnxruntime::QnnEpFactory>(registration_name,
                                                           onnxruntime::ApiPtrs{*ort_api,
                                                                                *ep_api,
                                                                                *model_editor_api});

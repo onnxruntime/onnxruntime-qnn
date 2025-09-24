@@ -10,7 +10,6 @@
 #include "QnnInterface.h"
 #include "nlohmann/json.hpp"
 
-#include "core/graph/ep_api_types.h"
 #include "core/providers/qnn-abi/ort_api.h"
 #include "core/providers/qnn-abi/builder/qnn_def.h"
 #include "core/providers/qnn-abi/builder/qnn_quant_params_wrapper.h"
@@ -116,7 +115,11 @@ class QnnModelWrapper {
   }
 
   Status GetInitializerTensors(gsl::span<const OrtValueInfo*> initializers) const {
-    return ort_graph_.GetInitializers(initializers);
+    RETURN_STATUS_IF_ERROR(api_ptrs_.ort_api.Graph_GetInitializers(&ort_graph_,
+                                                                   initializers.data(),
+                                                                   initializers.size()),
+                           api_ptrs_.ort_api);
+    return Status::OK();
   }
 
   // Find an initializer by name

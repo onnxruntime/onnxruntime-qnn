@@ -131,6 +131,9 @@ OrtStatus* CreateEpFactories(const char* registration_name,
     return nullptr;  // Cannot create status without ORT API
   }
 
+  // Manual init for the C++ API
+  Ort::InitApi(ort_api);
+
   if (max_factories < 1) {
     return ort_api->CreateStatus(ORT_INVALID_ARGUMENT,
                                  "Not enough space to return EP factory. Need at least one.");
@@ -154,7 +157,7 @@ OrtStatus* CreateEpFactories(const char* registration_name,
   // Factory could use registration_name or define its own EP name.
   std::unique_ptr<onnxruntime::QnnEpFactorySimulation> factory;
   if (registration_name == nullptr) {
-    registration_name = onnxruntime::kQnnABIExecutionProvider;
+    registration_name = "QnnAbiTestProvider";
   }
   try {
     factory = std::make_unique<onnxruntime::QnnEpFactorySimulation>(registration_name,

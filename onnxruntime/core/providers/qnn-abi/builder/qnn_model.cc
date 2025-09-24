@@ -116,7 +116,7 @@ Status QnnModel::ComposeGraph(const OrtGraph& ort_graph,
                               const logging::Logger& logger,
                               const QnnGraph_Config_t** graph_configs,
                               const std::string& json_qnn_graph_path) {
-  LOGS(logger, VERBOSE) << "ComposeGraph Graph name: " << ort_graph.GetName();
+  LOGS(logger, VERBOSE) << "ComposeGraph Graph name: " << Ort::ConstGraph(&ort_graph).GetName();
 
   // Holder for the OrtNodes in the graph, this will guarantee the OrtNodes is
   // valid throughout the lifetime of the ModelBuilder
@@ -126,7 +126,7 @@ Status QnnModel::ComposeGraph(const OrtGraph& ort_graph,
   std::tie(node_unit_holder, node_unit_map) = GetAllOrtNodeUnits(api_ptrs_.ort_api, &ort_graph, logger);
 
   // This name must be same with the EPContext node name
-  const auto& graph_name = fused_node.GetName();
+  const auto& graph_name = Ort::ConstNode(&fused_node).GetName();
   ORT_RETURN_IF_ERROR(SetGraphInputOutputInfo(ort_graph, fused_node, logger));
 
   QnnModelWrapper qnn_model_wrapper = QnnModelWrapper(ort_graph, api_ptrs_, logger,
