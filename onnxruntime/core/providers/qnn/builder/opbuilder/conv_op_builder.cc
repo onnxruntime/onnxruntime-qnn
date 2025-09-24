@@ -373,7 +373,6 @@ Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
             LOGS(logger, VERBOSE) << "Bias quantization parameters match expected values, no requantization needed";
           } else {
             // Need to requantize the bias tensor
-            float expected_scale = weights_scales[0] * activation_scale;
             LOGS(logger, VERBOSE) << "Per-tensor bias quantization parameters don't match, performing requantization";
 
             // Get current bias data and requantize
