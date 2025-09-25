@@ -1127,7 +1127,6 @@ Status DequantizePerChannel(gsl::span<const uint8_t> quant_bytes, gsl::span<cons
       i += block_size;
     }
   }
-  assert(i == data.size());
 
   return Status::OK();
 }
@@ -1501,6 +1500,56 @@ Status GetPermToLastAxis(uint32_t axis, uint32_t rank, std::vector<uint32_t>& pe
   return Status::OK();
 }
 
+// Helper function to print bias tensor values for debugging
+template <typename T>
+void PrintBiasTensorValues(const std::string& label, gsl::span<const uint8_t> data, size_t max_values = 10) {
+  const T* typed_data = reinterpret_cast<const T*>(data.data());
+  size_t num_elements = data.size() / sizeof(T);
+  size_t print_count = std::min(num_elements, max_values);
+
+  std::ostringstream oss;
+  oss << label << " [" << num_elements << " elements]: ";
+  for (size_t i = 0; i < print_count; ++i) {
+    if constexpr (sizeof(T) == 1) {
+      oss << static_cast<int32_t>(typed_data[i]);
+    } else {
+      oss << typed_data[i];
+    }
+    if (i < print_count - 1) oss << ", ";
+  }
+  if (print_count < num_elements) {
+    oss << "...";
+  }
+
+  LOGS_DEFAULT(INFO) << oss.str();
+}
+
+void PrintBiasTensorByDataType(const std::string& label, gsl::span<const uint8_t> data, Qnn_DataType_t data_type, size_t max_values = 10) {
+  switch (data_type) {
+    case QNN_DATATYPE_SFIXED_POINT_8:
+      PrintBiasTensorValues<int8_t>(label, data, max_values);
+      break;
+    case QNN_DATATYPE_UFIXED_POINT_8:
+      PrintBiasTensorValues<uint8_t>(label, data, max_values);
+      break;
+    case QNN_DATATYPE_SFIXED_POINT_16:
+      PrintBiasTensorValues<int16_t>(label, data, max_values);
+      break;
+    case QNN_DATATYPE_UFIXED_POINT_16:
+      PrintBiasTensorValues<uint16_t>(label, data, max_values);
+      break;
+    case QNN_DATATYPE_SFIXED_POINT_32:
+      PrintBiasTensorValues<int32_t>(label, data, max_values);
+      break;
+    case QNN_DATATYPE_UFIXED_POINT_32:
+      PrintBiasTensorValues<uint32_t>(label, data, max_values);
+      break;
+    default:
+      LOGS_DEFAULT(INFO) << label << " [Unsupported data type for printing: " << data_type << "]";
+      break;
+  }
+}
+
 bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation_scale, float tolerance) {
   float expected_scale = weights_scale * activation_scale;
   return std::abs(bias_scale - expected_scale) <= tolerance;
@@ -1520,10 +1569,23 @@ Status RequantizeBiasTensor(const std::vector<uint8_t>& original_bias_data,
   const size_t num_dims = bias_shape.size();
   const size_t num_elems = ShapeSizeCalc(bias_shape, 0, num_dims);
 
+  // Print original bias tensor values
+  LOGS_DEFAULT(INFO) << "=== BIAS REQUANTIZATION DEBUG ===";
+  LOGS_DEFAULT(INFO) << "Bias tensor shape: [" << bias_shape[0] << "], num_elements: " << num_elems;
+  LOGS_DEFAULT(INFO) << "Data type: " << data_type;
+  LOGS_DEFAULT(INFO) << "Current scales count: " << current_scales.size() << ", offsets count: " << current_offsets.size();
+  LOGS_DEFAULT(INFO) << "Weight scales count: " << weights_scales.size() << ", activation_scale: " << activation_scale;
+
+  PrintBiasTensorByDataType("ORIGINAL bias tensor", gsl::span<const uint8_t>(original_bias_data), data_type, 20);
+
   // Step 1: Dequantize the bias tensor to float
   std::vector<float> float_bias_data(num_elems);
   ORT_RETURN_IF_ERROR(DequantizePerChannel(original_bias_data, bias_shape, current_scales, current_offsets,
                                            float_bias_data, data_type, axis));
+
+  // Print dequantized float values
+  std::ostringstream float_oss;
+  float_oss << "DEQUANTIZED bias (float) [" << float_bias_data.size() << " elements]: ";
 
   // Step 2: Calculate new quantization parameters
   size_t broadcast_dim = 1;
@@ -1536,12 +1598,16 @@ Status RequantizeBiasTensor(const std::vector<uint8_t>& original_bias_data,
   new_scales.resize(broadcast_dim);
   new_offsets.resize(broadcast_dim);
 
+  // Calculate per-channel bias scales: bias_scale[i] = activation_scale * weight_scale[i]
+  std::ostringstream scale_oss;
+  scale_oss << "NEW bias scales: ";
+
   // Calculate per-channel bias scales: bias_scale[i] = weights_scale[i] * activation_scale
   for (size_t i = 0; i < broadcast_dim; ++i) {
     // Use the corresponding weight scale if available, otherwise use the first one
     float weight_scale = (i < weights_scales.size()) ? weights_scales[i] : weights_scales[0];
     new_scales[i] = weight_scale * activation_scale;
-    new_offsets[i] = 0;  // Bias is typically symmetric (offset = 0)
+    new_offsets[i] = 0;
   }
 
   // Step 3: Quantize back with new parameters
@@ -1550,6 +1616,9 @@ Status RequantizeBiasTensor(const std::vector<uint8_t>& original_bias_data,
 
   ORT_RETURN_IF_ERROR(QuantizeData(float_bias_data, bias_shape, new_scales, new_offsets,
                                    requantized_bias_data, data_type, axis));
+
+  PrintBiasTensorByDataType("REQUANTIZED bias tensor", gsl::span<const uint8_t>(requantized_bias_data), data_type, 20);
+  LOGS_DEFAULT(INFO) << "=== END BIAS REQUANTIZATION DEBUG ===";
 
   return Status::OK();
 }

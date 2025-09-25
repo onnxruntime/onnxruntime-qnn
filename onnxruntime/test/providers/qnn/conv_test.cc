@@ -73,6 +73,72 @@ static GetTestModelFn BuildF32ConvTestCase(const std::string& conv_op_type, cons
   };
 }
 
+// Creates a graph with a single Q/DQ Conv operator with mismatched bias scales to test bias requantization.
+template <typename ActivationQType, typename WeightQType>
+static GetTestQDQModelFn<ActivationQType> BuildQDQConvBiasRequantTestCase(
+    const std::string& conv_op_type,
+    const TestInputDef<float>& input_def,
+    const TestInputDef<float>& weights_def,
+    const TestInputDef<float>& bias_def,
+    const std::vector<int64_t>& strides,
+    const std::vector<int64_t>& pads,
+    const std::vector<int64_t>& dilations,
+    std::optional<int64_t> group,
+    const std::string& auto_pad = "NOTSET",
+    bool use_contrib_qdq = false) {
+  return [conv_op_type, input_def, weights_def, bias_def, strides, pads,
+          dilations, group, auto_pad, use_contrib_qdq](ModelTestBuilder& builder,
+                                                       std::vector<QuantParams<ActivationQType>>& output_qparams) {
+    std::vector<NodeArg*> conv_inputs;
+
+    // input -> Q/DQ ->
+    auto* input = MakeTestInput(builder, input_def);
+    QuantParams<ActivationQType> input_qparams = GetTestInputQuantParams<ActivationQType>(input_def);
+    auto* input_qdq = AddQDQNodePair<ActivationQType>(builder, input, input_qparams.scale, input_qparams.zero_point,
+                                                      use_contrib_qdq);
+    conv_inputs.push_back(input_qdq);
+
+    // weights -> Q/DQ ->
+    auto* weights = MakeTestInput(builder, weights_def);
+    QuantParams<WeightQType> weights_qparams = GetTestInputQuantParams<WeightQType>(weights_def);
+    auto* weights_qdq = AddQDQNodePair<WeightQType>(builder, weights, weights_qparams.scale,
+                                                    weights_qparams.zero_point, use_contrib_qdq);
+    conv_inputs.push_back(weights_qdq);
+
+    // bias -> Create bias with MISMATCHED scale to trigger requantization
+    if (!bias_def.GetShape().empty()) {
+      // Intentionally use a WRONG bias scale that doesn't match (input_scale * weight_scale)
+      // This should trigger the bias requantization logic in QNN EP
+      const float correct_bias_scale = input_qparams.scale * weights_qparams.scale;
+      const float wrong_bias_scale = correct_bias_scale * 2.5f;  // Intentionally wrong scale
+
+      conv_inputs.push_back(MakeTestQDQBiasInput(builder, bias_def, wrong_bias_scale, use_contrib_qdq));
+    }
+
+    auto* conv_output = builder.MakeIntermediate();
+    Node& conv_node = builder.AddNode(conv_op_type, conv_inputs, {conv_output});
+
+    conv_node.AddAttribute("auto_pad", auto_pad);
+
+    if (group.has_value()) {
+      conv_node.AddAttribute("group", group.value());
+    }
+
+    if (!pads.empty() && auto_pad == "NOTSET") {
+      conv_node.AddAttribute("pads", pads);
+    }
+    if (!strides.empty()) {
+      conv_node.AddAttribute("strides", strides);
+    }
+    if (!dilations.empty()) {
+      conv_node.AddAttribute("dilations", dilations);
+    }
+
+    AddQDQNodePairWithOutputAsGraphOutput<ActivationQType>(builder, conv_output, output_qparams[0].scale,
+                                                           output_qparams[0].zero_point, use_contrib_qdq);
+  };
+}
+
 // Runs a Conv model on the QNN CPU backend. Checks the graph node assignment, and that inference
 // outputs for QNN EP and CPU EP match.
 static void RunConvOpTest(const std::string& conv_op_type, const TestInputDef<float>& input_def,
@@ -801,6 +867,38 @@ TEST_F(QnnHTPBackendTests, ConvU16S4S32_PerChannel) {
                                                false,  // use_qdq_contrib_ops
                                                21);    // opset
 }
+
+// Test bias requantization when bias scale doesn't match (weight_scale * activation_scale)
+// This test uses a bias with intentionally wrong scale to trigger the requantization logic in QNN EP
+TEST_F(QnnHTPBackendTests, ConvU8U8S32_BiasRequantization) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestQDQModelAccuracy(BuildF32ConvTestCase("Conv",
+                                            TestInputDef<float>({1, 2, 4, 4}, false, -10.0f, 10.0f),  // Input
+                                            TestInputDef<float>({3, 2, 2, 2}, true, -1.0f, 5.0f),     // Weights
+                                            TestInputDef<float>({3}, true, -1.0f, 1.0f),              // Bias
+                                            {1, 1},                                                   // Strides
+                                            {0, 0, 0, 0},                                             // Pads
+                                            {1, 1},                                                   // Dilations
+                                            1,                                                        // Group
+                                            "NOTSET"),                                                // Auto pad
+                       BuildQDQConvBiasRequantTestCase<uint8_t, uint8_t>("Conv",
+                                                                         TestInputDef<float>({1, 2, 4, 4}, false, -10.0f, 10.0f),  // Input
+                                                                         TestInputDef<float>({3, 2, 2, 2}, true, -1.0f, 5.0f),     // Weights
+                                                                         TestInputDef<float>({3}, true, -1.0f, 1.0f),              // Bias (will get wrong scale)
+                                                                         {1, 1},                                                   // Strides
+                                                                         {0, 0, 0, 0},                                             // Pads
+                                                                         {1, 1},                                                   // Dilations
+                                                                         1,                                                        // Group
+                                                                         "NOTSET"),                                                // Auto pad
+                       provider_options,
+                       13,  // opset
+                       ExpectedEPNodeAssignment::All,
+                       QDQTolerance());
+}
+
 
 // Test per-channel QDQ Conv with INT4 weights and no bias.
 // in0: u16, in1 (weight): s4, out: u8
