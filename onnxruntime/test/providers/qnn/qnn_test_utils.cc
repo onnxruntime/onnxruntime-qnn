@@ -138,6 +138,11 @@ void InferenceModel(const std::string& model_data, const char* log_id,
                     const std::unordered_map<std::string, std::string>& session_option_pairs,
                     std::function<void(const Graph&)>* graph_checker) {
   SessionOptions so;
+  // Addition begin
+  [[maybe_unused]] auto res_ = so.config_options.AddConfigEntry("session.debug_layout_transformation", "1");
+  so.session_logid = log_id;
+  so.session_log_severity_level = 0;  //::onnxruntime::logging::Severity::kVERBOSE;
+  // Addition end
   so.session_logid = log_id;
   for (auto key_value : session_option_pairs) {
     ASSERT_STATUS_OK(so.config_options.AddConfigEntry(key_value.first.c_str(), key_value.second.c_str()));
