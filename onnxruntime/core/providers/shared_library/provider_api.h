@@ -412,6 +412,10 @@ constexpr ONNXTensorElementDataType GetONNXTensorElementDataType<UInt4x2>() {
   return ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4;
 }
 
+inline std::unique_ptr<GraphOptimizerRegistry> CreateDummyGraphOptimizerRegistry() {
+  return g_host->CreateDummyGraphOptimizerRegistry();
+}
+
 inline std::vector<std::unique_ptr<ComputeCapability>>
 CreateSupportedPartitions(const GraphViewer& graph_viewer,
                           const std::unordered_set<const Node*>& supported_nodes,
@@ -441,6 +445,22 @@ inline Status GetTensorProtoWithDataIfInMemory(
 
 inline bool HasExternalDataInMemory(const ONNX_NAMESPACE::TensorProto& ten_proto) {
   return g_host->Utils__HasExternalDataInMemory(ten_proto);
+}
+
+inline const GraphViewer& OrtGraphToGraphViewer(const OrtGraph* graph) {
+  return g_host->OrtGraph__ToGraphViewer(graph);
+}
+
+inline GraphViewer& OrtGraphToGraphViewerNonConst(const OrtGraph* graph) {
+  return g_host->OrtGraph__ToGraphViewerNonConst(graph);
+}
+
+inline const Node& OrtNodeToNode(const OrtNode* node) {
+  return g_host->OrtNode__ToNode(node);
+}
+
+inline Node& OrtNodeToNodeNonConst(const OrtNode* node) {
+  return g_host->OrtNode__ToNodeNonConst(node);
 }
 
 }  // namespace utils

@@ -1589,3 +1589,153 @@ Status QNNExecutionProvider::SetEpDynamicOptions(gsl::span<const char* const> ke
 }
 
 }  // namespace onnxruntime
+
+#if !BUILD_QNN_EP_STATIC_LIB
+QnnEp::QnnEp(const OrtApi& ort_api, const OrtSessionOptions* session_options, const OrtLogger* logger)
+    : ort_api_(ort_api) {
+  GetName = GetNameImpl;
+  GetCapability = GetCapabilityImpl;
+  Compile = CompileImpl;
+  ReleaseNodeComputeInfos = ReleaseNodeComputeInfosImpl;
+  GetPreferredDataLayout = GetPreferredDataLayoutImpl;
+  ShouldConvertDataLayoutForOp = ShouldConvertDataLayoutForOpImpl;
+  OnRunStart = OnRunStartImpl;
+  OnRunEnd = OnRunEndImpl;
+  SetDynamicOptions = SetDynamicOptionsImpl;
+
+  const onnxruntime::ConfigOptions& config_options = session_options->GetConfigOptions();
+  const std::unordered_map<std::string, std::string>& config_options_map = config_options.GetConfigOptionsMap();
+
+  // The implementation of the SessionOptionsAppendExecutionProvider C API function automatically adds EP options to
+  // the session option configurations with the key prefix "ep.<lowercase_ep_name>.".
+  // We extract those EP options and pass them to QNN EP as separate "provider options".
+  std::unordered_map<std::string, std::string> provider_options;;
+  std::string key_prefix = "ep.";
+  key_prefix += onnxruntime::qnn::utils::GetLowercaseString(onnxruntime::kQnnExecutionProvider);
+  key_prefix += ".";
+
+  for (const auto& [key, value] : config_options_map) {
+    if (key.rfind(key_prefix, 0) == 0) {
+      provider_options[key.substr(key_prefix.size())] = value;
+    }
+  }
+
+  qnn_ep_internal_ = std::make_unique<onnxruntime::QNNExecutionProvider>(provider_options, &config_options);
+  qnn_ep_internal_->SetLogger(reinterpret_cast<const onnxruntime::logging::Logger*>(logger));
+}
+
+const char* ORT_API_CALL QnnEp::GetNameImpl(const OrtEp* /*this_ptr*/) noexcept {
+  return onnxruntime::kQnnExecutionProvider;
+}
+
+OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
+                                                 const OrtGraph* graph,
+                                                 OrtEpGraphSupportInfo* graph_support_info) noexcept {
+  QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+
+  const onnxruntime::GraphViewer& graph_viewer = onnxruntime::utils::OrtGraphToGraphViewer(graph);
+  onnxruntime::QNNExecutionProvider::DummyKernelLookup kernel_lookup;
+  auto graph_optimizer_registry = onnxruntime::utils::CreateDummyGraphOptimizerRegistry();
+  auto capability = ep->qnn_ep_internal_->GetCapability(graph_viewer, kernel_lookup, *graph_optimizer_registry, nullptr);
+
+  graph_support_info;
+  return nullptr;
+}
+
+OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
+                                           _In_ const OrtGraph** graphs,
+                                           _In_ const OrtNode** fused_nodes,
+                                           _In_ size_t count,
+                                           _Out_writes_all_(count) OrtNodeComputeInfo** node_compute_infos,
+                                           _Out_writes_(count) OrtNode** ep_context_nodes) noexcept {
+  QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+
+  std::vector<std::reference_wrapper<onnxruntime::GraphViewer>> graph_viewers;
+  std::vector<std::reference_wrapper<onnxruntime::Node>> nodes;
+  std::vector<onnxruntime::IExecutionProvider::FusedNodeAndGraph> fused_nodes_and_graphs;
+
+  graph_viewers.reserve(count);
+  nodes.reserve(count);
+  fused_nodes_and_graphs.reserve(count);
+
+  for (size_t idx = 0; idx < count; ++idx) {
+    graph_viewers.push_back(onnxruntime::utils::OrtGraphToGraphViewerNonConst(graphs[idx]));
+    nodes.push_back(onnxruntime::utils::OrtNodeToNodeNonConst(fused_nodes[idx]));
+    fused_nodes_and_graphs.push_back(onnxruntime::IExecutionProvider::FusedNodeAndGraph{nodes.back(), graph_viewers.back()});
+  }
+
+  std::vector<onnxruntime::NodeComputeInfo> node_compute_funcs;
+  node_compute_funcs.reserve(count);
+
+  auto status = ep->qnn_ep_internal_->Compile(fused_nodes_and_graphs, node_compute_funcs);
+  status;
+
+  node_compute_infos;
+  ep_context_nodes;
+  return nullptr;
+}
+
+void ORT_API_CALL QnnEp::ReleaseNodeComputeInfosImpl(OrtEp* this_ptr,
+                                                     OrtNodeComputeInfo** node_compute_infos,
+                                                     size_t num_node_compute_infos) noexcept {
+  ORT_UNUSED_PARAMETER(this_ptr);
+  for (size_t idx = 0; idx < num_node_compute_infos; ++idx) {
+    delete node_compute_infos[idx];
+  }
+}
+
+OrtStatus* ORT_API_CALL QnnEp::GetPreferredDataLayoutImpl(_In_ OrtEp* this_ptr,
+                                                          _Out_ OrtEpDataLayout* preferred_data_layout) noexcept {
+  ORT_UNUSED_PARAMETER(this_ptr);
+  *preferred_data_layout = OrtEpDataLayout::OrtEpDataLayout_NHWC;
+  return nullptr;
+}
+
+OrtStatus* ORT_API_CALL QnnEp::ShouldConvertDataLayoutForOpImpl(_In_ OrtEp* this_ptr,
+                                                                _In_z_ const char* domain,
+                                                                _In_z_ const char* op_type,
+                                                                _In_ OrtEpDataLayout target_data_layout,
+                                                                _Outptr_ int* should_convert) noexcept {
+  ORT_UNUSED_PARAMETER(this_ptr);
+  ORT_UNUSED_PARAMETER(target_data_layout);
+
+  *should_convert = -1;
+
+  if (std::string(domain) == onnxruntime::kOnnxDomain && std::string(op_type) == "Upsample") {
+    // Upsample is translated to QNN's Resize, which requires the NHWC layout for processing.
+    *should_convert = 1;
+  }
+
+  return nullptr;
+}
+
+OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const OrtRunOptions* run_options) noexcept {
+  QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+  ep;
+  run_options;
+  return nullptr;
+}
+
+OrtStatus* ORT_API_CALL QnnEp::OnRunEndImpl(_In_ OrtEp* this_ptr,
+                                            _In_ const OrtRunOptions* run_options,
+                                            _In_ bool sync_stream) noexcept {
+  QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+  ep;
+  run_options;
+  sync_stream;
+  return nullptr;
+}
+
+OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
+                                                     _In_reads_(num_options) const char* const* option_keys,
+                                                     _In_reads_(num_options) const char* const* option_values,
+                                                     _In_ size_t num_options) noexcept {
+  QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+  ep;
+  option_keys;
+  option_values;
+  num_options;
+  return nullptr;
+}
+
+#endif

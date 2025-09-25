@@ -174,6 +174,54 @@ class QNNExecutionProvider : public IExecutionProvider {
 
   PerThreadContext& GetPerThreadContext() const;
   void ReleasePerThreadContext() const;
+
+#if !BUILD_QNN_EP_STATIC_LIB
+ public:
+  class DummyKernelLookup final : public IKernelLookup {
+  public:
+    const KernelCreateInfo* LookUpKernel(const Node& /*node*/) const override { return nullptr; }
+  };
+#endif
 };
 
 }  // namespace onnxruntime
+
+#if !BUILD_QNN_EP_STATIC_LIB
+class QnnEp : public OrtEp {
+ public:
+  QnnEp(const OrtApi& ort_api, const OrtSessionOptions* session_options, const OrtLogger* logger);
+
+ private:
+  static const char* ORT_API_CALL GetNameImpl(const OrtEp* this_ptr) noexcept;
+  static OrtStatus* ORT_API_CALL GetCapabilityImpl(OrtEp* this_ptr,
+                                                   const OrtGraph* graph,
+                                                   OrtEpGraphSupportInfo* graph_support_info) noexcept;
+  static OrtStatus* ORT_API_CALL CompileImpl(_In_ OrtEp* this_ptr,
+                                             _In_ const OrtGraph** graphs,
+                                             _In_ const OrtNode** fused_nodes,
+                                             _In_ size_t count,
+                                             _Out_writes_all_(count) OrtNodeComputeInfo** node_compute_infos,
+                                             _Out_writes_(count) OrtNode** ep_context_nodes) noexcept;
+  static void ORT_API_CALL ReleaseNodeComputeInfosImpl(OrtEp* this_ptr,
+                                                       OrtNodeComputeInfo** node_compute_infos,
+                                                       size_t num_node_compute_infos) noexcept;
+  static OrtStatus* ORT_API_CALL GetPreferredDataLayoutImpl(_In_ OrtEp* this_ptr,
+                                                            _Out_ OrtEpDataLayout* preferred_data_layout) noexcept;
+  static OrtStatus* ORT_API_CALL ShouldConvertDataLayoutForOpImpl(_In_ OrtEp* this_ptr,
+                                                                  _In_z_ const char* domain,
+                                                                  _In_z_ const char* op_type,
+                                                                  _In_ OrtEpDataLayout target_data_layout,
+                                                                  _Outptr_ int* should_convert) noexcept;
+  static OrtStatus* ORT_API_CALL OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const OrtRunOptions* run_options) noexcept;
+  static OrtStatus* ORT_API_CALL OnRunEndImpl(_In_ OrtEp* this_ptr,
+                                              _In_ const OrtRunOptions* run_options,
+                                              _In_ bool sync_stream) noexcept;
+  static OrtStatus* ORT_API_CALL SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
+                                                       _In_reads_(num_options) const char* const* option_keys,
+                                                       _In_reads_(num_options) const char* const* option_values,
+                                                       _In_ size_t num_options) noexcept;
+
+  const OrtApi& ort_api_;
+  std::unique_ptr<onnxruntime::QNNExecutionProvider> qnn_ep_internal_;
+};
+#endif

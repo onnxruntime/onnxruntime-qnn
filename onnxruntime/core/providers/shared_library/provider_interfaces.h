@@ -158,6 +158,8 @@ struct ProviderHost {
   virtual Status GetOptimizerByName(const std::string& name,
                                     const GraphOptimizerRegistry& graph_optimizer_registry,
                                     SelectionFunc& selection_func) = 0;
+  virtual std::unique_ptr<GraphOptimizerRegistry> CreateDummyGraphOptimizerRegistry() = 0;
+  virtual void GraphOptimizerRegistry__operator_delete(GraphOptimizerRegistry* p) = 0;
 
   virtual void* HeapAllocate(size_t size) = 0;
   virtual void HeapFree(void*) = 0;
@@ -1376,6 +1378,13 @@ struct ProviderHost {
   virtual std::unique_ptr<ModelMetadefIdGenerator> ModelMetadefIdGenerator__construct() = 0;
   virtual void ModelMetadefIdGenerator__operator_delete(ModelMetadefIdGenerator* p) = 0;
   virtual int ModelMetadefIdGenerator__GenerateId(const ModelMetadefIdGenerator* p, const GraphViewer& graph_viewer, HashValue& model_hash) = 0;
+
+  // OrtGraph -> GraphViewer
+  virtual const GraphViewer& OrtGraph__ToGraphViewer(const OrtGraph* graph) = 0;
+  virtual GraphViewer& OrtGraph__ToGraphViewerNonConst(const OrtGraph* graph) = 0;
+  // OrtNode -> Node
+  virtual const Node& OrtNode__ToNode(const OrtNode* node) = 0;
+  virtual Node& OrtNode__ToNodeNonConst(const OrtNode* node) = 0;
 };
 
 #if defined(_MSC_VER) && !defined(__clang__)

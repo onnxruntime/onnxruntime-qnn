@@ -31,6 +31,7 @@
 #include "core/framework/tensorprotoutils.h"
 #include "core/framework/TensorSeq.h"
 #include "core/graph/constants.h"
+#include "core/graph/ep_api_types.h"
 #include "core/graph/graph_proto_serializer.h"
 #include "core/graph/model.h"
 #include "core/optimizer/graph_optimizer_registry.h"
@@ -258,6 +259,10 @@ struct ProviderHostImpl : ProviderHost {
     }
     return Status::OK();
   };
+  std::unique_ptr<GraphOptimizerRegistry> CreateDummyGraphOptimizerRegistry() {
+    return std::make_unique<GraphOptimizerRegistry>(nullptr, nullptr, nullptr);
+  }
+  void GraphOptimizerRegistry__operator_delete(GraphOptimizerRegistry* p) override { delete p; }
 
   void* HeapAllocate(size_t size) override { return new uint8_t[size]; }
   void HeapFree(void* p) override { delete[] reinterpret_cast<uint8_t*>(p); }
@@ -1714,6 +1719,21 @@ struct ProviderHostImpl : ProviderHost {
   std::unique_ptr<ModelMetadefIdGenerator> ModelMetadefIdGenerator__construct() override { return std::make_unique<ModelMetadefIdGenerator>(); }
   void ModelMetadefIdGenerator__operator_delete(ModelMetadefIdGenerator* p) override { delete p; }
   int ModelMetadefIdGenerator__GenerateId(const ModelMetadefIdGenerator* p, const GraphViewer& graph_viewer, HashValue& model_hash) override { return p->GenerateId(graph_viewer, model_hash); }
+
+  // OrtGraph -> GraphViewer
+  const GraphViewer& OrtGraph__ToGraphViewer(const OrtGraph* graph) override {
+    return EpGraph::ToInternal(graph)->GetGraphViewer();
+  }
+  GraphViewer& OrtGraph__ToGraphViewerNonConst(const OrtGraph* graph) override {
+    return const_cast<GraphViewer&>(EpGraph::ToInternal(graph)->GetGraphViewer());
+  }
+  // OrtNode -> Node
+  const Node& OrtNode__ToNode(const OrtNode* node) override {
+    return EpNode::ToInternal(node)->GetInternalNode();
+  }
+  Node& OrtNode__ToNodeNonConst(const OrtNode* node) override {
+    return const_cast<Node&>(EpNode::ToInternal(node)->GetInternalNode());
+  }
 
 #if defined(ENABLE_TRAINING) && defined(ORT_USE_NCCL)
   training::DistributedRunContext& GetDistributedRunContextInstance() override { return training::DistributedRunContext::GetInstance(); }

@@ -223,14 +223,19 @@ struct QnnEpFactory : OrtEpFactory {
     return nullptr;
   }
 
-  static OrtStatus* CreateEpImpl(OrtEpFactory* /*this_ptr*/,
+  static OrtStatus* CreateEpImpl(OrtEpFactory* this_ptr,
                                  _In_reads_(num_devices) const OrtHardwareDevice* const* /*devices*/,
                                  _In_reads_(num_devices) const OrtKeyValuePairs* const* /*ep_metadata*/,
                                  _In_ size_t /*num_devices*/,
-                                 _In_ const OrtSessionOptions* /*session_options*/,
-                                 _In_ const OrtLogger* /*logger*/,
-                                 _Out_ OrtEp** /*ep*/) noexcept {
-    return onnxruntime::CreateStatus(ORT_INVALID_ARGUMENT, "QNN EP factory does not support this method.");
+                                 _In_ const OrtSessionOptions* session_options,
+                                 _In_ const OrtLogger* logger,
+                                 _Out_ OrtEp** ep) noexcept {
+    auto* factory = static_cast<QnnEpFactory*>(this_ptr);
+
+    std::unique_ptr<QnnEp> qnn_ep = std::make_unique<QnnEp>(factory->ort_api, session_options, logger);
+    *ep = qnn_ep.release();
+
+    return nullptr;
   }
 
   static void ReleaseEpImpl(OrtEpFactory* /*this_ptr*/, OrtEp* /*ep*/) noexcept {
@@ -294,6 +299,9 @@ OrtStatus* CreateEpFactories(const char* /*registration_name*/, const OrtApiBase
                              const OrtLogger* default_logger,
                              OrtEpFactory** factories, size_t max_factories, size_t* num_factories) {
   const OrtApi* ort_api = ort_api_base->GetApi(ORT_API_VERSION);
+
+  // Manual init for the C++ API
+  Ort::InitApi(ort_api);
 
   std::unordered_map<OrtHardwareDeviceType, std::string> supported_backends = {
 #if defined(_WIN32)
