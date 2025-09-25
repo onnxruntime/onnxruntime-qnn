@@ -1371,10 +1371,6 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
                         "Failed to set shared QnnBackendManager.");
     }
   }
-  for (const auto& pair : qnn_models_) {
-    LOGS(logger, VERBOSE) << "qnn_save_buffer_size_: " << pair.second->GetSaveBufferSize();
-    LOGS(logger, VERBOSE) << "qnn_save_buffer_: " << pair.second->GetSaveBuffer();
-  }
   return Status::OK();
 }
 

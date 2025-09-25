@@ -3,7 +3,6 @@
 
 #pragma once
 
-#include <cstddef>
 #include <mutex>
 #include <vector>
 
@@ -12,7 +11,6 @@
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/rpcmem_library.h"
-#include "core/providers/shared_library/provider_wrappedtypes.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -123,7 +121,7 @@ class QnnModel {
   bool GetGraphInfoFromModel(QnnModelWrapper& model_wrapper, const logging::Logger& logger);
 
   Status SetupTensors(std::vector<QnnTensorInfo>& tensors, const std::vector<QnnTensorWrapper>& tensor_wrappers,
-                      bool is_input = true, const logging::Logger* logger = nullptr);
+                      bool is_input = true);
 
   QnnBackendType GetQnnBackendType() { return qnn_backend_type_; }
 

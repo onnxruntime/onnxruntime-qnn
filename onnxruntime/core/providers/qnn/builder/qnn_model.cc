@@ -219,7 +219,7 @@ Status QnnModel::FinalizeGraphs(const logging::Logger& logger) {
 Status QnnModel::SetupQnnInputOutput(const logging::Logger& logger) {
   LOGS(logger, VERBOSE) << "Setting up QNN input/output for graph: " << graph_info_->Name();
 
-  auto result = SetupTensors(qnn_input_infos_, graph_info_->InputTensors(), true, &logger);
+  auto result = SetupTensors(qnn_input_infos_, graph_info_->InputTensors());
 
   if (Status::OK() != result) {
     const std::string message = "Failed to setup QNN input tensors for graph: " + graph_info_->Name();
@@ -227,7 +227,7 @@ Status QnnModel::SetupQnnInputOutput(const logging::Logger& logger) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, message);
   }
 
-  result = SetupTensors(qnn_output_infos_, graph_info_->OutputTensors(), false, &logger);
+  result = SetupTensors(qnn_output_infos_, graph_info_->OutputTensors(), false);
   if (Status::OK() != result) {
     const std::string message = "Failed to setup QNN output tensors for graph: " + graph_info_->Name();
     LOGS(logger, ERROR) << message;
@@ -290,10 +290,6 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
   LOGS(logger, VERBOSE) << "QnnModel::ExecuteGraphs";
   const size_t num_inputs = context.GetInputCount();
   const size_t num_outputs = context.GetOutputCount();
-  LOGS(logger, VERBOSE) << "qnn_input_infos_.size() " << qnn_input_infos_.size();
-  LOGS(logger, VERBOSE) << "context.GetInputCount() " << context.GetInputCount();
-  LOGS(logger, VERBOSE) << "qnn_output_infos_.size() " << qnn_output_infos_.size();
-  LOGS(logger, VERBOSE) << "context.GetOutputCount() " << context.GetOutputCount();
   ORT_RETURN_IF_NOT(qnn_input_infos_.size() <= num_inputs, "Inconsistent input sizes");
   ORT_RETURN_IF_NOT(qnn_output_infos_.size() == num_outputs, "Inconsistent output sizes");
 
@@ -410,24 +406,18 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
 // Setup information for Qnn inputs/outputs used during execution.
 Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
                               const std::vector<QnnTensorWrapper>& tensor_wrappers,
-                              bool is_input,
-                              const logging::Logger* logger) {
-  LOGS(*logger, VERBOSE) << "[SSR Handling]: SetupTensors";
+                              bool is_input) {
   size_t tensor_count = tensor_wrappers.size();
-  LOGS(*logger, VERBOSE) << "[SSR Handling]: tensor_count " << tensor_count;
-  LOGS(*logger, VERBOSE) << "[SSR Handling]: tensor_wrappers.size() " << tensor_wrappers.size();
   ORT_RETURN_IF(0 == tensor_count, "Zero tensor size!");
   if (is_input) {
     // Resize qnn_tensor_infos according to the number of graph inputs.
     auto input_count = GetGraphInputCount();
-    LOGS(*logger, VERBOSE) << "[SSR Handling]: input_count " << input_count;
     ORT_RETURN_IF(input_count < tensor_count,
                   "The count of graph inputs should be at least the count of tensor_wrapper!");
     qnn_tensor_infos.resize(input_count);
   } else {
     qnn_tensor_infos.resize(tensor_count);
   }
-  LOGS(*logger, VERBOSE) << "[SSR Handling]: tensor_wrapper";
 
   for (auto& tensor_wrapper : tensor_wrappers) {
     ORT_RETURN_IF(utils::QnnTensorHasDynamicShape(tensor_wrapper.GetQnnTensor()),
@@ -444,8 +434,6 @@ Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
     qnn_tensor_info.tensor_byte_size = static_cast<uint32_t>(length);
     qnn_tensor_info.ort_index = ort_index;
   }
-
-  LOGS(*logger, VERBOSE) << "[SSR Handling]: qnn_tensor_infos";
   // The number of graph inputs and the number of tensor wrappers may not match.
   // - For example, for ResizeNearestNeighbor op, Qnn only cares about the 1st input,
   //   so the rest of the inputs are not converted to tensor wrappers.
