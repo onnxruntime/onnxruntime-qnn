@@ -4,6 +4,7 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include "test/providers/qnn/qnn_test_utils.h"
+#include "test/providers/qnn/rpcmem_utils.h"
 #include <cassert>
 #include "test/util/include/asserts.h"
 #include "test/util/include/default_providers.h"
@@ -96,6 +97,28 @@ void TryEnableQNNSaver(ProviderOptions& qnn_options) {
 #endif  // defined(_WIN32)
   }
 }
+
+#if defined(_WIN32)
+void TriggerPDReset(const std::string& pd) {
+  const auto& logger = DefaultLoggingManager().DefaultLogger();
+  PathString rpcmem_library_path{};
+  ASSERT_STATUS_OK(GetRpcMemDynamicLibraryPath(rpcmem_library_path));
+  LOGS(logger, VERBOSE) << "rpcmem_library_path " << rpcmem_library_path.c_str();
+  HMODULE lib_handle = LoadLibraryW(rpcmem_library_path.c_str());
+  typedef int (*RscFnHandleType_t)(uint32_t, void*, uint32_t);
+  FARPROC addr = GetProcAddress(lib_handle, "remote_session_control");
+  RscFnHandleType_t rsc_call = reinterpret_cast<RscFnHandleType_t>(addr);
+  typedef struct {
+    int domain;
+  } RemoteRpcSessionClose_t;
+  RemoteRpcSessionClose_t scdata;
+  // TODO: Specify the PD
+  scdata.domain = std::stoi(pd);
+  LOGS(logger, VERBOSE) << "[Triggering] Restarting PD=" << scdata.domain;
+  rsc_call(/*FASTRPC_REMOTE_PROCESS_EXCEPTION*/ 9, &scdata, sizeof(RemoteRpcSessionClose_t));
+  LOGS(logger, VERBOSE) << "[Triggered] Restarting PD=" << scdata.domain;
+}
+#endif
 
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
@@ -227,7 +250,8 @@ void InferenceModel(const std::string& model_data, const char* log_id,
   ASSERT_STATUS_OK(session_object.Initialize());
 
   if (trigger_ssr) {
-    std::system(R"(.\SSRTestApp.exe CDSP -ErrorFatal)");
+    // std::system(R"(.\SSRTestApp.exe CDSP -ErrorFatal)");
+    TriggerPDReset("0");
     std::this_thread::sleep_for(std::chrono::milliseconds(3000));
   }
 
