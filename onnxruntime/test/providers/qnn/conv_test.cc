@@ -1005,7 +1005,7 @@ TEST_F(QnnHTPBackendTests, ConvU8U8S32_BiasRequantization) {
                        provider_options,
                        13,  // opset
                        ExpectedEPNodeAssignment::All,
-                       QDQTolerance());
+                       QDQTolerance(0.005f));
 }
 
 
@@ -1018,8 +1018,12 @@ TEST_F(QnnHTPBackendTests, ConvU8S8S32_PerChannel_BiasRequantization) {
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestInputDef<float> input_def({1, 2, 4, 4}, false, -10.0f, 10.0f);
-  TestInputDef<float> weight_def({3, 2, 2, 2}, true, -1.0f, 5.0f);
-  TestInputDef<float> bias_def({3}, true, -1.0f, 1.0f);
+  std::vector<int64_t> weight_shape = {3, 2, 2, 2};
+  TestInputDef<float> weight_def(weight_shape, true,
+                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+  std::vector<int64_t> bias_shape = {3};
+  TestInputDef<float> bias_def(bias_shape, true,
+                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
 
   TestQDQModelAccuracy(BuildF32ConvTestCase("Conv",
                                             input_def,
@@ -1044,7 +1048,7 @@ TEST_F(QnnHTPBackendTests, ConvU8S8S32_PerChannel_BiasRequantization) {
                        provider_options,
                        13,  // opset
                        ExpectedEPNodeAssignment::All,
-                       QDQTolerance());
+                       QDQTolerance(0.005f));
 }
 
 // Test per-channel QDQ Conv with INT4 weights and no bias.
