@@ -1230,7 +1230,9 @@ Status QNNExecutionProvider::CompileFromOrtGraph(const std::vector<FusedNodeAndG
                                                 all_graph_configs_ptr, json_graph_filepath));
     ORT_RETURN_IF_ERROR(qnn_model->FinalizeGraphs(logger));
     ORT_RETURN_IF_ERROR(qnn_model->SetupQnnInputOutput(logger));
-    ORT_RETURN_IF_ERROR(qnn_model->SaveContextToBinary(logger));
+    if (enable_ssr_handling_) {
+      ORT_RETURN_IF_ERROR(qnn_model->SaveContextToBinary(logger));
+    }
 
     LOGS(logger, VERBOSE) << "fused node name: " << fused_node.Name();
     qnn_models_.emplace(fused_node.Name(), std::move(qnn_model));

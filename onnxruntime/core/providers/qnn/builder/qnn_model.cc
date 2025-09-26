@@ -253,7 +253,6 @@ Status QnnModel::SaveContextToBinary(const logging::Logger& logger) {
   qnn_save_buffer_ = qnn_backend_manager_->GetContextBinaryBuffer(writtenBufferSize);
   qnn_save_buffer_size_ = writtenBufferSize;
   LOGS(logger, VERBOSE) << "qnn_save_buffer_size_: " << qnn_save_buffer_size_;
-  LOGS(logger, VERBOSE) << "qnn_save_buffer_: " << qnn_save_buffer_;
 
   return Status::OK();
 }

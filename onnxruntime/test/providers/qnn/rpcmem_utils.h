@@ -1,8 +1,9 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License
 
+#if defined(_WIN32)
 #include <libloaderapi.h>
-
+#endif
 namespace onnxruntime {
 namespace test {
 #if defined(_WIN32)

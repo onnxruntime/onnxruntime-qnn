@@ -250,9 +250,13 @@ void InferenceModel(const std::string& model_data, const char* log_id,
   ASSERT_STATUS_OK(session_object.Initialize());
 
   if (trigger_ssr) {
+#if defined(_WIN32)
     // std::system(R"(.\SSRTestApp.exe CDSP -ErrorFatal)");
     TriggerPDReset("0");
     std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+#else
+    // TODO: Trigger SSR on Android and Linux
+#endif
   }
 
   const auto& graph = session_object.GetGraph();
