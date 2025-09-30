@@ -21,15 +21,15 @@ namespace qnn {
   CreateOrValidateOnQnn((qnn_model_wrapper), (hardsigmoid_node_unit), (mul_node_unit), true)
 #define CreateOnQnn(qnn_model_wrapper, hardsigmoid_node_unit, mul_node_unit) \
   CreateOrValidateOnQnn((qnn_model_wrapper), (hardsigmoid_node_unit), (mul_node_unit), false)
-static Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& hardsigmoid_node_unit,
-                                    const OrtNodeUnit& mul_node_unit, bool validate);
+static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& hardsigmoid_node_unit,
+                                         const OrtNodeUnit& mul_node_unit, bool validate);
 
 std::unique_ptr<IQnnNodeGroup> HardSigmoidMulFusion::TryFusion(
     QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnit& hardsigmoid_node_unit,
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
-    const logging::Logger& logger) {
+    const Ort::Logger& logger) {
   ORT_UNUSED_PARAMETER(logger);
 
   // Looking for a standalone HardSigmoid to start the sequence.
@@ -70,7 +70,7 @@ std::unique_ptr<IQnnNodeGroup> HardSigmoidMulFusion::TryFusion(
     return nullptr;
   }
 
-  if (Status status = ValidateOnQnn(qnn_model_wrapper, hardsigmoid_node_unit, *mul_node_unit);
+  if (Ort::Status status = ValidateOnQnn(qnn_model_wrapper, hardsigmoid_node_unit, *mul_node_unit);
       !status.IsOK()) {
     return nullptr;
   }
@@ -82,12 +82,12 @@ HardSigmoidMulFusion::HardSigmoidMulFusion(const OrtNodeUnit& hardsigmoid_node_u
     : node_units_{&hardsigmoid_node_unit, &mul_node_unit} {
 }
 
-Status HardSigmoidMulFusion::IsSupported(QnnModelWrapper& qmw, const logging::Logger& logger) const {
+Ort::Status HardSigmoidMulFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
   return ValidateOnQnn(qmw, *node_units_[0], *node_units_[1]);
 }
 
-Status HardSigmoidMulFusion::AddToModelBuilder(QnnModelWrapper& qmw, const logging::Logger& logger) const {
+Ort::Status HardSigmoidMulFusion::AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
   return CreateOnQnn(qmw, *node_units_[0], *node_units_[1]);
 }
@@ -100,10 +100,10 @@ const OrtNodeUnit* HardSigmoidMulFusion::GetTargetNodeUnit() const {
   return node_units_[0];
 }
 
-static Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
-                                    const OrtNodeUnit& hardsigmoid_node_unit,
-                                    const OrtNodeUnit& mul_node_unit,
-                                    bool validate) {
+static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
+                                         const OrtNodeUnit& hardsigmoid_node_unit,
+                                         const OrtNodeUnit& mul_node_unit,
+                                         bool validate) {
   assert(hardsigmoid_node_unit.OpType() == "HardSigmoid" && mul_node_unit.OpType() == "Mul");
   const auto& node_name = utils::GetUniqueName(hardsigmoid_node_unit);
   const OrtNodeUnitIODef& input_def = hardsigmoid_node_unit.Inputs()[0];
@@ -112,30 +112,30 @@ static Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   QnnTensorWrapper input_tensor;
   QnnTensorWrapper output_tensor;
 
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(input_def, input_tensor));
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(output_def, output_tensor));
+  RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(input_def, input_tensor));
+  RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(output_def, output_tensor));
 
   if (validate) {
-    ORT_RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(node_name,
-                                                          QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                          QNN_OP_HARD_SWISH,
-                                                          {input_tensor.GetQnnTensor()},
-                                                          {output_tensor.GetQnnTensor()},
-                                                          {}));
-  } else {
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensor)), "Failed to add input");
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)), "Failed to add output");
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
+    RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(node_name,
                                                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                       QNN_OP_HARD_SWISH,
-                                                      {input_def.name},
-                                                      {output_def.name},
-                                                      {},
-                                                      validate),
-                      "Failed to add fused HardSwish node.");
+                                                      {input_tensor.GetQnnTensor()},
+                                                      {output_tensor.GetQnnTensor()},
+                                                      {}));
+  } else {
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensor)), "Failed to add input");
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)), "Failed to add output");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  QNN_OP_HARD_SWISH,
+                                                  {input_def.name},
+                                                  {output_def.name},
+                                                  {},
+                                                  validate),
+                  "Failed to add fused HardSwish node.");
   }
 
-  return Status::OK();
+  return Ort::Status();
 }
 
 }  // namespace qnn

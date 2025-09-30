@@ -367,7 +367,9 @@ class OrtSelectorManager {
   OrtSelectorManager();
 
   // Method that finds and returns a vector of QDQ::NodeGroup in a given OrtGraph
-  std::vector<OrtNodeGroup> GetOrtQDQSelections(const OrtGraph* graph, const OrtApi& ort_api, const logging::Logger& logger) const;
+  std::vector<OrtNodeGroup> GetOrtQDQSelections(const OrtGraph* graph,
+                                                const OrtApi& ort_api,
+                                                const Ort::Logger& logger) const;
 
  private:
   OrtSelectors ort_selectors_;
@@ -394,6 +396,6 @@ std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
 
 // Function to get QDQ node units from OrtGraph
 std::pair<std::vector<std::unique_ptr<OrtNodeUnit>>, std::unordered_map<const OrtNode*, const OrtNodeUnit*>>
-GetAllOrtNodeUnits(OrtApi ort_api, const OrtGraph* graph, const logging::Logger& logger);
+GetAllOrtNodeUnits(OrtApi ort_api, const OrtGraph* graph, const Ort::Logger& logger);
 
 }  // namespace onnxruntime

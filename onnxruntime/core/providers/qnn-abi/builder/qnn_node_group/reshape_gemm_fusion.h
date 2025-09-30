@@ -26,8 +26,8 @@ class ReshapeGemmFusion : public IQnnNodeGroup {
   ReshapeGemmFusion(const OrtNodeUnit& reshape_node_unit, const OrtNodeUnit& gemm_node_unit);
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(ReshapeGemmFusion);
 
-  Status IsSupported(QnnModelWrapper& qmw, const logging::Logger& logger) const override;
-  Status AddToModelBuilder(QnnModelWrapper& qmw, const logging::Logger& logger) const override;
+  Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
+  Ort::Status AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override;
   std::string_view Type() const override { return "ReshapeGemmFusion"; }
@@ -36,7 +36,7 @@ class ReshapeGemmFusion : public IQnnNodeGroup {
       QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& gemm_node_unit,
       const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
       const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
-      const logging::Logger& logger);
+      const Ort::Logger& logger);
 
  private:
   std::array<const OrtNodeUnit*, 2> node_units_;

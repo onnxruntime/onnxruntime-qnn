@@ -31,8 +31,8 @@ constexpr char kOpSoftmax[] = "Softmax";
   CreateOrValidateOnQnn((qnn_model_wrapper), (mul_node_unit), (softmax_node_unit), true)
 #define CreateOnQnn(qnn_model_wrapper, mul_node_unit, softmax_node_unit) \
   CreateOrValidateOnQnn((qnn_model_wrapper), (mul_node_unit), (softmax_node_unit), false)
-static Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& mul_node_unit,
-                                    const OrtNodeUnit& softmax_node_unit, bool validate);
+static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& mul_node_unit,
+                                         const OrtNodeUnit& softmax_node_unit, bool validate);
 
 /// @brief Get the index of the scalar input in the mul node
 /// @param mul Multiply node unit
@@ -41,31 +41,32 @@ static Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper, const Or
 std::optional<size_t> GetMulScalarInputIndex(const OrtNodeUnit& mul, const OrtApi& ort_api) {
   // Get inputs of mul node
   size_t num_inputs = 0;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.Node_GetNumInputs(&mul.GetNode(), &num_inputs), ort_api, std::nullopt);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(&mul.GetNode(), &num_inputs), ort_api, std::nullopt);
   std::vector<const OrtValueInfo*> inputs(num_inputs);
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.Node_GetInputs(&mul.GetNode(), inputs.data(), inputs.size()), ort_api,
-                              std::nullopt);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(&mul.GetNode(), inputs.data(), inputs.size()),
+                             ort_api,
+                             std::nullopt);
 
   const OrtValueInfo* mul_x = inputs[0];
   const OrtValueInfo* mul_y = inputs[1];
 
   // Get type info for inputs
   const OrtTypeInfo* x_type_info = nullptr;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetValueInfoTypeInfo(mul_x, &x_type_info), ort_api, std::nullopt);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoTypeInfo(mul_x, &x_type_info), ort_api, std::nullopt);
   const OrtTypeInfo* y_type_info = nullptr;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetValueInfoTypeInfo(mul_y, &y_type_info), ort_api, std::nullopt);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoTypeInfo(mul_y, &y_type_info), ort_api, std::nullopt);
 
   // Cast to tensor info
   const OrtTensorTypeAndShapeInfo* x_tensor_info = nullptr;
   const OrtTensorTypeAndShapeInfo* y_tensor_info = nullptr;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.CastTypeInfoToTensorInfo(x_type_info, &x_tensor_info), ort_api, std::nullopt);
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.CastTypeInfoToTensorInfo(y_type_info, &y_tensor_info), ort_api, std::nullopt);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.CastTypeInfoToTensorInfo(x_type_info, &x_tensor_info), ort_api, std::nullopt);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.CastTypeInfoToTensorInfo(y_type_info, &y_tensor_info), ort_api, std::nullopt);
 
   // Get dimensions count
   size_t x_dims_count = 0;
   size_t y_dims_count = 0;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetDimensionsCount(x_tensor_info, &x_dims_count), ort_api, std::nullopt);
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetDimensionsCount(y_tensor_info, &y_dims_count), ort_api, std::nullopt);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensionsCount(x_tensor_info, &x_dims_count), ort_api, std::nullopt);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensionsCount(y_tensor_info, &y_dims_count), ort_api, std::nullopt);
 
   bool is_x_scalar = (x_dims_count == 0);
   bool is_y_scalar = (y_dims_count == 0);
@@ -98,19 +99,20 @@ std::optional<uint32_t> GetPositiveSoftmaxAxis(const OrtNodeUnit& mul, const Ort
 
     // Get the other input's shape
     size_t num_inputs = 0;
-    QNN_RETURN_IF_STATUS_NOT_OK(ort_api.Node_GetNumInputs(&mul.GetNode(), &num_inputs), ort_api, std::nullopt);
+    RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(&mul.GetNode(), &num_inputs), ort_api, std::nullopt);
     std::vector<const OrtValueInfo*> inputs(num_inputs);
-    QNN_RETURN_IF_STATUS_NOT_OK(ort_api.Node_GetInputs(&mul.GetNode(), inputs.data(), inputs.size()), ort_api,
-                                std::nullopt);
+    RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(&mul.GetNode(), inputs.data(), inputs.size()),
+                               ort_api,
+                               std::nullopt);
 
     const OrtValueInfo* other_input = inputs[input_other_index];
     const OrtTypeInfo* type_info = nullptr;
-    QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetValueInfoTypeInfo(other_input, &type_info), ort_api, std::nullopt);
+    RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoTypeInfo(other_input, &type_info), ort_api, std::nullopt);
     const OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
-    QNN_RETURN_IF_STATUS_NOT_OK(ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info), ort_api, std::nullopt);
+    RETURN_DEFAULT_IF_API_FAIL(ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info), ort_api, std::nullopt);
 
     size_t dims_count = 0;
-    QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetDimensionsCount(tensor_info, &dims_count), ort_api, std::nullopt);
+    RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensionsCount(tensor_info, &dims_count), ort_api, std::nullopt);
 
     axis_value += static_cast<int64_t>(dims_count);
   }
@@ -131,16 +133,17 @@ std::optional<float> ExtractScalarValueFromMul(const QnnModelWrapper& qnn_model_
 
   // Get inputs of mul node
   size_t num_inputs = 0;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.Node_GetNumInputs(&mul.GetNode(), &num_inputs), ort_api, std::nullopt);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(&mul.GetNode(), &num_inputs), ort_api, std::nullopt);
   std::vector<const OrtValueInfo*> inputs(num_inputs);
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.Node_GetInputs(&mul.GetNode(), inputs.data(), inputs.size()), ort_api,
-                              std::nullopt);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(&mul.GetNode(), inputs.data(), inputs.size()),
+                             ort_api,
+                             std::nullopt);
 
   const OrtValueInfo* scalar_input = inputs[input_scale_index.value()];
 
   // Get the name of the scalar input
   const char* scalar_name = nullptr;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetValueInfoName(scalar_input, &scalar_name), ort_api, std::nullopt);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoName(scalar_input, &scalar_name), ort_api, std::nullopt);
 
   // Check if it's a constant initializer
   if (!qnn_model_wrapper.IsConstantInput(scalar_name)) {
@@ -155,15 +158,15 @@ std::optional<float> ExtractScalarValueFromMul(const QnnModelWrapper& qnn_model_
 
   // Get the value
   const OrtValue* value = nullptr;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.ValueInfo_GetInitializerValue(scalar_tensor, &value), ort_api, std::nullopt);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetInitializerValue(scalar_tensor, &value), ort_api, std::nullopt);
 
   // Check if it's a float tensor
   ONNXTensorElementDataType element_type;
   OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetTensorTypeAndShape(value, &tensor_info), ort_api, std::nullopt);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetTensorTypeAndShape(value, &tensor_info), ort_api, std::nullopt);
   if (OrtStatus* status = ort_api.GetTensorElementType(tensor_info, &element_type)) {
     ort_api.ReleaseTensorTypeAndShapeInfo(tensor_info);
-    QNN_RETURN_IF_STATUS_NOT_OK(status, ort_api, std::nullopt);
+    RETURN_DEFAULT_IF_API_FAIL(status, ort_api, std::nullopt);
   }
   ort_api.ReleaseTensorTypeAndShapeInfo(tensor_info);
   if (element_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
@@ -172,7 +175,7 @@ std::optional<float> ExtractScalarValueFromMul(const QnnModelWrapper& qnn_model_
 
   // Get the raw data
   const void* raw_data = nullptr;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetTensorData(value, &raw_data), ort_api, std::nullopt);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetTensorData(value, &raw_data), ort_api, std::nullopt);
 
   // Return the float value
   return *static_cast<const float*>(raw_data);
@@ -183,18 +186,15 @@ std::optional<float> ExtractScalarValueFromMul(const QnnModelWrapper& qnn_model_
 /// @param node_units The node units containing the softmax and mul nodes
 /// @param validate Whether to validate the QNN node
 /// @return Status
-Status CreateOrValidateOnQnn(
-    QnnModelWrapper& qnn_model_wrapper,
-    const OrtNodeUnit& mul_node_unit,
-    const OrtNodeUnit& softmax_node_unit,
-    bool validate) {
+Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
+                                  const OrtNodeUnit& mul_node_unit,
+                                  const OrtNodeUnit& softmax_node_unit,
+                                  bool validate) {
   assert(mul_node_unit.OpType() == kOpMul && softmax_node_unit.OpType() == kOpSoftmax);
   const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
 
   std::optional<size_t> input_scale_index = GetMulScalarInputIndex(mul_node_unit, ort_api);
-  if (!input_scale_index.has_value()) {
-    return Status(common::ONNXRUNTIME, common::FAIL, "Failed to get scalar input index");
-  }
+  RETURN_IF(!input_scale_index.has_value(), "Failed to get scalar input index");
 
   size_t input_other_index = 1U - input_scale_index.value();
   const OrtNodeUnitIODef& mul_input_other = mul_node_unit.Inputs()[input_other_index];
@@ -211,7 +211,7 @@ Status CreateOrValidateOnQnn(
                                     softmax_node_unit.Name(),
                                     QNN_OP_SOFTMAX_PARAM_AXIS,
                                     axis_scalar);
-      ORT_RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(param_wrapper)), "Failed to add axis param");
+      RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(param_wrapper)), "Failed to add axis param");
       param_tensor_names.push_back(param_wrapper.GetParamTensorName());
     }
   }
@@ -226,37 +226,37 @@ Status CreateOrValidateOnQnn(
                                   softmax_node_unit.Name(),
                                   QNN_OP_SOFTMAX_PARAM_BETA,
                                   beta_scalar);
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(param_wrapper)), "Failed to add beta param");
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(param_wrapper)), "Failed to add beta param");
     param_tensor_names.push_back(param_wrapper.GetParamTensorName());
   }
 
   QnnTensorWrapper fused_softmax_input;
   QnnTensorWrapper fused_softmax_output;
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(mul_input_other, fused_softmax_input));
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(softmax_output, fused_softmax_output));
+  RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(mul_input_other, fused_softmax_input));
+  RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(softmax_output, fused_softmax_output));
 
   const std::string node_name = onnxruntime::qnn::utils::GetUniqueName(softmax_node_unit);
   if (validate) {
-    ORT_RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(node_name,
-                                                          QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                          QNN_OP_SOFTMAX,
-                                                          {fused_softmax_input.GetQnnTensor()},
-                                                          {fused_softmax_output.GetQnnTensor()},
-                                                          {}));
-  } else {
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fused_softmax_input)), "Failed to add input");
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fused_softmax_output)), "Failed to add output");
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
+    RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(node_name,
                                                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                       QNN_OP_SOFTMAX,
-                                                      {mul_input_other.name},
-                                                      {softmax_output.name},
-                                                      std::move(param_tensor_names),
-                                                      validate),
-                      "Failed to add fused " + std::string(kOpSoftmax) + " node.");
+                                                      {fused_softmax_input.GetQnnTensor()},
+                                                      {fused_softmax_output.GetQnnTensor()},
+                                                      {}));
+  } else {
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fused_softmax_input)), "Failed to add input");
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fused_softmax_output)), "Failed to add output");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  QNN_OP_SOFTMAX,
+                                                  {mul_input_other.name},
+                                                  {softmax_output.name},
+                                                  std::move(param_tensor_names),
+                                                  validate),
+                  ("Failed to add fused " + std::string(kOpSoftmax) + " node.").c_str());
   }
 
-  return Status::OK();
+  return Ort::Status();
 }
 
 }  // namespace
@@ -266,7 +266,7 @@ std::unique_ptr<IQnnNodeGroup> ScaleSoftmaxFusion::TryFusion(
     const OrtNodeUnit& mul_node_unit,
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
-    [[maybe_unused]] const logging::Logger& logger) {
+    [[maybe_unused]] const Ort::Logger& logger) {
   if (mul_node_unit.OpType() != kOpMul || mul_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode) {
     return nullptr;
   }
@@ -288,7 +288,7 @@ std::unique_ptr<IQnnNodeGroup> ScaleSoftmaxFusion::TryFusion(
     return nullptr;
   }
 
-  if (Status status = ValidateOnQnn(qnn_model_wrapper, mul_node_unit, *softmax);
+  if (Ort::Status status = ValidateOnQnn(qnn_model_wrapper, mul_node_unit, *softmax);
       !status.IsOK()) {
     return nullptr;
   }
@@ -300,13 +300,13 @@ gsl::span<const OrtNodeUnit* const> ScaleSoftmaxFusion::GetNodeUnits() const {
   return node_units_;
 }
 
-Status ScaleSoftmaxFusion::IsSupported(
-    QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const logging::Logger& logger) const {
+Ort::Status ScaleSoftmaxFusion::IsSupported(QnnModelWrapper& qnn_model_wrapper,
+                                            [[maybe_unused]] const Ort::Logger& logger) const {
   return ValidateOnQnn(qnn_model_wrapper, *node_units_[0], *node_units_[1]);
 }
 
-Status ScaleSoftmaxFusion::AddToModelBuilder(
-    QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const logging::Logger& logger) const {
+Ort::Status ScaleSoftmaxFusion::AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper,
+                                                  [[maybe_unused]] const Ort::Logger& logger) const {
   return CreateOnQnn(qnn_model_wrapper, *node_units_[0], *node_units_[1]);
 }
 

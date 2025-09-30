@@ -15,48 +15,46 @@ class ReshapeOpBuilder : public BaseOpBuilder {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(ReshapeOpBuilder);
 
  protected:
-  Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const OrtNodeUnit& node_unit,
-                       const logging::Logger& logger,
-                       std::vector<std::string>& input_names,
-                       bool do_op_validation) const override ORT_MUST_USE_RESULT;
-  Status OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
-                                  const OrtNodeUnit& node_unit,
-                                  const logging::Logger& logger,
-                                  const std::vector<std::string>& input_names,
-                                  size_t output_index,
-                                  Qnn_DataType_t qnn_data_type,
-                                  QnnQuantParamsWrapper& quant_param) const override ORT_MUST_USE_RESULT;
+  Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                            const OrtNodeUnit& node_unit,
+                            const Ort::Logger& logger,
+                            std::vector<std::string>& input_names,
+                            bool do_op_validation) const override ORT_MUST_USE_RESULT;
+  Ort::Status OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
+                                       const OrtNodeUnit& node_unit,
+                                       const Ort::Logger& logger,
+                                       const std::vector<std::string>& input_names,
+                                       size_t output_index,
+                                       Qnn_DataType_t qnn_data_type,
+                                       QnnQuantParamsWrapper& quant_param) const override ORT_MUST_USE_RESULT;
 };
 
-Status ReshapeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                       const OrtNodeUnit& node_unit,
-                                       const logging::Logger& logger,
-                                       std::vector<std::string>& input_names,
-                                       bool do_op_validation) const {
+Ort::Status ReshapeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                                            const OrtNodeUnit& node_unit,
+                                            const Ort::Logger& logger,
+                                            std::vector<std::string>& input_names,
+                                            bool do_op_validation) const {
   if (do_op_validation) {
     OrtNodeAttrHelper node_helper(node_unit);
     auto allowzero = node_helper.Get("allowzero", static_cast<int64_t>(0));
-    if (0 != allowzero) {
-      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN Reshape doesn't support dynamic shape!");
-    }
+    RETURN_IF(0 != allowzero, "QNN Reshape doesn't support dynamic shape!");
   }
 
   const auto& input_0 = node_unit.Inputs()[0];
-  ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, input_0, logger, input_names));
+  RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, input_0, logger, input_names));
 
-  return Status::OK();
+  return Ort::Status();
 }
 
-Status ReshapeOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
-                                                  const OrtNodeUnit& node_unit,
-                                                  const logging::Logger& logger,
-                                                  const std::vector<std::string>& input_names,
-                                                  size_t output_index,
-                                                  Qnn_DataType_t qnn_data_type,
-                                                  QnnQuantParamsWrapper& quant_param) const {
+Ort::Status ReshapeOpBuilder::OverrideOutputQuantParam(QnnModelWrapper& qnn_model_wrapper,
+                                                       const OrtNodeUnit& node_unit,
+                                                       const Ort::Logger& logger,
+                                                       const std::vector<std::string>& input_names,
+                                                       size_t output_index,
+                                                       Qnn_DataType_t qnn_data_type,
+                                                       QnnQuantParamsWrapper& quant_param) const {
   if (!quant_param.IsPerTensor()) {
-    return Status::OK();
+    return Ort::Status();
   }
 
   // Force Reshape output to use the same quantization parameters as the input if nearly equal.

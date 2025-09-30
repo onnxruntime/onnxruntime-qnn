@@ -14,14 +14,14 @@ namespace onnxruntime::qnn {
 class HtpSharedMemoryAllocator : public OrtAllocator {
  public:
   // Gets the OrtMemoryInfo value that is associated with this allocator type.
-  static OrtMemoryInfo AssociatedMemoryInfo();
+  // static OrtMemoryInfo AssociatedMemoryInfo();
 
   HtpSharedMemoryAllocator(const OrtMemoryInfo* mem_info,
                            std::shared_ptr<RpcMemLibrary> rpcmem_lib,
-                           const logging::Logger* logger = nullptr)
+                           const Ort::Logger& logger)
       : memory_info_{mem_info},
         rpcmem_lib_{std::move(rpcmem_lib)},
-        logger_(logger != nullptr ? *logger : logging::LoggingManager::DefaultLogger()) {
+        logger_(logger) {
     ORT_ENFORCE(rpcmem_lib_ != nullptr);
 
     Alloc = AllocImpl;
@@ -51,8 +51,8 @@ class HtpSharedMemoryAllocator : public OrtAllocator {
   // Gets an allocation's shared memory info.
   // `address_within_allocation` identifies the allocation. It must be an address within an allocation returned by
   // Alloc() which has not yet been freed.
-  static Status GetAllocationSharedMemoryInfo(void* address_within_allocation,
-                                              SharedMemoryInfo& allocation_info);
+  static Ort::Status GetAllocationSharedMemoryInfo(void* address_within_allocation,
+                                                   SharedMemoryInfo& allocation_info);
 
   // Allocation clean up callback signature.
   // For a given allocation, any added clean up callbacks will be called with the allocation's base address when the
@@ -63,13 +63,14 @@ class HtpSharedMemoryAllocator : public OrtAllocator {
   // `address_within_allocation` identifies the allocation. It must be an address within an allocation returned by
   // Alloc() which has not yet been freed.
   // `allocation_clean_up` is the clean up callback. The associated allocator takes ownership of the callback.
-  static Status AddAllocationCleanUp(void* address_within_allocation, AllocationCleanUpFn&& allocation_clean_up);
+  static Ort::Status AddAllocationCleanUp(void* address_within_allocation, AllocationCleanUpFn&& allocation_clean_up);
 
  private:
-  Status GetAllocationSharedMemoryInfoForThisAllocator(void* allocation_base_address,
-                                                       SharedMemoryInfo& allocation_info);
+  Ort::Status GetAllocationSharedMemoryInfoForThisAllocator(void* allocation_base_address,
+                                                            SharedMemoryInfo& allocation_info);
 
-  Status AddAllocationCleanUpForThisAllocator(void* allocation_base_address, AllocationCleanUpFn&& allocation_clean_up);
+  Ort::Status AddAllocationCleanUpForThisAllocator(void* allocation_base_address,
+                                                   AllocationCleanUpFn&& allocation_clean_up);
 
   struct AllocationRecord {
     SharedMemoryInfo shared_memory_info;
@@ -82,7 +83,7 @@ class HtpSharedMemoryAllocator : public OrtAllocator {
 
   const OrtMemoryInfo* memory_info_;
   std::shared_ptr<RpcMemLibrary> rpcmem_lib_;
-  const logging::Logger& logger_;
+  const Ort::Logger& logger_;
 };
 
 }  // namespace onnxruntime::qnn

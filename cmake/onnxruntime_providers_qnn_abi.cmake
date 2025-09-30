@@ -38,14 +38,7 @@
   endif()
   message(STATUS "QNN SDK version ${QNN_SDK_VERSION}")
 
-  file(GLOB_RECURSE
-     onnxruntime_providers_qnn_shared_lib_srcs CONFIGURE_DEPENDS
-     "${ONNXRUNTIME_ROOT}/core/providers/shared_library/*.h"
-     "${ONNXRUNTIME_ROOT}/core/providers/shared_library/*.cc"
-  )
-
-  set(onnxruntime_providers_qnn_abi_srcs ${onnxruntime_providers_qnn_abi_ep_srcs}
-                                         ${onnxruntime_providers_qnn_shared_lib_srcs})
+  set(onnxruntime_providers_qnn_abi_srcs ${onnxruntime_providers_qnn_abi_ep_srcs})
 
   source_group(TREE ${ONNXRUNTIME_ROOT}/core FILES ${onnxruntime_providers_qnn_abi_srcs})
 
@@ -56,9 +49,9 @@
   endif()
 
   onnxruntime_add_shared_library_module(onnxruntime_providers_qnn_abi ${onnxruntime_providers_qnn_abi_all_srcs})
-    onnxruntime_add_include_to_target(onnxruntime_providers_qnn_abi ${ONNXRUNTIME_PROVIDERS_SHARED} ${GSL_TARGET} onnx
-                                                                onnxruntime_common Boost::mp11 safeint_interface
-                                                                nlohmann_json::nlohmann_json)
+  onnxruntime_add_include_to_target(onnxruntime_providers_qnn_abi ${ONNXRUNTIME_PROVIDERS_SHARED} ${GSL_TARGET}
+                                                                  onnxruntime_common safeint_interface
+                                                                  nlohmann_json::nlohmann_json)
   target_link_libraries(onnxruntime_providers_qnn_abi PRIVATE ${ONNXRUNTIME_PROVIDERS_SHARED} ${ABSEIL_LIBS} ${CMAKE_DL_LIBS})
 
   # Link cpuinfo if supported - needed for CPU feature detection

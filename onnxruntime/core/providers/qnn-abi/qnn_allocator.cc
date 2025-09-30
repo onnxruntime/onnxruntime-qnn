@@ -115,12 +115,12 @@ AllocationTracker& GlobalAllocationTracker() {
 
 }  // namespace
 
-OrtMemoryInfo HtpSharedMemoryAllocator::AssociatedMemoryInfo() {
-  return OrtMemoryInfo{QNN_HTP_SHARED, OrtAllocatorType::OrtDeviceAllocator,
-                       OrtDevice{OrtDevice::CPU, OrtDevice::MemType::HOST_ACCESSIBLE, OrtDevice::VendorIds::QUALCOMM,
-                                 /*device_id*/ 0},
-                       OrtMemTypeDefault};
-}
+// OrtMemoryInfo HtpSharedMemoryAllocator::AssociatedMemoryInfo() {
+//   return OrtMemoryInfo{QNN_HTP_SHARED, OrtAllocatorType::OrtDeviceAllocator,
+//                        OrtDevice{OrtDevice::CPU, OrtDevice::MemType::HOST_ACCESSIBLE, OrtDevice::VendorIds::QUALCOMM,
+//                                  /*device_id*/ 0},
+//                        OrtMemTypeDefault};
+// }
 
 void* ORT_API_CALL HtpSharedMemoryAllocator::AllocImpl(struct OrtAllocator* this_, size_t requested_size) {
   HtpSharedMemoryAllocator* allocator = static_cast<HtpSharedMemoryAllocator*>(this_);
@@ -136,17 +136,24 @@ void* ORT_API_CALL HtpSharedMemoryAllocator::AllocImpl(struct OrtAllocator* this
   void* shared_memory_raw = allocator->rpcmem_lib_->Api().alloc(rpcmem::RPCMEM_HEAP_ID_SYSTEM,
                                                                 rpcmem::RPCMEM_DEFAULT_FLAGS,
                                                                 shared_memory_block_size_in_bytes_int);
-  ORT_ENFORCE(shared_memory_raw != nullptr, "rpcmem_alloc() failed to allocate and returned nullptr.");
+  if (shared_memory_raw == nullptr) {
+    ORT_CXX_API_THROW("rpcmem_alloc() failed to allocate and returned nullptr.", ORT_EP_FAIL);
+  }
   auto shared_memory = WrapSharedMemoryWithUniquePtr(shared_memory_raw, allocator->rpcmem_lib_->Api());
 
   const size_t allocation_alignment = AllocationAlignment();
-  ORT_ENFORCE(IsAligned(shared_memory_raw, allocation_alignment),
-              "Shared memory address (", shared_memory_raw, ") does not have required alignment (",
-              allocation_alignment, " bytes).");
+  if (!IsAligned(shared_memory_raw, allocation_alignment)) {
+    ORT_CXX_API_THROW(
+        ("Shared memory address does not have required alignment (" +
+         std::to_string(allocation_alignment) + " bytes)."),
+        ORT_EP_FAIL);
+  }
 
   // get shared memory fd
   const auto shared_memory_fd = allocator->rpcmem_lib_->Api().to_fd(shared_memory.get());
-  ORT_ENFORCE(shared_memory_fd != -1, "rpcmem_to_fd() returned invalid file descriptor.");
+  if (shared_memory_fd == -1) {
+    ORT_CXX_API_THROW("rpcmem_to_fd() returned invalid file descriptor.", ORT_EP_FAIL);
+  }
 
   std::byte* allocation_address = reinterpret_cast<std::byte*>(shared_memory_raw);
 
@@ -162,7 +169,9 @@ void* ORT_API_CALL HtpSharedMemoryAllocator::AllocImpl(struct OrtAllocator* this
 
     std::scoped_lock g{allocator->allocations_mutex_};
     const bool inserted = allocator->allocations_.emplace(allocation_address, std::move(allocation_record)).second;
-    ORT_ENFORCE(inserted, "Allocation record already exists for address (", allocation_address, ").");
+    if (!inserted) {
+      ORT_CXX_API_THROW("Allocation record already exists for address.", ORT_EP_FAIL);
+    }
   }
 
   // register with global allocation tracker
@@ -171,8 +180,9 @@ void* ORT_API_CALL HtpSharedMemoryAllocator::AllocImpl(struct OrtAllocator* this
                                                                          shared_memory_block_size_in_bytes,
                                                                          *allocator);
 
-    ORT_ENFORCE(registered, "Attempted to register allocation but it is already tracked for address (",
-                allocation_address, ").");
+    if (!registered) {
+      ORT_CXX_API_THROW("Attempted to register allocation but it is already tracked for address.", ORT_EP_FAIL);
+    }
   }
 
   shared_memory.release();
@@ -191,7 +201,9 @@ void ORT_API_CALL HtpSharedMemoryAllocator::FreeImpl(struct OrtAllocator* this_,
     return allocator->allocations_.extract(allocation_address);
   }();
 
-  ORT_ENFORCE(!allocation_node.empty(), "Failed to get allocation info for address (", allocation_address, ").");
+  if (allocation_node.empty()) {
+    ORT_CXX_API_THROW("Failed to get allocation info for address.", ORT_EP_FAIL);
+  }
 
   // At this point, we have a valid allocation to free.
   // Avoid throwing exceptions as this may be running from a destructor.
@@ -203,8 +215,9 @@ void ORT_API_CALL HtpSharedMemoryAllocator::FreeImpl(struct OrtAllocator* this_,
     {
       const bool unregistered = GlobalAllocationTracker().UnregisterAllocation(allocation_address);
       if (!unregistered) {
-        LOGS(allocator->logger_, ERROR) << "Attempted to deregister allocation but it is untracked for address ("
-                                        << allocation_address << ").";
+        std::ostringstream oss;
+        oss << "Attempted to deregister allocation but it is untracked for address (" << allocation_address << ").";
+        ORT_CXX_LOG(allocator->logger_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
       }
     }
 
@@ -215,24 +228,27 @@ void ORT_API_CALL HtpSharedMemoryAllocator::FreeImpl(struct OrtAllocator* this_,
       try {
         clean_up_fn(allocation_address);
       } catch (const std::exception& e) {
-        LOGS(allocator->logger_, ERROR) << "Caught exception while running clean up callback for address ("
-                                        << allocation_address
-                                        << "): " << e.what();
+        std::ostringstream oss;
+        oss << "Caught exception while running clean up callback for address (" << allocation_address << "): "
+            << e.what();
+        ORT_CXX_LOG(allocator->logger_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
       }
     }
   } catch (const std::exception& e) {
-    LOGS(allocator->logger_, ERROR) << "Caught exception while freeing address (" << allocation_address << "): " << e.what();
+    std::ostringstream oss;
+    oss << "Caught exception while freeing address (" << allocation_address << "): " << e.what();
+    ORT_CXX_LOG(allocator->logger_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
   }
 }
 
-Status HtpSharedMemoryAllocator::GetAllocationSharedMemoryInfo(void* address_within_allocation,
-                                                               SharedMemoryInfo& shared_memory_info_out) {
+Ort::Status HtpSharedMemoryAllocator::GetAllocationSharedMemoryInfo(void* address_within_allocation,
+                                                                    SharedMemoryInfo& shared_memory_info_out) {
   const auto tracked_record = GlobalAllocationTracker().LookUp(address_within_allocation);
-  ORT_RETURN_IF_NOT(tracked_record.has_value(), "Failed to look up tracked allocation.");
+  RETURN_IF_NOT(tracked_record.has_value(), "Failed to look up tracked allocation.");
 
   void* const base_address = tracked_record->base_address;
   SharedMemoryInfo shared_memory_info{};
-  ORT_RETURN_IF_ERROR(tracked_record->allocator->GetAllocationSharedMemoryInfoForThisAllocator(
+  RETURN_IF_ERROR(tracked_record->allocator->GetAllocationSharedMemoryInfoForThisAllocator(
       base_address, shared_memory_info));
 
   // adjust `shared_memory_info.offset` for `address_within_allocation`
@@ -242,42 +258,40 @@ Status HtpSharedMemoryAllocator::GetAllocationSharedMemoryInfo(void* address_wit
   shared_memory_info.offset += offset_from_base;
 
   shared_memory_info_out = std::move(shared_memory_info);
-  return Status::OK();
+  return Ort::Status();
 }
 
-Status HtpSharedMemoryAllocator::AddAllocationCleanUp(void* address_within_allocation,
-                                                      AllocationCleanUpFn&& allocation_clean_up) {
+Ort::Status HtpSharedMemoryAllocator::AddAllocationCleanUp(void* address_within_allocation,
+                                                           AllocationCleanUpFn&& allocation_clean_up) {
   const auto tracked_record = GlobalAllocationTracker().LookUp(address_within_allocation);
-  ORT_RETURN_IF_NOT(tracked_record.has_value(), "Failed to look up tracked allocation.");
+  RETURN_IF_NOT(tracked_record.has_value(), "Failed to look up tracked allocation.");
 
   void* const base_address = tracked_record->base_address;
   return tracked_record->allocator->AddAllocationCleanUpForThisAllocator(base_address,
                                                                          std::move(allocation_clean_up));
 }
 
-Status HtpSharedMemoryAllocator::GetAllocationSharedMemoryInfoForThisAllocator(void* allocation_base_address,
-                                                                               SharedMemoryInfo& allocation_info) {
+Ort::Status HtpSharedMemoryAllocator::GetAllocationSharedMemoryInfoForThisAllocator(void* allocation_base_address,
+                                                                                    SharedMemoryInfo& allocation_info) {
   std::scoped_lock g{allocations_mutex_};
   const auto allocation_it = allocations_.find(allocation_base_address);
-  ORT_RETURN_IF(allocation_it == allocations_.end(),
-                "Failed to get allocation info for address (", allocation_base_address, ").");
+  RETURN_IF(allocation_it == allocations_.end(), "Failed to get allocation info for address.");
 
   allocation_info = allocation_it->second.shared_memory_info;
-  return Status::OK();
+  return Ort::Status();
 }
 
-Status HtpSharedMemoryAllocator::AddAllocationCleanUpForThisAllocator(void* allocation_base_address,
-                                                                      AllocationCleanUpFn&& allocation_clean_up) {
-  ORT_RETURN_IF(allocation_clean_up == nullptr, "allocation_clean_up should not be empty.");
+Ort::Status HtpSharedMemoryAllocator::AddAllocationCleanUpForThisAllocator(void* allocation_base_address,
+                                                                           AllocationCleanUpFn&& allocation_clean_up) {
+  RETURN_IF(allocation_clean_up == nullptr, "allocation_clean_up should not be empty.");
 
   std::scoped_lock g{allocations_mutex_};
   const auto allocation_it = allocations_.find(allocation_base_address);
-  ORT_RETURN_IF(allocation_it == allocations_.end(),
-                "Failed to get allocation info for address (", allocation_base_address, ").");
+  RETURN_IF(allocation_it == allocations_.end(), "Failed to get allocation info for address.");
 
   auto& clean_up_fns = allocation_it->second.clean_up_fns;
   clean_up_fns.emplace_back(std::move(allocation_clean_up));
-  return Status::OK();
+  return Ort::Status();
 }
 
 }  // namespace onnxruntime::qnn

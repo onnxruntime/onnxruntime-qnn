@@ -10,15 +10,15 @@ namespace onnxruntime {
 namespace qnn {
 namespace {
 
-Status GetOnnxAxis(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit, uint32_t& onnx_axis) {
+Ort::Status GetOnnxAxis(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit, uint32_t& onnx_axis) {
   const auto& inputs = node_unit.Inputs();
   TensorInfo axis_input_info = {};
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], axis_input_info));
-  ORT_RETURN_IF_NOT(axis_input_info.is_initializer, "axis must be initializers");
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], axis_input_info));
+  RETURN_IF_NOT(axis_input_info.is_initializer, "axis must be initializers");
   std::vector<uint8_t> axis_unpacked_tensor;
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*axis_input_info.initializer_tensor, axis_unpacked_tensor));
-  ORT_RETURN_IF_NOT(1 == static_cast<uint32_t>(axis_unpacked_tensor.size() / sizeof(axis_input_info.qnn_data_type)),
-                    "axis should be a single element");
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*axis_input_info.initializer_tensor, axis_unpacked_tensor));
+  RETURN_IF_NOT(1 == static_cast<uint32_t>(axis_unpacked_tensor.size() / sizeof(axis_input_info.qnn_data_type)),
+                "axis should be a single element");
 
   int32_t axis = 0;
   if (axis_input_info.qnn_data_type == QNN_DATATYPE_INT_64) {
@@ -28,18 +28,18 @@ Status GetOnnxAxis(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_u
   }
 
   std::vector<uint32_t> input_shape;
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape");
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape");
 
   auto rank = static_cast<int32_t>(input_shape.size());
   if (axis < 0) {
     axis += rank;
   }
 
-  ORT_RETURN_IF_NOT((axis >= 0 && axis < static_cast<int32_t>(input_shape.size())), "QNN requires axis range [0, rank-1].");
+  RETURN_IF_NOT((axis >= 0 && axis < static_cast<int32_t>(input_shape.size())), "QNN requires axis range [0, rank-1].");
 
   onnx_axis = static_cast<uint32_t>(axis);
 
-  return Status::OK();
+  return Ort::Status();
 }
 
 }  // namespace
@@ -49,29 +49,29 @@ class CumSumOpBuilder : public BaseOpBuilder {
   CumSumOpBuilder() : BaseOpBuilder("CumSumOpBuilder") {}
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(CumSumOpBuilder);
 
-  Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                       const OrtNodeUnit& node_unit,
-                       const logging::Logger& logger) const override ORT_MUST_USE_RESULT;
+  Ort::Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
+                            const OrtNodeUnit& node_unit,
+                            const Ort::Logger& logger) const override ORT_MUST_USE_RESULT;
 
-  Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const OrtNodeUnit& node_unit,
-                       const logging::Logger& logger,
-                       std::vector<std::string>& input_names,
-                       bool do_op_validation) const override ORT_MUST_USE_RESULT;
+  Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                            const OrtNodeUnit& node_unit,
+                            const Ort::Logger& logger,
+                            std::vector<std::string>& input_names,
+                            bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
-  Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const OrtNodeUnit& node_unit,
-                                     std::vector<std::string>&& input_names,
-                                     const logging::Logger& logger,
-                                     bool do_op_validation) const override ORT_MUST_USE_RESULT;
+  Ort::Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
+                                          const OrtNodeUnit& node_unit,
+                                          std::vector<std::string>&& input_names,
+                                          const Ort::Logger& logger,
+                                          bool do_op_validation) const override ORT_MUST_USE_RESULT;
 };
 
-Status CumSumOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                                      const OrtNodeUnit& node_unit,
-                                      const logging::Logger& logger) const {
+Ort::Status CumSumOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
+                                           const OrtNodeUnit& node_unit,
+                                           const Ort::Logger& logger) const {
   const auto& inputs = node_unit.Inputs();
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.IsConstantInput(inputs[1].name),
-                    "QNN CumSum needs axis as a param, hence input[1] must be a constant.");
+  RETURN_IF_NOT(qnn_model_wrapper.IsConstantInput(inputs[1].name),
+                "QNN CumSum needs axis as a param, hence input[1] must be a constant.");
 
   OrtNodeAttrHelper node_helper(node_unit);
   int64_t exclusive = node_helper.Get("exclusive", static_cast<int64_t>(0));
@@ -79,28 +79,28 @@ Status CumSumOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 
   // QNN HTP op validation passes for non-default values of attributes but fails in finalize.
   // Hence adding the checks here.
-  ORT_RETURN_IF_NOT(exclusive == 0, "QNN only supports default value 0 for exclusive attribute");
-  ORT_RETURN_IF_NOT(reverse == 0, "QNN only supports default value 0 for reverse attribute");
+  RETURN_IF_NOT(exclusive == 0, "QNN only supports default value 0 for exclusive attribute");
+  RETURN_IF_NOT(reverse == 0, "QNN only supports default value 0 for reverse attribute");
 
   return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
 }
 
-Status CumSumOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                      const OrtNodeUnit& node_unit,
-                                      const logging::Logger& logger,
-                                      std::vector<std::string>& input_names,
-                                      bool do_op_validation) const {
+Ort::Status CumSumOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                                           const OrtNodeUnit& node_unit,
+                                           const Ort::Logger& logger,
+                                           std::vector<std::string>& input_names,
+                                           bool do_op_validation) const {
   ORT_UNUSED_PARAMETER(do_op_validation);
   const auto& inputs = node_unit.Inputs();
-  ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
-  return Status::OK();
+  RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
+  return Ort::Status();
 }
 
-Status CumSumOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                    const OrtNodeUnit& node_unit,
-                                                    std::vector<std::string>&& input_names,
-                                                    const logging::Logger& logger,
-                                                    bool do_op_validation) const {
+Ort::Status CumSumOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
+                                                         const OrtNodeUnit& node_unit,
+                                                         std::vector<std::string>&& input_names,
+                                                         const Ort::Logger& logger,
+                                                         bool do_op_validation) const {
   ORT_UNUSED_PARAMETER(do_op_validation);
 
   std::vector<std::string> param_tensor_names;
@@ -108,7 +108,7 @@ Status CumSumOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_w
   // Add axis param
   Qnn_Scalar_t axis_qnn_scalar = QNN_SCALAR_INIT;
   uint32_t onnx_axis = 0;
-  ORT_RETURN_IF_ERROR(GetOnnxAxis(qnn_model_wrapper, node_unit, onnx_axis));
+  RETURN_IF_ERROR(GetOnnxAxis(qnn_model_wrapper, node_unit, onnx_axis));
   axis_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
   axis_qnn_scalar.uint32Value = onnx_axis;
   QnnParamWrapper axis_param(node_unit.Index(), node_unit.Name(), QNN_OP_CUMULATIVE_SUM_PARAM_AXIS, axis_qnn_scalar);

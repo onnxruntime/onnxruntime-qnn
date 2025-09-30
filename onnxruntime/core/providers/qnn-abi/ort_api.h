@@ -3,48 +3,63 @@
 
 #pragma once
 
+#include <functional>
+#include <gsl/gsl>
+#include <memory>
+#include <string>
+#include <vector>
+
+#include <SafeInt.hpp>
+
 // This compilation unit (ort_api.h/.cc) encapsulates the interface between the EP and ORT in a manner
 // that allows QNN EP to built either as a static library or a dynamic shared library.
 // The preprocessor macro `BUILD_QNN_EP_STATIC_LIB` is defined and set to 1 if QNN EP
 // is built as a static library.
 // Includes when building QNN EP as a shared library
-#include "core/providers/shared_library/provider_api.h"
+// #include "core/providers/shared_library/provider_api.h"
 #define ORT_API_MANUAL_INIT
 #include "core/session/onnxruntime_cxx_api.h"
 
 #include "core/session/onnxruntime_c_api.h"
 
 #include "core/common/inlined_containers.h"
+#include "core/common/float16.h"
+#include "core/framework/int4.h"
 #include "core/session/onnxruntime_session_options_config_keys.h"
 #include "core/session/onnxruntime_run_options_config_keys.h"
 
-#include <functional>
-#include <memory>
-#include <string>
-#include <vector>
-
 namespace onnxruntime {
 
-// Redefine this macro for convenience since it is widely used.
-// Original definition would try to log some message through default env which causes segfault.
-#undef ORT_RETURN_IF_ERROR
-#define ORT_RETURN_IF_ERROR(fn) \
+#define MAKE_FAIL(msg) Ort::Status(msg, ORT_FAIL)
+#define MAKE_EP_FAIL(msg) Ort::Status(msg, ORT_EP_FAIL)
+
+#define RETURN_IF(cond, msg)      \
+  do {                            \
+    if ((cond)) {                 \
+      return MAKE_EP_FAIL((msg)); \
+    }                             \
+  } while (0)
+
+#define RETURN_IF_NOT(cond, msg) \
+  RETURN_IF(!(cond), msg)
+
+#define RETURN_IF_ERROR(fn)     \
   do {                          \
-    Status _status = (fn);      \
+    Ort::Status _status = (fn); \
     if (!_status.IsOK()) {      \
       return _status;           \
     }                           \
   } while (0)
 
-#define RETURN_IF_NOT_OK(fn, ort_api)                                                                         \
-  do {                                                                                                        \
-    Status status = (fn);                                                                                     \
-    if (!status.IsOK()) {                                                                                     \
-      return (ort_api).CreateStatus(static_cast<OrtErrorCode>(status.Code()), status.ErrorMessage().c_str()); \
-    }                                                                                                         \
+#define RETURN_IF_NOT_OK(fn)    \
+  do {                          \
+    Ort::Status _status = (fn); \
+    if (!_status.IsOK()) {      \
+      return _status.release(); \
+    }                           \
   } while (0)
 
-#define RETURN_IF_ERROR(fn)    \
+#define RETURN_IF_NOT_NULL(fn) \
   do {                         \
     OrtStatus* _status = (fn); \
     if (_status != nullptr) {  \
@@ -52,33 +67,58 @@ namespace onnxruntime {
     }                          \
   } while (0)
 
-#define RETURN_STATUS_IF_ERROR(fn, ort_api)                 \
-  do {                                                      \
-    OrtStatus* _status = (fn);                              \
-    if (_status != nullptr) {                               \
-      const char* msg = (ort_api).GetErrorMessage(_status); \
-      (ort_api).ReleaseStatus(_status);                     \
-      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, msg);       \
-    }                                                       \
+#define RETURN_DEFAULT_IF_API_FAIL(ort_api_fn_call, ort_api, ret_val) \
+  do {                                                                \
+    if (OrtStatus* _status = (ort_api_fn_call)) {                     \
+      (ort_api).ReleaseStatus(_status);                               \
+      return (ret_val);                                               \
+    }                                                                 \
   } while (0)
 
-#define RETURN_IF(cond, ort_api, msg)                    \
-  do {                                                   \
-    if ((cond)) {                                        \
-      return (ort_api).CreateStatus(ORT_EP_FAIL, (msg)); \
-    }                                                    \
-  } while (0)
+// Below are macors copied from core/common/common.h directly.
+#ifdef _WIN32
+#define ORT_UNUSED_PARAMETER(x) (x)
+#else
+#define ORT_UNUSED_PARAMETER(x) (void)(x)
+#endif
 
-#define RETURN_IF_NOT(cond, ort_api, msg) \
-  RETURN_IF(!(cond), ort_api, msg)
+// Macros to disable the copy and/or move ctor and assignment methods
+// These are usually placed in the private: declarations for a class.
+#define ORT_DISALLOW_COPY(TypeName) TypeName(const TypeName&) = delete
 
-#define QNN_RETURN_IF_STATUS_NOT_OK(ort_api_fn_call, ort_api, ret_val) \
-  do {                                                                 \
-    if (OrtStatus* _status = (ort_api_fn_call)) {                      \
-      (ort_api).ReleaseStatus(_status);                                \
-      return (ret_val);                                                \
-    }                                                                  \
-  } while (0)
+#define ORT_DISALLOW_ASSIGNMENT(TypeName) TypeName& operator=(const TypeName&) = delete
+
+#define ORT_DISALLOW_COPY_AND_ASSIGNMENT(TypeName) \
+  ORT_DISALLOW_COPY(TypeName);                     \
+  ORT_DISALLOW_ASSIGNMENT(TypeName)
+
+#define ORT_DISALLOW_MOVE(TypeName) \
+  TypeName(TypeName&&) = delete;    \
+  TypeName& operator=(TypeName&&) = delete
+
+#define ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(TypeName) \
+  ORT_DISALLOW_COPY_AND_ASSIGNMENT(TypeName);           \
+  ORT_DISALLOW_MOVE(TypeName)
+
+#ifdef _WIN32
+#define FILEPATH_TO_STRING(filepath) (filepath).wstring();
+#else
+#define FILEPATH_TO_STRING(filepath) (filepath).string();
+#endif
+
+// Below are GSL utilities copied from core/common/span_utils.h directly.
+template <class U, class T>
+[[nodiscard]] inline gsl::span<U> ReinterpretAsSpan(gsl::span<T> src) {
+  // adapted from gsl-lite span::as_span():
+  // https://github.com/gsl-lite/gsl-lite/blob/4720a2980a30da085b4ddb4a0ea2a71af7351a48/include/gsl/gsl-lite.hpp#L4102-L4108
+  Expects(src.size_bytes() % sizeof(U) == 0);
+  return gsl::span<U>(reinterpret_cast<U*>(src.data()), src.size_bytes() / sizeof(U));
+}
+
+// Below are constants copied from core/graph/constants.h directly.
+constexpr const char* kOnnxDomain = "";
+constexpr const char* kMSDomain = "com.microsoft";
+constexpr const char* kMSInternalNHWCDomain = "com.ms.internal.nhwc";
 
 struct ApiPtrs {
   const OrtApi& ort_api;
@@ -195,7 +235,7 @@ class OrtNodeUnit {
 
  private:
   // // Initialization for a NodeUnit that contains a single node
-  Status InitForSingleNode(const OrtApi& ort_api);
+  OrtStatus* InitForSingleNode(const OrtApi& ort_api);
 
   const std::vector<const OrtNode*> dq_nodes_;  // dq nodes for this NodeUnit, not necessarily all inputs
   const OrtNode* target_node_;
@@ -261,7 +301,7 @@ OrtStatus* GetSessionConfigEntryOrDefault(const OrtApi& ort_api,
                                           const std::string& default_val,
                                           /*out*/ std::string& config_val);
 
-PathString GetModelPathString(const OrtGraph* graph, const OrtApi& ort_api);
+std::basic_string<ORTCHAR_T> GetModelPathString(const OrtGraph* graph, const OrtApi& ort_api);
 
 /**
  * Returns a lowercase version of the input string.
@@ -285,13 +325,15 @@ std::string GetProviderOptionPrefix(const std::string& provider_name);
 // TODO
 // Not sure why Env::Default() fails inside EP, replicate below implementations from "core/platform/posix/env.cc" and
 // "core/platform/windows/env.cc" to here.
-PathString OrtGetRuntimePath();
+std::basic_string<ORTCHAR_T> OrtGetRuntimePath();
 
-Status OrtLoadDynamicLibrary(const PathString& wlibrary_filename, bool global_symbols, void** handle);
+Ort::Status OrtLoadDynamicLibrary(const std::basic_string<ORTCHAR_T>& wlibrary_filename,
+                                  bool global_symbols,
+                                  void** handle);
 
-Status OrtUnloadDynamicLibrary(void* handle);
+Ort::Status OrtUnloadDynamicLibrary(void* handle);
 
-Status OrtGetSymbolFromLibrary(void* handle, const std::string& symbol_name, void** symbol);
+Ort::Status OrtGetSymbolFromLibrary(void* handle, const std::string& symbol_name, void** symbol);
 
 // non-macro equivalent of TEMP_FAILURE_RETRY, described here:
 // https://www.gnu.org/software/libc/manual/html_node/Interrupted-Primitives.html
@@ -304,6 +346,6 @@ long int TempFailureRetry(TFunc retriable_operation, TFuncArgs&&... args) {
   return result;
 }
 
-Status ReadFileIntoBuffer(const ORTCHAR_T* file_path, int64_t offset, size_t length, gsl::span<char> buffer);
+Ort::Status ReadFileIntoBuffer(const ORTCHAR_T* file_path, int64_t offset, size_t length, gsl::span<char> buffer);
 
 }  // namespace onnxruntime

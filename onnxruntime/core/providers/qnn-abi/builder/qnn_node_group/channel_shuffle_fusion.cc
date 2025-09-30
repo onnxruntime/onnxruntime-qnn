@@ -126,10 +126,9 @@ std::optional<std::array<const OrtNodeUnit*, 5>> MatchChannelShufflePattern(
 /// @param node_units The node units containing the nodes in pattern
 /// @param validate Whether to validate the QNN node
 /// @return Status
-Status CreateOrValidateOnQnn(
-    QnnModelWrapper& qnn_model_wrapper,
-    gsl::span<const OrtNodeUnit* const> node_units,
-    bool validate) {
+Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
+                                  gsl::span<const OrtNodeUnit* const> node_units,
+                                  bool validate) {
   const OrtNodeUnit* transpose_head = node_units[0];
   const OrtNodeUnit* transpose_tail = node_units[4];
   const OrtNodeUnitIODef& cs_input_def = transpose_head->Inputs()[0];
@@ -143,25 +142,23 @@ Status CreateOrValidateOnQnn(
   {
     // Get input shape information
     size_t num_transpose_head_inputs = 0;
-    RETURN_STATUS_IF_ERROR(ort_api.Node_GetNumInputs(&transpose_head->GetNode(), &num_transpose_head_inputs), ort_api);
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetNumInputs(&transpose_head->GetNode(), &num_transpose_head_inputs));
     std::vector<const OrtValueInfo*> transpose_head_inputs(num_transpose_head_inputs);
-    RETURN_STATUS_IF_ERROR(
-        ort_api.Node_GetInputs(&transpose_head->GetNode(), transpose_head_inputs.data(), transpose_head_inputs.size()),
-        ort_api);
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetInputs(&transpose_head->GetNode(),
+                                                      transpose_head_inputs.data(),
+                                                      transpose_head_inputs.size()));
     const OrtValueInfo* transpose_head_input_info = transpose_head_inputs[0];
     const OrtTypeInfo* transpose_head_input_type_info = nullptr;
-    RETURN_STATUS_IF_ERROR(ort_api.GetValueInfoTypeInfo(transpose_head_input_info, &transpose_head_input_type_info),
-                           ort_api);
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(transpose_head_input_info,
+                                                            &transpose_head_input_type_info));
     const OrtTensorTypeAndShapeInfo* transpose_head_input_tensor_info = nullptr;
-    RETURN_STATUS_IF_ERROR(
-        ort_api.CastTypeInfoToTensorInfo(transpose_head_input_type_info, &transpose_head_input_tensor_info),
-        ort_api);
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.CastTypeInfoToTensorInfo(transpose_head_input_type_info,
+                                                                &transpose_head_input_tensor_info));
 
     // Get dimensions count
     size_t transpose_head_input_dims_count = 0;
-    RETURN_STATUS_IF_ERROR(
-        ort_api.GetDimensionsCount(transpose_head_input_tensor_info, &transpose_head_input_dims_count),
-        ort_api);
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetDimensionsCount(transpose_head_input_tensor_info,
+                                                          &transpose_head_input_dims_count));
 
     // Set channel axis parameter
     const uint32_t channel_axis = static_cast<uint32_t>(transpose_head_input_dims_count - 1);
@@ -172,7 +169,7 @@ Status CreateOrValidateOnQnn(
                                   transpose_tail->Name(),
                                   QNN_OP_CHANNEL_SHUFFLE_PARAM_AXIS,
                                   axis_scalar);
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(param_wrapper)), "Failed to add axis param");
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(param_wrapper)), "Failed to add axis param");
     param_tensor_names.push_back(param_wrapper.GetParamTensorName());
   }
 
@@ -181,26 +178,25 @@ Status CreateOrValidateOnQnn(
     // Get reshape1 output shape
     const OrtNodeUnit* reshape1 = node_units[1];
     size_t num_reshape1_outputs = 0;
-    RETURN_STATUS_IF_ERROR(ort_api.Node_GetNumOutputs(&reshape1->GetNode(), &num_reshape1_outputs), ort_api);
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetNumOutputs(&reshape1->GetNode(), &num_reshape1_outputs));
     std::vector<const OrtValueInfo*> reshape1_outputs(num_reshape1_outputs);
-    RETURN_STATUS_IF_ERROR(
-        ort_api.Node_GetOutputs(&reshape1->GetNode(), reshape1_outputs.data(), reshape1_outputs.size()),
-        ort_api);
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetOutputs(&reshape1->GetNode(),
+                                                       reshape1_outputs.data(),
+                                                       reshape1_outputs.size()));
     const OrtValueInfo* reshape1_output_info = reshape1_outputs[0];
     const OrtTypeInfo* reshape1_output_type_info = nullptr;
-    RETURN_STATUS_IF_ERROR(ort_api.GetValueInfoTypeInfo(reshape1_output_info, &reshape1_output_type_info), ort_api);
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(reshape1_output_info, &reshape1_output_type_info));
     const OrtTensorTypeAndShapeInfo* reshape1_output_tensor_info = nullptr;
-    RETURN_STATUS_IF_ERROR(ort_api.CastTypeInfoToTensorInfo(reshape1_output_type_info, &reshape1_output_tensor_info),
-                           ort_api);
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.CastTypeInfoToTensorInfo(reshape1_output_type_info,
+                                                                &reshape1_output_tensor_info));
 
     // Get dimensions
     size_t reshape1_output_dims_count = 0;
-    RETURN_STATUS_IF_ERROR(ort_api.GetDimensionsCount(reshape1_output_tensor_info, &reshape1_output_dims_count),
-                           ort_api);
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetDimensionsCount(reshape1_output_tensor_info, &reshape1_output_dims_count));
     std::vector<int64_t> reshape1_output_dims(reshape1_output_dims_count);
-    RETURN_STATUS_IF_ERROR(
-        ort_api.GetDimensions(reshape1_output_tensor_info, reshape1_output_dims.data(), reshape1_output_dims_count),
-        ort_api);
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetDimensions(reshape1_output_tensor_info,
+                                                     reshape1_output_dims.data(),
+                                                     reshape1_output_dims_count));
 
     // Set number of groups parameter
     Qnn_Scalar_t num_groups_scalar = QNN_SCALAR_INIT;
@@ -210,37 +206,37 @@ Status CreateOrValidateOnQnn(
                                   transpose_tail->Name(),
                                   QNN_OP_CHANNEL_SHUFFLE_PARAM_NUM_GROUPS,
                                   num_groups_scalar);
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(param_wrapper)), "Failed to add num_groups param");
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(param_wrapper)), "Failed to add num_groups param");
     param_tensor_names.push_back(param_wrapper.GetParamTensorName());
   }
 
   // Create tensor wrappers for input and output
   QnnTensorWrapper channel_shuffle_input;
   QnnTensorWrapper channel_shuffle_output;
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(cs_input_def, channel_shuffle_input));
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(cs_output_def, channel_shuffle_output));
+  RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(cs_input_def, channel_shuffle_input));
+  RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(cs_output_def, channel_shuffle_output));
 
   if (validate) {
-    ORT_RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(transpose_tail->Name(),
-                                                          QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                          QNN_OP_CHANNEL_SHUFFLE,
-                                                          {channel_shuffle_input.GetQnnTensor()},
-                                                          {channel_shuffle_output.GetQnnTensor()},
-                                                          {}));
-  } else {
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(channel_shuffle_input)), "Failed to add input");
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(channel_shuffle_output)), "Failed to add output");
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(onnxruntime::qnn::utils::GetUniqueName(*transpose_tail),
+    RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(transpose_tail->Name(),
                                                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                       QNN_OP_CHANNEL_SHUFFLE,
-                                                      {cs_input_def.name},
-                                                      {cs_output_def.name},
-                                                      std::move(param_tensor_names),
-                                                      validate),
-                      "Failed to add fused " + std::string(kOpChannelShuffle) + " node.");
+                                                      {channel_shuffle_input.GetQnnTensor()},
+                                                      {channel_shuffle_output.GetQnnTensor()},
+                                                      {}));
+  } else {
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(channel_shuffle_input)), "Failed to add input");
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(channel_shuffle_output)), "Failed to add output");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(onnxruntime::qnn::utils::GetUniqueName(*transpose_tail),
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  QNN_OP_CHANNEL_SHUFFLE,
+                                                  {cs_input_def.name},
+                                                  {cs_output_def.name},
+                                                  std::move(param_tensor_names),
+                                                  validate),
+                  ("Failed to add fused " + std::string(kOpChannelShuffle) + " node.").c_str());
   }
 
-  return Status::OK();
+  return Ort::Status();
 }
 
 }  // namespace
@@ -250,7 +246,7 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusion(
     const OrtNodeUnit& transpose_head,
     const MapNodeToNodeUnit& node_to_node_unit,
     const MapNodeUnitToGroup& node_unit_to_qnn_node_group,
-    [[maybe_unused]] const logging::Logger& logger) {
+    [[maybe_unused]] const Ort::Logger& logger) {
   std::optional<std::array<const OrtNodeUnit*, 5>> pattern = MatchChannelShufflePattern(
       qnn_model_wrapper, &transpose_head, node_to_node_unit, node_unit_to_qnn_node_group);
   if (!pattern.has_value()) {
@@ -266,44 +262,53 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusion(
   // Input shape to reshape1 must equal output shape of reshape2; and has rank > 2
   // Get reshape1 input shape
   size_t num_reshape1_inputs = 0;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.Node_GetNumInputs(&reshape1->GetNode(), &num_reshape1_inputs), ort_api,
-                              nullptr);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(&reshape1->GetNode(), &num_reshape1_inputs),
+                             ort_api,
+                             nullptr);
   std::vector<const OrtValueInfo*> reshape1_inputs(num_reshape1_inputs);
-  QNN_RETURN_IF_STATUS_NOT_OK(
+  RETURN_DEFAULT_IF_API_FAIL(
       ort_api.Node_GetInputs(&reshape1->GetNode(), reshape1_inputs.data(), reshape1_inputs.size()),
-      ort_api, nullptr);
+      ort_api,
+      nullptr);
   const OrtValueInfo* reshape1_input_info = reshape1_inputs[0];
   const OrtTypeInfo* reshape1_input_type_info = nullptr;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetValueInfoTypeInfo(reshape1_input_info, &reshape1_input_type_info),
-                              ort_api, nullptr);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoTypeInfo(reshape1_input_info, &reshape1_input_type_info),
+                             ort_api,
+                             nullptr);
   const OrtTensorTypeAndShapeInfo* reshape1_input_tensor_info = nullptr;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.CastTypeInfoToTensorInfo(reshape1_input_type_info, &reshape1_input_tensor_info),
-                              ort_api, nullptr);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.CastTypeInfoToTensorInfo(reshape1_input_type_info, &reshape1_input_tensor_info),
+                             ort_api,
+                             nullptr);
 
   // Get reshape2 output shape
   size_t num_reshape2_outputs = 0;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.Node_GetNumOutputs(&reshape2->GetNode(), &num_reshape2_outputs), ort_api,
-                              nullptr);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(&reshape2->GetNode(), &num_reshape2_outputs),
+                             ort_api,
+                             nullptr);
   std::vector<const OrtValueInfo*> reshape2_outputs(num_reshape2_outputs);
-  QNN_RETURN_IF_STATUS_NOT_OK(
+  RETURN_DEFAULT_IF_API_FAIL(
       ort_api.Node_GetOutputs(&reshape2->GetNode(), reshape2_outputs.data(), reshape2_outputs.size()),
       ort_api, nullptr);
   const OrtValueInfo* reshape2_output_info = reshape2_outputs[0];
   const OrtTypeInfo* reshape2_output_type_info = nullptr;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetValueInfoTypeInfo(reshape2_output_info, &reshape2_output_type_info),
-                              ort_api, nullptr);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoTypeInfo(reshape2_output_info, &reshape2_output_type_info),
+                             ort_api,
+                             nullptr);
   const OrtTensorTypeAndShapeInfo* reshape2_output_tensor_info = nullptr;
-  QNN_RETURN_IF_STATUS_NOT_OK(
+  RETURN_DEFAULT_IF_API_FAIL(
       ort_api.CastTypeInfoToTensorInfo(reshape2_output_type_info, &reshape2_output_tensor_info),
-      ort_api, nullptr);
+      ort_api,
+      nullptr);
 
   // Compare dimensions
   size_t reshape1_input_dims_count = 0;
   size_t reshape2_output_dims_count = 0;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetDimensionsCount(reshape1_input_tensor_info, &reshape1_input_dims_count),
-                              ort_api, nullptr);
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetDimensionsCount(reshape2_output_tensor_info, &reshape2_output_dims_count),
-                              ort_api, nullptr);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensionsCount(reshape1_input_tensor_info, &reshape1_input_dims_count),
+                             ort_api,
+                             nullptr);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensionsCount(reshape2_output_tensor_info, &reshape2_output_dims_count),
+                             ort_api,
+                             nullptr);
 
   if (reshape1_input_dims_count != reshape2_output_dims_count) {
     return nullptr;
@@ -311,12 +316,14 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusion(
 
   std::vector<int64_t> reshape1_input_dims(reshape1_input_dims_count);
   std::vector<int64_t> reshape2_output_dims(reshape2_output_dims_count);
-  QNN_RETURN_IF_STATUS_NOT_OK(
+  RETURN_DEFAULT_IF_API_FAIL(
       ort_api.GetDimensions(reshape1_input_tensor_info, reshape1_input_dims.data(), reshape1_input_dims_count),
-      ort_api, nullptr);
-  QNN_RETURN_IF_STATUS_NOT_OK(
+      ort_api,
+      nullptr);
+  RETURN_DEFAULT_IF_API_FAIL(
       ort_api.GetDimensions(reshape2_output_tensor_info, reshape2_output_dims.data(), reshape2_output_dims_count),
-      ort_api, nullptr);
+      ort_api,
+      nullptr);
 
   // Check if reshape1 input dims equal reshape2 output dims
   if (!std::equal(reshape1_input_dims.begin(), reshape1_input_dims.end(), reshape2_output_dims.begin())) {
@@ -325,27 +332,33 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusion(
 
   // Get reshape1 output shape
   size_t num_reshape1_outputs = 0;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.Node_GetNumOutputs(&reshape1->GetNode(), &num_reshape1_outputs), ort_api,
-                              nullptr);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(&reshape1->GetNode(), &num_reshape1_outputs),
+                             ort_api,
+                             nullptr);
   std::vector<const OrtValueInfo*> reshape1_outputs(num_reshape1_outputs);
-  QNN_RETURN_IF_STATUS_NOT_OK(
+  RETURN_DEFAULT_IF_API_FAIL(
       ort_api.Node_GetOutputs(&reshape1->GetNode(), reshape1_outputs.data(), reshape1_outputs.size()),
-      ort_api, nullptr);
+      ort_api,
+      nullptr);
   const OrtValueInfo* reshape1_output_info = reshape1_outputs[0];
   const OrtTypeInfo* reshape1_output_type_info = nullptr;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetValueInfoTypeInfo(reshape1_output_info, &reshape1_output_type_info),
-                              ort_api, nullptr);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoTypeInfo(reshape1_output_info, &reshape1_output_type_info),
+                             ort_api,
+                             nullptr);
   const OrtTensorTypeAndShapeInfo* reshape1_output_tensor_info = nullptr;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.CastTypeInfoToTensorInfo(reshape1_output_type_info, &reshape1_output_tensor_info),
-                              ort_api, nullptr);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.CastTypeInfoToTensorInfo(reshape1_output_type_info, &reshape1_output_tensor_info),
+                             ort_api,
+                             nullptr);
 
   size_t reshape1_output_dims_count = 0;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetDimensionsCount(reshape1_output_tensor_info, &reshape1_output_dims_count),
-                              ort_api, nullptr);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensionsCount(reshape1_output_tensor_info, &reshape1_output_dims_count),
+                             ort_api,
+                             nullptr);
   std::vector<int64_t> reshape1_output_dims(reshape1_output_dims_count);
-  QNN_RETURN_IF_STATUS_NOT_OK(
+  RETURN_DEFAULT_IF_API_FAIL(
       ort_api.GetDimensions(reshape1_output_tensor_info, reshape1_output_dims.data(), reshape1_output_dims_count),
-      ort_api, nullptr);
+      ort_api,
+      nullptr);
 
   // Intermediate shape must split channels in groups only
   if (reshape1_input_dims[0] != reshape1_output_dims[0]) {
@@ -410,7 +423,7 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusion(
     return nullptr;
   }
 
-  if (CreateOrValidateOnQnn(qnn_model_wrapper, pattern.value(), /*validate=*/true) != Status::OK()) {
+  if (!CreateOrValidateOnQnn(qnn_model_wrapper, pattern.value(), /*validate=*/true).IsOK()) {
     return nullptr;
   }
   return std::make_unique<ChannelShuffleFusion>(pattern.value());
@@ -420,13 +433,13 @@ gsl::span<const OrtNodeUnit* const> ChannelShuffleFusion::GetNodeUnits() const {
   return gsl::span<const OrtNodeUnit* const>{node_units_.data(), node_units_.size()};
 }
 
-Status ChannelShuffleFusion::IsSupported(
-    QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const logging::Logger& logger) const {
+Ort::Status ChannelShuffleFusion::IsSupported(
+    QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const Ort::Logger& logger) const {
   return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), /*validate=*/true);
 }
 
-Status ChannelShuffleFusion::AddToModelBuilder(
-    QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const logging::Logger& logger) const {
+Ort::Status ChannelShuffleFusion::AddToModelBuilder(
+    QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const Ort::Logger& logger) const {
   return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), /*validate=*/false);
 }
 

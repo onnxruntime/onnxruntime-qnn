@@ -69,11 +69,11 @@ OrtStatus* ORT_API_CALL QnnEpFactorySimulation::GetSupportedDevicesImpl(OrtEpFac
     auto vendor_id = factory->ort_api.HardwareDevice_VendorId(&device);
 
     if (vendor_id == factory->vendor_id_ || device_type == OrtHardwareDeviceType_CPU) {
-      RETURN_IF_ERROR(factory->ep_api.CreateEpDevice(factory,
-                                                     &device,
-                                                     nullptr,
-                                                     nullptr,
-                                                     &ep_devices[num_ep_devices++]));
+      RETURN_IF_NOT_NULL(factory->ep_api.CreateEpDevice(factory,
+                                                        &device,
+                                                        nullptr,
+                                                        nullptr,
+                                                        &ep_devices[num_ep_devices++]));
     }
   }
 

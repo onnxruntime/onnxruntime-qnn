@@ -200,7 +200,6 @@ TEST_F(QnnCPUBackendTests, PadModeReflectNeg) {
                ExpectedEPNodeAssignment::None,
                has_constant_value);
 }
-
 // Pad edge mode
 TEST_F(QnnCPUBackendTests, PadModeEdge) {
   bool has_constant_value = false;

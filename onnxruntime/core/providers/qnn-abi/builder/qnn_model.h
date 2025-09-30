@@ -33,39 +33,37 @@ class QnnModel {
   ~QnnModel() = default;
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModel);
 
-  Status ComposeGraph(const OrtGraph& ort_graph,
-                      const OrtNode& fused_node,
-                      const qnn::ModelSettings& model_settings,
-                      const logging::Logger& logger,
-                      const QnnGraph_Config_t** graph_configs = nullptr,
-                      const std::string& json_qnn_graph_path = "");
+  Ort::Status ComposeGraph(const OrtGraph& ort_graph,
+                           const OrtNode& fused_node,
+                           const qnn::ModelSettings& model_settings,
+                           const Ort::Logger& logger,
+                           const QnnGraph_Config_t** graph_configs = nullptr,
+                           const std::string& json_qnn_graph_path = "");
 
-  Status FinalizeGraphs(const logging::Logger& logger);
+  Ort::Status FinalizeGraphs(const Ort::Logger& logger);
 
-  Status SetupQnnInputOutput(const logging::Logger& logger);
+  Ort::Status SetupQnnInputOutput(const Ort::Logger& logger);
 
-  Status ExecuteGraph(OrtKernelContext* context,
-                      const logging::Logger& logger);
+  Ort::Status ExecuteGraph(OrtKernelContext* context, const Ort::Logger& logger);
 
   const OnnxTensorInfo* GetOutputInfo(const std::string& name) const {
     auto it = outputs_info_.find(name);
     if (it == outputs_info_.end()) {
-      LOGS_DEFAULT(ERROR) << "GetOutputInfo, output: " << name << "not exist!";
       return nullptr;
     }
     return &(it->second);
   }
 
-  Status SetGraphInputOutputInfo(const OrtGraph& ort_graph,
-                                 const OrtNode& fused_node,
-                                 const logging::Logger& logger);
-  Status ParseGraphInputOrOutput(const OrtGraph& ort_graph,
-                                 std::vector<const OrtValueInfo*> input_output_defs,
-                                 std::vector<std::string>& input_output_names,
-                                 std::unordered_map<std::string, OnnxTensorInfo>& input_output_info_table,
-                                 std::unordered_map<std::string, size_t>& input_output_index,
-                                 const logging::Logger& logger,
-                                 bool is_input = false);
+  Ort::Status SetGraphInputOutputInfo(const OrtGraph& ort_graph,
+                                      const OrtNode& fused_node,
+                                      const Ort::Logger& logger);
+  Ort::Status ParseGraphInputOrOutput(const OrtGraph& ort_graph,
+                                      std::vector<const OrtValueInfo*> input_output_defs,
+                                      std::vector<std::string>& input_output_names,
+                                      std::unordered_map<std::string, OnnxTensorInfo>& input_output_info_table,
+                                      std::unordered_map<std::string, size_t>& input_output_index,
+                                      const Ort::Logger& logger,
+                                      bool is_input = false);
 
   // Return the input index within Ort graph which has initializers included
   size_t GetOrtInputIndex(const std::string& name) const {
@@ -75,7 +73,9 @@ class QnnModel {
   // Return the pure input index which doesn't cover initializers
   size_t GetGraphInputIndex(const std::string& name) const {
     auto it = model_input_index_map_.find(name);
-    ORT_ENFORCE(it != model_input_index_map_.end(), "Input name not found.");
+    if (it == model_input_index_map_.end()) {
+      ORT_CXX_API_THROW("Input name not found.", ORT_EP_FAIL);
+    }
     return it->second;
   }
 
@@ -88,8 +88,8 @@ class QnnModel {
     return GetInputOutputIndex(name, outputs_info_);
   }
 
-  Status DeserializeGraphInfoFromBinaryInfo(const QnnSystemContext_GraphInfo_t& qnn_sys_ctx_graph_info,
-                                            const Qnn_ContextHandle_t& context);
+  Ort::Status DeserializeGraphInfoFromBinaryInfo(const QnnSystemContext_GraphInfo_t& qnn_sys_ctx_graph_info,
+                                                 const Qnn_ContextHandle_t& context);
 
   bool IsConstantInitializer(const OrtGraph& ort_graph,
                              const std::string& tensor_name) const {
@@ -145,16 +145,18 @@ class QnnModel {
  private:
   const OrtNodeUnit& GetNodeUnit(const OrtNode* node,
                                  const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map) const;
-  bool GetGraphInfoFromModel(QnnModelWrapper& model_wrapper, const logging::Logger& logger);
+  bool GetGraphInfoFromModel(QnnModelWrapper& model_wrapper, const Ort::Logger& logger);
 
-  Status SetupTensors(std::vector<QnnTensorInfo>& tensors, const std::vector<QnnTensorWrapper>& tensor_wrappers,
-                      bool is_input = true);
+  Ort::Status SetupTensors(std::vector<QnnTensorInfo>& tensors, const std::vector<QnnTensorWrapper>& tensor_wrappers,
+                           bool is_input = true);
 
   QnnBackendType GetQnnBackendType() { return qnn_backend_type_; }
 
   size_t GetInputOutputIndex(const std::string& name, const std::unordered_map<std::string, OnnxTensorInfo>& io_info) const {
     auto it = io_info.find(name);
-    ORT_ENFORCE(it != io_info.end(), "Input/Output name not found.");
+    if (it == io_info.end()) {
+      ORT_CXX_API_THROW("Input/Output name not found.", ORT_EP_FAIL);
+    }
     return it->second.index_;
   }
 
