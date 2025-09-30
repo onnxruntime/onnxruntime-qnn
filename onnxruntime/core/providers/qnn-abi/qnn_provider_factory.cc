@@ -68,11 +68,11 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
     auto vendor_id = factory->ort_api.HardwareDevice_VendorId(&device);
 
     if (vendor_id == factory->vendor_id_ || device_type == OrtHardwareDeviceType_CPU) {
-      RETURN_IF_ERROR(factory->ep_api.CreateEpDevice(factory,
-                                                     &device,
-                                                     nullptr,
-                                                     nullptr,
-                                                     &ep_devices[num_ep_devices++]));
+      RETURN_IF_NOT_NULL(factory->ep_api.CreateEpDevice(factory,
+                                                        &device,
+                                                        nullptr,
+                                                        nullptr,
+                                                        &ep_devices[num_ep_devices++]));
     }
   }
 
@@ -90,9 +90,9 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
   *ep = nullptr;
 
   // Create the execution provider
-  RETURN_IF_ERROR(factory->ort_api.Logger_LogMessage(logger,
-                                                     OrtLoggingLevel::ORT_LOGGING_LEVEL_INFO,
-                                                     "Creating QNN EP", ORT_FILE, __LINE__, __FUNCTION__));
+  RETURN_IF_NOT_NULL(factory->ort_api.Logger_LogMessage(logger,
+                                                        OrtLoggingLevel::ORT_LOGGING_LEVEL_INFO,
+                                                        "Creating QNN EP", ORT_FILE, __LINE__, __FUNCTION__));
 
   std::unique_ptr<QnnEp> qnn_ep;
   try {

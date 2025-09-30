@@ -22,23 +22,23 @@ const OrtNodeUnit* GetOnlyChildOfType(const QnnModelWrapper& qnn_model_wrapper,
 
   // Parent must have a single child (1 output edge) and must not produce a graph output.
   size_t num_outputs = 0;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.Node_GetNumOutputs(&parent_node, &num_outputs), ort_api, nullptr);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(&parent_node, &num_outputs), ort_api, nullptr);
   if (num_outputs != 1) {
     return nullptr;
   }
   std::vector<const OrtValueInfo*> outputs(num_outputs);
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.Node_GetOutputs(&parent_node, outputs.data(), outputs.size()), ort_api,
-                              nullptr);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(&parent_node, outputs.data(), outputs.size()), ort_api,
+                             nullptr);
 
   // Check if any of the node's outputs are graph outputs
   const OrtValueInfo* output_info = outputs[0];
 
   bool is_graph_output = false;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.ValueInfo_IsGraphOutput(output_info, &is_graph_output), ort_api, nullptr);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_IsGraphOutput(output_info, &is_graph_output), ort_api, nullptr);
 
   // We should have exactly one consumer
   size_t num_consumers = 0;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.ValueInfo_GetValueNumConsumers(output_info, &num_consumers), ort_api, nullptr);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueNumConsumers(output_info, &num_consumers), ort_api, nullptr);
   if (num_consumers != 1) {
     return nullptr;
   }
@@ -46,11 +46,11 @@ const OrtNodeUnit* GetOnlyChildOfType(const QnnModelWrapper& qnn_model_wrapper,
   // Get the consumers of this output
   std::vector<const OrtNode*> consumers(num_consumers);
   std::vector<int64_t> input_indices(num_consumers);
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.ValueInfo_GetValueConsumers(output_info,
-                                                                  consumers.data(),
-                                                                  input_indices.data(),
-                                                                  num_consumers),
-                              ort_api, nullptr);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueConsumers(output_info,
+                                                                 consumers.data(),
+                                                                 input_indices.data(),
+                                                                 num_consumers),
+                             ort_api, nullptr);
 
   // Get the child node
   const OrtNode* child_node_ptr = consumers[0];

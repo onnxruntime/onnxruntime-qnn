@@ -34,7 +34,8 @@ void SetQnnTensorType(Qnn_Tensor_t& qnn_tensor, Qnn_TensorType_t tensor_type) {
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 void SetQnnTensorName(Qnn_Tensor_t& qnn_tensor, const char* name) {
@@ -50,7 +51,8 @@ void SetQnnTensorName(Qnn_Tensor_t& qnn_tensor, const char* name) {
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 void SetQnnTensorDataFormat(Qnn_Tensor_t& qnn_tensor, Qnn_TensorDataFormat_t data_format) {
@@ -66,7 +68,8 @@ void SetQnnTensorDataFormat(Qnn_Tensor_t& qnn_tensor, Qnn_TensorDataFormat_t dat
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 void SetQnnTensorDataType(Qnn_Tensor_t& qnn_tensor, Qnn_DataType_t data_type) {
@@ -82,7 +85,8 @@ void SetQnnTensorDataType(Qnn_Tensor_t& qnn_tensor, Qnn_DataType_t data_type) {
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 void SetQnnTensorDim(Qnn_Tensor_t& qnn_tensor, const std::vector<uint32_t>& dimensions) {
@@ -100,7 +104,8 @@ void SetQnnTensorDim(Qnn_Tensor_t& qnn_tensor, const std::vector<uint32_t>& dime
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 void SetQnnTensorMemType(Qnn_Tensor_t& qnn_tensor, Qnn_TensorMemType_t mem_type) {
@@ -116,7 +121,8 @@ void SetQnnTensorMemType(Qnn_Tensor_t& qnn_tensor, Qnn_TensorMemType_t mem_type)
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 void SetQnnTensorClientBuf(Qnn_Tensor_t& qnn_tensor, const std::vector<uint8_t>& client_buf) {
@@ -136,7 +142,8 @@ void SetQnnTensorClientBuf(Qnn_Tensor_t& qnn_tensor, const std::vector<uint8_t>&
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 void SetQnnTensorClientBuf(Qnn_Tensor_t& qnn_tensor, void* buf_data, uint32_t buf_size) {
@@ -154,7 +161,8 @@ void SetQnnTensorClientBuf(Qnn_Tensor_t& qnn_tensor, void* buf_data, uint32_t bu
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 void SetQnnTensorClientBufSize(Qnn_Tensor_t& qnn_tensor, uint32_t client_buf_size) {
@@ -170,7 +178,8 @@ void SetQnnTensorClientBufSize(Qnn_Tensor_t& qnn_tensor, uint32_t client_buf_siz
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 void SetQnnTensorClientBufData(Qnn_Tensor_t& qnn_tensor, void* client_buf_data) {
@@ -186,7 +195,8 @@ void SetQnnTensorClientBufData(Qnn_Tensor_t& qnn_tensor, void* client_buf_data) 
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 void SetQnnTensorMemHandle(Qnn_Tensor_t& qnn_tensor, Qnn_MemHandle_t mem_handle) {
@@ -202,7 +212,8 @@ void SetQnnTensorMemHandle(Qnn_Tensor_t& qnn_tensor, Qnn_MemHandle_t mem_handle)
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 void SetQnnTensorQParams(Qnn_Tensor_t& qnn_tensor, const Qnn_QuantizeParams_t& quantize_params) {
@@ -218,7 +229,8 @@ void SetQnnTensorQParams(Qnn_Tensor_t& qnn_tensor, const Qnn_QuantizeParams_t& q
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 uint32_t GetQnnTensorID(const Qnn_Tensor_t& qnn_tensor) {
@@ -232,7 +244,8 @@ uint32_t GetQnnTensorID(const Qnn_Tensor_t& qnn_tensor) {
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 Qnn_TensorType_t GetQnnTensorType(const Qnn_Tensor_t& qnn_tensor) {
@@ -246,7 +259,8 @@ Qnn_TensorType_t GetQnnTensorType(const Qnn_Tensor_t& qnn_tensor) {
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 const char* GetQnnTensorName(const Qnn_Tensor_t& qnn_tensor) {
@@ -260,7 +274,8 @@ const char* GetQnnTensorName(const Qnn_Tensor_t& qnn_tensor) {
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 Qnn_TensorDataFormat_t GetQnnTensorDataFormat(const Qnn_Tensor_t& qnn_tensor) {
@@ -274,7 +289,8 @@ Qnn_TensorDataFormat_t GetQnnTensorDataFormat(const Qnn_Tensor_t& qnn_tensor) {
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 Qnn_DataType_t GetQnnTensorDataType(const Qnn_Tensor_t& qnn_tensor) {
@@ -288,7 +304,8 @@ Qnn_DataType_t GetQnnTensorDataType(const Qnn_Tensor_t& qnn_tensor) {
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 Qnn_TensorMemType_t GetQnnTensorMemType(const Qnn_Tensor_t& qnn_tensor) {
@@ -302,7 +319,8 @@ Qnn_TensorMemType_t GetQnnTensorMemType(const Qnn_Tensor_t& qnn_tensor) {
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 uint32_t GetQnnTensorRank(const Qnn_Tensor_t& qnn_tensor) {
@@ -316,7 +334,8 @@ uint32_t GetQnnTensorRank(const Qnn_Tensor_t& qnn_tensor) {
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 uint32_t* GetQnnTensorDims(const Qnn_Tensor_t& qnn_tensor) {
@@ -330,7 +349,8 @@ uint32_t* GetQnnTensorDims(const Qnn_Tensor_t& qnn_tensor) {
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 const Qnn_ClientBuffer_t& GetQnnTensorClientBuf(const Qnn_Tensor_t& qnn_tensor) {
@@ -344,7 +364,8 @@ const Qnn_ClientBuffer_t& GetQnnTensorClientBuf(const Qnn_Tensor_t& qnn_tensor) 
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 Qnn_MemHandle_t GetQnnTensorMemHandle(const Qnn_Tensor_t& qnn_tensor) {
@@ -358,7 +379,8 @@ Qnn_MemHandle_t GetQnnTensorMemHandle(const Qnn_Tensor_t& qnn_tensor) {
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 const Qnn_QuantizeParams_t& GetQnnTensorQParams(const Qnn_Tensor_t& qnn_tensor) {
@@ -372,7 +394,8 @@ const Qnn_QuantizeParams_t& GetQnnTensorQParams(const Qnn_Tensor_t& qnn_tensor) 
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
 uint8_t* GetQnnTensorIsDynamicDimensions(const Qnn_Tensor_t& qnn_tensor) {
@@ -386,17 +409,18 @@ uint8_t* GetQnnTensorIsDynamicDimensions(const Qnn_Tensor_t& qnn_tensor) {
   }
 #endif  // QNN_TENSOR_V2_INIT
 
-  ORT_THROW("QNN tensor version not supported, QNN tensor version: ", qnn_tensor.version);
+  ORT_CXX_API_THROW("QNN tensor version not supported, QNN tensor version: " + std::to_string(qnn_tensor.version),
+                    ORT_EP_FAIL);
 }
 
-Status CompareQnnQuantParams(const Qnn_QuantizeParams_t& qparam0, const Qnn_QuantizeParams_t& qparam1,
-                             float& scale_diff, int32_t& offset_diff) {
+Ort::Status CompareQnnQuantParams(const Qnn_QuantizeParams_t& qparam0, const Qnn_QuantizeParams_t& qparam1,
+                                  float& scale_diff, int32_t& offset_diff) {
   scale_diff = 0.0f;
   offset_diff = 0;
 
-  ORT_RETURN_IF_NOT((qparam0.encodingDefinition == qparam1.encodingDefinition &&
-                     qparam0.quantizationEncoding == qparam1.quantizationEncoding),
-                    "Expected quantization parameters to be the same type.");
+  RETURN_IF_NOT((qparam0.encodingDefinition == qparam1.encodingDefinition &&
+                 qparam0.quantizationEncoding == qparam1.quantizationEncoding),
+                "Expected quantization parameters to be the same type.");
 
   if (qparam0.encodingDefinition == QNN_DEFINITION_DEFINED) {
     switch (qparam0.quantizationEncoding) {
@@ -406,11 +430,13 @@ Status CompareQnnQuantParams(const Qnn_QuantizeParams_t& qparam0, const Qnn_Quan
         break;
       }
       default:
-        return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Unsupported quantization encoding: ", qparam0.quantizationEncoding);
+        return MAKE_EP_FAIL(("Unsupported quantization encoding: " +
+                             std::to_string(qparam0.quantizationEncoding))
+                                .c_str());
     }
   }
 
-  return Status::OK();
+  return Ort::Status();
 }
 
 uint32_t CalcQnnTensorNumElems(const Qnn_Tensor_t& qnn_tensor) {
@@ -516,7 +542,8 @@ void QnnOpConfigWrapper::SetNames(const char* op_name,
     op_config_.v1.packageName = package_name;
     op_config_.v1.typeName = type_name;
   } else {
-    ORT_THROW("QNN OpConfig version not supported, QNN OpConfig version: ", op_config_.version);
+    ORT_CXX_API_THROW("QNN OpConfig version not supported, QNN OpConfig version: " + std::to_string(op_config_.version),
+                      ORT_EP_FAIL);
   }
 }
 
@@ -528,7 +555,8 @@ void QnnOpConfigWrapper::SetNums(uint32_t num_inputs,
     op_config_.v1.numOfOutputs = num_outputs;
     op_config_.v1.numOfParams = num_params;
   } else {
-    ORT_THROW("QNN OpConfig version not supported, QNN OpConfig version: ", op_config_.version);
+    ORT_CXX_API_THROW("QNN OpConfig version not supported, QNN OpConfig version: " + std::to_string(op_config_.version),
+                      ORT_EP_FAIL);
   }
 }
 
@@ -540,7 +568,8 @@ void QnnOpConfigWrapper::SetData(Qnn_Tensor_t* input_tensors,
     op_config_.v1.outputTensors = output_tensors;
     op_config_.v1.params = params;
   } else {
-    ORT_THROW("QNN OpConfig version not supported, QNN OpConfig version: ", op_config_.version);
+    ORT_CXX_API_THROW("QNN OpConfig version not supported, QNN OpConfig version: " + std::to_string(op_config_.version),
+                      ORT_EP_FAIL);
   }
 }
 

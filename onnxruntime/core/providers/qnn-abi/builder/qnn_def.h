@@ -145,8 +145,8 @@ uint8_t* GetQnnTensorIsDynamicDimensions(const Qnn_Tensor_t& qnn_tensor);
  * \param offset_diff Set to the absolute value of the difference in offset value.
  * \return Status indicating success.
  */
-Status CompareQnnQuantParams(const Qnn_QuantizeParams_t& qparam0, const Qnn_QuantizeParams_t& qparam1,
-                             float& max_scale_diff, int32_t& max_offset_diff);
+Ort::Status CompareQnnQuantParams(const Qnn_QuantizeParams_t& qparam0, const Qnn_QuantizeParams_t& qparam1,
+                                  float& max_scale_diff, int32_t& max_offset_diff);
 
 // TODO: split out separate files for Wrappers
 class QnnTensorWrapper {
@@ -195,10 +195,10 @@ class QnnTensorWrapper {
   // when deserializing from cached context object. Possible return errors due to:
   //   - Unexpected Qnn_TensorType_t: only handle graph inputs/outputs, not static initializers with data buffers.
   //   - Unexpected quantization encoding.
-  Status Init(const Qnn_Tensor_t& qnn_tensor) {
+  Ort::Status Init(const Qnn_Tensor_t& qnn_tensor) {
     Qnn_TensorType_t tensor_type = GetQnnTensorType(qnn_tensor);
-    ORT_RETURN_IF(tensor_type == QNN_TENSOR_TYPE_STATIC,
-                  "QnnTensorWrapper::Init(const Qnn_Tensor_t&) does not support static initializers");
+    RETURN_IF(tensor_type == QNN_TENSOR_TYPE_STATIC,
+              "QnnTensorWrapper::Init(const Qnn_Tensor_t&) does not support static initializers");
 
     tensor_name_ = GetQnnTensorName(qnn_tensor);
     client_buf_.clear();
@@ -207,7 +207,7 @@ class QnnTensorWrapper {
     SetQnnTensorName(qnn_tensor_, tensor_name_.c_str());
 
     const Qnn_QuantizeParams_t& src_quantize_param = GetQnnTensorQParams(qnn_tensor);
-    ORT_RETURN_IF_ERROR(quant_params_.Init(src_quantize_param));
+    RETURN_IF_ERROR(quant_params_.Init(src_quantize_param));
     SetQnnTensorQParams(qnn_tensor_, quant_params_.Get());
 
     uint32_t shape_rank = GetQnnTensorRank(qnn_tensor);
@@ -217,7 +217,7 @@ class QnnTensorWrapper {
 
     SetQnnTensorMemType(qnn_tensor_, QNN_TENSORMEMTYPE_RAW);
 
-    return Status::OK();
+    return Ort::Status();
   }
 
   QnnTensorWrapper() = default;
@@ -292,7 +292,7 @@ class QnnTensorWrapper {
 
 class QnnParamWrapper {
  public:
-  QnnParamWrapper(NodeIndex node_index,
+  QnnParamWrapper(size_t node_index,
                   const std::string& node_name,
                   const std::string& name,
                   Qnn_Scalar_t scalarParam) : name_(name), shape_({}), param_data_({}) {
@@ -304,7 +304,7 @@ class QnnParamWrapper {
     qnn_param_.scalarParam = scalarParam;
   }
 
-  QnnParamWrapper(NodeIndex node_index,
+  QnnParamWrapper(size_t node_index,
                   const std::string& node_name,
                   const std::string& name,
                   Qnn_DataType_t data_type,
@@ -324,7 +324,7 @@ class QnnParamWrapper {
     SetQnnTensorClientBuf(qnn_param_.tensorParam, param_data_);
   }
 
-  QnnParamWrapper(NodeIndex node_index,
+  QnnParamWrapper(size_t node_index,
                   const std::string& node_name,
                   const std::string& name,
                   std::vector<uint32_t>&& shape,
@@ -394,7 +394,7 @@ class QnnParamWrapper {
 };
 
 template <typename T>
-QnnParamWrapper createQnnParamWrapper(NodeIndex node_index,
+QnnParamWrapper createQnnParamWrapper(size_t node_index,
                                       const std::string& node_name,
                                       const std::string& name,
                                       std::vector<uint32_t>&& shape,

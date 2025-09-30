@@ -146,7 +146,8 @@ void QnnTelemetry::LogQnnProfileEvent(uint64_t timestamp,
   TraceLoggingWrite(
       telemetry_provider_handle,
       "QNNProfilingEvent",
-      TraceLoggingKeyword(static_cast<uint64_t>(onnxruntime::logging::ORTTraceLoggingKeyword::Profiling)),
+      // TODO: onnxruntime::logging::ORTTraceLoggingKeyword::Profiling defined in core/common/logging/loggin.h.
+      TraceLoggingKeyword(static_cast<uint64_t>(0x100)),
       TraceLoggingLevel(WINEVENT_LEVEL_VERBOSE),
       TraceLoggingValue(timestamp, "Timestamp"),
       TraceLoggingString(message.c_str(), "Message"),

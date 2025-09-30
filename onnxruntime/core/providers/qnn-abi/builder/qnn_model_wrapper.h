@@ -37,7 +37,7 @@ class QnnModelWrapper {
  public:
   QnnModelWrapper(const OrtGraph& ort_graph,
                   const ApiPtrs& api_ptrs,
-                  const logging::Logger& logger,
+                  const Ort::Logger& logger,
                   const QNN_INTERFACE_VER_TYPE& qnn_interface,
                   const Qnn_BackendHandle_t& backend_handle,
                   const std::unordered_map<std::string, size_t>& input_index_map,
@@ -65,10 +65,10 @@ class QnnModelWrapper {
                       const QnnGraph_Config_t** graph_configs = nullptr);
 
   // Make a QnnTensorWrapper from an onnx input or output.
-  Status MakeTensorWrapper(const OrtNodeUnitIODef& tensor, QnnTensorWrapper& tensor_wrapper) const;
-  Status MakeTensorWrapper(const TensorInfo& tensor_info,
-                           const std::string& tensor_name,
-                           QnnTensorWrapper& tensor_wrapper) const;
+  Ort::Status MakeTensorWrapper(const OrtNodeUnitIODef& tensor, QnnTensorWrapper& tensor_wrapper) const;
+  Ort::Status MakeTensorWrapper(const TensorInfo& tensor_info,
+                                const std::string& tensor_name,
+                                QnnTensorWrapper& tensor_wrapper) const;
 
   // Add to internal tensor wrapper table
   bool AddTensorWrapper(QnnTensorWrapper&& tensor_wrapper);
@@ -79,12 +79,12 @@ class QnnModelWrapper {
   const QnnTensorWrapper& GetQnnTensorWrapper(const std::string& tensor_name);
 
   // Utility function to validate a QNN node. Does not modify this object's state.
-  Status ValidateQnnNode(const std::string& node_name,
-                         const std::string& package_name,
-                         const std::string& qnn_op_type,
-                         std::vector<Qnn_Tensor_t>&& input_tensors,
-                         std::vector<Qnn_Tensor_t>&& output_tensors,
-                         std::vector<Qnn_Param_t>&& params) const;
+  Ort::Status ValidateQnnNode(const std::string& node_name,
+                              const std::string& package_name,
+                              const std::string& qnn_op_type,
+                              std::vector<Qnn_Tensor_t>&& input_tensors,
+                              std::vector<Qnn_Tensor_t>&& output_tensors,
+                              std::vector<Qnn_Param_t>&& params) const;
 
   bool CreateQnnNode(const std::string& name,
                      const std::string& package_name,
@@ -114,50 +114,38 @@ class QnnModelWrapper {
     return std::move(model_output_tensor_wrappers_);
   }
 
-  Status GetInitializerTensors(gsl::span<const OrtValueInfo*> initializers) const {
-    RETURN_STATUS_IF_ERROR(api_ptrs_.ort_api.Graph_GetInitializers(&ort_graph_,
-                                                                   initializers.data(),
-                                                                   initializers.size()),
-                           api_ptrs_.ort_api);
-    return Status::OK();
+  Ort::Status GetInitializerTensors(gsl::span<const OrtValueInfo*> initializers) const {
+    ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetInitializers(&ort_graph_,
+                                                                       initializers.data(),
+                                                                       initializers.size()));
+    return Ort::Status();
   }
 
   // Find an initializer by name
-  Status FindInitializer(const std::string& tensor_name,
-                         const OrtValueInfo** found_value_info = nullptr) const {
+  Ort::Status FindInitializer(const std::string& tensor_name,
+                              const OrtValueInfo** found_value_info = nullptr) const {
     size_t num_initializers = 0;
-    OrtStatus* status = api_ptrs_.ort_api.Graph_GetNumInitializers(&ort_graph_, &num_initializers);
-    if (status != nullptr) {
-      api_ptrs_.ort_api.ReleaseStatus(status);
-      return Status(common::ONNXRUNTIME, common::FAIL, "Failed to get number of initializers");
-    }
+    ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetNumInitializers(&ort_graph_, &num_initializers));
 
     std::vector<const OrtValueInfo*> initializers(num_initializers);
-    Status ort_status = GetInitializerTensors(initializers);
-    if (!ort_status.IsOK()) {
-      return ort_status;
-    }
+    RETURN_IF_ERROR(GetInitializerTensors(initializers));
 
     for (const OrtValueInfo* value_info : initializers) {
       const char* value_info_name = nullptr;
-      status = api_ptrs_.ort_api.GetValueInfoName(value_info, &value_info_name);
-      if (status != nullptr) {
-        api_ptrs_.ort_api.ReleaseStatus(status);
-        return Status(common::ONNXRUNTIME, common::FAIL, "Failed to get value info name");
-      }
+      ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetValueInfoName(value_info, &value_info_name));
 
       if (std::string(value_info_name) == tensor_name) {
         *found_value_info = value_info;
-        return Status::OK();
+        return Ort::Status();
       }
     }
 
-    return Status(common::ONNXRUNTIME, common::FAIL, "Initializer not found");
+    return MAKE_EP_FAIL("Initializer not found");
   }
 
   const OrtValueInfo* GetConstantTensor(const std::string& tensor_name) const {
     const OrtValueInfo* value_info = nullptr;
-    Status status = FindInitializer(tensor_name, &value_info);
+    Ort::Status status = FindInitializer(tensor_name, &value_info);
     if (!status.IsOK() || value_info == nullptr) {
       return nullptr;
     }
@@ -180,7 +168,7 @@ class QnnModelWrapper {
   // Note: the `input` here refers to the input of the node, not the input of the graph.
   bool IsConstantInput(const std::string& input_name) const {
     const OrtValueInfo* value_info = nullptr;
-    Status status = FindInitializer(input_name, &value_info);
+    Ort::Status status = FindInitializer(input_name, &value_info);
     if (!status.IsOK() || value_info == nullptr) {
       return false;
     }
@@ -224,98 +212,104 @@ class QnnModelWrapper {
     }
   }
 
-  Status GetTensorInfo(const OrtNodeUnitIODef& tensor, TensorInfo& tensor_info) const;
+  Ort::Status GetTensorInfo(const OrtNodeUnitIODef& tensor, TensorInfo& tensor_info) const;
 
-  Status AddReshapeNode(const std::string& input_name,
-                        const std::string& output_name,
-                        const std::vector<uint32_t>& input_shape,
-                        const std::vector<uint32_t>& output_shape,
-                        const Qnn_DataType_t& tensor_data_type,
-                        const QnnQuantParamsWrapper& input_quantize_param,
-                        const QnnQuantParamsWrapper& output_quantize_param,
-                        bool do_op_validation,
-                        bool is_for_input = true,
-                        bool is_for_output = false);
+  Ort::Status AddReshapeNode(const std::string& input_name,
+                             const std::string& output_name,
+                             const std::vector<uint32_t>& input_shape,
+                             const std::vector<uint32_t>& output_shape,
+                             const Qnn_DataType_t& tensor_data_type,
+                             const QnnQuantParamsWrapper& input_quantize_param,
+                             const QnnQuantParamsWrapper& output_quantize_param,
+                             bool do_op_validation,
+                             bool is_for_input = true,
+                             bool is_for_output = false);
 
-  Status AddReshapeNode(const std::string& input_name,
-                        const std::string& output_name,
-                        const std::vector<uint32_t>& input_shape,
-                        const std::vector<uint32_t>& output_shape,
-                        const Qnn_DataType_t& tensor_data_type,
-                        const QnnQuantParamsWrapper& quantize_param,
-                        bool do_op_validation,
-                        bool is_for_input = true,
-                        bool is_for_output = false);
+  Ort::Status AddReshapeNode(const std::string& input_name,
+                             const std::string& output_name,
+                             const std::vector<uint32_t>& input_shape,
+                             const std::vector<uint32_t>& output_shape,
+                             const Qnn_DataType_t& tensor_data_type,
+                             const QnnQuantParamsWrapper& quantize_param,
+                             bool do_op_validation,
+                             bool is_for_input = true,
+                             bool is_for_output = false);
 
-  Status AddTransposeNode(NodeIndex node_index,
-                          const std::string& input_name,
-                          const std::string& output_name,
-                          const std::vector<uint32_t>& input_shape,
-                          const std::vector<uint32_t>& transpose_perm,
-                          const std::vector<uint32_t>& output_shape,
-                          const Qnn_DataType_t& tensor_data_type,
-                          const QnnQuantParamsWrapper& quantize_param,
-                          bool do_op_validation,
-                          bool is_for_input = true,
-                          bool is_for_output = false);
+  Ort::Status AddTransposeNode(size_t node_index,
+                               const std::string& input_name,
+                               const std::string& output_name,
+                               const std::vector<uint32_t>& input_shape,
+                               const std::vector<uint32_t>& transpose_perm,
+                               const std::vector<uint32_t>& output_shape,
+                               const Qnn_DataType_t& tensor_data_type,
+                               const QnnQuantParamsWrapper& quantize_param,
+                               bool do_op_validation,
+                               bool is_for_input = true,
+                               bool is_for_output = false);
 
   // Transpose NCHW->HWCN for QNN weight
-  Status AddNchwToHwcnTranspose(NodeIndex node_index,
-                                const std::string& input_name,
-                                const std::string& output_name,
-                                const std::vector<uint32_t>& input_shape,
-                                const std::vector<uint32_t>& output_shape,
-                                const Qnn_DataType_t& tensor_data_type,
-                                const QnnQuantParamsWrapper& quantize_param,
-                                bool do_op_validation,
-                                bool is_for_input = true,
-                                bool is_for_output = false,
-                                bool is_3d = false) {
-    LOGS(logger_, VERBOSE) << "Add NCHW->HWCN Transpose node after Conv weight input: " << input_name
-                           << " -> " << output_name;
+  Ort::Status AddNchwToHwcnTranspose(size_t node_index,
+                                     const std::string& input_name,
+                                     const std::string& output_name,
+                                     const std::vector<uint32_t>& input_shape,
+                                     const std::vector<uint32_t>& output_shape,
+                                     const Qnn_DataType_t& tensor_data_type,
+                                     const QnnQuantParamsWrapper& quantize_param,
+                                     bool do_op_validation,
+                                     bool is_for_input = true,
+                                     bool is_for_output = false,
+                                     bool is_3d = false) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("Add NCHW->HWCN Transpose node after Conv weight input: " +
+                 input_name + " -> " + output_name)
+                    .c_str());
     auto perm = is_3d ? nchw2hwcn_perm_3d : nchw2hwcn_perm;
     std::vector<uint32_t> transpose_perm;
     transpose_perm.resize(perm.size());
     std::transform(perm.begin(), perm.end(),
                    transpose_perm.begin(), [](size_t item) -> uint32_t {
-                     return narrow<uint32_t>(item);
+                     return gsl::narrow<uint32_t>(item);
                    });
     return AddTransposeNode(node_index, input_name, output_name, input_shape, transpose_perm, output_shape,
                             tensor_data_type, quantize_param, do_op_validation, is_for_input, is_for_output);
   }
 
   // Tranpose CNHW->HWCN for QNN weight
-  Status AddCnhwToHwcnTranspose(NodeIndex node_index,
-                                const std::string& input_name,
-                                const std::string& output_name,
-                                const std::vector<uint32_t>& input_shape,
-                                const std::vector<uint32_t>& output_shape,
-                                const Qnn_DataType_t& tensor_data_type,
-                                const QnnQuantParamsWrapper& quantize_param,
-                                bool do_op_validation,
-                                bool is_for_input = true,
-                                bool is_for_output = false,
-                                bool is_3d = false) {
-    LOGS(logger_, VERBOSE) << "Add CNHW->HWCN Transpose node after ConvTranspose weight input: " << input_name
-                           << " -> " << output_name;
+  Ort::Status AddCnhwToHwcnTranspose(size_t node_index,
+                                     const std::string& input_name,
+                                     const std::string& output_name,
+                                     const std::vector<uint32_t>& input_shape,
+                                     const std::vector<uint32_t>& output_shape,
+                                     const Qnn_DataType_t& tensor_data_type,
+                                     const QnnQuantParamsWrapper& quantize_param,
+                                     bool do_op_validation,
+                                     bool is_for_input = true,
+                                     bool is_for_output = false,
+                                     bool is_3d = false) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("Add CNHW->HWCN Transpose node after ConvTranspose weight input: " +
+                 input_name + " -> " + output_name)
+                    .c_str());
     auto perm = is_3d ? cnhw2hwcn_perm_3d : cnhw2hwcn_perm;
     std::vector<uint32_t> transpose_perm;
     transpose_perm.resize(perm.size());
     std::transform(perm.begin(), perm.end(),
                    transpose_perm.begin(), [](size_t item) -> uint32_t {
-                     return narrow<uint32_t>(item);
+                     return gsl::narrow<uint32_t>(item);
                    });
     return AddTransposeNode(node_index, input_name, output_name, input_shape, transpose_perm, output_shape,
                             tensor_data_type, quantize_param, do_op_validation, is_for_input, is_for_output);
   }
 
-  Status UnpackInitializerData(OrtValueInfo& initializer,
-                               std::vector<uint8_t>& unpacked_tensor) const;
+  Ort::Status UnpackInitializerData(OrtValueInfo& initializer,
+                                    std::vector<uint8_t>& unpacked_tensor) const;
 
   // Perform a 2D matrix transpose on a tensor
-  Status TransposeTensor(std::vector<uint32_t>& data_shape,
-                         const OrtValueInfo& initializer,
-                         std::vector<uint8_t>& transposed_data) const;
+  Ort::Status TransposeTensor(std::vector<uint32_t>& data_shape,
+                              const OrtValueInfo& initializer,
+                              std::vector<uint8_t>& transposed_data) const;
 
   QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
 
@@ -324,17 +318,17 @@ class QnnModelWrapper {
   const OrtApi& GetOrtApi() const { return api_ptrs_.ort_api; }
 
   // Unpack float scales from initializer (1 scale for per-tensor, > 1 for per-axis).
-  Status UnpackScales(const std::string& initializer_name, std::vector<float>& scales) const;
+  Ort::Status UnpackScales(const std::string& initializer_name, std::vector<float>& scales) const;
 
   // Unpack zero-points from initializer and convert to int32_t (1 zero-point for per-tensor, > 1 for per-channel).
-  Status UnpackZeroPoints(const std::string& initializer_name,
-                          /*out*/ std::vector<int32_t>& zero_points,
-                          /*out*/ ONNXTensorElementDataType& onnx_data_type) const;
+  Ort::Status UnpackZeroPoints(const std::string& initializer_name,
+                               /*out*/ std::vector<int32_t>& zero_points,
+                               /*out*/ ONNXTensorElementDataType& onnx_data_type) const;
 
   // // Checks if a tensor in the ONNX graph is per-channel quantized.
-  Status IsPerChannelQuantized(const OrtNodeUnitIODef& io_def,
-                               /*out*/ bool& is_per_channel,
-                               /*out*/ int64_t& axis) const;
+  Ort::Status IsPerChannelQuantized(const OrtNodeUnitIODef& io_def,
+                                    /*out*/ bool& is_per_channel,
+                                    /*out*/ int64_t& axis) const;
 
  private:
   bool CreateQnnInputOutputTensors(const std::string& qnn_node_name,
@@ -349,13 +343,6 @@ class QnnModelWrapper {
                              std::vector<Qnn_Param_t>& qnn_params,
                              bool do_op_validation = false);
 
-  bool IsQDQNode(const Node& node) const {
-    if (node.OpType() == "QuantizeLinear" || node.OpType() == "DequantizeLinear") {
-      return true;
-    }
-    return false;
-  }
-
   bool IsQnnTensorCreated(const std::string& tensor_name) {
     auto pos = tensor_created_map_.find(tensor_name);
     if (pos == tensor_created_map_.end()) {
@@ -368,7 +355,7 @@ class QnnModelWrapper {
                                         std::vector<QnnTensorWrapper>& wrappers_list);
 
   const OrtGraph& ort_graph_;
-  const logging::Logger& logger_;
+  const Ort::Logger& logger_;
   const QNN_INTERFACE_VER_TYPE& qnn_interface_;
   const Qnn_BackendHandle_t& backend_handle_;
   Qnn_GraphHandle_t graph_ = nullptr;
@@ -397,12 +384,12 @@ class QnnModelWrapper {
 };  // QnnModelWrapper
 
 template <typename T>
-inline Status AddQnnScalar(QnnModelWrapper& qnn_model_wrapper,
-                           const NodeIndex& node_index,
-                           const std::string& node_name,
-                           const T& scalar,
-                           const std::string& qnn_scalar_param_name,
-                           std::vector<std::string>& param_names) {
+inline Ort::Status AddQnnScalar(QnnModelWrapper& qnn_model_wrapper,
+                                const size_t& node_index,
+                                const std::string& node_name,
+                                const T& scalar,
+                                const std::string& qnn_scalar_param_name,
+                                std::vector<std::string>& param_names) {
   Qnn_Scalar_t qnn_scalar = QNN_SCALAR_INIT;
   if (std::is_same<T, float>::value) {
     qnn_scalar.dataType = QNN_DATATYPE_FLOAT_32;
@@ -420,27 +407,27 @@ inline Status AddQnnScalar(QnnModelWrapper& qnn_model_wrapper,
     qnn_scalar.dataType = QNN_DATATYPE_BOOL_8;
     qnn_scalar.bool8Value = static_cast<uint8_t>(scalar);
   } else {
-    ORT_RETURN_IF(true, "QNN EP: Unsupported scalar dtype");
+    RETURN_IF(true, "QNN EP: Unsupported scalar dtype");
   }
   QnnParamWrapper qnn_param_wrapper(node_index, node_name, qnn_scalar_param_name, qnn_scalar);
   param_names.push_back(qnn_param_wrapper.GetParamTensorName());
   qnn_model_wrapper.AddParamWrapper(std::move(qnn_param_wrapper));
-  return Status::OK();
+  return Ort::Status();
 }
 
-inline Status AddQnnScalar(QnnModelWrapper& qnn_model_wrapper,
-                           const NodeIndex& node_index,
-                           const std::string& node_name,
-                           const std::string& scalar,
-                           const std::string& qnn_scalar_param_name,
-                           std::vector<std::string>& param_names) {
+inline Ort::Status AddQnnScalar(QnnModelWrapper& qnn_model_wrapper,
+                                const size_t& node_index,
+                                const std::string& node_name,
+                                const std::string& scalar,
+                                const std::string& qnn_scalar_param_name,
+                                std::vector<std::string>& param_names) {
   Qnn_Scalar_t qnn_scalar = QNN_SCALAR_INIT;
   qnn_scalar.dataType = QNN_DATATYPE_STRING;
   qnn_scalar.stringValue = scalar.c_str();
   QnnParamWrapper qnn_param_wrapper(node_index, node_name, qnn_scalar_param_name, qnn_scalar);
   param_names.push_back(qnn_param_wrapper.GetParamTensorName());
   qnn_model_wrapper.AddParamWrapper(std::move(qnn_param_wrapper));
-  return Status::OK();
+  return Ort::Status();
 }
 
 }  // namespace qnn
