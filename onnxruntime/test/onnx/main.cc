@@ -642,7 +642,11 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
       }
       if (enable_qnn_abi) {
         const OrtApi& c_api = Ort::GetApi();
+#if _WIN32
         const std::filesystem::path& library_path = "onnxruntime_providers_qnn_abi.dll";
+#else
+        const std::filesystem::path& library_path = "libonnxruntime_providers_qnn_abi.so";
+#endif
         registration_name = onnxruntime::kQnnABIExecutionProvider;
         OrtStatusPtr status = c_api.RegisterExecutionProviderLibrary(env,
                                                                      registration_name.c_str(),
