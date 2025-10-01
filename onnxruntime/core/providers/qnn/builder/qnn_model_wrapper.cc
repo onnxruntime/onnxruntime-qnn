@@ -19,23 +19,31 @@ namespace qnn {
 bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
                                      const std::string& graph_name,
                                      const QnnGraph_Config_t** graph_configs) {
+  LOGS(logger_, VERBOSE) << "[Mock] CreateQnnGraph";
   if (!graph_name_.empty()) {
     // only one graph is allowed per QnnModel
     LOGS(logger_, ERROR) << "Graph " << graph_name << " already initialized.";
     return false;
   }
+  LOGS(logger_, VERBOSE) << "[Mock] check context";
   if (context == nullptr) {
     LOGS(logger_, ERROR) << "Invalid Qnn context.";
     return false;
   }
+  LOGS(logger_, VERBOSE) << "[Mock] check graph name";
   if (graph_name.length() == 0) {
     LOGS(logger_, ERROR) << "Empty graph name.";
     return false;
   }
 
+  LOGS(logger_, VERBOSE) << "[Mock] qnn_interface_.graphCreate";
+
   auto rt = qnn_interface_.graphCreate(context, graph_name.c_str(), graph_configs, &graph_);
+
+  LOGS(logger_, VERBOSE) << "[Mock] Finish qnn_interface_.graphCreate";
   if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
     rt = qnn_interface_.graphRetrieve(context, graph_name.c_str(), &graph_);
+    LOGS(logger_, VERBOSE) << "[Mock] Finish qnn_interface_.graphRetrieve";
     if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
       LOGS(logger_, ERROR) << "Failed to create Qnn graph: " << graph_name;
       return false;

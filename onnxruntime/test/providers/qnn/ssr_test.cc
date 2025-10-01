@@ -6,6 +6,8 @@
 #include <string>
 #include "core/graph/graph.h"
 #include "core/graph/node_attr_utils.h"
+#include "core/session/inference_session.h"
+#include "core/framework/session_options.h"
 
 #include "test/unittest_util/qdq_test_utils.h"
 #include "test/providers/qnn/qnn_test_utils.h"
@@ -84,6 +86,41 @@ TEST_F(QnnHTPBackendTests, SSRInstanceNormU8U8) {
                        true);
 }
 
+TEST_F(QnnHTPBackendTests, SSRInferenceSession) {
+  std::vector<float> input_data = {3.21289f, -5.9981f, -1.72799f, 6.27263f, 3.36205f, -1.93515f, -5.40113f, 3.75648f, 6.15357f,
+                                   -5.25769f, 2.73637f, -0.901382f, -6.55612f, 1.99497f, -4.79228f, 2.69813f, 8.3064f, 0.0362501f};
+  std::vector<float> scale_data = {-0.148738f, -1.45158f};
+  std::vector<float> bias_data = {-2.2785083772f, 2.3338717017f};
+  auto input_def = TestInputDef<float>({1, 2, 3, 3}, false, input_data).OverrideValueRange(-10.0f, 10.0f);
+  auto scale_def = TestInputDef<float>({2}, true, scale_data).OverrideValueRange(-2.0f, 2.0f);
+  auto bias_def = TestInputDef<float>({2}, true, bias_data).OverrideValueRange(-3.0f, 3.0f);
+
+  ProviderOptions provider_options;
+  provider_options["backend_path"] = "QnnMockSSR.dll";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["enable_ssr_handling"] = "1";
+  SessionOptions so;
+  InferenceSessionWrapper session_object{so, GetEnvironment()};
+  auto qnn_ep = QnnExecutionProviderWithOptions(provider_options, &so);
+  std::string provider_type = qnn_ep->Type();
+  ASSERT_STATUS_OK(session_object.RegisterExecutionProvider(std::move(qnn_ep)));
+
+  auto& logging_manager = DefaultLoggingManager();
+  onnxruntime::Model model("QNN_EP_TestModel", false, ModelMetaData(), PathString(),
+                           IOnnxRuntimeOpSchemaRegistryList(), {}, {},
+                           logging_manager.DefaultLogger());
+  Graph& graph = model.MainGraph();
+  ModelTestBuilder helper(graph);
+  BuildOpTestCase<float>("InstanceNormalization", {input_def, scale_def, bias_def}, {}, {})(helper);
+  helper.SetGraphOutputs();
+  ASSERT_STATUS_OK(model.MainGraph().Resolve());
+
+  std::string model_data;
+  model.ToProto().SerializeToString(&model_data);
+  ASSERT_STATUS_OK(session_object.Load(model_data.data(), static_cast<int>(model_data.size())));
+  ASSERT_STATUS_OK(session_object.Initialize());
+
+}
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
