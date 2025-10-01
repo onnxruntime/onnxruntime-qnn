@@ -10,8 +10,6 @@
 namespace onnxruntime {
 namespace qnn {
 
-static OpBuilderRegistrations op_registrations;
-
 OpBuilderRegistrations::OpBuilderRegistrations() {
   {
     CreateArgMaxMinOpBuilder("ArgMax", *this);
@@ -62,6 +60,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
 
   {
     CreateInstanceNormOpBuilder("InstanceNormalization", *this);
+  }
+
+  {
+    CreateInverseOpBuilder("Inverse", *this);
   }
 
   {
@@ -194,6 +196,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   }
 
   {
+    CreateSTFTOpBuilder("STFT", *this);
+  }
+
+  {
     CreateThresholdedReluOpBuilder("ThresholdedRelu", *this);
   }
 
@@ -214,11 +220,8 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   }
 }
 
-void RegisterUDOBuilder(const std::string& op_type, const std::string& op_package) {
-  CreateUDOBuilder(op_type, op_package, op_registrations);
-}
-
 const IOpBuilder* GetOpBuilder(const std::string& onnx_op_type) {
+  static const OpBuilderRegistrations op_registrations;
   return op_registrations.GetOpBuilderByOnnxOpType(onnx_op_type);
 }
 

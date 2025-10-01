@@ -31,25 +31,25 @@ OrtStatus* ParseOrtValueInfo(const OrtValueInfo* io,
                              /*out*/ OrtNodeUnitIODef& result) {
   // Get name.
   const char* name = nullptr;
-  RETURN_IF_ERROR(ort_api.GetValueInfoName(io, &name));
+  RETURN_IF_NOT_NULL(ort_api.GetValueInfoName(io, &name));
 
   // Get type and shape.
   const OrtTypeInfo* type_info = nullptr;
-  RETURN_IF_ERROR(ort_api.GetValueInfoTypeInfo(io, &type_info));
+  RETURN_IF_NOT_NULL(ort_api.GetValueInfoTypeInfo(io, &type_info));
 
   const OrtTensorTypeAndShapeInfo* type_shape = nullptr;
-  RETURN_IF_ERROR(ort_api.CastTypeInfoToTensorInfo(type_info, &type_shape));
+  RETURN_IF_NOT_NULL(ort_api.CastTypeInfoToTensorInfo(type_info, &type_shape));
 
   ONNXTensorElementDataType elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
-  RETURN_IF_ERROR(ort_api.GetTensorElementType(type_shape, &elem_type));
+  RETURN_IF_NOT_NULL(ort_api.GetTensorElementType(type_shape, &elem_type));
 
   size_t num_dims = 0;
-  RETURN_IF_ERROR(ort_api.GetDimensionsCount(type_shape, &num_dims));
+  RETURN_IF_NOT_NULL(ort_api.GetDimensionsCount(type_shape, &num_dims));
 
   std::vector<int64_t> shape;
   shape.resize(num_dims, 0);
   if (num_dims > 0) {
-    RETURN_IF_ERROR(ort_api.GetDimensions(type_shape, shape.data(), shape.size()));
+    RETURN_IF_NOT_NULL(ort_api.GetDimensions(type_shape, shape.data(), shape.size()));
   }
 
   result = OrtNodeUnitIODef{name ? name : "", elem_type, shape, quant_param};
@@ -67,32 +67,24 @@ std::vector<OrtNodeUnitIODef> GetQDQIODefs(const OrtNode* target_node,
   if (is_input) {
     auto status = ort_api.Node_GetNumInputs(target_node, &num_ios);
     if (status != nullptr) {
-      const char* error_msg = ort_api.GetErrorMessage(status);
-      LOGS_DEFAULT(ERROR) << "Failed to get number of inputs: " << error_msg;
       ort_api.ReleaseStatus(status);
       return {};
     }
     target_node_ios.resize(num_ios);
     status = ort_api.Node_GetInputs(target_node, target_node_ios.data(), target_node_ios.size());
     if (status != nullptr) {
-      const char* error_msg = ort_api.GetErrorMessage(status);
-      LOGS_DEFAULT(ERROR) << "Failed to get node inputs: " << error_msg;
       ort_api.ReleaseStatus(status);
       return {};
     }
   } else {
     auto status = ort_api.Node_GetNumOutputs(target_node, &num_ios);
     if (status != nullptr) {
-      const char* error_msg = ort_api.GetErrorMessage(status);
-      LOGS_DEFAULT(ERROR) << "Failed to get number of outputs: " << error_msg;
       ort_api.ReleaseStatus(status);
       return {};
     }
     target_node_ios.resize(num_ios);
     status = ort_api.Node_GetOutputs(target_node, target_node_ios.data(), target_node_ios.size());
     if (status != nullptr) {
-      const char* error_msg = ort_api.GetErrorMessage(status);
-      LOGS_DEFAULT(ERROR) << "Failed to get node outputs: " << error_msg;
       ort_api.ReleaseStatus(status);
       return {};
     }
@@ -111,8 +103,6 @@ std::vector<OrtNodeUnitIODef> GetQDQIODefs(const OrtNode* target_node,
     if (is_input) {
       auto status = ort_api.ValueInfo_GetValueProducer(target_node_ios[io_idx], &node, nullptr);
       if (status != nullptr) {
-        const char* error_msg = ort_api.GetErrorMessage(status);
-        LOGS_DEFAULT(ERROR) << "Failed to get value producer: " << error_msg;
         ort_api.ReleaseStatus(status);
         continue;
       }
@@ -121,8 +111,6 @@ std::vector<OrtNodeUnitIODef> GetQDQIODefs(const OrtNode* target_node,
       size_t num_consumers = 0;
       auto status = ort_api.ValueInfo_GetValueNumConsumers(target_node_ios[io_idx], &num_consumers);
       if (status != nullptr) {
-        const char* error_msg = ort_api.GetErrorMessage(status);
-        LOGS_DEFAULT(ERROR) << "Failed to get number of value consumers: " << error_msg;
         ort_api.ReleaseStatus(status);
         continue;
       }
@@ -137,8 +125,6 @@ std::vector<OrtNodeUnitIODef> GetQDQIODefs(const OrtNode* target_node,
                                                    input_indices.data(),
                                                    num_consumers);
       if (status != nullptr) {
-        const char* error_msg = ort_api.GetErrorMessage(status);
-        LOGS_DEFAULT(ERROR) << "Failed to get value consumers: " << error_msg;
         ort_api.ReleaseStatus(status);
         continue;
       }
@@ -153,16 +139,12 @@ std::vector<OrtNodeUnitIODef> GetQDQIODefs(const OrtNode* target_node,
     size_t num_node_inputs = 0;
     auto status = ort_api.Node_GetNumInputs(node, &num_node_inputs);
     if (status != nullptr) {
-      const char* error_msg = ort_api.GetErrorMessage(status);
-      LOGS_DEFAULT(ERROR) << "Failed to get number of node inputs: " << error_msg;
       ort_api.ReleaseStatus(status);
       continue;
     }
     std::vector<const OrtValueInfo*> node_inputs(num_node_inputs);
     status = ort_api.Node_GetInputs(node, node_inputs.data(), node_inputs.size());
     if (status != nullptr) {
-      const char* error_msg = ort_api.GetErrorMessage(status);
-      LOGS_DEFAULT(ERROR) << "Failed to get node inputs: " << error_msg;
       ort_api.ReleaseStatus(status);
       continue;
     }
@@ -178,8 +160,6 @@ std::vector<OrtNodeUnitIODef> GetQDQIODefs(const OrtNode* target_node,
       // DQ node, using input[0, 1, 2].
       auto parse_status = ParseOrtValueInfo(node_inputs[0], quant_param, ort_api, io_def);
       if (parse_status != nullptr) {
-        const char* error_msg = ort_api.GetErrorMessage(parse_status);
-        LOGS_DEFAULT(ERROR) << "Failed to parse input value info: " << error_msg;
         ort_api.ReleaseStatus(parse_status);
         continue;
       }
@@ -188,23 +168,17 @@ std::vector<OrtNodeUnitIODef> GetQDQIODefs(const OrtNode* target_node,
       size_t num_node_outputs = 0;
       status = ort_api.Node_GetNumOutputs(node, &num_node_outputs);
       if (status != nullptr) {
-        const char* error_msg = ort_api.GetErrorMessage(status);
-        LOGS_DEFAULT(ERROR) << "Failed to get number of node outputs: " << error_msg;
         ort_api.ReleaseStatus(status);
         continue;
       }
       std::vector<const OrtValueInfo*> node_outputs(num_node_outputs);
       status = ort_api.Node_GetOutputs(node, node_outputs.data(), node_outputs.size());
       if (status != nullptr) {
-        const char* error_msg = ort_api.GetErrorMessage(status);
-        LOGS_DEFAULT(ERROR) << "Failed to get node outputs: " << error_msg;
         ort_api.ReleaseStatus(status);
         continue;
       }
       auto parse_status = ParseOrtValueInfo(node_outputs[0], quant_param, ort_api, io_def);
       if (parse_status != nullptr) {
-        const char* error_msg = ort_api.GetErrorMessage(parse_status);
-        LOGS_DEFAULT(ERROR) << "Failed to parse output value info: " << error_msg;
         ort_api.ReleaseStatus(parse_status);
         continue;
       }
@@ -231,8 +205,6 @@ std::vector<OrtNodeUnitIODef> GetQDQIODefs(const OrtNode* target_node,
       OrtNodeUnitIODef regular_io_def;
       auto parse_status = ParseOrtValueInfo(target_node_ios[io_idx], std::nullopt, ort_api, regular_io_def);
       if (parse_status != nullptr) {
-        const char* error_msg = ort_api.GetErrorMessage(parse_status);
-        LOGS_DEFAULT(ERROR) << "Failed to parse regular input value info: " << error_msg;
         ort_api.ReleaseStatus(parse_status);
         regular_io_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, {}, std::nullopt};
       }
@@ -246,9 +218,9 @@ std::vector<OrtNodeUnitIODef> GetQDQIODefs(const OrtNode* target_node,
 }  // namespace
 
 OrtNodeUnit::OrtNodeUnit(const OrtNode* node, const OrtApi& ort_api) : target_node_(node), type_(Type::SingleNode) {
-  auto status = InitForSingleNode(ort_api);
-  if (!status.IsOK()) {
-    LOGS_DEFAULT(ERROR) << "Failed to initialize single node: " << status.ErrorMessage();
+  OrtStatus* status = InitForSingleNode(ort_api);
+  if (status != nullptr) {
+    ort_api.ReleaseStatus(status);
     // Initialize with empty inputs/outputs on error
     inputs_.clear();
     outputs_.clear();
@@ -265,19 +237,19 @@ OrtNodeUnit::OrtNodeUnit(const OrtGraph* /* graph */, const QDQ::OrtNodeGroup& n
       outputs_(GetQDQIODefs((redundant_clip_node_ ? redundant_clip_node_ : target_node_), node_group, false, ort_api)) {
 }
 
-Status OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {
+OrtStatus* OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {
   size_t num_inputs = 0;
   size_t num_outputs = 0;
-  RETURN_STATUS_IF_ERROR(ort_api.Node_GetNumInputs(target_node_, &num_inputs), ort_api);
-  RETURN_STATUS_IF_ERROR(ort_api.Node_GetNumOutputs(target_node_, &num_outputs), ort_api);
+  RETURN_IF_NOT_NULL(ort_api.Node_GetNumInputs(target_node_, &num_inputs));
+  RETURN_IF_NOT_NULL(ort_api.Node_GetNumOutputs(target_node_, &num_outputs));
 
   std::vector<const OrtValueInfo*> inputs_data(num_inputs);
   std::vector<const OrtValueInfo*> outputs_data(num_outputs);
-  RETURN_STATUS_IF_ERROR(ort_api.Node_GetInputs(target_node_, inputs_data.data(), inputs_data.size()), ort_api);
-  RETURN_STATUS_IF_ERROR(ort_api.Node_GetOutputs(target_node_, outputs_data.data(), outputs_data.size()), ort_api);
+  RETURN_IF_NOT_NULL(ort_api.Node_GetInputs(target_node_, inputs_data.data(), inputs_data.size()));
+  RETURN_IF_NOT_NULL(ort_api.Node_GetOutputs(target_node_, outputs_data.data(), outputs_data.size()));
 
   const char* op_type = nullptr;
-  RETURN_STATUS_IF_ERROR(ort_api.Node_GetOperatorType(target_node_, &op_type), ort_api);
+  RETURN_IF_NOT_NULL(ort_api.Node_GetOperatorType(target_node_, &op_type));
 
   if (std::string(op_type) == "DequantizeLinear") {
     std::optional<int64_t> axis = OrtNodeAttrHelper(*target_node_).GetInt64("axis");
@@ -286,16 +258,12 @@ Status OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {
     OrtNodeUnitIODef input_def, output_def;
     auto input_status = ParseOrtValueInfo(inputs_data[0], quant_param, ort_api, input_def);
     if (input_status != nullptr) {
-      const char* error_msg = ort_api.GetErrorMessage(input_status);
-      LOGS_DEFAULT(ERROR) << "Failed to parse DequantizeLinear input: " << error_msg;
       ort_api.ReleaseStatus(input_status);
       input_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, {}, std::nullopt};
     }
 
     auto output_status = ParseOrtValueInfo(outputs_data[0], std::nullopt, ort_api, output_def);
     if (output_status != nullptr) {
-      const char* error_msg = ort_api.GetErrorMessage(output_status);
-      LOGS_DEFAULT(ERROR) << "Failed to parse DequantizeLinear output: " << error_msg;
       ort_api.ReleaseStatus(output_status);
       output_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, {}, std::nullopt};
     }
@@ -309,16 +277,12 @@ Status OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {
     OrtNodeUnitIODef input_def, output_def;
     auto input_status = ParseOrtValueInfo(inputs_data[0], std::nullopt, ort_api, input_def);
     if (input_status != nullptr) {
-      const char* error_msg = ort_api.GetErrorMessage(input_status);
-      LOGS_DEFAULT(ERROR) << "Failed to parse QuantizeLinear input: " << error_msg;
       ort_api.ReleaseStatus(input_status);
       input_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, {}, std::nullopt};
     }
 
     auto output_status = ParseOrtValueInfo(outputs_data[0], quant_param, ort_api, output_def);
     if (output_status != nullptr) {
-      const char* error_msg = ort_api.GetErrorMessage(output_status);
-      LOGS_DEFAULT(ERROR) << "Failed to parse QuantizeLinear output: " << error_msg;
       ort_api.ReleaseStatus(output_status);
       output_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, {}, std::nullopt};
     }
@@ -336,8 +300,6 @@ Status OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {
       } else {
         auto parse_status = ParseOrtValueInfo(io, std::nullopt, ort_api, io_def);
         if (parse_status != nullptr) {
-          const char* error_msg = ort_api.GetErrorMessage(parse_status);
-          LOGS_DEFAULT(ERROR) << "Failed to parse input " << idx << ": " << error_msg;
           ort_api.ReleaseStatus(parse_status);
           io_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, {}, std::nullopt};
         }
@@ -355,8 +317,6 @@ Status OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {
       } else {
         auto parse_status = ParseOrtValueInfo(io, std::nullopt, ort_api, io_def);
         if (parse_status != nullptr) {
-          const char* error_msg = ort_api.GetErrorMessage(parse_status);
-          LOGS_DEFAULT(ERROR) << "Failed to parse output " << idx << ": " << error_msg;
           ort_api.ReleaseStatus(parse_status);
           io_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, {}, std::nullopt};
         }
@@ -365,7 +325,7 @@ Status OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {
     }
   }
 
-  return Status::OK();
+  return nullptr;
 }
 
 size_t OrtNodeUnit::GetInputEdgesCount(const OrtApi& ort_api) const {
@@ -373,8 +333,6 @@ size_t OrtNodeUnit::GetInputEdgesCount(const OrtApi& ort_api) const {
     size_t num_inputs = 0;
     auto status = ort_api.Node_GetNumInputs(target_node, &num_inputs);
     if (status != nullptr) {
-      const char* error_msg = ort_api.GetErrorMessage(status);
-      LOGS_DEFAULT(ERROR) << "Failed to get number of inputs: " << error_msg;
       ort_api.ReleaseStatus(status);
       return size_t(0);
     }
@@ -382,8 +340,6 @@ size_t OrtNodeUnit::GetInputEdgesCount(const OrtApi& ort_api) const {
     std::vector<const OrtValueInfo*> inputs(num_inputs);
     status = ort_api.Node_GetInputs(target_node, inputs.data(), inputs.size());
     if (status != nullptr) {
-      const char* error_msg = ort_api.GetErrorMessage(status);
-      LOGS_DEFAULT(ERROR) << "Failed to get node inputs: " << error_msg;
       ort_api.ReleaseStatus(status);
       return size_t(0);
     }
@@ -397,8 +353,6 @@ size_t OrtNodeUnit::GetInputEdgesCount(const OrtApi& ort_api) const {
       const OrtNode* producer_node = nullptr;
       status = ort_api.ValueInfo_GetValueProducer(input, &producer_node, nullptr);
       if (status != nullptr) {
-        const char* error_msg = ort_api.GetErrorMessage(status);
-        LOGS_DEFAULT(ERROR) << "Failed to get value producer: " << error_msg;
         ort_api.ReleaseStatus(status);
         continue;
       }
@@ -428,8 +382,6 @@ std::vector<const OrtNode*> OrtNodeUnit::GetOutputNodes(const OrtApi& ort_api) c
     size_t num_outputs = 0;
     auto status = ort_api.Node_GetNumOutputs(target_node, &num_outputs);
     if (status != nullptr) {
-      const char* error_msg = ort_api.GetErrorMessage(status);
-      LOGS_DEFAULT(ERROR) << "Failed to get number of outputs: " << error_msg;
       ort_api.ReleaseStatus(status);
       return target_consumers;
     }
@@ -437,8 +389,6 @@ std::vector<const OrtNode*> OrtNodeUnit::GetOutputNodes(const OrtApi& ort_api) c
     std::vector<const OrtValueInfo*> outputs(num_outputs);
     status = ort_api.Node_GetOutputs(target_node, outputs.data(), outputs.size());
     if (status != nullptr) {
-      const char* error_msg = ort_api.GetErrorMessage(status);
-      LOGS_DEFAULT(ERROR) << "Failed to get node outputs: " << error_msg;
       ort_api.ReleaseStatus(status);
       return target_consumers;
     }
@@ -451,8 +401,6 @@ std::vector<const OrtNode*> OrtNodeUnit::GetOutputNodes(const OrtApi& ort_api) c
       size_t num_consumers = 0;
       status = ort_api.ValueInfo_GetValueNumConsumers(output, &num_consumers);
       if (status != nullptr) {
-        const char* error_msg = ort_api.GetErrorMessage(status);
-        LOGS_DEFAULT(ERROR) << "Failed to get number of value consumers: " << error_msg;
         ort_api.ReleaseStatus(status);
         continue;
       }
@@ -461,8 +409,6 @@ std::vector<const OrtNode*> OrtNodeUnit::GetOutputNodes(const OrtApi& ort_api) c
       std::vector<int64_t> input_indices(num_consumers);
       status = ort_api.ValueInfo_GetValueConsumers(output, consumers.data(), input_indices.data(), num_consumers);
       if (status != nullptr) {
-        const char* error_msg = ort_api.GetErrorMessage(status);
-        LOGS_DEFAULT(ERROR) << "Failed to get value consumers: " << error_msg;
         ort_api.ReleaseStatus(status);
         continue;
       }
@@ -708,7 +654,7 @@ OrtStatus* GetSessionConfigEntryOrDefault(const OrtApi& ort_api,
   const char* config_key_cstr = config_key.c_str();
 
   int has_config = 0;
-  RETURN_IF_ERROR(ort_api.HasSessionConfigEntry(&session_options, config_key_cstr, &has_config));
+  RETURN_IF_NOT_NULL(ort_api.HasSessionConfigEntry(&session_options, config_key_cstr, &has_config));
 
   if (has_config != 1) {
     config_val = default_val;
@@ -716,23 +662,23 @@ OrtStatus* GetSessionConfigEntryOrDefault(const OrtApi& ort_api,
   }
 
   size_t size = 0;
-  RETURN_IF_ERROR(ort_api.GetSessionConfigEntry(&session_options, config_key_cstr, nullptr, &size));
+  RETURN_IF_NOT_NULL(ort_api.GetSessionConfigEntry(&session_options, config_key_cstr, nullptr, &size));
 
   config_val.resize(size);
-  RETURN_IF_ERROR(ort_api.GetSessionConfigEntry(&session_options, config_key_cstr, config_val.data(), &size));
+  RETURN_IF_NOT_NULL(ort_api.GetSessionConfigEntry(&session_options, config_key_cstr, config_val.data(), &size));
   config_val.resize(size - 1);  // remove the terminating '\0'
 
   return nullptr;
 }
 
-PathString GetModelPathString(const OrtGraph* graph, const OrtApi& ort_api) {
+std::basic_string<ORTCHAR_T> GetModelPathString(const OrtGraph* graph, const OrtApi& ort_api) {
   const ORTCHAR_T* model_path = nullptr;
   OrtStatus* ort_status = ort_api.Graph_GetModelPath(graph, &model_path);
   if (ort_status != nullptr) {
     ort_api.ReleaseStatus(ort_status);
-    return ToPathString("");
+    return ORT_TSTR("");
   }
-  return PathString(model_path);
+  return std::basic_string<ORTCHAR_T>(model_path);
 }
 
 std::string GetProviderOptionPrefix(const std::string& provider_name) {
@@ -743,31 +689,33 @@ std::string GetProviderOptionPrefix(const std::string& provider_name) {
   return key_prefix;
 }
 
-PathString OrtGetRuntimePath() {
+std::basic_string<ORTCHAR_T> OrtGetRuntimePath() {
 #ifdef _WIN32
   IMAGE_DOS_HEADER __ImageBase;
   wchar_t buffer[MAX_PATH];
   if (!GetModuleFileNameW(reinterpret_cast<HINSTANCE>(&__ImageBase), buffer, _countof(buffer))) {
-    return PathString();
+    return ORT_TSTR("");
   }
 
   // Remove the filename at the end, but keep the trailing slash
-  PathString path(buffer);
+  std::basic_string<ORTCHAR_T> path(buffer);
   auto slash_index = path.find_last_of(ORT_TSTR('\\'));
   if (slash_index == std::string::npos) {
     // Windows supports forward slashes
     slash_index = path.find_last_of(ORT_TSTR('/'));
     if (slash_index == std::string::npos) {
-      return PathString();
+      return ORT_TSTR("");
     }
   }
   return path.substr(0, slash_index + 1);
 #else
-  return PathString();
+  return ORT_TSTR("");
 #endif
 }
 
-Status OrtLoadDynamicLibrary(const PathString& wlibrary_filename, bool global_symbols, void** handle) {
+Ort::Status OrtLoadDynamicLibrary(const std::basic_string<ORTCHAR_T>& wlibrary_filename,
+                                  bool global_symbols,
+                                  void** handle) {
 #ifdef _WIN32
   (void)global_symbols;  // Suppress unused parameter warning on Windows
 #if WINAPI_FAMILY == WINAPI_FAMILY_PC_APP
@@ -778,49 +726,47 @@ Status OrtLoadDynamicLibrary(const PathString& wlibrary_filename, bool global_sy
 #endif
   if (!*handle) {
     const auto error_code = GetLastError();
-    return ORT_MAKE_STATUS(ONNXRUNTIME,
-                           FAIL,
-                           "Loadibrary failed with error ",
-                           error_code,
-                           " - ",
-                           std::system_category().message(error_code));
+    return MAKE_FAIL(("Loadibrary failed with error " + std::to_string(error_code) + " - " +
+                      std::system_category().message(error_code))
+                         .c_str());
   }
-  return Status::OK();
+  return Ort::Status();
 #else
   dlerror();  // clear any old error_str
   std::string library_filename = wlibrary_filename;
   *handle = dlopen(library_filename.c_str(), RTLD_NOW | (global_symbols ? RTLD_GLOBAL : RTLD_LOCAL));
   char* error_str = dlerror();
   if (!*handle) {
-    return Status(common::ONNXRUNTIME, common::FAIL, "Failed to load library " + library_filename + " with error: " + std::string(error_str ? error_str : "unknown error"));
+    return MAKE_FAIL(("Failed to load library " + library_filename + " with error: " +
+                      std::string(error_str ? error_str : "unknown error"))
+                         .c_str());
   }
-  return Status::OK();
+  return Ort::Status();
 #endif
 }
 
-Status OrtUnloadDynamicLibrary(void* handle) {
+Ort::Status OrtUnloadDynamicLibrary(void* handle) {
 #ifdef _WIN32
   if (::FreeLibrary(reinterpret_cast<HMODULE>(handle)) == 0) {
     const auto error_code = GetLastError();
-    return ORT_MAKE_STATUS(ONNXRUNTIME,
-                           FAIL,
-                           "FreeLibrary failed with error ",
-                           error_code,
-                           " - ",
-                           std::system_category().message(error_code));
+    return MAKE_FAIL(("FreeLibrary failed with error " + std::to_string(error_code) + " - " +
+                      std::system_category().message(error_code))
+                         .c_str());
   }
-  return Status::OK();
+  return Ort::Status();
 #else
   if (!handle) {
-    return Status(common::ONNXRUNTIME, common::FAIL, "Got null library handle");
+    return MAKE_FAIL("Got null library handle");
   }
   dlerror();  // clear any old error_str
   int retval = dlclose(handle);
   char* error_str = dlerror();
   if (retval != 0) {
-    return Status(common::ONNXRUNTIME, common::FAIL, "Failed to unload library with error: " + std::string(error_str ? error_str : "unknown error"));
+    return MAKE_FAIL(("Failed to unload library with error" +
+                      std::string(error_str ? error_str : "unknown error"))
+                         .c_str());
   }
-  return Status::OK();
+  return Ort::Status();
 #endif
 }
 
@@ -879,10 +825,8 @@ void* OrtSearchModulesForSymbol(const char* name) {
 }  // namespace ort_dlfcn_win32
 #endif  // ifdef _WIN32
 
-Status OrtGetSymbolFromLibrary(void* handle, const std::string& symbol_name, void** symbol) {
+Ort::Status OrtGetSymbolFromLibrary(void* handle, const std::string& symbol_name, void** symbol) {
 #ifdef _WIN32
-  Status status = Status::OK();
-
   // global search to replicate dlsym RTLD_DEFAULT if handle is nullptr
   if (handle == nullptr) {
     *symbol = ort_dlfcn_win32::OrtSearchModulesForSymbol(symbol_name.c_str());
@@ -892,15 +836,12 @@ Status OrtGetSymbolFromLibrary(void* handle, const std::string& symbol_name, voi
 
   if (!*symbol) {
     const auto error_code = GetLastError();
-    return ORT_MAKE_STATUS(ONNXRUNTIME,
-                           FAIL,
-                           "GetSymbol failed with error ",
-                           error_code,
-                           " - ",
-                           std::system_category().message(error_code));
+    return MAKE_FAIL(("GetSymbol failed with error " + std::to_string(error_code) + " - " +
+                      std::system_category().message(error_code))
+                         .c_str());
   }
 
-  return status;
+  return Ort::Status();
 #else
   dlerror();  // clear any old error str
 
@@ -911,48 +852,38 @@ Status OrtGetSymbolFromLibrary(void* handle, const std::string& symbol_name, voi
 
   char* error_str = dlerror();
   if (error_str) {
-    return Status(common::ONNXRUNTIME, common::FAIL, "Failed to get symbol " + symbol_name + " with error: " + error_str);
+    return MAKE_FAIL(("Failed to get symbol " + symbol_name + " with error: " + error_str).c_str());
   }
   // it's possible to get a NULL symbol in our case when Schemas are not custom.
-  return Status::OK();
+  return Ort::Status();
 #endif
 }
 
-Status ReadFileIntoBuffer(const ORTCHAR_T* file_path, int64_t offset, size_t length, gsl::span<char> buffer) {
-  ORT_RETURN_IF_NOT(file_path, "file_path == nullptr");
-  ORT_RETURN_IF_NOT(offset >= 0, "offset < 0");
-  ORT_RETURN_IF_NOT(length <= buffer.size(), "length > buffer.size()");
+Ort::Status ReadFileIntoBuffer(const ORTCHAR_T* file_path, int64_t offset, size_t length, gsl::span<char> buffer) {
+  RETURN_IF_NOT(file_path, "file_path == nullptr");
+  RETURN_IF_NOT(offset >= 0, "offset < 0");
+  RETURN_IF_NOT(length <= buffer.size(), "length > buffer.size()");
 
 #ifdef _WIN32
   wil::unique_hfile file_handle{CreateFile2(file_path, GENERIC_READ, FILE_SHARE_READ, OPEN_EXISTING, NULL)};
   if (file_handle.get() == INVALID_HANDLE_VALUE) {
     const auto error_code = GetLastError();
-    return ORT_MAKE_STATUS(ONNXRUNTIME,
-                           FAIL,
-                           "Open file ",
-                           file_path,
-                           " fail, errcode = ",
-                           error_code,
-                           " - ",
-                           std::system_category().message(error_code));
+    return MAKE_FAIL(("Open file failed with error " + std::to_string(error_code) + " - " +
+                      std::system_category().message(error_code))
+                         .c_str());
   }
 
   if (length == 0)
-    return Status::OK();
+    return Ort::Status();
 
   if (offset > 0) {
     LARGE_INTEGER current_position;
     current_position.QuadPart = offset;
     if (!SetFilePointerEx(file_handle.get(), current_position, &current_position, FILE_BEGIN)) {
       const auto error_code = GetLastError();
-      return ORT_MAKE_STATUS(ONNXRUNTIME,
-                             FAIL,
-                             "SetFilePointerEx ",
-                             file_path,
-                             " fail, errcode = ",
-                             error_code,
-                             " - ",
-                             std::system_category().message(error_code));
+      return MAKE_FAIL(("SetFilePointerEx failed with error " + std::to_string(error_code) + " - " +
+                        std::system_category().message(error_code))
+                           .c_str());
     }
   }
 
@@ -965,40 +896,35 @@ Status ReadFileIntoBuffer(const ORTCHAR_T* file_path, int64_t offset, size_t len
 
     if (!ReadFile(file_handle.get(), buffer.data() + total_bytes_read, bytes_to_read, &bytes_read, nullptr)) {
       const auto error_code = GetLastError();
-      return ORT_MAKE_STATUS(ONNXRUNTIME,
-                             FAIL,
-                             "ReadFile ",
-                             file_path,
-                             " fail, errcode = ",
-                             error_code,
-                             " - ",
-                             std::system_category().message(error_code));
+      return MAKE_FAIL(("ReadFile failed with error " + std::to_string(error_code) + " - " +
+                        std::system_category().message(error_code))
+                           .c_str());
     }
 
     if (bytes_read != bytes_to_read) {
-      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "ReadFile ", file_path, " fail: unexpected end");
+      return MAKE_FAIL("ReadFile fail: unexpected end");
     }
 
     total_bytes_read += bytes_read;
   }
 
-  return Status::OK();
+  return Ort::Status();
 #else
   int file_descriptor = open(file_path, O_RDONLY);
   if (file_descriptor == -1) {
-    return ORT_MAKE_STATUS(SYSTEM, FAIL, "Failed to open ", file_path);
+    return MAKE_FAIL("Failed to open file");
   }
 
   if (length == 0) {
     close(file_descriptor);
-    return Status::OK();
+    return Ort::Status();
   }
 
   if (offset > 0) {
     const int64_t seek_result = lseek(file_descriptor, offset, SEEK_SET);
     if (seek_result == -1) {
       close(file_descriptor);
-      return ORT_MAKE_STATUS(SYSTEM, FAIL, "Failed to lseek ", file_path);
+      return MAKE_FAIL("Failed to lseek");
     }
   }
 
@@ -1015,19 +941,19 @@ Status ReadFileIntoBuffer(const ORTCHAR_T* file_path, int64_t offset, size_t len
 
     if (bytes_read == -1) {
       close(file_descriptor);
-      return ORT_MAKE_STATUS(SYSTEM, FAIL, "Failed to read ", file_path);
+      return MAKE_FAIL("Failed to read");
     }
 
     if (bytes_read == 0) {
       close(file_descriptor);
-      return ORT_MAKE_STATUS(SYSTEM, FAIL, "Failed to read ", file_path);
+      return MAKE_FAIL("Failed to read");
     }
 
     total_bytes_read += bytes_read;
   }
 
   close(file_descriptor);
-  return Status::OK();
+  return Ort::Status();
 #endif
 }
 

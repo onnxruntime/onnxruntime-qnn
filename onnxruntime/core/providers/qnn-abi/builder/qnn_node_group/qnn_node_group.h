@@ -5,6 +5,7 @@
 
 #include <gsl/gsl>
 #include <memory>
+#include <string>
 #include <unordered_map>
 #include <vector>
 
@@ -24,10 +25,10 @@ class IQnnNodeGroup {
   virtual ~IQnnNodeGroup() = default;
 
   // Returns an OK status if this IQnnNodeGroup is supported by QNN.
-  virtual Status IsSupported(QnnModelWrapper& qnn_model_wrapper, const logging::Logger& logger) const = 0;
+  virtual Ort::Status IsSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const = 0;
 
   // Adds this IQnnNodeGroup to the QNN model wrapper.
-  virtual Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const logging::Logger& logger) const = 0;
+  virtual Ort::Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const = 0;
 
   // Returns a list of NodeUnits contained by this IQnnNodeGroup.
   virtual gsl::span<const OrtNodeUnit* const> GetNodeUnits() const = 0;
@@ -48,6 +49,9 @@ class IQnnNodeGroup {
   virtual std::string_view Type() const = 0;
 };
 
+/// Function to register fusion for QDQ
+void registerUDO(const std::string& node_type, const std::string& op_package);
+
 /// <summary>
 /// Traverses the ONNX graph to create IQnnNodeGroup objects, each containing one or more NodeUnits.
 /// The returned IQnnNodeGroup objects are sorted in topological order.
@@ -58,10 +62,10 @@ class IQnnNodeGroup {
 /// <param name="num_node_units">The number of NodeUnits in the ONNX graph.</param>
 /// <param name="logger">Logger</param>
 /// <returns>Status with potential error</returns>
-Status GetQnnNodeGroups(/*out*/ std::vector<std::unique_ptr<IQnnNodeGroup>>& qnn_node_groups,
-                        QnnModelWrapper& qnn_model_wrapper,
-                        const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
-                        size_t num_node_units,
-                        const logging::Logger& logger);
+Ort::Status GetQnnNodeGroups(/*out*/ std::vector<std::unique_ptr<IQnnNodeGroup>>& qnn_node_groups,
+                             QnnModelWrapper& qnn_model_wrapper,
+                             const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
+                             size_t num_node_units,
+                             const Ort::Logger& logger);
 }  // namespace qnn
 }  // namespace onnxruntime

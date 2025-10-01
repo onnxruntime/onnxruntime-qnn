@@ -23,7 +23,9 @@ class QnnModelWrapper;
 class ChannelShuffleFusion : public IQnnNodeGroup {
  public:
   explicit ChannelShuffleFusion(gsl::span<const OrtNodeUnit* const> node_units) {
-    ORT_ENFORCE(node_units.size() == 5, "Pattern expect exactly 5 NodeUnits.");
+    if (node_units.size() != 5) {
+      ORT_CXX_API_THROW("Pattern expect exactly 5 NodeUnits.", ORT_EP_FAIL);
+    }
     node_units_[0] = node_units[0];
     node_units_[1] = node_units[1];
     node_units_[2] = node_units[2];
@@ -32,8 +34,8 @@ class ChannelShuffleFusion : public IQnnNodeGroup {
   }
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(ChannelShuffleFusion);
 
-  Status IsSupported(QnnModelWrapper& qnn_model_wrapper, const logging::Logger& logger) const override;
-  Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const logging::Logger& logger) const override;
+  Ort::Status IsSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
+  Ort::Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override { return node_units_[0]; }
   std::string_view Type() const override { return "ChannelShuffleFusion"; }
@@ -47,7 +49,7 @@ class ChannelShuffleFusion : public IQnnNodeGroup {
       const OrtNodeUnit& transpose_node_unit,
       const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
       const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
-      const logging::Logger& logger);
+      const Ort::Logger& logger);
 
  private:
   std::array<const OrtNodeUnit*, 5> node_units_;

@@ -781,7 +781,7 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     return false;
   }
 
-  if (dt_input == ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_INT8) {
+  if (dt_input == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8)) {
     if (!int8_allowed_ || dt_weight != dt_input) {
       return false;
     }
@@ -789,7 +789,7 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
 
   if (dq_nodes.size() == 3) {  // has bias
     int32_t dt_bias = GetNodeIODataType(dq_nodes[2], ort_api, true, 0);
-    if (dt_bias != ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_INT32) {
+    if (dt_bias != static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32)) {
       return false;
     }
   }
@@ -815,7 +815,7 @@ bool OrtEinsumNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
     int32_t dt_input = GetNodeIODataType(dq_nodes[i], ort_api, true, 0);
 
     // Check if INT8 is allowed
-    if (!allow_int8_ && dt_input == ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_INT8) {
+    if (!allow_int8_ && dt_input == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8)) {
       return false;
     }
 
@@ -854,7 +854,7 @@ bool OrtReciprocalNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& 
   size_t num_dq_inputs = dq_nodes.size();
   for (size_t i = 0; i < num_dq_inputs; ++i) {
     int32_t dt_input = GetNodeIODataType(dq_nodes[i], ort_api, true, 0);
-    if (!allow_int8_ && dt_input == ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_INT8) {
+    if (!allow_int8_ && dt_input == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8)) {
       return false;
     }
     if (!allow_16bit_ && Is16BitIntType(dt_input)) {
@@ -887,7 +887,7 @@ bool OrtMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
   int32_t dt_weight = GetNodeIODataType(dq_nodes[1], ort_api, true, 0);
 
   // Check if INT8 is allowed
-  if (dt_input == ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_INT8) {
+  if (dt_input == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8)) {
     if (!int8_allowed_ || dt_weight != dt_input) {
       return false;
     }
@@ -1024,8 +1024,8 @@ bool OrtDQMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& or
   int32_t dt_scales = GetNodeIODataType(dq_nodes[0], ort_api, true, 1);
 
   // Check if scales are float or float16
-  if (dt_scales != ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT &&
-      dt_scales != ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT16) {
+  if (dt_scales != static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) &&
+      dt_scales != static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16)) {
     return false;
   }
 
@@ -1225,7 +1225,7 @@ bool OrtGemmNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
   int32_t dt_B = GetNodeIODataType(dq_nodes[1], ort_api, true, 0);
 
   // If A is INT8, B must also be INT8
-  if (dt_A == ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_INT8) {
+  if (dt_A == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8)) {
     if (dt_A != dt_B) {  // if A is signed int, B must be signed int
       return false;
     }
@@ -1265,7 +1265,7 @@ bool OrtGemmNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
 
   // Check if bias has the correct data type (INT32)
   int32_t dt_bias = GetNodeIODataType(dq_nodes[2], ort_api, true, 0);
-  return dt_bias == ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_INT32;
+  return dt_bias == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32);
 }
 
 bool OrtWhereNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
@@ -1351,7 +1351,7 @@ bool OrtInstanceAndLayerNormalizationNodeGroupSelector::Check(const OrtGraph* gr
   // Input, output, need to be the same type. The bias is int32.
   // Scale can be different with input for a16w8 case
   return (dt_input == dt_output) &&
-         (has_bias ? dt_bias == ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_INT32 : true);  // 6 is INT32 in ONNX_NAMESPACE::TensorProto_DataType
+         (has_bias ? dt_bias == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32) : true);  // 6 is INT32 in ONNX_NAMESPACE::TensorProto_DataType
 }
 
 bool OrtBatchNormalizationNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
@@ -1371,7 +1371,7 @@ bool OrtBatchNormalizationNodeGroupSelector::Check(const OrtGraph* graph, const 
   }
 
   // INT8 is 3 in ONNX_NAMESPACE::TensorProto_DataType
-  if (dt_input == ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_INT8) {  // INT8
+  if (dt_input == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8)) {  // INT8
     if (!int8_allowed_ || dt_scale != dt_input) {
       return false;
     }
@@ -1878,7 +1878,9 @@ void OrtSelectorManager::InitializeSelectorsMap() {
 }
 
 // Implementation of GetQDQSelections for OrtGraph
-std::vector<OrtNodeGroup> OrtSelectorManager::GetOrtQDQSelections(const OrtGraph* graph, const OrtApi& ort_api, const logging::Logger& logger) const {
+std::vector<OrtNodeGroup> OrtSelectorManager::GetOrtQDQSelections(const OrtGraph* graph,
+                                                                  const OrtApi& ort_api,
+                                                                  const Ort::Logger& logger) const {
   std::vector<OrtNodeGroup> qdq_selections;
 
   // Get all nodes from the graph
@@ -1936,7 +1938,7 @@ std::vector<OrtNodeGroup> OrtSelectorManager::GetOrtQDQSelections(const OrtGraph
       }
 
       if (std::find(versions.cbegin(), versions.cend(), since_version) == versions.cend()) {
-        LOGS(logger, VERBOSE) << "Op version is not supported for " << op_type;
+        ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Op version is not supported for " + op_type).c_str());
         continue;
       }
     }
@@ -2093,8 +2095,11 @@ std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
 
   close_group();
 
-  ORT_ENFORCE(num_nodes_processed == in_degree.size(),
-              "Processed ", num_nodes_processed, " nodes. Expected to process ", in_degree.size());
+  if (num_nodes_processed != in_degree.size()) {
+    ORT_CXX_API_THROW("Processed " + std::to_string(num_nodes_processed) +
+                          " nodes. Expected to process " + std::to_string(in_degree.size()),
+                      ORT_EP_FAIL);
+  }
 
   return supported_groups;
 }
@@ -2103,7 +2108,7 @@ std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
 
 // Implementation of GetQDQNodeUnits for OrtGraph
 std::pair<std::vector<std::unique_ptr<OrtNodeUnit>>, std::unordered_map<const OrtNode*, const OrtNodeUnit*>>
-GetAllOrtNodeUnits(OrtApi ort_api, const OrtGraph* graph, const logging::Logger& logger) {
+GetAllOrtNodeUnits(OrtApi ort_api, const OrtGraph* graph, const Ort::Logger& logger) {
   std::vector<std::unique_ptr<OrtNodeUnit>> node_unit_holder;
   std::unordered_map<const OrtNode*, const OrtNodeUnit*> node_unit_map;
 

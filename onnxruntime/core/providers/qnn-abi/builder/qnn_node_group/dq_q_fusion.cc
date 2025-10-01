@@ -21,8 +21,8 @@ namespace qnn {
   CreateOrValidateOnQnn((qnn_model_wrapper), (dq_node_unit), (q_node_unit), true)
 #define CreateOnQnn(qnn_model_wrapper, dq_node_unit, q_node_unit) \
   CreateOrValidateOnQnn((qnn_model_wrapper), (dq_node_unit), (q_node_unit), false)
-static Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& dq_node_unit,
-                                    const OrtNodeUnit& q_node_unit, bool validate);
+static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& dq_node_unit,
+                                         const OrtNodeUnit& q_node_unit, bool validate);
 static bool IsDQQConversion(const QnnModelWrapper& qnn_model_wrapper, const OrtNode& dq_node, const OrtNode& q_node);
 
 std::unique_ptr<IQnnNodeGroup> DQQFusion::TryFusion(
@@ -30,7 +30,7 @@ std::unique_ptr<IQnnNodeGroup> DQQFusion::TryFusion(
     const OrtNodeUnit& dq_node_unit,
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
-    const logging::Logger& logger) {
+    const Ort::Logger& logger) {
   ORT_UNUSED_PARAMETER(logger);
   // Expect that this function is called with a standalone DQ.
   if (dq_node_unit.OpType() != DEQUANTIZE_LINEAR || dq_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode) {
@@ -53,7 +53,7 @@ std::unique_ptr<IQnnNodeGroup> DQQFusion::TryFusion(
     return nullptr;
   }
 
-  if (Status status = ValidateOnQnn(qnn_model_wrapper, dq_node_unit, *q_node_unit);
+  if (Ort::Status status = ValidateOnQnn(qnn_model_wrapper, dq_node_unit, *q_node_unit);
       !status.IsOK()) {
     return nullptr;
   }
@@ -65,12 +65,12 @@ DQQFusion::DQQFusion(const OrtNodeUnit& dq_node_unit, const OrtNodeUnit& q_node_
     : node_units_{&dq_node_unit, &q_node_unit} {
 }
 
-Status DQQFusion::IsSupported(QnnModelWrapper& qmw, const logging::Logger& logger) const {
+Ort::Status DQQFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
   return ValidateOnQnn(qmw, *node_units_[0], *node_units_[1]);
 }
 
-Status DQQFusion::AddToModelBuilder(QnnModelWrapper& qmw, const logging::Logger& logger) const {
+Ort::Status DQQFusion::AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
   return CreateOnQnn(qmw, *node_units_[0], *node_units_[1]);
 }
@@ -83,10 +83,10 @@ const OrtNodeUnit* DQQFusion::GetTargetNodeUnit() const {
   return node_units_[0];
 }
 
-static Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
-                                    const OrtNodeUnit& dq_node_unit,
-                                    const OrtNodeUnit& q_node_unit,
-                                    bool validate) {
+static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
+                                         const OrtNodeUnit& dq_node_unit,
+                                         const OrtNodeUnit& q_node_unit,
+                                         bool validate) {
   assert(dq_node_unit.OpType() == DEQUANTIZE_LINEAR && q_node_unit.OpType() == QUANTIZE_LINEAR);
   const auto& node_name = utils::GetUniqueName(dq_node_unit);
   const OrtNodeUnitIODef& input_def = dq_node_unit.Inputs()[0];
@@ -95,30 +95,31 @@ static Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   QnnTensorWrapper input_tensor;
   QnnTensorWrapper output_tensor;
 
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(input_def, input_tensor));
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(output_def, output_tensor));
+  RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(input_def, input_tensor));
+  RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(output_def, output_tensor));
 
   if (validate) {
-    ORT_RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(node_name,
-                                                          QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                          QNN_OP_CONVERT,
-                                                          {input_tensor.GetQnnTensor()},
-                                                          {output_tensor.GetQnnTensor()},
-                                                          {}));
-  } else {
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensor)), "Failed to add input");
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)), "Failed to add output");
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
+    RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(node_name,
                                                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                       QNN_OP_CONVERT,
-                                                      {input_def.name},
-                                                      {output_def.name},
-                                                      {},
-                                                      validate),
-                      "Failed to add fused Convert node.");
+                                                      {input_tensor.GetQnnTensor()},
+                                                      {output_tensor.GetQnnTensor()},
+                                                      {}));
+  } else {
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensor)), "Failed to add input");
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)), "Failed to add output");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  QNN_OP_CONVERT,
+                                                  {input_def.name},
+                                                  {output_def.name},
+                                                  {},
+                                                  validate),
+                  "Failed to add fused Convert node.");
   }
 
-  return Status::OK();
+  return Ort::Status();
+  ;
 }
 
 static bool IsDQQConversion(const QnnModelWrapper& qnn_model_wrapper, const OrtNode& dq_node, const OrtNode& q_node) {
@@ -126,25 +127,25 @@ static bool IsDQQConversion(const QnnModelWrapper& qnn_model_wrapper, const OrtN
 
   // Get DQ inputs
   size_t dq_inputs_count = 0;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.Node_GetNumInputs(&dq_node, &dq_inputs_count), ort_api, false);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(&dq_node, &dq_inputs_count), ort_api, false);
   std::vector<const OrtValueInfo*> dq_inputs(dq_inputs_count);
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.Node_GetInputs(&dq_node, dq_inputs.data(), dq_inputs.size()), ort_api, false);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(&dq_node, dq_inputs.data(), dq_inputs.size()), ort_api, false);
 
   // Get Q inputs
   size_t q_inputs_count = 0;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.Node_GetNumInputs(&q_node, &q_inputs_count), ort_api, false);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(&q_node, &q_inputs_count), ort_api, false);
   std::vector<const OrtValueInfo*> q_inputs(q_inputs_count);
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.Node_GetInputs(&q_node, q_inputs.data(), q_inputs.size()), ort_api, false);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(&q_node, q_inputs.data(), q_inputs.size()), ort_api, false);
 
   auto is_scalar_shape = [&ort_api](const OrtValueInfo* value_info) -> bool {
     const OrtTypeInfo* type_info = nullptr;
-    QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetValueInfoTypeInfo(value_info, &type_info), ort_api, false);
+    RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoTypeInfo(value_info, &type_info), ort_api, false);
 
     const OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
-    QNN_RETURN_IF_STATUS_NOT_OK(ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info), ort_api, false);
+    RETURN_DEFAULT_IF_API_FAIL(ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info), ort_api, false);
 
     size_t dims_count = 0;
-    QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetDimensionsCount(tensor_info, &dims_count), ort_api, false);
+    RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensionsCount(tensor_info, &dims_count), ort_api, false);
 
     if (dims_count == 0) {
       return true;
@@ -152,7 +153,7 @@ static bool IsDQQConversion(const QnnModelWrapper& qnn_model_wrapper, const OrtN
 
     if (dims_count == 1) {
       int64_t dim_value = 0;
-      QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetDimensions(tensor_info, &dim_value, 1), ort_api, false);
+      RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensions(tensor_info, &dim_value, 1), ort_api, false);
       return dim_value == 1;
     }
 
@@ -208,22 +209,26 @@ static bool IsDQQConversion(const QnnModelWrapper& qnn_model_wrapper, const OrtN
   // Get the data types
   const OrtTypeInfo* dq_scale_type_info = nullptr;
   const OrtTypeInfo* q_scale_type_info = nullptr;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetValueInfoTypeInfo(dq_scale, &dq_scale_type_info), ort_api, false);
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetValueInfoTypeInfo(q_scale, &q_scale_type_info), ort_api, false);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoTypeInfo(dq_scale, &dq_scale_type_info), ort_api, false);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoTypeInfo(q_scale, &q_scale_type_info), ort_api, false);
 
   const OrtTensorTypeAndShapeInfo* dq_scale_tensor_info = nullptr;
   const OrtTensorTypeAndShapeInfo* q_scale_tensor_info = nullptr;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.CastTypeInfoToTensorInfo(dq_scale_type_info, &dq_scale_tensor_info), ort_api,
-                              false);
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.CastTypeInfoToTensorInfo(q_scale_type_info, &q_scale_tensor_info), ort_api,
-                              false);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.CastTypeInfoToTensorInfo(dq_scale_type_info, &dq_scale_tensor_info),
+                             ort_api,
+                             false);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.CastTypeInfoToTensorInfo(q_scale_type_info, &q_scale_tensor_info),
+                             ort_api,
+                             false);
 
   ONNXTensorElementDataType dq_scale_data_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   ONNXTensorElementDataType q_scale_data_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetTensorElementType(dq_scale_tensor_info, &dq_scale_data_type), ort_api,
-                              false);
-  QNN_RETURN_IF_STATUS_NOT_OK(ort_api.GetTensorElementType(q_scale_tensor_info, &q_scale_data_type), ort_api,
-                              false);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetTensorElementType(dq_scale_tensor_info, &dq_scale_data_type),
+                             ort_api,
+                             false);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetTensorElementType(q_scale_tensor_info, &q_scale_data_type),
+                             ort_api,
+                             false);
 
   // For scale, ensure that the Q/DQ have same scale type.
   return (dq_scale_data_type == q_scale_data_type);

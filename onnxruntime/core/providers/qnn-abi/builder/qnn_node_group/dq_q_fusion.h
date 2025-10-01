@@ -25,8 +25,8 @@ class DQQFusion : public IQnnNodeGroup {
   DQQFusion(const OrtNodeUnit& dq_node_unit, const OrtNodeUnit& q_node_unit);
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(DQQFusion);
 
-  Status IsSupported(QnnModelWrapper& qmw, const logging::Logger& logger) const override;
-  Status AddToModelBuilder(QnnModelWrapper& qmw, const logging::Logger& logger) const override;
+  Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
+  Ort::Status AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override;
   std::string_view Type() const override { return "DQQFusion"; }
@@ -46,7 +46,7 @@ class DQQFusion : public IQnnNodeGroup {
       const OrtNodeUnit& dq_node_unit,
       const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
       const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
-      const logging::Logger& logger);
+      const Ort::Logger& logger);
 
  private:
   std::array<const OrtNodeUnit*, 2> node_units_;

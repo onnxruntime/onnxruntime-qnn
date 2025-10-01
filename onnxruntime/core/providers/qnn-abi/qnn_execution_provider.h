@@ -68,11 +68,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                                        _In_reads_(num_options) const char* const* option_values,
                                                        _In_ size_t num_options) noexcept;
 
-  OrtStatus* GetSupportedNodes(OrtEp* this_ptr,
-                               const OrtGraph* graph,
+  OrtStatus* GetSupportedNodes(const OrtGraph* graph,
                                const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                const size_t node_unit_size,
-                               const logging::Logger& logger,
                                std::vector<const OrtNode*>& supported_nodes) const;
 
   void PartitionCtxModel(const OrtGraph* graph, OrtEpGraphSupportInfo* graph_support_info);
@@ -91,7 +89,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // int GenerateMetadefId(const OrtGraph* graph, uint64_t& model_hash);
   // std::string MakeMetadefName(const OrtGraph* graph);
   void ParseHtpGraphFinalizationOptimizationMode(const std::string& htp_graph_finalization_opt_mode_string,
-                                                 const logging::Logger& logger);
+                                                 const Ort::Logger& logger);
 
   void InitQnnHtpGraphConfigs(
       qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t>& configs_builder) const;
@@ -170,8 +168,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   // const QnnEpFactory& factory_;
   std::string name_;
-  // const OrtLogger& logger_;
-  const logging::Logger& logger_in_;
+  const Ort::Logger logger_;
   bool context_cache_enabled_ = false;
   bool share_ep_contexts_ = false;
   bool enable_vtcm_backup_buffer_sharing_ = false;
@@ -184,7 +181,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool stop_share_ep_contexts_ = false;
   bool enable_spill_fill_buffer_ = false;
 #if defined(_WIN32)
-  onnxruntime::logging::EtwRegistrationManager::EtwInternalCallback callback_ETWSink_provider_ = nullptr;
+  // onnxruntime::logging::EtwRegistrationManager::EtwInternalCallback callback_ETWSink_provider_ = nullptr;
 #endif
 
   // Metadef ID generation state

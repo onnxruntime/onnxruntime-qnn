@@ -32,113 +32,108 @@ class TopKOpBuilder : public BaseOpBuilder {
     return qnn_data_type;
   }
 
-  Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const OrtNodeUnit& node_unit,
-                       const logging::Logger& logger,
-                       std::vector<std::string>& input_names,
-                       bool do_op_validation) const override ORT_MUST_USE_RESULT;
+  Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                            const OrtNodeUnit& node_unit,
+                            const Ort::Logger& logger,
+                            std::vector<std::string>& input_names,
+                            bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
-  Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const OrtNodeUnit& node_unit,
-                                     std::vector<std::string>&& input_names,
-                                     const logging::Logger& logger,
-                                     bool do_op_validation) const override ORT_MUST_USE_RESULT;
+  Ort::Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
+                                          const OrtNodeUnit& node_unit,
+                                          std::vector<std::string>&& input_names,
+                                          const Ort::Logger& logger,
+                                          bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
  private:
-  Status ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const;
+  Ort::Status ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const;
 };
 
-Status TopKOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const {
+Ort::Status TopKOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const {
   size_t input_count = node_unit.Inputs().size();
   size_t output_count = node_unit.Outputs().size();
-  ORT_RETURN_IF_NOT(input_count >= TOPK_MIN_INPUT && input_count <= TOPK_MAX_INPUT,
-                    "For ONNX TopK operation the expected number of inputs is 2.");
-  ORT_RETURN_IF_NOT(output_count == 2, "QNN TopK expects exactly 2 outputs.");
+  RETURN_IF_NOT(input_count >= TOPK_MIN_INPUT && input_count <= TOPK_MAX_INPUT,
+                "For ONNX TopK operation the expected number of inputs is 2.");
+  RETURN_IF_NOT(output_count == 2, "QNN TopK expects exactly 2 outputs.");
 
   // Skip the first input. The second input needs to be an initializer.
   const auto& input_1 = node_unit.Inputs()[1].name;
-  if (!qnn_model_wrapper.IsConstantInput(input_1)) {
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "The number of top elements to retrieve must be specified as constant input.");
-  }
+  RETURN_IF(!qnn_model_wrapper.IsConstantInput(input_1),
+            "The number of top elements to retrieve must be specified as constant input.");
   OrtNodeAttrHelper node_helper(node_unit);
   auto largest = node_helper.Get("largest", 1);
   auto sorted = node_helper.Get("sorted", 1);
-  if (0 == sorted) {
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN TopK output is always sorted");
-  }
-  if (0 == largest) {
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN TopK output is always largest values");
-  }
+  RETURN_IF(0 == sorted, "QNN TopK output is always sorted");
+  RETURN_IF(0 == largest, "QNN TopK output is always largest values");
 
-  return Status::OK();
+  return Ort::Status();
 }
 
-Status TopKOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                    const OrtNodeUnit& node_unit,
-                                    const logging::Logger& logger,
-                                    std::vector<std::string>& input_names,
-                                    bool do_op_validation) const {
+Ort::Status TopKOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                                         const OrtNodeUnit& node_unit,
+                                         const Ort::Logger& logger,
+                                         std::vector<std::string>& input_names,
+                                         bool do_op_validation) const {
   if (do_op_validation) {
-    ORT_RETURN_IF_ERROR(ExplictOpCheck(qnn_model_wrapper, node_unit));
+    RETURN_IF_ERROR(ExplictOpCheck(qnn_model_wrapper, node_unit));
   }
 
   const auto& inputs = node_unit.Inputs();
-  ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
+  RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
 
   // HTP only supports TopK at the last axis, and thus check whether extra Transpose is required.
   TensorInfo input_info = {};
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
 
   size_t input_rank = input_info.shape.size();
   int32_t axis = OrtNodeAttrHelper(node_unit).Get("axis", -1);
   if (axis == -1 || axis == static_cast<int32_t>(input_rank - 1)) {
-    return Status::OK();
+    return Ort::Status();
   }
 
   // Add Transpose to permute axis to the last.
   const std::string transpose_output_name = utils::GetUniqueName(input_names[0], "_transpose");
   std::vector<uint32_t> transpose_perm;
-  ORT_RETURN_IF_ERROR(utils::GetPermToLastAxis(static_cast<uint32_t>(axis),
-                                               static_cast<uint32_t>(input_rank),
-                                               transpose_perm));
+  RETURN_IF_ERROR(utils::GetPermToLastAxis(static_cast<uint32_t>(axis),
+                                           static_cast<uint32_t>(input_rank),
+                                           transpose_perm));
 
   std::vector<uint32_t> transpose_output_shape = input_info.shape;
   transpose_output_shape[input_rank - 1] = input_info.shape[axis];
   transpose_output_shape[axis] = input_info.shape[input_rank - 1];
 
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(),
-                                                         input_names[0],
-                                                         transpose_output_name,
-                                                         input_info.shape,
-                                                         transpose_perm,
-                                                         transpose_output_shape,
-                                                         input_info.qnn_data_type,
-                                                         input_info.quant_param,
-                                                         do_op_validation,
-                                                         false,
-                                                         false));
+  RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(),
+                                                     input_names[0],
+                                                     transpose_output_name,
+                                                     input_info.shape,
+                                                     transpose_perm,
+                                                     transpose_output_shape,
+                                                     input_info.qnn_data_type,
+                                                     input_info.quant_param,
+                                                     do_op_validation,
+                                                     false,
+                                                     false));
   input_names[0] = transpose_output_name;
 
-  return Status::OK();
+  return Ort::Status();
 }
 
-Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                  const OrtNodeUnit& node_unit,
-                                                  std::vector<std::string>&& input_names,
-                                                  const logging::Logger& logger,
-                                                  bool do_op_validation) const {
+Ort::Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
+                                                       const OrtNodeUnit& node_unit,
+                                                       std::vector<std::string>&& input_names,
+                                                       const Ort::Logger& logger,
+                                                       bool do_op_validation) const {
   auto& input_name = node_unit.Inputs()[1].name;
   uint32_t k = 0;  // The number of elements to extract from the input tensor at each position.
   bool is_constant_input = qnn_model_wrapper.IsConstantInput(input_name);
   if (is_constant_input) {
     std::vector<uint8_t> unpacked_tensor;
     const auto& input_tensor = qnn_model_wrapper.GetConstantTensor(input_name);
-    ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(const_cast<OrtValueInfo&>(*input_tensor),
-                                                                unpacked_tensor));
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(const_cast<OrtValueInfo&>(*input_tensor),
+                                                            unpacked_tensor));
     const int64_t* tensor_data = reinterpret_cast<const int64_t*>(unpacked_tensor.data());
     k = static_cast<uint32_t>(*tensor_data);
   } else {
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN TopK operator requires constant input parameter k.");
+    return MAKE_EP_FAIL("QNN TopK operator requires constant input parameter k.");
   }
   Qnn_Scalar_t qnn_scalar_k = QNN_SCALAR_INIT;
   qnn_scalar_k.dataType = QNN_DATATYPE_UINT_32;
@@ -150,19 +145,19 @@ Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
 
   // HTP only supports TopK at the last axis, and thus check whether extra Transpose is required.
   TensorInfo input_info = {};
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
 
   size_t input_rank = input_info.shape.size();
   int32_t axis = OrtNodeAttrHelper(node_unit).Get("axis", -1);
   if (axis == -1 || axis == static_cast<int32_t>(input_rank - 1)) {
-    ORT_RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper,
-                                       node_unit,
-                                       std::move(input_names),
-                                       std::move(param_tensor_names),
-                                       logger,
-                                       do_op_validation,
-                                       GetQnnOpType(node_unit.OpType())));
-    return Status::OK();
+    RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper,
+                                   node_unit,
+                                   std::move(input_names),
+                                   std::move(param_tensor_names),
+                                   logger,
+                                   do_op_validation,
+                                   GetQnnOpType(node_unit.OpType())));
+    return Ort::Status();
   }
 
   const auto& outputs = node_unit.Outputs();
@@ -181,7 +176,7 @@ Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
 
     // Since the input of TopK node is permuted, its output shape must be manually calculated.
     TensorInfo output_info = {};
-    ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(output, output_info));
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(output, output_info));
     size_t output_rank = output_info.shape.size();
 
     std::vector<uint32_t> transpose_input_shape = output_info.shape;
@@ -194,17 +189,17 @@ Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
                                           output_info.qnn_data_type,
                                           output_info.quant_param.Copy(),
                                           std::vector<uint32_t>(transpose_input_shapes[output_idx]));
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
   }
 
   // Add TopK node.
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit),
-                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                    GetQnnOpType(node_unit.OpType()),
-                                                    std::move(input_names),
-                                                    std::vector<std::string>(transpose_input_names),
-                                                    std::move(param_tensor_names)),
-                    "Failed to add node.");
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit),
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                GetQnnOpType(node_unit.OpType()),
+                                                std::move(input_names),
+                                                std::vector<std::string>(transpose_input_names),
+                                                std::move(param_tensor_names)),
+                "Failed to add node.");
 
   // Add Transpose nodes for each output to permute back.
   for (size_t output_idx = 0; output_idx < 2; ++output_idx) {
@@ -212,13 +207,13 @@ Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
     const std::string& output_name = output.name;
 
     TensorInfo output_info = {};
-    ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(output, output_info));
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(output, output_info));
     size_t output_rank = output_info.shape.size();
 
     std::vector<uint32_t> transpose_perm;
-    ORT_RETURN_IF_ERROR(utils::GetPermToLastAxis(static_cast<uint32_t>(axis),
-                                                 static_cast<uint32_t>(output_rank),
-                                                 transpose_perm));
+    RETURN_IF_ERROR(utils::GetPermToLastAxis(static_cast<uint32_t>(axis),
+                                             static_cast<uint32_t>(output_rank),
+                                             transpose_perm));
 
     std::string transpose_output_name = output_name;
     bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
@@ -236,17 +231,17 @@ Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
       is_graph_output = false;
     }
 
-    ORT_RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(),
-                                                           transpose_input_names[output_idx],
-                                                           transpose_output_name,
-                                                           transpose_input_shapes[output_idx],
-                                                           transpose_perm,
-                                                           output_info.shape,
-                                                           output_info.qnn_data_type,
-                                                           output_info.quant_param,
-                                                           do_op_validation,
-                                                           false,
-                                                           is_graph_output));
+    RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(),
+                                                       transpose_input_names[output_idx],
+                                                       transpose_output_name,
+                                                       transpose_input_shapes[output_idx],
+                                                       transpose_perm,
+                                                       output_info.shape,
+                                                       output_info.qnn_data_type,
+                                                       output_info.quant_param,
+                                                       do_op_validation,
+                                                       false,
+                                                       is_graph_output));
 
     if (is_cast_required) {
       QnnTensorWrapper cast_output_tensorwrapper(output_name,
@@ -254,19 +249,18 @@ Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
                                                  output_info.qnn_data_type,
                                                  output_info.quant_param.Copy(),
                                                  std::vector<uint32_t>(output_info.shape));
-      ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(cast_output_tensorwrapper)),
-                        "Failed to add tensor.");
-      ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit, QNN_OP_CAST),
-                                                        QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                        QNN_OP_CAST,
-                                                        {cast_input_name},
-                                                        {output_name},
-                                                        {}),
-                        "Failed to add node");
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(cast_output_tensorwrapper)), "Failed to add tensor.");
+      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit, QNN_OP_CAST),
+                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                    QNN_OP_CAST,
+                                                    {cast_input_name},
+                                                    {output_name},
+                                                    {}),
+                    "Failed to add node");
     }
   }
 
-  return Status::OK();
+  return Ort::Status();
 }
 
 void CreateTopKOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
