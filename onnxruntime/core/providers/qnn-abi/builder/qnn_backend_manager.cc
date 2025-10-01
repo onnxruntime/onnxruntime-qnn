@@ -216,7 +216,7 @@ Status QnnBackendManager::GetQnnInterfaceProvider(const char* lib_path,
                                                   T** interface_provider) {
   std::string error_msg;
   *backend_lib_handle = LoadLib(lib_path,
-                                static_cast<int>(DlOpenFlag::DL_NOW) | static_cast<int>(DlOpenFlag::DL_LOCAL),
+                                static_cast<int>(DlOpenFlag::DL_NOW) | static_cast<int>(DlOpenFlag::DL_GLOBAL),
                                 error_msg);
   ORT_RETURN_IF(nullptr == *backend_lib_handle, "Unable to load backend, error: ", error_msg, " ", DlError());
 
