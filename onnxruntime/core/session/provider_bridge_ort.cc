@@ -31,6 +31,7 @@
 #include "core/framework/tensorprotoutils.h"
 #include "core/framework/TensorSeq.h"
 #include "core/graph/constants.h"
+#include "core/graph/ep_api_types.h"
 #include "core/graph/graph_proto_serializer.h"
 #include "core/graph/model.h"
 #include "core/optimizer/graph_optimizer_registry.h"
@@ -43,6 +44,7 @@
 #include "core/session/onnxruntime_c_api.h"
 #include "core/session/onnxruntime_session_options_config_keys.h"
 #include "core/session/ort_apis.h"
+#include "core/session/abi_ep_types.h"
 #include "core/session/provider_bridge_library.h"
 #include "core/session/provider_bridge_ort.h"
 #include "core/util/math.h"
@@ -1714,6 +1716,27 @@ struct ProviderHostImpl : ProviderHost {
   std::unique_ptr<ModelMetadefIdGenerator> ModelMetadefIdGenerator__construct() override { return std::make_unique<ModelMetadefIdGenerator>(); }
   void ModelMetadefIdGenerator__operator_delete(ModelMetadefIdGenerator* p) override { delete p; }
   int ModelMetadefIdGenerator__GenerateId(const ModelMetadefIdGenerator* p, const GraphViewer& graph_viewer, HashValue& model_hash) override { return p->GenerateId(graph_viewer, model_hash); }
+
+  // GraphViewer -> OrtGraph
+  OrtGraph* GraphViewer__ToOrtGraph(const GraphViewer& graph_viewer) override {
+    std::unique_ptr<EpGraph> ep_graph = nullptr;
+    if (Status status = EpGraph::Create(graph_viewer, ep_graph); !status.IsOK()) {
+      LOGS_DEFAULT(ERROR) << "Failed to create OrtGraph: " << status.ToString();
+      return nullptr;
+    }
+    EpGraph* ep_graph_ptr = ep_graph.release();
+    return ep_graph_ptr->ToExternal();
+  }
+
+  OrtEpGraphSupportInfo* GraphViewer__ToOrtEpGraphSupportInfo(const GraphViewer& graph_viewer) override {
+    std::unique_ptr<EpGraph> ep_graph = nullptr;
+    if (Status status = EpGraph::Create(graph_viewer, ep_graph); !status.IsOK()) {
+      LOGS_DEFAULT(ERROR) << "Failed to create OrtGraph: " << status.ToString();
+      return nullptr;
+    }
+    OrtEpGraphSupportInfo graph_support_info(*ep_graph);
+    return &graph_support_info;
+  }
 
 #if defined(ENABLE_TRAINING) && defined(ORT_USE_NCCL)
   training::DistributedRunContext& GetDistributedRunContextInstance() override { return training::DistributedRunContext::GetInstance(); }

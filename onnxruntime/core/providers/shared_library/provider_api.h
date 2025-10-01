@@ -443,6 +443,14 @@ inline bool HasExternalDataInMemory(const ONNX_NAMESPACE::TensorProto& ten_proto
   return g_host->Utils__HasExternalDataInMemory(ten_proto);
 }
 
+inline OrtGraph* GraphViewerToOrtGraph(const GraphViewer& graph_viewer){
+  return g_host->GraphViewer__ToOrtGraph(graph_viewer);
+}
+
+inline OrtEpGraphSupportInfo* GraphViewerToOrtEpGraphSupportInfo(const GraphViewer& graph_viewer){
+  return g_host->GraphViewer__ToOrtEpGraphSupportInfo(graph_viewer);
+}
+
 }  // namespace utils
 
 namespace graph_utils {

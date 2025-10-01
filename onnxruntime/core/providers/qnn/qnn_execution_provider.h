@@ -10,18 +10,22 @@
 #include <vector>
 
 #include "core/providers/qnn/ort_api.h"
-#include "core/providers/qnn/builder/qnn_backend_manager.h"
-#include "core/providers/qnn/builder/qnn_model.h"
-#include "core/providers/qnn/builder/qnn_configs_helper.h"
-#include "core/providers/qnn/rpcmem_library.h"
-#include "HTP/QnnHtpGraph.h"
+// #include "core/providers/qnn/builder/qnn_backend_manager.h"
+// #include "core/providers/qnn/builder/qnn_model.h"
+// #include "core/providers/qnn/builder/qnn_configs_helper.h"
+#include "core/providers/qnn-abi/qnn_ep.h"
+// #include "core/providers/qnn/rpcmem_library.h"
+// #include "HTP/QnnHtpGraph.h"
 
 namespace onnxruntime {
 
 // Logical device representation.
 class QNNExecutionProvider : public IExecutionProvider {
  public:
-  explicit QNNExecutionProvider(const ProviderOptions& provider_options_map, const ConfigOptions* config_options);
+  explicit QNNExecutionProvider(const ProviderOptions& provider_options_map,
+                                const ConfigOptions* config_options,
+                                const OrtSessionOptions* session_options,
+                                const OrtLogger* session_logger);
   virtual ~QNNExecutionProvider();
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QNNExecutionProvider);
 
@@ -43,11 +47,11 @@ class QNNExecutionProvider : public IExecutionProvider {
 
   DataLayout GetPreferredLayout() const override;
 
-  std::optional<bool> ShouldConvertDataLayoutForOp(std::string_view node_domain,
-                                                   std::string_view node_op_type,
-                                                   DataLayout target_data_layout) const override;
+  // std::optional<bool> ShouldConvertDataLayoutForOp(std::string_view node_domain,
+  //                                                  std::string_view node_op_type,
+  //                                                  DataLayout target_data_layout) const override;
 
-  const InlinedVector<const Node*> GetEpContextNodes() const override;
+  // const InlinedVector<const Node*> GetEpContextNodes() const override;
 
   Status OnRunStart(const onnxruntime::RunOptions& run_options) override;
 
@@ -60,11 +64,16 @@ class QNNExecutionProvider : public IExecutionProvider {
   Status SetEpDynamicOptions(gsl::span<const char* const> keys,
                              gsl::span<const char* const> value) override;
 
+  // void SetLogger(const logging::Logger* logger) override{
+  //   logger_ = logger;
+  //   external_logger_ = logger.ToExternal();
+  // }
+
  private:
-  std::unordered_set<const Node*> GetSupportedNodes(const GraphViewer& graph_viewer,
-                                                    const std::unordered_map<const Node*, const NodeUnit*>& node_unit_map,
-                                                    const size_t node_unit_size,
-                                                    const logging::Logger& logger) const;
+  // std::unordered_set<const Node*> GetSupportedNodes(const GraphViewer& graph_viewer,
+  //                                                   const std::unordered_map<const Node*, const NodeUnit*>& node_unit_map,
+  //                                                   const size_t node_unit_size,
+  //                                                   const logging::Logger& logger) const;
 
   Status CreateComputeFunc(std::vector<NodeComputeInfo>& node_compute_funcs,
                            const logging::Logger& logger);
@@ -104,6 +113,9 @@ class QNNExecutionProvider : public IExecutionProvider {
   bool share_ep_contexts_ = false;
   bool stop_share_ep_contexts_ = false;
   bool enable_spill_fill_buffer_ = false;
+  std::vector<OrtEpFactory*> factories{4, nullptr};
+  OrtEp* qnn_external_ep;
+  const OrtLogger* external_logger_;
 #if defined(_WIN32)
   onnxruntime::logging::EtwRegistrationManager::EtwInternalCallback callback_ETWSink_provider_ = nullptr;
 #endif

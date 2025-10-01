@@ -8,56 +8,61 @@
 // The preprocessor macro `BUILD_QNN_EP_STATIC_LIB` is defined and set to 1 if QNN EP
 // is built as a static library.
 
-#if BUILD_QNN_EP_STATIC_LIB
-// Includes when building QNN EP statically
-#ifdef _WIN32
-#include <Windows.h>
-#include <winmeta.h>
-#include "core/platform/tracing.h"
-#include "core/platform/windows/logging/etw_sink.h"
-#endif
+// #include "core/session/onnxruntime_c_api.h"
+#include "core/providers/qnn-abi/ort_api.h"
 
-#include "core/common/common.h"
-#include "core/common/status.h"
-#include "core/common/safeint.h"
-#include "core/common/logging/logging.h"
-#include "core/common/logging/capture.h"
-#include "core/common/path_string.h"
-#include "core/graph/onnx_protobuf.h"
-#include "core/platform/env.h"
-#include "core/framework/data_types.h"
-#include "core/framework/float16.h"
-#include "core/framework/run_options.h"
-#include "core/framework/execution_provider.h"
-#include "core/framework/model_metadef_id_generator.h"
-#include "core/framework/compute_capability.h"
-#include "core/framework/tensor_shape.h"
-#include "core/framework/node_unit.h"
-#include "core/framework/tensorprotoutils.h"
-#include "core/framework/utils.h"
-#include "core/graph/constants.h"
-#include "core/graph/basic_types.h"
-#include "core/graph/model.h"
-#include "core/graph/graph_viewer.h"
-#include "core/optimizer/qdq_transformer/selectors_actions/qdq_selectors.h"
-#include "core/optimizer/qdq_transformer/selectors_actions/shared/utils.h"
-#include "core/providers/common.h"
-#include "core/providers/partitioning_utils.h"
-#include "core/session/abi_session_options_impl.h"
-#include "core/session/onnxruntime_cxx_api.h"
-#else
-// Includes when building QNN EP as a shared library
-#include "core/providers/shared_library/provider_api.h"
-#define ORT_API_MANUAL_INIT
-#include "core/session/onnxruntime_cxx_api.h"
-#endif
+// Ensure OrtStatus and other C API types are available regardless of build mode
 
-#include "core/common/inlined_containers.h"
-#include "core/session/onnxruntime_session_options_config_keys.h"
-#include "core/session/onnxruntime_run_options_config_keys.h"
+// #if BUILD_QNN_EP_STATIC_LIB
+// // Includes when building QNN EP statically
+// #ifdef _WIN32
+// #include <Windows.h>
+// #include <winmeta.h>
+// #include "core/platform/tracing.h"
+// #include "core/platform/windows/logging/etw_sink.h"
+// #endif
 
-#include <memory>
-#include <vector>
+// #include "core/common/common.h"
+// #include "core/common/status.h"
+// #include "core/common/safeint.h"
+// #include "core/common/logging/logging.h"
+// #include "core/common/logging/capture.h"
+// #include "core/common/path_string.h"
+// #include "core/graph/onnx_protobuf.h"
+// #include "core/platform/env.h"
+// #include "core/framework/data_types.h"
+// #include "core/framework/float16.h"
+// #include "core/framework/run_options.h"
+// #include "core/framework/execution_provider.h"
+// #include "core/framework/model_metadef_id_generator.h"
+// #include "core/framework/compute_capability.h"
+// #include "core/framework/tensor_shape.h"
+// #include "core/framework/node_unit.h"
+// #include "core/framework/tensorprotoutils.h"
+// #include "core/framework/utils.h"
+// #include "core/graph/constants.h"
+// #include "core/graph/basic_types.h"
+// #include "core/graph/model.h"
+// #include "core/graph/graph_viewer.h"
+// #include "core/optimizer/qdq_transformer/selectors_actions/qdq_selectors.h"
+// #include "core/optimizer/qdq_transformer/selectors_actions/shared/utils.h"
+// #include "core/providers/common.h"
+// #include "core/providers/partitioning_utils.h"
+// #include "core/session/abi_session_options_impl.h"
+// #include "core/session/onnxruntime_cxx_api.h"
+// #else
+// // Includes when building QNN EP as a shared library
+// #include "core/providers/shared_library/provider_api.h"
+// #define ORT_API_MANUAL_INIT
+// #include "core/session/onnxruntime_cxx_api.h"
+// #endif
+
+// #include "core/common/inlined_containers.h"
+// #include "core/session/onnxruntime_session_options_config_keys.h"
+// #include "core/session/onnxruntime_run_options_config_keys.h"
+
+// #include <memory>
+// #include <vector>
 
 namespace onnxruntime {
 #if BUILD_QNN_EP_STATIC_LIB
@@ -78,23 +83,30 @@ inline void InitOrtCppApi() {
 #endif
 }
 
+
+
+// struct OrtStatus {
+//   OrtErrorCode code;
+//   char msg[1];  // a null-terminated string
+// };
+
 /// <summary>
 /// Creates an onnxruntime or onnx object. Works for both static and shared library builds of QNN EP.
 /// <!-- Example: auto model = Factory<Model>::Create(/* args ... */); -->
 /// Example: auto model = Factory&lt;Model&gt;::Create(/* args ... */);
 /// </summary>
 /// <typeparam name="T">Type of the object to create</typeparam>
-template <typename T>
-struct Factory {
-  template <typename... Params>
-  static inline std::unique_ptr<T> Create(Params&&... params) {
-#if BUILD_QNN_EP_STATIC_LIB
-    return std::make_unique<T>(std::forward<Params>(params)...);
-#else
-    return T::Create(std::forward<Params>(params)...);
-#endif
-  }
-};
+// template <typename T>
+// struct Factory {
+//   template <typename... Params>
+//   static inline std::unique_ptr<T> Create(Params&&... params) {
+// #if BUILD_QNN_EP_STATIC_LIB
+//     return std::make_unique<T>(std::forward<Params>(params)...);
+// #else
+//     return T::Create(std::forward<Params>(params)...);
+// #endif
+//   }
+// };
 
 inline const ConfigOptions& RunOptions__GetConfigOptions(const RunOptions& run_options) {
 #if BUILD_QNN_EP_STATIC_LIB

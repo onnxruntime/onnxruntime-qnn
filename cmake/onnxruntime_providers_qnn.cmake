@@ -9,9 +9,18 @@
 
   file(GLOB_RECURSE
        onnxruntime_providers_qnn_ep_srcs CONFIGURE_DEPENDS
-       "${ONNXRUNTIME_ROOT}/core/providers/qnn/*.h"
-       "${ONNXRUNTIME_ROOT}/core/providers/qnn/*.cc"
+       "${ONNXRUNTIME_ROOT}/core/providers/qnn/qnn_execution_provider.h"
+       "${ONNXRUNTIME_ROOT}/core/providers/qnn/qnn_execution_provider.cc"
+       "${ONNXRUNTIME_ROOT}/core/providers/qnn/qnn_provider_factory_creator.h"
+       "${ONNXRUNTIME_ROOT}/core/providers/qnn/qnn_provider_factory.cc"
+       "${ONNXRUNTIME_ROOT}/core/providers/qnn-abi/*.h"
+       "${ONNXRUNTIME_ROOT}/core/providers/qnn-abi/*.cc"
   )
+
+  # Exclude the simulation EP factory files from the build
+  list(REMOVE_ITEM onnxruntime_providers_qnn_ep_srcs
+       "${ONNXRUNTIME_ROOT}/core/providers/qnn-abi/qnn_ep_factory_simulation.h"
+       "${ONNXRUNTIME_ROOT}/core/providers/qnn-abi/qnn_ep_factory_simulation.cc")
 
   function(extract_qnn_sdk_version_from_yaml QNN_SDK_YAML_FILE QNN_VERSION_OUTPUT)
     file(READ "${QNN_SDK_YAML_FILE}" QNN_SDK_YAML_CONTENT)
@@ -49,9 +58,13 @@
     set_target_properties(onnxruntime_providers_qnn PROPERTIES CXX_STANDARD_REQUIRED ON)
     set_target_properties(onnxruntime_providers_qnn PROPERTIES FOLDER "ONNXRuntime")
     target_include_directories(onnxruntime_providers_qnn PRIVATE ${ONNXRUNTIME_ROOT}
+                                                                 ${ONNXRUNTIME_ROOT}/onnxruntime # Added for core ONNX Runtime headers
                                                                  ${onnxruntime_QNN_HOME}/include/QNN
                                                                  ${onnxruntime_QNN_HOME}/include)
     set_target_properties(onnxruntime_providers_qnn PROPERTIES LINKER_LANGUAGE CXX)
+
+    # Debugging QNN_HOME for HTP/QnnHtpGraph.h
+    message(STATUS "onnxruntime_QNN_HOME in cmake/onnxruntime_providers_qnn.cmake: ${onnxruntime_QNN_HOME}")
 
     # ignore the warning unknown-pragmas on "pragma region"
     if(NOT MSVC)
@@ -96,12 +109,15 @@
     onnxruntime_add_include_to_target(onnxruntime_providers_qnn ${ONNXRUNTIME_PROVIDERS_SHARED} ${GSL_TARGET} onnx
                                                                 onnxruntime_common Boost::mp11 safeint_interface
                                                                 nlohmann_json::nlohmann_json)
-    target_link_libraries(onnxruntime_providers_qnn PRIVATE ${ONNXRUNTIME_PROVIDERS_SHARED} ${ABSEIL_LIBS} ${CMAKE_DL_LIBS})
+    target_link_libraries(onnxruntime_providers_qnn PRIVATE ${ONNXRUNTIME_PROVIDERS_SHARED} ${ABSEIL_LIBS} ${CMAKE_DL_LIBS} onnxruntime::onnxruntime_shared_lib)
     add_dependencies(onnxruntime_providers_qnn onnxruntime_providers_shared ${onnxruntime_EXTERNAL_DEPENDENCIES})
     target_include_directories(onnxruntime_providers_qnn PRIVATE ${ONNXRUNTIME_ROOT}
                                                                  ${CMAKE_CURRENT_BINARY_DIR}
                                                                  ${onnxruntime_QNN_HOME}/include/QNN
                                                                  ${onnxruntime_QNN_HOME}/include)
+
+    # Debugging QNN_HOME for HTP/QnnHtpGraph.h
+    message(STATUS "onnxruntime_QNN_HOME in cmake/onnxruntime_providers_qnn.cmake: ${onnxruntime_QNN_HOME}")
 
     # Set preprocessor definitions used in onnxruntime_providers_qnn.rc
     if(WIN32)
@@ -147,7 +163,7 @@
             RUNTIME  DESTINATION ${CMAKE_INSTALL_BINDIR})
 
     set(onnxruntime_providers_qnn_target onnxruntime_providers_qnn)
-    
+
     if (MSVC OR ${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
       add_custom_command(
         TARGET ${onnxruntime_providers_qnn_target} POST_BUILD

@@ -83,12 +83,14 @@ if(onnxruntime_BUILD_SHARED_LIB)
       "${ONNXRUNTIME_ROOT}/core/dll/delay_load_hook.cc"
       "${ONNXRUNTIME_ROOT}/core/dll/onnxruntime.rc"
     )
+    add_library(onnxruntime::onnxruntime_shared_lib ALIAS onnxruntime)
   elseif(onnxruntime_BUILD_APPLE_FRAMEWORK)
     # apple framework requires the header file be part of the library
     onnxruntime_add_shared_library(onnxruntime
       ${ONNXRUNTIME_PUBLIC_HEADERS}
       "${CMAKE_CURRENT_BINARY_DIR}/generated_source.c"
     )
+    add_library(onnxruntime::onnxruntime_shared_lib ALIAS onnxruntime)
 
     # create Info.plist for the framework and podspec for CocoaPods (optional)
     set(MACOSX_FRAMEWORK_NAME "onnxruntime")
@@ -120,20 +122,21 @@ if(onnxruntime_BUILD_SHARED_LIB)
       MACOSX_FRAMEWORK_INFO_PLIST ${INFO_PLIST_PATH}
       # Note: The PUBLIC_HEADER and VERSION properties for the 'onnxruntime' target will be set later in this file.
     )
-  else()
-    if(CMAKE_SYSTEM_NAME MATCHES "AIX")
-      onnxruntime_add_shared_library(onnxruntime ${ONNXRUNTIME_ROOT}/core/session/onnxruntime_c_api.cc)
     else()
-      onnxruntime_add_shared_library(onnxruntime ${CMAKE_CURRENT_BINARY_DIR}/generated_source.c )
-    endif()
-    if(NOT APPLE)
-      include(CheckLinkerFlag)
-      check_linker_flag(CXX "LINKER:-rpath=\$ORIGIN" LINKER_SUPPORT_RPATH)
-      if(LINKER_SUPPORT_RPATH)
-        target_link_options(onnxruntime PRIVATE "LINKER:-rpath=\$ORIGIN")
+      if(CMAKE_SYSTEM_NAME MATCHES "AIX")
+        onnxruntime_add_shared_library(onnxruntime ${ONNXRUNTIME_ROOT}/core/session/onnxruntime_c_api.cc)
+      else()
+        onnxruntime_add_shared_library(onnxruntime ${CMAKE_CURRENT_BINARY_DIR}/generated_source.c )
+      endif()
+      add_library(onnxruntime::onnxruntime_shared_lib ALIAS onnxruntime)
+      if(NOT APPLE)
+        include(CheckLinkerFlag)
+        check_linker_flag(CXX "LINKER:-rpath=\$ORIGIN" LINKER_SUPPORT_RPATH)
+        if(LINKER_SUPPORT_RPATH)
+          target_link_options(onnxruntime PRIVATE "LINKER:-rpath=\$ORIGIN")
+        endif()
       endif()
     endif()
-  endif()
 
   if(CMAKE_SYSTEM_NAME MATCHES "AIX")
     add_dependencies(onnxruntime ${onnxruntime_EXTERNAL_DEPENDENCIES})
