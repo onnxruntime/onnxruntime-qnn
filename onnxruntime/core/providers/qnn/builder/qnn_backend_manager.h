@@ -31,6 +31,7 @@
 #include "core/providers/qnn/builder/qnn_htp_power_config_manager.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
+#include "core/providers/qnn/builder/timer.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -119,6 +120,20 @@ struct QnnBackendManagerConfig {
   uint32_t soc_model;
   std::vector<OpPackage> op_packages;
   bool skip_qnn_version_check;
+};
+
+enum class DcvsState_t { DCVS_DEFAULT = 0,
+                         DCVS_DISABLE = 1,
+                         DCVS_ENABLE = 2,
+                         DCVS_NUM_STATES };
+
+enum class GraphState {
+  INIT_START,
+  INIT_DONE,
+  RUN_START,
+  RUN_DONE,
+  TIMEOUT,
+  NONE
 };
 
 class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
@@ -247,6 +262,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
   bool ProfilingEnabled() { return profiling_enabled_; }
 #endif
+  void createTimerThread(uint32_t htp_power_config_client_id);
+
+  Status setState(GraphState state, uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode);
+
+  void ReleaseTimerThread(uint32_t htp_power_config_client_id);
 
  private:
   Status LoadBackend();
@@ -291,6 +311,26 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Status UnloadLib(void* handle);
 
   void* LibFunction(void* handle, const char* symbol, std::string& error_msg);
+
+  Status setRelaxedPerfPowerConfig(uint32_t htp_power_config_client_id, DcvsState_t dcvsState);
+
+  Status setReleasedPerfPowerConfig(uint32_t htp_power_config_client_id, DcvsState_t dcvsState);
+
+  Status setExtremeLowPerfPowerConfig(uint32_t htp_power_config_client_id);
+
+  Status setSustainedHighPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode);
+
+  Status setPowerSaverPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode);
+
+  Status setExtremePowerSaverPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode);
+
+  Status setHighPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode);
+
+  Status setPerformanceForBalanced(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode);
+
+  static void timerCallback(void* user_data);
+
+  Status applyPerformanceMode(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode);
 
   template <class T>
   inline T ResolveSymbol(void* lib_handle, const char* sym, const logging::Logger& logger) {
@@ -471,6 +511,19 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Mapping of thread id to on-run-start/end power configs
   std::mutex per_thread_power_configs_mutex_;
   std::unordered_map<std::thread::id, PerThreadHtpPowerConfigs_t> per_thread_power_configs_;
+  std::unique_ptr<Timer> timer_;
+  struct TimerResource {
+    static const unsigned long sustainedTimerDuration = 300000;
+    bool timer_thread_in_use = false;
+    bool caller_busy = false;
+  };
+  TimerResource timer_resource;
+  std::atomic<GraphState> graphState = GraphState::NONE;
+  struct TimerCallbackArg {
+    uint32_t power_config_id;
+    QnnBackendManager* instance;
+  };
+  TimerCallbackArg* timer_callback_arg{nullptr};
 };
 
 }  // namespace qnn

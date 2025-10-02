@@ -156,6 +156,227 @@ Status ReadBinaryFromFile(const std::string& file_path, uint8_t* buffer, size_t 
   return Status::OK();
 }
 
+void QnnBackendManager::ReleaseTimerThread(uint32_t htp_power_config_client_id) {
+  if (timer_resource.timer_thread_in_use) {
+    timer_->deinitialize();
+    graphState = GraphState::NONE;
+    timer_resource.caller_busy = false;
+    timer_resource.timer_thread_in_use = false;
+  }
+
+  if (timer_callback_arg != nullptr) {
+    delete timer_callback_arg;
+    timer_callback_arg = nullptr;
+  }
+
+  auto status = setReleasedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+  if (status != Status::OK()) {
+    LOGS_DEFAULT(VERBOSE) << "Not able to set Power config to relaxed";
+  }
+}
+
+Status QnnBackendManager::setSustainedHighPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
+  Status status = Status::OK();
+  unsigned long remaining_duration = 0;
+  if (graphState == GraphState::RUN_DONE) {
+    std::chrono::microseconds sustainedDurationMs(timer_resource.sustainedTimerDuration);
+    if (timer_->launch(sustainedDurationMs)) {
+      timer_resource.timer_thread_in_use = true;
+      graphState = GraphState::NONE;
+      timer_resource.caller_busy = false;
+    } else {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Not able to launch timer thread");
+    }
+  }
+  if (graphState == GraphState::RUN_START) {
+    std::chrono::microseconds remainUs;
+    if (timer_->remainingDuration(remainUs)) {
+      remaining_duration = static_cast<unsigned long>(remainUs.count());
+      if (timer_resource.timer_thread_in_use && remaining_duration > 0 && remaining_duration < timer_resource.sustainedTimerDuration) {
+        timer_->abortTimer();
+      } else {
+        status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+      }
+    }
+    graphState = GraphState::NONE;
+    timer_resource.caller_busy = true;
+  }
+  if (graphState == GraphState::INIT_DONE) {
+    status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+    graphState = GraphState::NONE;
+    timer_resource.caller_busy = false;
+  }
+  if (graphState == GraphState::INIT_START) {
+    std::chrono::microseconds remainUs;
+    if (timer_->remainingDuration(remainUs)) {
+      remaining_duration = static_cast<unsigned long>(remainUs.count());
+      if (timer_resource.timer_thread_in_use && remaining_duration > 0 && remaining_duration < timer_resource.sustainedTimerDuration) {
+        timer_->abortTimer();
+        timer_resource.timer_thread_in_use = false;
+      } else {
+        status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+      }
+    }
+    graphState = GraphState::NONE;
+    timer_resource.caller_busy = true;
+  }
+  if (graphState == GraphState::TIMEOUT) {
+    if (!timer_resource.caller_busy) {
+      status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+      graphState = GraphState::NONE;
+      timer_resource.caller_busy = false;
+    }
+  }
+  return status;
+}
+
+Status QnnBackendManager::setPowerSaverPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
+  Status status = Status::OK();
+  if (graphState == GraphState::RUN_DONE) {
+    status = setReleasedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+    graphState = GraphState::NONE;
+  }
+  if (graphState == GraphState::RUN_START) {
+    status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+    graphState = GraphState::NONE;
+  }
+  if (graphState == GraphState::INIT_DONE) {
+    status = setReleasedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+    graphState = GraphState::NONE;
+  }
+  if (graphState == GraphState::INIT_START) {
+    status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+    graphState = GraphState::NONE;
+  }
+  return status;
+}
+
+Status QnnBackendManager::setExtremePowerSaverPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
+  Status status = Status::OK();
+  if (graphState == GraphState::RUN_DONE) {
+    status = setExtremeLowPerfPowerConfig(htp_power_config_client_id);
+    graphState = GraphState::NONE;
+  }
+  if (graphState == GraphState::RUN_START) {
+    status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+    graphState = GraphState::NONE;
+  }
+  if (graphState == GraphState::INIT_DONE) {
+    status = setExtremeLowPerfPowerConfig(htp_power_config_client_id);
+    graphState = GraphState::NONE;
+  }
+  if (graphState == GraphState::INIT_START) {
+    status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+    graphState = GraphState::NONE;
+  }
+  return status;
+}
+
+Status QnnBackendManager::setHighPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
+  Status status = Status::OK();
+  if (graphState == GraphState::RUN_DONE) {
+    status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+    graphState = GraphState::NONE;
+  }
+  if (graphState == GraphState::RUN_START) {
+    status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+    graphState = GraphState::NONE;
+  }
+  if (graphState == GraphState::INIT_DONE) {
+    status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+    graphState = GraphState::NONE;
+  }
+  if (graphState == GraphState::INIT_START) {
+    status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+    graphState = GraphState::NONE;
+  }
+  return status;
+}
+
+Status QnnBackendManager::setPerformanceForBalanced(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
+  Status status = Status::OK();
+  if (graphState == GraphState::RUN_DONE) {
+    status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+    graphState = GraphState::NONE;
+  }
+  if (graphState == GraphState::RUN_START) {
+    status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+    graphState = GraphState::NONE;
+  }
+  if (graphState == GraphState::INIT_DONE) {
+    status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+    graphState = GraphState::NONE;
+  }
+  if (graphState == GraphState::INIT_START) {
+    status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+    graphState = GraphState::NONE;
+  }
+  return status;
+}
+
+Status QnnBackendManager::applyPerformanceMode(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode) {
+  switch (perfMode) {
+    case qnn::HtpPerformanceMode::kHtpLowBalanced:
+    case qnn::HtpPerformanceMode::kHtpBalanced:
+      return setPerformanceForBalanced(htp_power_config_client_id, perfMode);
+    case qnn::HtpPerformanceMode::kHtpHighPerformance:
+      return setHighPerformance(htp_power_config_client_id, perfMode);
+    case qnn::HtpPerformanceMode::kHtpSustainedHighPerformance:
+    case qnn::HtpPerformanceMode::kHtpBurst:
+      return setSustainedHighPerformance(htp_power_config_client_id, perfMode);
+    case qnn::HtpPerformanceMode::kHtpExtremePowerSaver:
+      return setExtremePowerSaverPerformance(htp_power_config_client_id, perfMode);
+    case qnn::HtpPerformanceMode::kHtpLowPowerSaver:
+    case qnn::HtpPerformanceMode::kHtpHighPowerSaver:
+    case qnn::HtpPerformanceMode::kHtpPowerSaver:
+      return setPowerSaverPerformance(htp_power_config_client_id, perfMode);
+    case qnn::HtpPerformanceMode::kHtpDefault:
+      return Status::OK();
+    default:
+      LOGS_DEFAULT(VERBOSE) << "Invalid performance mode ";
+      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Performance mode passed is not supported");
+  }
+}
+
+Status QnnBackendManager::setState(GraphState state, uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode) {
+  if (perfMode == qnn::HtpPerformanceMode::kHtpSustainedHighPerformance || perfMode == qnn::HtpPerformanceMode::kHtpBurst) {
+      ORT_RETURN_IF(timer_ == nullptr,"timer is not started");
+  }
+  if (state != graphState) {
+    graphState = state;
+    ORT_RETURN_IF_ERROR(applyPerformanceMode(htp_power_config_client_id, perfMode));
+  }
+  return Status::OK();
+}
+
+void QnnBackendManager::timerCallback(void* user_data) {
+  TimerCallbackArg* args = static_cast<TimerCallbackArg*>(user_data);
+  QnnBackendManager* instance = args->instance;
+  auto rt = instance->setState(GraphState::TIMEOUT, args->power_config_id, qnn::HtpPerformanceMode::kHtpSustainedHighPerformance);
+  if (rt != Status::OK()) {
+    LOGS_DEFAULT(VERBOSE) << "State update failed";
+  }
+}
+
+void QnnBackendManager::createTimerThread(uint32_t htp_power_config_client_id) {
+  std::unique_ptr<Timer> temp(new Timer());
+  if (temp != nullptr) {
+    timer_ = std::move(temp);
+    if (timer_callback_arg != nullptr) {
+      delete timer_callback_arg;
+      timer_callback_arg = nullptr;
+    }
+    timer_callback_arg = new TimerCallbackArg({htp_power_config_client_id, this});
+    if (!timer_->initialize(timerCallback, timer_callback_arg)) {
+      LOGS_DEFAULT(VERBOSE) << "Failed to create timer to set performance";
+      delete timer_callback_arg;
+      timer_callback_arg = nullptr;
+    }
+  } else {
+    LOGS_DEFAULT(VERBOSE) << "Failed: Timer is nullptr";
+  }
+}
+
 Status QnnBackendManager::ParseLoraConfig(std::string lora_config_path) {
   LOGS_DEFAULT(INFO) << "Acquiring the QnnInterface " << lora_config_path;
 
@@ -1364,6 +1585,133 @@ Status QnnBackendManager::SetupBackend(const logging::Logger& logger,
   return status;
 }
 
+Status QnnBackendManager::setExtremeLowPerfPowerConfig(uint32_t htp_power_config_client_id) {
+  QnnDevice_Infrastructure_t qnn_device_infra = nullptr;
+  auto status = qnn_interface_.deviceGetInfrastructure(&qnn_device_infra);
+  ORT_RETURN_IF(QNN_SUCCESS != status, "backendGetPerfInfrastructure failed.");
+
+  auto* htp_infra = static_cast<QnnHtpDevice_Infrastructure_t*>(qnn_device_infra);
+  ORT_RETURN_IF(QNN_HTP_DEVICE_INFRASTRUCTURE_TYPE_PERF != htp_infra->infraType,
+                "HTP infra type = ", htp_infra->infraType, ", which is not perf infra type.");
+  QnnHtpDevice_PerfInfrastructure_t& htp_perf_infra = htp_infra->perfInfra;
+
+  constexpr const int kNumConfigs = 1;
+  std::vector<QnnHtpPerfInfrastructure_PowerConfig_t> power_configs(
+      kNumConfigs);
+  QnnHtpPerfInfrastructure_PowerConfig_t& dcvs_config = power_configs[0];
+  dcvs_config.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_DCVS_V3;
+  QnnHtpPerfInfrastructure_DcvsV3_t& dcvs_v3 = dcvs_config.dcvsV3Config;
+  dcvs_v3.contextId = htp_power_config_client_id;
+  dcvs_v3.dcvsEnable = 1;
+  dcvs_v3.setDcvsEnable = 1;
+  dcvs_v3.sleepLatency = kSleepHigherLatency;
+  dcvs_v3.setSleepLatency = 1;
+  dcvs_v3.sleepDisable = 0;
+  dcvs_v3.setSleepDisable = 0;
+  dcvs_v3.powerMode = QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_POWER_SAVER_MODE;
+  dcvs_v3.busVoltageCornerMin = DCVS_VOLTAGE_CORNER_DISABLE;
+  dcvs_v3.busVoltageCornerTarget = DCVS_VOLTAGE_CORNER_DISABLE;
+  dcvs_v3.busVoltageCornerMax = DCVS_VOLTAGE_CORNER_DISABLE;
+  dcvs_v3.setBusParams = 1;
+  dcvs_v3.coreVoltageCornerMin = DCVS_VOLTAGE_CORNER_DISABLE;
+  dcvs_v3.coreVoltageCornerTarget = DCVS_VOLTAGE_CORNER_DISABLE;
+  dcvs_v3.coreVoltageCornerMax = DCVS_VOLTAGE_CORNER_DISABLE;
+  dcvs_v3.setCoreParams = 1;
+
+  std::vector<const QnnHtpPerfInfrastructure_PowerConfig_t*> perf_power_configs_ptr = ObtainNullTermPtrVector(power_configs);
+  status = htp_perf_infra.setPowerConfig(htp_power_config_client_id, perf_power_configs_ptr.data());
+  ORT_RETURN_IF(QNN_SUCCESS != status, "setPowerConfig failed for HTP performance mode.");
+  return Status::OK();
+}
+
+Status QnnBackendManager::setRelaxedPerfPowerConfig(uint32_t htp_power_config_client_id, DcvsState_t dcvsState) {
+  QnnDevice_Infrastructure_t qnn_device_infra = nullptr;
+  auto status = qnn_interface_.deviceGetInfrastructure(&qnn_device_infra);
+  ORT_RETURN_IF(QNN_SUCCESS != status, "backendGetPerfInfrastructure failed.");
+
+  auto* htp_infra = static_cast<QnnHtpDevice_Infrastructure_t*>(qnn_device_infra);
+  ORT_RETURN_IF(QNN_HTP_DEVICE_INFRASTRUCTURE_TYPE_PERF != htp_infra->infraType,
+                "HTP infra type = ", htp_infra->infraType, ", which is not perf infra type.");
+  QnnHtpDevice_PerfInfrastructure_t& htp_perf_infra = htp_infra->perfInfra;
+
+  constexpr const int kNumConfigs = 1;
+  std::vector<QnnHtpPerfInfrastructure_PowerConfig_t> power_configs(
+      kNumConfigs);
+  QnnHtpPerfInfrastructure_PowerConfig_t& dcvs_config = power_configs[0];
+  dcvs_config.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_DCVS_V3;
+  QnnHtpPerfInfrastructure_DcvsV3_t& dcvs_v3 = dcvs_config.dcvsV3Config;
+  dcvs_v3.contextId = htp_power_config_client_id;
+  dcvs_v3.dcvsEnable = 1;
+  dcvs_v3.setDcvsEnable = 1;
+  dcvs_v3.sleepLatency = kSleepHighLatency;
+  dcvs_v3.setSleepLatency = 1;
+  dcvs_v3.sleepDisable = 0;
+  dcvs_v3.setSleepDisable = 0;
+  if (dcvsState == DcvsState_t::DCVS_ENABLE) {
+    dcvs_v3.powerMode = QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_ADJUST_UP_DOWN;
+  } else {
+    dcvs_v3.powerMode = QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_POWER_SAVER_MODE;
+  }
+  dcvs_v3.busVoltageCornerMin = DCVS_VOLTAGE_VCORNER_SVS2;
+  dcvs_v3.busVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_SVS;
+  dcvs_v3.busVoltageCornerMax = DCVS_VOLTAGE_VCORNER_SVS;
+  dcvs_v3.setBusParams = 1;
+  dcvs_v3.coreVoltageCornerMin = DCVS_VOLTAGE_VCORNER_SVS2;
+  dcvs_v3.coreVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_SVS;
+  dcvs_v3.coreVoltageCornerMax = DCVS_VOLTAGE_VCORNER_SVS;
+  dcvs_v3.setCoreParams = 1;
+
+  std::vector<const QnnHtpPerfInfrastructure_PowerConfig_t*> perf_power_configs_ptr = ObtainNullTermPtrVector(power_configs);
+  status = htp_perf_infra.setPowerConfig(htp_power_config_client_id, perf_power_configs_ptr.data());
+  ORT_RETURN_IF(QNN_SUCCESS != status, "setPowerConfig failed for HTP performance mode.");
+
+  return Status::OK();
+}
+
+Status QnnBackendManager::setReleasedPerfPowerConfig(uint32_t htp_power_config_client_id, DcvsState_t dcvsState) {
+  QnnDevice_Infrastructure_t qnn_device_infra = nullptr;
+  auto status = qnn_interface_.deviceGetInfrastructure(&qnn_device_infra);
+  ORT_RETURN_IF(QNN_SUCCESS != status, "backendGetPerfInfrastructure failed.");
+
+  auto* htp_infra = static_cast<QnnHtpDevice_Infrastructure_t*>(qnn_device_infra);
+  ORT_RETURN_IF(QNN_HTP_DEVICE_INFRASTRUCTURE_TYPE_PERF != htp_infra->infraType,
+                "HTP infra type = ", htp_infra->infraType, ", which is not perf infra type.");
+  QnnHtpDevice_PerfInfrastructure_t& htp_perf_infra = htp_infra->perfInfra;
+  constexpr const int kNumConfigs = 1;
+  std::vector<QnnHtpPerfInfrastructure_PowerConfig_t> power_configs(
+      kNumConfigs);
+  QnnHtpPerfInfrastructure_PowerConfig_t& dcvs_config = power_configs[0];
+  dcvs_config.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_DCVS_V3;
+  QnnHtpPerfInfrastructure_DcvsV3_t& dcvs_v3 = dcvs_config.dcvsV3Config;
+  dcvs_v3.contextId = htp_power_config_client_id;
+  dcvs_v3.dcvsEnable = 1;
+  dcvs_v3.setDcvsEnable = 1;
+  dcvs_v3.sleepLatency = kSleepHigherLatency;
+  dcvs_v3.setSleepLatency = 1;
+  dcvs_v3.sleepDisable = 0;
+  dcvs_v3.setSleepDisable = 0;
+
+  if (dcvsState == DcvsState_t::DCVS_ENABLE) {
+    dcvs_v3.powerMode = QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_ADJUST_UP_DOWN;
+  } else {
+    dcvs_v3.powerMode = QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_POWER_SAVER_MODE;
+  }
+  dcvs_v3.busVoltageCornerMin = DCVS_VOLTAGE_VCORNER_MIN_VOLTAGE_CORNER;
+  dcvs_v3.busVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_MIN_VOLTAGE_CORNER;
+  dcvs_v3.busVoltageCornerMax = DCVS_VOLTAGE_VCORNER_MIN_VOLTAGE_CORNER;
+  dcvs_v3.setBusParams = 1;
+  dcvs_v3.coreVoltageCornerMin = DCVS_VOLTAGE_VCORNER_MIN_VOLTAGE_CORNER;
+  dcvs_v3.coreVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_MIN_VOLTAGE_CORNER;
+  dcvs_v3.coreVoltageCornerMax = DCVS_VOLTAGE_VCORNER_MIN_VOLTAGE_CORNER;
+  dcvs_v3.setCoreParams = 1;
+
+  std::vector<const QnnHtpPerfInfrastructure_PowerConfig_t*> perf_power_configs_ptr = ObtainNullTermPtrVector(power_configs);
+  status = htp_perf_infra.setPowerConfig(htp_power_config_client_id, perf_power_configs_ptr.data());
+  ORT_RETURN_IF(QNN_SUCCESS != status, "setPowerConfig failed for HTP performance mode.");
+
+  return Status::OK();
+}
+
 Status QnnBackendManager::CreateHtpPowerCfgId(uint32_t device_id, uint32_t core_id, uint32_t& htp_power_config_id) {
   // This function is called in QNN EP's OnRunStart() even if QNN backend setup failed and the model is assigned
   // to a different EP. Therefore, we have to check that backend setup actually completed before trying to
@@ -1496,6 +1844,11 @@ Status QnnBackendManager::TerminateQnnLog() {
 }
 
 void QnnBackendManager::ReleaseResources() {
+  if (timer_callback_arg != nullptr) {
+    delete timer_callback_arg;
+    timer_callback_arg = nullptr;
+  }
+
   auto result = ReleaseContext();
   if (Status::OK() != result) {
     LOGS_DEFAULT(ERROR) << "Failed to ReleaseContext: " << result.ErrorMessage();
