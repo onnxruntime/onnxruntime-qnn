@@ -63,6 +63,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   }
 
   {
+    CreateInverseOpBuilder("Inverse", *this);
+  }
+
+  {
     CreateLayerNormOpBuilder("LayerNormalization", *this);
   }
 
@@ -189,6 +193,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
 
   {
     CreateSplitOpBuilder("Split", *this);
+  }
+
+  {
+    CreateSTFTOpBuilder("STFT", *this);
   }
 
   {
