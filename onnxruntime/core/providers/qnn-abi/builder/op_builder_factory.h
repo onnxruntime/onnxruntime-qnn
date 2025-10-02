@@ -81,6 +81,8 @@ void CreateGemmOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_
 
 void CreateInstanceNormOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
+void CreateInverseOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+
 void CreateLayerNormOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
 void CreateLRNOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
@@ -112,6 +114,8 @@ void CreateSliceOpBuilder(const std::string& op_type, OpBuilderRegistrations& op
 void CreateSoftmaxOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
 void CreateSplitOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+
+void CreateSTFTOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
 void CreateThresholdedReluOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
