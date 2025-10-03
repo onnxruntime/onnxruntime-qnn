@@ -157,6 +157,7 @@ Status ReadBinaryFromFile(const std::string& file_path, uint8_t* buffer, size_t 
 }
 
 void QnnBackendManager::ReleaseTimerThread(uint32_t htp_power_config_client_id) {
+  std::lock_guard<std::mutex> lk(state_mutex_);
   if (timer_resource.timer_thread_in_use) {
     timer_->deinitialize();
     graphState = GraphState::NONE;
@@ -360,6 +361,7 @@ void QnnBackendManager::timerCallback(void* user_data) {
 }
 
 void QnnBackendManager::createTimerThread(uint32_t htp_power_config_client_id) {
+  std::lock_guard<std::mutex> lk(state_mutex_);
   std::unique_ptr<Timer> temp(new Timer());
   if (temp != nullptr) {
     timer_ = std::move(temp);
