@@ -149,6 +149,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   std::unique_ptr<unsigned char[]> GetContextBinaryBuffer(uint64_t& written_buffer_size);
 
+  Status SaveContextToBinary(const logging::Logger& logger);
+
   Status LoadCachedQnnContextFromBuffer(char* buffer, uint64_t buffer_length,
                                         std::string node_name,
                                         std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
@@ -184,6 +186,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   const Qnn_BackendHandle_t& GetQnnBackendHandle() { return backend_handle_; }
 
   const Qnn_ProfileHandle_t& GetQnnProfileHandle() { return profile_backend_handle_; }
+
+  const std::unique_ptr<unsigned char[]>& GetSaveBuffer() const { return qnn_save_buffer_; }
+
+  const uint64_t& GetSaveBufferSize() const { return qnn_save_buffer_size_; }
 
   // Resets the QNN log level to the given ORT log level or to the default log level if the argument is
   // std::nullopt.
@@ -431,6 +437,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   // Vector of Qnn_ContextHandle_t. The context handles are owned by context_map_.
   std::vector<Qnn_ContextHandle_t> contexts_;
+
+  // Binary buffer of Qnn Context to handle SSR
+  std::unique_ptr<unsigned char[]> qnn_save_buffer_;
+  uint64_t qnn_save_buffer_size_;
 
   ProfilingLevel profiling_level_etw_;
   ProfilingLevel profiling_level_;

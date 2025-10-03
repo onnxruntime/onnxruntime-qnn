@@ -26,7 +26,6 @@
 
 namespace onnxruntime {
 
-static int ssr_cnt = 1;
 constexpr const char* QNN = "QNN";
 
 static std::string MakeSharedLibraryPath(std::string_view name) {
@@ -1120,16 +1119,15 @@ Status QNNExecutionProvider::CreateComputeFunc(std::vector<NodeComputeInfo>& nod
       ORT_RETURN_IF_ERROR(qnn_backend_manager_->ReleaseContext());
       // TODO: Deal with the max_spill_fill_size
       Status recover_status = qnn_backend_manager_->LoadCachedQnnContextFromBuffer(
-        reinterpret_cast<char*>(model->GetSaveBuffer().get()),
-        model->GetSaveBufferSize(),
+        reinterpret_cast<char*>(qnn_backend_manager_->GetSaveBuffer().get()),
+        qnn_backend_manager_->GetSaveBufferSize(),
         model->Name(),
         qnn_models,
-        model->GetSaveBufferSize());
+        qnn_backend_manager_->GetSaveBufferSize());
       ORT_RETURN_IF_ERROR(recover_status);
-      ORT_RETURN_IF_NOT(qnn_models.size() == 1, "There must be only one qnn_model");
-      auto new_qnn_model = std::move(qnn_models.begin()->second);
-      model->GetGraphInfo()->SetGraphContext(new_qnn_model->GetGraphInfo()->GraphContext());
-      model->GetGraphInfo()->SetGraph(new_qnn_model->GetGraphInfo()->Graph());
+      // Recover the graph and context handle of model with qnn_models
+      model->GetGraphInfo()->SetGraphContext(qnn_models[model->Name()]->GetGraphInfo()->GraphContext());
+      model->GetGraphInfo()->SetGraph(qnn_models[model->Name()]->GetGraphInfo()->Graph());
       result = model->ExecuteGraph(ctx, logger);
     }
     LOGS(logger, VERBOSE) << "[SSR Handling]: After Recover " << result;
@@ -1229,21 +1227,16 @@ Status QNNExecutionProvider::CompileFromOrtGraph(const std::vector<FusedNodeAndG
 
     ORT_RETURN_IF_ERROR(qnn_model->ComposeGraph(graph_viewer, fused_node, model_settings_, logger,
                                                 all_graph_configs_ptr, json_graph_filepath));
-    if (ssr_cnt > 0) {
-      std::system(R"(.\SSRTestApp.exe CDSP -ErrorFatal)");
-      std::this_thread::sleep_for(std::chrono::milliseconds(3000));
-      ssr_cnt -= 1;
-    }
     ORT_RETURN_IF_ERROR(qnn_model->FinalizeGraphs(logger));
     ORT_RETURN_IF_ERROR(qnn_model->SetupQnnInputOutput(logger));
-    if (enable_ssr_handling_) {
-      ORT_RETURN_IF_ERROR(qnn_model->SaveContextToBinary(logger));
-    }
 
     LOGS(logger, VERBOSE) << "fused node name: " << fused_node.Name();
     qnn_models_.emplace(fused_node.Name(), std::move(qnn_model));
 
     ORT_RETURN_IF_ERROR(CreateComputeFunc(node_compute_funcs, logger));
+  }
+  if (enable_ssr_handling_) {
+    ORT_RETURN_IF_ERROR(qnn_backend_manager_->SaveContextToBinary(logger));
   }
   return Status::OK();
 }
@@ -1351,12 +1344,9 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
   if (!is_qnn_ctx_model && !enable_vtcm_backup_buffer_sharing_ && !share_ep_contexts_ &&
       enable_ssr_handling_ &&
       compile_res.ErrorMessage().find(std::to_string(QNN_COMMON_ERROR_SYSTEM_COMMUNICATION)) != std::string::npos) {
-    LOGS(logger, VERBOSE) << "[SSR Handle] release resource";
     ORT_RETURN_IF_ERROR(qnn_backend_manager_->ReleaseContext());
     ORT_RETURN_IF_ERROR(qnn_backend_manager_->CreateContext(false));
-    LOGS(logger, VERBOSE) << "[SSR Handle] CreateContext succeed.";
-    // ORT_RETURN_IF_ERROR(qnn_backend_manager_->SetHtpPowerConfig(GetPerThreadContext().GetHtpPowerConfigId(),
-    //                                                             default_htp_performance_mode_));
+    LOGS(logger, VERBOSE) << "[SSR Handle] ReCreate Context succeed.";
     // CompileFromOrtGraph will re-create the graph
     compile_res = CompileFromOrtGraph(fused_nodes_and_graphs, node_compute_funcs, logger);
   }

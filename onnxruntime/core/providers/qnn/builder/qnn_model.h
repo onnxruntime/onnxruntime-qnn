@@ -42,8 +42,6 @@ class QnnModel {
 
   Status SetupQnnInputOutput(const logging::Logger& logger);
 
-  Status SaveContextToBinary(const logging::Logger& logger);
-
   Status ExecuteGraph(const Ort::KernelContext& context,
                       const logging::Logger& logger);
 
@@ -109,10 +107,6 @@ class QnnModel {
 
   const std::unique_ptr<GraphInfo>& GetGraphInfo() const { return graph_info_; }
 
-  const std::unique_ptr<unsigned char[]>& GetSaveBuffer() const { return qnn_save_buffer_; }
-
-  const uint64_t& GetSaveBufferSize() const { return qnn_save_buffer_size_; }
-
   const std::string& Name() const { return graph_info_->Name(); }
 
  private:
@@ -133,8 +127,6 @@ class QnnModel {
 
  private:
   std::unique_ptr<GraphInfo> graph_info_;
-  std::unique_ptr<unsigned char[]> qnn_save_buffer_;
-  uint64_t qnn_save_buffer_size_;
   QnnBackendManager* qnn_backend_manager_ = nullptr;
   // <input_name, input_index>, initializer inputs are excluded, keep the input index here
   std::unordered_map<std::string, size_t> model_input_index_map_;

@@ -1001,6 +1001,16 @@ std::unique_ptr<unsigned char[]> QnnBackendManager::GetContextBinaryBuffer(uint6
   return context_buffer;
 }
 
+Status QnnBackendManager::SaveContextToBinary(const logging::Logger& logger) {
+  LOGS(logger, VERBOSE) << "Save Context To Binary";
+  uint64_t writtenBufferSize{0};
+  qnn_save_buffer_ = GetContextBinaryBuffer(writtenBufferSize);
+  qnn_save_buffer_size_ = writtenBufferSize;
+  LOGS(logger, VERBOSE) << "qnn_save_buffer_size_: " << qnn_save_buffer_size_;
+
+  return Status::OK();
+}
+
 Status QnnBackendManager::GetMaxSpillFillBufferSize(unsigned char* buffer,
                                                     uint64_t buffer_length,
                                                     uint64_t& max_spill_fill_buffer_size) {

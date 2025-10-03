@@ -240,26 +240,6 @@ Status QnnModel::SetupQnnInputOutput(const logging::Logger& logger) {
   return Status::OK();
 }
 
-Status QnnModel::SaveContextToBinary(const logging::Logger& logger) {
-  LOGS(logger, VERBOSE) << "Save Context To Binary: " << graph_info_->Name();
-
-  Qnn_ErrorHandle_t res = QNN_CONTEXT_NO_ERROR;
-  Qnn_ContextBinarySize_t requiredBufferSize = 0;
-  res = qnn_backend_manager_->GetQnnInterface().contextGetBinarySize(graph_info_->GraphContext(),
-                                                                    &requiredBufferSize);
-  if (QNN_CONTEXT_NO_ERROR != res) {
-    return ORT_MAKE_STATUS(ONNXRUNTIME, ENGINE_ERROR, "[SSR Handling] error_contextGetBinarySize", res);
-  }
-  LOGS(logger, VERBOSE) << "requiredBufferSize: " << requiredBufferSize;
-  uint64_t writtenBufferSize{0};
-  // TODO: Handle multiple qnn_models_ into qnn_save_buffers_
-  qnn_save_buffer_ = qnn_backend_manager_->GetContextBinaryBuffer(writtenBufferSize);
-  qnn_save_buffer_size_ = writtenBufferSize;
-  LOGS(logger, VERBOSE) << "qnn_save_buffer_size_: " << qnn_save_buffer_size_;
-
-  return Status::OK();
-}
-
 static Status BindQnnTensorMemoryToOrtValueMemory(const logging::Logger& logger,
                                                   QnnBackendManager& qnn_backend_manager,
                                                   const OrtMemoryInfo& ort_value_memory_info,
