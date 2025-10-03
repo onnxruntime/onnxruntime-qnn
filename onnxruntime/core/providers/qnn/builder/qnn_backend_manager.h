@@ -511,6 +511,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Mapping of thread id to on-run-start/end power configs
   std::mutex per_thread_power_configs_mutex_;
   std::unordered_map<std::thread::id, PerThreadHtpPowerConfigs_t> per_thread_power_configs_;
+  std::mutex state_mutex_;
   std::unique_ptr<Timer> timer_;
   struct TimerResource {
     static const unsigned long sustainedTimerDuration = 300000;
