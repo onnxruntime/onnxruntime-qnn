@@ -340,7 +340,7 @@ Status QnnBackendManager::applyPerformanceMode(uint32_t htp_power_config_client_
 
 Status QnnBackendManager::setState(GraphState state, uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode) {
   if (perfMode == qnn::HtpPerformanceMode::kHtpSustainedHighPerformance || perfMode == qnn::HtpPerformanceMode::kHtpBurst) {
-      ORT_RETURN_IF(timer_ == nullptr,"timer is not started");
+    ORT_RETURN_IF(timer_ == nullptr, "timer is not started");
   }
   if (state != graphState) {
     graphState = state;
