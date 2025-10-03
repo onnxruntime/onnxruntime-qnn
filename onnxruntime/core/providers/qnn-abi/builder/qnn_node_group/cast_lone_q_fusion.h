@@ -1,43 +1,56 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
+#pragma once
+
+#include <memory>
+#include <unordered_map>
+#include <vector>
+
+#include "core/providers/qnn-abi/builder/qnn_node_group/qnn_node_group.h"
+#include "core/providers/qnn-abi/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {
+
+class QnnModelWrapper;
+
 /// <summary>
-/// Represents a fusion of pattern: Quantize(Cast(x)) => Convert(x)
-/// when x is not the output of Dequantize
+/// Represents a fusion of a Cast -> Q sequence that converts from one data type to a quantized type.
+/// This is translated into a QNN Convert operator. The Cast and Q are standalone NodeUnits that are not
+/// part of a QDQ node unit. The Cast input must not come from a DQ node.
+/// Pattern: Non-DQ Node -> Cast -> Q => Non-DQ Node -> Convert
 /// </summary>
 class CastLoneQFusion : public IQnnNodeGroup {
  public:
-  explicit CastLoneQFusion(gsl::span<const NodeUnit* const> node_units) {
-    ORT_ENFORCE(node_units.size() == 2, "Pattern expect exactly 2 NodeUnits.");
-    node_units_[0] = node_units[0];
-    node_units_[1] = node_units[1];
-  }
-
+  CastLoneQFusion(const OrtNodeUnit& cast_node_unit, const OrtNodeUnit& q_node_unit);
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(CastLoneQFusion);
 
-  Status IsSupported(QnnModelWrapper& qnn_model_wrapper, const logging::Logger& logger) const override;
-  Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const logging::Logger& logger) const override;
-  gsl::span<const NodeUnit* const> GetNodeUnits() const override;
-  const NodeUnit* GetTargetNodeUnit() const override { return node_units_[0]; }
+  Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
+  Ort::Status AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
+  gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
+  const OrtNodeUnit* GetTargetNodeUnit() const override;
   std::string_view Type() const override { return "CastLoneQFusion"; }
 
   /// <summary>
-  /// Traverses graph to check if the given starting NodeUnit is part of a valid Cast -> Quantize sequence.
-  /// If so, returns a IQnnNodeGroup that contains the Cast and Quantize NodeUnits.
+  /// Traverses graph to check if the given starting NodeUnit is part of a valid Cast -> Q sequence.
+  /// If so, returns a IQnnNodeGroup that contains the Cast and Q NodeUnits.
   /// </summary>
+  /// <param name="qnn_model_wrapper">Used for validation and traverse/query the graph</param>
+  /// <param name="cast_node_unit">Cast node unit that could start the Cast -> Q sequence</param>
+  /// <param name="node_to_node_unit">Maps a Node to a NodeUnit.</param>
+  /// <param name="node_unit_to_qnn_node_group">Maps a NodeUnit to a IQnnNodeGroup.</param>
+  /// <param name="logger"></param>
+  /// <returns>A valid IQnnNodeGroup on success or an empty std::unique_ptr otherwise</returns>
   static std::unique_ptr<IQnnNodeGroup> TryFusion(
       QnnModelWrapper& qnn_model_wrapper,
-      const NodeUnit& mul_node_unit,
-      const std::unordered_map<const Node*, const NodeUnit*>& node_to_node_unit,
-      const std::unordered_map<const NodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
-      const logging::Logger& logger);
+      const OrtNodeUnit& cast_node_unit,
+      const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
+      const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
+      const Ort::Logger& logger);
 
  private:
-  std::array<const NodeUnit*, 2> node_units_;
+  std::array<const OrtNodeUnit*, 2> node_units_;
 };
 
 }  // namespace qnn

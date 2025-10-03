@@ -16,6 +16,7 @@
 #include "core/providers/qnn-abi/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn-abi/builder/qnn_node_group/reshape_gemm_fusion.h"
 #include "core/providers/qnn-abi/builder/qnn_node_group/scale_softmax_fusion.h"
+#include "core/providers/qnn-abi/builder/qnn_node_group/cast_lone_q_fusion.h"
 #include "core/providers/qnn-abi/builder/qnn_node_group/channel_shuffle_fusion.h"
 #include "core/providers/qnn-abi/builder/qnn_node_group/udo_fusion.h"
 #include "core/providers/qnn-abi/builder/qnn_utils.h"
@@ -37,12 +38,10 @@ class QnnNodeUnitWrapper : public IQnnNodeGroup {
     const std::string& op_type = node_unit_->OpType();
     const auto* op_builder = qnn::GetOpBuilder(op_type);
 
-    const std::string& name = node_unit_->Name();
-    RETURN_IF_NOT(op_builder != nullptr,
-                  ("Operators of type `" + op_type +
-                   "` are not supported by QNN EP." + op_type + " node `" + name +
-                   "` will not be assigned to QNN EP.")
-                      .c_str());
+    RETURN_IF_NOT(op_builder != nullptr, ("Operators of type `" + op_type +
+                                          "` are not supported by QNN EP." + op_type + " node `" +
+                                          node_unit_->Name() + "` will not be assigned to QNN EP.")
+                                             .c_str());
 
     return op_builder->IsOpSupported(qmw, *node_unit_, logger);
   }
@@ -98,17 +97,17 @@ void registerUDO(const std::string& node_type, const std::string& op_package) {
                                 /*logger=*/std::placeholders::_5);
   fusions[node_type] = boundFunction;
 }
-// / <summary>
-// / Given a starting NodeUnit, this function tries all possible fusions that start with that NodeUnit.
-// / If successful, returns a IQnnNodeGroup object that represents the fusion of various NodeUnits.
-// / Currently only handles standalone NodeUnits that are not in a QDQ unit but that can change in the future.
-// / </summary>
-// / <param name="qnn_model_wrapper">QnnModelWrapper that contains the ONNX GraphViewer. Used for validation.</param>
-// / <param name="starting_node_unit">NodeUnit that potentially starts a fusion.</param>
-// / <param name="node_to_node_unit">Maps a Node* to a NodeUnit*</param>
-// / <param name="node_unit_to_qnn_node_group">Maps a NodeUnit* to a IQnnNodeGroup*</param>
-// / <param name="logger"></param>
-// / <returns>IQnnNodeGroup representing the fusion or an empty std::unique_ptr</returns>
+/// <summary>
+/// Given a starting NodeUnit, this function tries all possible fusions that start with that NodeUnit.
+/// If successful, returns a IQnnNodeGroup object that represents the fusion of various NodeUnits.
+/// Currently only handles standalone NodeUnits that are not in a QDQ unit but that can change in the future.
+/// </summary>
+/// <param name="qnn_model_wrapper">QnnModelWrapper that contains the ONNX GraphViewer. Used for validation.</param>
+/// <param name="starting_node_unit">NodeUnit that potentially starts a fusion.</param>
+/// <param name="node_to_node_unit">Maps a Node* to a NodeUnit*</param>
+/// <param name="node_unit_to_qnn_node_group">Maps a NodeUnit* to a IQnnNodeGroup*</param>
+/// <param name="logger"></param>
+/// <returns>IQnnNodeGroup representing the fusion or an empty std::unique_ptr</returns>
 static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
     QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnit& starting_node_unit,
@@ -116,7 +115,7 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
   // For now, all fusions involve standalone node units (i.e., no wrapping DQ/Q nodes).
-  if (starting_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode) {
+  if (starting_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode && starting_node_unit.OpType() != "MatMul") {
     return nullptr;
   }
 

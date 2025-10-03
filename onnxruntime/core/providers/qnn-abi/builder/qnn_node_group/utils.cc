@@ -93,5 +93,65 @@ const OrtNodeUnit* GetOnlyChildOfType(const QnnModelWrapper& qnn_model_wrapper,
   return child_node_unit;
 }
 
+const OrtNodeUnit* GetParentOfType(const QnnModelWrapper& qnn_model_wrapper,
+                                   const OrtNodeUnit& child_node_unit,
+                                   gsl::span<const std::string_view> parent_op_types,
+                                   const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
+                                   const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& qnn_node_group_map) {
+  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
+  const OrtNode& child_node = child_node_unit.GetNode();
+
+  // Get the first input of the child node
+  size_t num_inputs = 0;
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(&child_node, &num_inputs), ort_api, nullptr);
+  if (num_inputs == 0) {
+    return nullptr;
+  }
+
+  std::vector<const OrtValueInfo*> inputs(num_inputs);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(&child_node, inputs.data(), inputs.size()), ort_api, nullptr);
+
+  const OrtValueInfo* input_info = inputs[0];
+  const OrtNode* parent_node = nullptr;
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueProducer(input_info, &parent_node, nullptr), ort_api, nullptr);
+
+  if (parent_node == nullptr) {
+    return nullptr;
+  }
+
+  // Parent must be of a valid type.
+  const std::string& parent_type = Ort::ConstNode(parent_node).GetOperatorType();
+  bool is_valid_parent_type = false;
+
+  for (const auto& valid_op_type : parent_op_types) {
+    if (valid_op_type == parent_type) {
+      is_valid_parent_type = true;
+      break;
+    }
+  }
+
+  if (!is_valid_parent_type) {
+    return nullptr;
+  }
+
+  const auto parent_node_unit_it = node_unit_map.find(parent_node);
+  if (parent_node_unit_it == node_unit_map.end()) {
+    return nullptr;
+  }
+  const OrtNodeUnit* parent_node_unit = parent_node_unit_it->second;
+
+  // Check if parent node has already been handled.
+  if (qnn_node_group_map.count(parent_node_unit) != 0) {
+    return nullptr;
+  }
+
+  // Parent must not already be part of a QDQ NodeUnit (i.e., be standalone).
+  if (parent_node_unit->UnitType() != OrtNodeUnit::Type::SingleNode) {
+    return nullptr;
+  }
+
+  return parent_node_unit;
+}
+
 }  // namespace qnn
 }  // namespace onnxruntime
