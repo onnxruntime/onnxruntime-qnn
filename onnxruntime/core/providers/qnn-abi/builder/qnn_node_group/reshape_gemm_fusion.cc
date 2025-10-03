@@ -186,8 +186,6 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper, const OrtN
 
   // Get tensor type for weight
   Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(weight_tensor_name);
-
-  // Default data type is float32, but get actual type from node arg
   Qnn_DataType_t data_type = QNN_DATATYPE_FLOAT_32;
   RETURN_IF_ERROR(utils::GetQnnDataType(false, weight_def.type, data_type));
 
@@ -197,12 +195,8 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper, const OrtN
     // Transpose the weight tensor (2D matrix transpose)
     RETURN_IF_ERROR(qnn_model_wrapper.TransposeTensor(weight_shape, *weight_tensor_proto, unpacked_tensor));
   }
-
-  // Create weight tensor wrapper
   QnnTensorWrapper weight_tensor(weight_tensor_name, tensor_type, data_type, QnnQuantParamsWrapper(),
                                  std::move(weight_shape), std::move(unpacked_tensor));
-
-  // Create bias tensor wrapper if bias exists
   if (has_bias) {
     RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(*bias_def_ptr, bias_tensor));
   }
@@ -211,10 +205,7 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper, const OrtN
   RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(output_def, output_tensor));
 
   if (validate) {
-    // For validation, create input tensors vector with input and weight
     std::vector<Qnn_Tensor_t> input_tensors = {input_tensor.GetQnnTensor(), weight_tensor.GetQnnTensor()};
-
-    // Add bias tensor to inputs if it exists
     if (has_bias) {
       input_tensors.emplace_back(bias_tensor.GetQnnTensor());
     }
@@ -238,8 +229,6 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper, const OrtN
 
     // Create input names vector
     std::vector<std::string> input_names = {input_def.name, weight_tensor_name};
-
-    // Add bias name to inputs if it exists
     if (has_bias) {
       input_names.emplace_back(bias_def_ptr->name);
     }
@@ -262,7 +251,6 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusion::TryFusion(
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
   ORT_UNUSED_PARAMETER(logger);
-
   if (gemm_node_unit.OpType() != "Gemm" || gemm_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode) {
     return nullptr;
   }
@@ -281,13 +269,11 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusion::TryFusion(
 
   // Check if weight is constant
   const OrtNodeUnitIODef& weight_input = gemm_node_unit.Inputs()[1];
-  bool is_constant = qnn_model_wrapper.IsConstantInput(weight_input.name);
-  if (!is_constant) {
+  // The pattern is from MatMul->Add, so the transA and transB should be false, and weight should be initializer.
+  // Currently we don't handle quantized weight.
+  if (!qnn_model_wrapper.IsConstantInput(weight_input.name) || weight_input.quant_param.has_value()) {
     return nullptr;
   }
-
-  // TODO: In the original code, there was a check for weight_input.quant_param.has_value()
-  // but we don't have access to quantization parameters in OrtNodeUnitIODef
 
   // Find the reshape node unit
   const OrtNodeUnit* reshape_node_unit = GetReshapeNodeUnit(qnn_model_wrapper, node_to_node_unit, node_unit_to_qnn_node_group, gemm_node);
@@ -295,7 +281,6 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusion::TryFusion(
     return nullptr;
   }
 
-  // Check if the reshape pattern is valid
   if (!CheckShape(qnn_model_wrapper, reshape_node_unit->GetNode())) {
     return nullptr;
   }

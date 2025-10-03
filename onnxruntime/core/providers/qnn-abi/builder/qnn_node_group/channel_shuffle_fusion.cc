@@ -216,14 +216,8 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(cs_input_def, channel_shuffle_input));
   RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(cs_output_def, channel_shuffle_output));
 
-  if (validate) {
-    RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(transpose_tail->Name(),
-                                                      QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                      QNN_OP_CHANNEL_SHUFFLE,
-                                                      {channel_shuffle_input.GetQnnTensor()},
-                                                      {channel_shuffle_output.GetQnnTensor()},
-                                                      {}));
-  } else {
+  // Note: Skipped QNN validation API due to its inconsistent behavior than creation API. Re-enable it when fixed.
+  if (!validate) {
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(channel_shuffle_input)), "Failed to add input");
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(channel_shuffle_output)), "Failed to add output");
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(onnxruntime::qnn::utils::GetUniqueName(*transpose_tail),
@@ -252,7 +246,6 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusion(
   if (!pattern.has_value()) {
     return nullptr;
   }
-
   const OrtNodeUnit* reshape1 = pattern->at(1);
   const OrtNodeUnit* transpose = pattern->at(2);
   const OrtNodeUnit* reshape2 = pattern->at(3);
@@ -364,24 +357,19 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusion(
   if (reshape1_input_dims[0] != reshape1_output_dims[0]) {
     return nullptr;
   }
-
   if (reshape1_output_dims_count < 3) {
     return nullptr;
   }
-
   if (reshape1_input_dims[1] != (reshape1_output_dims[1] * reshape1_output_dims[2])) {
     return nullptr;
   }
-
   if (reshape1_output_dims_count != reshape1_input_dims_count + 1) {
     return nullptr;
   }
-
   size_t remaining_dims = reshape1_input_dims_count - 2;
   if (reshape1_output_dims_count < remaining_dims + 3) {
     return nullptr;
   }
-
   for (size_t i = 0; i < remaining_dims; ++i) {
     if (reshape1_input_dims[i + 2] != reshape1_output_dims[i + 3]) {
       return nullptr;
@@ -393,14 +381,12 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusion(
   if (!perm.has_value()) {
     return nullptr;
   }
-
   std::vector<int64_t> perm_to_check = perm.value();
   std::swap(perm_to_check[1], perm_to_check[2]);
   std::vector<int64_t> perm_expected(perm_to_check.size());
   for (size_t i = 0; i < perm_expected.size(); ++i) {
     perm_expected[i] = static_cast<int64_t>(i);
   }
-
   if (perm_to_check != perm_expected) {
     return nullptr;
   }
@@ -410,7 +396,6 @@ std::unique_ptr<IQnnNodeGroup> ChannelShuffleFusion::TryFusion(
   if (!perm_head.has_value()) {
     return nullptr;
   }
-
   std::optional<std::vector<int64_t>> perm_tail = GetTransposePerm(*transpose_tail);
   if (!perm_tail.has_value()) {
     return nullptr;

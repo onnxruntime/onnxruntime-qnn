@@ -1,104 +1,133 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn/builder/qnn_node_group/cast_lone_q_fusion.h"
-#include "core/providers/qnn/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn/builder/qnn_node_group/utils.h"
+#include "core/providers/qnn-abi/builder/qnn_node_group/cast_lone_q_fusion.h"
+
+#include <gsl/gsl>
+#include <algorithm>
+#include <cassert>
+#include <limits>
+#include <optional>
+#include <utility>
+
+#include "core/providers/qnn-abi/ort_api.h"
+#include "core/providers/qnn-abi/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
+#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn-abi/builder/qnn_node_group/utils.h"
 
 namespace onnxruntime {
 namespace qnn {
 
-constexpr char kOpCast[] = "Cast";
-constexpr char kOpConvert[] = "Convert";
+// Forward declarations.
+#define ValidateOnQnn(qnn_model_wrapper, cast_node_unit, q_node_unit) \
+  CreateOrValidateOnQnn((qnn_model_wrapper), (cast_node_unit), (q_node_unit), true)
+#define CreateOnQnn(qnn_model_wrapper, cast_node_unit, q_node_unit) \
+  CreateOrValidateOnQnn((qnn_model_wrapper), (cast_node_unit), (q_node_unit), false)
 
-Status CreateOrValidateOnQnn(
-    QnnModelWrapper* qnn_model_wrapper,
-    gsl::span<const NodeUnit* const> node_units,
-    [[maybe_unused]] const logging::Logger& logger,
-    bool validate) {
-  const NodeUnit* cast = node_units[0];
-  const NodeUnit* quantize_linear = node_units[1];
+static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
+                                         const OrtNodeUnit& cast_node_unit,
+                                         const OrtNodeUnit& q_node_unit,
+                                         bool validate) {
+  assert(cast_node_unit.OpType() == "Cast" && q_node_unit.OpType() == QUANTIZE_LINEAR);
+  const auto& node_name = utils::GetUniqueName(cast_node_unit);
+  const OrtNodeUnitIODef& input_def = cast_node_unit.Inputs()[0];
+  const OrtNodeUnitIODef& output_def = q_node_unit.Outputs()[0];
 
-  // ProcessInputs
-  const auto& input_name = cast->Inputs()[0].node_arg.Name();
-  if (!qnn_model_wrapper->IsQnnTensorWrapperExist(input_name)) {
-    TensorInfo cast_node_input_info = {};
-    ORT_RETURN_IF_ERROR(qnn_model_wrapper->GetTensorInfo(cast->Inputs()[0], cast_node_input_info));
+  // ProcessInputs - only add input tensor if it doesn't already exist
+  const auto& input_name = input_def.name;
+  if (!qnn_model_wrapper.IsQnnTensorWrapperExist(input_name)) {
+    TensorInfo input_tensor_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input_def, input_tensor_info));
     QnnTensorWrapper input_tensor_wrapper;
-    ORT_RETURN_IF_ERROR(qnn_model_wrapper->MakeTensorWrapper(cast_node_input_info, input_name, input_tensor_wrapper));
-    ORT_RETURN_IF_NOT(qnn_model_wrapper->AddTensorWrapper(std::move(input_tensor_wrapper)),
-                      "Failed to add input tensor for QNN Convert node.");
+    RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(input_tensor_info, input_name, input_tensor_wrapper));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensor_wrapper)),
+                  "Failed to add input tensor for QNN Convert node.");
   }
-  // ProcessAttributesAndOutputs
-  const auto& output_name = quantize_linear->Outputs()[0].node_arg.Name();
-  TensorInfo q_node_output_info = {};
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper->GetTensorInfo(quantize_linear->Outputs()[0], q_node_output_info));
-  QnnTensorWrapper output_tensor_wrapper;
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper->MakeTensorWrapper(q_node_output_info, output_name, output_tensor_wrapper));
-  ORT_RETURN_IF_NOT(qnn_model_wrapper->AddTensorWrapper(std::move(output_tensor_wrapper)),
-                    "Failed to add output tensor for QNN Convert node.");
-  ORT_RETURN_IF_NOT(qnn_model_wrapper->CreateQnnNode(cast->Name() + "_ort_qnn_ep_convert",
-                                                     QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                     QNN_OP_CONVERT,
-                                                     {input_name},
-                                                     {output_name},
-                                                     {},
-                                                     validate),
-                    "Failed to add fused " + std::string(kOpConvert) + " node.");
 
-  return Status::OK();
+  // ProcessAttributesAndOutputs
+  const auto& output_name = output_def.name;
+  TensorInfo output_tensor_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(output_def, output_tensor_info));
+  QnnTensorWrapper output_tensor_wrapper;
+  RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(output_tensor_info, output_name, output_tensor_wrapper));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor_wrapper)),
+                "Failed to add output tensor for QNN Convert node.");
+
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                QNN_OP_CONVERT,
+                                                {input_name},
+                                                {output_name},
+                                                {},
+                                                validate),
+                "Failed to add fused Convert node.");
+
+  return Ort::Status();
 }
 
 std::unique_ptr<IQnnNodeGroup> CastLoneQFusion::TryFusion(
     QnnModelWrapper& qnn_model_wrapper,
-    const NodeUnit& cast_node_unit,
-    const std::unordered_map<const Node*, const NodeUnit*>& node_to_node_unit,
-    const std::unordered_map<const NodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
-    [[maybe_unused]] const logging::Logger& logger) {
-  if (cast_node_unit.OpType() != kOpCast || cast_node_unit.UnitType() != NodeUnit::Type::SingleNode) {
+    const OrtNodeUnit& cast_node_unit,
+    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
+    const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
+    [[maybe_unused]] const Ort::Logger& logger) {
+  // Expect that this function is called with a standalone Cast.
+  if (cast_node_unit.OpType() != "Cast" || cast_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode) {
     return nullptr;
   }
 
-  // Transform the pattern Non-DQ Node -> Cast -> Q into Non-DQ Node -> Convert
-  const GraphViewer& graph_viewer = qnn_model_wrapper.GetGraphViewer();
-  const std::array<std::string_view, 1> child_op_types{QUANTIZE_LINEAR};
-  const NodeUnit* quantize_linear = GetOnlyChildOfType(
-      graph_viewer, cast_node_unit, child_op_types,
-      node_to_node_unit, node_unit_to_qnn_node_group);
-  const std::array<std::string_view, 1> parent_op_types{DEQUANTIZE_LINEAR};
-  const NodeUnit* dequantize_linear = GetParentOfType(
-      graph_viewer, cast_node_unit, parent_op_types,
-      node_to_node_unit, node_unit_to_qnn_node_group);
+  // Cast must have a single Q child (1 output edge) and must not produce a graph output.
+  const std::array<std::string_view, 1> child_types = {QUANTIZE_LINEAR};
+  const OrtNodeUnit* q_node_unit = GetOnlyChildOfType(qnn_model_wrapper, cast_node_unit, child_types,
+                                                      node_to_node_unit, node_unit_to_qnn_node_group);
 
-  if (quantize_linear == nullptr || dequantize_linear != nullptr) {
+  if (q_node_unit == nullptr) {
     return nullptr;
   }
 
-  // Skip Constant cast
-  if (qnn_model_wrapper.IsConstantInput(cast_node_unit.Inputs()[0].node_arg.Name())) {
-    return nullptr;
-  }
-  std::array<const NodeUnit*, 2> node_unit_array{&cast_node_unit, quantize_linear};
-  auto node_units = gsl::make_span<const NodeUnit*>(node_unit_array.data(), 2);
+  // Cast input must not come from a DQ node (we want to fuse Cast -> Q, not DQ -> Cast -> Q).
+  const std::array<std::string_view, 1> parent_types = {DEQUANTIZE_LINEAR};
+  const OrtNodeUnit* dq_node_unit = GetParentOfType(qnn_model_wrapper, cast_node_unit, parent_types,
+                                                    node_to_node_unit, node_unit_to_qnn_node_group);
 
-  if (CreateOrValidateOnQnn(&qnn_model_wrapper, node_units, logger, /*validate=*/true) != Status::OK()) {
+  if (dq_node_unit != nullptr) {
     return nullptr;
   }
-  return std::make_unique<CastLoneQFusion>(node_units);
+
+  // Skip if Cast input is a constant.
+  if (qnn_model_wrapper.IsConstantInput(cast_node_unit.Inputs()[0].name)) {
+    return nullptr;
+  }
+
+  if (Ort::Status status = ValidateOnQnn(qnn_model_wrapper, cast_node_unit, *q_node_unit);
+      !status.IsOK()) {
+    return nullptr;
+  }
+
+  return std::make_unique<CastLoneQFusion>(cast_node_unit, *q_node_unit);
 }
 
-gsl::span<const NodeUnit* const> CastLoneQFusion::GetNodeUnits() const {
-  return gsl::span<const NodeUnit* const>{node_units_.data(), node_units_.size()};
+CastLoneQFusion::CastLoneQFusion(const OrtNodeUnit& cast_node_unit, const OrtNodeUnit& q_node_unit)
+    : node_units_{&cast_node_unit, &q_node_unit} {
 }
 
-Status CastLoneQFusion::IsSupported(
-    QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const logging::Logger& logger) const {
-  return CreateOrValidateOnQnn(&qnn_model_wrapper, GetNodeUnits(), logger, true);
+Ort::Status CastLoneQFusion::IsSupported(QnnModelWrapper& qmw,
+                                         [[maybe_unused]] const Ort::Logger& logger) const {
+  return ValidateOnQnn(qmw, *node_units_[0], *node_units_[1]);
 }
 
-Status CastLoneQFusion::AddToModelBuilder(
-    QnnModelWrapper& qnn_model_wrapper, [[maybe_unused]] const logging::Logger& logger) const {
-  return CreateOrValidateOnQnn(&qnn_model_wrapper, GetNodeUnits(), logger, false);
+Ort::Status CastLoneQFusion::AddToModelBuilder(QnnModelWrapper& qmw,
+                                               [[maybe_unused]] const Ort::Logger& logger) const {
+  return CreateOnQnn(qmw, *node_units_[0], *node_units_[1]);
+}
+
+gsl::span<const OrtNodeUnit* const> CastLoneQFusion::GetNodeUnits() const {
+  return node_units_;
+}
+
+const OrtNodeUnit* CastLoneQFusion::GetTargetNodeUnit() const {
+  return node_units_[0];
 }
 
 }  // namespace qnn

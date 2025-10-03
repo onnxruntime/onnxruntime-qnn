@@ -35,5 +35,11 @@ const OrtNodeUnit* GetOnlyChildOfType(const QnnModelWrapper& qnn_model_wrapper,
                                       const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                       const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group);
 
+const OrtNodeUnit* GetParentOfType(const QnnModelWrapper& qnn_model_wrapper,
+                                   const OrtNodeUnit& child_node_unit,
+                                   gsl::span<const std::string_view> parent_op_types,
+                                   const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
+                                   const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group);
+
 }  // namespace qnn
 }  // namespace onnxruntime
