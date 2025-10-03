@@ -207,7 +207,7 @@ Status QnnModel::FinalizeGraphs(const logging::Logger& logger) {
 
   if (QNN_GRAPH_NO_ERROR != status) {
     LOGS(logger, ERROR) << "Failed to finalize QNN graph. Error code: " << status;
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to finalize QNN graph.");
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to finalize QNN graph.", status);
   }
 
   // NOTE: This function returns immediately when profiling is disabled.

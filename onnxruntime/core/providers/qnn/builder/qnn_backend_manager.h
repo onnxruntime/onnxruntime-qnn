@@ -236,7 +236,13 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
   bool ProfilingEnabled() { return profiling_enabled_; }
 #endif
+  Status CreateContext(bool enable_htp_weight_sharing);
+
   Status ReleaseContext();
+
+  // Releases all QNN resources. Called in the destructor.
+  // NOTE: This function indirectly locks the internal `logger_recursive_mutex_` via nested function calls.
+  void ReleaseResources();
 
  private:
   Status LoadBackend();
@@ -253,8 +259,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Status ReleaseProfilehandle();
 
-  Status CreateContext(bool enable_htp_weight_sharing);
-
   Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
                                                                         std::unique_ptr<std::vector<std::string>>>& context_bin_map);
 
@@ -265,10 +269,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Terminate logging in the backend
   // NOTE: This function locks the internal `logger_recursive_mutex_`.
   Status TerminateQnnLog();
-
-  // Releases all QNN resources. Called in the destructor.
-  // NOTE: This function indirectly locks the internal `logger_recursive_mutex_` via nested function calls.
-  void ReleaseResources();
 
   void* LoadLib(const char* file_name, int flags, std::string& error_msg);
 
