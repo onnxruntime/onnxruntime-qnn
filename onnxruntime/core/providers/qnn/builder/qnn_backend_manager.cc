@@ -177,6 +177,7 @@ void QnnBackendManager::ReleaseTimerThread(uint32_t htp_power_config_client_id) 
 }
 
 Status QnnBackendManager::setSustainedHighPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
+  std::lock_guard<std::mutex> lk(state_mutex_);
   Status status = Status::OK();
   unsigned long remaining_duration = 0;
   if (graphState == GraphState::RUN_DONE) {
