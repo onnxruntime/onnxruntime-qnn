@@ -233,6 +233,7 @@ Status QnnBackendManager::setSustainedHighPerformance(uint32_t htp_power_config_
 }
 
 Status QnnBackendManager::setPowerSaverPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
+  std::lock_guard<std::mutex> lk(state_mutex_);
   Status status = Status::OK();
   if (graphState == GraphState::RUN_DONE) {
     status = setReleasedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
@@ -254,6 +255,7 @@ Status QnnBackendManager::setPowerSaverPerformance(uint32_t htp_power_config_cli
 }
 
 Status QnnBackendManager::setExtremePowerSaverPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
+  std::lock_guard<std::mutex> lk(state_mutex_);
   Status status = Status::OK();
   if (graphState == GraphState::RUN_DONE) {
     status = setExtremeLowPerfPowerConfig(htp_power_config_client_id);
@@ -275,6 +277,7 @@ Status QnnBackendManager::setExtremePowerSaverPerformance(uint32_t htp_power_con
 }
 
 Status QnnBackendManager::setHighPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
+  std::lock_guard<std::mutex> lk(state_mutex_);
   Status status = Status::OK();
   if (graphState == GraphState::RUN_DONE) {
     status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
@@ -296,6 +299,7 @@ Status QnnBackendManager::setHighPerformance(uint32_t htp_power_config_client_id
 }
 
 Status QnnBackendManager::setPerformanceForBalanced(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
+  std::lock_guard<std::mutex> lk(state_mutex_);
   Status status = Status::OK();
   if (graphState == GraphState::RUN_DONE) {
     status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
