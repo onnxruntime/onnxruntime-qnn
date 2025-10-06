@@ -206,6 +206,12 @@ Qnn_ErrorHandle_t QnnInterface_getProviders(const QnnInterface_t*** providerList
   interface.QNN_INTERFACE_VER_NAME = real_providerList[0]->QNN_INTERFACE_VER_NAME;
   std::cout << "QnnSSRController::Instance().GetTiming() " << static_cast<int>(QnnSSRController::Instance().GetTiming()) << std::endl;
   switch(QnnSSRController::Instance().GetTiming()) {
+    case QnnSSRController::Timing::TensorCreateGraphTensor:
+      interface.QNN_INTERFACE_VER_NAME.tensorCreateGraphTensor = QnnTensor_createGraphTensor;
+      break;
+    case QnnSSRController::Timing::GraphAddNode:
+      interface.QNN_INTERFACE_VER_NAME.graphAddNode = QnnGraph_addNode;
+      break;
     case QnnSSRController::Timing::GraphFinalize:
       interface.QNN_INTERFACE_VER_NAME.graphFinalize = QnnGraph_finalize;
       break;
@@ -220,10 +226,8 @@ Qnn_ErrorHandle_t QnnInterface_getProviders(const QnnInterface_t*** providerList
   // interface.QNN_INTERFACE_VER_NAME.backendCreate = QnnBackend_create;
   // interface.QNN_INTERFACE_VER_NAME.contextCreate = QnnContext_create;
   // interface.QNN_INTERFACE_VER_NAME.backendValidateOpConfig = QnnBackend_validateOpConfig;
-  // interface.QNN_INTERFACE_VER_NAME.tensorCreateGraphTensor = QnnTensor_createGraphTensor;
   // interface.QNN_INTERFACE_VER_NAME.graphCreate = QnnGraph_create;
   // interface.QNN_INTERFACE_VER_NAME.graphRetrieve = QnnGraph_retrieve;
-  // interface.QNN_INTERFACE_VER_NAME.graphAddNode = QnnGraph_addNode;
   // interface.QNN_INTERFACE_VER_NAME.contextGetBinarySize = QnnContext_getBinarySize;
   // interface.QNN_INTERFACE_VER_NAME.contextGetBinary = QnnContext_getBinary;
   static std::vector<const QnnInterface_t*> m_providerPtrs = {&interface};

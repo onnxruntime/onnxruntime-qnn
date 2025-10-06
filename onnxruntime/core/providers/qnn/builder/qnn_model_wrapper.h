@@ -93,7 +93,7 @@ class QnnModelWrapper {
                      std::vector<std::string>&& param_tensor_names,
                      bool do_op_validation = false);
 
-  bool ComposeQnnGraph(bool build_json_qnn_graph = false);
+  Status ComposeQnnGraph(bool build_json_qnn_graph = false);
 
   Qnn_GraphHandle_t GetQnnGraph() const { return graph_; }
 
@@ -293,10 +293,10 @@ class QnnModelWrapper {
                                /*out*/ int64_t& axis) const;
 
  private:
-  bool CreateQnnInputOutputTensors(const std::string& qnn_node_name,
-                                   const std::vector<std::string>& names,
-                                   std::vector<Qnn_Tensor_t>& tensor_wrappers,
-                                   bool do_op_validation = false);
+  Status CreateQnnInputOutputTensors(const std::string& qnn_node_name,
+                                     const std::vector<std::string>& names,
+                                     std::vector<Qnn_Tensor_t>& tensor_wrappers,
+                                     bool do_op_validation = false);
 
   bool QnnParamExists(const std::string& param_tensor_name) const;
 

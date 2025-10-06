@@ -8,6 +8,7 @@
 #include <gsl/gsl>
 #include "QnnOpDef.h"
 
+#include "core/common/common.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
@@ -161,7 +162,8 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
   }
 
   const bool build_json_graph = !json_qnn_graph_path.empty();
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.ComposeQnnGraph(build_json_graph), "Failed to compose Qnn graph.");
+  Status status = qnn_model_wrapper.ComposeQnnGraph(build_json_graph);
+  ORT_RETURN_IF_NOT(status.IsOK(), "Failed to compose Qnn graph. ", status.ErrorMessage());
 
   if (build_json_graph) {
     const nlohmann::json& json_graph = qnn_model_wrapper.GetQnnJSONGraph();

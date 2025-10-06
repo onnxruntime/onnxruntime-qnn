@@ -1,6 +1,8 @@
 class QnnSSRController {
     public:
         enum class Timing {
+            TensorCreateGraphTensor,
+            GraphAddNode,
             GraphFinalize,
             GraphExecute
         };
