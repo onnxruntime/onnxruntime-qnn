@@ -99,7 +99,7 @@ void TryEnableQNNSaver(ProviderOptions& qnn_options) {
 }
 
 #if defined(_WIN32)
-void TriggerPDReset(const std::string& pd) {
+void TriggerPDReset() {
   const auto& logger = DefaultLoggingManager().DefaultLogger();
   PathString rpcmem_library_path{};
   ASSERT_STATUS_OK(GetRpcMemDynamicLibraryPath(rpcmem_library_path));
@@ -110,12 +110,11 @@ void TriggerPDReset(const std::string& pd) {
   RscFnHandleType_t rsc_call = reinterpret_cast<RscFnHandleType_t>(addr);
   typedef struct {
     int domain;
-  } RemoteRpcSessionClose_t;
-  RemoteRpcSessionClose_t scdata;
-  // TODO: Specify the PD
-  scdata.domain = std::stoi(pd);
+  } remote_rpc_process_clean_params;
+  remote_rpc_process_clean_params scdata;
+  scdata.domain = 3; /*CDSP_DOMAIN_ID*/
   LOGS(logger, VERBOSE) << "[Triggering] Restarting PD=" << scdata.domain;
-  rsc_call(/*FASTRPC_REMOTE_PROCESS_EXCEPTION*/ 9, &scdata, sizeof(RemoteRpcSessionClose_t));
+  rsc_call(/*FASTRPC_REMOTE_PROCESS_KILL*/ 6, &scdata, sizeof(remote_rpc_process_clean_params));
   LOGS(logger, VERBOSE) << "[Triggered] Restarting PD=" << scdata.domain;
 }
 #endif
@@ -252,7 +251,7 @@ void InferenceModel(const std::string& model_data, const char* log_id,
   if (trigger_ssr) {
 #if defined(_WIN32)
     // std::system(R"(.\SSRTestApp.exe CDSP -ErrorFatal)");
-    TriggerPDReset("0");
+    TriggerPDReset();
     std::this_thread::sleep_for(std::chrono::milliseconds(3000));
 #else
     // TODO: Trigger SSR on Android and Linux

@@ -1,3 +1,4 @@
 LIBRARY QnnMockSSR
 EXPORTS
     QnnInterface_getProviders
+    GetQnnSSRController
