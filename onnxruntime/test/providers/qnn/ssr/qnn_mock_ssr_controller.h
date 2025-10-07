@@ -1,4 +1,4 @@
-class QnnSSRController {
+class QnnMockSSRController {
     public:
         enum class Timing {
             TensorCreateGraphTensor,
@@ -7,8 +7,8 @@ class QnnSSRController {
             GraphExecute
         };
 
-        static QnnSSRController& Instance() {
-            static QnnSSRController instance;
+        static QnnMockSSRController& Instance() {
+            static QnnMockSSRController instance;
             return instance;
         }
 
@@ -21,9 +21,9 @@ class QnnSSRController {
         }
 
     private:
-        QnnSSRController() = default;
-        QnnSSRController(const QnnSSRController&) = delete;
-        QnnSSRController& operator=(const QnnSSRController&) = delete;
+        QnnMockSSRController() = default;
+        QnnMockSSRController(const QnnMockSSRController&) = delete;
+        QnnMockSSRController& operator=(const QnnMockSSRController&) = delete;
 
         // The timing to trigger SSR
         Timing timing_;

@@ -4,11 +4,11 @@
 #include <thread>
 #include "QnnCommon.h"
 #include "QnnInterface.h"
-#include "ssr_controller.h"
+#include "qnn_mock_ssr_controller.h"
 #include "rpcmem_utils.h"
 
 extern "C"
-QnnSSRController* GetQnnSSRController() { return &QnnSSRController::Instance(); }
+QnnMockSSRController* GetQnnMockSSRController() { return &QnnMockSSRController::Instance(); }
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -92,13 +92,13 @@ Qnn_ErrorHandle_t QnnContext_create(Qnn_BackendHandle_t backend,
 QNN_API
 Qnn_ErrorHandle_t QnnBackend_validateOpConfig(Qnn_BackendHandle_t backend,
                                               Qnn_OpConfig_t opConfig) {
-#if defined(_WIN32)
-  typedef Qnn_ErrorHandle_t (*QnnApiFnType_t)(Qnn_BackendHandle_t, Qnn_OpConfig_t);
-  FARPROC addr = GetProcAddress(lib_handle, "QnnBackend_validateOpConfig");
-  QnnApiFnType_t real_QnnBackend_validateOpConfig = reinterpret_cast<QnnApiFnType_t>(addr);
-#endif  // defined(_WIN32)
-  return real_QnnBackend_validateOpConfig(backend, opConfig);
-  // return QNN_SUCCESS;
+  static int call_cnt = 0;
+  if (call_cnt == 0) {
+    call_cnt += 1;
+    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
+  } else {
+    return real_providerList[0]->QNN_INTERFACE_VER_NAME.backendValidateOpConfig(backend, opConfig);
+  }
 }
 
 QNN_API
@@ -121,8 +121,7 @@ Qnn_ErrorHandle_t QnnTensor_createGraphTensor(Qnn_GraphHandle_t graph, Qnn_Tenso
     onnxruntime::test::TriggerPDReset();
     std::this_thread::sleep_for(std::chrono::milliseconds(3000));
   }
-  return real_providerList[0]->QNN_INTERFACE_VER_NAME.tensorCreateGraphTensor(
-    graph, tensor);
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.tensorCreateGraphTensor(graph, tensor);
 }
 
 QNN_API
@@ -134,8 +133,7 @@ Qnn_ErrorHandle_t QnnGraph_retrieve(Qnn_ContextHandle_t contextHandle,
     call_cnt += 1;
     return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
   } else {
-    return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphRetrieve(
-      contextHandle, graphName, graphHandle);
+    return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphRetrieve(contextHandle, graphName, graphHandle);
   }
 }
 
@@ -149,20 +147,19 @@ Qnn_ErrorHandle_t QnnGraph_finalize(Qnn_GraphHandle_t graph,
     onnxruntime::test::TriggerPDReset();
     std::this_thread::sleep_for(std::chrono::milliseconds(3000));
   }
-  return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphFinalize(
-    graph, profileHandle, signalHandle);
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphFinalize(graph, profileHandle, signalHandle);
 }
 
 QNN_API
 Qnn_ErrorHandle_t QnnContext_getBinarySize(Qnn_ContextHandle_t context,
                                            Qnn_ContextBinarySize_t* binaryBufferSize) {
-#if defined(_WIN32)
-  typedef Qnn_ErrorHandle_t (*QnnApiFnType_t)(Qnn_ContextHandle_t, Qnn_ContextBinarySize_t*);
-  FARPROC addr = GetProcAddress(lib_handle, "QnnContext_getBinarySize");
-  QnnApiFnType_t real_QnnContext_getBinarySize = reinterpret_cast<QnnApiFnType_t>(addr);
-#endif  // defined(_WIN32)
-  return real_QnnContext_getBinarySize(context, binaryBufferSize);
-  // return QNN_SUCCESS;
+  static int call_cnt = 0;
+  if (call_cnt == 0) {
+    call_cnt += 1;
+    onnxruntime::test::TriggerPDReset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+  }
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.contextGetBinarySize(context, binaryBufferSize);
 }
 
 QNN_API
@@ -170,13 +167,14 @@ Qnn_ErrorHandle_t QnnContext_getBinary(Qnn_ContextHandle_t context,
                                        void* binaryBuffer,
                                        Qnn_ContextBinarySize_t binaryBufferSize,
                                        Qnn_ContextBinarySize_t* writtenBufferSize) {
-#if defined(_WIN32)
-  typedef Qnn_ErrorHandle_t (*QnnApiFnType_t)(Qnn_ContextHandle_t, void*, Qnn_ContextBinarySize_t, Qnn_ContextBinarySize_t*);
-  FARPROC addr = GetProcAddress(lib_handle, "QnnContext_getBinary");
-  QnnApiFnType_t real_QnnContext_getBinary = reinterpret_cast<QnnApiFnType_t>(addr);
-#endif  // defined(_WIN32)
-  return real_QnnContext_getBinary(context, binaryBuffer, binaryBufferSize, writtenBufferSize);
-  // return QNN_SUCCESS;
+  static int call_cnt = 0;
+  if (call_cnt == 0) {
+    call_cnt += 1;
+    onnxruntime::test::TriggerPDReset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+  }
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.contextGetBinary(
+    context, binaryBuffer, binaryBufferSize, writtenBufferSize);
 }
 
 QNN_API
@@ -205,18 +203,17 @@ Qnn_ErrorHandle_t QnnInterface_getProviders(const QnnInterface_t*** providerList
   interface.providerName = "MockSSR";
   interface.apiVersion = real_providerList[0]->apiVersion;
   interface.QNN_INTERFACE_VER_NAME = real_providerList[0]->QNN_INTERFACE_VER_NAME;
-  std::cout << "QnnSSRController::Instance().GetTiming() " << static_cast<int>(QnnSSRController::Instance().GetTiming()) << std::endl;
-  switch(QnnSSRController::Instance().GetTiming()) {
-    case QnnSSRController::Timing::TensorCreateGraphTensor:
+  switch(QnnMockSSRController::Instance().GetTiming()) {
+    case QnnMockSSRController::Timing::TensorCreateGraphTensor:
       interface.QNN_INTERFACE_VER_NAME.tensorCreateGraphTensor = QnnTensor_createGraphTensor;
       break;
-    case QnnSSRController::Timing::GraphAddNode:
+    case QnnMockSSRController::Timing::GraphAddNode:
       interface.QNN_INTERFACE_VER_NAME.graphAddNode = QnnGraph_addNode;
       break;
-    case QnnSSRController::Timing::GraphFinalize:
+    case QnnMockSSRController::Timing::GraphFinalize:
       interface.QNN_INTERFACE_VER_NAME.graphFinalize = QnnGraph_finalize;
       break;
-    case QnnSSRController::Timing::GraphExecute:
+    case QnnMockSSRController::Timing::GraphExecute:
       interface.QNN_INTERFACE_VER_NAME.graphExecute = QnnGraph_execute;
       break;
     default:
