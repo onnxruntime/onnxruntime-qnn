@@ -350,7 +350,7 @@ Status QnnBackendManager::setState(GraphState state, uint32_t htp_power_config_c
     ORT_RETURN_IF(timer_ == nullptr, "timer is not started");
   } else {
     if (timer_resource.timer_thread_in_use) {
-        timer_->abortTimer();
+      timer_->abortTimer();
     }
   }
   if (state != graphState) {
