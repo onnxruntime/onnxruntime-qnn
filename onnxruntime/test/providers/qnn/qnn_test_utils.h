@@ -464,7 +464,6 @@ void InferenceModel(const std::string& model_data, const char* log_id,
                     ExpectedEPNodeAssignment expected_ep_assignment, const NameMLValMap& feeds,
                     std::vector<OrtValue>& output_vals,
                     bool is_qnn_ep = false,
-                    bool trigger_ssr = false,
                     const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                     std::function<void(const Graph&)>* graph_checker = nullptr);
 
@@ -529,8 +528,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
                                  logging::Severity log_severity = logging::Severity::kERROR,
                                  const std::string& qnn_ctx_model_path = "",
                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
-                                 std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr,
-                                 bool trigger_ssr = false) {
+                                 std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr) {
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
@@ -611,12 +609,12 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
     model_proto.SerializeToString(&qnn_ctx_model_data);
     // Run QNN context cache model on QNN EP and collect outputs.
     InferenceModel(qnn_ctx_model_data, "qnn_ctx_model_logger", qnn_options,
-                   expected_ep_assignment, qdq_helper.feeds_, qnn_qdq_outputs, is_qnn_ep, trigger_ssr, session_option_pairs);
+                   expected_ep_assignment, qdq_helper.feeds_, qnn_qdq_outputs, is_qnn_ep, session_option_pairs);
   } else {
     // Run QDQ model on QNN EP and collect outputs.
     // Only need to apply the extra session options to this QDQ model inference on QNN EP
     InferenceModel(qdq_model_data, "qdq_model_logger", qnn_options, expected_ep_assignment,
-                   qdq_helper.feeds_, qnn_qdq_outputs, is_qnn_ep, trigger_ssr, session_option_pairs, qnn_ep_graph_checker);
+                   qdq_helper.feeds_, qnn_qdq_outputs, is_qnn_ep, session_option_pairs, qnn_ep_graph_checker);
   }
 
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
@@ -744,8 +742,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                                   float tolerance = 0.004,
                                   logging::Severity log_severity = logging::Severity::kERROR,
                                   const std::string& qnn_ctx_model_path = "",
-                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
-                                  bool trigger_ssr = false) {
+                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
@@ -811,12 +808,12 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     model_proto.SerializeToString(&qnn_ctx_model_data);
     // Run QNN context cache model on QNN EP and collect outputs.
     InferenceModel(qnn_ctx_model_data, "qnn_ctx_model_logger", qnn_options,
-                   expected_ep_assignment, f16_helper.feeds_, qnn_f16_outputs, is_qnn_ep, trigger_ssr, session_option_pairs);
+                   expected_ep_assignment, f16_helper.feeds_, qnn_f16_outputs, is_qnn_ep, session_option_pairs);
   } else {
     // Run QDQ model on QNN EP and collect outputs.
     // Only need to apply the extra session options to this QDQ model inference on QNN EP
     InferenceModel(f16_model_data, "fp16_model_logger", qnn_options, expected_ep_assignment,
-                   f16_helper.feeds_, qnn_f16_outputs, is_qnn_ep, trigger_ssr, session_option_pairs);
+                   f16_helper.feeds_, qnn_f16_outputs, is_qnn_ep, session_option_pairs);
   }
 
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {

@@ -1,9 +1,11 @@
 #include <cassert>
 #include <iostream>
 #include <vector>
+#include <thread>
 #include "QnnCommon.h"
 #include "QnnInterface.h"
 #include "ssr_controller.h"
+#include "rpcmem_utils.h"
 
 extern "C"
 QnnSSRController* GetQnnSSRController() { return &QnnSSRController::Instance(); }
@@ -28,10 +30,9 @@ Qnn_ErrorHandle_t QnnGraph_create(Qnn_ContextHandle_t contextHandle,
   if (call_cnt == 0) {
     call_cnt += 1;
     return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
-  } else {
-    return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphCreate(
-      contextHandle, graphName, config, graphHandle);
   }
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphCreate(
+    contextHandle, graphName, config, graphHandle);
 }
 
 QNN_API
@@ -105,11 +106,11 @@ Qnn_ErrorHandle_t QnnGraph_addNode(Qnn_GraphHandle_t graph, Qnn_OpConfig_t opCon
   static int call_cnt = 0;
   if (call_cnt == 0) {
     call_cnt += 1;
-    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
-  } else {
-    return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphAddNode(
-      graph, opConfig);
+    onnxruntime::test::TriggerPDReset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
   }
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphAddNode(
+    graph, opConfig);
 }
 
 QNN_API
@@ -117,11 +118,11 @@ Qnn_ErrorHandle_t QnnTensor_createGraphTensor(Qnn_GraphHandle_t graph, Qnn_Tenso
   static int call_cnt = 0;
   if (call_cnt == 0) {
     call_cnt += 1;
-    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
-  } else {
-    return real_providerList[0]->QNN_INTERFACE_VER_NAME.tensorCreateGraphTensor(
-      graph, tensor);
+    onnxruntime::test::TriggerPDReset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
   }
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.tensorCreateGraphTensor(
+    graph, tensor);
 }
 
 QNN_API
@@ -145,11 +146,11 @@ Qnn_ErrorHandle_t QnnGraph_finalize(Qnn_GraphHandle_t graph,
   static int call_cnt = 0;
   if (call_cnt == 0) {
     call_cnt += 1;
-    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
-  } else {
-    return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphFinalize(
-      graph, profileHandle, signalHandle);
+    onnxruntime::test::TriggerPDReset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
   }
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphFinalize(
+    graph, profileHandle, signalHandle);
 }
 
 QNN_API
@@ -189,11 +190,11 @@ Qnn_ErrorHandle_t QnnGraph_execute(Qnn_GraphHandle_t graphHandle,
   static int call_cnt = 0;
   if (call_cnt == 0) {
     call_cnt += 1;
-    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
-  } else {
-    return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphExecute(graphHandle,
-      inputs, numInputs, outputs, numOutputs, profileHandle, signalHandle);
+    onnxruntime::test::TriggerPDReset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
   }
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphExecute(graphHandle,
+    inputs, numInputs, outputs, numOutputs, profileHandle, signalHandle);
 }
 
 extern "C"

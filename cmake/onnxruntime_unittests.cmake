@@ -770,6 +770,7 @@ if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_RED
     ${TEST_SRC_DIR}/providers/qnn/ssr/ssr_test_mock_qnn.cc
     ${TEST_SRC_DIR}/providers/qnn/ssr/ssr_mock_qnn.def
   )
+  target_link_libraries(QnnMockSSR PRIVATE onnxruntime_common)
   target_include_directories(QnnMockSSR PRIVATE ${onnxruntime_QNN_HOME}/include/QNN)
   if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
     list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_shared)

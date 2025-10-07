@@ -1,8 +1,13 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License
 
+#include <filesystem>
+#include "core/common/common.h"
+#include "core/common/path_string.h"
+#include "core/common/status.h"
+#include "test/util/include/test/test_environment.h"
 #if defined(_WIN32)
-#include <libloaderapi.h>
+#include <windows.h>
 #endif
 namespace onnxruntime {
 namespace test {
@@ -100,6 +105,21 @@ Status GetRpcMemDynamicLibraryPath(PathString& path_out) {
   return Status::OK();
 
 #endif  // !defined(_WIN32)
+}
+
+void TriggerPDReset() {
+  onnxruntime::PathString rpcmem_library_path{};
+  Status res = GetRpcMemDynamicLibraryPath(rpcmem_library_path);
+  HMODULE lib_handle = LoadLibraryW(rpcmem_library_path.c_str());
+  typedef int (*RscFnHandleType_t)(uint32_t, void*, uint32_t);
+  FARPROC addr = GetProcAddress(lib_handle, "remote_session_control");
+  RscFnHandleType_t rsc_call = reinterpret_cast<RscFnHandleType_t>(addr);
+  typedef struct {
+    int domain;
+  } remote_rpc_process_clean_params;
+  remote_rpc_process_clean_params scdata;
+  scdata.domain = 3; /*CDSP_DOMAIN_ID*/
+  rsc_call(/*FASTRPC_REMOTE_PROCESS_KILL*/ 6, &scdata, sizeof(remote_rpc_process_clean_params));
 }
 }  // namespace test
 }  // namespace onnxruntime

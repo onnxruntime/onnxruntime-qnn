@@ -4,7 +4,6 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include "test/providers/qnn/qnn_test_utils.h"
-#include "test/providers/qnn/rpcmem_utils.h"
 #include <cassert>
 #include "test/util/include/asserts.h"
 #include "test/util/include/default_providers.h"
@@ -97,27 +96,6 @@ void TryEnableQNNSaver(ProviderOptions& qnn_options) {
 #endif  // defined(_WIN32)
   }
 }
-
-#if defined(_WIN32)
-void TriggerPDReset() {
-  const auto& logger = DefaultLoggingManager().DefaultLogger();
-  PathString rpcmem_library_path{};
-  ASSERT_STATUS_OK(GetRpcMemDynamicLibraryPath(rpcmem_library_path));
-  LOGS(logger, VERBOSE) << "rpcmem_library_path " << rpcmem_library_path.c_str();
-  HMODULE lib_handle = LoadLibraryW(rpcmem_library_path.c_str());
-  typedef int (*RscFnHandleType_t)(uint32_t, void*, uint32_t);
-  FARPROC addr = GetProcAddress(lib_handle, "remote_session_control");
-  RscFnHandleType_t rsc_call = reinterpret_cast<RscFnHandleType_t>(addr);
-  typedef struct {
-    int domain;
-  } remote_rpc_process_clean_params;
-  remote_rpc_process_clean_params scdata;
-  scdata.domain = 3; /*CDSP_DOMAIN_ID*/
-  LOGS(logger, VERBOSE) << "[Triggering] Restarting PD=" << scdata.domain;
-  rsc_call(/*FASTRPC_REMOTE_PROCESS_KILL*/ 6, &scdata, sizeof(remote_rpc_process_clean_params));
-  LOGS(logger, VERBOSE) << "[Triggered] Restarting PD=" << scdata.domain;
-}
-#endif
 
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
@@ -226,7 +204,6 @@ void InferenceModel(const std::string& model_data, const char* log_id,
                     ExpectedEPNodeAssignment expected_ep_assignment, const NameMLValMap& feeds,
                     std::vector<OrtValue>& output_vals,
                     bool is_qnn_ep,
-                    bool trigger_ssr,
                     const std::unordered_map<std::string, std::string>& session_option_pairs,
                     std::function<void(const Graph&)>* graph_checker) {
   SessionOptions so;
@@ -247,16 +224,6 @@ void InferenceModel(const std::string& model_data, const char* log_id,
   }
   ASSERT_STATUS_OK(session_object.Load(model_data.data(), static_cast<int>(model_data.size())));
   ASSERT_STATUS_OK(session_object.Initialize());
-
-  if (trigger_ssr) {
-#if defined(_WIN32)
-    // std::system(R"(.\SSRTestApp.exe CDSP -ErrorFatal)");
-    TriggerPDReset();
-    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
-#else
-    // TODO: Trigger SSR on Android and Linux
-#endif
-  }
 
   const auto& graph = session_object.GetGraph();
 
