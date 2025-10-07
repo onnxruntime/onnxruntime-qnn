@@ -16,15 +16,15 @@
 
 namespace onnxruntime {
 namespace test {
-namespace qnn_ssr {
+
 #if defined(_WIN32)
+namespace qnn_ssr {
   #include <windows.h>
   HMODULE lib_handle = LoadLibraryW(L"QnnMockSSR.dll");
   FARPROC addr = GetProcAddress(lib_handle, "GetQnnMockSSRController");
   typedef QnnMockSSRController* (*GetQnnMockSSRControllerFn_t)();
   GetQnnMockSSRControllerFn_t GetQnnMockSSRController = reinterpret_cast<GetQnnMockSSRControllerFn_t>(addr);
   QnnMockSSRController* controller = GetQnnMockSSRController();
-#endif  // defined(_WIN32)
   auto input_def = TestInputDef<float>({1, 2, 3, 3}, false, {-10.0f, 10.0f});
   auto scale_def = TestInputDef<float>({2}, true, {1.0f, 2.0f});
   auto bias_def = TestInputDef<float>({2}, true, {1.0f, 3.0f});
@@ -34,8 +34,6 @@ namespace qnn_ssr {
     {"enable_ssr_handling", "1"},
   };
 }  // namespace qnn_ssr
-
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 TEST_F(QnnHTPBackendTests, SSRTensorCreateGraphTensor) {
   qnn_ssr::controller->SetTiming(QnnMockSSRController::Timing::TensorCreateGraphTensor);
@@ -88,8 +86,7 @@ TEST_F(QnnHTPBackendTests, SSRGraphExecute) {
                   true,
                   nullptr);
 }
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
-
+#endif  // defined(_WIN32)
 }  // namespace test
 }  // namespace onnxruntime
 

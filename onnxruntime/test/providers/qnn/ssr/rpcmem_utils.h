@@ -108,6 +108,7 @@ Status GetRpcMemDynamicLibraryPath(PathString& path_out) {
 }
 
 void TriggerPDReset() {
+#if defined(_WIN32)
   onnxruntime::PathString rpcmem_library_path{};
   Status res = GetRpcMemDynamicLibraryPath(rpcmem_library_path);
   HMODULE lib_handle = LoadLibraryW(rpcmem_library_path.c_str());
@@ -120,6 +121,7 @@ void TriggerPDReset() {
   remote_rpc_process_clean_params scdata;
   scdata.domain = 3; /*CDSP_DOMAIN_ID*/
   rsc_call(/*FASTRPC_REMOTE_PROCESS_KILL*/ 6, &scdata, sizeof(remote_rpc_process_clean_params));
+#endif  // !defined(_WIN32)
 }
 }  // namespace test
 }  // namespace onnxruntime

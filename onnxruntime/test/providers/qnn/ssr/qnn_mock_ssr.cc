@@ -1,5 +1,4 @@
 #include <cassert>
-#include <iostream>
 #include <vector>
 #include <thread>
 #include "QnnCommon.h"
@@ -19,7 +18,6 @@ QnnApiFnType_t real_QnnInterface_getProviders = reinterpret_cast<QnnApiFnType_t>
 const QnnInterface_t** real_providerList{nullptr};
 uint32_t real_numProviders{0};
 auto res = real_QnnInterface_getProviders((const QnnInterface_t***)&real_providerList, &real_numProviders);
-#endif  // defined(_WIN32)
 
 QNN_API
 Qnn_ErrorHandle_t QnnGraph_create(Qnn_ContextHandle_t contextHandle,
@@ -194,6 +192,7 @@ Qnn_ErrorHandle_t QnnGraph_execute(Qnn_GraphHandle_t graphHandle,
   return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphExecute(graphHandle,
     inputs, numInputs, outputs, numOutputs, profileHandle, signalHandle);
 }
+#endif  // defined(_WIN32)
 
 extern "C"
 Qnn_ErrorHandle_t QnnInterface_getProviders(const QnnInterface_t*** providerList,
@@ -201,6 +200,7 @@ Qnn_ErrorHandle_t QnnInterface_getProviders(const QnnInterface_t*** providerList
   static QnnInterface_t interface;
   interface.backendId = 0;
   interface.providerName = "MockSSR";
+#if defined(_WIN32)
   interface.apiVersion = real_providerList[0]->apiVersion;
   interface.QNN_INTERFACE_VER_NAME = real_providerList[0]->QNN_INTERFACE_VER_NAME;
   switch(QnnMockSSRController::Instance().GetTiming()) {
@@ -228,6 +228,7 @@ Qnn_ErrorHandle_t QnnInterface_getProviders(const QnnInterface_t*** providerList
   // interface.QNN_INTERFACE_VER_NAME.graphRetrieve = QnnGraph_retrieve;
   // interface.QNN_INTERFACE_VER_NAME.contextGetBinarySize = QnnContext_getBinarySize;
   // interface.QNN_INTERFACE_VER_NAME.contextGetBinary = QnnContext_getBinary;
+#endif  // defined(_WIN32)
   static std::vector<const QnnInterface_t*> m_providerPtrs = {&interface};
   *providerList = m_providerPtrs.data(),
   *numProviders = 1;
