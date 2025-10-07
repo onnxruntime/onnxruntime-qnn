@@ -209,7 +209,7 @@ TEST_F(QnnABIHTPBackendTests, MaxPool_Large_Input_HTP_u8) {
 TEST_F(QnnABIHTPBackendTests, MaxPool1D_ReshapeNodesPresent) {
   auto build_test_case = [](ModelTestBuilder& builder) {
     NodeArg* input = builder.MakeInput<float>(std::vector<int64_t>{1, 3, 3},
-                                              GetFloatDataInRange(-10.0f, 10.0f, 9));
+                                              GetFloatDataInRangeABI(-10.0f, 10.0f, 9));
     NodeArg* output = builder.MakeOutput();
     auto& maxpool_node = builder.AddNode("MaxPool", {input}, {output});
     maxpool_node.AddAttribute("kernel_shape", std::vector<int64_t>{3});
@@ -421,7 +421,7 @@ TEST_F(QnnABIHTPBackendTests, MaxPool_AutoPad_SAME_UPPER_u8) {
 
 // QDQ GlobalMaxPool test
 TEST_F(QnnABIHTPBackendTests, GlobalMaxPool_u8) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 18);
+  std::vector<float> input_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 18);
   RunQDQPoolOpTest<uint8_t>("GlobalMaxPool",
                             TestInputDef<float>({1, 2, 3, 3}, false, input_data),  // Dynamic input with range [-10, 10]
                             {},
@@ -429,7 +429,7 @@ TEST_F(QnnABIHTPBackendTests, GlobalMaxPool_u8) {
 }
 
 TEST_F(QnnABIHTPBackendTests, GlobalMaxPool_u16) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 18);
+  std::vector<float> input_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 18);
   RunQDQPoolOpTest<uint16_t>("GlobalMaxPool",
                              TestInputDef<float>({1, 2, 3, 3}, false, input_data),  // Dynamic input with range [-10, 10]
                              {},

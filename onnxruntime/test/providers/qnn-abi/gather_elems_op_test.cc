@@ -233,7 +233,7 @@ TEST_F(QnnABIHTPBackendTests, GatherElems_DataUint8_StaticNegIndicesInt64) {
 // Axis is negative (points to last dim).
 TEST_F(QnnABIHTPBackendTests, GatherElems_DataUint16_StaticNegIndicesInt64) {
   const std::vector<int64_t> input_shape = {1, 2, 3, 3};
-  const std::vector<float> input_data = GetSequentialFloatData(input_shape, -8.0f, 1.0f);
+  const std::vector<float> input_data = GetSequentialFloatDataABI(input_shape, -8.0f, 1.0f);
   RunHTPQDQGatherElemsOpTest<uint16_t, int64_t>(
       TestInputDef<float>(input_shape, false, input_data),
       TestInputDef<int64_t>({1, 1, 2, 2}, true, {0, -1, -3, 2}),

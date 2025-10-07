@@ -140,7 +140,7 @@ inline QuantParams<QType> GetDataQuantParams(gsl::span<const float> data, bool s
  * \param num_elems The number of elements in the result. Should be at least 3 to include min, 0, and max.
  * \return A vector of floats with elements set to values in the specified range.
  */
-std::vector<float> GetFloatDataInRange(float min_val, float max_val, size_t num_elems);
+std::vector<float> GetFloatDataInRangeABI(float min_val, float max_val, size_t num_elems);
 
 /**
  * Returns a float vector with sequential data.
@@ -150,7 +150,7 @@ std::vector<float> GetFloatDataInRange(float min_val, float max_val, size_t num_
  * \param step The step size.
  * \return A vector of sequential floats.
  */
-std::vector<float> GetSequentialFloatData(const std::vector<int64_t>& shape, float start = 0.0f, float step = 1.0f);
+std::vector<float> GetSequentialFloatDataABI(const std::vector<int64_t>& shape, float start = 0.0f, float step = 1.0f);
 
 // Class that defines an input that can be created with ModelTestBuilder.
 // Defines whether the input is an initializer and if the data should be randomized or if
@@ -308,7 +308,7 @@ struct TestInputDef {
 };
 
 // Convert a float input definition to a float16 input definition.
-TestInputDef<MLFloat16> ConvertToFP16InputDef(const TestInputDef<float>& input_def);
+TestInputDef<MLFloat16> ConvertToFP16InputDefABI(const TestInputDef<float>& input_def);
 
 template <typename QType>
 inline QuantParams<QType> GetTestInputQuantParams(const TestInputDef<float>& input_def, bool symmetric = false) {
@@ -471,13 +471,11 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
  * \param session_option_pairs extra session options.
  * \param graph_checker Function called on the Graph.
  */
-void InferenceModel(const std::string& model_data, const char* log_id,
-                    const ProviderOptions& provider_options,
-                    ExpectedEPNodeAssignment expected_ep_assignment, const NameMLValMap& feeds,
-                    std::vector<OrtValue>& output_vals,
-                    bool is_qnn_ep = false,
-                    const std::unordered_map<std::string, std::string>& session_option_pairs = {},
-                    std::function<void(const Graph&)>* graph_checker = nullptr);
+void InferenceModelCPU(const std::string& model_data,
+                       const char* log_id,
+                       ExpectedEPNodeAssignment expected_ep_assignment,
+                       const NameMLValMap& feeds,
+                       std::vector<OrtValue>& output_vals);
 
 void InferenceModelABI(const std::string& model_data,
                        const char* log_id,
@@ -505,7 +503,7 @@ void InferenceModelABI(const std::string& model_data,
  *
  * \param qnn_options QNN EP provider options that may be modified to enable QNN Saver.
  */
-void TryEnableQNNSaver(ProviderOptions& qnn_options);
+void TryEnableQNNSaverABI(ProviderOptions& qnn_options);
 
 struct QDQTolerance {
   // When comparing output activations between QNN EP and CPU EP (both running the QDQ model),
@@ -679,8 +677,8 @@ inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn,
 
   // Run f32 model on CPU EP and collect outputs.
   std::vector<OrtValue> cpu_f32_outputs;
-  InferenceModel(f32_model_data, "f32_model_logger", {}, ExpectedEPNodeAssignment::All,
-                 f32_helper.feeds_, cpu_f32_outputs);
+  InferenceModelCPU(f32_model_data, "f32_model_logger", ExpectedEPNodeAssignment::All,
+                    f32_helper.feeds_, cpu_f32_outputs);
   ASSERT_FALSE(cpu_f32_outputs.empty());
 
   const size_t num_outputs = cpu_f32_outputs.size();
@@ -722,10 +720,10 @@ inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn,
 
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<OrtValue> cpu_qdq_outputs;
-  InferenceModel(qdq_model_data, "qdq_model_logger", {}, ExpectedEPNodeAssignment::All,
-                 qdq_helper.feeds_, cpu_qdq_outputs);
+  InferenceModelCPU(qdq_model_data, "qdq_model_logger", ExpectedEPNodeAssignment::All,
+                    qdq_helper.feeds_, cpu_qdq_outputs);
 
-  TryEnableQNNSaver(qnn_options);
+  TryEnableQNNSaverABI(qnn_options);
 
   // Run with QNN-ABI.
   std::vector<OrtValue> qnn_abi_qdq_outputs;
@@ -892,8 +890,8 @@ inline void TestFp16ModelAccuracyABI(const GetTestModelFn& f32_model_fn,
 
   // Run f32 model on CPU EP and collect outputs.
   std::vector<OrtValue> cpu_f32_outputs;
-  InferenceModel(f32_model_data, "f32_model_logger", {}, ExpectedEPNodeAssignment::All,
-                 f32_helper.feeds_, cpu_f32_outputs);
+  InferenceModelCPU(f32_model_data, "f32_model_logger", ExpectedEPNodeAssignment::All,
+                    f32_helper.feeds_, cpu_f32_outputs);
   ASSERT_FALSE(cpu_f32_outputs.empty());
 
   const size_t num_outputs = cpu_f32_outputs.size();
@@ -928,10 +926,10 @@ inline void TestFp16ModelAccuracyABI(const GetTestModelFn& f32_model_fn,
 
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<OrtValue> cpu_f16_outputs;
-  InferenceModel(f16_model_data, "fp16_model_logger", {}, ExpectedEPNodeAssignment::All,
-                 f16_helper.feeds_, cpu_f16_outputs);
+  InferenceModelCPU(f16_model_data, "fp16_model_logger", ExpectedEPNodeAssignment::All,
+                    f16_helper.feeds_, cpu_f16_outputs);
 
-  TryEnableQNNSaver(qnn_options);
+  TryEnableQNNSaverABI(qnn_options);
 
   // Run with QNN-ABI.
   std::vector<OrtValue> qnn_abi_f16_outputs;

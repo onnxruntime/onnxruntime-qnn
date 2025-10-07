@@ -73,7 +73,7 @@ std::vector<float> GetSequentialFloatDataABI(const std::vector<int64_t>& shape, 
   return data;
 }
 
-TestInputDef<MLFloat16> ConvertToFP16InputDefABIABI(const TestInputDef<float>& input_def) {
+TestInputDef<MLFloat16> ConvertToFP16InputDefABI(const TestInputDef<float>& input_def) {
   if (input_def.IsRawData()) {
     std::vector<MLFloat16> input_data_fp16;
     input_data_fp16.reserve(input_def.GetRawData().size());
@@ -212,6 +212,47 @@ void RunQnnModelTestABI(const GetTestModelFn& build_test_case, ProviderOptions p
                                helper.feeds_,
                                verification_params,
                                verify_outputs);
+}
+
+void InferenceModelCPU(const std::string& model_data,
+                       const char* log_id,
+                       ExpectedEPNodeAssignment expected_ep_assignment,
+                       const NameMLValMap& feeds,
+                       std::vector<OrtValue>& output_vals) {
+  SessionOptions so;
+  so.session_logid = log_id;
+  RunOptions run_options;
+  run_options.run_tag = so.session_logid;
+
+  InferenceSessionWrapper session_object{so, GetEnvironment()};
+
+  std::string provider_type = kCpuExecutionProvider;
+  ASSERT_STATUS_OK(session_object.Load(model_data.data(), static_cast<int>(model_data.size())));
+  ASSERT_STATUS_OK(session_object.Initialize());
+
+  const auto& graph = session_object.GetGraph();
+
+  auto ep_nodes = CountAssignedNodes(graph, provider_type);
+  if (expected_ep_assignment == ExpectedEPNodeAssignment::All) {
+    // Verify the entire graph is assigned to the EP
+    ASSERT_EQ(ep_nodes, graph.NumberOfNodes()) << "Not all nodes were assigned to " << provider_type;
+  } else if (expected_ep_assignment == ExpectedEPNodeAssignment::None) {
+    ASSERT_EQ(ep_nodes, 0) << "No nodes are supposed to be assigned to " << provider_type;
+  } else {
+    ASSERT_GT(ep_nodes, 0) << "No nodes were assigned to " << provider_type;
+  }
+
+  const auto& outputs = graph.GetOutputs();
+  std::vector<std::string> output_names;
+
+  output_names.reserve(outputs.size());
+  for (const auto* node_arg : outputs) {
+    if (node_arg->Exists()) {
+      output_names.push_back(node_arg->Name());
+    }
+  }
+
+  ASSERT_STATUS_OK(session_object.Run(run_options, feeds, output_names, &output_vals));
 }
 
 void InferenceModelABI(const std::string& model_data,

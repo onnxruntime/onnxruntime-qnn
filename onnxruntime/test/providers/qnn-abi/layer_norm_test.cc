@@ -33,36 +33,36 @@ static void RunLayerNormCpuTest(const TestInputDef<float>& input_def,
 }
 
 TEST_F(QnnABICPUBackendTests, LayerNorm) {
-  RunLayerNormCpuTest(TestInputDef<float>({2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                      TestInputDef<float>({2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+  RunLayerNormCpuTest(TestInputDef<float>({2, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 6)),
+                      TestInputDef<float>({2, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 6)),
                       {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
                       ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnABICPUBackendTests, LayerNorm1D_Axis0) {
-  RunLayerNormCpuTest(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+  RunLayerNormCpuTest(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 6)),
+                      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 6)),
                       {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
                       ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnABICPUBackendTests, LayerNorm1D_AxisLast) {
-  RunLayerNormCpuTest(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                      TestInputDef<float>({3}, false, GetFloatDataInRange(0.0f, 10.0f, 3)),
+  RunLayerNormCpuTest(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 6)),
+                      TestInputDef<float>({3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 3)),
                       {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
                       ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnABICPUBackendTests, LayerNorm2D) {
-  RunLayerNormCpuTest(TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 18)),
-                      TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 18)),
+  RunLayerNormCpuTest(TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 18)),
+                      TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 18)),
                       {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
                       ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnABICPUBackendTests, LayerNorm3D) {
-  RunLayerNormCpuTest(TestInputDef<float>({1, 2, 3, 3, 4}, false, GetFloatDataInRange(0.0f, 10.0f, 72)),
-                      TestInputDef<float>({1, 2, 3, 3, 4}, false, GetFloatDataInRange(0.0f, 10.0f, 72)),
+  RunLayerNormCpuTest(TestInputDef<float>({1, 2, 3, 3, 4}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 72)),
+                      TestInputDef<float>({1, 2, 3, 3, 4}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 72)),
                       {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
                       ExpectedEPNodeAssignment::All);
 }
@@ -160,8 +160,8 @@ TEST_F(QnnABIHTPBackendTests, LayerNorm1D_Axis0_Unsupported) {
 
 // Test accuracy of 8-bit QDQ LayerNorm with a static scale input.
 TEST_F(QnnABIHTPBackendTests, LayerNorm1D_LastAxis_StaticScale_AU8_WU8) {
-  RunLayerNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                                        TestInputDef<float>({3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),
+  RunLayerNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 6)),
+                                        TestInputDef<float>({3}, true, GetFloatDataInRangeABI(0.0f, 1.0f, 3)),
                                         TestInputDef<float>(),  // Implicit bias input
                                         {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
                                         ExpectedEPNodeAssignment::All);
@@ -169,9 +169,9 @@ TEST_F(QnnABIHTPBackendTests, LayerNorm1D_LastAxis_StaticScale_AU8_WU8) {
 
 // Test accuracy of 8-bit QDQ LayerNorm with a static scale input and an explicit bias input (static).
 TEST_F(QnnABIHTPBackendTests, LayerNorm1D_LastAxis_StaticScale_StaticBias_AU8_WU8_BU8) {
-  RunLayerNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                                        TestInputDef<float>({3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),
-                                        TestInputDef<float>({3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),
+  RunLayerNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 6)),
+                                        TestInputDef<float>({3}, true, GetFloatDataInRangeABI(0.0f, 1.0f, 3)),
+                                        TestInputDef<float>({3}, true, GetFloatDataInRangeABI(0.0f, 1.0f, 3)),
                                         {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
                                         ExpectedEPNodeAssignment::All);
 }
@@ -182,8 +182,8 @@ TEST_F(QnnABIHTPBackendTests, LayerNorm1D_QNN2_24_ImplicitBias_ValidationBug) {
   // QNN 2.28.0: Validation bug is fixed, but get accuracy errors.
   // QNN 2.28.2: All fixed.
   for (size_t i = 0; i < 15; i++) {  // Run it multiple times since this is an intermittent bug.
-    RunLayerNormQDQTest<uint16_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 1.0f, 6)),
-                                           TestInputDef<float>({3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),
+    RunLayerNormQDQTest<uint16_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRangeABI(0.0f, 1.0f, 6)),
+                                           TestInputDef<float>({3}, true, GetFloatDataInRangeABI(0.0f, 1.0f, 3)),
                                            TestInputDef<float>(),  // Implicit bias input
                                            {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
                                            ExpectedEPNodeAssignment::All,
@@ -194,8 +194,8 @@ TEST_F(QnnABIHTPBackendTests, LayerNorm1D_QNN2_24_ImplicitBias_ValidationBug) {
 TEST_F(QnnABIHTPBackendTests, LayerNorm1D_LastAxis_StaticScale_AU16_WU8) {
   // QNN 2.28.0: Get accuracy errors.
   // QNN 2.28.2: All fixed.
-  RunLayerNormQDQTest<uint16_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                                         TestInputDef<float>({3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),  // Static
+  RunLayerNormQDQTest<uint16_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 6)),
+                                         TestInputDef<float>({3}, true, GetFloatDataInRangeABI(0.0f, 1.0f, 3)),  // Static
                                          TestInputDef<float>(),
                                          {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},  // Last axis
                                          ExpectedEPNodeAssignment::All,
@@ -217,8 +217,8 @@ TEST_F(QnnABIHTPBackendTests, LayerNorm1D_LastAxis_StaticScale_AU16_WU8) {
 // QnnDsp <I> QnnGraph_finalize done. status 0x3ea
 // Failed to finalize QNN graph.
 TEST_F(QnnABIHTPBackendTests, DISABLED_LayerNorm1D_LastAxis_DynamicScale) {
-  RunLayerNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                                        TestInputDef<float>({3}, false, GetFloatDataInRange(0.0f, 1.0f, 3)),  // Dynamic
+  RunLayerNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 6)),
+                                        TestInputDef<float>({3}, false, GetFloatDataInRangeABI(0.0f, 1.0f, 3)),  // Dynamic
                                         TestInputDef<float>(),
                                         {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},  // Last axis
                                         ExpectedEPNodeAssignment::All);

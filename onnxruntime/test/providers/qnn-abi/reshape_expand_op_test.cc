@@ -62,7 +62,7 @@ TEST_F(QnnABICPUBackendTests, Reshape_AllowZeroAttr_Unsupported) {
 
 // Test Reshape of rank 4 -> rank 2.
 TEST_F(QnnABICPUBackendTests, Reshape_4D_f32) {
-  RunReshapeExpandTest("Reshape", TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+  RunReshapeExpandTest("Reshape", TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 48)),
                        TestInputDef<int64_t>({2}, true, {1, 48}),
                        {},  // Attributes
                        ExpectedEPNodeAssignment::All,
@@ -117,7 +117,7 @@ TEST_F(QnnABICPUBackendTests, Expand_6D) {
 
 // Test Reshape of rank 4 -> rank 2.
 TEST_F(QnnABIGPUBackendTests, Reshape_4D_f32) {
-  RunReshapeExpandTest("Reshape", TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+  RunReshapeExpandTest("Reshape", TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 48)),
                        TestInputDef<int64_t>({2}, true, {1, 48}),
                        {},  // Attributes
                        ExpectedEPNodeAssignment::All,
@@ -284,7 +284,7 @@ TEST_F(QnnABIHTPBackendTests, Reshape_AllowZeroAttr_Unsupported) {
 // Test 8-bit QDQ Reshape of rank 4 -> rank 2.
 TEST_F(QnnABIHTPBackendTests, Reshape_4D_u8) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Reshape",
-                                        TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+                                        TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 48)),
                                         TestInputDef<int64_t>({2}, true, {1, 48}),
                                         {},  // Attributes
                                         ExpectedEPNodeAssignment::All,
@@ -294,7 +294,7 @@ TEST_F(QnnABIHTPBackendTests, Reshape_4D_u8) {
 // Test 16-bit QDQ Reshape of rank 4 -> rank 2.
 TEST_F(QnnABIHTPBackendTests, Reshape_4D_u16) {
   RunQDQReshapeExpandTestOnHTP<uint16_t>("Reshape",
-                                         TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+                                         TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 48)),
                                          TestInputDef<int64_t>({2}, true, {1, 48}),
                                          {},  // Attributes
                                          ExpectedEPNodeAssignment::All,
@@ -327,7 +327,7 @@ TEST_F(QnnABIHTPBackendTests, Reshape_4D_int64) {
 // Test QDQ Reshape with a shape value of 0 (copy dimension from input)
 TEST_F(QnnABIHTPBackendTests, Reshape_4D_0MeansCopy) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Reshape",
-                                        TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+                                        TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 48)),
                                         TestInputDef<int64_t>({3}, true, {1, 0, 16}),  // zero means copy => '(1, 3, 16)'
                                         {},                                            // Attributes
                                         ExpectedEPNodeAssignment::All,
@@ -337,7 +337,7 @@ TEST_F(QnnABIHTPBackendTests, Reshape_4D_0MeansCopy) {
 // Test QDQ Reshape with a shape value of -1 (dimension is inferred from the expected number of elements)
 TEST_F(QnnABIHTPBackendTests, Reshape_4D_Neg1MeansInfer) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Reshape",
-                                        TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+                                        TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 48)),
                                         TestInputDef<int64_t>({3}, true, {1, 3, -1}),  // -1 means infer => '(1, 3, 16)'
                                         {},                                            // Attributes
                                         ExpectedEPNodeAssignment::All,

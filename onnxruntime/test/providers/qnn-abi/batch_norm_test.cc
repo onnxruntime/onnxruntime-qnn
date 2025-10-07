@@ -233,9 +233,9 @@ static void RunBatchNormFP16Test(const TestInputDef<float>& input_def,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  TestInputDef<MLFloat16> input_fp16_def = ConvertToFP16InputDef(input_def);
-  TestInputDef<MLFloat16> scale_fp16_def = ConvertToFP16InputDef(scale_def);
-  TestInputDef<MLFloat16> bias_fp16_def = ConvertToFP16InputDef(bias_def);
+  TestInputDef<MLFloat16> input_fp16_def = ConvertToFP16InputDefABI(input_def);
+  TestInputDef<MLFloat16> scale_fp16_def = ConvertToFP16InputDefABI(scale_def);
+  TestInputDef<MLFloat16> bias_fp16_def = ConvertToFP16InputDefABI(bias_def);
 
   // Runs model with DQ-> InstanceNorm -> Q and compares the outputs of the CPU and QNN EPs.
   TestFp16ModelAccuracyABI(BuildBatchNormTestCase<float>(input_def, scale_def, bias_def),

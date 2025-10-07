@@ -262,7 +262,7 @@ TEST_F(QnnABICPUBackendTests, Pad4dMix) {
 
 // Pad 5d supported
 TEST_F(QnnABICPUBackendTests, Pad5d) {
-  RunPadOpTest(TestInputDef<float>({1, 2, 2, 2, 2}, false, GetFloatDataInRange(1.0f, 10.0f, 16)),
+  RunPadOpTest(TestInputDef<float>({1, 2, 2, 2, 2}, false, GetFloatDataInRangeABI(1.0f, 10.0f, 16)),
                TestInputDef<int64_t>({10}, true, {0, 0, 0, 1, 0, 0, 0, 1, 0, 0}),
                TestInputDef<float>({1}, true, {5.0f}),
                {utils::MakeAttribute("mode", "constant")},
@@ -271,7 +271,7 @@ TEST_F(QnnABICPUBackendTests, Pad5d) {
 
 // Pad 6d supported
 TEST_F(QnnABICPUBackendTests, Pad6d) {
-  RunPadOpTest(TestInputDef<float>({1, 2, 2, 2, 2, 2}, false, GetFloatDataInRange(1.0f, 10.0f, 32)),
+  RunPadOpTest(TestInputDef<float>({1, 2, 2, 2, 2, 2}, false, GetFloatDataInRangeABI(1.0f, 10.0f, 32)),
                TestInputDef<int64_t>({12}, true, {0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
                {utils::MakeAttribute("mode", "constant")},
@@ -323,7 +323,7 @@ TEST_F(QnnABIHTPBackendTests, DISABLED_PadReflectMode_FP16_big_data) {
   bool has_constant_value_input = false;
   bool use_htp = true;
   bool enable_fp16_precision = true;
-  RunPadOpTest(TestInputDef<float>({1, 4, 512, 512}, false, GetFloatDataInRange(1.0f, 10.0f, 4 * 512 * 512)),
+  RunPadOpTest(TestInputDef<float>({1, 4, 512, 512}, false, GetFloatDataInRangeABI(1.0f, 10.0f, 4 * 512 * 512)),
                TestInputDef<int64_t>({8}, true, {0, 0, 3, 3, 0, 0, 3, 3}),
                TestInputDef<float>({1}, true, {0.0f}),
                {utils::MakeAttribute("mode", "reflect")},
@@ -545,7 +545,7 @@ TEST_F(QnnABIHTPBackendTests, DISABLED_Pad4dOutOfRangePadConstantValue) {
 }
 
 TEST_F(QnnABIHTPBackendTests, Pad5d) {
-  RunQDQPadOpTest<uint8_t>(TestInputDef<float>({1, 2, 2, 2, 2}, false, GetFloatDataInRange(1.0f, 10.0f, 16)),
+  RunQDQPadOpTest<uint8_t>(TestInputDef<float>({1, 2, 2, 2, 2}, false, GetFloatDataInRangeABI(1.0f, 10.0f, 16)),
                            TestInputDef<int64_t>({10}, true, {0, 0, 0, 1, 0, 0, 0, 1, 0, 0}),
                            TestInputDef<float>({1}, true, {2.0f}),
                            {utils::MakeAttribute("mode", "constant")},
