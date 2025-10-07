@@ -196,6 +196,7 @@ Status QnnBackendManager::setSustainedHighPerformance(uint32_t htp_power_config_
       remaining_duration = static_cast<unsigned long>(remainUs.count());
       if (timer_resource.timer_thread_in_use && remaining_duration > 0 && remaining_duration < timer_resource.sustainedTimerDuration) {
         timer_->abortTimer();
+        timer_resource.timer_thread_in_use = false;
       } else {
         status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
       }
@@ -351,6 +352,7 @@ Status QnnBackendManager::setState(GraphState state, uint32_t htp_power_config_c
   } else {
     if (timer_resource.timer_thread_in_use) {
       timer_->abortTimer();
+      timer_resource.timer_thread_in_use = false;
     }
   }
   if (state != graphState) {
