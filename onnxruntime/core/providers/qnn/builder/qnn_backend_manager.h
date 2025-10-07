@@ -517,6 +517,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
     static const unsigned long sustainedTimerDuration = 300000;
     std::atomic<bool> timer_thread_in_use = false;
     std::atomic<bool> caller_busy = false;
+    std::atomic<bool> timer_created = false;
   };
   TimerResource timer_resource;
   std::atomic<GraphState> graphState = GraphState::NONE;

@@ -158,11 +158,12 @@ Status ReadBinaryFromFile(const std::string& file_path, uint8_t* buffer, size_t 
 
 void QnnBackendManager::ReleaseTimerThread(uint32_t htp_power_config_client_id) {
   std::lock_guard<std::mutex> lk(state_mutex_);
-  if (timer_resource.timer_thread_in_use) {
+  if (timer_resource.timer_created) {
     timer_->deinitialize();
     graphState = GraphState::NONE;
     timer_resource.caller_busy = false;
     timer_resource.timer_thread_in_use = false;
+    timer_resource.timer_created = false;
   }
 
   if (timer_callback_arg != nullptr) {
@@ -386,6 +387,7 @@ void QnnBackendManager::createTimerThread(uint32_t htp_power_config_client_id) {
       delete timer_callback_arg;
       timer_callback_arg = nullptr;
     }
+    timer_resource.timer_created = true;
   } else {
     LOGS_DEFAULT(VERBOSE) << "Failed: Timer is nullptr";
   }
