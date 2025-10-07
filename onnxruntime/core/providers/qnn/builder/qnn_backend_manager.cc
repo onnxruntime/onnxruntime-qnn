@@ -158,7 +158,7 @@ Status ReadBinaryFromFile(const std::string& file_path, uint8_t* buffer, size_t 
 
 void QnnBackendManager::ReleaseTimerThread(uint32_t htp_power_config_client_id) {
   std::lock_guard<std::mutex> lk(state_mutex_);
-  if (timer_resource.timer_created) {
+  if (timer_resource.timer_created && timer_ != nullptr) {
     timer_->deinitialize();
     graphState = GraphState::NONE;
     timer_resource.caller_busy = false;
@@ -229,6 +229,7 @@ Status QnnBackendManager::setSustainedHighPerformance(uint32_t htp_power_config_
       status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
       graphState = GraphState::NONE;
       timer_resource.caller_busy = false;
+      timer_resource.timer_thread_in_use = false;
     }
   }
   return status;
@@ -372,7 +373,7 @@ void QnnBackendManager::timerCallback(void* user_data) {
 void QnnBackendManager::createTimerThread(uint32_t htp_power_config_client_id) {
   std::lock_guard<std::mutex> lk(state_mutex_);
   std::unique_ptr<Timer> temp(new Timer());
-  if (temp != nullptr) {
+  if (!timer_resource.timer_created && temp != nullptr) {
     timer_ = std::move(temp);
     if (timer_callback_arg != nullptr) {
       delete timer_callback_arg;
