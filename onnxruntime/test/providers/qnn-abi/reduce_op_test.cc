@@ -475,7 +475,7 @@ TEST_F(QnnABIHTPBackendTests, ReduceSumU8Opset11) {
 // - Uses opset 13, which has "axes" as an input.
 TEST_F(QnnABIHTPBackendTests, ReduceSumS8Opset13) {
   // non-symmetrical input range so output sum is not trivially zero.
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 20.0f, 9);
+  std::vector<float> input_data = GetFloatDataInRangeABI(-10.0f, 20.0f, 9);
 
   RunReduceOpQDQTest<int8_t>("ReduceSum",
                              TestInputDef<float>({3, 3}, false, input_data),
@@ -487,7 +487,7 @@ TEST_F(QnnABIHTPBackendTests, ReduceSumS8Opset13) {
 
 // Tests that keepdims = false generates expected results.
 TEST_F(QnnABIHTPBackendTests, ReduceSumS8Opset13_NoKeepDims) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 9);
+  std::vector<float> input_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 9);
 
   RunReduceOpQDQTest<int8_t>("ReduceSum",
                              TestInputDef<float>({3, 3}, false, input_data),
@@ -500,7 +500,7 @@ TEST_F(QnnABIHTPBackendTests, ReduceSumS8Opset13_NoKeepDims) {
 // Test rank 5 ReduceSum (s8 quant) with axes = [0, 1, 2, 3, 4], keep_dims = true
 TEST_F(QnnABIHTPBackendTests, ReduceSumS8Opset13_Rank5) {
   RunReduceOpQDQTest<int8_t>("ReduceSum",
-                             TestInputDef<float>({1, 3, 4, 4, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 96)),
+                             TestInputDef<float>({1, 3, 4, 4, 2}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 96)),
                              {0, 1, 2, 3, 4},  // axes
                              true,             // keepdims
                              13,               // opset
@@ -510,7 +510,7 @@ TEST_F(QnnABIHTPBackendTests, ReduceSumS8Opset13_Rank5) {
 // Test that QNN validation APIs reject inputs of unsupported ranks.
 TEST_F(QnnABIHTPBackendTests, ReduceSumS8Opset13_Rank6_Unsupported) {
   RunReduceOpQDQTest<int8_t>("ReduceSum",
-                             TestInputDef<float>({1, 3, 4, 4, 2, 1}, false, GetFloatDataInRange(-10.0f, 10.0f, 96)),
+                             TestInputDef<float>({1, 3, 4, 4, 2, 1}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 96)),
                              {-1},                             // axes
                              false,                            // keepdims
                              13,                               // opset
@@ -520,7 +520,7 @@ TEST_F(QnnABIHTPBackendTests, ReduceSumS8Opset13_Rank6_Unsupported) {
 // Test rank 5 ReduceSum (u8 quant) with axes = [-1], keep_dims = false
 TEST_F(QnnABIHTPBackendTests, ReduceSumU8Opset13_Rank5_LastAxis) {
   constexpr size_t num_elems = 2ULL * 12 * 124 * 2 * 4;
-  std::vector<float> input_data = GetFloatDataInRange(-100.0f, 100.0f, num_elems);
+  std::vector<float> input_data = GetFloatDataInRangeABI(-100.0f, 100.0f, num_elems);
   RunReduceOpQDQTest<uint8_t>("ReduceSum",
                               TestInputDef<float>({2, 12, 124, 2, 4}, false, input_data),
                               {-1},   // axes
@@ -567,7 +567,7 @@ TEST_F(QnnABIHTPBackendTests, ReduceMaxU8Opset13) {
 // - Uses int8 as the quantization type.
 // - Uses opset 18, which has "axes" as an input.
 TEST_F(QnnABIHTPBackendTests, ReduceMaxS8Opset18) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 9);
+  std::vector<float> input_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 9);
 
   RunReduceOpQDQTest<int8_t>("ReduceMax",
                              TestInputDef<float>({3, 3}, false, input_data),
@@ -614,7 +614,7 @@ TEST_F(QnnABIHTPBackendTests, ReduceMinU8Opset13) {
 //
 // Uses int8 as the quantization type.
 TEST_F(QnnABIHTPBackendTests, ReduceMinS8Opset18) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 9);
+  std::vector<float> input_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 9);
 
   RunReduceOpQDQTest<int8_t>("ReduceMin",
                              TestInputDef<float>({3, 3}, false, input_data),
@@ -673,7 +673,7 @@ TEST_F(QnnABIHTPBackendTests, ReduceMeanU8Opset13) {
 // - Uses int8 as the quantization type.
 // - Uses opset 18, which has "axes" as an input.
 TEST_F(QnnABIHTPBackendTests, ReduceMeanS8Opset18) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 20.0f, 48);
+  std::vector<float> input_data = GetFloatDataInRangeABI(-10.0f, 20.0f, 48);
 
   RunReduceOpQDQTest<int8_t>("ReduceMean",
                              TestInputDef<float>({1, 3, 4, 4}, false, input_data),

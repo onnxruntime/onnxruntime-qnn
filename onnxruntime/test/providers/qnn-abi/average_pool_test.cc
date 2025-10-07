@@ -63,7 +63,7 @@ static void RunQDQAveragePoolOpTest(const std::string& op_type,
 // AveragePool with kernel size equal to the spatial dimension of input tensor.
 TEST_F(QnnABICPUBackendTests, AveragePool_AsGlobal) {
   RunAveragePoolOpTest("AveragePool",
-                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 18))},
+                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 18))},
                        {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
                         utils::MakeAttribute("strides", std::vector<int64_t>{3, 3})},
                        ExpectedEPNodeAssignment::All);
@@ -72,7 +72,7 @@ TEST_F(QnnABICPUBackendTests, AveragePool_AsGlobal) {
 // Test GlobalAveragePool on QNN CPU backend.
 TEST_F(QnnABICPUBackendTests, GlobalAveragePool) {
   RunAveragePoolOpTest("GlobalAveragePool",
-                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 18))},
+                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 18))},
                        {},
                        ExpectedEPNodeAssignment::All);
 }
@@ -80,7 +80,7 @@ TEST_F(QnnABICPUBackendTests, GlobalAveragePool) {
 // AveragePool that counts padding.
 TEST_F(QnnABICPUBackendTests, AveragePool_CountIncludePad) {
   RunAveragePoolOpTest("AveragePool",
-                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 18))},
+                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 18))},
                        {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{1, 1}),
                         utils::MakeAttribute("count_include_pad", static_cast<int64_t>(1))},
                        ExpectedEPNodeAssignment::All);
@@ -89,7 +89,7 @@ TEST_F(QnnABICPUBackendTests, AveragePool_CountIncludePad) {
 // AveragePool that use auto_pad 'SAME_UPPER'.
 TEST_F(QnnABICPUBackendTests, AveragePool_AutopadSameUpper) {
   RunAveragePoolOpTest("AveragePool",
-                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 18))},
+                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 18))},
                        {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{1, 1}),
                         utils::MakeAttribute("count_include_pad", static_cast<int64_t>(1)),
                         utils::MakeAttribute("auto_pad", "SAME_UPPER")},
@@ -99,7 +99,7 @@ TEST_F(QnnABICPUBackendTests, AveragePool_AutopadSameUpper) {
 // AveragePool that use auto_pad 'SAME_LOWER'.
 TEST_F(QnnABICPUBackendTests, AveragePool_AutopadSameLower) {
   RunAveragePoolOpTest("AveragePool",
-                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 18))},
+                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 18))},
                        {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{1, 1}),
                         utils::MakeAttribute("count_include_pad", static_cast<int64_t>(1)),
                         utils::MakeAttribute("auto_pad", "SAME_LOWER")},
@@ -141,7 +141,7 @@ TEST_F(QnnABIHTPBackendTests, AveragePool_AsGlobal) {
 
 // Test accuracy for 8-bit QDQ GlobalAveragePool with input of rank 4.
 TEST_F(QnnABIHTPBackendTests, GlobalAveragePool) {
-  std::vector<float> input = GetFloatDataInRange(-32.0f, 32.0f, 18);
+  std::vector<float> input = GetFloatDataInRangeABI(-32.0f, 32.0f, 18);
 
   RunQDQAveragePoolOpTest<uint8_t>("GlobalAveragePool",
                                    {TestInputDef<float>({1, 2, 3, 3}, false, input)},
@@ -225,7 +225,7 @@ TEST_F(QnnABIHTPBackendTests, AveragePool_3D_AutoPad_SAME_LOWER_u8) {
 // AveragePool with kernel size equal to the spatial dimension of input tensor.
 TEST_F(QnnABIGPUBackendTests, AveragePool_AsGlobal) {
   RunAveragePoolOpTest("AveragePool",
-                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 18))},
+                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 18))},
                        {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
                         utils::MakeAttribute("strides", std::vector<int64_t>{3, 3})},
                        ExpectedEPNodeAssignment::All, "gpu");
@@ -234,7 +234,7 @@ TEST_F(QnnABIGPUBackendTests, AveragePool_AsGlobal) {
 // Test GlobalAveragePool on QNN GPU backend.
 TEST_F(QnnABIGPUBackendTests, GlobalAveragePool) {
   RunAveragePoolOpTest("GlobalAveragePool",
-                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 18))},
+                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 18))},
                        {},
                        ExpectedEPNodeAssignment::All, "gpu");
 }
@@ -242,7 +242,7 @@ TEST_F(QnnABIGPUBackendTests, GlobalAveragePool) {
 // AveragePool that counts padding.
 TEST_F(QnnABIGPUBackendTests, AveragePool_CountIncludePad) {
   RunAveragePoolOpTest("AveragePool",
-                       {TestInputDef<float>({1, 3, 4, 5}, false, GetFloatDataInRange(-10.0f, 10.0f, 3 * 4 * 5))},
+                       {TestInputDef<float>({1, 3, 4, 5}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 3 * 4 * 5))},
                        {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
                         utils::MakeAttribute("count_include_pad", static_cast<int64_t>(1))},
                        ExpectedEPNodeAssignment::All, "gpu");
@@ -251,7 +251,7 @@ TEST_F(QnnABIGPUBackendTests, AveragePool_CountIncludePad) {
 // AveragePool that use auto_pad 'SAME_UPPER'.
 TEST_F(QnnABIGPUBackendTests, AveragePool_AutopadSameUpper) {
   RunAveragePoolOpTest("AveragePool",
-                       {TestInputDef<float>({1, 3, 4, 5}, false, GetFloatDataInRange(-10.0f, 10.0f, 3 * 4 * 5))},
+                       {TestInputDef<float>({1, 3, 4, 5}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 3 * 4 * 5))},
                        {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
                         utils::MakeAttribute("count_include_pad", static_cast<int64_t>(1)),
                         utils::MakeAttribute("auto_pad", "SAME_UPPER")},
@@ -261,7 +261,7 @@ TEST_F(QnnABIGPUBackendTests, AveragePool_AutopadSameUpper) {
 // AveragePool that use auto_pad 'SAME_LOWER'.
 TEST_F(QnnABIGPUBackendTests, AveragePool_AutopadSameLower) {
   RunAveragePoolOpTest("AveragePool",
-                       {TestInputDef<float>({1, 3, 4, 5}, false, GetFloatDataInRange(-10.0f, 10.0f, 3 * 4 * 5))},
+                       {TestInputDef<float>({1, 3, 4, 5}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 3 * 4 * 5))},
                        {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
                         utils::MakeAttribute("count_include_pad", static_cast<int64_t>(1)),
                         utils::MakeAttribute("auto_pad", "SAME_LOWER")},

@@ -1189,12 +1189,12 @@ TEST_F(QnnABIHTPBackendTests, EPRejectsDynamicShapesF32) {
   // Local function that builds a model in which the last two nodes use dynamic shapes.
   auto model_build_fn = [](ModelTestBuilder& builder) {
     NodeArg* input1 = builder.MakeInput<float>(std::vector<int64_t>{1, 2, 8, 8},
-                                               GetFloatDataInRange(0.0f, 1.0f, 128));
+                                               GetFloatDataInRangeABI(0.0f, 1.0f, 128));
     NodeArg* input2 = builder.MakeInput<int64_t>(std::vector<int64_t>{3}, std::vector<int64_t>{1, 2, 49});
 
     // Add a Conv with known shapes. QNN EP should support it.
     NodeArg* weight = builder.MakeInitializer<float>(std::vector<int64_t>{2, 2, 2, 2},
-                                                     GetFloatDataInRange(-0.3f, 0.3f, 16));
+                                                     GetFloatDataInRangeABI(-0.3f, 0.3f, 16));
     NodeArg* bias = builder.MakeInitializer<float>(std::vector<int64_t>{2}, {0.0f, 1.0f});
 
     auto* conv_output = builder.MakeIntermediate();
@@ -1338,7 +1338,7 @@ TEST_F(QnnABIHTPBackendTests, EPOffloadsGraphIOQuantDequant) {
       auto expected_ep_assignment = offload_io_quant ? ExpectedEPNodeAssignment::Some : ExpectedEPNodeAssignment::All;
 
       float min_val = (op_type == "Sqrt") ? 0.0f : -10.0f;
-      TestInputDef<float> input_def({1, 2, 2, 2}, false, GetFloatDataInRange(min_val, 10.0f, 8));
+      TestInputDef<float> input_def({1, 2, 2, 2}, false, GetFloatDataInRangeABI(min_val, 10.0f, 8));
       auto f32_model_build_fn = BuildOpTestCase<float>(op_type, {input_def}, {}, {});
       auto qdq_model_build_fn = BuildQDQOpTestCase<uint8_t>(op_type, {input_def}, {}, {});
       TestQDQModelAccuracyABI<uint8_t>(f32_model_build_fn,

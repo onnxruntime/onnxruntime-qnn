@@ -74,7 +74,7 @@ void _BuildLSTMTestCase(ModelTestBuilder& builder,
                         const std::vector<QuantParams<InputType>>& output_qparams) {
   auto convert_input = [](ModelTestBuilder& builder, const TestInputDef<float>& def) {
     if (std::is_same<InputType, MLFloat16>::value) {
-      TestInputDef<MLFloat16> Fp16_def = ConvertToFP16InputDef(def);
+      TestInputDef<MLFloat16> Fp16_def = ConvertToFP16InputDefABI(def);
       return MakeTestInput(builder, Fp16_def);
     } else if (std::is_same<InputType, uint8_t>::value) {
       NodeArg* input = MakeTestInput(builder, def);

@@ -69,7 +69,7 @@ TEST_F(QnnABICPUBackendTests, Max_1Input_NotSupported) {
 
 // Test Min with 2 inputs on CPU backend.
 TEST_F(QnnABICPUBackendTests, Min_2Inputs) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  std::vector<float> input_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 48);
   RunCPUMinOrMaxOpTest("Min",
                        {TestInputDef<float>({1, 3, 4, 4}, false, input_data),
                         TestInputDef<float>({1, 3, 4, 4}, false, input_data)},
@@ -78,7 +78,7 @@ TEST_F(QnnABICPUBackendTests, Min_2Inputs) {
 
 // Test Max with 2 inputs on CPU backend.
 TEST_F(QnnABICPUBackendTests, Max_2Inputs) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  std::vector<float> input_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 48);
   RunCPUMinOrMaxOpTest("Max",
                        {TestInputDef<float>({1, 3, 4, 4}, false, input_data),
                         TestInputDef<float>({1, 3, 4, 4}, false, input_data)},
@@ -106,7 +106,7 @@ TEST_F(QnnABIHTPBackendTests, Max_1Input_NotSupported) {
 
 // Test accuracy of 8-bit Q/DQ Min with 2 inputs on HTP backend.
 TEST_F(QnnABIHTPBackendTests, Min_2Inputs) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  std::vector<float> input_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 48);
   RunQDQMinOrMaxOpTest<uint8_t>("Min",
                                 {TestInputDef<float>({1, 3, 4, 4}, false, input_data),
                                  TestInputDef<float>({1, 3, 4, 4}, false, input_data)},
@@ -115,7 +115,7 @@ TEST_F(QnnABIHTPBackendTests, Min_2Inputs) {
 
 // Test accuracy of 8-bit Q/DQ Max with 2 inputs on HTP backend.
 TEST_F(QnnABIHTPBackendTests, Max_2Inputs) {
-  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  std::vector<float> input_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 48);
   RunQDQMinOrMaxOpTest<uint8_t>("Max",
                                 {TestInputDef<float>({1, 3, 4, 4}, false, input_data),
                                  TestInputDef<float>({1, 3, 4, 4}, false, input_data)},

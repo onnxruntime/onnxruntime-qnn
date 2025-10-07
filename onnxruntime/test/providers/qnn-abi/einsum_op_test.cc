@@ -140,8 +140,8 @@ namespace test {
 TEST_F(QnnABICPUBackendTests, EinsumRank2) {
   const std::vector<int64_t> shape0{2, 3};
   const std::vector<int64_t> shape1{3, 4};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeCpu,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -153,8 +153,8 @@ TEST_F(QnnABICPUBackendTests, EinsumRank2) {
 TEST_F(QnnABICPUBackendTests, EinsumRank3MatMul) {
   const std::vector<int64_t> shape0{4, 5, 6};
   const std::vector<int64_t> shape1{4, 6, 5};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeCpu,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -166,8 +166,8 @@ TEST_F(QnnABICPUBackendTests, EinsumRank3MatMul) {
 TEST_F(QnnABICPUBackendTests, EinsumRank3MatMul_QK) {
   const std::vector<int64_t> shape0{4, 5, 6};
   const std::vector<int64_t> shape1{4, 6, 5};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeCpu,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -179,8 +179,8 @@ TEST_F(QnnABICPUBackendTests, EinsumRank3MatMul_QK) {
 TEST_F(QnnABICPUBackendTests, EinsumRank4MatMul) {
   const std::vector<int64_t> shape0{3, 4, 5, 6};
   const std::vector<int64_t> shape1{3, 4, 6, 5};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeCpu,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -192,8 +192,8 @@ TEST_F(QnnABICPUBackendTests, EinsumRank4MatMul) {
 TEST_F(QnnABICPUBackendTests, EinsumRank4MatMulTransposeY) {
   const std::vector<int64_t> shape0{2, 3, 4, 6};
   const std::vector<int64_t> shape1{2, 3, 5, 6};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeCpu,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -205,8 +205,8 @@ TEST_F(QnnABICPUBackendTests, EinsumRank4MatMulTransposeY) {
 TEST_F(QnnABICPUBackendTests, EinsumRank4MatMulTransposeAll1) {
   const std::vector<int64_t> shape0{1, 9, 1, 7};
   const std::vector<int64_t> shape1{1, 7, 1, 9};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeCpu,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -218,8 +218,8 @@ TEST_F(QnnABICPUBackendTests, EinsumRank4MatMulTransposeAll1) {
 TEST_F(QnnABICPUBackendTests, EinsumRank4MatMulTransposeY_QK) {
   const std::vector<int64_t> shape0{2, 3, 4, 6};
   const std::vector<int64_t> shape1{2, 3, 5, 6};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeCpu,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -231,8 +231,8 @@ TEST_F(QnnABICPUBackendTests, EinsumRank4MatMulTransposeY_QK) {
 TEST_F(QnnABICPUBackendTests, EinsumRank4MatMulTransposeAll2) {
   const std::vector<int64_t> shape0{1, 7, 1, 7};
   const std::vector<int64_t> shape1{1, 9, 1, 7};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeCpu,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -244,8 +244,8 @@ TEST_F(QnnABICPUBackendTests, EinsumRank4MatMulTransposeAll2) {
 TEST_F(QnnABICPUBackendTests, EinsumMatMulBroadcastTransposeY) {
   const std::vector<int64_t> shape0{2, 3, 3, 4};
   const std::vector<int64_t> shape1{3, 3, 4};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeCpu,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -257,8 +257,8 @@ TEST_F(QnnABICPUBackendTests, EinsumMatMulBroadcastTransposeY) {
 TEST_F(QnnABICPUBackendTests, EinsumReduceSumMulBroadcastX) {
   const std::vector<int64_t> shape0{2, 3, 4, 5};
   const std::vector<int64_t> shape1{4, 6, 5};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeCpu,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -276,8 +276,8 @@ TEST_F(QnnABICPUBackendTests, EinsumReduceSumMulBroadcastX) {
 TEST_F(QnnABIHTPBackendTests, EinsumF16Rank2MatMul) {
   const std::vector<int64_t> shape0{2, 3};
   const std::vector<int64_t> shape1{3, 4};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeHtp,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -289,8 +289,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumF16Rank2MatMul) {
 TEST_F(QnnABIHTPBackendTests, EinsumF16Rank4MatMul) {
   const std::vector<int64_t> shape0{3, 1, 5, 2};
   const std::vector<int64_t> shape1{3, 1, 2, 5};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeHtp,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -302,8 +302,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumF16Rank4MatMul) {
 TEST_F(QnnABIHTPBackendTests, EinsumF16Rank4MatMulTransposeY) {
   const std::vector<int64_t> shape0{2, 3, 4, 2};
   const std::vector<int64_t> shape1{2, 3, 5, 2};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeHtp,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -315,8 +315,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumF16Rank4MatMulTransposeY) {
 TEST_F(QnnABIHTPBackendTests, EinsumF16Rank4MatMulTransposeY_QK) {
   const std::vector<int64_t> shape0{2, 3, 4, 2};
   const std::vector<int64_t> shape1{2, 3, 5, 2};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeHtp,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -328,8 +328,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumF16Rank4MatMulTransposeY_QK) {
 TEST_F(QnnABIHTPBackendTests, EinsumRank3MatMulTransposeY) {
   const std::vector<int64_t> shape0{2, 4, 2};
   const std::vector<int64_t> shape1{2, 5, 2};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeHtp,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -341,8 +341,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumRank3MatMulTransposeY) {
 TEST_F(QnnABIHTPBackendTests, EinsumRank3MatMulTransposeY_QK) {
   const std::vector<int64_t> shape0{2, 4, 2};
   const std::vector<int64_t> shape1{2, 5, 2};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeHtp,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -356,8 +356,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumRank3MatMulTransposeY_QK) {
 TEST_F(QnnABIHTPBackendTests, DISABLED_EinsumRank3MatMul_QK) {
   const std::vector<int64_t> shape0{4, 5, 6};
   const std::vector<int64_t> shape1{4, 6, 5};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeHtp,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -369,8 +369,8 @@ TEST_F(QnnABIHTPBackendTests, DISABLED_EinsumRank3MatMul_QK) {
 TEST_F(QnnABIHTPBackendTests, EinsumF16Rank4MatMulTransposeAll1) {
   const std::vector<int64_t> shape0{1, 3, 1, 7};
   const std::vector<int64_t> shape1{1, 7, 1, 3};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeHtp,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -382,8 +382,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumF16Rank4MatMulTransposeAll1) {
 TEST_F(QnnABIHTPBackendTests, EinsumF16Rank4MatMulTransposeAll2) {
   const std::vector<int64_t> shape0{1, 4, 1, 4};
   const std::vector<int64_t> shape1{1, 9, 1, 4};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeHtp,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -395,8 +395,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumF16Rank4MatMulTransposeAll2) {
 TEST_F(QnnABIHTPBackendTests, EinsumF16MatMulBroadcastTransposeY) {
   const std::vector<int64_t> shape0{2, 3, 3, 4};
   const std::vector<int64_t> shape1{3, 3, 4};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeHtp,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -408,8 +408,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumF16MatMulBroadcastTransposeY) {
 TEST_F(QnnABIHTPBackendTests, EinsumF16ReduceSumMulBroadcastX) {
   const std::vector<int64_t> shape0{1, 3, 2, 4};
   const std::vector<int64_t> shape1{2, 3, 4};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeHtp,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -425,8 +425,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumF16ReduceSumMulBroadcastX) {
 TEST_F(QnnABIHTPBackendTests, EinsumQdqRank2MatMul) {
   const std::vector<int64_t> shape0{2, 3};
   const std::vector<int64_t> shape1{3, 4};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnHtpQdqEinsum<uint8_t, uint8_t>(
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
@@ -437,8 +437,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumQdqRank2MatMul) {
 TEST_F(QnnABIHTPBackendTests, EinsumQdqRank4MatMul) {
   const std::vector<int64_t> shape0{3, 1, 5, 2};
   const std::vector<int64_t> shape1{3, 1, 2, 5};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnHtpQdqEinsum<uint8_t, uint8_t>(
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
@@ -449,8 +449,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumQdqRank4MatMul) {
 TEST_F(QnnABIHTPBackendTests, EinsumQdqRank4MatMulTransposeY) {
   const std::vector<int64_t> shape0{2, 3, 4, 2};
   const std::vector<int64_t> shape1{2, 3, 5, 2};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnHtpQdqEinsum<uint8_t, uint8_t>(
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
@@ -461,8 +461,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumQdqRank4MatMulTransposeY) {
 TEST_F(QnnABIHTPBackendTests, EinsumQdqRank4MatMulTransposeY_QK) {
   const std::vector<int64_t> shape0{2, 3, 4, 2};
   const std::vector<int64_t> shape1{2, 3, 5, 2};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnHtpQdqEinsum<uint8_t, uint8_t>(
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
@@ -473,8 +473,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumQdqRank4MatMulTransposeY_QK) {
 TEST_F(QnnABIHTPBackendTests, EinsumQdqRank3MatMulTransposeY) {
   const std::vector<int64_t> shape0{2, 4, 2};
   const std::vector<int64_t> shape1{2, 5, 2};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnHtpQdqEinsum<uint8_t, uint8_t>(
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
@@ -485,8 +485,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumQdqRank3MatMulTransposeY) {
 TEST_F(QnnABIHTPBackendTests, EinsumQdqRank3MatMulTransposeY_QK) {
   const std::vector<int64_t> shape0{2, 4, 2};
   const std::vector<int64_t> shape1{2, 5, 2};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnHtpQdqEinsum<uint8_t, uint8_t>(
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
@@ -497,8 +497,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumQdqRank3MatMulTransposeY_QK) {
 TEST_F(QnnABIHTPBackendTests, EinsumQdqRank3MatMul) {
   const std::vector<int64_t> shape0{4, 5, 6};
   const std::vector<int64_t> shape1{4, 6, 5};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnHtpQdqEinsum<uint8_t, uint8_t>(
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
@@ -509,8 +509,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumQdqRank3MatMul) {
 TEST_F(QnnABIHTPBackendTests, EinsumQdqRank3MatMul_QK) {
   const std::vector<int64_t> shape0{4, 5, 6};
   const std::vector<int64_t> shape1{4, 6, 5};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnHtpQdqEinsum<uint8_t, uint8_t>(
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
@@ -521,8 +521,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumQdqRank3MatMul_QK) {
 TEST_F(QnnABIHTPBackendTests, EinsumQdqRank4MatMulTransposeAll1) {
   const std::vector<int64_t> shape0{1, 3, 1, 7};
   const std::vector<int64_t> shape1{1, 7, 1, 3};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnHtpQdqEinsum<uint8_t, uint8_t>(
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
@@ -533,8 +533,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumQdqRank4MatMulTransposeAll1) {
 TEST_F(QnnABIHTPBackendTests, EinsumQdqRank4MatMulTransposeAll2) {
   const std::vector<int64_t> shape0{1, 4, 1, 4};
   const std::vector<int64_t> shape1{1, 9, 1, 4};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnHtpQdqEinsum<uint8_t, uint8_t>(
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
@@ -545,8 +545,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumQdqRank4MatMulTransposeAll2) {
 TEST_F(QnnABIHTPBackendTests, EinsumQdqMatMulBroadcastTransposeY) {
   const std::vector<int64_t> shape0{2, 3, 3, 4};
   const std::vector<int64_t> shape1{3, 3, 4};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnHtpQdqEinsum<uint8_t, uint8_t>(
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
@@ -558,8 +558,8 @@ TEST_F(QnnABIHTPBackendTests, EinsumQdqMatMulBroadcastTransposeY) {
 TEST_F(QnnABIHTPBackendTests, DISABLED_EinsumQdqReduceSumMulBroadcastX) {
   const std::vector<int64_t> shape0{1, 3, 2, 4};
   const std::vector<int64_t> shape1{2, 3, 4};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnHtpQdqEinsum<uint8_t, uint8_t>(
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
       /*in1=*/TestInputDef<float>(shape1, /*is_initializer=*/false, std::move(data1)),
@@ -577,8 +577,8 @@ TEST_F(QnnABIHTPBackendTests, DISABLED_EinsumQdqReduceSumMulBroadcastX) {
 TEST_F(QnnABIGPUBackendTests, EinsumRank2) {
   const std::vector<int64_t> shape0{2, 3};
   const std::vector<int64_t> shape1{3, 4};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeGpu,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -590,8 +590,8 @@ TEST_F(QnnABIGPUBackendTests, EinsumRank2) {
 TEST_F(QnnABIGPUBackendTests, EinsumRank3MatMul) {
   const std::vector<int64_t> shape0{4, 5, 6};
   const std::vector<int64_t> shape1{4, 6, 5};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeGpu,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -603,8 +603,8 @@ TEST_F(QnnABIGPUBackendTests, EinsumRank3MatMul) {
 TEST_F(QnnABIGPUBackendTests, EinsumRank4MatMul) {
   const std::vector<int64_t> shape0{3, 2, 5, 6};
   const std::vector<int64_t> shape1{3, 2, 6, 5};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeGpu,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -616,8 +616,8 @@ TEST_F(QnnABIGPUBackendTests, EinsumRank4MatMul) {
 TEST_F(QnnABIGPUBackendTests, EinsumRank4MatMulTransposeY) {
   const std::vector<int64_t> shape0{2, 3, 4, 6};
   const std::vector<int64_t> shape1{2, 3, 5, 6};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeGpu,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -629,8 +629,8 @@ TEST_F(QnnABIGPUBackendTests, EinsumRank4MatMulTransposeY) {
 TEST_F(QnnABIGPUBackendTests, EinsumRank4MatMulTransposeAll1) {
   const std::vector<int64_t> shape0{1, 9, 1, 7};
   const std::vector<int64_t> shape1{1, 7, 1, 9};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeGpu,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -642,8 +642,8 @@ TEST_F(QnnABIGPUBackendTests, EinsumRank4MatMulTransposeAll1) {
 TEST_F(QnnABIGPUBackendTests, EinsumRank4MatMulTransposeAll2) {
   const std::vector<int64_t> shape0{1, 7, 1, 7};
   const std::vector<int64_t> shape1{1, 9, 1, 7};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeGpu,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -656,8 +656,8 @@ TEST_F(QnnABIGPUBackendTests, EinsumRank4MatMulTransposeAll2) {
 TEST_F(QnnABIGPUBackendTests, DISABLED_EinsumMatMulBroadcastTransposeY) {
   const std::vector<int64_t> shape0{2, 3, 3, 4};
   const std::vector<int64_t> shape1{3, 3, 4};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeGpu,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),
@@ -670,8 +670,8 @@ TEST_F(QnnABIGPUBackendTests, DISABLED_EinsumMatMulBroadcastTransposeY) {
 TEST_F(QnnABIGPUBackendTests, DISABLED_EinsumReduceSumMulBroadcastX) {
   const std::vector<int64_t> shape0{1, 3, 2, 4};
   const std::vector<int64_t> shape1{2, 3, 4};
-  const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
-  const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data0 = GetSequentialFloatDataABI(shape0, /*start=*/-0.1f, /*step=*/0.05f);
+  const std::vector<float> data1 = GetSequentialFloatDataABI(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
       /*backend=*/kQnnBackendTypeGpu,
       /*in0=*/TestInputDef<float>(shape0, /*is_initializer=*/false, std::move(data0)),

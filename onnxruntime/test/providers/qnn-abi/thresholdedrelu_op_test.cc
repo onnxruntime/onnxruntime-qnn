@@ -111,7 +111,7 @@ static void RunQDQThresholdedReluTestOnHTP(const std::vector<TestInputDef<float>
 
 // Test ThresholdedRelu QDQ.
 TEST_F(QnnABIHTPBackendTests, ThresholdedRelu_qdq) {
-  std::vector<float> input = GetFloatDataInRange(-10.0f, 10.0f, 20);
+  std::vector<float> input = GetFloatDataInRangeABI(-10.0f, 10.0f, 20);
   RunQDQThresholdedReluTestOnHTP<uint8_t, uint8_t>({TestInputDef<float>({1, 4, 5}, false, input)},
                                                    {utils::MakeAttribute("alpha", 4.5f)},
                                                    ExpectedEPNodeAssignment::All);

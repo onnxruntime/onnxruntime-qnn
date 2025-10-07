@@ -83,7 +83,7 @@ static void RunCastFP16HTPTest(const std::vector<int64_t>& shape,
 
   auto testcase = [shape, dst_type](ModelTestBuilder& builder) {
     auto input_def_fp = TestInputDef(shape, false, static_cast<float>(0), static_cast<float>(20));
-    auto input_def = ConvertToFP16InputDef(input_def_fp);
+    auto input_def = ConvertToFP16InputDefABI(input_def_fp);
     auto input = MakeTestInput<MLFloat16>(builder, input_def);
 
     auto* output = builder.MakeOutput();

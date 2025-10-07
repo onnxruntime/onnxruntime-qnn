@@ -56,8 +56,8 @@ TEST_F(QnnABICPUBackendTests, Gemm_NonDefaultAlphaBeta_Unsupported) {
 
 // Test Gemm with 2D bias is supported.
 TEST_F(QnnABICPUBackendTests, Gemm_2D_Bias) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 12);
+  std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 12);
 
   // 2D matrix mul with bias is supported.
   RunGemmTest<float>({TestInputDef<float>({2, 3}, false, input_a_data),
@@ -76,9 +76,9 @@ TEST_F(QnnABICPUBackendTests, Gemm_2D_Bias) {
 // since Qnn v2.34 value pair (120.73912, 121.73912) at index #0 don't match, which is 1 from 120.739
 // Test Gemm with dynamic (i.e., not initializer) inputs (A, B, Bias).
 TEST_F(QnnABICPUBackendTests, DISABLED_Gemm_Dynamic_A_B_Bias) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRangeABI(-1.0f, 1.0f, 4);
   RunGemmTest<float>({TestInputDef<float>({1, 6}, false, input_a_data),
                       TestInputDef<float>({6, 4}, false, input_b_data),
                       TestInputDef<float>({1, 4}, false, input_c_data)},
@@ -88,9 +88,9 @@ TEST_F(QnnABICPUBackendTests, DISABLED_Gemm_Dynamic_A_B_Bias) {
 
 // Test Gemm with static B and Bias inputs.
 TEST_F(QnnABICPUBackendTests, Gemm_Static_B_And_Bias) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRangeABI(-1.0f, 1.0f, 4);
   RunGemmTest<float>({TestInputDef<float>({1, 6}, false, input_a_data),
                       TestInputDef<float>({6, 4}, true, input_b_data),
                       TestInputDef<float>({1, 4}, true, input_c_data)},
@@ -100,9 +100,9 @@ TEST_F(QnnABICPUBackendTests, Gemm_Static_B_And_Bias) {
 
 // Test Gemm with transposed A/B and static B and Bias inputs.
 TEST_F(QnnABICPUBackendTests, Gemm_TransAB_Static_B_And_Bias) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRangeABI(-1.0f, 1.0f, 4);
   RunGemmTest<float>({TestInputDef<float>({6, 1}, false, input_a_data),
                       TestInputDef<float>({4, 6}, true, input_b_data),
                       TestInputDef<float>({1, 4}, true, input_c_data)},
@@ -114,9 +114,9 @@ TEST_F(QnnABICPUBackendTests, Gemm_TransAB_Static_B_And_Bias) {
 // Since Qnn 2.34 value pair (29.4347763, 30.4347763) at index #0 don't match, which is 1 from 29.4348
 // Test Gemm with transposed A/B and dynamic (i.e., not initializer) B and Bias inputs.
 TEST_F(QnnABICPUBackendTests, DISABLED_Gemm_TransAB_Dynamic_B_And_Bias) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRangeABI(-1.0f, 1.0f, 4);
   RunGemmTest<float>({TestInputDef<float>({6, 1}, false, input_a_data),
                       TestInputDef<float>({4, 6}, false, input_b_data),
                       TestInputDef<float>({1, 4}, false, input_c_data)},
@@ -294,9 +294,9 @@ static void RunQDQGemmTestOnHTP(const std::vector<TestInputDef<float>>& input_de
 
 // Test 8-bit QDQ Gemm with dynamic inputs A and Bias. The B input is an initializer.
 TEST_F(QnnABIHTPBackendTests, Gemm_Dynamic_A_Static_B_Dynamic_Bias_U8) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRangeABI(-1.0f, 1.0f, 4);
   RunQDQGemmTestOnHTP<uint8_t, uint8_t>({TestInputDef<float>({1, 6}, false, input_a_data),
                                          TestInputDef<float>({6, 4}, true, input_b_data),
                                          TestInputDef<float>({1, 4}, false, input_c_data)},
@@ -307,9 +307,9 @@ TEST_F(QnnABIHTPBackendTests, Gemm_Dynamic_A_Static_B_Dynamic_Bias_U8) {
 #ifndef __linux__
 // Test 16-bit QDQ Gemm with dynamic inputs A and Bias. The B input is an initializer.
 TEST_F(QnnABIHTPBackendTests, Gemm_Dynamic_A_Dynamic_B_Dynamic_Bias_U16) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRangeABI(-1.0f, 1.0f, 4);
   RunQDQGemmTestOnHTP<uint16_t, uint16_t>({TestInputDef<float>({1, 6}, false, input_a_data),
                                            TestInputDef<float>({6, 4}, false, input_b_data),
                                            TestInputDef<float>({1, 4}, false, input_c_data)},
@@ -391,9 +391,9 @@ TEST_F(QnnABIHTPBackendTests, DISABLED_Gemm_Dynamic_A_Static_B_Dynamic_Bias_U16)
 #else
 TEST_F(QnnABIHTPBackendTests, Gemm_Dynamic_A_Static_B_Dynamic_Bias_U16) {
 #endif
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRangeABI(-1.0f, 1.0f, 4);
   RunQDQGemmTestOnHTP<uint16_t, uint16_t>({TestInputDef<float>({1, 6}, false, input_a_data),
                                            TestInputDef<float>({6, 4}, true, input_b_data),
                                            TestInputDef<float>({1, 4}, false, input_c_data)},
@@ -405,9 +405,9 @@ TEST_F(QnnABIHTPBackendTests, Gemm_Dynamic_A_Static_B_Dynamic_Bias_U16) {
 
 // Test QDQ Gemm (16bit act, 8bit weight) with dynamic inputs A and Bias. The B input is an initializer.
 TEST_F(QnnABIHTPBackendTests, Gemm_Dynamic_A_Static_B_Dynamic_Bias_U16Act_U8Weight) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRangeABI(-1.0f, 1.0f, 4);
   RunQDQGemmTestOnHTP<uint16_t, uint8_t>({TestInputDef<float>({1, 6}, false, input_a_data),
                                           TestInputDef<float>({6, 4}, true, input_b_data),
                                           TestInputDef<float>({1, 4}, false, input_c_data)},
@@ -425,9 +425,9 @@ TEST_F(QnnABIHTPBackendTests, Gemm_Dynamic_A_Static_B_Dynamic_Bias_U16Act_U8Weig
 // CPU QDQ val: 119.85115814208984 (err 0.88796234130859375)
 // Issue fixed in 2.30
 TEST_F(QnnABIHTPBackendTests, Gemm_Dynamic_A_B_Static_Bias) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRangeABI(-1.0f, 1.0f, 4);
   RunQDQGemmTestOnHTP<uint8_t, uint8_t>({TestInputDef<float>({1, 6}, false, input_a_data),
                                          TestInputDef<float>({6, 4}, false, input_b_data),  // Dynamic => inaccuracy
                                          TestInputDef<float>({1, 4}, true, input_c_data)},
@@ -437,9 +437,9 @@ TEST_F(QnnABIHTPBackendTests, Gemm_Dynamic_A_B_Static_Bias) {
 
 // Test QDQ Gemm with static B and Bias inputs.
 TEST_F(QnnABIHTPBackendTests, Gemm_Static_B_And_Bias) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRangeABI(-1.0f, 1.0f, 4);
   RunQDQGemmTestOnHTP<uint8_t, uint8_t>({TestInputDef<float>({1, 6}, false, input_a_data),
                                          TestInputDef<float>({6, 4}, true, input_b_data),
                                          TestInputDef<float>({1, 4}, true, input_c_data)},
@@ -449,9 +449,9 @@ TEST_F(QnnABIHTPBackendTests, Gemm_Static_B_And_Bias) {
 
 // Test 8-bit QDQ Gemm with transposed A/B and static B and Bias inputs.
 TEST_F(QnnABIHTPBackendTests, Gemm_TransAB_Static_B_And_Bias_U8) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRangeABI(-1.0f, 1.0f, 4);
   RunQDQGemmTestOnHTP<uint8_t, uint8_t>({TestInputDef<float>({6, 1}, false, input_a_data),
                                          TestInputDef<float>({4, 6}, true, input_b_data),
                                          TestInputDef<float>({1, 4}, true, input_c_data)},
@@ -462,9 +462,9 @@ TEST_F(QnnABIHTPBackendTests, Gemm_TransAB_Static_B_And_Bias_U8) {
 
 // Test QDQ Gemm (16bit activation, 8bit weight) with transposed A/B and static B and Bias inputs.
 TEST_F(QnnABIHTPBackendTests, Gemm_TransAB_Static_B_And_Bias_U16Act_U8Weight) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRangeABI(-1.0f, 1.0f, 4);
   RunQDQGemmTestOnHTP<uint16_t, uint8_t>({TestInputDef<float>({6, 1}, false, input_a_data),
                                           TestInputDef<float>({4, 6}, true, input_b_data),
                                           TestInputDef<float>({1, 4}, true, input_c_data)},
@@ -477,9 +477,9 @@ TEST_F(QnnABIHTPBackendTests, Gemm_TransAB_Static_B_And_Bias_U16Act_U8Weight) {
 
 // Test QDQ Gemm with transposed A/B and dynamic (i.e., not initializer) B and Bias inputs.
 TEST_F(QnnABIHTPBackendTests, Gemm_TransAB_Dynamic_B_And_Bias) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRangeABI(-1.0f, 1.0f, 4);
   RunQDQGemmTestOnHTP<uint8_t, uint8_t>({TestInputDef<float>({6, 1}, false, input_a_data),
                                          TestInputDef<float>({4, 6}, false, input_b_data),
                                          TestInputDef<float>({1, 4}, false, input_c_data)},
@@ -555,9 +555,9 @@ TEST_F(QnnABIGPUBackendTests, Gemm_1DBiasBcast) {
 
 // Test Gemm with dynamic (i.e., not initializer) inputs (A, B, Bias).
 TEST_F(QnnABIGPUBackendTests, Gemm_Dynamic_A_B_Bias) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRangeABI(-1.0f, 1.0f, 4);
   RunGemmTest<float>({TestInputDef<float>({1, 6}, false, input_a_data),
                       TestInputDef<float>({6, 4}, false, input_b_data),
                       TestInputDef<float>({1, 4}, false, input_c_data)},
@@ -568,9 +568,9 @@ TEST_F(QnnABIGPUBackendTests, Gemm_Dynamic_A_B_Bias) {
 
 // Test Gemm with static B and Bias inputs.
 TEST_F(QnnABIGPUBackendTests, Gemm_Static_B_And_Bias) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRangeABI(-1.0f, 1.0f, 4);
   RunGemmTest<float>({TestInputDef<float>({1, 6}, false, input_a_data),
                       TestInputDef<float>({6, 4}, true, input_b_data),
                       TestInputDef<float>({1, 4}, true, input_c_data)},
@@ -581,9 +581,9 @@ TEST_F(QnnABIGPUBackendTests, Gemm_Static_B_And_Bias) {
 
 // Test Gemm with transposed A/B and static B and Bias inputs.
 TEST_F(QnnABIGPUBackendTests, Gemm_TransposeAB_Static_B_And_Bias) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRangeABI(-1.0f, 1.0f, 4);
   RunGemmTest<float>({TestInputDef<float>({6, 1}, false, input_a_data),
                       TestInputDef<float>({4, 6}, true, input_b_data),
                       TestInputDef<float>({1, 4}, true, input_c_data)},
@@ -595,9 +595,9 @@ TEST_F(QnnABIGPUBackendTests, Gemm_TransposeAB_Static_B_And_Bias) {
 
 // Test Gemm with transposed A/B and dynamic (i.e., not initializer) B and Bias inputs.
 TEST_F(QnnABIGPUBackendTests, Gemm_TransAB_Dynamic_B_And_Bias) {
-  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
-  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
-  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
+  std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
+  std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 24);
+  std::vector<float> input_c_data = GetFloatDataInRangeABI(-1.0f, 1.0f, 4);
   RunGemmTest<float>({TestInputDef<float>({6, 1}, false, input_a_data),
                       TestInputDef<float>({4, 6}, false, input_b_data),
                       TestInputDef<float>({1, 4}, false, input_c_data)},
