@@ -38,10 +38,10 @@ Qnn_ErrorHandle_t QnnBackend_getBuildId(const char** id) {
   static int call_cnt = 0;
   if (call_cnt == 0) {
     call_cnt += 1;
-    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
-  } else {
-    return real_providerList[0]->QNN_INTERFACE_VER_NAME.backendGetBuildId(id);
+    onnxruntime::test::TriggerPDReset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
   }
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.backendGetBuildId(id);
 }
 
 QNN_API
@@ -51,11 +51,11 @@ Qnn_ErrorHandle_t QnnLog_create(QnnLog_Callback_t callback,
   static int call_cnt = 0;
   if (call_cnt == 0) {
     call_cnt += 1;
-    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
-  } else {
-    return real_providerList[0]->QNN_INTERFACE_VER_NAME.logCreate(
-      callback, maxLogLevel, logger);
+    onnxruntime::test::TriggerPDReset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
   }
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.logCreate(
+    callback, maxLogLevel, logger);
 }
 
 QNN_API
@@ -65,11 +65,11 @@ Qnn_ErrorHandle_t QnnBackend_create(Qnn_LogHandle_t logHandle,
   static int call_cnt = 0;
   if (call_cnt == 0) {
     call_cnt += 1;
-    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
-  } else {
-    return real_providerList[0]->QNN_INTERFACE_VER_NAME.backendCreate(
-      logHandle, config, backend);
+    onnxruntime::test::TriggerPDReset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
   }
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.backendCreate(
+    logHandle, config, backend);
 }
 
 QNN_API
@@ -204,6 +204,21 @@ Qnn_ErrorHandle_t QnnInterface_getProviders(const QnnInterface_t*** providerList
   interface.apiVersion = real_providerList[0]->apiVersion;
   interface.QNN_INTERFACE_VER_NAME = real_providerList[0]->QNN_INTERFACE_VER_NAME;
   switch(QnnMockSSRController::Instance().GetTiming()) {
+    case QnnMockSSRController::Timing::BackendGetBuildId:
+      interface.QNN_INTERFACE_VER_NAME.backendGetBuildId = QnnBackend_getBuildId;
+      break;
+    case QnnMockSSRController::Timing::BackendCreate:
+      interface.QNN_INTERFACE_VER_NAME.backendCreate = QnnBackend_create;
+      break;
+    case QnnMockSSRController::Timing::LogCreate:
+      interface.QNN_INTERFACE_VER_NAME.logCreate = QnnLog_create;
+      break;
+    case QnnMockSSRController::Timing::ContextGetBinarySize:
+      interface.QNN_INTERFACE_VER_NAME.contextGetBinarySize = QnnContext_getBinarySize;
+      break;
+    case QnnMockSSRController::Timing::ContextGetBinary:
+      interface.QNN_INTERFACE_VER_NAME.contextGetBinary = QnnContext_getBinary;
+      break;
     case QnnMockSSRController::Timing::TensorCreateGraphTensor:
       interface.QNN_INTERFACE_VER_NAME.tensorCreateGraphTensor = QnnTensor_createGraphTensor;
       break;
@@ -219,15 +234,10 @@ Qnn_ErrorHandle_t QnnInterface_getProviders(const QnnInterface_t*** providerList
     default:
       break;
   }
-  // interface.QNN_INTERFACE_VER_NAME.backendGetBuildId = QnnBackend_getBuildId;
-  // interface.QNN_INTERFACE_VER_NAME.logCreate = QnnLog_create;
-  // interface.QNN_INTERFACE_VER_NAME.backendCreate = QnnBackend_create;
   // interface.QNN_INTERFACE_VER_NAME.contextCreate = QnnContext_create;
   // interface.QNN_INTERFACE_VER_NAME.backendValidateOpConfig = QnnBackend_validateOpConfig;
   // interface.QNN_INTERFACE_VER_NAME.graphCreate = QnnGraph_create;
   // interface.QNN_INTERFACE_VER_NAME.graphRetrieve = QnnGraph_retrieve;
-  // interface.QNN_INTERFACE_VER_NAME.contextGetBinarySize = QnnContext_getBinarySize;
-  // interface.QNN_INTERFACE_VER_NAME.contextGetBinary = QnnContext_getBinary;
 #endif  // defined(_WIN32)
   static std::vector<const QnnInterface_t*> m_providerPtrs = {&interface};
   *providerList = m_providerPtrs.data(),

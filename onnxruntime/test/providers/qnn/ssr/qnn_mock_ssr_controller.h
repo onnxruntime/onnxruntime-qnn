@@ -1,9 +1,18 @@
 class QnnMockSSRController {
     public:
         enum class Timing {
+            BackendGetBuildId,
+            LogCreate,
+            BackendCreate,
+            ContextCreate,
+            BackendValidateOpConfig,
+            GraphCreate,
+            GraphRetrieve,
             TensorCreateGraphTensor,
             GraphAddNode,
             GraphFinalize,
+            ContextGetBinarySize,
+            ContextGetBinary,
             GraphExecute
         };
 
