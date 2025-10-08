@@ -17,7 +17,7 @@
 namespace onnxruntime {
 namespace test {
 
-#if defined(_WIN32)
+#if defined(__aarch64__) || defined(_M_ARM64)
 namespace qnn_ssr {
   #include <windows.h>
   HMODULE lib_handle = LoadLibraryW(L"QnnMockSSR.dll");
@@ -203,7 +203,7 @@ TEST_F(QnnHTPBackendTests, SSRGraphExecute) {
                   true,
                   nullptr);
 }
-#endif  // defined(_WIN32)
+#endif  // defined(__aarch64__) || defined(_M_ARM64)
 }  // namespace test
 }  // namespace onnxruntime
 

@@ -537,6 +537,7 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
   // Add this option because this feature requires QnnSystem lib and it's no supported for Windows x86_64 platform
   enable_spill_fill_buffer_ = ParseBoolOption("enable_htp_spill_fill_buffer", false, provider_options_map);
 
+  // Handling SSR requires QnnSystem lib and it's no supported for Windows x86_64 platform
   enable_ssr_handling_ = ParseBoolOption("enable_ssr_handling", false, provider_options_map);
 
   model_settings_.offload_graph_io_quantization = ParseBoolOption("offload_graph_io_quantization", true,
@@ -946,9 +947,8 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
   // It will load the QnnSystem lib if is_qnn_ctx_model=true, and
   // delay the Qnn context creation to Compile() using the cached context binary
   // or generate context cache enable, need to use use QnnSystem lib to parse the binary to get the max spill fill buffer size
-  // TODO: Specify need_load_system_lib only when we specify the provider_option qnn_handle_ssr|1
   auto rt = qnn_backend_manager_->SetupBackend(logger, is_qnn_ctx_model,
-                                               true,
+                                               enable_ssr_handling_ || (context_cache_enabled_ && enable_spill_fill_buffer_),
                                                share_ep_contexts_,
                                                enable_vtcm_backup_buffer_sharing_,
                                                context_bin_map);
@@ -1110,27 +1110,35 @@ Status QNNExecutionProvider::CreateComputeFunc(std::vector<NodeComputeInfo>& nod
     Ort::KernelContext ctx(context);
     qnn::QnnModel* model = reinterpret_cast<qnn::QnnModel*>(state);
     Status result = model->ExecuteGraph(ctx, logger);
-    LOGS(logger, VERBOSE) << "[SSR Handling]: Before Recover " << result;
-    if (enable_ssr_handling_ &&
-        result.ErrorMessage().find(std::to_string(QNN_COMMON_ERROR_SYSTEM_COMMUNICATION)) != std::string::npos) {
+    int retry_cnt = 0;
+    while (enable_ssr_handling_ && retry_cnt < 3 &&
+           result.ErrorMessage().find(std::to_string(QNN_COMMON_ERROR_SYSTEM_COMMUNICATION)) != std::string::npos) {
+      LOGS(logger, VERBOSE) << "[SSR Handle during Inference] Retry " << retry_cnt + 1 << "th";
       // Customer Recover Routines
       qnn::QnnModelLookupTable qnn_models;
       // ReleaseContext helps contextFree with custom deleter
       ORT_RETURN_IF_ERROR(qnn_backend_manager_->ReleaseContext());
-      // TODO: Deal with the max_spill_fill_size
-      Status recover_status = qnn_backend_manager_->LoadCachedQnnContextFromBuffer(
-        reinterpret_cast<char*>(qnn_backend_manager_->GetSaveBuffer().get()),
+      uint64_t max_spill_fill_buffer_size = 0;
+      ORT_RETURN_IF_ERROR(qnn_backend_manager_->GetMaxSpillFillBufferSize(
+        qnn_backend_manager_->GetSaveBuffer().get(),
         qnn_backend_manager_->GetSaveBufferSize(),
-        model->Name(),
-        qnn_models,
-        qnn_backend_manager_->GetSaveBufferSize());
-      ORT_RETURN_IF_ERROR(recover_status);
+        max_spill_fill_buffer_size
+      ));
+      ORT_RETURN_IF_ERROR(qnn_backend_manager_->LoadCachedQnnContextFromBuffer(
+        reinterpret_cast<char*>(qnn_backend_manager_->GetSaveBuffer().get()),
+ qnn_backend_manager_->GetSaveBufferSize(),
+     model->Name(),
+             qnn_models,
+             max_spill_fill_buffer_size));
       // Recover the graph and context handle of model with qnn_models
       model->GetGraphInfo()->SetGraphContext(qnn_models[model->Name()]->GetGraphInfo()->GraphContext());
       model->GetGraphInfo()->SetGraph(qnn_models[model->Name()]->GetGraphInfo()->Graph());
       result = model->ExecuteGraph(ctx, logger);
+      if (result.IsOK()) {
+        LOGS(logger, VERBOSE) << "[SSR Handle during Inference] Successfully Recover";
+      }
+      retry_cnt += 1;
     }
-    LOGS(logger, VERBOSE) << "[SSR Handling]: After Recover " << result;
     return result;
   };
 
@@ -1341,14 +1349,19 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
   auto compile_res = CompileFromOrtGraph(fused_nodes_and_graphs, node_compute_funcs, logger);
   LOGS(logger, VERBOSE) << "compile_res.ErrorMessage(): " << compile_res.ErrorMessage();
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> context_bin_map;
-  if (!is_qnn_ctx_model && !enable_vtcm_backup_buffer_sharing_ && !share_ep_contexts_ &&
-      enable_ssr_handling_ &&
-      compile_res.ErrorMessage().find(std::to_string(QNN_COMMON_ERROR_SYSTEM_COMMUNICATION)) != std::string::npos) {
+  bool support_ssr = !is_qnn_ctx_model && !enable_vtcm_backup_buffer_sharing_ && !share_ep_contexts_;
+  int retry_cnt = 0;
+  while (support_ssr && enable_ssr_handling_ && retry_cnt < 3 &&
+         compile_res.ErrorMessage().find(std::to_string(QNN_COMMON_ERROR_SYSTEM_COMMUNICATION)) != std::string::npos) {
+    LOGS(logger, VERBOSE) << "[SSR Handle during Compile] Retry " << retry_cnt + 1 << "th";
     ORT_RETURN_IF_ERROR(qnn_backend_manager_->ReleaseContext());
     ORT_RETURN_IF_ERROR(qnn_backend_manager_->CreateContext(false));
-    LOGS(logger, VERBOSE) << "[SSR Handle] ReCreate Context succeed.";
     // CompileFromOrtGraph will re-create the graph
     compile_res = CompileFromOrtGraph(fused_nodes_and_graphs, node_compute_funcs, logger);
+    if (compile_res.IsOK()) {
+      LOGS(logger, VERBOSE) << "[SSR Handle during Compile] Successfully Recover";
+    }
+    retry_cnt += 1;
   }
   ORT_RETURN_IF_ERROR(compile_res);
   // Generate QNN context model if it's QDQ model + context_cache_enabled=true + not exist already
