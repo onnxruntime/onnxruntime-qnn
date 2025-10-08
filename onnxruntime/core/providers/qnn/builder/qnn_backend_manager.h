@@ -246,10 +246,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Status ReleaseContext();
 
-  // Releases all QNN resources. Called in the destructor.
-  // NOTE: This function indirectly locks the internal `logger_recursive_mutex_` via nested function calls.
-  void ReleaseResources();
-
  private:
   Status LoadBackend();
 
@@ -275,6 +271,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Terminate logging in the backend
   // NOTE: This function locks the internal `logger_recursive_mutex_`.
   Status TerminateQnnLog();
+
+  // Releases all QNN resources. Called in the destructor.
+  // NOTE: This function indirectly locks the internal `logger_recursive_mutex_` via nested function calls.
+  void ReleaseResources();
 
   void* LoadLib(const char* file_name, int flags, std::string& error_msg);
 

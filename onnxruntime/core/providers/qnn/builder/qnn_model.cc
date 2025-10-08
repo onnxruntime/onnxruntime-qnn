@@ -107,7 +107,6 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
   // This name must be same with the EPContext node name
   const auto& graph_name = fused_node.Name();
   ORT_RETURN_IF_ERROR(SetGraphInputOutputInfo(graph_viewer, fused_node, logger));
-  LOGS(logger, VERBOSE) << "[Mock] SetGraphInputOutputInfo";
 
   QnnModelWrapper qnn_model_wrapper = QnnModelWrapper(graph_viewer, logger,
                                                       qnn_backend_manager_->GetQnnInterface(),
@@ -116,7 +115,6 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
                                                       model_output_index_map_,
                                                       qnn_backend_manager_->GetQnnBackendType(),
                                                       model_settings);
-  LOGS(logger, VERBOSE) << "[Mock] QnnModelWrapper";
   bool rt = true;
 
   qnn::profile::ProfilingInfo profiling_info;

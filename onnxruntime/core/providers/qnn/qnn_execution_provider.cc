@@ -1243,9 +1243,6 @@ Status QNNExecutionProvider::CompileFromOrtGraph(const std::vector<FusedNodeAndG
 
     ORT_RETURN_IF_ERROR(CreateComputeFunc(node_compute_funcs, logger));
   }
-  if (enable_ssr_handling_) {
-    ORT_RETURN_IF_ERROR(qnn_backend_manager_->SaveContextToBinary(logger));
-  }
   return Status::OK();
 }
 
@@ -1364,6 +1361,9 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
     retry_cnt += 1;
   }
   ORT_RETURN_IF_ERROR(compile_res);
+  if (enable_ssr_handling_) {
+    ORT_RETURN_IF_ERROR(qnn_backend_manager_->SaveContextToBinary(logger));
+  }
   // Generate QNN context model if it's QDQ model + context_cache_enabled=true + not exist already
   if (!is_qnn_ctx_model && context_cache_enabled_ && !is_ctx_file_exist) {
     // All partitioned graph share single QNN context, included in the same context binary

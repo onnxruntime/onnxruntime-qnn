@@ -237,8 +237,6 @@ Status QnnBackendManager::GetQnnInterfaceProvider(const char* lib_path,
 
     LOGS_DEFAULT(VERBOSE) << lib_path << " interface version: " << interface_version.major << "."
                           << interface_version.minor << "." << interface_version.patch;
-    LOGS_DEFAULT(VERBOSE) << "request version: " << req_version.major << "."
-                          << req_version.minor << "." << req_version.patch;
 
     // Check the interface's API version against the required version.
     // Major versions must match. The interface's minor version must be greater OR equal with a suitable patch version.
@@ -1001,12 +999,10 @@ std::unique_ptr<unsigned char[]> QnnBackendManager::GetContextBinaryBuffer(uint6
   return context_buffer;
 }
 
-Status QnnBackendManager::SaveContextToBinary(const logging::Logger& logger) {
-  LOGS(logger, VERBOSE) << "Save Context To Binary";
+Status QnnBackendManager::SaveContextToBinary(const logging::Logger&) {
   uint64_t writtenBufferSize{0};
   qnn_save_buffer_ = GetContextBinaryBuffer(writtenBufferSize);
   qnn_save_buffer_size_ = writtenBufferSize;
-  LOGS(logger, VERBOSE) << "qnn_save_buffer_size_: " << qnn_save_buffer_size_;
 
   return Status::OK();
 }
