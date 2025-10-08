@@ -171,6 +171,8 @@ void QnnBackendManager::ReleaseTimerThread(uint32_t htp_power_config_client_id) 
     timer_callback_arg = nullptr;
   }
 
+  timer_.reset();
+
   auto status = setReleasedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
   if (status != Status::OK()) {
     LOGS_DEFAULT(VERBOSE) << "Not able to set Power config to relaxed";
@@ -178,7 +180,7 @@ void QnnBackendManager::ReleaseTimerThread(uint32_t htp_power_config_client_id) 
 }
 
 Status QnnBackendManager::setSustainedHighPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
-  std::lock_guard<std::mutex> lk(state_mutex_);
+  std::lock_guard<std::mutex> lk(perf_mutex_);
   Status status = Status::OK();
   unsigned long remaining_duration = 0;
   if (graphState == GraphState::RUN_DONE) {
@@ -236,7 +238,7 @@ Status QnnBackendManager::setSustainedHighPerformance(uint32_t htp_power_config_
 }
 
 Status QnnBackendManager::setPowerSaverPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
-  std::lock_guard<std::mutex> lk(state_mutex_);
+  std::lock_guard<std::mutex> lk(perf_mutex_);
   Status status = Status::OK();
   if (graphState == GraphState::RUN_DONE) {
     status = setReleasedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
@@ -258,7 +260,7 @@ Status QnnBackendManager::setPowerSaverPerformance(uint32_t htp_power_config_cli
 }
 
 Status QnnBackendManager::setExtremePowerSaverPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
-  std::lock_guard<std::mutex> lk(state_mutex_);
+  std::lock_guard<std::mutex> lk(perf_mutex_);
   Status status = Status::OK();
   if (graphState == GraphState::RUN_DONE) {
     status = setExtremeLowPerfPowerConfig(htp_power_config_client_id);
@@ -280,7 +282,7 @@ Status QnnBackendManager::setExtremePowerSaverPerformance(uint32_t htp_power_con
 }
 
 Status QnnBackendManager::setHighPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
-  std::lock_guard<std::mutex> lk(state_mutex_);
+  std::lock_guard<std::mutex> lk(perf_mutex_);
   Status status = Status::OK();
   if (graphState == GraphState::RUN_DONE) {
     status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
@@ -302,7 +304,7 @@ Status QnnBackendManager::setHighPerformance(uint32_t htp_power_config_client_id
 }
 
 Status QnnBackendManager::setPerformanceForBalanced(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
-  std::lock_guard<std::mutex> lk(state_mutex_);
+  std::lock_guard<std::mutex> lk(perf_mutex_);
   Status status = Status::OK();
   if (graphState == GraphState::RUN_DONE) {
     status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
@@ -372,22 +374,27 @@ void QnnBackendManager::timerCallback(void* user_data) {
 
 void QnnBackendManager::createTimerThread(uint32_t htp_power_config_client_id) {
   std::lock_guard<std::mutex> lk(state_mutex_);
-  std::unique_ptr<Timer> temp(new Timer());
-  if (!timer_resource.timer_created && temp != nullptr) {
-    timer_ = std::move(temp);
-    if (timer_callback_arg != nullptr) {
-      delete timer_callback_arg;
-      timer_callback_arg = nullptr;
+  if (!timer_resource.timer_created) {
+    std::unique_ptr<Timer> temp(new Timer());
+    if (temp != nullptr) {
+      timer_ = std::move(temp);
+      if (timer_callback_arg != nullptr) {
+        delete timer_callback_arg;
+        timer_callback_arg = nullptr;
+      }
+      timer_callback_arg = new TimerCallbackArg({htp_power_config_client_id, this});
+      if (!timer_->initialize(timerCallback, timer_callback_arg)) {
+        LOGS_DEFAULT(VERBOSE) << "Failed to create timer to set performance";
+        delete timer_callback_arg;
+        timer_callback_arg = nullptr;
+        timer_.reset();
+      }
+      timer_resource.timer_created = true;
+    } else {
+      LOGS_DEFAULT(VERBOSE) << "Failed: Timer is nullptr";
     }
-    timer_callback_arg = new TimerCallbackArg({htp_power_config_client_id, this});
-    if (!timer_->initialize(timerCallback, timer_callback_arg)) {
-      LOGS_DEFAULT(VERBOSE) << "Failed to create timer to set performance";
-      delete timer_callback_arg;
-      timer_callback_arg = nullptr;
-    }
-    timer_resource.timer_created = true;
   } else {
-    LOGS_DEFAULT(VERBOSE) << "Failed: Timer is nullptr";
+    LOGS_DEFAULT(VERBOSE) << "Timer already created";
   }
 }
 
@@ -1595,7 +1602,6 @@ Status QnnBackendManager::SetupBackend(const logging::Logger& logger,
     LOGS_DEFAULT(WARNING) << "Failed to setup so cleaning up";
     ReleaseResources();
   }
-
   return status;
 }
 
