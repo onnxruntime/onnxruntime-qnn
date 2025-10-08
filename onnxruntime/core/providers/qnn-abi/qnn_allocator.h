@@ -16,12 +16,10 @@ class HtpSharedMemoryAllocator : public OrtAllocator {
   // Gets the OrtMemoryInfo value that is associated with this allocator type.
   // static OrtMemoryInfo AssociatedMemoryInfo();
 
-  HtpSharedMemoryAllocator(const OrtMemoryInfo* mem_info,
-                           std::shared_ptr<RpcMemLibrary> rpcmem_lib,
-                           const Ort::Logger& logger)
+  HtpSharedMemoryAllocator(const OrtMemoryInfo* mem_info, std::shared_ptr<RpcMemLibrary> rpcmem_lib)
       : memory_info_{mem_info},
         rpcmem_lib_{std::move(rpcmem_lib)},
-        logger_(logger) {
+        logger_(OrtLoggingManager::GetDefaultLogger()) {
     ORT_ENFORCE(rpcmem_lib_ != nullptr);
 
     Alloc = AllocImpl;

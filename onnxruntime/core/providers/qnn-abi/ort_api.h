@@ -120,6 +120,34 @@ constexpr const char* kOnnxDomain = "";
 constexpr const char* kMSDomain = "com.microsoft";
 constexpr const char* kMSInternalNHWCDomain = "com.ms.internal.nhwc";
 
+class OrtLoggingManager {
+ public:
+  static const Ort::Logger& GetDefaultLogger() {
+    return GetLoggerInstance();
+  }
+
+  static bool HasDefaultLogger() {
+    return GetLoggerPtr() != nullptr;
+  }
+
+  static void SetDefaultLogger(const OrtLogger* default_logger) {
+    GetLoggerPtr() = default_logger;
+  }
+
+ private:
+  OrtLoggingManager() = delete;
+
+  static const OrtLogger*& GetLoggerPtr() {
+    static const OrtLogger* default_logger_ = nullptr;
+    return default_logger_;
+  }
+
+  static const Ort::Logger& GetLoggerInstance() {
+    static const Ort::Logger ort_logger_ = Ort::Logger(GetLoggerPtr());
+    return ort_logger_;
+  }
+};
+
 struct ApiPtrs {
   const OrtApi& ort_api;
   const OrtEpApi& ep_api;
@@ -148,18 +176,6 @@ struct DeferOrtRelease {
   T** objects_ = nullptr;
   size_t count_ = 0;
   std::function<void(T*)> release_func_ = nullptr;
-};
-
-template <typename T>
-struct Factory {
-  template <typename... Params>
-  static inline std::unique_ptr<T> Create(Params&&... params) {
-#if BUILD_QNN_EP_STATIC_LIB
-    return std::make_unique<T>(std::forward<Params>(params)...);
-#else
-    return T::Create(std::forward<Params>(params)...);
-#endif
-  }
 };
 
 namespace QDQ {

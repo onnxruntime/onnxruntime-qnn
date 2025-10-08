@@ -133,7 +133,7 @@ extern "C" {
 //
 OrtStatus* CreateEpFactories(const char* registration_name,
                              const OrtApiBase* ort_api_base,
-                             const OrtLogger* /*default_logger*/,
+                             const OrtLogger* default_logger,
                              OrtEpFactory** factories,
                              size_t max_factories,
                              size_t* num_factories) {
@@ -184,6 +184,9 @@ OrtStatus* CreateEpFactories(const char* registration_name,
 
   factories[0] = factory.release();
   *num_factories = 1;
+
+  // Set default logger for later use.
+  onnxruntime::OrtLoggingManager::SetDefaultLogger(default_logger);
 
   return nullptr;
 }

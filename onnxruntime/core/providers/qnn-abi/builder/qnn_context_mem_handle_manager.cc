@@ -96,12 +96,15 @@ Ort::Status QnnContextMemHandleManager::GetOrRegister(void* shared_memory_addres
     //   ~InferenceSession() -> ~Logger() -> ~QnnExecutionProvider() -> ~QnnBackendManager() ->
     //   ~QnnContextMemHandleManager() -> unregister_mem_handle() segfault
     const auto unregister_mem_handle = [&qnn_interface = this->qnn_interface_](Qnn_MemHandle_t raw_mem_handle) {
-      // LOGS_DEFAULT(VERBOSE) << "Unregistering QNN mem handle. mem_handle: " << raw_mem_handle;
+      ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, "Unregistering QNN mem handle.");
 
       const auto unregister_result = qnn_interface.memDeRegister(&raw_mem_handle, 1);
       if (unregister_result != QNN_SUCCESS) {
-        // LOGS_DEFAULT(ERROR) << "qnn_interface.memDeRegister() failed: "
-        //                     << utils::GetVerboseQnnErrorMessage(qnn_interface, unregister_result);
+        ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
+                    ORT_LOGGING_LEVEL_ERROR,
+                    ("qnn_interface.memDeRegister() failed: " +
+                     utils::GetVerboseQnnErrorMessage(qnn_interface, unregister_result))
+                        .c_str());
       }
     };
 
