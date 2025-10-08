@@ -185,12 +185,14 @@ Status QnnBackendManager::setSustainedHighPerformance(uint32_t htp_power_config_
   unsigned long remaining_duration = 0;
   if (graphState == GraphState::RUN_DONE) {
     std::chrono::microseconds sustainedDurationMs(timer_resource.sustainedTimerDuration);
-    if (timer_->launch(sustainedDurationMs)) {
-      timer_resource.timer_thread_in_use = true;
-      graphState = GraphState::NONE;
-      timer_resource.caller_busy = false;
-    } else {
-      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Not able to launch timer thread");
+    if (!timer_resource.timer_thread_in_use) {
+      if (timer_->launch(sustainedDurationMs)) {
+        timer_resource.timer_thread_in_use = true;
+        graphState = GraphState::NONE;
+        timer_resource.caller_busy = false;
+      } else {
+        return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Not able to launch timer thread");
+      }
     }
   }
   if (graphState == GraphState::RUN_START) {
