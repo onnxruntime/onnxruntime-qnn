@@ -421,30 +421,49 @@ void QnnLogging(const char* format,
                 QnnLog_Level_t level,
                 uint64_t timestamp,
                 va_list argument_parameter) {
-  ORT_UNUSED_PARAMETER(format);
   ORT_UNUSED_PARAMETER(level);
   ORT_UNUSED_PARAMETER(timestamp);
-  ORT_UNUSED_PARAMETER(argument_parameter);
 
-  // TODO: Not sure how to migrate this part.
-  // if (!::onnxruntime::logging::LoggingManager::HasDefaultLogger()) {
-  //   // QNN may call this logging callback at any point, which means that we need to explicitly check
-  //   // that the default logger has been initialized before trying to use it (otherwise get segfault).
-  //   return;
-  // }
+  if (!OrtLoggingManager::HasDefaultLogger()) {
+    return;
+  }
 
-  // const auto& logger = ::onnxruntime::logging::LoggingManager::DefaultLogger();
-  // const auto severity = ::onnxruntime::logging::Severity::kVERBOSE;
-  // const auto data_type = ::onnxruntime::logging::DataType::SYSTEM;
+  // TODO
+  // There is an unknown bug in Ort::Logger::LogFormattedMessage which causes crashes.
+  // Below implementations are directly copied from core/common/logging/capture.cc.
 
-  // if (logger.OutputIsEnabled(severity, data_type)) {
-  //   auto log_capture = Factory<logging::Capture>::Create(logger,
-  //                                                        severity,
-  //                                                        logging::Category::onnxruntime,
-  //                                                        data_type,
-  //                                                        ORT_WHERE);
-  //   log_capture->ProcessPrintf(format, argument_parameter);
-  // }
+  static constexpr auto kTruncatedWarningText = "[...truncated...]";
+  static constexpr int kMaxMessageSize = 2048;
+  char message_buffer[kMaxMessageSize];
+  const auto message = gsl::make_span(message_buffer);
+
+  bool error = false;
+  bool truncated = false;
+
+#if (defined(WIN32) || defined(_WIN32) || defined(__WIN32__) && !defined(__GNUC__))
+  errno = 0;
+  const int nbrcharacters = vsnprintf_s(message.data(), message.size(), _TRUNCATE, format, argument_parameter);
+  if (nbrcharacters < 0) {
+    error = errno != 0;
+    truncated = !error;
+  }
+#else
+  const int nbrcharacters = vsnprintf(message.data(), message.size(), format, argument_parameter);
+  error = nbrcharacters < 0;
+  truncated = (nbrcharacters >= 0 && static_cast<size_t>(nbrcharacters) > message.size());
+#endif
+
+  std::ostringstream stream;
+  if (error) {
+    stream << "\n\tERROR LOG MSG NOTIFICATION: Failure to successfully parse the message";
+    stream << '"' << format << '"' << std::endl;
+  } else if (truncated) {
+    stream << message.data() << kTruncatedWarningText;
+  } else {
+    stream << message.data();
+  }
+
+  ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, stream.str().c_str());
 }
 
 Ort::Status QnnBackendManager::InitializeQnnLog() {

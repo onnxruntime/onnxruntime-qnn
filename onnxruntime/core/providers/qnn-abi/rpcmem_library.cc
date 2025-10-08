@@ -25,7 +25,9 @@ void DynamicLibraryHandleDeleter::operator()(void* library_handle) noexcept {
   const auto unload_status = OrtUnloadDynamicLibrary(library_handle);
 
   if (!unload_status.IsOK()) {
-    // LOGS_DEFAULT(WARNING) << "Failed to unload dynamic library. Error: " << unload_status.GetErrorMessage();
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
+                ORT_LOGGING_LEVEL_WARNING,
+                ("Failed to unload dynamic library. Error: " + unload_status.GetErrorMessage()).c_str());
   }
 }
 
