@@ -115,12 +115,22 @@ AllocationTracker& GlobalAllocationTracker() {
 
 }  // namespace
 
-// OrtMemoryInfo HtpSharedMemoryAllocator::AssociatedMemoryInfo() {
-//   return OrtMemoryInfo{QNN_HTP_SHARED, OrtAllocatorType::OrtDeviceAllocator,
-//                        OrtDevice{OrtDevice::CPU, OrtDevice::MemType::HOST_ACCESSIBLE, OrtDevice::VendorIds::QUALCOMM,
-//                                  /*device_id*/ 0},
-//                        OrtMemTypeDefault};
-// }
+const struct OrtMemoryInfo* ORT_API_CALL HtpSharedMemoryAllocator::AssociatedMemoryInfo(const OrtApi& ort_api) {
+  OrtMemoryInfo* memory_info = nullptr;
+  OrtStatus* status = ort_api.CreateMemoryInfo_V2("QnnHtpShared",
+                                                  OrtMemoryInfoDeviceType_CPU,
+                                                  /*vendor_id*/ 0x5143,  // QUALCOMM
+                                                  /*device_id*/ 0,
+                                                  OrtDeviceMemoryType_HOST_ACCESSIBLE,
+                                                  /*alignment*/ 0,
+                                                  OrtAllocatorType::OrtDeviceAllocator,
+                                                  &memory_info);
+  if (status != nullptr) {
+    ort_api.ReleaseStatus(status);
+    return nullptr;
+  }
+  return memory_info;
+}
 
 void* ORT_API_CALL HtpSharedMemoryAllocator::AllocImpl(struct OrtAllocator* this_, size_t requested_size) {
   HtpSharedMemoryAllocator* allocator = static_cast<HtpSharedMemoryAllocator*>(this_);

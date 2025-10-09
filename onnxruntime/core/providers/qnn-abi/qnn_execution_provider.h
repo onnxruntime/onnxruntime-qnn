@@ -63,6 +63,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
   static OrtStatus* ORT_API_CALL OnRunEndImpl(_In_ OrtEp* this_ptr,
                                               _In_ const ::OrtRunOptions* run_options,
                                               _In_ bool sync_stream) noexcept;
+  static OrtStatus* ORT_API_CALL CreateAllocatorImpl(_In_ OrtEp* this_ptr,
+                                                     _In_ const OrtMemoryInfo* memory_info,
+                                                     _Outptr_result_maybenull_ OrtAllocator** allocator) noexcept;
   static OrtStatus* ORT_API_CALL SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
                                                        _In_reads_(num_options) const char* const* option_keys,
                                                        _In_reads_(num_options) const char* const* option_values,
@@ -90,6 +93,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // std::string MakeMetadefName(const OrtGraph* graph);
   void ParseHtpGraphFinalizationOptimizationMode(const std::string& htp_graph_finalization_opt_mode_string,
                                                  const Ort::Logger& logger);
+
+  bool IsHtpSharedMemoryAllocatorAvailable() const { return rpcmem_library_ != nullptr; }
 
   void InitQnnHtpGraphConfigs(
       qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t>& configs_builder) const;
