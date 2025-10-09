@@ -186,6 +186,7 @@ Status QnnBackendManager::setSustainedHighPerformance(uint32_t htp_power_config_
   if (graphState == GraphState::RUN_DONE) {
     std::chrono::microseconds sustainedDurationMs(timer_resource.sustainedTimerDuration);
     if (timer_resource.timer_thread_in_use) {
+      std::chrono::microseconds remainUs;
       if (timer_->remainingDuration(remainUs)) {
         remaining_duration = static_cast<unsigned long>(remainUs.count());
         if (remaining_duration > 0 && remaining_duration < timer_resource.sustainedTimerDuration) {
