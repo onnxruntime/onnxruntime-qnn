@@ -22,6 +22,8 @@
 #include "core/providers/qnn/builder/qnn_node_group/lpbqgemm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/lpbqmatmul_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5.h"
+#include "core/providers/qnn/builder/qnn_node_group/gelu_fusion.h"
+
 
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -84,7 +86,8 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"Mul", {ScaleSoftmaxFusion::TryFusion}},
     {"Cast", {CastLoneQFusion::TryFusion}},
     {"Reshape", {Rank6ToRank5Fusion::TryFusion}},
-    {"Transpose", {ChannelShuffleFusion::TryFusion}}};
+    {"Transpose", {ChannelShuffleFusion::TryFusion}},
+    {"Erf", {GeluFusion::TryFusion}}};
 
 void registerUDO(const std::string& node_type, const std::string& op_package) {
   std::function<std::unique_ptr<IQnnNodeGroup>(QnnModelWrapper & qnn_model_wrapper,
