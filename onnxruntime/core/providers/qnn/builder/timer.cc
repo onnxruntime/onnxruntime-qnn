@@ -36,6 +36,7 @@ void Timer::bkgTimer() {
     if (isTimerStopped) {
       threadStatus = threadState::IDLE;
       isTimerStopped = false;
+      kcv.notify_all();
     }
 
     if (threadStatus == threadState::LAUNCH) {
@@ -67,4 +68,5 @@ void Timer::abortTimer() {
   std::unique_lock<std::mutex> lk(mtx);
   isTimerStopped = true;
   kcv.notify_all();
+  kcv.wait(lk, [&] { return threadStatus == threadState::IDLE; });
 }
