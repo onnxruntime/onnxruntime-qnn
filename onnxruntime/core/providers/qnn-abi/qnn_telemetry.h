@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #pragma once
+#include "core/providers/qnn-abi/ort_api.h"
 #ifdef _WIN32
 #include <Windows.h>
 
@@ -13,8 +14,6 @@
 #include <mutex>
 #include <string>
 #include <vector>
-
-#include "core/providers/qnn-abi/ort_api.h"
 
 #if !BUILD_QNN_EP_STATIC_LIB
 TRACELOGGING_DECLARE_PROVIDER(telemetry_provider_handle);
@@ -128,7 +127,6 @@ class QnnTelemetry {
 #endif
 };
 
-
 enum class ORTTraceLoggingKeyword : uint64_t {
   Session = 0x1,    // ORT Session TraceLoggingWrite
   Logs = 0x2,       // LOGS() Macro ORT logs. Pair with an appropriate level depending on detail required
@@ -140,7 +138,6 @@ enum class ORTTraceLoggingKeyword : uint64_t {
   Reserved6 = 0x80,
   Profiling = 0x100  // Enables profiling. At higher levels >5 can impact inference performance
 };
-
 
 }  // namespace qnn
 }  // namespace onnxruntime

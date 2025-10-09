@@ -822,7 +822,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   if (qnn::QnnTelemetry::SupportsETW()) {
     auto& etwRegistrationManager = qnn::QnnTelemetry::Instance();
     // Register callback for ETW capture state (rundown)
-    callback_ETWSink_provider_ =qnn::QnnTelemetry::EtwInternalCallback(
+    callback_ETWSink_provider_ = qnn::QnnTelemetry::EtwInternalCallback(
         [&etwRegistrationManager, this](
             LPCGUID SourceId,
             ULONG IsEnabled,
@@ -1814,7 +1814,7 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
   if (ep->IsHtpSharedMemoryAllocatorAvailable()) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating HtpSharedMemoryAllocator.");
 
-    auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, ep->rpcmem_library_);
+    auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(ep->ort_api, memory_info, ep->rpcmem_library_);
     *allocator = htp_allocator.release();
   }
   return nullptr;
