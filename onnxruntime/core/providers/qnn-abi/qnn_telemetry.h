@@ -21,6 +21,35 @@ TRACELOGGING_DECLARE_PROVIDER(telemetry_provider_handle);
 #endif
 
 namespace onnxruntime {
+namespace logging {
+// Severity enum copied from core/common/logging/severity.h to avoid dependency
+enum class Severity {
+  kVERBOSE = 0,
+  kINFO = 1,
+  kWARNING = 2,
+  kERROR = 3,
+  kFATAL = 4
+};
+
+// Helper function to convert Severity to OrtLoggingLevel
+inline OrtLoggingLevel SeverityToOrtLoggingLevel(Severity severity) {
+  switch (severity) {
+    case Severity::kVERBOSE:
+      return ORT_LOGGING_LEVEL_VERBOSE;
+    case Severity::kINFO:
+      return ORT_LOGGING_LEVEL_INFO;
+    case Severity::kWARNING:
+      return ORT_LOGGING_LEVEL_WARNING;
+    case Severity::kERROR:
+      return ORT_LOGGING_LEVEL_ERROR;
+    case Severity::kFATAL:
+      return ORT_LOGGING_LEVEL_FATAL;
+    default:
+      return ORT_LOGGING_LEVEL_VERBOSE;
+  }
+}
+}  // namespace logging
+
 namespace qnn {
 
 /// <summary>
@@ -37,10 +66,17 @@ namespace qnn {
 class QnnTelemetry {
  public:
   static QnnTelemetry& Instance();
+
+  // Returns true if ETW is supported on this platform
+  static bool SupportsETW();
+
   bool IsEnabled() const;
 
   // Get the current logging level
   unsigned char Level() const;
+
+  // Map ETW level to ORT Severity
+  logging::Severity MapLevelToSeverity();
 
   // Get the current keyword
   UINT64 Keyword() const;
@@ -92,7 +128,39 @@ class QnnTelemetry {
 #endif
 };
 
+
+enum class ORTTraceLoggingKeyword : uint64_t {
+  Session = 0x1,    // ORT Session TraceLoggingWrite
+  Logs = 0x2,       // LOGS() Macro ORT logs. Pair with an appropriate level depending on detail required
+  Reserved1 = 0x4,  // Reserved if we want to add some specific sub-categories instead of just LOGS() or other uses
+  Reserved2 = 0x8,
+  Reserved3 = 0x10,
+  Reserved4 = 0x20,
+  Reserved5 = 0x40,
+  Reserved6 = 0x80,
+  Profiling = 0x100  // Enables profiling. At higher levels >5 can impact inference performance
+};
+
+
 }  // namespace qnn
 }  // namespace onnxruntime
 
+#else
+// ETW is not supported on non-Windows platforms but should still define a dummy QnnTelemetry
+namespace onnxruntime {
+namespace qnn {
+
+class QnnTelemetry {
+ public:
+  static QnnTelemetry& Instance();
+  static bool SupportsETW();
+
+ private:
+  QnnTelemetry() = default;
+  ~QnnTelemetry() = default;
+  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnTelemetry);
+};
+
+}  // namespace qnn
+}  // namespace onnxruntime
 #endif  // defined(_WIN32)

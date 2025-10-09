@@ -186,7 +186,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool stop_share_ep_contexts_ = false;
   bool enable_spill_fill_buffer_ = false;
 #if defined(_WIN32)
-  // onnxruntime::logging::EtwRegistrationManager::EtwInternalCallback callback_ETWSink_provider_ = nullptr;
+  qnn::QnnTelemetry::EtwInternalCallback callback_ETWSink_provider_ = nullptr;
 #endif
 
   // Metadef ID generation state
