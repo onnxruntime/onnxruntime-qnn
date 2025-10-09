@@ -9,6 +9,7 @@
 // need space after Windows.h to prevent clang-format re-ordering breaking the build.
 // TraceLoggingProvider.h must follow Windows.h
 #include <Windows.h>
+#include <ntverp.h>
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -103,6 +104,22 @@ QnnTelemetry& QnnTelemetry::Instance() {
   return instance;
 }
 
+bool QnnTelemetry::SupportsETW() {
+#if BUILD_QNN_EP_STATIC_LIB
+  const Env& env = GetDefaultEnv();
+  auto& provider = env.GetTelemetryProvider();
+  return provider.SupportsETW();
+#else
+  // Check for Windows 10 SDK or later (same logic as etw_sink.h)
+  // VER_PRODUCTBUILD > 9600 means Windows 10 SDK or later
+#if VER_PRODUCTBUILD > 9600
+  return true;
+#else
+  return false;
+#endif
+#endif
+}
+
 bool QnnTelemetry::IsEnabled() const {
 #if BUILD_QNN_EP_STATIC_LIB
   const Env& env = GetDefaultEnv();
@@ -133,6 +150,31 @@ UINT64 QnnTelemetry::Keyword() const {
 #else
   std::lock_guard<std::mutex> lock(provider_change_mutex_);
   return keyword_;
+#endif
+}
+
+logging::Severity QnnTelemetry::MapLevelToSeverity() {
+#if BUILD_QNN_EP_STATIC_LIB
+  const Env& env = GetDefaultEnv();
+  auto& provider = env.GetTelemetryProvider();
+  return provider.MapLevelToSeverity();
+#else
+  switch (level_) {
+    case TRACE_LEVEL_NONE:
+      return logging::Severity::kFATAL;  // There is no none severity option
+    case TRACE_LEVEL_VERBOSE:
+      return logging::Severity::kVERBOSE;
+    case TRACE_LEVEL_INFORMATION:
+      return logging::Severity::kINFO;
+    case TRACE_LEVEL_WARNING:
+      return logging::Severity::kWARNING;
+    case TRACE_LEVEL_ERROR:
+      return logging::Severity::kERROR;
+    case TRACE_LEVEL_CRITICAL:
+      return logging::Severity::kFATAL;
+    default:
+      return logging::Severity::kVERBOSE;
+  }
 #endif
 }
 
@@ -206,6 +248,22 @@ void QnnTelemetry::InvokeCallbacks(LPCGUID SourceId, ULONG IsEnabled, UCHAR Leve
   }
 }
 #endif  // !BUILD_QNN_EP_STATIC_LIB
+
+}  // namespace qnn
+}  // namespace onnxruntime
+#else
+// ETW is not supported on non-Windows platforms
+namespace onnxruntime {
+namespace qnn {
+
+QnnTelemetry& QnnTelemetry::Instance() {
+  static QnnTelemetry instance;
+  return instance;
+}
+
+bool QnnTelemetry::SupportsETW() {
+  return false;
+}
 
 }  // namespace qnn
 }  // namespace onnxruntime

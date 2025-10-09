@@ -13,6 +13,10 @@
 #include <filesystem>
 #include <optional>
 
+#ifdef _WIN32
+#include <evntrace.h>
+#endif
+
 #include "HTP/QnnHtpGraph.h"
 
 #include "core/providers/qnn-abi/ort_api.h"
@@ -524,7 +528,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   std::string profiling_level_str;
   GetSessionConfigEntryOrDefault(ort_api,
                                  session_options_,
-                                 FormatEPConfigKey("profiling_level"),
+                                 FormatEPConfigKey(PROFILING_LEVEL),
                                  "off",
                                  profiling_level_str);
   ParseProfilingLevel(profiling_level_str, profiling_level, logger_);
@@ -804,53 +808,53 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 
 #if defined(_WIN32)
-  // TODO: There is no alternative implementation with C API header currently.
-  // if (onnxruntime::logging::EtwRegistrationManager::SupportsETW()) {
-  //   auto& etwRegistrationManager = logging::EtwRegistrationManager::Instance();
-  //   // Register callback for ETW capture state (rundown)
-  //   callback_ETWSink_provider_ = onnxruntime::logging::EtwRegistrationManager::EtwInternalCallback(
-  //       [&etwRegistrationManager, this](
-  //           LPCGUID SourceId,
-  //           ULONG IsEnabled,
-  //           UCHAR Level,
-  //           ULONGLONG MatchAnyKeyword,
-  //           ULONGLONG MatchAllKeyword,
-  //           PEVENT_FILTER_DESCRIPTOR FilterData,
-  //           PVOID CallbackContext) {
-  //         ORT_UNUSED_PARAMETER(SourceId);
-  //         ORT_UNUSED_PARAMETER(MatchAnyKeyword);
-  //         ORT_UNUSED_PARAMETER(MatchAllKeyword);
-  //         ORT_UNUSED_PARAMETER(FilterData);
-  //         ORT_UNUSED_PARAMETER(CallbackContext);
+  if (qnn::QnnTelemetry::SupportsETW()) {
+    auto& etwRegistrationManager = qnn::QnnTelemetry::Instance();
+    // Register callback for ETW capture state (rundown)
+    callback_ETWSink_provider_ =qnn::QnnTelemetry::EtwInternalCallback(
+        [&etwRegistrationManager, this](
+            LPCGUID SourceId,
+            ULONG IsEnabled,
+            UCHAR Level,
+            ULONGLONG MatchAnyKeyword,
+            ULONGLONG MatchAllKeyword,
+            PEVENT_FILTER_DESCRIPTOR FilterData,
+            PVOID CallbackContext) {
+          ORT_UNUSED_PARAMETER(SourceId);
+          ORT_UNUSED_PARAMETER(MatchAnyKeyword);
+          ORT_UNUSED_PARAMETER(MatchAllKeyword);
+          ORT_UNUSED_PARAMETER(FilterData);
+          ORT_UNUSED_PARAMETER(CallbackContext);
 
-  //         if (IsEnabled == EVENT_CONTROL_CODE_ENABLE_PROVIDER) {
-  //           if ((MatchAnyKeyword & static_cast<ULONGLONG>(onnxruntime::logging::ORTTraceLoggingKeyword::Logs)) != 0) {
-  //             auto ortETWSeverity = etwRegistrationManager.MapLevelToSeverity();
-  //             (void)qnn_backend_manager_->ResetQnnLogLevel(ortETWSeverity);
-  //           }
-  //           if ((MatchAnyKeyword & static_cast<ULONGLONG>(onnxruntime::logging::ORTTraceLoggingKeyword::Profiling)) != 0) {
-  //             if (Level != 0) {
-  //               // Commenting out Dynamic QNN Profiling for now
-  //               // There seems to be a crash in 3rd party QC QnnHtp.dll with this.
-  //               // Repro Scenario - start ETW tracing prior to session creation.
-  //               //    Then disable/enable ETW Tracing with the code below uncommented a few times
-  //               // auto profiling_level_etw = GetProfilingLevelFromETWLevel(Level);
-  //               // (void)qnn_backend_manager_->SetProfilingLevelETW(profiling_level_etw);
-  //               //
-  //               // NOTE(1/2/2025): It is possible that the above was not working in part because it is using the
-  //               // *logging ETW* subsystem to modify profiling, which should use an entirely different
-  //               // ETW provider (see QnnTelemetry). Should add callbacks for profiling to the QnnTelemetry ETW provider.
-  //             }
-  //           }
-  //         }
+          if (IsEnabled == EVENT_CONTROL_CODE_ENABLE_PROVIDER) {
+            if ((MatchAnyKeyword & static_cast<ULONGLONG>(qnn::ORTTraceLoggingKeyword::Logs)) != 0) {
+              auto severity = etwRegistrationManager.MapLevelToSeverity();
+              auto ortETWSeverity = onnxruntime::logging::SeverityToOrtLoggingLevel(severity);
+              (void)qnn_backend_manager_->ResetQnnLogLevel(ortETWSeverity);
+            }
+            if ((MatchAnyKeyword & static_cast<ULONGLONG>(qnn::ORTTraceLoggingKeyword::Profiling)) != 0) {
+              if (Level != 0) {
+                // Commenting out Dynamic QNN Profiling for now
+                // There seems to be a crash in 3rd party QC QnnHtp.dll with this.
+                // Repro Scenario - start ETW tracing prior to session creation.
+                //    Then disable/enable ETW Tracing with the code below uncommented a few times
+                // auto profiling_level_etw = GetProfilingLevelFromETWLevel(Level);
+                // (void)qnn_backend_manager_->SetProfilingLevelETW(profiling_level_etw);
+                //
+                // NOTE(1/2/2025): It is possible that the above was not working in part because it is using the
+                // *logging ETW* subsystem to modify profiling, which should use an entirely different
+                // ETW provider (see QnnTelemetry). Should add callbacks for profiling to the QnnTelemetry ETW provider.
+              }
+            }
+          }
 
-  //         if (IsEnabled == EVENT_CONTROL_CODE_DISABLE_PROVIDER) {
-  //           // (void)qnn_backend_manager_->SetProfilingLevelETW(qnn::ProfilingLevel::INVALID);
-  //           (void)qnn_backend_manager_->ResetQnnLogLevel(std::nullopt);
-  //         }
-  //       });
-  //   etwRegistrationManager.RegisterInternalCallback(callback_ETWSink_provider_);
-  // }
+          if (IsEnabled == EVENT_CONTROL_CODE_DISABLE_PROVIDER) {
+            // (void)qnn_backend_manager_->SetProfilingLevelETW(qnn::ProfilingLevel::INVALID);
+            (void)qnn_backend_manager_->ResetQnnLogLevel(std::nullopt);
+          }
+        });
+    etwRegistrationManager.RegisterInternalCallback(callback_ETWSink_provider_);
+  }
 #endif
 }
 
@@ -879,14 +883,14 @@ QnnEp::~QnnEp() {
   }
 
 #if defined(_WIN32)
-  // Clean up ETW callback if registered
-  // if (callback_ETWSink_provider_) {
-  //   if (onnxruntime::logging::EtwRegistrationManager::SupportsETW()) {
-  //     auto& etwRegistrationManager = logging::EtwRegistrationManager::Instance();
-  //     etwRegistrationManager.UnregisterInternalCallback(callback_ETWSink_provider_);
-  //     callback_ETWSink_provider_ = nullptr;
-  //   }
-  // }
+  // // Clean up ETW callback if registered
+  if (callback_ETWSink_provider_) {
+    if (qnn::QnnTelemetry::SupportsETW()) {
+      auto& etwRegistrationManager = qnn::QnnTelemetry::Instance();
+      etwRegistrationManager.UnregisterInternalCallback(callback_ETWSink_provider_);
+      callback_ETWSink_provider_ = nullptr;
+    }
+  }
 #endif
 }
 
@@ -1734,7 +1738,7 @@ OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const :
   }
 
   uint32_t rpc_polling_time = 0;
-  if (qnn::HtpPerformanceMode::kHtpBurst != htp_performance_mode) {
+  if (qnn::HtpPerformanceMode::kHtpBurst == htp_performance_mode) {
     rpc_polling_time = 9999;
   }
 
