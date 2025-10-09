@@ -22,7 +22,6 @@ QnnEpFactory::QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in) : ApiPtrs(or
   GetSupportedDevices = GetSupportedDevicesImpl;
   CreateEp = CreateEpImpl;
   ReleaseEp = ReleaseEpImpl;
-  CreateAllocator = CreateAllocatorImpl;
   ReleaseAllocator = ReleaseAllocatorImpl;
   CreateDataTransfer = CreateDataTransferImpl;
   IsStreamAware = IsStreamAwareImpl;
@@ -31,7 +30,7 @@ QnnEpFactory::QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in) : ApiPtrs(or
   OrtMemoryInfo* mem_info = nullptr;
   auto* status = ort_api.CreateMemoryInfo_V2("QnnEp",
                                              OrtMemoryInfoDeviceType_CPU,
-                                             /*vendor_id*/ 0x5143,
+                                             /*vendor_id*/ 0x0000,  // No vendor ID. Valid for DeviceType::CPU + MemType::DEFAULT or for generic allocators
                                              /*device_id*/ 0,
                                              OrtDeviceMemoryType_DEFAULT,
                                              /*alignment*/ 0,
@@ -43,7 +42,7 @@ QnnEpFactory::QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in) : ApiPtrs(or
   // create read-only allocator for use with initializers. same info as DEFAULT memory apart from the allocator type.
   status = ort_api.CreateMemoryInfo_V2("QnnEp readonly",
                                        OrtMemoryInfoDeviceType_CPU,
-                                       /*vendor_id*/ 0x5143,
+                                       /*vendor_id*/ 0x0000,
                                        /*device_id*/ 0,
                                        OrtDeviceMemoryType_DEFAULT,
                                        /*alignment*/ 0,
@@ -119,14 +118,8 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
                                                         nullptr,
                                                         nullptr,
                                                         &ep_device));
-      // register the allocator info required by the EP.
-      // registering OrtMemoryInfo for host accessible memory would be done in an additional call.
-      // OrtReadOnlyAllocator + OrtDeviceMemoryType_DEFAULT allocator for use with initializers is optional.
-      // RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->default_memory_info_.get()));
-      // RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->readonly_memory_info_.get()));
-      RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->host_accessible_memory_info_.get()));
-
       ep_devices[num_ep_devices++] = ep_device;
+      factory->ep_devices_.push_back(ep_device);
     }
   }
 
@@ -151,6 +144,18 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
   std::unique_ptr<QnnEp> qnn_ep;
   try {
     qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *session_options, logger);
+
+    std::string enable_htp_shared_memory_allocator_str;
+    GetSessionConfigEntryOrDefault(factory->ort_api,
+                                   *session_options,
+                                   GetProviderOptionPrefix(factory->ep_name_) + "enable_htp_shared_memory_allocator",
+                                   "0",
+                                   enable_htp_shared_memory_allocator_str);
+    if (enable_htp_shared_memory_allocator_str == "1") {
+      for (OrtEpDevice* ep_device : factory->ep_devices_) {
+        RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->host_accessible_memory_info_.get()));
+      }
+    }
   } catch (const std::runtime_error& e) {
     return factory->ort_api.CreateStatus(ORT_FAIL, e.what());
   }
@@ -166,23 +171,6 @@ void ORT_API_CALL QnnEpFactory::ReleaseEpImpl(OrtEpFactory* /*this_ptr*/, OrtEp*
 
   QnnEp* dummy_ep = static_cast<QnnEp*>(ep);
   delete dummy_ep;
-}
-
-OrtStatus* ORT_API_CALL QnnEpFactory::CreateAllocatorImpl(OrtEpFactory* this_ptr,
-                                                          const OrtMemoryInfo* memory_info,
-                                                          const OrtKeyValuePairs* /*allocator_options*/,
-                                                          OrtAllocator** allocator) noexcept {
-  auto& factory = *static_cast<QnnEpFactory*>(this_ptr);
-  *allocator = nullptr;
-
-  bool is_default_allocator = memory_info == factory.default_memory_info_.get();
-  bool is_readonly_allocator = memory_info == factory.readonly_memory_info_.get();
-  bool is_host_accessible_allocator = memory_info == factory.host_accessible_memory_info_.get();
-
-  auto host_accessible_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, std::make_shared<qnn::RpcMemLibrary>());
-  *allocator = host_accessible_allocator.release();
-
-  return nullptr;
 }
 
 void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* /*this_ptr*/, OrtAllocator* allocator) noexcept {

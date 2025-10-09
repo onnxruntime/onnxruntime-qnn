@@ -32,10 +32,6 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
                                               _In_ const OrtLogger* logger,
                                               _Out_ OrtEp** ep) noexcept;
   static void ORT_API_CALL ReleaseEpImpl(OrtEpFactory* /*this_ptr*/, OrtEp* ep) noexcept;
-  static OrtStatus* ORT_API_CALL CreateAllocatorImpl(OrtEpFactory* this_ptr,
-                                                     const OrtMemoryInfo* /*memory_info*/,
-                                                     const OrtKeyValuePairs* /*allocator_options*/,
-                                                     OrtAllocator** allocator) noexcept;
   static void ORT_API_CALL ReleaseAllocatorImpl(OrtEpFactory* /*this*/, OrtAllocator* allocator) noexcept;
   static OrtStatus* ORT_API_CALL CreateDataTransferImpl(OrtEpFactory* this_ptr,
                                                         OrtDataTransferImpl** data_transfer) noexcept;
@@ -54,6 +50,8 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   MemoryInfoUniquePtr default_memory_info_;
   MemoryInfoUniquePtr readonly_memory_info_;  // used for initializers
   MemoryInfoUniquePtr host_accessible_memory_info_;
+
+  std::vector<OrtEpDevice*> ep_devices_;
 };
 
 }  // namespace onnxruntime

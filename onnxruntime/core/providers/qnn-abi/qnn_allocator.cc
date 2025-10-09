@@ -127,9 +127,10 @@ const struct OrtMemoryInfo* ORT_API_CALL HtpSharedMemoryAllocator::AssociatedMem
                                                   &memory_info);
   if (status != nullptr) {
     ort_api.ReleaseStatus(status);
+    ORT_CXX_API_THROW("Failed to create memory info for HtpSharedMemoryAllocator", ORT_EP_FAIL);
     return nullptr;
   }
-  return memory_info;
+  return static_cast<const OrtMemoryInfo*>(memory_info);
 }
 
 void* ORT_API_CALL HtpSharedMemoryAllocator::AllocImpl(struct OrtAllocator* this_, size_t requested_size) {
