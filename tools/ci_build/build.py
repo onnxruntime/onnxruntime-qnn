@@ -2476,6 +2476,9 @@ def main():
                         "ARM(64) builds. Will skip test running after build."
                     )
                     args.test = False
+                if args.msvc_toolset:
+                    toolset = f"version={args.msvc_toolset}"
+                    cmake_extra_args += ["-T", toolset]
             else:
                 target_arch = platform.machine()
                 if target_arch == "AMD64":
