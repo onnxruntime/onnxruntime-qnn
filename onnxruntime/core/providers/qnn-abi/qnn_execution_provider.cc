@@ -18,6 +18,7 @@
 #include "core/providers/qnn-abi/ort_api.h"
 #include "core/providers/qnn-abi/qnn_provider_factory.h"
 #include "core/providers/qnn-abi/shared_context.h"
+#include "core/providers/qnn-abi/qnn_allocator.h"
 #include "core/providers/qnn-abi/builder/qnn_backend_manager.h"
 #include "core/providers/qnn-abi/builder/qnn_configs_helper.h"
 #include "core/providers/qnn-abi/builder/qnn_model.h"
@@ -369,6 +370,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   ShouldConvertDataLayoutForOp = ShouldConvertDataLayoutForOpImpl;
   OnRunStart = OnRunStartImpl;
   OnRunEnd = OnRunEndImpl;
+  CreateAllocator = CreateAllocatorImpl;
   SetDynamicOptions = SetDynamicOptionsImpl;
 
   // Initialize from session options
@@ -1785,6 +1787,21 @@ OrtStatus* ORT_API_CALL QnnEp::OnRunEndImpl(_In_ OrtEp* this_ptr,
     }
   }
 
+  return nullptr;
+}
+
+OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
+                                                   _In_ const OrtMemoryInfo* memory_info,
+                                                   _Outptr_result_maybenull_ OrtAllocator** allocator) noexcept {
+  *allocator = nullptr;
+  QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+
+  if (ep->IsHtpSharedMemoryAllocatorAvailable()) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating HtpSharedMemoryAllocator.");
+
+    auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, ep->rpcmem_library_);
+    *allocator = htp_allocator.release();
+  }
   return nullptr;
 }
 

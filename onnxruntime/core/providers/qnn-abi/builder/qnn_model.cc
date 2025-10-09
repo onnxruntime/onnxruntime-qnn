@@ -227,18 +227,23 @@ Ort::Status QnnModel::SetupQnnInputOutput(const Ort::Logger& logger) {
   return Ort::Status();
 }
 
-static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const Ort::Logger& logger,
+static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
+                                                       const Ort::Logger& logger,
                                                        QnnBackendManager& qnn_backend_manager,
-                                                       const OrtMemoryInfo& /*ort_value_memory_info*/,
+                                                       const OrtMemoryInfo* ort_value_memory_info,
                                                        void* ort_value_data, uint32_t ort_value_data_size,
                                                        Qnn_ContextHandle_t qnn_context,
                                                        Qnn_Tensor_t& qnn_tensor) {
   // either set qnn_tensor memHandle or clientBuf
-  // TODO: Fix HTP shared memory usage.
-  // const static auto htp_shared_mem_info = HtpSharedMemoryAllocator::AssociatedMemoryInfo();
-  // const bool uses_shared_memory = (ort_value_memory_info.device.Type() == htp_shared_mem_info.device.Type() &&
-  //                                  ort_value_memory_info.device.MemType() == htp_shared_mem_info.device.MemType());
-  const bool uses_shared_memory = false;
+  const static auto htp_shared_mem_info = HtpSharedMemoryAllocator::AssociatedMemoryInfo(ort_api);
+  OrtMemoryInfoDeviceType ort_value_memory_info_device_type, htp_shared_mem_info_device_type;
+  (void)ort_api.MemoryInfoGetDeviceType(ort_value_memory_info, &ort_value_memory_info_device_type);
+  (void)ort_api.MemoryInfoGetDeviceType(htp_shared_mem_info, &htp_shared_mem_info_device_type);
+  OrtDeviceMemoryType ort_value_memory_info_device_memory_type = ort_api.MemoryInfoGetDeviceMemType(ort_value_memory_info);
+  OrtDeviceMemoryType htp_shared_mem_info_device_memory_type = ort_api.MemoryInfoGetDeviceMemType(htp_shared_mem_info);
+  const bool uses_shared_memory = (ort_value_memory_info_device_type == htp_shared_mem_info_device_type &&
+                                   ort_value_memory_info_device_memory_type == htp_shared_mem_info_device_memory_type);
+  std::cout << "uses_shared_memory? " << uses_shared_memory << std::endl;
 
   if (!uses_shared_memory) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t clientBuf to ORT tensor memory.");
@@ -317,9 +322,10 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
     ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorData(ort_input_tensor, &raw_data));
 
     RETURN_IF_ERROR(BindQnnTensorMemoryToOrtValueMemory(
+        api_ptrs_.ort_api,
         logger,
         *qnn_backend_manager_,
-        *static_cast<const OrtMemoryInfo*>(input_tensor_mem_info),
+        static_cast<const OrtMemoryInfo*>(input_tensor_mem_info),
         const_cast<void*>(raw_data), qnn_input_info.tensor_byte_size,
         graph_info_->GraphContext(),
         qnn_inputs.back()));
@@ -362,9 +368,10 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
     ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorMutableData(ort_output_tensor, &mutable_data));
 
     RETURN_IF_ERROR(BindQnnTensorMemoryToOrtValueMemory(
+        api_ptrs_.ort_api,
         logger,
         *qnn_backend_manager_,
-        *static_cast<const OrtMemoryInfo*>(output_tensor_mem_info),
+        static_cast<const OrtMemoryInfo*>(output_tensor_mem_info),
         mutable_data, qnn_output_info.tensor_byte_size,
         graph_info_->GraphContext(),
         qnn_outputs.back()));

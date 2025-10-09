@@ -7,6 +7,7 @@
 #include <mutex>
 #include <sstream>
 #include <unordered_map>
+#include <iostream>
 
 #include <absl/base/config.h>
 

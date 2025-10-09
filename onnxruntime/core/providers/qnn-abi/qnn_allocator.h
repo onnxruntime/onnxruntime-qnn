@@ -8,19 +8,23 @@
 
 #include "core/providers/qnn-abi/ort_api.h"
 #include "core/providers/qnn-abi/rpcmem_library.h"
+// #include "core/framework/ortdevice.h"
 
 namespace onnxruntime::qnn {
 
 class HtpSharedMemoryAllocator : public OrtAllocator {
  public:
   // Gets the OrtMemoryInfo value that is associated with this allocator type.
-  // static OrtMemoryInfo AssociatedMemoryInfo();
+  static const struct OrtMemoryInfo* ORT_API_CALL AssociatedMemoryInfo(const OrtApi& ort_api);
 
   HtpSharedMemoryAllocator(const OrtMemoryInfo* mem_info, std::shared_ptr<RpcMemLibrary> rpcmem_lib)
       : memory_info_{mem_info},
         rpcmem_lib_{std::move(rpcmem_lib)},
         logger_(OrtLoggingManager::GetDefaultLogger()) {
-    ORT_ENFORCE(rpcmem_lib_ != nullptr);
+    // ORT_ENFORCE(rpcmem_lib_ != nullptr);
+    if (rpcmem_lib_ == nullptr) {
+      ORT_CXX_API_THROW("rpcmem_lib_ should not be nullptr.", ORT_EP_FAIL);
+    }
 
     Alloc = AllocImpl;
     Free = FreeImpl;
