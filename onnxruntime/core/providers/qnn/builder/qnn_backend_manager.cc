@@ -193,67 +193,73 @@ Status QnnBackendManager::setSustainedHighPerformance(uint32_t htp_power_config_
   std::lock_guard<std::mutex> lk(perf_mutex_);
   Status status = Status::OK();
   std::chrono::microseconds remainUs = std::chrono::milliseconds::zero();
-  if (graphState == GraphState::RUN_DONE) {
-    std::chrono::microseconds sustainedDurationMs(timer_resource.sustainedTimerDuration);
-    if (timer_resource.timer_thread_in_use) {
-      if (timer_->remainingDuration(remainUs)) {
-        if (isRemainingDurationInRange(remainUs)) {
-          timer_->abortTimer();
-          if (timer_->launch(sustainedDurationMs)) {
-            timer_resource.timer_thread_in_use = true;
-            graphState = GraphState::NONE;
-            timer_resource.caller_busy = false;
-          } else {
-            return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Not able to launch timer thread");
+
+  switch (graphState) {
+    case GraphState::RUN_DONE:
+      std::chrono::microseconds sustainedDurationMs(timer_resource.sustainedTimerDuration);
+      if (timer_resource.timer_thread_in_use) {
+        if (timer_->remainingDuration(remainUs)) {
+          if (isRemainingDurationInRange(remainUs)) {
+            timer_->abortTimer();
+            if (timer_->launch(sustainedDurationMs)) {
+              timer_resource.timer_thread_in_use = true;
+              graphState = GraphState::NONE;
+              timer_resource.caller_busy = false;
+            } else {
+              return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Not able to launch timer thread");
+            }
           }
         }
-      }
-    } else {
-      if (timer_->launch(sustainedDurationMs)) {
-        timer_resource.timer_thread_in_use = true;
-        graphState = GraphState::NONE;
-        timer_resource.caller_busy = false;
       } else {
-        return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Not able to launch timer thread");
+        if (timer_->launch(sustainedDurationMs)) {
+          timer_resource.timer_thread_in_use = true;
+          graphState = GraphState::NONE;
+          timer_resource.caller_busy = false;
+        } else {
+          return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Not able to launch timer thread");
+        }
       }
-    }
-  }
-  if (graphState == GraphState::RUN_START) {
-    if (timer_->remainingDuration(remainUs)) {
-      if (timer_resource.timer_thread_in_use && isRemainingDurationInRange(remainUs)) {
-        timer_->abortTimer();
-        timer_resource.timer_thread_in_use = false;
-      } else {
-        status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+      break;
+    case GraphState::RUN_START:
+      if (timer_->remainingDuration(remainUs)) {
+        if (timer_resource.timer_thread_in_use && isRemainingDurationInRange(remainUs)) {
+          timer_->abortTimer();
+          timer_resource.timer_thread_in_use = false;
+        } else {
+          status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+        }
       }
-    }
-    graphState = GraphState::NONE;
-    timer_resource.caller_busy = true;
-  }
-  if (graphState == GraphState::INIT_DONE) {
-    status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
-    graphState = GraphState::NONE;
-    timer_resource.caller_busy = false;
-  }
-  if (graphState == GraphState::INIT_START) {
-    if (timer_->remainingDuration(remainUs)) {
-      if (timer_resource.timer_thread_in_use && isRemainingDurationInRange(remainUs)) {
-        timer_->abortTimer();
-        timer_resource.timer_thread_in_use = false;
-      } else {
-        status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
-      }
-    }
-    graphState = GraphState::NONE;
-    timer_resource.caller_busy = true;
-  }
-  if (graphState == GraphState::TIMEOUT) {
-    if (!timer_resource.caller_busy) {
+      graphState = GraphState::NONE;
+      timer_resource.caller_busy = true;
+      break;
+    case GraphState::INIT_DONE:
       status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
       graphState = GraphState::NONE;
       timer_resource.caller_busy = false;
-      timer_resource.timer_thread_in_use = false;
-    }
+      break;
+    case GraphState::INIT_START:
+      if (timer_->remainingDuration(remainUs)) {
+        if (timer_resource.timer_thread_in_use && isRemainingDurationInRange(remainUs)) {
+          timer_->abortTimer();
+          timer_resource.timer_thread_in_use = false;
+        } else {
+          status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+        }
+      }
+      graphState = GraphState::NONE;
+      timer_resource.caller_busy = true;
+      break;
+    case GraphState::TIMEOUT:
+      if (!timer_resource.caller_busy) {
+        status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+        graphState = GraphState::NONE;
+        timer_resource.caller_busy = false;
+        timer_resource.timer_thread_in_use = false;
+      }
+      break;
+    default:
+      LOGS_DEFAULT(VERBOSE) << "Invalid graph state";
+      break;
   }
   return status;
 }
@@ -261,21 +267,26 @@ Status QnnBackendManager::setSustainedHighPerformance(uint32_t htp_power_config_
 Status QnnBackendManager::setPowerSaverPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
   std::lock_guard<std::mutex> lk(perf_mutex_);
   Status status = Status::OK();
-  if (graphState == GraphState::RUN_DONE) {
-    status = setReleasedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
-    graphState = GraphState::NONE;
-  }
-  if (graphState == GraphState::RUN_START) {
-    status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
-    graphState = GraphState::NONE;
-  }
-  if (graphState == GraphState::INIT_DONE) {
-    status = setReleasedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
-    graphState = GraphState::NONE;
-  }
-  if (graphState == GraphState::INIT_START) {
-    status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
-    graphState = GraphState::NONE;
+  switch (graphState) {
+    case GraphState::RUN_DONE:
+      status = setReleasedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+      graphState = GraphState::NONE;
+      break;
+    case GraphState::RUN_START:
+      status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+      graphState = GraphState::NONE;
+      break;
+    case GraphState::INIT_DONE:
+      status = setReleasedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+      graphState = GraphState::NONE;
+      break;
+    case GraphState::INIT_START:
+      status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+      graphState = GraphState::NONE;
+      break;
+    default:
+      LOGS_DEFAULT(VERBOSE) << "Invalid graph state";
+      break;
   }
   return status;
 }
@@ -283,21 +294,26 @@ Status QnnBackendManager::setPowerSaverPerformance(uint32_t htp_power_config_cli
 Status QnnBackendManager::setExtremePowerSaverPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
   std::lock_guard<std::mutex> lk(perf_mutex_);
   Status status = Status::OK();
-  if (graphState == GraphState::RUN_DONE) {
-    status = setExtremeLowPerfPowerConfig(htp_power_config_client_id);
-    graphState = GraphState::NONE;
-  }
-  if (graphState == GraphState::RUN_START) {
-    status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
-    graphState = GraphState::NONE;
-  }
-  if (graphState == GraphState::INIT_DONE) {
-    status = setExtremeLowPerfPowerConfig(htp_power_config_client_id);
-    graphState = GraphState::NONE;
-  }
-  if (graphState == GraphState::INIT_START) {
-    status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
-    graphState = GraphState::NONE;
+  switch (graphState) {
+    case GraphState::RUN_DONE:
+      status = setExtremeLowPerfPowerConfig(htp_power_config_client_id);
+      graphState = GraphState::NONE;
+      break;
+    case GraphState::RUN_START:
+      status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+      graphState = GraphState::NONE;
+      break;
+    case GraphState::INIT_DONE:
+      status = setExtremeLowPerfPowerConfig(htp_power_config_client_id);
+      graphState = GraphState::NONE;
+      break;
+    case GraphState::INIT_START:
+      status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+      graphState = GraphState::NONE;
+      break;
+    default:
+      LOGS_DEFAULT(VERBOSE) << "Invalid graph state";
+      break;
   }
   return status;
 }
@@ -305,21 +321,26 @@ Status QnnBackendManager::setExtremePowerSaverPerformance(uint32_t htp_power_con
 Status QnnBackendManager::setHighPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
   std::lock_guard<std::mutex> lk(perf_mutex_);
   Status status = Status::OK();
-  if (graphState == GraphState::RUN_DONE) {
-    status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
-    graphState = GraphState::NONE;
-  }
-  if (graphState == GraphState::RUN_START) {
-    status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
-    graphState = GraphState::NONE;
-  }
-  if (graphState == GraphState::INIT_DONE) {
-    status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
-    graphState = GraphState::NONE;
-  }
-  if (graphState == GraphState::INIT_START) {
-    status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
-    graphState = GraphState::NONE;
+  switch (graphState) {
+    case GraphState::RUN_DONE:
+      status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+      graphState = GraphState::NONE;
+      break;
+    case GraphState::RUN_START:
+      status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+      graphState = GraphState::NONE;
+      break;
+    case GraphState::INIT_DONE:
+      status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+      graphState = GraphState::NONE;
+      break;
+    case GraphState::INIT_START:
+      status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+      graphState = GraphState::NONE;
+      break;
+    default:
+      LOGS_DEFAULT(VERBOSE) << "Invalid graph state";
+      break;
   }
   return status;
 }
@@ -327,21 +348,26 @@ Status QnnBackendManager::setHighPerformance(uint32_t htp_power_config_client_id
 Status QnnBackendManager::setPerformanceForBalanced(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
   std::lock_guard<std::mutex> lk(perf_mutex_);
   Status status = Status::OK();
-  if (graphState == GraphState::RUN_DONE) {
-    status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
-    graphState = GraphState::NONE;
-  }
-  if (graphState == GraphState::RUN_START) {
-    status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
-    graphState = GraphState::NONE;
-  }
-  if (graphState == GraphState::INIT_DONE) {
-    status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
-    graphState = GraphState::NONE;
-  }
-  if (graphState == GraphState::INIT_START) {
-    status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
-    graphState = GraphState::NONE;
+  switch (graphState) {
+    case GraphState::RUN_DONE:
+      status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+      graphState = GraphState::NONE;
+      break;
+    case GraphState::RUN_START:
+      status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+      graphState = GraphState::NONE;
+      break;
+    case GraphState::INIT_DONE:
+      status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+      graphState = GraphState::NONE;
+      break;
+    case GraphState::INIT_START:
+      status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
+      graphState = GraphState::NONE;
+      break;
+    default:
+      LOGS_DEFAULT(VERBOSE) << "Invalid graph state";
+      break;
   }
   return status;
 }
