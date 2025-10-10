@@ -193,10 +193,10 @@ Status QnnBackendManager::setSustainedHighPerformance(uint32_t htp_power_config_
   std::lock_guard<std::mutex> lk(perf_mutex_);
   Status status = Status::OK();
   std::chrono::microseconds remainUs = std::chrono::milliseconds::zero();
+  std::chrono::microseconds sustainedDurationMs(timer_resource.sustainedTimerDuration);
 
   switch (graphState) {
     case GraphState::RUN_DONE:
-      std::chrono::microseconds sustainedDurationMs(timer_resource.sustainedTimerDuration);
       if (timer_resource.timer_thread_in_use) {
         if (timer_->remainingDuration(remainUs)) {
           if (isRemainingDurationInRange(remainUs)) {
