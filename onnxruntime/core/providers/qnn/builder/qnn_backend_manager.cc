@@ -179,17 +179,25 @@ void QnnBackendManager::ReleaseTimerThread(uint32_t htp_power_config_client_id) 
   }
 }
 
+bool QnnBackendManager::isRemainingDurationInRange(std::chrono::microseconds remainingTime) {
+  unsigned long remaining_duration = 0;
+  remaining_duration = static_cast<unsigned long>(remainingTime.count());
+  if (remaining_duration > 0 && remaining_duration < timer_resource.sustainedTimerDuration) {
+    return true;
+  } else {
+    return false;
+  }
+}
+
 Status QnnBackendManager::setSustainedHighPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
   std::lock_guard<std::mutex> lk(perf_mutex_);
   Status status = Status::OK();
-  unsigned long remaining_duration = 0;
+  std::chrono::microseconds remainUs = std::chrono::milliseconds::zero();
   if (graphState == GraphState::RUN_DONE) {
     std::chrono::microseconds sustainedDurationMs(timer_resource.sustainedTimerDuration);
     if (timer_resource.timer_thread_in_use) {
-      std::chrono::microseconds remainUs;
       if (timer_->remainingDuration(remainUs)) {
-        remaining_duration = static_cast<unsigned long>(remainUs.count());
-        if (remaining_duration > 0 && remaining_duration < timer_resource.sustainedTimerDuration) {
+        if (isRemainingDurationInRange(remainUs)) {
           timer_->abortTimer();
           if (timer_->launch(sustainedDurationMs)) {
             timer_resource.timer_thread_in_use = true;
@@ -211,10 +219,8 @@ Status QnnBackendManager::setSustainedHighPerformance(uint32_t htp_power_config_
     }
   }
   if (graphState == GraphState::RUN_START) {
-    std::chrono::microseconds remainUs;
     if (timer_->remainingDuration(remainUs)) {
-      remaining_duration = static_cast<unsigned long>(remainUs.count());
-      if (timer_resource.timer_thread_in_use && remaining_duration > 0 && remaining_duration < timer_resource.sustainedTimerDuration) {
+      if (timer_resource.timer_thread_in_use && isRemainingDurationInRange(remainUs)) {
         timer_->abortTimer();
         timer_resource.timer_thread_in_use = false;
       } else {
@@ -230,10 +236,8 @@ Status QnnBackendManager::setSustainedHighPerformance(uint32_t htp_power_config_
     timer_resource.caller_busy = false;
   }
   if (graphState == GraphState::INIT_START) {
-    std::chrono::microseconds remainUs;
     if (timer_->remainingDuration(remainUs)) {
-      remaining_duration = static_cast<unsigned long>(remainUs.count());
-      if (timer_resource.timer_thread_in_use && remaining_duration > 0 && remaining_duration < timer_resource.sustainedTimerDuration) {
+      if (timer_resource.timer_thread_in_use && isRemainingDurationInRange(remainUs)) {
         timer_->abortTimer();
         timer_resource.timer_thread_in_use = false;
       } else {
@@ -395,11 +399,16 @@ void QnnBackendManager::createTimerThread(uint32_t htp_power_config_client_id) {
     std::unique_ptr<Timer> temp(new Timer());
     if (temp != nullptr) {
       timer_ = std::move(temp);
+
       if (timer_callback_arg != nullptr) {
         delete timer_callback_arg;
         timer_callback_arg = nullptr;
       }
       timer_callback_arg = new TimerCallbackArg({htp_power_config_client_id, this});
+      if (timer_callback_arg == nullptr) {
+        LOGS_DEFAULT(VERBOSE) << "Failed to create Timer argument";
+      }
+
       if (!timer_->initialize(timerCallback, timer_callback_arg)) {
         LOGS_DEFAULT(VERBOSE) << "Failed to create timer to set performance";
         delete timer_callback_arg;
