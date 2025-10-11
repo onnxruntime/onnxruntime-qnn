@@ -119,8 +119,10 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
     const std::unordered_map<const Node*, const NodeUnit*>& node_to_node_unit,
     const std::unordered_map<const NodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const logging::Logger& logger) {
-  // For now, all fusions involve standalone node units (i.e., no wrapping DQ/Q nodes) except MatMul w/ LPBQ encodings
-  if (starting_node_unit.UnitType() != NodeUnit::Type::SingleNode && starting_node_unit.OpType() != "MatMul") {
+  // For now, all fusions involve standalone node units (i.e., no wrapping DQ/Q nodes) except MatMul w/ LPBQ encodings and Reshape
+  if (starting_node_unit.UnitType() != NodeUnit::Type::SingleNode &&
+      starting_node_unit.OpType() != "MatMul" &&
+      starting_node_unit.OpType() != "Reshape") {
     return nullptr;
   }
 

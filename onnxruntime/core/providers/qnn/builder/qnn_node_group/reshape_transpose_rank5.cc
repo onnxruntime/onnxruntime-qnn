@@ -76,6 +76,68 @@ Status GetConstantShapeData(
   return Status::OK();
 }
 
+/// @brief Get child NodeUnit of specified type, allowing QDQ-wrapped nodes
+const NodeUnit* GetChildNodeUnit(
+    const GraphViewer& graph_viewer,
+    const NodeUnit& parent_node_unit,
+    const std::string& child_op_type,
+    const MapNodeToNodeUnit& node_to_node_unit,
+    const MapNodeUnitToGroup& node_unit_to_qnn_node_group,
+    const logging::Logger& logger) {
+  const Node& parent_node = parent_node_unit.GetNode();
+
+  // For QDQ NodeUnits, we need to look at the Q node's output, not the target node's output
+  const Node* search_node = &parent_node;
+  if (parent_node_unit.UnitType() == NodeUnit::Type::QDQGroup) {
+    const auto& q_nodes = parent_node_unit.GetQNodes();
+    if (!q_nodes.empty()) {
+      search_node = q_nodes[0];  // Use first Q node
+    }
+  }
+
+  // Search node must have a single child (1 output edge) and must not produce a graph output
+  if (search_node->GetOutputEdgesCount() != 1 || graph_viewer.NodeProducesGraphOutput(*search_node)) {
+    return nullptr;
+  }
+
+  // Get the child node from the search node's output edge
+  const Node* potential_child = &search_node->OutputEdgesBegin()->GetNode();
+  if (graph_viewer.GetNode(potential_child->Index()) == nullptr) {
+    return nullptr;
+  }
+
+  // If the child is a DequantizeLinear, skip it and look at its child (the target op of the next QDQ group)
+  if (potential_child->OpType() == "DequantizeLinear") {
+    if (potential_child->GetOutputEdgesCount() != 1) {
+      return nullptr;
+    }
+    potential_child = &potential_child->OutputEdgesBegin()->GetNode();
+    if (graph_viewer.GetNode(potential_child->Index()) == nullptr) {
+      return nullptr;
+    }
+  }
+
+  // Check if this node matches the target type
+  if (potential_child->OpType() != child_op_type) {
+    return nullptr;
+  }
+
+  // Get the NodeUnit for the child
+  const auto child_node_unit_it = node_to_node_unit.find(potential_child);
+  if (child_node_unit_it == node_to_node_unit.end()) {
+    return nullptr;
+  }
+
+  const NodeUnit* child_node_unit = child_node_unit_it->second;
+
+  // Check if child node has already been handled
+  if (node_unit_to_qnn_node_group.count(child_node_unit) != 0) {
+    return nullptr;
+  }
+
+  return child_node_unit;
+}
+
 /// @brief Match the pattern: Reshape -> Transpose -> Reshape with rank-6 intermediate tensors
 std::optional<std::array<const NodeUnit*, 3>> MatchRank6ToRank5Pattern(
     const GraphViewer& graph_viewer,
@@ -87,29 +149,27 @@ std::optional<std::array<const NodeUnit*, 3>> MatchRank6ToRank5Pattern(
                         << " OpType=" << reshape1->OpType()
                         << " UnitType=" << static_cast<int>(reshape1->UnitType());
 
-  // Validate reshape1
-  if (reshape1->OpType() != kOpReshape || reshape1->UnitType() != NodeUnit::Type::SingleNode) {
-    LOGS(logger, VERBOSE) << "[Rank6ToRank5] MatchPattern: reshape1 validation failed";
+  // Validate reshape1 - allow both SingleNode and QDQGroup
+  if (reshape1->OpType() != kOpReshape) {
+    LOGS(logger, VERBOSE) << "[Rank6ToRank5] MatchPattern: reshape1 validation failed - not a Reshape op";
     return std::nullopt;
   }
 
-  // Get transpose child
-  const std::array<std::string_view, 1> transpose_types{kOpTranspose};
-  const NodeUnit* transpose = GetOnlyChildOfType(
-      graph_viewer, *reshape1, transpose_types, node_to_node_unit, node_unit_to_qnn_node_group);
-  if (transpose == nullptr || transpose->UnitType() != NodeUnit::Type::SingleNode) {
-    LOGS(logger, VERBOSE) << "[Rank6ToRank5] MatchPattern: transpose child not found or invalid";
+  // Get transpose child - allow both SingleNode and QDQGroup
+  const NodeUnit* transpose = GetChildNodeUnit(
+      graph_viewer, *reshape1, kOpTranspose, node_to_node_unit, node_unit_to_qnn_node_group, logger);
+  if (transpose == nullptr) {
+    LOGS(logger, VERBOSE) << "[Rank6ToRank5] MatchPattern: transpose child not found";
     return std::nullopt;
   }
 
   LOGS(logger, VERBOSE) << "[Rank6ToRank5] MatchPattern: Found transpose child: " << transpose->Name();
 
-  // Get reshape2 child
-  const std::array<std::string_view, 1> reshape_types{kOpReshape};
-  const NodeUnit* reshape2 = GetOnlyChildOfType(
-      graph_viewer, *transpose, reshape_types, node_to_node_unit, node_unit_to_qnn_node_group);
-  if (reshape2 == nullptr || reshape2->UnitType() != NodeUnit::Type::SingleNode) {
-    LOGS(logger, VERBOSE) << "[Rank6ToRank5] MatchPattern: reshape2 child not found or invalid";
+  // Get reshape2 child - allow both SingleNode and QDQGroup
+  const NodeUnit* reshape2 = GetChildNodeUnit(
+      graph_viewer, *transpose, kOpReshape, node_to_node_unit, node_unit_to_qnn_node_group, logger);
+  if (reshape2 == nullptr) {
+    LOGS(logger, VERBOSE) << "[Rank6ToRank5] MatchPattern: reshape2 child not found";
     return std::nullopt;
   }
 
@@ -156,6 +216,19 @@ bool ValidatePatternConditions(
   auto t1_dims = t1_shape->GetDims();
   auto t2_dims = t2_shape->GetDims();
   auto t3_dims = t3_shape->GetDims();
+
+  // Log shapes
+  std::ostringstream oss;
+  oss << "[Rank6ToRank5] ValidateConditions: Shapes - t0=[";
+  for (size_t i = 0; i < t0_dims.size(); ++i) oss << (i > 0 ? "," : "") << t0_dims[i];
+  oss << "] t1=[";
+  for (size_t i = 0; i < t1_dims.size(); ++i) oss << (i > 0 ? "," : "") << t1_dims[i];
+  oss << "] t2=[";
+  for (size_t i = 0; i < t2_dims.size(); ++i) oss << (i > 0 ? "," : "") << t2_dims[i];
+  oss << "] t3=[";
+  for (size_t i = 0; i < t3_dims.size(); ++i) oss << (i > 0 ? "," : "") << t3_dims[i];
+  oss << "]";
+  LOGS(logger, INFO) << oss.str();
 
   // Condition 1: Rank(t1) == Rank(t2) == 6
   if (t1_shape->NumDimensions() != kRank6 || t2_shape->NumDimensions() != kRank6) {
