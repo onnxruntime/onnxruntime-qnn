@@ -20,6 +20,8 @@
 
 #include "gtest/gtest.h"
 
+#include "ssr/qnn_mock_ssr_controller.h"
+
 namespace onnxruntime {
 namespace test {
 
@@ -1240,6 +1242,19 @@ class QnnIRBackendTests : public ::testing::Test {
   void SetUp() override;
 
   static BackendSupport cached_ir_support_;  // Set by the first test using this fixture.
+};
+
+class QnnMockSSRBackendTests : public QnnHTPBackendTests {
+  protected:
+    void SetUp() override;
+    void TearDown() override;
+    HMODULE lib_handle;
+    FARPROC addr;
+    QnnMockSSRController* controller = nullptr;
+    TestInputDef<float> input_def;
+    TestInputDef<float> scale_def;
+    TestInputDef<float> bias_def;
+    ProviderOptions provider_options;
 };
 
 /**
