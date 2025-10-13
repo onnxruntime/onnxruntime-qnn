@@ -23,6 +23,10 @@
 namespace onnxruntime {
 namespace test {
 
+const std::string BACKEND_CPU = "cpu";
+const std::string BACKEND_HTP = "htp";
+const std::string BACKEND_GPU = "gpu";
+
 // Signature for function that builds a float32 model.
 using GetTestModelFn = std::function<void(ModelTestBuilder& builder)>;
 

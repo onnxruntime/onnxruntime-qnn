@@ -18,41 +18,139 @@
 namespace onnxruntime {
 namespace test {
 
-// Runs a non-QDQ model on the QNN CPU backend and compares output to CPU EP.
-template <typename InputType = float>
-static void RunOpTestOnCPU(const std::string& op_type,
-                           const std::vector<TestInputDef<InputType>>& input_defs,
-                           const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                           int opset_version,
-                           ExpectedEPNodeAssignment expected_ep_assignment,
-                           const std::string& op_domain = kOnnxDomain) {
+// Tests the accuracy of a QDQ model on QNN EP by comparing to CPU EP, which runs both the fp32 model
+// and the QDQ model.
+template <typename InputQType = uint8_t>
+static void RunQDQOpTest(const std::string& op_type,
+                         const std::vector<TestInputDef<float>>& input_defs,
+                         const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                         int opset_version,
+                         ExpectedEPNodeAssignment expected_ep_assignment,
+                         const std::string& backend_type = BACKEND_HTP,
+                         const std::string& op_domain = kOnnxDomain,
+                         bool use_contrib_qdq = false,
+                         QDQTolerance tolerance = QDQTolerance()) {
   ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = backend_type;
   provider_options["offload_graph_io_quantization"] = "0";
 
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type, input_defs, {}, attrs, op_domain),
+                       BuildQDQOpTestCase<InputQType>(op_type, input_defs, {}, attrs, op_domain, use_contrib_qdq),
+                       provider_options,
+                       opset_version,
+                       expected_ep_assignment,
+                       tolerance);
+}
+
+// Tests the accuracy of a QDQ model with indices inputs on QNN EP by comparing to CPU EP, which runs
+// both the fp32 model and the QDQ model.
+template <typename InputQType = uint8_t, typename InputType2 = int64_t>
+static void RunQDQOpTest(const std::string& op_type,
+                         const std::vector<TestInputDef<float>>& input_defs_1,
+                         const std::vector<TestInputDef<InputType2>>& input_defs_2,
+                         const std::vector<TestInputDef<float>>& input_defs_3,
+                         const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                         int opset_version,
+                         ExpectedEPNodeAssignment expected_ep_assignment,
+                         const std::string& backend_type = BACKEND_HTP,
+                         const std::string& op_domain = kOnnxDomain,
+                         bool use_contrib_qdq = false,
+                         QDQTolerance tolerance = QDQTolerance()) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = backend_type;
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestQDQModelAccuracy(BuildOpTestCase<float, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
+                       BuildQDQOpTestCase<InputQType, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs,
+                                                                  op_domain, use_contrib_qdq),
+                       provider_options,
+                       opset_version,
+                       expected_ep_assignment,
+                       tolerance);
+}
+
+// Runs a non-QDQ model on HTP and compares output to CPU EP.
+template <typename InputType = float>
+static void RunOpTest(const std::string& op_type,
+                      const std::vector<TestInputDef<InputType>>& input_defs,
+                      const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                      int opset_version,
+                      ExpectedEPNodeAssignment expected_ep_assignment,
+                      const std::string& backend_type = BACKEND_HTP,
+                      const std::string& op_domain = kOnnxDomain,
+                      float fp32_abs_err = 1e-5f,
+                      bool enable_htp_fp16_precision = false) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = backend_type;
+
+  if (enable_htp_fp16_precision) {
+    provider_options["enable_htp_fp16_precision"] = "1";
+  }
+
+  // Runs model with a Q/DQ binary op and compares the outputs of the CPU and QNN EPs.
   RunQnnModelTest(BuildOpTestCase<InputType>(op_type, input_defs, {}, attrs, op_domain),
                   provider_options,
                   opset_version,
-                  expected_ep_assignment);
+                  expected_ep_assignment,
+                  fp32_abs_err);
 }
 
+// Runs a non-QDQ model with indices inputs (int64) on HTP and compares output to CPU EP.
 template <typename InputType1, typename InputType2 = int64_t>
-static void RunOpTestOnCPU(const std::string& op_type,
-                           const std::vector<TestInputDef<InputType1>>& input_defs_1,
-                           const std::vector<TestInputDef<InputType2>>& input_defs_2,
-                           const std::vector<TestInputDef<InputType1>>& input_defs_3,
-                           const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                           int opset_version,
-                           ExpectedEPNodeAssignment expected_ep_assignment,
-                           const std::string& op_domain = kOnnxDomain) {
+static void RunOpTest(const std::string& op_type,
+                      const std::vector<TestInputDef<InputType1>>& input_defs_1,
+                      const std::vector<TestInputDef<InputType2>>& input_defs_2,
+                      const std::vector<TestInputDef<InputType1>>& input_defs_3,
+                      const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                      int opset_version,
+                      ExpectedEPNodeAssignment expected_ep_assignment,
+                      const std::string& backend_type = BACKEND_HTP,
+                      const std::string& op_domain = kOnnxDomain,
+                      float fp32_abs_err = 1e-5f,
+                      bool enable_htp_fp16_precision = false) {
   ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["backend_type"] = backend_type;
 
+  if (enable_htp_fp16_precision) {
+    provider_options["enable_htp_fp16_precision"] = "1";
+  }
+
+  // Runs model with a Q/DQ binary op and compares the outputs of the CPU and QNN EPs.
   RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
                   provider_options,
                   opset_version,
-                  expected_ep_assignment);
+                  expected_ep_assignment,
+                  fp32_abs_err);
+}
+
+// Runs an FP16 model on the QNN HTP backend and compares QNN EP's accuracy to CPU EP.
+static void RunFP16OpTest(const std::string& op_type,
+                          const std::vector<TestInputDef<float>>& input_defs,
+                          const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                          int opset_version,
+                          ExpectedEPNodeAssignment expected_ep_assignment,
+                          const std::string& backend_type = BACKEND_HTP,
+                          const std::string& op_domain = kOnnxDomain,
+                          float tolerance = 0.004f) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = backend_type;
+
+  std::vector<TestInputDef<MLFloat16>> input_fp16_defs;
+  input_fp16_defs.reserve(input_defs.size());
+
+  for (size_t i = 0; i < input_defs.size(); i++) {
+    input_fp16_defs.push_back(ConvertToFP16InputDef(input_defs[i]));
+  }
+
+  auto model_fp32_fn = BuildOpTestCase<float>(op_type, input_defs, {}, attrs, op_domain);
+  auto model_fp16_fn = BuildOpTestCase<MLFloat16>(op_type, input_fp16_defs, {}, attrs, op_domain);
+
+  TestFp16ModelAccuracy(model_fp32_fn,
+                        model_fp16_fn,
+                        provider_options,
+                        opset_version,
+                        expected_ep_assignment,
+                        tolerance);
 }
 
 // Test float DepthToSpace on the QNN CPU backend.
@@ -74,11 +172,12 @@ TEST_F(QnnCPUBackendTests, SpaceToDepth_Flaky) {
        3.0f, 3.1f, 3.2f, 3.3f};
 
   for (size_t i = 0; i < 4; i++) {
-    RunOpTestOnCPU("SpaceToDepth",
-                   {TestInputDef<float>({1, 2, 2, 4}, false, X)},
-                   {utils::MakeAttribute("blocksize", static_cast<int64_t>(2))},
-                   7,
-                   ExpectedEPNodeAssignment::All);
+    RunOpTest("SpaceToDepth",
+              {TestInputDef<float>({1, 2, 2, 4}, false, X)},
+              {utils::MakeAttribute("blocksize", static_cast<int64_t>(2))},
+              7,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_CPU);
   }
 }
 
@@ -104,11 +203,12 @@ TEST_F(QnnCPUBackendTests, SpaceToDepth_Flaky2) {
       99., 100., 101., 102., 103., 104., 105., 106., 107.};
 
   for (size_t i = 0; i < 4; i++) {
-    RunOpTestOnCPU("SpaceToDepth",
-                   {TestInputDef<float>({2, 3, 3, 6}, false, X)},
-                   {utils::MakeAttribute("blocksize", static_cast<int64_t>(3))},
-                   7,
-                   ExpectedEPNodeAssignment::All);
+    RunOpTest("SpaceToDepth",
+              {TestInputDef<float>({2, 3, 3, 6}, false, X)},
+              {utils::MakeAttribute("blocksize", static_cast<int64_t>(3))},
+              7,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_CPU);
   }
 }
 
@@ -121,143 +221,15 @@ TEST_F(QnnCPUBackendTests, DISABLED_UnaryOp_Relu) {
                                 100.0f, -100.0f, 1000.0f, -1000.0f,
                                 FLT_MIN, FLT_MIN / 10, -FLT_MIN / 10,
                                 FLT_MAX, -FLT_MAX, std::numeric_limits<float>::infinity()};
-  RunOpTestOnCPU("Relu",
-                 {TestInputDef<float>({13}, false, input_data)},
-                 {},
-                 14,
-                 ExpectedEPNodeAssignment::All);
+  RunOpTest("Relu",
+            {TestInputDef<float>({13}, false, input_data)},
+            {},
+            14,
+            ExpectedEPNodeAssignment::All,
+            BACKEND_CPU);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
-
-// Tests the accuracy of a QDQ model on QNN EP by comparing to CPU EP, which runs both the fp32 model
-// and the QDQ model.
-template <typename InputQType = uint8_t>
-static void RunQDQOpTest(const std::string& op_type,
-                         const std::vector<TestInputDef<float>>& input_defs,
-                         const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                         int opset_version,
-                         ExpectedEPNodeAssignment expected_ep_assignment,
-                         const std::string& op_domain = kOnnxDomain,
-                         bool use_contrib_qdq = false,
-                         QDQTolerance tolerance = QDQTolerance()) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type, input_defs, {}, attrs, op_domain),
-                       BuildQDQOpTestCase<InputQType>(op_type, input_defs, {}, attrs, op_domain, use_contrib_qdq),
-                       provider_options,
-                       opset_version,
-                       expected_ep_assignment,
-                       tolerance);
-}
-// Tests the accuracy of a QDQ model with indices inputs on QNN EP by comparing to CPU EP, which runs
-// both the fp32 model and the QDQ model.
-template <typename InputQType = uint8_t, typename InputType2 = int64_t>
-static void RunQDQOpTest(const std::string& op_type,
-                         const std::vector<TestInputDef<float>>& input_defs_1,
-                         const std::vector<TestInputDef<InputType2>>& input_defs_2,
-                         const std::vector<TestInputDef<float>>& input_defs_3,
-                         const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                         int opset_version,
-                         ExpectedEPNodeAssignment expected_ep_assignment,
-                         const std::string& op_domain = kOnnxDomain,
-                         bool use_contrib_qdq = false,
-                         QDQTolerance tolerance = QDQTolerance()) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  TestQDQModelAccuracy(BuildOpTestCase<float, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
-                       BuildQDQOpTestCase<InputQType, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs,
-                                                                  op_domain, use_contrib_qdq),
-                       provider_options,
-                       opset_version,
-                       expected_ep_assignment,
-                       tolerance);
-}
-
-// Runs a non-QDQ model on HTP and compares output to CPU EP.
-template <typename InputType = float>
-static void RunOpTest(const std::string& op_type,
-                      const std::vector<TestInputDef<InputType>>& input_defs,
-                      const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                      int opset_version,
-                      ExpectedEPNodeAssignment expected_ep_assignment,
-                      const std::string& op_domain = kOnnxDomain,
-                      float fp32_abs_err = 1e-5f,
-                      bool enable_htp_fp16_precision = false) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-
-  if (enable_htp_fp16_precision) {
-    provider_options["enable_htp_fp16_precision"] = "1";
-  }
-
-  // Runs model with a Q/DQ binary op and compares the outputs of the CPU and QNN EPs.
-  RunQnnModelTest(BuildOpTestCase<InputType>(op_type, input_defs, {}, attrs, op_domain),
-                  provider_options,
-                  opset_version,
-                  expected_ep_assignment,
-                  fp32_abs_err);
-}
-
-// Runs a non-QDQ model with indices inputs (int64) on HTP and compares output to CPU EP.
-template <typename InputType1, typename InputType2 = int64_t>
-static void RunOpTest(const std::string& op_type,
-                      const std::vector<TestInputDef<InputType1>>& input_defs_1,
-                      const std::vector<TestInputDef<InputType2>>& input_defs_2,
-                      const std::vector<TestInputDef<InputType1>>& input_defs_3,
-                      const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                      int opset_version,
-                      ExpectedEPNodeAssignment expected_ep_assignment,
-                      const std::string& op_domain = kOnnxDomain,
-                      float fp32_abs_err = 1e-5f,
-                      bool enable_htp_fp16_precision = false) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-
-  if (enable_htp_fp16_precision) {
-    provider_options["enable_htp_fp16_precision"] = "1";
-  }
-
-  // Runs model with a Q/DQ binary op and compares the outputs of the CPU and QNN EPs.
-  RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
-                  provider_options,
-                  opset_version,
-                  expected_ep_assignment,
-                  fp32_abs_err);
-}
-
-// Runs an FP16 model on the QNN HTP backend and compares QNN EP's accuracy to CPU EP.
-static void RunFP16OpTest(const std::string& op_type,
-                          const std::vector<TestInputDef<float>>& input_defs,
-                          const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                          int opset_version,
-                          ExpectedEPNodeAssignment expected_ep_assignment,
-                          const std::string& op_domain = kOnnxDomain,
-                          float tolerance = 0.004f) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-
-  std::vector<TestInputDef<MLFloat16>> input_fp16_defs;
-  input_fp16_defs.reserve(input_defs.size());
-
-  for (size_t i = 0; i < input_defs.size(); i++) {
-    input_fp16_defs.push_back(ConvertToFP16InputDef(input_defs[i]));
-  }
-
-  auto model_fp32_fn = BuildOpTestCase<float>(op_type, input_defs, {}, attrs, op_domain);
-  auto model_fp16_fn = BuildOpTestCase<MLFloat16>(op_type, input_fp16_defs, {}, attrs, op_domain);
-
-  TestFp16ModelAccuracy(model_fp32_fn,
-                        model_fp16_fn,
-                        provider_options,
-                        opset_version,
-                        expected_ep_assignment,
-                        tolerance);
-}
 
 // Test the accuracy of QDQ Sigmoid.
 TEST_F(QnnHTPBackendTests, UnaryOp_Sigmoid) {
@@ -275,6 +247,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Sigmoid_U16) {
                          {},
                          13,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,
                          true);  // Use MS domain Q/DQ ops
 }
@@ -305,6 +278,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Tanh_U16) {
                          {},
                          13,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,
                          true);  // Use MS domain Q/DQ ops
 }
@@ -317,6 +291,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Gelu) {
                         {},
                         11,
                         ExpectedEPNodeAssignment::All,
+                        BACKEND_HTP,
                         kMSDomain);  // GeLu is a contrib op.
 }
 
@@ -333,6 +308,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Gelu_U16) {
                          {},
                          11,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kMSDomain,  // GeLu is a contrib op.
                          true);      // Use MS domain Q/DQ ops.
 }
@@ -361,6 +337,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Elu_U16) {
                          {},
                          11,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,
                          true);
 }
@@ -400,6 +377,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_HardSwish_U16) {
                          {},
                          14,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,
                          true);
 }
@@ -427,6 +405,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Atan_U16) {
                          {},
                          14,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,  // Atan domain
                          true);        // Q/DQ op domain is com.microsoft
 }
@@ -459,6 +438,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Sign_U16) {
                          {},
                          13,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,  // Sign op domain
                          true);        // Use com.microsoft Q/DQ op domains
 }
@@ -559,6 +539,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Log_U16) {
                          {},
                          11,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,  // Log op domain
                          true);        // Use com.microsoft domain for Q/DQ ops
 }
@@ -582,6 +563,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Softmax13_U16_DefaultAxis) {
                          {},  // Uses default axis of -1 for opset 13
                          13,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,  // Sofmax's domain
                          true);        // Use com.microsoft domain for Q/DQ ops
 }
@@ -621,6 +603,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Softmax13_U16_NonLastAxis_LargeInput) {
                          {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
                          13,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,
                          true);
 }
@@ -706,6 +689,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Abs_U16) {
                          {},
                          13,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,  // Abs op's domain
                          true);        // Use com.microsoft domain for Q/DQ ops
 }
@@ -735,6 +719,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Ceil_U16) {
                          {},
                          13,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,  // Ceil op's domain
                          true);        // Use com.microsoft domain for Q/DQ ops
 }
@@ -783,6 +768,7 @@ TEST_F(QnnHTPBackendTests, DepthToSpaceOp_U16_CRD) {
                           utils::MakeAttribute("mode", "CRD")},
                          11,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,  // Op's domain
                          true);        // Use com.microsoft domain for Q/DQ ops
 }
@@ -831,6 +817,7 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthOp_U16) {
                          {utils::MakeAttribute("blocksize", static_cast<int64_t>(2))},
                          11,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,  // Op's domain
                          true);        // Use com.microsoft domain for Q/DQ ops
 }
@@ -887,6 +874,7 @@ TEST_F(QnnHTPBackendTests, BinaryOp_Add4D_U16) {
                          {},
                          17,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,
                          true);  // Use com.microsoft Q/DQ ops
 }
@@ -911,6 +899,7 @@ TEST_F(QnnHTPBackendTests, BinaryOp_Sub4D_U16) {
                          {},
                          17,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,
                          true);  // Use com.microsoft Q/DQ ops
 }
@@ -1000,6 +989,7 @@ TEST_F(QnnHTPBackendTests, BinaryOp_Div4D_U16_SmallInputs) {
                          {},
                          17,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,
                          true);  // Use com.microsoft Q/DQ ops
 }
@@ -1048,6 +1038,7 @@ TEST_F(QnnHTPBackendTests, BinaryOp_Mul4D_U16) {
                          {},
                          17,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,
                          true);  // Use com.microsoft Q/DQ ops
 }
@@ -1236,19 +1227,20 @@ TEST_F(QnnCPUBackendTests, ScatterElements_Float_Reduction_None) {
   std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
   std::vector<int64_t> indices = {1};
   std::vector<float> updates = {10.0f};
-  RunOpTestOnCPU<float, int64_t>("ScatterElements",
-                                 {
-                                     TestInputDef<float>({4}, false, std::move(data)),
-                                 },
-                                 {
-                                     TestInputDef<int64_t>({1}, false, std::move(indices)),
-                                 },
-                                 {
-                                     TestInputDef<float>({1}, false, std::move(updates)),
-                                 },
-                                 {},
-                                 17,
-                                 ExpectedEPNodeAssignment::All);
+  RunOpTest<float, int64_t>("ScatterElements",
+                            {
+                                TestInputDef<float>({4}, false, std::move(data)),
+                            },
+                            {
+                                TestInputDef<int64_t>({1}, false, std::move(indices)),
+                            },
+                            {
+                                TestInputDef<float>({1}, false, std::move(updates)),
+                            },
+                            {},
+                            17,
+                            ExpectedEPNodeAssignment::All,
+                            BACKEND_CPU);
 }
 
 // Test ScatterElements with reduction Add on CPU
@@ -1256,21 +1248,22 @@ TEST_F(QnnCPUBackendTests, ScatterElements_Float_Reduction_Add) {
   std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
   std::vector<int64_t> indices = {1};
   std::vector<float> updates = {10.0f};
-  RunOpTestOnCPU<float, int64_t>("ScatterElements",
-                                 {
-                                     TestInputDef<float>({4}, false, std::move(data)),
-                                 },
-                                 {
-                                     TestInputDef<int64_t>({1}, false, std::move(indices)),
-                                 },
-                                 {
-                                     TestInputDef<float>({1}, false, std::move(updates)),
-                                 },
-                                 {
-                                     utils::MakeAttribute("reduction", "add"),
-                                 },
-                                 17,
-                                 ExpectedEPNodeAssignment::All);
+  RunOpTest<float, int64_t>("ScatterElements",
+                            {
+                                TestInputDef<float>({4}, false, std::move(data)),
+                            },
+                            {
+                                TestInputDef<int64_t>({1}, false, std::move(indices)),
+                            },
+                            {
+                                TestInputDef<float>({1}, false, std::move(updates)),
+                            },
+                            {
+                                utils::MakeAttribute("reduction", "add"),
+                            },
+                            17,
+                            ExpectedEPNodeAssignment::All,
+                            BACKEND_CPU);
 }
 
 // Test ScatterElements with default attributes on HTP
@@ -1403,6 +1396,7 @@ TEST_F(QnnHTPBackendTests, GridSample_U16_Bilinear) {
                           utils::MakeAttribute("padding_mode", "zeros")},
                          17,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,
                          true);  // Use com.microsoft Q/DQ ops
 }
@@ -1417,6 +1411,7 @@ TEST_F(QnnHTPBackendTests, GridSample_AlignCorners) {
                          utils::MakeAttribute("padding_mode", "zeros")},
                         17,
                         ExpectedEPNodeAssignment::All,
+                        BACKEND_HTP,
                         kOnnxDomain,
                         false,
                         QDQTolerance(0.008f));
@@ -1432,6 +1427,7 @@ TEST_F(QnnHTPBackendTests, GridSample_U16_AlignCorners) {
                           utils::MakeAttribute("padding_mode", "zeros")},
                          17,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,
                          true);  // Use com.microsoft Q/DQ ops
 }
@@ -1471,6 +1467,7 @@ TEST_F(QnnHTPBackendTests, GridSample_U16_Nearest) {
                          {utils::MakeAttribute("mode", "nearest")},
                          17,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,
                          true);
 }
@@ -1503,6 +1500,7 @@ TEST_F(QnnHTPBackendTests, GridSample_Linear_ReflectionPadding_U16) {
                          {utils::MakeAttribute("mode", "linear"), utils::MakeAttribute("padding_mode", "reflection")},
                          /*opset_version=*/21,
                          /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          /*op_domain=*/kOnnxDomain,
                          /*use_contrib_qdq=*/true);
 }
@@ -1562,6 +1560,7 @@ TEST_F(QnnHTPBackendTests, LpNormalization_u16_rank4) {
                           utils::MakeAttribute("p", static_cast<int64_t>(2))},     // Order 2 to map to QNN's L2Norm operator
                          13,
                          ExpectedEPNodeAssignment::All,
+                         BACKEND_HTP,
                          kOnnxDomain,
                          true);
 }
@@ -1724,6 +1723,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_F32_as_FP16) {
                    {},
                    21,
                    ExpectedEPNodeAssignment::All,
+                   BACKEND_HTP,
                    kOnnxDomain,
                    0.004f,  // Tolerance. Comparing fp16 (QNN) with fp32 (CPU EP), so expect to need larger tolerance.
                    true);   // enable_htp_fp16_precision
@@ -1735,6 +1735,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_F32_as_FP16) {
                     utils::MakeAttribute("beta", 0.4f)},
                    21,
                    ExpectedEPNodeAssignment::All,
+                   BACKEND_HTP,
                    kOnnxDomain,
                    0.004f,  // Tolerance. Comparing fp16 (QNN) with fp32 (CPU EP), so expect to need larger tolerance.
                    true);   // enable_htp_fp16_precision
@@ -1749,6 +1750,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_FP16) {
                 {},
                 21,
                 ExpectedEPNodeAssignment::All,
+                BACKEND_HTP,
                 kOnnxDomain);
 
   // Rank 4, non-default alpha and beta
@@ -1758,6 +1760,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_FP16) {
                  utils::MakeAttribute("beta", 0.4f)},
                 21,
                 ExpectedEPNodeAssignment::All,
+                BACKEND_HTP,
                 kOnnxDomain);
 }
 
@@ -1872,6 +1875,784 @@ TEST_F(QnnHTPBackendTests, RandomUniformLikeAddTest) {
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+
+#if defined(_M_ARM64)
+//
+// GPU tests:
+//
+
+TEST_F(QnnGPUBackendTests, UnaryOp_Sigmoid) {
+  RunOpTest<>("Sigmoid",
+              {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+              {},
+              13,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_Tanh) {
+  RunOpTest<>("Tanh",
+              {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+              {},
+              13,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_Gelu) {
+  RunOpTest<>("Gelu",
+              {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+              {},
+              11,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU,
+              kMSDomain);  // GeLu is a contrib op.
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_Elu) {
+  RunOpTest<>("Elu",
+              {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+              {},
+              11,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_Relu) {
+  RunOpTest<>("Relu",
+              {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+              {},
+              14,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_HardSwish) {
+  RunOpTest<>("HardSwish",
+              {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+              {},
+              14,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+// Disable reason : not supported by GPU ?
+TEST_F(QnnGPUBackendTests, DISABLED_UnaryOp_Atan) {
+  RunOpTest<>("Atan",
+              {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+              {},
+              14,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+// Disable reason : not supported by GPU ?
+TEST_F(QnnGPUBackendTests, DISABLED_UnaryOp_Asin) {
+  RunOpTest<>("Asin",
+              {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-0.5, 0.5, 6))},
+              {},
+              13,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_Sign) {
+  RunOpTest<>("Sign",
+              {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+              {},
+              13,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_Sin) {
+  RunOpTest<>("Sin",
+              {TestInputDef<float>({1, 2, 3}, false, -3.14159f, 3.14159f)},
+              {},
+              11,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_Cos) {
+  RunOpTest<>("Cos",
+              {TestInputDef<float>({1, 2, 3}, false, {-3.14159f, -1.5f, -0.5f, 0.0f, 1.5, 3.14159f})},
+              {},
+              11,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_Log) {
+  RunOpTest<>("Log",
+              {TestInputDef<float>({1, 2, 3}, false, {3.14159f, 100.88436f, 10.542863f, 9.1f, 1.05622f, 3.14159f})},
+              {},
+              11, ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_Sqrt) {
+  std::vector<float> input_data = GetFloatDataInRange(0.0f, 20.0f, 9);
+  RunOpTest<>("Sqrt",
+              {TestInputDef<float>({1, 3, 3}, false, input_data)},
+              {},
+              13,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_Neg) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
+  RunOpTest<>("Neg",
+              {TestInputDef<float>({1, 2, 3}, false, input_data)},
+              {},
+              13,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_Not) {
+  RunOpTest<bool>("Not",
+                  {TestInputDef<bool>({1, 4}, false, {false, false, true, true})},
+                  {},
+                  17,
+                  ExpectedEPNodeAssignment::All,
+                  BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_Round) {
+  std::vector<float> input_data = GetFloatDataInRange(-9.0f, 9.0f, 6);
+  RunOpTest<>("Round",
+              {TestInputDef<float>({1, 2, 3}, false, input_data)},
+              {},
+              11,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_Softmax13_DefaultAxis) {
+  const std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 6);
+  RunOpTest<>("Softmax",
+              {TestInputDef<float>({1, 2, 3}, false, input_data)},
+              {},  // Uses default axis of -1 for opset 13
+              13,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+// Disable Reason : GPU currently doesn't support NonLastAxis.
+TEST_F(QnnGPUBackendTests, DISABLED_UnaryOp_Softmax13_NonLastAxis) {
+  const std::vector<float> input_data = {0.0f, 1.0f, 2.0f, 10.0f, 11.0f, 12.0f, 100.0f, 110.0f, 120.0f,
+                                         1.0856307f, 0.99734545f, 0.2829785f, 1.5062947f, 0.5786002f, 1.6514366f,
+                                         2.4266791f, 0.42891264f, 1.2659363f};
+  RunOpTest<>("Softmax",
+              {TestInputDef<float>({1, 2, 3, 3}, false, input_data)},
+              {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
+              13,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+// Disable Reason : GPU currently doesn't support NonLastAxis.
+TEST_F(QnnGPUBackendTests, DISABLED_UnaryOp_Softmax13_NonLastAxis_LargeInput) {
+  const std::vector<float> input_data = GetFloatDataInRange(-50.0f, 50.0f, 124);
+  RunOpTest<>("Softmax",
+              {TestInputDef<float>({1, 124, 1}, false, input_data)},
+              {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
+              13,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_Softmax11_DefaultAxis) {
+  RunOpTest<>("Softmax",
+              {TestInputDef<float>({1, 2, 3}, false, -5.0f, 5.0f)},
+              {},  // Uses default axis of 1 for opset < 13.
+              11,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_Softmax11_SetAxis) {
+  RunOpTest<>("Softmax",
+              {TestInputDef<float>({1, 2, 3}, false, -5.0f, 5.0f)},
+              {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
+              11,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_LogSoftmax13_DefaultAxis) {
+  std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 6);
+  RunOpTest<>("LogSoftmax",
+              {TestInputDef<float>({1, 2, 3}, false, input_data)},
+              {},  // Uses default axis of -1 for opset 13
+              13,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+// Disable Reason : GPU currently doesn't support NonLastAxis.
+TEST_F(QnnGPUBackendTests, DISABLED_UnaryOp_LogSoftmax13_NonLastAxis) {
+  std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 6);
+  RunOpTest<>("LogSoftmax",
+              {TestInputDef<float>({1, 2, 3}, false, input_data)},
+              {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
+              13,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_LogSoftmax11_DefaultAxis) {
+  std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 6);
+  RunOpTest<>("LogSoftmax",
+              {TestInputDef<float>({1, 2, 3}, false, input_data)},
+              {},  // Uses default axis of 1 for opset < 13.
+              11,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_LogSoftmax11_SetAxis) {
+  std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 6);
+  RunOpTest<>("LogSoftmax",
+              {TestInputDef<float>({1, 2, 3}, false, input_data)},
+              {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
+              11,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_Abs) {
+  RunOpTest<>("Abs",
+              {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+              {},
+              13,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_Ceil) {
+  const std::vector<float> input_data = GetFloatDataInRange(-12.0f, 12.0f, 6);
+  RunOpTest<>("Ceil",
+              {TestInputDef<float>({1, 2, 3}, false, input_data)},
+              {},
+              13,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_Floor) {
+  const std::vector<float> input_data = GetFloatDataInRange(-12.0f, 12.0f, 6);
+  RunOpTest<>("Floor",
+              {TestInputDef<float>({1, 2, 3}, false, input_data)},
+              {},
+              13,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, DepthToSpaceOp_CRD) {
+  const std::vector<float> X = {0., 1., 2.,
+                                3., 4., 5.,
+                                9., 10., 11.,
+                                12., 13., 14.,
+                                18., 19., 20.,
+                                21., 22., 23.,
+                                27., 28., 29.,
+                                30., 31., 32.};
+  RunOpTest<>("DepthToSpace",
+              {TestInputDef<float>({1, 4, 2, 3}, false, X)},
+              {utils::MakeAttribute("blocksize", static_cast<int64_t>(2)),
+               utils::MakeAttribute("mode", "CRD")},
+              11,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, DepthToSpaceOp_DCR) {
+  const std::vector<float> X = {0., 1., 2.,
+                                3., 4., 5.,
+                                9., 10., 11.,
+                                12., 13., 14.,
+                                18., 19., 20.,
+                                21., 22., 23.,
+                                27., 28., 29.,
+                                30., 31., 32.};
+  RunOpTest<>("DepthToSpace",
+              {TestInputDef<float>({1, 4, 2, 3}, false, X)},
+              {utils::MakeAttribute("blocksize", static_cast<int64_t>(2)),
+               utils::MakeAttribute("mode", "DCR")},
+              11,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, SpaceToDepthOp) {
+  const std::vector<float> X = {0.0f, 0.1f, 0.2f, 0.3f,
+                                1.0f, 1.1f, 1.2f, 1.3f,
+
+                                2.0f, 2.1f, 2.2f, 2.3f,
+                                3.0f, 3.1f, 3.2f, 3.3f};
+  RunOpTest<>("SpaceToDepth",
+              {TestInputDef<float>({1, 2, 2, 4}, false, X)},
+              {utils::MakeAttribute("blocksize", static_cast<int64_t>(2))},
+              11,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, BinaryOp_Add4D) {
+  RunOpTest<>("Add",
+              {TestInputDef<float>({1, 2, 2, 2}, false, -10.0f, 10.0f),
+               TestInputDef<float>({1, 2, 2, 2}, false, -10.0f, 10.0f)},
+              {},
+              17,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, BinaryOp_Sub4D) {
+  RunOpTest<>("Sub",
+              {TestInputDef<float>({1, 3, 8, 8}, false, -10.0f, 10.0f),
+               TestInputDef<float>({1, 3, 8, 8}, false, -10.0f, 10.0f)},
+              {},
+              17,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, BinaryOp_Sub4D_LargeInputs) {
+  RunOpTest<>("Sub",
+              {TestInputDef<float>({1, 3, 768, 1152}, false, -1.0f, 1.0f),
+               TestInputDef<float>({1, 3, 768, 1152}, false, -1.0f, 1.0f)},
+              {},
+              17,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, BinaryOp_Sub4D_Broadcast) {
+  RunOpTest<>("Sub",
+              {TestInputDef<float>({1, 3, 768, 1152}, false, -1.0f, 1.0f),
+               TestInputDef<float>({3, 1, 1}, true, {1.0f, 0.5f, -0.3f})},
+              {},
+              17,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, BinaryOp_Pow) {
+  std::vector<float> bases_input = {-10.0f, -8.0f, -6.0f, 1.0f, 2.0f, 3.0f, 5.5f, 10.0f};
+  std::vector<float> exponents_input = {-2.0f, -1.0f, 0.0f, 0.5f, 1.0f, 2.0f, 1.5f, 0.2f};
+  RunOpTest<>("Pow",
+              {TestInputDef<float>({1, 2, 2, 2}, false, bases_input),
+               TestInputDef<float>({1, 2, 2, 2}, false, exponents_input)},
+              {},
+              15,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, BinaryOp_PRelu_DynamicSlopes) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 8);
+  std::vector<float> slopes_data = GetFloatDataInRange(-1.0f, 1.0f, 8);
+  RunOpTest<>("PRelu",
+              {TestInputDef<float>({1, 2, 2, 2}, false, input_data),
+               TestInputDef<float>({1, 2, 2, 2}, false, slopes_data)},
+              {},
+              16,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, BinaryOp_PRelu_StaticSlopes) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 8);
+  std::vector<float> slopes_data = GetFloatDataInRange(-1.0f, 1.0f, 8);
+  RunOpTest<>("PRelu",
+              {TestInputDef<float>({1, 2, 2, 2}, false, input_data),
+               TestInputDef<float>({1, 2, 2, 2}, true, slopes_data)},
+              {},
+              16,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, BinaryOp_Div4D_SmallInputs) {
+  std::vector<float> input0_data = {-10.0f, -8.0f, -1.0f, 0.0f, 1.0f, 2.1f, 8.0f, 10.0f};
+  std::vector<float> input1_data = {5.0f, 4.0f, 1.0f, 1.0f, 1.0f, 4.0f, 4.0f, 5.0f};
+  RunOpTest<>("Div",
+              {TestInputDef<float>({1, 2, 2, 2}, false, input0_data),
+               TestInputDef<float>({1, 2, 2, 2}, false, input1_data)},
+              {},
+              17,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, BinaryOp_Div4D_Broadcast) {
+  RunOpTest<>("Div",
+              {TestInputDef<float>({1, 3, 768, 1152}, false, -1.0f, 1.0f),
+               TestInputDef<float>({3, 1, 1}, true, {1.0f, 0.5f, -0.3f})},
+              {},
+              17,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, BinaryOp_Mul4D) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0, 10.0f, 8);
+  RunOpTest<>("Mul",
+              {TestInputDef<float>({1, 2, 2, 2}, false, input_data),
+               TestInputDef<float>({1, 2, 2, 2}, false, input_data)},
+              {},
+              17,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, BinaryOp_And4D) {
+  RunOpTest<bool>("And",
+                  {TestInputDef<bool>({1, 4}, false, {false, false, true, true}),
+                   TestInputDef<bool>({1, 4}, false, {false, true, false, true})},
+                  {},
+                  17,
+                  ExpectedEPNodeAssignment::All,
+                  BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, Reciprocal) {
+  RunOpTest<float>("Reciprocal",
+                   {TestInputDef<float>({2, 2}, false, {1.0f, 2.0f, 0.5f, 4.0f})},
+                   {},  // No attributes
+                   13,
+                   ExpectedEPNodeAssignment::All,
+                   BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, Mean_TwoInputs) {
+  std::vector<float> input1 = {1.0f, 2.0f, 3.0f, 4.0f};
+  std::vector<float> input2 = {5.0f, 6.0f, 7.0f, 8.0f};
+
+  RunOpTest<float>("Mean",
+                   {
+                       TestInputDef<float>({4}, false, std::move(input1)),
+                       TestInputDef<float>({4}, false, std::move(input2)),
+                   },
+                   {},
+                   13,  // Opset version
+                   ExpectedEPNodeAssignment::All,
+                   BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, Mean_FourInputs) {
+  std::vector<float> input1 = {1.0f, 1.0f, 1.0f, 1.0f};
+  std::vector<float> input2 = {2.0f, 2.0f, 2.0f, 2.0f};
+  std::vector<float> input3 = {3.0f, 3.0f, 3.0f, 3.0f};
+  std::vector<float> input4 = {4.0f, 4.0f, 4.0f, 4.0f};
+
+  RunOpTest<float>("Mean",
+                   {
+                       TestInputDef<float>({4}, false, std::move(input1)),
+                       TestInputDef<float>({4}, false, std::move(input2)),
+                       TestInputDef<float>({4}, false, std::move(input3)),
+                       TestInputDef<float>({4}, false, std::move(input4)),
+                   },
+                   {},
+                   13,
+                   ExpectedEPNodeAssignment::All,
+                   BACKEND_GPU);
+}
+
+// Test ScatterND op on GPU
+TEST_F(QnnGPUBackendTests, ScatterND_float_int64) {
+  std::vector<float> data = {0, 1, 2, 3};
+  std::vector<int64_t> indices = {1};
+  std::vector<float> updates = {10};
+  RunOpTest<float, int64_t>("ScatterND",
+                            {TestInputDef<float>({4}, false, std::move(data))},
+                            {TestInputDef<int64_t>({1, 1}, false, std::move(indices))},
+                            {TestInputDef<float>({1}, false, std::move(updates))},
+                            {},
+                            17,
+                            ExpectedEPNodeAssignment::All,
+                            BACKEND_GPU);
+}
+
+// Test ScatterND op on GPU
+TEST_F(QnnGPUBackendTests, ScatterND_float_int64_d2Di2D) {
+  std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f, 10.0f, 11.0f};
+  std::vector<int64_t> indices = {0, 1, 1, 2, 2, 3};
+  std::vector<float> updates = {15.0f, 1.0f, 3.0f};
+  RunOpTest<float, int64_t>("ScatterND",
+                            {TestInputDef<float>({3, 4}, false, std::move(data))},
+                            {TestInputDef<int64_t>({3, 2}, false, std::move(indices))},
+                            {TestInputDef<float>({3}, false, std::move(updates))},
+                            {},
+                            17,
+                            ExpectedEPNodeAssignment::All,
+                            BACKEND_GPU);
+}
+
+// Test ScatterND op on GPU
+TEST_F(QnnGPUBackendTests, ScatterND_float_int64_d2Di3D) {
+  std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f, 10.0f, 11.0f};
+  std::vector<int64_t> indices = {0, 1, 1, 2, 2, 3, 1, 0, 2, 1, 2, 2};
+  std::vector<float> updates = {15.0f, 1.0f, 3.0f, 0.0f, 2.0f, 4.0f};
+  RunOpTest<float, int64_t>("ScatterND",
+                            {TestInputDef<float>({3, 4}, false, std::move(data))},
+                            {TestInputDef<int64_t>({2, 3, 2}, false, std::move(indices))},
+                            {TestInputDef<float>({2, 3}, false, std::move(updates))},
+                            {},
+                            17,
+                            ExpectedEPNodeAssignment::All,
+                            BACKEND_GPU);
+}
+
+// Test ScatterND 2D op on GPU. Uses CastBufferKernelSource for int64 to int32 cast.
+TEST_F(QnnGPUBackendTests, ScatterND_float_int64_i2D) {
+  std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f, 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f};
+  std::vector<int64_t> indices = {0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0, 5, 0, 0, 0, 6, 0, 0, 0, 7, 0, 0, 0, 8, 0, 0, 0, 9, 0, 0, 0, 10, 0, 0, 0, 11, 0, 0, 0, 12, 0, 0, 0, 13, 0, 0, 0, 14, 0, 0, 0, 15};
+  std::vector<float> updates = {15.0f, 14.0f, 13.0f, 12.0f, 11.0f, 10.0f, 9.0f, 8.0f, 7.0f, 6.0f, 5.0f, 4.0f, 3.0f, 2.0f, 1.0f, 0.0f};
+  RunOpTest<float, int64_t>("ScatterND",
+                            {TestInputDef<float>({1, 1, 1, 16}, false, std::move(data))},
+                            {TestInputDef<int64_t>({16, 4}, false, std::move(indices))},
+                            {TestInputDef<float>({16}, false, std::move(updates))},
+                            {},
+                            17,
+                            ExpectedEPNodeAssignment::All,
+                            BACKEND_GPU);
+}
+
+// Test ScatterND 3D op on GPU. Uses CastBufferKernelSource for int64 to int32 cast.
+TEST_F(QnnGPUBackendTests, ScatterND_float_int64_i3D) {
+  std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f, 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f};
+  std::vector<int64_t> indices = {0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0, 5, 0, 0, 0, 6, 0, 0, 0, 7, 0, 0, 0, 8, 0, 0, 0, 9, 0, 0, 0, 10, 0, 0, 0, 11, 0, 0, 0, 12, 0, 0, 0, 13, 0, 0, 0, 14, 0, 0, 0, 15};
+  std::vector<float> updates = {15.0f, 14.0f, 13.0f, 12.0f, 11.0f, 10.0f, 9.0f, 8.0f, 7.0f, 6.0f, 5.0f, 4.0f, 3.0f, 2.0f, 1.0f, 0.0f};
+  RunOpTest<float, int64_t>("ScatterND",
+                            {TestInputDef<float>({1, 1, 1, 16}, false, std::move(data))},
+                            {TestInputDef<int64_t>({1, 16, 4}, false, std::move(indices))},
+                            {TestInputDef<float>({1, 16}, false, std::move(updates))},
+                            {},
+                            17,
+                            ExpectedEPNodeAssignment::All,
+                            BACKEND_GPU);
+}
+
+// Test ScatterND 4D op on GPU. Uses CastBuffer4DKernelSource for int64 to int32 cast.
+// Disable reason : Need QNN GPU int32 to int64 castop fix to run tests > 3D.
+TEST_F(QnnGPUBackendTests, DISABLED_ScatterND_float_int64_i4D) {
+  std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f, 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f};
+  std::vector<int64_t> indices = {0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0, 5, 0, 0, 0, 6, 0, 0, 0, 7, 0, 0, 0, 8, 0, 0, 0, 9, 0, 0, 0, 10, 0, 0, 0, 11, 0, 0, 0, 12, 0, 0, 0, 13, 0, 0, 0, 14, 0, 0, 0, 15};
+  std::vector<float> updates = {15.0f, 14.0f, 13.0f, 12.0f, 11.0f, 10.0f, 9.0f, 8.0f, 7.0f, 6.0f, 5.0f, 4.0f, 3.0f, 2.0f, 1.0f, 0.0f};
+  RunOpTest<float, int64_t>("ScatterND",
+                            {TestInputDef<float>({1, 1, 1, 16}, false, std::move(data))},
+                            {TestInputDef<int64_t>({1, 1, 16, 4}, false, std::move(indices))},
+                            {TestInputDef<float>({1, 1, 16}, false, std::move(updates))},
+                            {},
+                            17,
+                            ExpectedEPNodeAssignment::All,
+                            BACKEND_GPU);
+}
+
+// Test ScatterND 5D on GPU. Llama3 exported by Optimum uses this. Uses CastBuffer5DKernelSource for int64 to int32 cast.
+// Disable reason : Need QNN GPU int32 to int64 castop fix to run tests > 3D.
+TEST_F(QnnGPUBackendTests, DISABLED_ScatterND_float_int64_i5D) {
+  std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f, 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f};
+  std::vector<int64_t> indices = {0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0, 5, 0, 0, 0, 6, 0, 0, 0, 7, 0, 0, 0, 8, 0, 0, 0, 9, 0, 0, 0, 10, 0, 0, 0, 11, 0, 0, 0, 12, 0, 0, 0, 13, 0, 0, 0, 14, 0, 0, 0, 15};
+  std::vector<float> updates = {15.0f, 14.0f, 13.0f, 12.0f, 11.0f, 10.0f, 9.0f, 8.0f, 7.0f, 6.0f, 5.0f, 4.0f, 3.0f, 2.0f, 1.0f, 0.0f};
+  RunOpTest<float, int64_t>("ScatterND",
+                            {TestInputDef<float>({1, 1, 1, 16}, false, std::move(data))},
+                            {TestInputDef<int64_t>({1, 1, 1, 16, 4}, false, std::move(indices))},
+                            {TestInputDef<float>({1, 1, 1, 16}, false, std::move(updates))},
+                            {},
+                            13,
+                            ExpectedEPNodeAssignment::All,
+                            BACKEND_GPU);
+}
+
+// Test ScatterND 5D on GPU. Llama3 exported by Optimum uses this. Uses CastBuffer5DKernelSource for int64 to int32 cast.
+// Disable reason : Need QNN GPU int32 to int64 castop fix to run tests > 3D.
+TEST_F(QnnGPUBackendTests, DISABLED_ScatterND_float_int64_i5D_sparse) {
+  std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f, 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f};
+  std::vector<int64_t> indices = {0, 0, 0, 1, 0, 0, 0, 3, 0, 0, 0, 15};
+  std::vector<float> updates = {11.0f, 33.0f, 0.0f};
+  RunOpTest<float, int64_t>("ScatterND",
+                            {TestInputDef<float>({1, 1, 1, 16}, false, std::move(data))},
+                            {TestInputDef<int64_t>({1, 1, 1, 3, 4}, false, std::move(indices))},
+                            {TestInputDef<float>({1, 1, 1, 3}, false, std::move(updates))},
+                            {},
+                            13,
+                            ExpectedEPNodeAssignment::All,
+                            BACKEND_GPU);
+}
+
+// Test ScatterND 5D on GPU. Same dimension and data inputs as Llama3 exported by Optimum.
+// Disable reason : Need QNN GPU int32 to int64 castop fix to run tests > 3D.
+TEST_F(QnnGPUBackendTests, DISABLED_ScatterND_float_int64_i5D_llama3) {
+  std::vector<float> data(1024);
+  std::vector<int64_t> indices(1024 * 4);
+  std::vector<float> updates(1024);
+  for (int i = 0; i < 1024; ++i) {
+    data[i] = 0.0f;
+    indices[4 * (i + 1) - 1] = i;
+    updates[i] = (i < 1022) ? -FLT_MAX : 0.0f;
+  }
+  RunOpTest<float, int64_t>("ScatterND",
+                            {TestInputDef<float>({1, 1, 1, 1024}, false, std::move(data))},
+                            {TestInputDef<int64_t>({1, 1, 1, 1024, 4}, false, std::move(indices))},
+                            {TestInputDef<float>({1, 1, 1, 1024}, false, std::move(updates))},
+                            {},
+                            13,
+                            ExpectedEPNodeAssignment::All,
+                            BACKEND_GPU);
+}
+
+// Test ScatterND 6D on GPU. Uses CastBuffer6DKernelSource for int64 to int32 cast.
+// Disable reason : Need QNN GPU int32 to int64 castop fix to run tests > 3D.
+TEST_F(QnnGPUBackendTests, DISABLED_ScatterND_float_int64_i6D) {
+  std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f, 9.0f, 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f};
+  std::vector<int64_t> indices = {0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0, 0, 0, 4, 0, 0, 0, 5, 0, 0, 0, 6, 0, 0, 0, 7, 0, 0, 0, 8, 0, 0, 0, 9, 0, 0, 0, 10, 0, 0, 0, 11, 0, 0, 0, 12, 0, 0, 0, 13, 0, 0, 0, 14, 0, 0, 0, 15};
+  std::vector<float> updates = {15.0f, 14.0f, 13.0f, 12.0f, 11.0f, 10.0f, 9.0f, 8.0f, 7.0f, 6.0f, 5.0f, 4.0f, 3.0f, 2.0f, 1.0f, 0.0f};
+  RunOpTest<float, int64_t>("ScatterND",
+                            {TestInputDef<float>({1, 1, 1, 16}, false, std::move(data))},
+                            {TestInputDef<int64_t>({1, 1, 1, 1, 16, 4}, false, std::move(indices))},
+                            {TestInputDef<float>({1, 1, 1, 1, 16}, false, std::move(updates))},
+                            {},
+                            17,
+                            ExpectedEPNodeAssignment::All,
+                            BACKEND_GPU);
+}
+
+// Test ScatterElements with default attributes on GPU
+TEST_F(QnnGPUBackendTests, ScatterElements_Float_Reduction_None) {
+  std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
+  std::vector<int64_t> indices = {1};
+  std::vector<float> updates = {10.0f};
+  RunOpTest<float, int64_t>("ScatterElements",
+                            {
+                                TestInputDef<float>({4}, false, std::move(data)),
+                            },
+                            {
+                                TestInputDef<int64_t>({1}, false, std::move(indices)),
+                            },
+                            {
+                                TestInputDef<float>({1}, false, std::move(updates)),
+                            },
+                            {},
+                            17,
+                            ExpectedEPNodeAssignment::All,
+                            BACKEND_GPU);
+}
+
+// Test ScatterElements with reduction Add on GPU
+TEST_F(QnnGPUBackendTests, ScatterElements_Float_Reduction_Add) {
+  std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
+  std::vector<int64_t> indices = {1};
+  std::vector<float> updates = {10.0f};
+  RunOpTest<float, int64_t>("ScatterElements",
+                            {
+                                TestInputDef<float>({4}, false, std::move(data)),
+                            },
+                            {
+                                TestInputDef<int64_t>({1}, false, std::move(indices)),
+                            },
+                            {
+                                TestInputDef<float>({1}, false, std::move(updates)),
+                            },
+                            {
+                                utils::MakeAttribute("reduction", "add"),
+                            },
+                            17,
+                            ExpectedEPNodeAssignment::All,
+                            BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, GridSample_Bilinear) {
+  RunOpTest<>("GridSample",
+              {TestInputDef<float>({1, 1, 3, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 6)),
+               TestInputDef<float>({1, 2, 4, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 16))},
+              {utils::MakeAttribute("align_corners", static_cast<int64_t>(0)),
+               utils::MakeAttribute("mode", "bilinear"),
+               utils::MakeAttribute("padding_mode", "zeros")},
+              17,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, GridSample_BorderPadding) {
+  RunOpTest<>("GridSample",
+              {TestInputDef<float>({1, 1, 3, 2}, false, -10.0f, 10.0f),
+               TestInputDef<float>({1, 2, 4, 2}, false, -10.0f, 10.0f)},
+              {utils::MakeAttribute("mode", "bilinear"),
+               utils::MakeAttribute("padding_mode", "border")},
+              17,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, GridSample_Nearest) {
+  RunOpTest<>("GridSample",
+              {TestInputDef<float>({1, 1, 3, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 6)),
+               TestInputDef<float>({1, 2, 4, 2}, false, GetFloatDataInRange(-10.0f, 10.0f, 16))},
+              {utils::MakeAttribute("mode", "nearest")},
+              17,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, Concat_3Inputs_LastAxis) {
+  RunOpTest<>("Concat",
+              {TestInputDef<float>({1, 2, 2, 2}, false, -10.0f, 10.0f),
+               TestInputDef<float>({1, 2, 2, 3}, false, -1.0f, 1.0f),
+               TestInputDef<float>({1, 2, 2, 1}, false, -2.0f, 2.0f)},
+              {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
+              13,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, Concat_2Inputs_2ndAxis) {
+  RunOpTest<>("Concat",
+              {TestInputDef<float>({1, 2, 2, 2}, false, -10.0f, 10.0f),
+               TestInputDef<float>({1, 3, 2, 2}, false, -2.0f, 2.0f)},
+              {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
+              13,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, LpNormalization_rank4) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 8);
+  RunOpTest<>("LpNormalization",
+              {TestInputDef<float>({1, 2, 2, 2}, false, input_data)},
+              {utils::MakeAttribute("axis", static_cast<int64_t>(-1)),  // Last axis
+               utils::MakeAttribute("p", static_cast<int64_t>(2))},     // Order 2 to map to QNN's L2Norm operator
+              13,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_HardSigmoid_rank3) {
+  RunOpTest<>("HardSigmoid",
+              {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+              {utils::MakeAttribute("alpha", 0.1f),
+               utils::MakeAttribute("beta", 0.4f)},
+              21,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+TEST_F(QnnGPUBackendTests, UnaryOp_HardSigmoid_rank4) {
+  RunOpTest<>("HardSigmoid",
+              {TestInputDef<float>({1, 2, 2, 2}, false, -10.0f, 10.0f)},
+              {},
+              19,
+              ExpectedEPNodeAssignment::All,
+              BACKEND_GPU);
+}
+
+#endif  // defined(_M_ARM64) GPU tests
 
 }  // namespace test
 }  // namespace onnxruntime
