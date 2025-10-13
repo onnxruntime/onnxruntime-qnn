@@ -229,38 +229,56 @@ class TaskLibrary:
 
         @task
         @depends(["build_ort_android_aarch64"])
-        def archive_ort_android_aarch64(self, plan: Plan) -> str:
+        def archive_ort_android_aarch64_tests(self, plan: Plan) -> str:
             if is_host_linux() or is_host_mac():
                 return plan.add_step(
                     BuildEpLinuxTask(
-                        "Archiving ONNX Runtime for Android",
+                        "Archiving ONNX Runtime Tests for Android",
                         self.__venv_path,
                         "android",
                         "aarch64",
                         self.__config,
                         None,  # target-py_version
                         self.__qairt_sdk_root,
-                        "archive",
+                        "archive-tests",
                     )
                 )
             else:
                 raise NotImplementedError("Archiving for Android on this host is not supported.")
 
+    if (is_host_linux() and is_host_x86_64()) or is_host_mac():
+
+        @task
+        @depends(["build_ort_linux_aarch64_oe_gcc11_2"])
+        def archive_ort_linux_aarch64_oe_gcc11_2(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Archiving ONNX Runtime for Linux",
+                    self.__venv_path,
+                    "linux",
+                    "aarch64_oe_gcc11.2",
+                    self.__config,
+                    None,  # target-py_version
+                    self.__qairt_sdk_root,
+                    "archive",
+                )
+            )
+
     if is_host_linux() and is_host_x86_64():
 
         @task
         @depends(["build_ort_linux_x86_64"])
-        def archive_ort_linux_x86_64(self, plan: Plan) -> str:
+        def archive_ort_linux_x86_64_tests(self, plan: Plan) -> str:
             return plan.add_step(
                 BuildEpLinuxTask(
-                    "Archiving ONNX Runtime for Linux",
+                    "Archiving ONNX Runtime Tests for Linux",
                     self.__venv_path,
                     "linux",
                     "x86_64",
                     self.__config,
                     self.__target_py_version,
                     self.__qairt_sdk_root,
-                    "archive",
+                    "archive-tests",
                 )
             )
 
@@ -268,16 +286,16 @@ class TaskLibrary:
 
         @task
         @depends(["build_ort_windows_arm64"])
-        def archive_ort_windows_arm64(self, plan: Plan) -> str:
+        def archive_ort_windows_arm64_tests(self, plan: Plan) -> str:
             return plan.add_step(
                 BuildEpWindowsTask(
-                    "Archiving ONNX Runtime for Windows on ARM64",
+                    "Archiving ONNX Runtime Tests for Windows on ARM64",
                     self.__venv_path,
                     "arm64",
                     self.__config,
                     self.__target_py_version,
                     self.__qairt_sdk_root,
-                    "archive",
+                    "archive-tests",
                 )
             )
 
@@ -285,16 +303,16 @@ class TaskLibrary:
 
         @task
         @depends(["build_ort_windows_arm64ec"])
-        def archive_ort_windows_arm64ec(self, plan: Plan) -> str:
+        def archive_ort_windows_arm64ec_tests(self, plan: Plan) -> str:
             return plan.add_step(
                 BuildEpWindowsTask(
-                    "Archiving ONNX Runtime for Windows on ARM64ec",
+                    "Archiving ONNX Runtime Tests for Windows on ARM64ec",
                     self.__venv_path,
                     "arm64ec",
                     self.__config,
                     self.__target_py_version,
                     self.__qairt_sdk_root,
-                    "archive",
+                    "archive-tests",
                 )
             )
 
@@ -302,16 +320,16 @@ class TaskLibrary:
 
         @task
         @depends(["build_ort_windows_arm64x"])
-        def archive_ort_windows_arm64x(self, plan: Plan) -> str:
+        def archive_ort_windows_arm64x_tests(self, plan: Plan) -> str:
             return plan.add_step(
                 BuildEpWindowsTask(
-                    "Archiving ONNX Runtime for Windows on ARM64x",
+                    "Archiving ONNX Runtime Tests for Windows on ARM64x",
                     self.__venv_path,
                     "arm64ec",
                     self.__config,
                     self.__target_py_version,
                     self.__qairt_sdk_root,
-                    "archive",
+                    "archive-tests",
                     build_as_x=True,
                 )
             )
@@ -320,16 +338,16 @@ class TaskLibrary:
 
         @task
         @depends(["build_ort_windows_x86_64"])
-        def archive_ort_windows_x86_64(self, plan: Plan) -> str:
+        def archive_ort_windows_x86_64_tests(self, plan: Plan) -> str:
             return plan.add_step(
                 BuildEpWindowsTask(
-                    "Archiving ONNX Runtime for Windows on x86_64",
+                    "Archiving ONNX Runtime Tests for Windows on x86_64",
                     self.__venv_path,
                     "x86_64",
                     self.__config,
                     self.__target_py_version,
                     self.__qairt_sdk_root,
-                    "archive",
+                    "archive-tests",
                 )
             )
 
@@ -365,21 +383,23 @@ class TaskLibrary:
             else:
                 raise NotImplementedError("Building for Android on this host is not supported.")
 
-    @task
-    @depends(["docker_build_manylinux_2_34_aarch64"])
-    def build_ort_linux_aarch64_manylinux_2_34(self, plan: Plan) -> str:
-        return plan.add_step(
-            BuildEpDockerTask(
-                "Building ONNX Runtime for Linux on AArch64 manylinux_2_34",
-                "aarch64_manylinux_2_34",
-                self.__config,
-                self.__target_py_version,
-                self.__qairt_sdk_root,
-                self.__docker_ccache_root,
-            ),
-        )
+    if is_host_linux() or is_host_mac():
 
-    if is_host_linux():
+        @task
+        @depends(["docker_build_manylinux_2_34_aarch64"])
+        def build_ort_linux_aarch64_manylinux_2_34(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpDockerTask(
+                    "Building ONNX Runtime for Linux on AArch64 manylinux_2_34",
+                    "aarch64_manylinux_2_34",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__qairt_sdk_root,
+                    self.__docker_ccache_root,
+                ),
+            )
+
+    if is_host_linux() or is_host_mac():
 
         @task
         @depends(["create_venv"])
@@ -584,7 +604,7 @@ class TaskLibrary:
                     "Debug",
                     self.__target_py_version,
                     self.__qairt_sdk_root,
-                    "generate_sln",
+                    "generate-sln",
                 )
             )
 
@@ -651,7 +671,7 @@ class TaskLibrary:
     if is_host_linux() or is_host_mac():
 
         @task
-        @depends(["archive_ort_android_aarch64"])
+        @depends(["archive_ort_android_aarch64_tests"])
         def test_ort_local_android_aarch64(self, plan: Plan) -> str:
             env = dict(os.environ)
             test_root = REPO_ROOT / "build" / "qdc_test_root"
@@ -685,7 +705,7 @@ class TaskLibrary:
     if is_host_linux() or is_host_mac():
 
         @task
-        @depends(["archive_ort_android_aarch64"])
+        @depends(["archive_ort_android_aarch64_tests"])
         def test_ort_qdc_android_aarch64(self, plan: Plan) -> str:
             return plan.add_step(
                 QdcTestsTask(
@@ -701,7 +721,7 @@ class TaskLibrary:
     if is_host_windows():
 
         @task
-        @depends(["archive_ort_windows_arm64"])
+        @depends(["archive_ort_windows_arm64_tests"])
         def test_ort_qdc_windows_arm64(self, plan: Plan) -> str:
             return plan.add_step(
                 QdcTestsTask(

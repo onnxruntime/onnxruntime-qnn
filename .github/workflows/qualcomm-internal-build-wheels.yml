@@ -77,7 +77,6 @@ jobs:
       # version of cpython that's installed on our Linux build machines.
       target_py_vsn: "3.10"
       run_tests: false
-      upload_test_archive: false
 
   build-windows-arm64_311:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
@@ -91,7 +90,6 @@ jobs:
       test_runner_arch: ARM64
       run_tests: false
       test_wheel: true
-      upload_test_archive: false
 
   build-windows-arm64_312:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
@@ -105,7 +103,6 @@ jobs:
       test_runner_arch: ARM64
       run_tests: false
       test_wheel: true
-      upload_test_archive: false
 
   build-windows-arm64_313:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
@@ -119,7 +116,6 @@ jobs:
       test_runner_arch: ARM64
       run_tests: false
       test_wheel: true
-      upload_test_archive: false
 
   build-windows-arm64x_311:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
@@ -132,7 +128,6 @@ jobs:
       test_runner_arch: ARM64
       run_tests: false
       test_wheel: true
-      upload_test_archive: false
 
   build-windows-arm64x_312:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
@@ -145,7 +140,6 @@ jobs:
       test_runner_arch: ARM64
       run_tests: false
       test_wheel: true
-      upload_test_archive: false
 
   build-windows-arm64x_313:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
@@ -158,4 +152,3 @@ jobs:
       test_runner_arch: ARM64
       run_tests: false
       test_wheel: true
-      upload_test_archive: false

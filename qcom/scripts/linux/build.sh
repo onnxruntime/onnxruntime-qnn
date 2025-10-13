@@ -84,8 +84,10 @@ cmake_generator="Ninja"
 
 build_root="${REPO_ROOT}/build"
 build_dir="${build_root}/${target_platform}-${target_arch}"
+install_dir="${build_root}/${target_platform}-${target_arch}.install"
 
 qairt_sdk_file_path="${build_dir}/qairt-sdk-path-${config}.txt"
+onnxruntime_version="$(cat "${REPO_ROOT}/VERSION_NUMBER")"
 
 if [ -z "${qairt_sdk_root}" ]; then
     qairt_sdk_root="$(get_qairt_contentdir)"
@@ -146,6 +148,7 @@ if [ -n "${warnings_as_errors}" ]; then
 fi
 
 action_args=()
+make_lib_archive=
 make_test_archive=
 run_tests=
 test_runner=
@@ -155,7 +158,17 @@ case "${target_platform}" in
     qnn_args=(--use_qnn --qnn_home "${qairt_sdk_root}")
     platform_args=(--build_shared_lib)
 
-    test_runner="${REPO_ROOT}/qcom/scripts/linux/run_tests.sh"
+    # * ORT really wants the EP lib in the same directory as the binary that loads it.
+    #   --> Put the test binaries into lib :-/
+    # * ORT's build uses manual linker flags to set rpaths and does so inconsistently.
+    #   --> Ensure that all executables have $ORIGIN in their rpath.
+    platform_args+=(--cmake_extra_defines
+                    CMAKE_INSTALL_BINDIR:STRING=lib
+                    CMAKE_INSTALL_RPATH:STRING=\$ORIGIN)
+
+    if [ "${target_arch}" == "x86_64" ]; then
+      test_runner="${REPO_ROOT}/qcom/scripts/linux/run_tests.sh"
+    fi
 
     case "${mode}" in
       build)
@@ -183,6 +196,9 @@ case "${target_platform}" in
         run_tests=1
         ;;
       archive)
+        make_lib_archive=1
+        ;;
+      archive-tests)
         make_test_archive=1
         ;;
       *)
@@ -221,7 +237,7 @@ case "${target_platform}" in
       test)
         die "--mode=test not supported with --target_platform=${target_platform}."
         ;;
-      archive)
+      archive-tests)
         make_test_archive=1
         ;;
       *)
@@ -243,13 +259,31 @@ function scrub_mirror() {
 }
 trap scrub_mirror EXIT
 
+if [ -n "${make_lib_archive}" ]; then
+  install_root="${install_dir}/${config}"
+  log_debug "Staging archive contents in ${install_root}"
+
+  install_prefix="${install_root}/onnxruntime-qnn-${onnxruntime_version}"
+  cmake --install "${build_dir}/${config}" --config "${config}" --prefix="${install_prefix}"
+
+  dist_dir="${build_root}"
+  archive_path="${dist_dir}/onnxruntime-qnn-${target_platform}-${target_arch}-${onnxruntime_version}.tar.gz"
+  log_debug "Creating lib archive in ${archive_path}"
+  tar -C "${install_root}" -czf "${archive_path}" .
+fi
+
 if [ -n "${make_test_archive}" ]; then
   python "${REPO_ROOT}/qcom/scripts/all/archive_tests.py" \
     "--config=${config}" \
     "--target-platform=${target_platform}-${target_arch}" \
     "--qairt-sdk-root=${qairt_sdk_root}"
-else
-  cd "${REPO_ROOT}"
+fi
+
+cd "${REPO_ROOT}"
+
+if [ "${#action_args[@]}" -gt 0 ]; then
+
+  python "${REPO_ROOT}/qcom/scripts/all/fetch_cmake_deps.py"
 
   # This platform supports running tests on the host. Prep the build directory
   # to run with our ctest wrapper.
@@ -269,45 +303,45 @@ else
       "${qnn_args[@]}" \
       "${platform_args[@]}"
   fi
+fi
 
-  if [ -n "${run_tests}" ]; then
-    onnx_models_root="$(get_onnx_models_dir)"
+if [ -n "${run_tests}" ]; then
+  onnx_models_root="$(get_onnx_models_dir)"
 
-    cd "${build_dir}/${config}/"
+  cd "${build_dir}/${config}/"
 
-    # Run tests using our ctest wrapper.
-    log_info "-=-=-=- Running unit tests -=-=-=-=-"
-    "./$(basename ${test_runner})" --python="${python_for_build}"
+  # Run tests using our ctest wrapper.
+  log_info "-=-=-=- Running unit tests -=-=-=-=-"
+  "./$(basename ${test_runner})" --python="${python_for_build}"
 
-    log_info "-=-=-=- Running ONNX model tests -=-=-=-=-"
-    "${build_dir}/${config}/onnx_test_runner" \
-        -j 1 \
-        -e qnn \
-        -i "backend_type|cpu" \
-        "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node"
+  log_info "-=-=-=- Running ONNX model tests -=-=-=-=-"
+  "${build_dir}/${config}/onnx_test_runner" \
+      -j 1 \
+      -e qnn \
+      -i "backend_type|cpu" \
+      "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node"
 
-    log_info "-=-=-=- Running onnx/models float32 tests -=-=-=-=-"
-    cd "${onnx_models_root}"
-    "${build_dir}/${config}/onnx_test_runner" \
-        -j 1 \
-        -e qnn \
-        -i "backend_type|cpu" \
-        "testdata/float32"
+  log_info "-=-=-=- Running onnx/models float32 tests -=-=-=-=-"
+  cd "${onnx_models_root}"
+  "${build_dir}/${config}/onnx_test_runner" \
+      -j 1 \
+      -e qnn \
+      -i "backend_type|cpu" \
+      "testdata/float32"
 
-    log_info "-=-=-=- Running onnx/models qdq tests -=-=-=-=-"
-    "${build_dir}/${config}/onnx_test_runner" \
-        -j 1 \
-        -e qnn \
-        -i "backend_type|htp" \
-        "testdata/qdq"
+  log_info "-=-=-=- Running onnx/models qdq tests -=-=-=-=-"
+  "${build_dir}/${config}/onnx_test_runner" \
+      -j 1 \
+      -e qnn \
+      -i "backend_type|htp" \
+      "testdata/qdq"
 
-    log_info "-=-=-=- Running onnx/models qdq tests with context cache enabled -=-=-=-=-"
-    log_debug "Scrubbing old context caches"
-    find "testdata/qdq-with-context-cache" -name "*_ctx.onnx" -print -delete
-    "${build_dir}/${config}/onnx_test_runner" \
-        -j 1 \
-        -e qnn \
-        -f -i "backend_type|htp" \
-        "testdata/qdq-with-context-cache"
-  fi
+  log_info "-=-=-=- Running onnx/models qdq tests with context cache enabled -=-=-=-=-"
+  log_debug "Scrubbing old context caches"
+  find "testdata/qdq-with-context-cache" -name "*_ctx.onnx" -print -delete
+  "${build_dir}/${config}/onnx_test_runner" \
+      -j 1 \
+      -e qnn \
+      -f -i "backend_type|htp" \
+      "testdata/qdq-with-context-cache"
 fi

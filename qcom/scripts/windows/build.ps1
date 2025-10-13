@@ -16,8 +16,8 @@ param (
     [string]$QairtSdkRoot,
 
     [Parameter(Mandatory = $false,
-               HelpMessage = "What to do: build|archive|test|generate_sln.")]
-    [ValidateSet("build", "archive", "test", "generate_sln")]
+               HelpMessage = "What to do: build|archive-test|test|generate-sln.")]
+    [ValidateSet("build", "archive-tests", "test", "generate-sln")]
     [string]$Mode = "build",
 
     [Parameter(Mandatory = $false,
@@ -47,7 +47,7 @@ $RepoRoot = (Resolve-Path -Path "$(Split-Path -Parent $MyInvocation.MyCommand.De
 $BuildRoot = (Join-Path $RepoRoot "build")
 $BuildDirArch = $Arch
 
-if ($Mode -eq "generate_sln") {
+if ($Mode -eq "generate-sln") {
     $BuildDir = (Join-Path $BuildRoot "vs")
 }
 else {
@@ -74,7 +74,7 @@ else {
     $QairtSdkRoot = Resolve-Path -Path $QairtSdkRoot
 }
 
-if ($Mode -eq "generate_sln") {
+if ($Mode -eq "generate-sln") {
     $CMakeGenerator = "Visual Studio 17 2022"
     $BuildIsDirty = $true
 }
@@ -173,13 +173,13 @@ switch ($Mode) {
 
         $DoBuild = $true
     }
-    "generate_sln" {
+    "generate-sln" {
         $GenerateBuild = $true
     }
     "test" {
         $RunTests = $true
     }
-    "archive" {
+    "archive-tests" {
         $MakeTestArchive = $true
     }
     default {
