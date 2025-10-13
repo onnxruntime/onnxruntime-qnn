@@ -148,9 +148,9 @@ const QnnTensorWrapper& QnnModelWrapper::GetQnnTensorWrapper(const std::string& 
 }
 
 Status QnnModelWrapper::CreateQnnInputOutputTensors(const std::string& qnn_node_name,
-                                                  const std::vector<std::string>& tensor_names,
-                                                  std::vector<Qnn_Tensor_t>& qnn_tensors,
-                                                  bool do_op_validation) {
+                                                    const std::vector<std::string>& tensor_names,
+                                                    std::vector<Qnn_Tensor_t>& qnn_tensors,
+                                                    bool do_op_validation) {
   for (const auto& tensor_name : tensor_names) {
     auto it = model_tensors_map_.find(tensor_name);
     if (it == model_tensors_map_.end()) {

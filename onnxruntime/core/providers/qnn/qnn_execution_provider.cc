@@ -1120,16 +1120,15 @@ Status QNNExecutionProvider::CreateComputeFunc(std::vector<NodeComputeInfo>& nod
       ORT_RETURN_IF_ERROR(qnn_backend_manager_->ReleaseContext());
       uint64_t max_spill_fill_buffer_size = 0;
       ORT_RETURN_IF_ERROR(qnn_backend_manager_->GetMaxSpillFillBufferSize(
-        qnn_backend_manager_->GetSaveBuffer().get(),
-        qnn_backend_manager_->GetSaveBufferSize(),
-        max_spill_fill_buffer_size
-      ));
+          qnn_backend_manager_->GetSaveBuffer().get(),
+          qnn_backend_manager_->GetSaveBufferSize(),
+          max_spill_fill_buffer_size));
       ORT_RETURN_IF_ERROR(qnn_backend_manager_->LoadCachedQnnContextFromBuffer(
-        reinterpret_cast<char*>(qnn_backend_manager_->GetSaveBuffer().get()),
- qnn_backend_manager_->GetSaveBufferSize(),
-     model->Name(),
-             qnn_models,
-             max_spill_fill_buffer_size));
+          reinterpret_cast<char*>(qnn_backend_manager_->GetSaveBuffer().get()),
+          qnn_backend_manager_->GetSaveBufferSize(),
+          model->Name(),
+          qnn_models,
+          max_spill_fill_buffer_size));
       // Recover the graph and context handle of model with qnn_models
       model->GetGraphInfo()->SetGraphContext(qnn_models[model->Name()]->GetGraphInfo()->GraphContext());
       model->GetGraphInfo()->SetGraph(qnn_models[model->Name()]->GetGraphInfo()->Graph());

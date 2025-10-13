@@ -19,26 +19,26 @@ namespace test {
 
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 namespace qnn_ssr {
-  #include <windows.h>
-  HMODULE lib_handle = LoadLibraryW(L"QnnMockSSR.dll");
-  FARPROC addr = GetProcAddress(lib_handle, "GetQnnMockSSRController");
-  typedef QnnMockSSRController* (*GetQnnMockSSRControllerFn_t)();
-  GetQnnMockSSRControllerFn_t GetQnnMockSSRController = reinterpret_cast<GetQnnMockSSRControllerFn_t>(addr);
-  QnnMockSSRController* controller = GetQnnMockSSRController();
-  auto input_def = TestInputDef<float>({1, 2, 3, 3}, false, {-10.0f, 10.0f});
-  auto scale_def = TestInputDef<float>({2}, true, {1.0f, 2.0f});
-  auto bias_def = TestInputDef<float>({2}, true, {1.0f, 3.0f});
-  ProviderOptions provider_options = {
+#include <windows.h>
+HMODULE lib_handle = LoadLibraryW(L"QnnMockSSR.dll");
+FARPROC addr = GetProcAddress(lib_handle, "GetQnnMockSSRController");
+typedef QnnMockSSRController* (*GetQnnMockSSRControllerFn_t)();
+GetQnnMockSSRControllerFn_t GetQnnMockSSRController = reinterpret_cast<GetQnnMockSSRControllerFn_t>(addr);
+QnnMockSSRController* controller = GetQnnMockSSRController();
+auto input_def = TestInputDef<float>({1, 2, 3, 3}, false, {-10.0f, 10.0f});
+auto scale_def = TestInputDef<float>({2}, true, {1.0f, 2.0f});
+auto bias_def = TestInputDef<float>({2}, true, {1.0f, 3.0f});
+ProviderOptions provider_options = {
     {"backend_path", "QnnMockSSR.dll"},
     {"offload_graph_io_quantization", "0"},
     {"enable_ssr_handling", "1"},
-  };
+};
 }  // namespace qnn_ssr
 
 TEST_F(QnnHTPBackendTests, SSRBackendGetBuildId) {
   qnn_ssr::controller->SetTiming(QnnMockSSRController::Timing::BackendGetBuildId);
   RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
-                  {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
+                                         {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
                   qnn_ssr::provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
@@ -51,7 +51,7 @@ TEST_F(QnnHTPBackendTests, SSRBackendGetBuildId) {
 TEST_F(QnnHTPBackendTests, SSRBackendCreate) {
   qnn_ssr::controller->SetTiming(QnnMockSSRController::Timing::BackendCreate);
   RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
-                  {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
+                                         {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
                   qnn_ssr::provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
@@ -64,7 +64,7 @@ TEST_F(QnnHTPBackendTests, SSRBackendCreate) {
 TEST_F(QnnHTPBackendTests, SSRContextCreate) {
   qnn_ssr::controller->SetTiming(QnnMockSSRController::Timing::ContextCreate);
   RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
-                  {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
+                                         {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
                   qnn_ssr::provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
@@ -77,7 +77,7 @@ TEST_F(QnnHTPBackendTests, SSRContextCreate) {
 TEST_F(QnnHTPBackendTests, SSRBackendValidateOpConfig) {
   qnn_ssr::controller->SetTiming(QnnMockSSRController::Timing::BackendValidateOpConfig);
   RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
-                  {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
+                                         {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
                   qnn_ssr::provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
@@ -90,7 +90,7 @@ TEST_F(QnnHTPBackendTests, SSRBackendValidateOpConfig) {
 TEST_F(QnnHTPBackendTests, SSRLogCreate) {
   qnn_ssr::controller->SetTiming(QnnMockSSRController::Timing::LogCreate);
   RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
-                  {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
+                                         {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
                   qnn_ssr::provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
@@ -103,7 +103,7 @@ TEST_F(QnnHTPBackendTests, SSRLogCreate) {
 TEST_F(QnnHTPBackendTests, SSRGraphCreate) {
   qnn_ssr::controller->SetTiming(QnnMockSSRController::Timing::GraphCreate);
   RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
-                  {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
+                                         {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
                   qnn_ssr::provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
@@ -116,7 +116,7 @@ TEST_F(QnnHTPBackendTests, SSRGraphCreate) {
 TEST_F(QnnHTPBackendTests, SSRGraphRetrieve) {
   qnn_ssr::controller->SetTiming(QnnMockSSRController::Timing::GraphRetrieve);
   RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
-                  {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
+                                         {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
                   qnn_ssr::provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
@@ -129,7 +129,7 @@ TEST_F(QnnHTPBackendTests, SSRGraphRetrieve) {
 TEST_F(QnnHTPBackendTests, SSRContextGetBinarySize) {
   qnn_ssr::controller->SetTiming(QnnMockSSRController::Timing::ContextGetBinarySize);
   RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
-                  {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
+                                         {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
                   qnn_ssr::provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
@@ -142,7 +142,7 @@ TEST_F(QnnHTPBackendTests, SSRContextGetBinarySize) {
 TEST_F(QnnHTPBackendTests, SSRContextGetBinary) {
   qnn_ssr::controller->SetTiming(QnnMockSSRController::Timing::ContextGetBinary);
   RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
-                  {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
+                                         {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
                   qnn_ssr::provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
@@ -155,7 +155,7 @@ TEST_F(QnnHTPBackendTests, SSRContextGetBinary) {
 TEST_F(QnnHTPBackendTests, SSRTensorCreateGraphTensor) {
   qnn_ssr::controller->SetTiming(QnnMockSSRController::Timing::TensorCreateGraphTensor);
   RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
-                  {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
+                                         {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
                   qnn_ssr::provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
@@ -168,7 +168,7 @@ TEST_F(QnnHTPBackendTests, SSRTensorCreateGraphTensor) {
 TEST_F(QnnHTPBackendTests, SSRGraphAddNode) {
   qnn_ssr::controller->SetTiming(QnnMockSSRController::Timing::GraphAddNode);
   RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
-                  {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
+                                         {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
                   qnn_ssr::provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
@@ -181,7 +181,7 @@ TEST_F(QnnHTPBackendTests, SSRGraphAddNode) {
 TEST_F(QnnHTPBackendTests, SSRGraphFinalize) {
   qnn_ssr::controller->SetTiming(QnnMockSSRController::Timing::GraphFinalize);
   RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
-                  {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
+                                         {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
                   qnn_ssr::provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
@@ -194,7 +194,7 @@ TEST_F(QnnHTPBackendTests, SSRGraphFinalize) {
 TEST_F(QnnHTPBackendTests, SSRGraphExecute) {
   qnn_ssr::controller->SetTiming(QnnMockSSRController::Timing::GraphExecute);
   RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
-                  {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
+                                         {qnn_ssr::input_def, qnn_ssr::scale_def, qnn_ssr::bias_def}, {}, {}),
                   qnn_ssr::provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
