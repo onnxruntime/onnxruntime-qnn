@@ -55,27 +55,6 @@ std::optional<TensorShape> GetTensorShape(const NodeArg* node_arg) {
   return utils::GetTensorProtoShape(*shape_proto);
 }
 
-/// @brief Get shape data from a constant initializer
-Status GetConstantShapeData(
-    QnnModelWrapper& qnn_model_wrapper,
-    const std::string& shape_tensor_name,
-    std::vector<int64_t>& shape_data) {
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.IsConstantInput(shape_tensor_name),
-                    "Shape tensor ", shape_tensor_name, " is not a constant");
-
-  const auto* shape_tensor_proto = qnn_model_wrapper.GetConstantTensor(shape_tensor_name);
-  ORT_RETURN_IF(shape_tensor_proto == nullptr, "Failed to get constant tensor proto for ", shape_tensor_name);
-
-  std::vector<uint8_t> unpacked_tensor;
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*shape_tensor_proto, unpacked_tensor));
-
-  const int64_t* shape_data_int64 = reinterpret_cast<const int64_t*>(unpacked_tensor.data());
-  size_t num_elements = unpacked_tensor.size() / sizeof(int64_t);
-  shape_data.assign(shape_data_int64, shape_data_int64 + num_elements);
-
-  return Status::OK();
-}
-
 /// @brief Get child NodeUnit of specified type, allowing QDQ-wrapped nodes
 const NodeUnit* GetChildNodeUnit(
     const GraphViewer& graph_viewer,
