@@ -18,10 +18,11 @@ class QnnModelWrapper;
 /// <summary>
 /// Represents a fusion of the Gelu pattern expanded into ONNX operators.
 /// This fusion handles two patterns:
-/// Pattern 1: root -> Div -> Erf -> Add -> Mul (with Mul(0.5) from root)
-/// Pattern 2: root -> Div -> Erf -> Add -> Mul -> Mul(0.5)
+/// Pattern 1: root -> Div -> Erf -> Add -> Mul (with Mul from root)
+/// Pattern 2: root -> Div -> Erf -> Add -> Mul -> Mul
 /// Both patterns are translated into a QNN Gelu operator.
-/// The contained NodeUnits are of type SingleNode since they are not a part of a QDQ node unit.
+/// The contained NodeUnits can be of type SingleNode or QDQGroup (with Q-DQ nodes).
+/// The second inputs to Div, Add, and Mul operations can be either constant or non-constant tensors.
 /// </summary>
 class GeluFusion : public IQnnNodeGroup {
  public:

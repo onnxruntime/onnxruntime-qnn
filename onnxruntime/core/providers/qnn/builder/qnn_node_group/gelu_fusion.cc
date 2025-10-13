@@ -32,124 +32,64 @@ static Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                     const NodeUnitIODef& final_output,
                                     bool validate);
 
-// Helper function to check if an initializer has the expected value
-static bool IsInitializerWithExpectedValue(const GraphViewer& graph_viewer,
-                                           const NodeArg& node_arg,
-                                           float expected_value,
-                                           bool check_opset_13_or_higher) {
-  if (!graph_viewer.IsConstantInitializer(node_arg.Name(), check_opset_13_or_higher)) {
-    return false;
-  }
-
-  const auto* initializer = graph_viewer.GetConstantInitializer(node_arg.Name());
-  if (!initializer) {
-    return false;
-  }
-
-  // Check if it's a scalar or single-element tensor
-  const auto& dims = initializer->dims();
-  if (dims.size() > 0) {
-    int64_t num_elements = 1;
-    for (int i = 0; i < dims.size(); ++i) {
-      num_elements *= dims[i];
-    }
-    if (num_elements != 1) {
-      return false;
-    }
-  }
-
-  // Get the value based on data type
-  float actual_value = 0.0f;
-  if (initializer->data_type() == ONNX_NAMESPACE::TensorProto_DataType_FLOAT) {
-    const auto& raw_data = initializer->raw_data();
-    if (raw_data.size() == sizeof(float) && reinterpret_cast<uintptr_t>(raw_data.data()) % alignof(float) == 0) {
-      actual_value = *reinterpret_cast<const float*>(raw_data.data());
-    } else {
-      return false;
-    }
-  } else if (initializer->data_type() == ONNX_NAMESPACE::TensorProto_DataType_DOUBLE) {
-    const auto& raw_data = initializer->raw_data();
-    if (raw_data.size() == sizeof(double) && reinterpret_cast<uintptr_t>(raw_data.data()) % alignof(double) == 0) {
-      double double_value = *reinterpret_cast<const double*>(raw_data.data());
-      actual_value = static_cast<float>(double_value);
-    } else {
-      return false;
-    }
-  } else {
-    return false;
-  }
-
-  // Compare with tolerance
-  constexpr float epsilon = std::numeric_limits<float>::epsilon();
-  return std::abs(actual_value - expected_value) <= epsilon * std::max(1.0f, std::abs(expected_value));
-}
-
 std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
     QnnModelWrapper& qnn_model_wrapper,
     const NodeUnit& erf_node_unit,
     const std::unordered_map<const Node*, const NodeUnit*>& node_to_node_unit,
     const std::unordered_map<const NodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const logging::Logger& logger) {
-  ORT_UNUSED_PARAMETER(logger);
-
-  // Looking for a standalone Erf node.
-  if (erf_node_unit.OpType() != "Erf" || erf_node_unit.UnitType() != NodeUnit::Type::SingleNode) {
+  // Looking for an Erf node (can be SingleNode or QDQGroup).
+  if (erf_node_unit.OpType() != "Erf") {
     return nullptr;
   }
 
   const GraphViewer& graph_viewer = qnn_model_wrapper.GetGraphViewer();
 
-  // Erf must have a Div parent
-  const std::array<std::string_view, 1> div_types = {"Div"};
-  const NodeUnit* div_node_unit = GetParentOfType(graph_viewer, erf_node_unit, div_types,
-                                                  node_to_node_unit, node_unit_to_qnn_node_group);
-  if (div_node_unit == nullptr) {
+  // Erf must have a Div parent on its input
+  const auto& erf_inputs = erf_node_unit.Inputs();
+  if (erf_inputs.empty()) {
     return nullptr;
   }
 
-  // Check second input of Div is sqrt(2) or approximated sqrt(2)
+  const NodeUnit* div_node_unit = GetParentOfInput(graph_viewer, erf_node_unit, erf_inputs[0],
+                                                   node_to_node_unit, node_unit_to_qnn_node_group);
+  if (div_node_unit == nullptr || div_node_unit->OpType() != "Div") {
+    return nullptr;
+  }
+
+  // Div must have 2 inputs
   const auto& div_inputs = div_node_unit->Inputs();
   if (div_inputs.size() < 2) {
     return nullptr;
   }
 
-  constexpr float approximated_sqrt_two = 1.4142099618911743f;
-  constexpr float sqrt_two = static_cast<float>(M_SQRT2);
-
-  bool is_sqrt2 = IsInitializerWithExpectedValue(graph_viewer, div_inputs[1].node_arg, sqrt_two, true) ||
-                  IsInitializerWithExpectedValue(graph_viewer, div_inputs[1].node_arg, approximated_sqrt_two, true);
-
-  if (!is_sqrt2) {
+  // Erf must have an Add child consuming its output
+  const auto& erf_outputs = erf_node_unit.Outputs();
+  if (erf_outputs.empty()) {
     return nullptr;
   }
 
-  // Erf must have a single Add child
-  const std::array<std::string_view, 1> add_types = {"Add"};
-  const NodeUnit* add_node_unit = GetOnlyChildOfType(graph_viewer, erf_node_unit, add_types,
-                                                     node_to_node_unit, node_unit_to_qnn_node_group);
-  if (add_node_unit == nullptr) {
+  const NodeUnit* add_node_unit = GetChildOfOutput(graph_viewer, erf_node_unit, erf_outputs[0],
+                                                   node_to_node_unit, node_unit_to_qnn_node_group);
+  if (add_node_unit == nullptr || add_node_unit->OpType() != "Add") {
     return nullptr;
   }
 
-  // Check the other input to Add is 1.0f
+  // Add must have 2 inputs
   const auto& add_inputs = add_node_unit->Inputs();
   if (add_inputs.size() < 2) {
     return nullptr;
   }
 
-  const auto& erf_output_name = erf_node_unit.Outputs()[0].node_arg.Name();
-  bool is_erf_first_input = (add_inputs[0].node_arg.Name() == erf_output_name);
-  const auto& add_const_input = add_inputs[is_erf_first_input ? 1 : 0];
-
-  if (!IsInitializerWithExpectedValue(graph_viewer, add_const_input.node_arg, 1.0f, true)) {
+  // Add must have a Mul child consuming its output
+  const auto& add_outputs = add_node_unit->Outputs();
+  if (add_outputs.empty()) {
     return nullptr;
   }
 
-  // Add must have a single Mul child
-  const std::array<std::string_view, 1> mul_types = {"Mul"};
-  const NodeUnit* mul_node_unit = GetOnlyChildOfType(graph_viewer, *add_node_unit, mul_types,
-                                                     node_to_node_unit, node_unit_to_qnn_node_group);
-  if (mul_node_unit == nullptr) {
+  const NodeUnit* mul_node_unit = GetChildOfOutput(graph_viewer, *add_node_unit, add_outputs[0],
+                                                   node_to_node_unit, node_unit_to_qnn_node_group);
+  if (mul_node_unit == nullptr || mul_node_unit->OpType() != "Mul") {
     return nullptr;
   }
 
@@ -161,8 +101,8 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
     return nullptr;
   }
 
-  // Try to match Pattern 1: root -> Mul(0.5) -> ... -> Mul
-  // In this case, one input to the final Mul should be from a Mul(0.5) node
+  // Try to match Pattern 1: root -> Mul -> ... -> Mul
+  // In this case, one input to the final Mul should be from a Mul node
   const NodeUnit* mul2_node_unit = nullptr;
 
   // Check if either input to mul_node_unit comes from a Mul node
@@ -182,20 +122,16 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
           if (it != node_to_node_unit.end()) {
             const NodeUnit* producer_unit = it->second;
             if (producer_unit->OpType() == "Mul" &&
-                producer_unit->UnitType() == NodeUnit::Type::SingleNode &&
                 node_unit_to_qnn_node_group.find(producer_unit) == node_unit_to_qnn_node_group.end()) {
-              // Check if this Mul has root as input and 0.5 as the other input
+              // Check if this Mul has root as one input (no longer checking for constant 0.5)
               const auto& mul2_inputs = producer_unit->Inputs();
               if (mul2_inputs.size() >= 2) {
                 bool has_root_input = (mul2_inputs[0].node_arg.Name() == root_input_name ||
                                        mul2_inputs[1].node_arg.Name() == root_input_name);
 
                 if (has_root_input) {
-                  size_t const_idx = (mul2_inputs[0].node_arg.Name() == root_input_name) ? 1 : 0;
-                  if (IsInitializerWithExpectedValue(graph_viewer, mul2_inputs[const_idx].node_arg, 0.5f, true)) {
-                    mul2_node_unit = producer_unit;
-                    break;
-                  }
+                  mul2_node_unit = producer_unit;
+                  break;
                 }
               }
             }
@@ -211,11 +147,11 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
   const NodeUnit* final_mul_node_unit = nullptr;
 
   if (mul2_node_unit != nullptr) {
-    // Pattern 1: root -> Mul(0.5) -> ... -> Mul
+    // Pattern 1: root -> Mul -> ... -> Mul
     node_units = {div_node_unit, &erf_node_unit, add_node_unit, mul2_node_unit, mul_node_unit};
     final_mul_node_unit = mul_node_unit;
   } else {
-    // Try Pattern 2: root -> ... -> Mul -> Mul(0.5)
+    // Try Pattern 2: root -> ... -> Mul -> Mul
     // Check if one input to mul_node_unit is root
     bool has_root_input = (mul_inputs[0].node_arg.Name() == root_input_name ||
                            mul_inputs[1].node_arg.Name() == root_input_name);
@@ -224,24 +160,21 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
       return nullptr;
     }
 
-    // mul_node_unit must have a single Mul child with 0.5
-    const NodeUnit* mul2_node_unit_pattern2 = GetOnlyChildOfType(graph_viewer, *mul_node_unit, mul_types,
-                                                                 node_to_node_unit, node_unit_to_qnn_node_group);
-    if (mul2_node_unit_pattern2 == nullptr) {
+    // mul_node_unit must have a Mul child consuming its output
+    const auto& mul_outputs = mul_node_unit->Outputs();
+    if (mul_outputs.empty()) {
       return nullptr;
     }
 
-    // Check if this final Mul has 0.5 as one input
+    const NodeUnit* mul2_node_unit_pattern2 = GetChildOfOutput(graph_viewer, *mul_node_unit, mul_outputs[0],
+                                                               node_to_node_unit, node_unit_to_qnn_node_group);
+    if (mul2_node_unit_pattern2 == nullptr || mul2_node_unit_pattern2->OpType() != "Mul") {
+      return nullptr;
+    }
+
+    // Verify this final Mul has 2 inputs
     const auto& mul2_inputs = mul2_node_unit_pattern2->Inputs();
     if (mul2_inputs.size() < 2) {
-      return nullptr;
-    }
-
-    const auto& mul_output_name = mul_node_unit->Outputs()[0].node_arg.Name();
-    bool is_mul_first_input = (mul2_inputs[0].node_arg.Name() == mul_output_name);
-    size_t const_idx = is_mul_first_input ? 1 : 0;
-
-    if (!IsInitializerWithExpectedValue(graph_viewer, mul2_inputs[const_idx].node_arg, 0.5f, true)) {
       return nullptr;
     }
 
