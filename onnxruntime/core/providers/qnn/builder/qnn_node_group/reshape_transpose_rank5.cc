@@ -25,9 +25,6 @@ namespace onnxruntime {
 namespace qnn {
 namespace {
 
-constexpr char kOpReshape[] = "Reshape";
-constexpr char kOpTranspose[] = "Transpose";
-constexpr char kAttrTransposePerm[] = "perm";
 constexpr size_t kRank6 = 6;
 constexpr size_t kRank5 = 5;
 
@@ -36,11 +33,11 @@ using MapNodeUnitToGroup = std::unordered_map<const NodeUnit*, const IQnnNodeGro
 
 /// @brief Get the transpose permutation attribute
 std::optional<std::vector<int64_t>> GetTransposePerm(const NodeUnit& transpose) {
-  if (transpose.OpType() != kOpTranspose) {
+  if (transpose.OpType() != "Transpose") {
     return std::nullopt;
   }
   NodeAttrHelper helper(transpose.GetNode());
-  return helper.Get(kAttrTransposePerm, std::vector<int64_t>());
+  return helper.Get("perm", std::vector<int64_t>());
 }
 
 /// @brief Get the shape of a tensor from its NodeArg
@@ -129,32 +126,32 @@ std::optional<std::array<const NodeUnit*, 3>> MatchRank6ToRank5Pattern(
                         << " OpType=" << reshape1->OpType()
                         << " UnitType=" << static_cast<int>(reshape1->UnitType());
 
-  // Validate reshape1 - allow both SingleNode and QDQGroup
-  if (reshape1->OpType() != kOpReshape) {
-    LOGS(logger, VERBOSE) << "[Rank6ToRank5] MatchPattern: reshape1 validation failed - not a Reshape op";
+  // Validate first Reshape in pattern - allow both SingleNode and QDQGroup
+  if (reshape1->OpType() != "Reshape") {
+    LOGS(logger, VERBOSE) << "[Rank6ToRank5] First node in pattern is not a Reshape op";
     return std::nullopt;
   }
 
-  // Get transpose child - allow both SingleNode and QDQGroup
+  // Get Transpose child (middle node in pattern) - allow both SingleNode and QDQGroup
   const NodeUnit* transpose = GetChildNodeUnit(
-      graph_viewer, *reshape1, kOpTranspose, node_to_node_unit, node_unit_to_qnn_node_group, logger);
+      graph_viewer, *reshape1, "Transpose", node_to_node_unit, node_unit_to_qnn_node_group, logger);
   if (transpose == nullptr) {
-    LOGS(logger, VERBOSE) << "[Rank6ToRank5] MatchPattern: transpose child not found";
+    LOGS(logger, VERBOSE) << "[Rank6ToRank5] Transpose (middle node in pattern) not found after first Reshape";
     return std::nullopt;
   }
 
-  LOGS(logger, VERBOSE) << "[Rank6ToRank5] MatchPattern: Found transpose child: " << transpose->Name();
+  LOGS(logger, VERBOSE) << "[Rank6ToRank5] Found Transpose (middle node): " << transpose->Name();
 
-  // Get reshape2 child - allow both SingleNode and QDQGroup
+  // Get second Reshape child (last node in pattern) - allow both SingleNode and QDQGroup
   const NodeUnit* reshape2 = GetChildNodeUnit(
-      graph_viewer, *transpose, kOpReshape, node_to_node_unit, node_unit_to_qnn_node_group, logger);
+      graph_viewer, *transpose, "Reshape", node_to_node_unit, node_unit_to_qnn_node_group, logger);
   if (reshape2 == nullptr) {
-    LOGS(logger, VERBOSE) << "[Rank6ToRank5] MatchPattern: reshape2 child not found";
+    LOGS(logger, VERBOSE) << "[Rank6ToRank5] Second Reshape (last node in pattern) not found after Transpose";
     return std::nullopt;
   }
 
-  LOGS(logger, VERBOSE) << "[Rank6ToRank5] MatchPattern: Found reshape2 child: " << reshape2->Name();
-  LOGS(logger, INFO) << "[Rank6ToRank5] MatchPattern: Pattern structure matched!";
+  LOGS(logger, VERBOSE) << "[Rank6ToRank5] Found second Reshape (last node): " << reshape2->Name();
+  LOGS(logger, INFO) << "[Rank6ToRank5] Pattern matched: Reshape -> Transpose -> Reshape";
 
   return std::array<const NodeUnit*, 3>{reshape1, transpose, reshape2};
 }
@@ -281,16 +278,19 @@ Status CreateOrValidateOnQnn(
   const std::string& t1_name = reshape1->GetNode().OutputDefs()[0]->Name();
   const std::string& t2_name = transpose->GetNode().OutputDefs()[0]->Name();
 
-  // Get data type for intermediate tensors
-  Qnn_DataType_t data_type = QNN_DATATYPE_FLOAT_32;
-  ORT_RETURN_IF_ERROR(utils::GetQnnDataType(false, reshape1->GetNode().OutputDefs()[0]->TypeAsProto(), data_type));
+  // Get data type from the NodeUnit's output (handles both quantized and float types)
+  const NodeUnitIODef& reshape1_output = reshape1->Outputs()[0];
+  Qnn_DataType_t data_type;
+  ORT_RETURN_IF_ERROR(utils::GetQnnDataType(reshape1_output.quant_param.has_value(),
+                                            reshape1_output.node_arg.TypeAsProto(),
+                                            data_type));
 
-  // Get input shape for reshape1
+  // Get input shape for first Reshape
   std::vector<uint32_t> reshape1_input_shape;
   ORT_RETURN_IF_NOT(qnn_model_wrapper->GetOnnxShape(reshape1_input.node_arg, reshape1_input_shape),
-                    "Failed to get reshape1 input shape");
+                    "Failed to get first Reshape input shape");
 
-  // Get quantization params
+  // Get quantization params for first Reshape input
   QnnQuantParamsWrapper quant_param;
   ORT_RETURN_IF_ERROR(quant_param.Init(*qnn_model_wrapper, reshape1_input));
 
@@ -346,6 +346,11 @@ Status CreateOrValidateOnQnn(
   // Get quantization params for reshape2
   QnnQuantParamsWrapper quant_param2;
   ORT_RETURN_IF_ERROR(quant_param2.Init(*qnn_model_wrapper, reshape2_output));
+
+  // Get data type from the NodeUnit's output (handles both quantized and float types)
+  ORT_RETURN_IF_ERROR(utils::GetQnnDataType(reshape2_output.quant_param.has_value(),
+                                            reshape2_output.node_arg.TypeAsProto(),
+                                            data_type));
 
   // Create Reshape2 with rank-5 input using AddReshapeNode
   ORT_RETURN_IF_ERROR(qnn_model_wrapper->AddReshapeNode(
