@@ -947,11 +947,20 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
   // It will load the QnnSystem lib if is_qnn_ctx_model=true, and
   // delay the Qnn context creation to Compile() using the cached context binary
   // or generate context cache enable, need to use use QnnSystem lib to parse the binary to get the max spill fill buffer size
-  auto rt = qnn_backend_manager_->SetupBackend(logger, is_qnn_ctx_model,
-                                               enable_ssr_handling_ || (context_cache_enabled_ && enable_spill_fill_buffer_),
-                                               share_ep_contexts_,
-                                               enable_vtcm_backup_buffer_sharing_,
-                                               context_bin_map);
+  int retry_cnt = 0;
+  Status rt;
+  do {
+    if (retry_cnt > 0) {
+      LOGS(logger, VERBOSE) << "[SSR Handle during SetupBackend] Retry " << retry_cnt << "th";
+    }
+    rt = qnn_backend_manager_->SetupBackend(logger, is_qnn_ctx_model,
+                                            enable_ssr_handling_ || (context_cache_enabled_ && enable_spill_fill_buffer_),
+                                            share_ep_contexts_,
+                                            enable_vtcm_backup_buffer_sharing_,
+                                            context_bin_map);
+    retry_cnt += 1;
+  } while (enable_ssr_handling_ && retry_cnt <= 3 &&
+           rt.ErrorMessage().find(std::to_string(QNN_COMMON_ERROR_SYSTEM_COMMUNICATION)) != std::string::npos);
 
   context_bin_map.clear();
 
