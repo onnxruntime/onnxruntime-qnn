@@ -10,11 +10,12 @@ extern "C" QnnMockSSRController* GetQnnMockSSRController() { return &QnnMockSSRC
 
 const QnnInterface_t** real_providerList{nullptr};
 uint32_t real_numProviders{0};
+#if defined(_WIN32)
 HMODULE lib_handle = nullptr;
+#endif  // defined(_WIN32)
 
 bool InitializeQnnMockSSR() {
 #if defined(_WIN32)
-  #include <windows.h>
   lib_handle = LoadLibraryW(L"QnnHtp.dll");
   FARPROC addr = GetProcAddress(lib_handle, "QnnInterface_getProviders");
   typedef Qnn_ErrorHandle_t (*QnnApiFnType_t)(const QnnInterface_t***, uint32_t*);
@@ -27,12 +28,13 @@ bool InitializeQnnMockSSR() {
 }
 
 void ShutDownQnnMockSSR() {
-  if (lib_handle) {
 #if defined(_WIN32)
+  if (lib_handle) {
     FreeLibrary(lib_handle);
-#endif  // defined(_WIN32)
     lib_handle = nullptr;
   }
+#endif  // defined(_WIN32)
+  return;
 }
 
 #if defined(_WIN32)

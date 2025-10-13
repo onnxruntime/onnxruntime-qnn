@@ -1245,16 +1245,18 @@ class QnnIRBackendTests : public ::testing::Test {
 };
 
 class QnnMockSSRBackendTests : public QnnHTPBackendTests {
-  protected:
-    void SetUp() override;
-    void TearDown() override;
-    HMODULE lib_handle;
-    FARPROC addr;
-    QnnMockSSRController* controller = nullptr;
-    TestInputDef<float> input_def;
-    TestInputDef<float> scale_def;
-    TestInputDef<float> bias_def;
-    ProviderOptions provider_options;
+ protected:
+  void SetUp() override;
+  void TearDown() override;
+#if defined(_WIN32)
+  HMODULE lib_handle;
+  FARPROC addr;
+#endif  // defined(_WIN32)
+  QnnMockSSRController* controller = nullptr;
+  TestInputDef<float> input_def;
+  TestInputDef<float> scale_def;
+  TestInputDef<float> bias_def;
+  ProviderOptions provider_options;
 };
 
 /**

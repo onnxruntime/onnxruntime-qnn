@@ -17,8 +17,8 @@ namespace onnxruntime {
 namespace qnn {
 
 Status QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
-                                     const std::string& graph_name,
-                                     const QnnGraph_Config_t** graph_configs) {
+                                       const std::string& graph_name,
+                                       const QnnGraph_Config_t** graph_configs) {
   if (!graph_name_.empty()) {
     // only one graph is allowed per QnnModel
     LOGS(logger_, ERROR) << "Graph " << graph_name << " already initialized.";
