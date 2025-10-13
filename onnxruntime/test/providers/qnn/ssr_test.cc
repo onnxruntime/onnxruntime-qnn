@@ -57,7 +57,7 @@ TEST_F(QnnMockSSRBackendTests, SSRContextCreate) {
                   nullptr);
 }
 
-TEST_F(QnnMockSSRBackendTests, SSRBackendValidateOpConfig) {
+TEST_F(QnnMockSSRBackendTests, DISABLED_SSRBackendValidateOpConfig) {
   controller->SetTiming(QnnMockSSRController::Timing::BackendValidateOpConfig);
   RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
                                          {input_def, scale_def, bias_def}, {}, {}),

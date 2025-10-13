@@ -8,15 +8,34 @@
 
 extern "C" QnnMockSSRController* GetQnnMockSSRController() { return &QnnMockSSRController::Instance(); }
 
-#if defined(_WIN32)
-#include <windows.h>
-HMODULE lib_handle = LoadLibraryW(L"QnnHtp.dll");
-FARPROC addr = GetProcAddress(lib_handle, "QnnInterface_getProviders");
-typedef Qnn_ErrorHandle_t (*QnnApiFnType_t)(const QnnInterface_t***, uint32_t*);
-QnnApiFnType_t real_QnnInterface_getProviders = reinterpret_cast<QnnApiFnType_t>(addr);
 const QnnInterface_t** real_providerList{nullptr};
 uint32_t real_numProviders{0};
-auto res = real_QnnInterface_getProviders((const QnnInterface_t***)&real_providerList, &real_numProviders);
+HMODULE lib_handle = nullptr;
+
+bool InitializeQnnMockSSR() {
+#if defined(_WIN32)
+  #include <windows.h>
+  lib_handle = LoadLibraryW(L"QnnHtp.dll");
+  FARPROC addr = GetProcAddress(lib_handle, "QnnInterface_getProviders");
+  typedef Qnn_ErrorHandle_t (*QnnApiFnType_t)(const QnnInterface_t***, uint32_t*);
+  QnnApiFnType_t real_QnnInterface_getProviders = reinterpret_cast<QnnApiFnType_t>(addr);
+  auto res = real_QnnInterface_getProviders((const QnnInterface_t***)&real_providerList, &real_numProviders);
+  return (res == QNN_SUCCESS);
+#else
+  return true;
+#endif  // defined(_WIN32)
+}
+
+void ShutDownQnnMockSSR() {
+  if (lib_handle) {
+#if defined(_WIN32)
+    FreeLibrary(lib_handle);
+#endif  // defined(_WIN32)
+    lib_handle = nullptr;
+  }
+}
+
+#if defined(_WIN32)
 
 QNN_API
 Qnn_ErrorHandle_t QnnGraph_create(Qnn_ContextHandle_t contextHandle,

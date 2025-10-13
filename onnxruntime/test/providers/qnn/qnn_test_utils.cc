@@ -383,10 +383,18 @@ void QnnMockSSRBackendTests::SetUp() {
   #include <windows.h>
   QnnHTPBackendTests::SetUp();
   lib_handle = LoadLibraryW(L"QnnMockSSR.dll");
-  addr = GetProcAddress(lib_handle, "GetQnnMockSSRController");
   typedef QnnMockSSRController* (*GetQnnMockSSRControllerFn_t)();
-  GetQnnMockSSRControllerFn_t GetQnnMockSSRController = reinterpret_cast<GetQnnMockSSRControllerFn_t>(addr);
+  GetQnnMockSSRControllerFn_t GetQnnMockSSRController = reinterpret_cast<GetQnnMockSSRControllerFn_t>(
+    GetProcAddress(lib_handle, "GetQnnMockSSRController")
+  );
   controller = GetQnnMockSSRController();
+
+  // Initialize QnnHtp.dll in QnnMockSSR.dll
+  typedef bool (*InitializeQnnMockSSRFn_t)();
+  InitializeQnnMockSSRFn_t InitializeQnnMockSSR = reinterpret_cast<InitializeQnnMockSSRFn_t>(
+    GetProcAddress(lib_handle, "InitializeQnnMockSSR")
+  );
+  bool init_res = InitializeQnnMockSSR();
 #endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
   input_def = TestInputDef<float>({1, 2, 3, 3}, false, {-10.0f, 10.0f});
   scale_def = TestInputDef<float>({2}, true, {1.0f, 2.0f});
@@ -400,6 +408,12 @@ void QnnMockSSRBackendTests::SetUp() {
 
 void QnnMockSSRBackendTests::TearDown() {
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
+  // Shutdown QnnHtp.dll in QnnMockSSR.dll
+  typedef void (*ShutDownQnnMockSSRFn_t)();
+  ShutDownQnnMockSSRFn_t ShutDownQnnMockSSR = reinterpret_cast<ShutDownQnnMockSSRFn_t>(
+    GetProcAddress(lib_handle, "ShutDownQnnMockSSR")
+  );
+  ShutDownQnnMockSSR();
   if (lib_handle) {
     FreeLibrary(lib_handle);
   }
