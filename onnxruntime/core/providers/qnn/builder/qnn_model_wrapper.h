@@ -59,9 +59,9 @@ class QnnModelWrapper {
 
   const ModelSettings& GetModelSettings() const { return model_settings_; }
 
-  bool CreateQnnGraph(const Qnn_ContextHandle_t& context,
-                      const std::string& graph_name,
-                      const QnnGraph_Config_t** graph_configs = nullptr);
+  Status CreateQnnGraph(const Qnn_ContextHandle_t& context,
+                        const std::string& graph_name,
+                        const QnnGraph_Config_t** graph_configs = nullptr);
 
   // Make a QnnTensorWrapper from an onnx input or output.
   Status MakeTensorWrapper(const NodeUnitIODef& tensor, QnnTensorWrapper& tensor_wrapper) const;

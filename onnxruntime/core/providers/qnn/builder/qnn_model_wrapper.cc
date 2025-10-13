@@ -16,29 +16,32 @@
 namespace onnxruntime {
 namespace qnn {
 
-bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
+Status QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
                                      const std::string& graph_name,
                                      const QnnGraph_Config_t** graph_configs) {
   if (!graph_name_.empty()) {
     // only one graph is allowed per QnnModel
     LOGS(logger_, ERROR) << "Graph " << graph_name << " already initialized.";
-    return false;
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL);
   }
   if (context == nullptr) {
     LOGS(logger_, ERROR) << "Invalid Qnn context.";
-    return false;
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL);
   }
   if (graph_name.length() == 0) {
     LOGS(logger_, ERROR) << "Empty graph name.";
-    return false;
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL);
   }
 
   auto rt = qnn_interface_.graphCreate(context, graph_name.c_str(), graph_configs, &graph_);
-  if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
+  if (rt == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION) {
+    // SSR detected, just return the error code and run recover routine
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, rt);
+  } else if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
     rt = qnn_interface_.graphRetrieve(context, graph_name.c_str(), &graph_);
     if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
       LOGS(logger_, ERROR) << "Failed to create Qnn graph: " << graph_name;
-      return false;
+      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, rt);
     }
   }
 
@@ -46,7 +49,7 @@ bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
 
   graph_name_ = graph_name;
   graph_context_ = context;
-  return true;
+  return Status::OK();
 }
 
 bool QnnModelWrapper::IsQnnTensorWrapperExist(const std::string& name) const {

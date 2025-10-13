@@ -115,8 +115,6 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
                                                       model_output_index_map_,
                                                       qnn_backend_manager_->GetQnnBackendType(),
                                                       model_settings);
-  bool rt = true;
-
   qnn::profile::ProfilingInfo profiling_info;
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
   if (qnn_backend_manager_->ProfilingEnabled()) {
@@ -125,7 +123,7 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
   }
 #endif
 
-  rt = qnn_model_wrapper.CreateQnnGraph(qnn_backend_manager_->GetQnnContext(), graph_name, graph_configs);
+  Status rt = qnn_model_wrapper.CreateQnnGraph(qnn_backend_manager_->GetQnnContext(), graph_name, graph_configs);
 
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
   if (qnn_backend_manager_->ProfilingEnabled()) {
@@ -134,8 +132,8 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
   }
 #endif
 
-  if (!rt) {
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to initialize qnn_model_wrapper.");
+  if (!rt.IsOK()) {
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to initialize qnn_model_wrapper.", rt.ErrorMessage());
   }
 
   // NOTE: This function returns immediately when profiling is disabled.
@@ -175,8 +173,7 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
     }
   }
 
-  rt = GetGraphInfoFromModel(qnn_model_wrapper, logger);
-  if (!rt) {
+  if (!GetGraphInfoFromModel(qnn_model_wrapper, logger)) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "GetGraphInfoFromModel failed.");
   }
   LOGS(logger, VERBOSE) << "GetGraphInfoFromModel completed.";
