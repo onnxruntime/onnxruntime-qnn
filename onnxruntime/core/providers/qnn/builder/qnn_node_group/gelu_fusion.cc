@@ -38,6 +38,7 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
     const std::unordered_map<const Node*, const NodeUnit*>& node_to_node_unit,
     const std::unordered_map<const NodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const logging::Logger& logger) {
+  ORT_UNUSED_PARAMETER(logger);
   // Looking for an Erf node (can be SingleNode or QDQGroup).
   if (erf_node_unit.OpType() != "Erf") {
     return nullptr;
