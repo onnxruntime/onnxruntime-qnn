@@ -241,6 +241,7 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
 
   std::vector<Qnn_Tensor_t> qnn_inputs;
   qnn_inputs.reserve(qnn_input_infos_.size());
+  uint32_t batch_multiplier = 1;
 
   for (const auto& qnn_input_info : qnn_input_infos_) {
     LOGS(logger, VERBOSE) << "model_input = " << qnn_input_info.tensor_wrapper->GetName()
@@ -249,16 +250,31 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
     auto ort_tensor_size = TensorDataSize(ort_input_tensor);
     LOGS(logger, VERBOSE) << "Qnn tensor size: " << qnn_input_info.tensor_byte_size
                           << " Ort tensor size: " << ort_tensor_size;
-    ORT_RETURN_IF_NOT(qnn_input_info.tensor_byte_size == ort_tensor_size,
+    LOGS(logger, VERBOSE) << "Qnn batch size: " << GetQnnTensorDims(qnn_input_info.tensor_wrapper->GetQnnTensor())[0]
+                          << " Ort batch size: " << ort_input_tensor.GetTensorTypeAndShapeInfo().GetShape()[0];
+    ORT_RETURN_IF_NOT((qnn_input_info.tensor_byte_size == ort_tensor_size)
+                      || (ort_tensor_size % qnn_input_info.tensor_byte_size == 0),
                       "ORT Tensor data size does not match QNN tensor data size.");
 
+    // check if there is only one batch multiplier value.
+    uint32_t bm = static_cast<uint32_t>(ort_tensor_size / qnn_input_info.tensor_byte_size);
+    ORT_RETURN_IF(batch_multiplier > 1 && batch_multiplier != bm, "More than one batch multiplier value.");
+    batch_multiplier = bm;
+    LOGS(logger, VERBOSE) << "batch multiplir: " << batch_multiplier;
+
+    LOGS(logger, VERBOSE) << "qnn_inputs batch size: " << GetQnnTensorDims(qnn_input_info.tensor_wrapper->GetQnnTensor())[0];
     qnn_inputs.push_back(qnn_input_info.tensor_wrapper->GetQnnTensor());
+    // modify Qnn inputs batch size with batch multiplier, if batch multiplier > 1
+    if (batch_multiplier > 1) {
+      GetQnnTensorDims(qnn_inputs.back())[0] *= batch_multiplier;
+      LOGS(logger, VERBOSE) << "qnn_inputs batch size (batch multiplier triggered): " << GetQnnTensorDims(qnn_inputs.back())[0];
+    }
 
     ORT_RETURN_IF_ERROR(BindQnnTensorMemoryToOrtValueMemory(
         logger,
         *qnn_backend_manager_,
         *static_cast<const OrtMemoryInfo*>(ort_input_tensor.GetTensorMemoryInfo()),
-        const_cast<void*>(ort_input_tensor.GetTensorRawData()), qnn_input_info.tensor_byte_size,
+        const_cast<void*>(ort_input_tensor.GetTensorRawData()), qnn_input_info.tensor_byte_size * batch_multiplier,
         graph_info_->GraphContext(),
         qnn_inputs.back()));
   }
@@ -270,21 +286,35 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
     const std::string& model_output_name = qnn_output_info.tensor_wrapper->GetName();
     LOGS(logger, VERBOSE) << "model_output = " << model_output_name << " index = " << qnn_output_info.ort_index;
     const auto& ort_output_info = GetOutputInfo(model_output_name);
-    const std::vector<int64_t>& output_shape = ort_output_info->shape_;
+
+    // apply batch multiplier to Ort tensor
+    std::vector<int64_t> output_shape = ort_output_info->shape_;
+    if (batch_multiplier > 1) {
+      output_shape[0] *= batch_multiplier;
+      LOGS(logger, VERBOSE) << "batch multiplier triggered: " << batch_multiplier;
+      LOGS(logger, VERBOSE) << "ort tensor batch size: " << output_shape[0];
+    }
     auto ort_output_tensor = context.GetOutput(qnn_output_info.ort_index, output_shape.data(), output_shape.size());
     auto ort_tensor_size = TensorDataSize(ort_output_tensor);
+    LOGS(logger, VERBOSE) << "ORT output tensor shape: " << ort_output_tensor.GetTensorTypeAndShapeInfo().GetShape()[0] << " " << ort_output_tensor.GetTensorTypeAndShapeInfo().GetShape()[1] << " " << ort_output_tensor.GetTensorTypeAndShapeInfo().GetShape()[2] << " " << ort_output_tensor.GetTensorTypeAndShapeInfo().GetShape()[3];
+    LOGS(logger, VERBOSE) << "Qnn output tensor shape: " << qnn_output_info.tensor_wrapper->GetTensorDims()[0] << " " << qnn_output_info.tensor_wrapper->GetTensorDims()[1] << " " << qnn_output_info.tensor_wrapper->GetTensorDims()[2] << " " << qnn_output_info.tensor_wrapper->GetTensorDims()[3];
     LOGS(logger, VERBOSE) << "Qnn tensor size: " << qnn_output_info.tensor_byte_size
                           << " Ort tensor size: " << ort_tensor_size;
-    ORT_RETURN_IF_NOT(qnn_output_info.tensor_byte_size == ort_tensor_size,
+    ORT_RETURN_IF_NOT(qnn_output_info.tensor_byte_size == ort_tensor_size || (ort_tensor_size % qnn_output_info.tensor_byte_size == 0),
                       "ORT Tensor data size does not match QNN tensor data size");
 
+    LOGS(logger, INFO) << "qnn_outputs batch_size: " << GetQnnTensorDims(qnn_output_info.tensor_wrapper->GetQnnTensor())[0];
     qnn_outputs.push_back(qnn_output_info.tensor_wrapper->GetQnnTensor());
+    if (batch_multiplier > 1) {
+      GetQnnTensorDims(qnn_outputs.back())[0] *= batch_multiplier;
+      LOGS(logger, VERBOSE) << "qnn_outputs batch_size (batch multiplier triggered): " << GetQnnTensorDims(qnn_outputs.back())[0];
+    }
 
     ORT_RETURN_IF_ERROR(BindQnnTensorMemoryToOrtValueMemory(
         logger,
         *qnn_backend_manager_,
         *static_cast<const OrtMemoryInfo*>(ort_output_tensor.GetTensorMemoryInfo()),
-        ort_output_tensor.GetTensorMutableRawData(), qnn_output_info.tensor_byte_size,
+        ort_output_tensor.GetTensorMutableRawData(), qnn_output_info.tensor_byte_size * batch_multiplier,
         graph_info_->GraphContext(),
         qnn_outputs.back()));
   }
@@ -320,6 +350,14 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
 
   if (QNN_GRAPH_NO_ERROR != execute_status) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN graph execute error. Error code: ", execute_status);
+  }
+
+  // Because dimensions is an pointer, so it will not release for another input data. We need to devide the batch_multiplier back
+  for (auto &qnn_input : qnn_inputs) {
+    GetQnnTensorDims(qnn_input)[0] /= batch_multiplier;
+  }
+  for (auto &qnn_output : qnn_outputs) {
+    GetQnnTensorDims(qnn_output)[0] /= batch_multiplier;
   }
 
   return Status::OK();

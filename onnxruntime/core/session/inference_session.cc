@@ -2611,7 +2611,10 @@ common::Status InferenceSession::CheckShapes(const std::string& input_output_nam
     if (expected_shape[i] < 0) {
       continue;  // this represents a symbolic shape dimension
     }
-    if (input_output_shape[i] != expected_shape[i]) {
+    else if (i == 0 && (execution_providers_.GetIds()[0] == kQnnExecutionProvider) && (input_output_shape[i] % expected_shape[i] == 0)) { //TODO: should only pass for qnnHtp ep
+      continue; // support batch muliple for QNN
+    }
+    else if (input_output_shape[i] != expected_shape[i]) {
       invalid_dim_indices.push_back(i);
     }
   }
