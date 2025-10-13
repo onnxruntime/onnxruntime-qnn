@@ -193,7 +193,7 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
     return nullptr;
   }
 
-  return std::make_unique<GeluFusion>(std::move(node_units), div_node_unit);
+  return std::make_unique<GeluFusion>(std::move(node_units), &erf_node_unit);
 }
 
 GeluFusion::GeluFusion(std::vector<const NodeUnit*>&& node_units, const NodeUnit* target_node_unit)
