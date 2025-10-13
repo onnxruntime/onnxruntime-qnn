@@ -213,10 +213,8 @@ bool ValidatePatternConditions(
     return false;
   }
 
-  auto t0_dims = t0_shape->GetDims();
   auto t1_dims = t1_shape->GetDims();
   auto t2_dims = t2_shape->GetDims();
-  auto t3_dims = t3_shape->GetDims();
 
   // Condition 1: Rank(t1) == Rank(t2) == 6
   if (t1_shape->NumDimensions() != kRank6 || t2_shape->NumDimensions() != kRank6) {
