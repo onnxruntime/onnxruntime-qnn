@@ -86,6 +86,7 @@ const NodeUnit* GetChildNodeUnit(
     const logging::Logger& logger) {
   const Node& parent_node = parent_node_unit.GetNode();
 
+  ORT_UNUSED_PARAMETER(logger);
   // For QDQ NodeUnits, we need to look at the Q node's output, not the target node's output
   const Node* search_node = &parent_node;
   if (parent_node_unit.UnitType() == NodeUnit::Type::QDQGroup) {
@@ -216,19 +217,6 @@ bool ValidatePatternConditions(
   auto t1_dims = t1_shape->GetDims();
   auto t2_dims = t2_shape->GetDims();
   auto t3_dims = t3_shape->GetDims();
-
-  // Log shapes
-  std::ostringstream oss;
-  oss << "[Rank6ToRank5] ValidateConditions: Shapes - t0=[";
-  for (size_t i = 0; i < t0_dims.size(); ++i) oss << (i > 0 ? "," : "") << t0_dims[i];
-  oss << "] t1=[";
-  for (size_t i = 0; i < t1_dims.size(); ++i) oss << (i > 0 ? "," : "") << t1_dims[i];
-  oss << "] t2=[";
-  for (size_t i = 0; i < t2_dims.size(); ++i) oss << (i > 0 ? "," : "") << t2_dims[i];
-  oss << "] t3=[";
-  for (size_t i = 0; i < t3_dims.size(); ++i) oss << (i > 0 ? "," : "") << t3_dims[i];
-  oss << "]";
-  LOGS(logger, INFO) << oss.str();
 
   // Condition 1: Rank(t1) == Rank(t2) == 6
   if (t1_shape->NumDimensions() != kRank6 || t2_shape->NumDimensions() != kRank6) {
