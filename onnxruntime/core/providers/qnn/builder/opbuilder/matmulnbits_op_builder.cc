@@ -154,7 +154,7 @@ Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
     ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*zero_points_tensor_proto, per_block_uint8_offset));
 
     ORT_RETURN_IF_NOT((per_block_uint8_offset.size() * 2) == (num_blocks * sizeof(uint8_t)), "Only packed uint4 into uint8 offset supported by op builder");
-    const uint8_t expected_offset_value = 0b10001000;
+    const uint8_t expected_offset_value = 136;  // 0b10001000
     for (int32_t i = 0; i < gsl::narrow_cast<int32_t>(num_blocks / 2); i++) {
       ORT_RETURN_IF_NOT(per_block_uint8_offset[i] == expected_offset_value, "Unsupported zero point value");
     }
