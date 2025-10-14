@@ -112,8 +112,15 @@ void TriggerPDReset() {
   onnxruntime::PathString rpcmem_library_path{};
   Status res = GetRpcMemDynamicLibraryPath(rpcmem_library_path);
   HMODULE lib_handle = LoadLibraryW(rpcmem_library_path.c_str());
+  if (!lib_handle) {
+    return;  // Failed to load library
+  }
   typedef int (*RscFnHandleType_t)(uint32_t, void*, uint32_t);
   FARPROC addr = GetProcAddress(lib_handle, "remote_session_control");
+  if (!addr) {
+    FreeLibrary(lib_handle);
+    return;  // Failed to get procedure address
+  }
   RscFnHandleType_t rsc_call = reinterpret_cast<RscFnHandleType_t>(addr);
   typedef struct {
     int domain;
@@ -121,6 +128,10 @@ void TriggerPDReset() {
   remote_rpc_process_clean_params scdata;
   scdata.domain = 3; /*CDSP_DOMAIN_ID*/
   rsc_call(/*FASTRPC_REMOTE_PROCESS_KILL*/ 6, &scdata, sizeof(remote_rpc_process_clean_params));
+  if (lib_handle) {
+    FreeLibrary(lib_handle);
+  }
+  lib_handle = nullptr;
 #endif  // !defined(_WIN32)
 }
 }  // namespace test

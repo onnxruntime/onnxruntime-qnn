@@ -300,10 +300,10 @@ class QnnModelWrapper {
 
   bool QnnParamExists(const std::string& param_tensor_name) const;
 
-  bool CreateQnnParamTensors(const std::string& qnn_node_name,
-                             const std::vector<std::string>& param_tensor_names,
-                             std::vector<Qnn_Param_t>& qnn_params,
-                             bool do_op_validation = false);
+  Status CreateQnnParamTensors(const std::string& qnn_node_name,
+                               const std::vector<std::string>& param_tensor_names,
+                               std::vector<Qnn_Param_t>& qnn_params,
+                               bool do_op_validation = false);
 
   bool IsQDQNode(const Node& node) const {
     if (node.OpType() == "QuantizeLinear" || node.OpType() == "DequantizeLinear") {

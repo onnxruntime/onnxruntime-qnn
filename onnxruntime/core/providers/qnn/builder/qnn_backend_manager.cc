@@ -1004,6 +1004,9 @@ Status QnnBackendManager::SaveContextToBinary(const logging::Logger&) {
   qnn_save_buffer_ = GetContextBinaryBuffer(writtenBufferSize);
   qnn_save_buffer_size_ = writtenBufferSize;
 
+  ORT_RETURN_IF(qnn_save_buffer_ == nullptr || writtenBufferSize == 0,
+                "Failed to get valid context binary buffer.");
+
   return Status::OK();
 }
 

@@ -25,10 +25,7 @@ TEST_F(QnnMockSSRBackendTests, SSRBackendGetBuildId) {
                   provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
-                  5e-3f,
-                  logging::Severity::kVERBOSE,
-                  true,
-                  nullptr);
+                  5e-3f);
 }
 
 TEST_F(QnnMockSSRBackendTests, SSRBackendCreate) {
@@ -38,10 +35,7 @@ TEST_F(QnnMockSSRBackendTests, SSRBackendCreate) {
                   provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
-                  5e-3f,
-                  logging::Severity::kVERBOSE,
-                  true,
-                  nullptr);
+                  5e-3f);
 }
 
 TEST_F(QnnMockSSRBackendTests, SSRContextCreate) {
@@ -51,10 +45,7 @@ TEST_F(QnnMockSSRBackendTests, SSRContextCreate) {
                   provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
-                  5e-3f,
-                  logging::Severity::kVERBOSE,
-                  true,
-                  nullptr);
+                  5e-3f);
 }
 
 TEST_F(QnnMockSSRBackendTests, DISABLED_SSRBackendValidateOpConfig) {
@@ -64,10 +55,7 @@ TEST_F(QnnMockSSRBackendTests, DISABLED_SSRBackendValidateOpConfig) {
                   provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
-                  5e-3f,
-                  logging::Severity::kVERBOSE,
-                  true,
-                  nullptr);
+                  5e-3f);
 }
 
 TEST_F(QnnMockSSRBackendTests, SSRLogCreate) {
@@ -77,10 +65,7 @@ TEST_F(QnnMockSSRBackendTests, SSRLogCreate) {
                   provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
-                  5e-3f,
-                  logging::Severity::kVERBOSE,
-                  true,
-                  nullptr);
+                  5e-3f);
 }
 
 TEST_F(QnnMockSSRBackendTests, SSRGraphCreate) {
@@ -90,10 +75,7 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphCreate) {
                   provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
-                  5e-3f,
-                  logging::Severity::kVERBOSE,
-                  true,
-                  nullptr);
+                  5e-3f);
 }
 
 TEST_F(QnnMockSSRBackendTests, SSRGraphRetrieve) {
@@ -103,10 +85,7 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphRetrieve) {
                   provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
-                  5e-3f,
-                  logging::Severity::kVERBOSE,
-                  true,
-                  nullptr);
+                  5e-3f);
 }
 
 TEST_F(QnnMockSSRBackendTests, SSRContextGetBinarySize) {
@@ -116,10 +95,7 @@ TEST_F(QnnMockSSRBackendTests, SSRContextGetBinarySize) {
                   provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
-                  5e-3f,
-                  logging::Severity::kVERBOSE,
-                  true,
-                  nullptr);
+                  5e-3f);
 }
 
 TEST_F(QnnMockSSRBackendTests, SSRContextGetBinary) {
@@ -129,10 +105,7 @@ TEST_F(QnnMockSSRBackendTests, SSRContextGetBinary) {
                   provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
-                  5e-3f,
-                  logging::Severity::kVERBOSE,
-                  true,
-                  nullptr);
+                  5e-3f);
 }
 
 TEST_F(QnnMockSSRBackendTests, SSRTensorCreateGraphTensor) {
@@ -142,10 +115,7 @@ TEST_F(QnnMockSSRBackendTests, SSRTensorCreateGraphTensor) {
                   provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
-                  5e-3f,
-                  logging::Severity::kVERBOSE,
-                  true,
-                  nullptr);
+                  5e-3f);
 }
 
 TEST_F(QnnMockSSRBackendTests, SSRGraphAddNode) {
@@ -155,10 +125,7 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphAddNode) {
                   provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
-                  5e-3f,
-                  logging::Severity::kVERBOSE,
-                  true,
-                  nullptr);
+                  5e-3f);
 }
 
 TEST_F(QnnMockSSRBackendTests, SSRGraphFinalize) {
@@ -168,10 +135,7 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphFinalize) {
                   provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
-                  5e-3f,
-                  logging::Severity::kVERBOSE,
-                  true,
-                  nullptr);
+                  5e-3f);
 }
 
 TEST_F(QnnMockSSRBackendTests, SSRGraphExecute) {
@@ -181,10 +145,7 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphExecute) {
                   provider_options,
                   18,
                   ExpectedEPNodeAssignment::All,
-                  5e-3f,
-                  logging::Severity::kVERBOSE,
-                  true,
-                  nullptr);
+                  5e-3f);
 }
 #endif  // defined(__aarch64__) || defined(_M_ARM64)
 }  // namespace test

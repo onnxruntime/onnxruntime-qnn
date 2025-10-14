@@ -34,7 +34,6 @@ void ShutDownQnnMockSSR() {
     lib_handle = nullptr;
   }
 #endif  // defined(_WIN32)
-  return;
 }
 
 #if defined(_WIN32)
@@ -47,10 +46,10 @@ Qnn_ErrorHandle_t QnnGraph_create(Qnn_ContextHandle_t contextHandle,
   static int call_cnt = 0;
   if (call_cnt == 0) {
     call_cnt += 1;
-    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
+    onnxruntime::test::TriggerPDReset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
   }
-  return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphCreate(
-      contextHandle, graphName, config, graphHandle);
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphCreate(contextHandle, graphName, config, graphHandle);
 }
 
 QNN_API
@@ -74,8 +73,7 @@ Qnn_ErrorHandle_t QnnLog_create(QnnLog_Callback_t callback,
     onnxruntime::test::TriggerPDReset();
     std::this_thread::sleep_for(std::chrono::milliseconds(3000));
   }
-  return real_providerList[0]->QNN_INTERFACE_VER_NAME.logCreate(
-      callback, maxLogLevel, logger);
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.logCreate(callback, maxLogLevel, logger);
 }
 
 QNN_API
@@ -88,8 +86,7 @@ Qnn_ErrorHandle_t QnnBackend_create(Qnn_LogHandle_t logHandle,
     onnxruntime::test::TriggerPDReset();
     std::this_thread::sleep_for(std::chrono::milliseconds(3000));
   }
-  return real_providerList[0]->QNN_INTERFACE_VER_NAME.backendCreate(
-      logHandle, config, backend);
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.backendCreate(logHandle, config, backend);
 }
 
 QNN_API
@@ -100,11 +97,10 @@ Qnn_ErrorHandle_t QnnContext_create(Qnn_BackendHandle_t backend,
   static int call_cnt = 0;
   if (call_cnt == 0) {
     call_cnt += 1;
-    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
-  } else {
-    return real_providerList[0]->QNN_INTERFACE_VER_NAME.contextCreate(
-        backend, device, config, context);
+    onnxruntime::test::TriggerPDReset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
   }
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.contextCreate(backend, device, config, context);
 }
 
 QNN_API
@@ -113,10 +109,10 @@ Qnn_ErrorHandle_t QnnBackend_validateOpConfig(Qnn_BackendHandle_t backend,
   static int call_cnt = 0;
   if (call_cnt == 0) {
     call_cnt += 1;
-    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
-  } else {
-    return real_providerList[0]->QNN_INTERFACE_VER_NAME.backendValidateOpConfig(backend, opConfig);
+    onnxruntime::test::TriggerPDReset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
   }
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.backendValidateOpConfig(backend, opConfig);
 }
 
 QNN_API
@@ -149,10 +145,10 @@ Qnn_ErrorHandle_t QnnGraph_retrieve(Qnn_ContextHandle_t contextHandle,
   static int call_cnt = 0;
   if (call_cnt == 0) {
     call_cnt += 1;
-    return QNN_COMMON_ERROR_SYSTEM_COMMUNICATION;
-  } else {
-    return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphRetrieve(contextHandle, graphName, graphHandle);
+    onnxruntime::test::TriggerPDReset();
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
   }
+  return real_providerList[0]->QNN_INTERFACE_VER_NAME.graphRetrieve(contextHandle, graphName, graphHandle);
 }
 
 QNN_API

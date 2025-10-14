@@ -8,7 +8,6 @@
 #include <gsl/gsl>
 #include "QnnOpDef.h"
 
-#include "core/common/common.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
@@ -132,9 +131,7 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
   }
 #endif
 
-  if (!rt.IsOK()) {
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to initialize qnn_model_wrapper.", rt.ErrorMessage());
-  }
+  ORT_RETURN_IF_ERROR(rt);
 
   // NOTE: This function returns immediately when profiling is disabled.
   // Extracting profiling data can be expensive, but it is typically only enabled for debugging purposes
@@ -158,8 +155,7 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
   }
 
   const bool build_json_graph = !json_qnn_graph_path.empty();
-  Status status = qnn_model_wrapper.ComposeQnnGraph(build_json_graph);
-  ORT_RETURN_IF_NOT(status.IsOK(), "Failed to compose Qnn graph. ", status.ErrorMessage());
+  ORT_RETURN_IF_ERROR(qnn_model_wrapper.ComposeQnnGraph(build_json_graph));
 
   if (build_json_graph) {
     const nlohmann::json& json_graph = qnn_model_wrapper.GetQnnJSONGraph();
@@ -203,8 +199,13 @@ Status QnnModel::FinalizeGraphs(const logging::Logger& logger) {
 #endif
 
   if (QNN_GRAPH_NO_ERROR != status) {
+    if (status == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION) {
+      auto error_message = "NPU crashed. SSR detected. Caused QNN graph finalize error. Error code: ";
+      LOGS(logger, WARNING) << error_message << status;
+      return ORT_MAKE_STATUS(ONNXRUNTIME, ENGINE_ERROR, error_message, status);
+    }
     LOGS(logger, ERROR) << "Failed to finalize QNN graph. Error code: " << status;
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to finalize QNN graph.", status);
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to finalize QNN graph.");
   }
 
   // NOTE: This function returns immediately when profiling is disabled.
@@ -371,7 +372,7 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
 
   if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
     auto error_message = "NPU crashed. SSR detected. Caused QNN graph execute error. Error code: ";
-    LOGS(logger, ERROR) << error_message << execute_status;
+    LOGS(logger, WARNING) << error_message << execute_status;
     return ORT_MAKE_STATUS(ONNXRUNTIME, ENGINE_ERROR, error_message, execute_status);
   }
 

@@ -30,7 +30,7 @@ class QnnMockSSRController {
   }
 
  private:
-  QnnMockSSRController() = default;
+  QnnMockSSRController() : timing_(Timing::GraphExecute) {};
   QnnMockSSRController(const QnnMockSSRController&) = delete;
   QnnMockSSRController& operator=(const QnnMockSSRController&) = delete;
 
