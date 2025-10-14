@@ -40,6 +40,10 @@ GetTestModelFn BuildRank6ToRank5FloatTestCase() {
     NodeArg* reshape2_shape = builder.Make1DInitializer<int64_t>({1, 256, 64});
     NodeArg* reshape2_out = builder.MakeIntermediate();
     builder.AddNode("Reshape", {transpose_out, reshape2_shape}, {reshape2_out});
+
+    NodeArg* add_const2 = builder.MakeScalarInitializer<float>(1.0f);
+    NodeArg* output = builder.MakeOutput();
+    builder.AddNode("Add", {reshape2_out, add_const2}, {output});
   };
 }
 
