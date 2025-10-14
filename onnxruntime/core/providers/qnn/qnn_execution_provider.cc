@@ -1299,12 +1299,18 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
     for (auto main_context_pos : main_context_pos_list) {
       const onnxruntime::GraphViewer& main_ctx_graph_viewer(fused_nodes_and_graphs[main_context_pos].filtered_graph);
       // Create QNN context from the cached binary, deserialize the QNN graph from the binary
-      ORT_RETURN_IF_ERROR(qnn::LoadQnnCtxFromOnnxGraph(main_ctx_graph_viewer,
-                                                       context_model_path,
-                                                       qnn_backend_manager_.get(),
-                                                       qnn_models,
-                                                       logger,
-                                                       max_spill_fill_size));
+      ORT_RETURN_IF_ERROR(qnn_backend_manager_->setState(onnxruntime::qnn::GraphState::INIT_START, GetPerThreadContext().GetHtpPowerConfigId(), default_htp_performance_mode_));
+
+      Status rtVal = qnn::LoadQnnCtxFromOnnxGraph(main_ctx_graph_viewer,
+                                                  context_model_path,
+                                                  qnn_backend_manager_.get(),
+                                                  qnn_models,
+                                                  logger,
+                                                  max_spill_fill_size);
+
+      ORT_RETURN_IF_ERROR(qnn_backend_manager_->setState(onnxruntime::qnn::GraphState::INIT_DONE, GetPerThreadContext().GetHtpPowerConfigId(), default_htp_performance_mode_));
+
+      ORT_RETURN_IF_ERROR(rtVal);
     }
 
     for (auto fused_node_and_graph : fused_nodes_and_graphs) {

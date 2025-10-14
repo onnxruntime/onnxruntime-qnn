@@ -122,10 +122,12 @@ struct QnnBackendManagerConfig {
   bool skip_qnn_version_check;
 };
 
-enum class DcvsState_t { DCVS_DEFAULT = 0,
-                         DCVS_DISABLE = 1,
-                         DCVS_ENABLE = 2,
-                         DCVS_NUM_STATES };
+enum class DcvsState_t {
+  DCVS_DEFAULT = 0,
+  DCVS_DISABLE = 1,
+  DCVS_ENABLE = 2,
+  DCVS_NUM_STATES
+};
 
 enum class GraphState {
   INIT_START,
