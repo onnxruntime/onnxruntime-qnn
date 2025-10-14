@@ -156,6 +156,44 @@ QnnQuantParamsWrapper::QnnQuantParamsWrapper(gsl::span<const float> per_channel_
   params_.blockwiseExpansion = lpbqPtr;
 }
 
+// Construct a BlockEncoding BQ quantization param.
+QnnQuantParamsWrapper::QnnQuantParamsWrapper(
+    gsl::span<const float> scales,
+    gsl::span<const int32_t> offsets,
+    gsl::span<const uint32_t> block_sizes,
+    Qnn_DataType_t tensor_data_type) {
+  ORT_UNUSED_PARAMETER(tensor_data_type);
+  assert(scales.size() == offsets.size());  // Logic error if sizes don't match.
+
+  num_blocks_ = static_cast<uint32_t>(scales.size());
+  params_.encodingDefinition = QNN_DEFINITION_DEFINED;
+  params_.quantizationEncoding = QNN_QUANTIZATION_ENCODING_BLOCK;
+
+  block_encoding_tensor_rank_ = static_cast<uint32_t>(block_sizes.size());
+  const size_t be_axis_num_bytes = block_encoding_tensor_rank_ * sizeof(uint32_t);
+  constexpr std::uintptr_t be_axis_align = alignof(uint32_t);
+  block_encoding_axis_data_ = std::make_unique<char[]>(be_axis_num_bytes + be_axis_align);
+  uint32_t* block_encoding_axis_data_aligned = ALIGN_PTR_UP(block_encoding_axis_data_.get(), be_axis_align, uint32_t*);
+  for (size_t idx = 0; idx < block_encoding_tensor_rank_; idx++) {
+    block_encoding_axis_data_aligned[idx] = block_sizes[idx];
+  }
+  params_.blockEncoding.blockSize = block_encoding_axis_data_aligned;
+
+  // Deep copy the scale offsets
+  if (num_blocks_ > 0) {
+    const size_t be_scale_offsets_num_bytes = num_blocks_ * sizeof(Qnn_ScaleOffset_t);
+    constexpr std::uintptr_t be_scale_offsets_align = alignof(Qnn_ScaleOffset_t);
+    block_encoding_scale_offsets_data_ = std::make_unique<char[]>(be_scale_offsets_num_bytes + be_scale_offsets_align);
+    Qnn_ScaleOffset_t* block_encoding_scale_offsets_data_aligned = ALIGN_PTR_UP(block_encoding_scale_offsets_data_.get(), be_scale_offsets_align, Qnn_ScaleOffset_t*);
+
+    for (uint32_t i = 0; i < num_blocks_; i++) {
+      block_encoding_scale_offsets_data_aligned[i].offset = offsets[i];
+      block_encoding_scale_offsets_data_aligned[i].scale = scales[i];
+    }
+    params_.blockEncoding.scaleOffset = block_encoding_scale_offsets_data_aligned;
+  }
+}
+
 // Get a copy of scales. Works for both per-tensor and per-channel.
 Status QnnQuantParamsWrapper::GetScales(/*out*/ std::vector<float>& scales) const {
   ORT_RETURN_IF_NOT(params_.encodingDefinition == QNN_DEFINITION_DEFINED, "Unquantized qparams does not have scales");
