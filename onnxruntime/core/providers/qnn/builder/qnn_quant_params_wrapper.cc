@@ -192,7 +192,7 @@ QnnQuantParamsWrapper::QnnQuantParamsWrapper(
     block_encoding_scale_offsets_data_ = std::make_unique<char[]>(be_scale_offsets_num_bytes + be_scale_offsets_align);
     Qnn_ScaleOffset_t* block_encoding_scale_offsets_data_aligned = ALIGN_PTR_UP(block_encoding_scale_offsets_data_.get(), be_scale_offsets_align, Qnn_ScaleOffset_t*);
 
-    for (size_t i = 0; i < static_cast<uint32_t>(num_blocks_); i++) {
+    for (uint32_t i = 0; i < num_blocks_; i++) {
       block_encoding_scale_offsets_data_aligned[i].offset = offsets[i];
       block_encoding_scale_offsets_data_aligned[i].scale = scales[i];
     }
