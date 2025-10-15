@@ -180,7 +180,7 @@ void QnnBackendManager::ReleaseTimerThread(uint32_t htp_power_config_client_id) 
 }
 
 bool QnnBackendManager::isTimerThreadRunning() {
-  std::chrono::microseconds remainUs = std::chrono::milliseconds::zero();
+  std::chrono::microseconds remainUs = std::chrono::microseconds::zero();
   unsigned long remaining_duration = 0;
   if (timer_resource.timer_thread_in_use && timer_->remainingDuration(remainUs)) {
     remaining_duration = static_cast<unsigned long>(remainUs.count());
