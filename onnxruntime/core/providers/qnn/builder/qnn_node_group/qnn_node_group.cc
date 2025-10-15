@@ -84,7 +84,9 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"Gemm", {LowPowerBlockQuantizedGemmFusion::TryFusion, ReshapeGemmFusion::TryFusion}},
     {"Mul", {ScaleSoftmaxFusion::TryFusion}},
     {"Cast", {CastLoneQFusion::TryFusion}},
-    {"Transpose", {ChannelShuffleFusion::TryFusion}}};
+    {"Reshape", {Rank6ToRank5Fusion::TryFusion}},
+    {"Transpose", {ChannelShuffleFusion::TryFusion}},
+    {"Erf", {GeluFusion::TryFusion}}};
 
 void registerUDO(const std::string& node_type, const std::string& op_package) {
   std::function<std::unique_ptr<IQnnNodeGroup>(QnnModelWrapper & qnn_model_wrapper,
@@ -122,7 +124,8 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
   // For now, all fusions involve standalone node units (i.e., no wrapping DQ/Q nodes) except MatMul w/ LPBQ encodings and Reshape
   if (starting_node_unit.UnitType() != NodeUnit::Type::SingleNode &&
       starting_node_unit.OpType() != "MatMul" &&
-      starting_node_unit.OpType() != "Reshape") {
+      starting_node_unit.OpType() != "Reshape" && 
+      starting_node_unit.OpType() != "Erf") {
     return nullptr;
   }
 
