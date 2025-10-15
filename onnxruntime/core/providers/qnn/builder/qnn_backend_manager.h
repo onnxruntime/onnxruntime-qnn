@@ -326,14 +326,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Status setPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode);
 
-  Status setPowerSaverPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode);
-
-  Status setExtremePowerSaverPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode);
-
-  Status setHighPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode);
-
-  Status setPerformanceForBalanced(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode);
-
   static void timerCallback(void* user_data);
 
   Status applyPerformanceMode(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode);
