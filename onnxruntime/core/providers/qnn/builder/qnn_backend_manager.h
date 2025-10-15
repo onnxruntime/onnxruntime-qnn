@@ -324,7 +324,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Status setSustainedHighPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode);
 
-  Status setPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode)
+  Status setPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode);
 
       Status setPowerSaverPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode);
 
