@@ -314,7 +314,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void* LibFunction(void* handle, const char* symbol, std::string& error_msg);
 
-  bool isRemainingDurationInRange(std::chrono::microseconds remainingTime);
+  bool isTimerThreadRunning();
 
   Status setRelaxedPerfPowerConfig(uint32_t htp_power_config_client_id, DcvsState_t dcvsState);
 
@@ -324,7 +324,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Status setSustainedHighPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode);
 
-  Status setPowerSaverPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode);
+  Status setPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode)
+
+      Status setPowerSaverPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode);
 
   Status setExtremePowerSaverPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode);
 
