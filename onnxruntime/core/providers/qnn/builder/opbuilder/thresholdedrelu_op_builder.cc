@@ -3,6 +3,7 @@
 
 #include <unordered_set>
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/utils/op_builder_helper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -140,10 +141,8 @@ Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
   NodeAttrHelper node_helper(node_unit);
   std::string& input_name = input_names[0];
   const std::string& org_output_name = node_unit.Outputs()[0].node_arg.Name();
-  const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(org_output_name);
 
   std::vector<uint32_t> output_shape = output_info.shape;
-  Qnn_TensorType_t op_output_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
 
   // Create alpha tensor.
   // QNN sub gives memory error, use input + (-alpha) as input - alpha's work around.
@@ -162,85 +161,26 @@ Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
 
   // input -> add -> relu -> sign -> mul -> output
   //       --------------------------/
-  // 1. Add
-  std::string add_name = utils::GetUniqueName(node_unit, "_Add");
-  std::string add_output_name = utils::GetUniqueName(node_unit, "_Add_output");
-  QnnTensorWrapper add_output(add_output_name,
-                              QNN_TENSOR_TYPE_NATIVE,
-                              input_info.qnn_data_type,
-                              QnnQuantParamsWrapper(),
-                              std::vector<uint32_t>(output_shape));
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(add_output)),
-                    "Failed to add ThresholdRelu - Sub output tensor.");
+  OpBuilderHelper op_builder_helper(qnn_model_wrapper, node_unit);
 
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(add_name,
-                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                    QNN_OP_ELEMENT_WISE_ADD,
-                                                    {input_name, negtive_alpha_tensor_name},
-                                                    {add_output_name},
-                                                    {},
-                                                    do_op_validation),
-                    "Failed to add ThresholdRelu - Sub node.");
-
-  // 2. Relu
-  std::string relu_name = utils::GetUniqueName(node_unit, "_Relu");
-  std::string relu_output_name = utils::GetUniqueName(node_unit, "_Relu_output");
-
-  QnnTensorWrapper relu_output(relu_output_name,
-                               QNN_TENSOR_TYPE_NATIVE,
-                               input_info.qnn_data_type,
-                               QnnQuantParamsWrapper(),
-                               std::vector<uint32_t>(output_shape));
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(relu_output)),
-                    "Failed to add ThresholdRelu - Relu output tensor.");
-
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(relu_name,
-                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                    QNN_OP_RELU,
-                                                    {add_output_name},
-                                                    {relu_output_name},
-                                                    {},
-                                                    do_op_validation),
-                    "Failed to add ThresholdRelu - Relu node.");
-
-  // 3. Sign
-  std::string sign_name = utils::GetUniqueName(node_unit, "_Sign");
+  // 1. ~ 3. add -> relu -> sign ->
   std::string sign_output_name = utils::GetUniqueName(node_unit, "_Sign_output");
-  QnnTensorWrapper sign_output(sign_output_name,
-                               QNN_TENSOR_TYPE_NATIVE,
-                               input_info.qnn_data_type,
-                               QnnQuantParamsWrapper(),
-                               std::vector<uint32_t>(output_shape));
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sign_output)),
-                    "Failed to add ThresholdRelu - Sign output tensor.");
-
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(sign_name,
-                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                    QNN_OP_ELEMENT_WISE_SIGN,
-                                                    {relu_output_name},
-                                                    {sign_output_name},
-                                                    {},
-                                                    do_op_validation),
-                    "Failed to add ThresholdRelu - Sign node.");
+  ORT_RETURN_IF_ERROR(op_builder_helper.AddSequentialNode(
+      std::vector<std::string>({QNN_OP_ELEMENT_WISE_ADD, QNN_OP_RELU, QNN_OP_ELEMENT_WISE_SIGN}),
+      {input_name, negtive_alpha_tensor_name},
+      {},
+      std::vector<uint32_t>(output_shape),
+      {sign_output_name},
+      do_op_validation));
 
   // 4. Mul
-  std::string mul_name = utils::GetUniqueName(node_unit, "_Mul");
-  QnnTensorWrapper mul_output(org_output_name,
-                              op_output_tensor_type,
-                              output_info.qnn_data_type,
-                              output_info.quant_param.Copy(),
-                              std::vector<uint32_t>(output_shape));
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(mul_output)),
-                    "Failed to add ThresholdRelu - Mul output tensor.");
-
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(mul_name,
-                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                    QNN_OP_ELEMENT_WISE_MULTIPLY,
-                                                    {input_name, sign_output_name},
-                                                    {org_output_name},
-                                                    {},
-                                                    do_op_validation),
-                    "Failed to add ThresholdRelu - Mul node.");
+  ORT_RETURN_IF_ERROR(op_builder_helper.AddSingleNode(
+      QNN_OP_ELEMENT_WISE_MULTIPLY,
+      {input_name, sign_output_name},
+      {},
+      std::vector<uint32_t>(output_shape),
+      {org_output_name},
+      do_op_validation));
 
   return Status::OK();
 }

@@ -3,6 +3,7 @@
 
 #include <unordered_set>
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/utils/op_builder_helper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -92,24 +93,17 @@ Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_
   constexpr uint32_t kFlatDim = 4;
   const std::vector<uint32_t>& reshaped_shape{total_elements / kFlatDim, kFlatDim};
 
+  OpBuilderHelper op_builder_helper(qnn_model_wrapper, node_unit);
+
   // Reshape input to [-1, 4]
   const std::string& reshape_output_name = utils::GetUniqueName(node_unit, "_reshape_output");
-  QnnTensorWrapper reshape_output(reshape_output_name,
-                                  QNN_TENSOR_TYPE_NATIVE,
-                                  input_info.qnn_data_type,
-                                  input_info.quant_param.Copy(),
-                                  std::vector<uint32_t>(reshaped_shape));
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(reshape_output)), "Failed to add tensor.");
-
-  bool is_graph_input = qnn_model_wrapper.IsGraphInput(input_name);
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(input_name,
-                                                       reshape_output_name,
-                                                       input_shape,
-                                                       std::vector<uint32_t>(reshaped_shape),
-                                                       input_info.qnn_data_type,
-                                                       input_info.quant_param.Copy(),
-                                                       do_op_validation,
-                                                       is_graph_input));
+  ORT_RETURN_IF_ERROR(op_builder_helper.AddSingleNode(
+      QNN_OP_RESHAPE,
+      {input_name},
+      {},
+      std::vector<uint32_t>(reshaped_shape),
+      {reshape_output_name},
+      do_op_validation));
 
   const uint32_t& channel_num = total_elements / kFlatDim;
   const std::vector<uint32_t>& sliced_shape{channel_num, 1};
@@ -155,103 +149,55 @@ Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_
         QNN_OP_STRIDED_SLICE_PARAM_END_MASK,
         slice_param_tensor_name));
 
-    QnnTensorWrapper slice_output(sliced_output_names[i],
-                                  QNN_TENSOR_TYPE_NATIVE,
-                                  input_info.qnn_data_type,
-                                  QnnQuantParamsWrapper(),
-                                  std::vector<uint32_t>(sliced_shape));
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(slice_output)), "Failed to add tensor.");
-
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(slice_name,
-                                                      QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                      QNN_OP_STRIDED_SLICE,
-                                                      {reshape_output_name},
-                                                      {sliced_output_names[i]},
-                                                      std::move(slice_param_tensor_name),
-                                                      do_op_validation),
-                      "Failed to add Inverse - slice node.");
+    ORT_RETURN_IF_ERROR(op_builder_helper.AddSingleNode(
+        QNN_OP_STRIDED_SLICE,
+        {reshape_output_name},
+        std::move(slice_param_tensor_name),
+        std::vector<uint32_t>(sliced_shape),
+        {sliced_output_names[i]},
+        do_op_validation));
   }
 
   // det([[a, b], [c, d]]) = ad - bc
-  const std::string& det_mul_0_name = utils::GetUniqueName(node_unit, "_det_mul_0");
-  const std::string& det_mul_0_output_name = utils::GetUniqueName(node_unit, "_det_mul_0_output");
-  QnnTensorWrapper det_mul_0_output(det_mul_0_output_name,
-                                    QNN_TENSOR_TYPE_NATIVE,
-                                    input_info.qnn_data_type,
-                                    QnnQuantParamsWrapper(),
-                                    std::vector<uint32_t>(sliced_shape));
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(det_mul_0_output)),
-                    "Failed to add Inverse - Det - Mul(a, d) output tensor.");
+  const std::string& det_mul_0_output_name = utils::GetUniqueName(node_unit, "_det_mul_0_output");  // a*d
+  ORT_RETURN_IF_ERROR(op_builder_helper.AddSingleNode(
+      QNN_OP_ELEMENT_WISE_MULTIPLY,
+      {sliced_output_names[0], sliced_output_names[3]},
+      {},
+      std::vector<uint32_t>(sliced_shape),
+      {det_mul_0_output_name},
+      do_op_validation));
 
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(det_mul_0_name,
-                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                    QNN_OP_ELEMENT_WISE_MULTIPLY,
-                                                    {sliced_output_names[0], sliced_output_names[3]},
-                                                    {det_mul_0_output_name},
-                                                    {},
-                                                    do_op_validation),
-                    "Failed to add Inverse - Det - Mul(a, d) node.");
+  const std::string& det_mul_1_output_name = utils::GetUniqueName(node_unit, "_det_mul_1_output");  // b*c
+  ORT_RETURN_IF_ERROR(op_builder_helper.AddSingleNode(
+      QNN_OP_ELEMENT_WISE_MULTIPLY,
+      {sliced_output_names[1], sliced_output_names[2]},
+      {},
+      std::vector<uint32_t>(sliced_shape),
+      {det_mul_1_output_name},
+      do_op_validation));
 
-  const std::string& det_mul_1_name = utils::GetUniqueName(node_unit, "_det_mul_1");
-  const std::string& det_mul_1_output_name = utils::GetUniqueName(node_unit, "_det_mul_1_output");
-  QnnTensorWrapper det_mul_1_output(det_mul_1_output_name,
-                                    QNN_TENSOR_TYPE_NATIVE,
-                                    input_info.qnn_data_type,
-                                    QnnQuantParamsWrapper(),
-                                    std::vector<uint32_t>(sliced_shape));
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(det_mul_1_output)),
-                    "Failed to add Inverse - Det - Mul(b, c) output tensor.");
-
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(det_mul_1_name,
-                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                    QNN_OP_ELEMENT_WISE_MULTIPLY,
-                                                    {sliced_output_names[1], sliced_output_names[2]},
-                                                    {det_mul_1_output_name},
-                                                    {},
-                                                    do_op_validation),
-                    "Failed to add Inverse - Det - Mul(b, c) node.");
-
-  const std::string& det_sub_name = utils::GetUniqueName(node_unit, "_det_sub");
-  const std::string& det_sub_output_name = utils::GetUniqueName(node_unit, "_det_sub_output");
-  QnnTensorWrapper det_sub_output(det_sub_output_name,
-                                  QNN_TENSOR_TYPE_NATIVE,
-                                  input_info.qnn_data_type,
-                                  QnnQuantParamsWrapper(),
-                                  std::vector<uint32_t>(sliced_shape));
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(det_sub_output)),
-                    "Failed to add Inverse - Det - Sub(ad, bc) output tensor.");
-
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(det_sub_name,
-                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                    QNN_OP_ELEMENT_WISE_SUBTRACT,
-                                                    {det_mul_0_output_name, det_mul_1_output_name},
-                                                    {det_sub_output_name},
-                                                    {},
-                                                    do_op_validation),
-                    "Failed to add Inverse - Det - Sub(ad, bc) node.");
+  const std::string& det_sub_output_name = utils::GetUniqueName(node_unit, "_det_sub_output");  // ad - bc
+  ORT_RETURN_IF_ERROR(op_builder_helper.AddSingleNode(
+      QNN_OP_ELEMENT_WISE_SUBTRACT,
+      {det_mul_0_output_name, det_mul_1_output_name},
+      {},
+      std::vector<uint32_t>(sliced_shape),
+      {det_sub_output_name},
+      do_op_validation));
 
   // adj([[a, b], [c, d]]) = [d, b, a, c] * [1, -1, -1, 1]
-  const std::string& adj_cat_name = utils::GetUniqueName(node_unit, "_adj_concat");
   const std::string& adj_cat_output_name = utils::GetUniqueName(node_unit, "_adj_concat_output");
   std::vector<std::string> concat_param_name;  // Will be modified in AddQnnScalar
   ORT_RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), adj_cat_output_name, static_cast<uint32_t>(1), QNN_OP_CONCAT_PARAM_AXIS, concat_param_name));
 
-  QnnTensorWrapper adj_cat_output(adj_cat_output_name,
-                                  QNN_TENSOR_TYPE_NATIVE,
-                                  input_info.qnn_data_type,
-                                  QnnQuantParamsWrapper(),
-                                  std::vector<uint32_t>(reshaped_shape));
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(adj_cat_output)),
-                    "Failed to add Inverse - Adj - cat(d, b, c, a) output tensor.");
-
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(adj_cat_name,
-                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                    QNN_OP_CONCAT,
-                                                    {sliced_output_names[3], sliced_output_names[1], sliced_output_names[2], sliced_output_names[0]},
-                                                    {adj_cat_output_name},
-                                                    std::move(concat_param_name),
-                                                    do_op_validation),
-                    "Failed to add Inverse - Adj - cat(d, b, c, a) node.");
+  ORT_RETURN_IF_ERROR(op_builder_helper.AddSingleNode(
+      QNN_OP_CONCAT,
+      {sliced_output_names[3], sliced_output_names[1], sliced_output_names[2], sliced_output_names[0]},
+      std::move(concat_param_name),
+      std::vector<uint32_t>(reshaped_shape),
+      {adj_cat_output_name},
+      do_op_validation));
 
   // Create [1, -1, -1, 1] tensor for adj.
   static constexpr std::array<float, 4> adj_mul_tensor_value{1.f, -1.f, -1.f, 1.f};
@@ -267,68 +213,35 @@ Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_
                                   std::move(adj_mul_bytes));
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(adj_mul_tensor)), "Failed to add tensor.");
 
-  const std::string& adj_mul_name = utils::GetUniqueName(node_unit, "_adj_mul");
   const std::string& adj_mul_output_name = utils::GetUniqueName(node_unit, "_adj_mul_output");
-  QnnTensorWrapper adj_mul_output(adj_mul_output_name,
-                                  QNN_TENSOR_TYPE_NATIVE,
-                                  input_info.qnn_data_type,
-                                  QnnQuantParamsWrapper(),
-                                  std::vector<uint32_t>(reshaped_shape));
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(adj_mul_output)),
-                    "Failed to add Inverse - Adj - Mul([d, b, a, c], [1, -1, -1, 1]) output tensor.");
-
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(adj_mul_name,
-                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                    QNN_OP_ELEMENT_WISE_MULTIPLY,
-                                                    {adj_cat_output_name, adj_mul_tensor_name},
-                                                    {adj_mul_output_name},
-                                                    {},
-                                                    do_op_validation),
-                    "Failed to add Inverse - Adj - Mul([d, b, a, c], [1, -1, -1, 1]) node.");
+  ORT_RETURN_IF_ERROR(op_builder_helper.AddSingleNode(
+      QNN_OP_ELEMENT_WISE_MULTIPLY,
+      {adj_cat_output_name, adj_mul_tensor_name},
+      {},
+      std::vector<uint32_t>(reshaped_shape),
+      {adj_mul_output_name},
+      do_op_validation));
 
   // inverse = adj / det
-  const std::string& inverse_div_name = utils::GetUniqueName(node_unit, "_inv_div");
   const std::string& inverse_div_output_name = utils::GetUniqueName(node_unit, "_inv_div_output");
-  QnnTensorWrapper inverse_div_tensor(inverse_div_output_name,
-                                      QNN_TENSOR_TYPE_NATIVE,
-                                      input_info.qnn_data_type,
-                                      QnnQuantParamsWrapper(),
-                                      std::vector<uint32_t>(reshaped_shape));
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(inverse_div_tensor)),
-                    "Failed to add Inverse - Adj / Det output tensor.");
-
-  // Expect QNN element-wise ops to broadcast unit dimensions.
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(inverse_div_name,
-                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                    QNN_OP_ELEMENT_WISE_DIVIDE,
-                                                    {adj_mul_output_name, det_sub_output_name},
-                                                    {inverse_div_output_name},
-                                                    {},
-                                                    do_op_validation),
-                    "Failed to add Inverse - Adj / Det node.");
+  ORT_RETURN_IF_ERROR(op_builder_helper.AddSingleNode(
+      QNN_OP_ELEMENT_WISE_DIVIDE,
+      {adj_mul_output_name, det_sub_output_name},
+      {},
+      std::vector<uint32_t>(reshaped_shape),
+      {inverse_div_output_name},
+      do_op_validation));
 
   // Reshape back to original shape input_info.shape
   const std::string& org_output_name = node_unit.Outputs()[0].node_arg.Name();
-  const bool& is_graph_output = qnn_model_wrapper.IsGraphOutput(org_output_name);
-
   std::vector<uint32_t> output_shape = output_info.shape;
-  Qnn_TensorType_t op_output_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
-
-  QnnTensorWrapper inverse_output(org_output_name,
-                                  op_output_tensor_type,
-                                  output_info.qnn_data_type,
-                                  output_info.quant_param.Copy(),
-                                  std::vector<uint32_t>(output_shape));
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(inverse_output)), "Failed to add tensor.");
-
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(inverse_div_output_name,
-                                                       org_output_name,
-                                                       std::vector<uint32_t>(reshaped_shape),
-                                                       std::vector<uint32_t>(output_shape),
-                                                       output_info.qnn_data_type,
-                                                       output_info.quant_param.Copy(),
-                                                       do_op_validation,
-                                                       is_graph_output));
+  ORT_RETURN_IF_ERROR(op_builder_helper.AddSingleNode(
+      QNN_OP_RESHAPE,
+      {inverse_div_output_name},
+      {},
+      std::vector<uint32_t>(output_shape),
+      {org_output_name},
+      do_op_validation));
 
   return Status::OK();
 }
