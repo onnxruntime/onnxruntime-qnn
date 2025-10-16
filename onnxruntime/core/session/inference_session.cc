@@ -2610,8 +2610,14 @@ common::Status InferenceSession::CheckShapes(const std::string& input_output_nam
   // We will check whether only the Htp backend is used inside QnnModel::ExecuteGraph.
   auto is_qnn_batch_multiplier_valid = [this](int64_t input_dim, int64_t expected_dim) -> bool {
     const auto& provider_ids = execution_providers_.GetIds();
+    // Ensure if QNN EP is used
     bool no_qnn_ep = std::find(provider_ids.begin(), provider_ids.end(), kQnnExecutionProvider) == provider_ids.end();
     if (no_qnn_ep) return false;
+    // Ensure only QNN EP or QNN EP + ORT CPU EP is used
+    for (const auto& ep : provider_ids) {
+      if (ep != kQnnExecutionProvider && ep != kCpuExecutionProvider) return false;
+    }
+
     if (expected_dim <= 0) return false;
 
     return (input_dim % expected_dim == 0);
