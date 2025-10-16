@@ -12,7 +12,24 @@ namespace onnxruntime {
 
 Rewrite rule that fuses two Mul+Add nodes to a single Batchnorm node.
 
-It is attempted to be triggered only on nodes with op type "Mul".
+Determines whether a Mul followed by an Add can be safely fused into a
+BatchNormalization node. The fusion is based on the observation that:
+
+  Y = (X * scale) + bias
+
+is mathematically equivalent to a BatchNormalization operation when the
+BatchNorm parameters are set to:
+
+  mean    = 0
+  var     = 1
+  epsilon = 0
+
+with
+
+  BatchNorm(X) = (X - mean) / sqrt(var + epsilon) * scale + bias
+               = (X - 0) / sqrt(1 + 0) * scale + bias
+               = X * scale + bias
+
 */
 class MulAddFusion : public GraphTransformer {
  public:
