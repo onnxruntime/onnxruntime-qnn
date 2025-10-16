@@ -241,24 +241,51 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
 
   std::vector<Qnn_Tensor_t> qnn_inputs;
   qnn_inputs.reserve(qnn_input_infos_.size());
+  uint32_t batch_multiplier = 0;
 
   for (const auto& qnn_input_info : qnn_input_infos_) {
     LOGS(logger, VERBOSE) << "model_input = " << qnn_input_info.tensor_wrapper->GetName()
                           << " index = " << qnn_input_info.ort_index;
     auto ort_input_tensor = context.GetInput(qnn_input_info.ort_index);
     auto ort_tensor_size = TensorDataSize(ort_input_tensor);
+    LOGS(logger, INFO) << "Ori Dimensions saved in qnn_input_info: " << qnn_input_info.ori_dimensions_[0] << " " << qnn_input_info.ori_dimensions_[1] << " " << qnn_input_info.ori_dimensions_[2] << " " << qnn_input_info.ori_dimensions_[3];
     LOGS(logger, VERBOSE) << "Qnn tensor size: " << qnn_input_info.tensor_byte_size
                           << " Ort tensor size: " << ort_tensor_size;
-    ORT_RETURN_IF_NOT(qnn_input_info.tensor_byte_size == ort_tensor_size,
+    LOGS(logger, VERBOSE) << "!!!Qnn input tensor shape: " << qnn_input_info.tensor_wrapper->GetTensorDims()[0] << " " << qnn_input_info.tensor_wrapper->GetTensorDims()[1] << " " << qnn_input_info.tensor_wrapper->GetTensorDims()[2] << " " << qnn_input_info.tensor_wrapper->GetTensorDims()[3];
+    LOGS(logger, VERBOSE) << "!!!Ort input tensor shape: " << ort_input_tensor.GetTensorTypeAndShapeInfo().GetShape()[0] << " " << ort_input_tensor.GetTensorTypeAndShapeInfo().GetShape()[1] << " " << ort_input_tensor.GetTensorTypeAndShapeInfo().GetShape()[2] << " " << ort_input_tensor.GetTensorTypeAndShapeInfo().GetShape()[3];
+    ORT_RETURN_IF_NOT((qnn_input_info.tensor_byte_size == ort_tensor_size) || (ort_tensor_size % qnn_input_info.tensor_byte_size == 0),
                       "ORT Tensor data size does not match QNN tensor data size.");
 
+    // check if there is only one batch multiplier value.
+    uint32_t bm = static_cast<uint32_t>(ort_tensor_size / qnn_input_info.tensor_byte_size);
+    if (batch_multiplier == 0) {  // Set batch multiplier just ONCE.
+      if (bm > 1) {
+        LOGS(logger, VERBOSE) << "batch multiplir: " << bm;
+        auto backend_type = qnn_backend_manager_->GetQnnBackendType();
+        ORT_RETURN_IF_NOT(backend_type == qnn::QnnBackendType::HTP ||
+                          backend_type == qnn::QnnBackendType::HTP_FP16,
+                          "Batch multiplier is only supported on HTP backend, but current backend is: ",
+                          static_cast<int>(backend_type));
+      }
+      batch_multiplier = bm;
+    } else {
+      ORT_RETURN_IF(batch_multiplier != bm, "Inconsistent batch multiplier. Expected: ", batch_multiplier, ", Got: ", bm);
+    }
+
     qnn_inputs.push_back(qnn_input_info.tensor_wrapper->GetQnnTensor());
+    // modify Qnn inputs batch size with batch multiplier, if batch multiplier > 1
+    if (batch_multiplier > 1) {
+      LOGS(logger, VERBOSE) << "qnn_inputs batch size: " << GetQnnTensorDims(qnn_input_info.tensor_wrapper->GetQnnTensor())[0];
+      GetQnnTensorDims(qnn_inputs.back())[0] = static_cast<uint32_t>(ort_input_tensor.GetTensorTypeAndShapeInfo().GetShape()[0]);
+      LOGS(logger, VERBOSE) << "qnn_inputs batch size (bm triggered): " << GetQnnTensorDims(qnn_inputs.back())[0];
+      LOGS(logger, VERBOSE) << "check ori dims: " << qnn_input_info.ori_dimensions_[0];
+    }
 
     ORT_RETURN_IF_ERROR(BindQnnTensorMemoryToOrtValueMemory(
         logger,
         *qnn_backend_manager_,
         *static_cast<const OrtMemoryInfo*>(ort_input_tensor.GetTensorMemoryInfo()),
-        const_cast<void*>(ort_input_tensor.GetTensorRawData()), qnn_input_info.tensor_byte_size,
+        const_cast<void*>(ort_input_tensor.GetTensorRawData()), qnn_input_info.tensor_byte_size * batch_multiplier,
         graph_info_->GraphContext(),
         qnn_inputs.back()));
   }
@@ -270,21 +297,40 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
     const std::string& model_output_name = qnn_output_info.tensor_wrapper->GetName();
     LOGS(logger, VERBOSE) << "model_output = " << model_output_name << " index = " << qnn_output_info.ort_index;
     const auto& ort_output_info = GetOutputInfo(model_output_name);
-    const std::vector<int64_t>& output_shape = ort_output_info->shape_;
+    LOGS(logger, INFO) << "Ori Dimensions saved in qnn_output_info: " << qnn_output_info.ori_dimensions_[0] << " " << qnn_output_info.ori_dimensions_[1];
+    // Adjust output shape to match input batch size
+    std::vector<int64_t> output_shape = ort_output_info->shape_;
+    if (batch_multiplier > 1) {
+      // TODO: need to fix if ORT tensor pre-allocated
+      output_shape[0] *= batch_multiplier;
+      LOGS(logger, VERBOSE) << "batch multiplier triggered: " << batch_multiplier;
+      LOGS(logger, VERBOSE) << "ort tensor batch size: " << output_shape[0];
+    }
     auto ort_output_tensor = context.GetOutput(qnn_output_info.ort_index, output_shape.data(), output_shape.size());
     auto ort_tensor_size = TensorDataSize(ort_output_tensor);
+    LOGS(logger, INFO) << "!!!ORT output tensor shape: " << ort_output_tensor.GetTensorTypeAndShapeInfo().GetShape()[0] << " " << ort_output_tensor.GetTensorTypeAndShapeInfo().GetShape()[1];
+    LOGS(logger, INFO) << "!!!Qnn output tensor shape: " << qnn_output_info.tensor_wrapper->GetTensorDims()[0] << " " << qnn_output_info.tensor_wrapper->GetTensorDims()[1];
     LOGS(logger, VERBOSE) << "Qnn tensor size: " << qnn_output_info.tensor_byte_size
                           << " Ort tensor size: " << ort_tensor_size;
-    ORT_RETURN_IF_NOT(qnn_output_info.tensor_byte_size == ort_tensor_size,
+    ORT_RETURN_IF_NOT((qnn_output_info.tensor_byte_size == ort_tensor_size) || (ort_tensor_size % qnn_output_info.tensor_byte_size == 0),
                       "ORT Tensor data size does not match QNN tensor data size");
+    uint32_t bm = static_cast<uint32_t>(ort_tensor_size / qnn_output_info.tensor_byte_size);
+    ORT_RETURN_IF(batch_multiplier != bm, "Inconsistent batch multiplier. Expected: ", batch_multiplier, ", Got: ", bm);
 
+
+    LOGS(logger, INFO) << "qnn_outputs batch_size: " << GetQnnTensorDims(qnn_output_info.tensor_wrapper->GetQnnTensor())[0];
     qnn_outputs.push_back(qnn_output_info.tensor_wrapper->GetQnnTensor());
+    if (batch_multiplier > 1) {
+      GetQnnTensorDims(qnn_outputs.back())[0] = static_cast<uint32_t>(ort_output_tensor.GetTensorTypeAndShapeInfo().GetShape()[0]);
+      LOGS(logger, VERBOSE) << "qnn_outputs batch_size (bm triggered): " << GetQnnTensorDims(qnn_outputs.back())[0];
+      LOGS(logger, VERBOSE) << "check ori dims: " << qnn_output_info.ori_dimensions_[0];
+    }
 
     ORT_RETURN_IF_ERROR(BindQnnTensorMemoryToOrtValueMemory(
         logger,
         *qnn_backend_manager_,
         *static_cast<const OrtMemoryInfo*>(ort_output_tensor.GetTensorMemoryInfo()),
-        ort_output_tensor.GetTensorMutableRawData(), qnn_output_info.tensor_byte_size,
+        ort_output_tensor.GetTensorMutableRawData(), qnn_output_info.tensor_byte_size * batch_multiplier,
         graph_info_->GraphContext(),
         qnn_outputs.back()));
   }
@@ -322,6 +368,19 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN graph execute error. Error code: ", execute_status);
   }
 
+  // dimensions_ is a pointer and won't be reset when new input data arrives.
+  // To recover the original batch size, we need to divide by the batch_multiplier.
+  if (batch_multiplier > 1) {
+    for (int i = 0; i < qnn_input_infos_.size(); i++) {
+      GetQnnTensorDims(qnn_inputs[i])[0] = qnn_input_infos_[0].ori_dimensions_[0];
+      LOGS(logger, INFO) << "recover input batch size: " << GetQnnTensorDims(qnn_inputs[i])[0];
+    }
+    for (int i = 0; i < qnn_output_infos_.size(); i++) {
+      GetQnnTensorDims(qnn_outputs[i])[0] = qnn_output_infos_[0].ori_dimensions_[0];
+      LOGS(logger, INFO) << "recover output batch size: " << GetQnnTensorDims(qnn_outputs[i])[0];
+    }
+  }
+
   return Status::OK();
 }
 
@@ -355,6 +414,7 @@ Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
     qnn_tensor_info.tensor_wrapper = &tensor_wrapper;
     qnn_tensor_info.tensor_byte_size = static_cast<uint32_t>(length);
     qnn_tensor_info.ort_index = ort_index;
+    qnn_tensor_info.ori_dimensions_.assign(tensor_wrapper.GetTensorDims().begin(), tensor_wrapper.GetTensorDims().end());
   }
   // The number of graph inputs and the number of tensor wrappers may not match.
   // - For example, for ResizeNearestNeighbor op, Qnn only cares about the 1st input,
