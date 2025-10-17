@@ -30,7 +30,7 @@ bool IsPatternBatchnorm(const NodeArg* inp,
   std::vector<int64_t> broadcast_scale(max_rank);
   std::vector<int64_t> broadcast_bias(max_rank);
   for (int idx = 0; idx < max_rank; ++idx) {
-    auto broad_idx = inp_rank - 1 - idx;
+    auto broad_idx = max_rank - 1 - idx;
     broadcast_inp[broad_idx] = (idx < inp_rank) ? inp->Shape()->dim(inp_rank - 1 - idx).dim_value() : 1;
     broadcast_scale[broad_idx] = (idx < scale_rank) ? scale->dims(scale_rank - 1 - idx) : 1;
     broadcast_bias[broad_idx] = (idx < bias_rank) ? bias->dims(bias_rank - 1 - idx) : 1;
@@ -96,9 +96,10 @@ Status MulAddFusion::FuseMulAdd(Node& node, Graph& graph, bool& modified, const 
   bool is_const_mul_in0 = graph_utils::NodeArgIsConstant(graph, *mul_node.InputDefs()[0]);
   bool is_const_add_in0 = graph_utils::NodeArgIsConstant(graph, *add_node.InputDefs()[0]);
   auto mul_const_idx = is_const_mul_in0 ? 0 : 1;
+  auto mul_non_const_idx = 1 - mul_const_idx;
   auto add_const_idx = is_const_add_in0 ? 0 : 1;
   // Before layout transform, channel is the 1st dimension
-  int64_t num_channel = mul_node.InputDefs()[1 - mul_const_idx]->Shape()->dim(1).dim_value();
+  int64_t num_channel = mul_node.InputDefs()[mul_non_const_idx]->Shape()->dim(1).dim_value();
 
   // Process scale and bias. Should be {num_channel}
   const auto* scale_tensor_proto = graph_utils::GetConstantInitializer(graph, mul_node.InputDefs()[mul_const_idx]->Name());
@@ -116,16 +117,18 @@ Status MulAddFusion::FuseMulAdd(Node& node, Graph& graph, bool& modified, const 
   NodeArg& reshaped_scale_node_arg = graph_utils::AddInitializer(graph, reshaped_scale_proto);
   NodeArg& reshaped_bias_node_arg = graph_utils::AddInitializer(graph, reshaped_bias_tensor_proto);
 
+  // add initializer of mean as zeros of shape [channel]
   Initializer mean_init(
-      static_cast<ONNX_NAMESPACE::TensorProto_DataType>(mul_node.InputDefs()[1 - mul_const_idx]->TypeAsProto()->tensor_type().elem_type()),
+      static_cast<ONNX_NAMESPACE::TensorProto_DataType>(mul_node.InputDefs()[mul_non_const_idx]->TypeAsProto()->tensor_type().elem_type()),
       graph.GenerateNodeArgName(mul_node.Name() + "_mul_add_fusion_mean"),
       gsl::span<const int64_t>({num_channel}));
   ONNX_NAMESPACE::TensorProto mean_tensor_proto;
   mean_init.ToProto(mean_tensor_proto);
   NodeArg& mean_init_node_arg = graph_utils::AddInitializer(graph, mean_tensor_proto);
 
+  // add initializer of var as ones of shape [channel]
   Initializer var_init(
-      static_cast<ONNX_NAMESPACE::TensorProto_DataType>(mul_node.InputDefs()[1 - mul_const_idx]->TypeAsProto()->tensor_type().elem_type()),
+      static_cast<ONNX_NAMESPACE::TensorProto_DataType>(mul_node.InputDefs()[mul_non_const_idx]->TypeAsProto()->tensor_type().elem_type()),
       graph.GenerateNodeArgName(add_node.Name() + "_mul_add_fusion_var"),
       gsl::span<const int64_t>({num_channel}));
   var_init.add(1);
@@ -133,11 +136,12 @@ Status MulAddFusion::FuseMulAdd(Node& node, Graph& graph, bool& modified, const 
   var_init.ToProto(var_tensor_proto);
   NodeArg& var_init_node_arg = graph_utils::AddInitializer(graph, var_tensor_proto);
 
+  // add BatchNormalization
   Node& bn_node = graph.AddNode(
       graph.GenerateNodeName(mul_node.Name() + "/MulAddFusion"),
       "BatchNormalization",
       "fused Mul and Add",
-      gsl::span<NodeArg* const>({mul_node.MutableInputDefs()[1 - mul_const_idx],
+      gsl::span<NodeArg* const>({mul_node.MutableInputDefs()[mul_non_const_idx],
                                  &reshaped_scale_node_arg,
                                  &reshaped_bias_node_arg,
                                  &mean_init_node_arg,
@@ -147,18 +151,16 @@ Status MulAddFusion::FuseMulAdd(Node& node, Graph& graph, bool& modified, const 
       kOnnxDomainAlias);
   bn_node.SetExecutionProviderType(mul_node.GetExecutionProviderType());
   constexpr float eps = 0.0f;
-  constexpr float momentum = 0.0f;
   bn_node.SetSinceVersion(9);
   bn_node.AddAttribute("epsilon", eps);
-  bn_node.AddAttribute("momentum", momentum);
 
   auto mul_input_edges = graph_utils::GraphEdge::GetNodeInputEdges(mul_node);
   auto add_input_edges = graph_utils::GraphEdge::GetNodeInputEdges(add_node);
-  if (!graph_utils::IsGraphInput(graph, mul_node.InputDefs()[1 - mul_const_idx])) {
+  if (!graph_utils::IsGraphInput(graph, mul_node.InputDefs()[mul_non_const_idx])) {
     graph.AddEdge(
-        mul_input_edges[1 - mul_const_idx].src_node,
+        mul_input_edges[mul_non_const_idx].src_node,
         bn_node.Index(),
-        mul_input_edges[1 - mul_const_idx].src_arg_index,
+        mul_input_edges[mul_non_const_idx].src_arg_index,
         0);
   }
 
