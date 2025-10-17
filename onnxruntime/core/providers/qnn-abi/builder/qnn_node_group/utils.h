@@ -41,5 +41,17 @@ const OrtNodeUnit* GetParentOfType(const QnnModelWrapper& qnn_model_wrapper,
                                    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                    const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group);
 
+const OrtNodeUnit* GetParentOfInput(const QnnModelWrapper& qnn_model_wrapper,
+                                    const OrtNodeUnit& child_node_unit,
+                                    const OrtNodeUnitIODef& input,
+                                    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
+                                    const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group);
+
+const OrtNodeUnit* GetChildOfOutput(const QnnModelWrapper& qnn_model_wrapper,
+                                    const OrtNodeUnit& node_unit,
+                                    const OrtNodeUnitIODef& output,
+                                    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
+                                    const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& qnn_node_group_map);
+
 }  // namespace qnn
 }  // namespace onnxruntime

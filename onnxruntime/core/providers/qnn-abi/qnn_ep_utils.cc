@@ -1743,6 +1743,7 @@ void OrtSelectorManager::CreateSelectors() {
       {"Relu", {}},
       {"Gelu", {}},
       {"Elu", {}},
+      {"Erf", {}},
       {"HardSigmoid", {}},
       {"HardSwish", {}},
       {"Sigmoid", {}},
