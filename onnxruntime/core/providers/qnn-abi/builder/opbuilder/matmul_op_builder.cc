@@ -1,11 +1,11 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn-abi/ort_api.h"
 #include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn-abi/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -104,7 +104,7 @@ Ort::Status ProcessInput0(QnnModelWrapper& qnn_model_wrapper,
     // Otherwise, add a Reshape node.
     if (input_0_info.is_initializer) {
       std::vector<uint8_t> unpacked_tensor;
-      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*input_0_info.initializer_tensor, unpacked_tensor));
+      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_0_info.initializer_tensor, unpacked_tensor));
       QnnTensorWrapper input_tensorwrapper(actual_input_0_name, QNN_TENSOR_TYPE_STATIC, input_0_info.qnn_data_type,
                                            std::move(quant_param_2d), std::move(shape_2d), std::move(unpacked_tensor));
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
@@ -189,7 +189,7 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
     // Otherwise, add a Reshape node.
     if (input_info_1.is_initializer) {
       std::vector<uint8_t> unpacked_tensor;
-      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*input_info_1.initializer_tensor, unpacked_tensor));
+      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info_1.initializer_tensor, unpacked_tensor));
 
       Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(org_input_1_name);
       QnnTensorWrapper input_tensorwrapper(input_1_name, tensor_type, input_info_1.qnn_data_type,
@@ -317,10 +317,10 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnFullyConnected(QnnModelWrapper& 
       std::vector<uint32_t> original_shape_copy = input_info_1.shape;
       RETURN_IF_ERROR(utils::TwoDimensionTranspose(qnn_model_wrapper,
                                                    original_shape_copy,  // Will be modified to new shape (unnecessary)
-                                                   *input_info_1.initializer_tensor,
+                                                   input_info_1.initializer_tensor,
                                                    unpacked_tensor));
     } else {
-      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*input_info_1.initializer_tensor, unpacked_tensor));
+      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info_1.initializer_tensor, unpacked_tensor));
     }
 
     Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(org_input_1_name);

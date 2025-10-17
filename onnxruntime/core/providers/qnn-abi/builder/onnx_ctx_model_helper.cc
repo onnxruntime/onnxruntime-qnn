@@ -3,13 +3,13 @@
 
 #include "core/providers/qnn-abi/builder/onnx_ctx_model_helper.h"
 
-#include <iostream>
-#include <fstream>
 #include <filesystem>
+#include <fstream>
+#include <iostream>
 
-#include "core/providers/qnn-abi/ort_api.h"
 #include "core/providers/qnn-abi/builder/qnn_utils.h"
 #include "core/providers/qnn-abi/builder/qnn_model.h"
+#include "core/providers/qnn-abi/ort_api.h"
 #include "core/providers/qnn-abi/shared_context.h"
 
 namespace onnxruntime {
@@ -56,7 +56,7 @@ Ort::Status GetMainContextNode(const OrtGraph** graphs,
   for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
     size_t num_nodes = 0;
     ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNumNodes(graphs[graph_idx], &num_nodes));
-    RETURN_IF(num_nodes != 1, "OrtGraph should has only one EPContext node.");
+    RETURN_IF(num_nodes != 1, "OrtGraph should have only one EPContext node.");
 
     std::vector<const OrtNode*> nodes(num_nodes);
     ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNodes(graphs[graph_idx], nodes.data(), nodes.size()));
@@ -168,7 +168,7 @@ Ort::Status TryGetMaxSpillFillSize(const OrtGraph** graphs,
   for (uint32_t idx = 0; idx < total_context_size; ++idx) {
     size_t num_nodes = 0;
     ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNumNodes(graphs[idx], &num_nodes));
-    RETURN_IF(num_nodes != 1, "OrtGraph should has only one EPContext node.");
+    RETURN_IF(num_nodes != 1, "OrtGraph should have only one EPContext node.");
 
     std::vector<const OrtNode*> nodes(num_nodes);
     ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNodes(graphs[idx], nodes.data(), nodes.size()));
@@ -201,7 +201,7 @@ Ort::Status LoadQnnCtxFromOnnxGraph(const OrtGraph* graph,
                                     int64_t max_spill_fill_size) {
   size_t num_nodes = 0;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNumNodes(graph, &num_nodes));
-  RETURN_IF(num_nodes != 1, "OrtGraph should has only one EPContext node.");
+  RETURN_IF(num_nodes != 1, "OrtGraph should have only one EPContext node.");
 
   std::vector<const OrtNode*> nodes(num_nodes);
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNodes(graph, nodes.data(), nodes.size()));

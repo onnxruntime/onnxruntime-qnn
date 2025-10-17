@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
+
 #include "core/providers/qnn-abi/builder/qnn_node_group/utils.h"
 
 #include <gsl/gsl>

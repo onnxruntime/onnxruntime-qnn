@@ -7,11 +7,11 @@
 #include <string>
 #include <vector>
 
-#include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
-#include "core/providers/qnn-abi/ort_api.h"
 #include "core/providers/qnn-abi/builder/op_builder_factory.h"
+#include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn-abi/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -124,10 +124,10 @@ Ort::Status ReduceOpBuilder::GetAxesSet(QnnModelWrapper& qnn_model_wrapper, cons
                 "QNN EP: \"axes\" input for reduce operator must be an initializer");
 
       // Get axes initializer bytes.
-      const auto& axes_tensor = qnn_model_wrapper.GetConstantTensor(axes_input_name);
+      const auto* axes_tensor = qnn_model_wrapper.GetConstantTensor(axes_input_name);
       std::vector<uint8_t> axes_bytes;
 
-      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(const_cast<OrtValueInfo&>(*axes_tensor), axes_bytes));
+      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(axes_tensor, axes_bytes));
       RETURN_IF_NOT(input_rank * sizeof(AxesOnnxIntType) >= axes_bytes.size(),
                     "Expect QNN Reduce* operator to have at most rank(input[0]) axes elements.");
       reduce_axes.resize(axes_bytes.size() / sizeof(AxesOnnxIntType));

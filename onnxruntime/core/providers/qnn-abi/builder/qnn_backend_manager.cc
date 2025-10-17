@@ -9,26 +9,26 @@
 #include <gsl/gsl>
 #include <string>
 
-#include "QnnOpDef.h"
 #include "CPU/QnnCpuCommon.h"
-#include "GPU/QnnGpuCommon.h"
 #include "DSP/QnnDspCommon.h"
+#include "GPU/QnnGpuCommon.h"
 #include "HTP/QnnHtpCommon.h"
 #include "HTP/QnnHtpContext.h"
 #include "HTP/QnnHtpPerfInfrastructure.h"
 #include "HTP/QnnHtpSystemContext.h"
 #include "IR/QnnIrCommon.h"
 #include "IR/QnnIrGraph.h"
+#include "QnnOpDef.h"
 #include "Saver/QnnSaver.h"
 #include "Saver/QnnSaverCommon.h"
 
+#include "core/providers/qnn-abi/builder/qnn_configs_helper.h"
+#include "core/providers/qnn-abi/builder/qnn_model.h"
+#include "core/providers/qnn-abi/builder/qnn_utils.h"
 #include "core/providers/qnn-abi/ort_api.h"
 #include "core/providers/qnn-abi/qnn_allocator.h"
 #include "core/providers/qnn-abi/qnn_telemetry.h"
 #include "core/providers/qnn-abi/shared_context.h"
-#include "core/providers/qnn-abi/builder/qnn_configs_helper.h"
-#include "core/providers/qnn-abi/builder/qnn_model.h"
-#include "core/providers/qnn-abi/builder/qnn_utils.h"
 
 // Flag to determine if Backend should do node validation for each opNode added
 #define DO_GRAPH_NODE_VALIDATIONS 1
@@ -428,9 +428,10 @@ void QnnLogging(const char* format,
     return;
   }
 
-  // TODO
+  // QNN-EP COPY START
   // There is an unknown bug in Ort::Logger::LogFormattedMessage which causes crashes.
-  // Below implementations are directly copied from core/common/logging/capture.cc.
+  // Below implementations are directly copied from core/common/logging/capture.cc to create formatted string
+  // and leverage Ort::Logger::LogMessage instead.
 
   static constexpr auto kTruncatedWarningText = "[...truncated...]";
   static constexpr int kMaxMessageSize = 2048;
@@ -462,6 +463,7 @@ void QnnLogging(const char* format,
   } else {
     stream << message.data();
   }
+  // QNN-EP COPY END
 
   ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, stream.str().c_str());
 }
@@ -1268,9 +1270,6 @@ Ort::Status QnnBackendManager::SetupBackend(
     return Ort::Status();
   }
 
-  // TODO: Setting logger is moved from here to constructor as setting the pointer would somehow cause SegFault during
-  // the later usage. In order to use its reference, its must be set during construction.
-
   vtcm_backup_buffer_sharing_enabled_ = enable_vtcm_backup_buffer_sharing;
 
   auto status = Ort::Status();
@@ -1653,8 +1652,7 @@ Ort::Status QnnBackendManager::ExtractBackendProfilingInfo() {
   if (provider.IsEnabled()) {
     auto level = provider.Level();
     auto keyword = provider.Keyword();
-    // TODO: onnxruntime::logging::ORTTraceLoggingKeyword::Profiling defined in core/common/logging/loggin.h.
-    if ((keyword & static_cast<uint64_t>(0x100)) != 0 && level >= 5) {
+    if ((keyword & static_cast<uint64_t>(qnn::ORTTraceLoggingKeyword::Profiling)) != 0 && level >= 5) {
       tracelogging_provider_ep_enabled = true;
     }
   }

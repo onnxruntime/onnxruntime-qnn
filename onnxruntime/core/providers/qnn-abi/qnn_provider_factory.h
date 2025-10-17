@@ -47,8 +47,6 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
 
   // CPU allocator so we can control the arena behavior. optional as ORT always provides a CPU allocator if needed.
   using MemoryInfoUniquePtr = std::unique_ptr<OrtMemoryInfo, std::function<void(OrtMemoryInfo*)>>;
-  MemoryInfoUniquePtr default_memory_info_;
-  MemoryInfoUniquePtr readonly_memory_info_;  // used for initializers
   MemoryInfoUniquePtr host_accessible_memory_info_;
 
   std::vector<OrtEpDevice*> ep_devices_;

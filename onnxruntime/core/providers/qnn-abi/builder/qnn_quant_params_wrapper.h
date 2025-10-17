@@ -1,5 +1,5 @@
-// // Copyright (c) Microsoft Corporation. All rights reserved.
-// // Licensed under the MIT License.
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
 
 #pragma once
 
@@ -7,8 +7,9 @@
 #include <memory>
 #include <vector>
 
-#include "core/providers/qnn-abi/ort_api.h"
 #include "QnnTypes.h"
+
+#include "core/providers/qnn-abi/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -39,7 +40,7 @@ class QnnQuantParamsWrapper {
 
   // Initialize this object from a (potentially) quantized ONNX tensor.
   // QnnModelWrapper provides utilities for unpacking scale and zero-point ONNX initializers.
-  Ort::Status Init(const OrtApi& ort_api, const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef& io_def);
+  Ort::Status Init(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef& io_def);
 
   QnnQuantParamsWrapper Copy() const;
 

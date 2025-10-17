@@ -1,10 +1,10 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
-#include "core/providers/qnn-abi/builder/qnn_utils.h"
-#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn-abi/builder/op_builder_factory.h"
+#include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn-abi/builder/qnn_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -62,8 +62,8 @@ Ort::Status TileOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   const auto& repeats_input_name = node_unit.Inputs()[1].name;
 
   std::vector<uint8_t> unpacked_tensor;
-  const auto& input_tensor = qnn_model_wrapper.GetConstantTensor(repeats_input_name);
-  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(const_cast<OrtValueInfo&>(*input_tensor), unpacked_tensor));
+  const auto* input_tensor = qnn_model_wrapper.GetConstantTensor(repeats_input_name);
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_tensor, unpacked_tensor));
   // Onnx repeats are int64, Qnn use uint32
   const int64_t* tensor_data = reinterpret_cast<const int64_t*>(unpacked_tensor.data());
   size_t tensor_byte_size = unpacked_tensor.size();

@@ -3,9 +3,9 @@
 
 #include "core/providers/qnn-abi/builder/qnn_node_group/udo_fusion.h"
 
-#include <gsl/gsl>
 #include <algorithm>
 #include <cassert>
+#include <gsl/gsl>
 #include <limits>
 #include <map>
 #include <memory>
@@ -15,12 +15,13 @@
 #include <utility>
 #include <vector>
 
-#include "core/providers/qnn-abi/ort_api.h"
-#include "core/providers/qnn-abi/builder/qnn_utils.h"
+#include <QnnOpDef.h>
+
 #include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn-abi/builder/qnn_node_group/utils.h"
-#include <QnnOpDef.h>
+#include "core/providers/qnn-abi/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {

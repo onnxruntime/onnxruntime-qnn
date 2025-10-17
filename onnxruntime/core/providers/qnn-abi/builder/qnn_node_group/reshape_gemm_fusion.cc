@@ -1,17 +1,20 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License.
+
 #include "core/providers/qnn-abi/builder/qnn_node_group/reshape_gemm_fusion.h"
 
-#include <gsl/gsl>
 #include <algorithm>
 #include <cassert>
+#include <gsl/gsl>
 #include <limits>
 #include <optional>
 #include <string>
 
-#include "core/providers/qnn-abi/ort_api.h"
-#include "core/providers/qnn-abi/builder/qnn_utils.h"
 #include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn-abi/builder/qnn_node_group/utils.h"
+#include "core/providers/qnn-abi/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -190,11 +193,9 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper, const OrtN
   RETURN_IF_ERROR(utils::GetQnnDataType(false, weight_def.type, data_type));
 
   // Get weight tensor proto and perform 2D transpose
-  const auto& weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
-  if (weight_tensor_proto != nullptr) {
-    // Transpose the weight tensor (2D matrix transpose)
-    RETURN_IF_ERROR(qnn_model_wrapper.TransposeTensor(weight_shape, *weight_tensor_proto, unpacked_tensor));
-  }
+  const auto* weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
+  // Transpose the weight tensor (2D matrix transpose)
+  RETURN_IF_ERROR(utils::TwoDimensionTranspose(qnn_model_wrapper, weight_shape, weight_tensor_proto, unpacked_tensor));
   QnnTensorWrapper weight_tensor(weight_tensor_name, tensor_type, data_type, QnnQuantParamsWrapper(),
                                  std::move(weight_shape), std::move(unpacked_tensor));
   if (has_bias) {

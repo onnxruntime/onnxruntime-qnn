@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/qnn_utils.h"
 
 namespace onnxruntime {
@@ -64,7 +64,7 @@ Ort::Status ProcessConstantValue(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input, input_info));
   std::vector<uint8_t> unpacked_tensor;
   // Already confirmed constant_value input is initializer in ProcessInputs()
-  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*input_info.initializer_tensor, unpacked_tensor));
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info.initializer_tensor, unpacked_tensor));
   Qnn_Scalar_t constant_value_qnn_scalar = QNN_SCALAR_INIT;
   // constant_value is quantized
   if (input.quant_param.has_value()) {
@@ -179,8 +179,8 @@ Ort::Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
   const auto& pads_input_name = inputs[1].name;
 
   std::vector<uint8_t> unpacked_tensor;
-  const auto& input_tensor = qnn_model_wrapper.GetConstantTensor(pads_input_name);
-  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(const_cast<OrtValueInfo&>(*input_tensor), unpacked_tensor));
+  const auto* input_tensor = qnn_model_wrapper.GetConstantTensor(pads_input_name);
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_tensor, unpacked_tensor));
   // Onnx Pads are int64, Qnn use uint32
   const int64_t* tensor_data = reinterpret_cast<const int64_t*>(unpacked_tensor.data());
   size_t tensor_byte_size = unpacked_tensor.size();

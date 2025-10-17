@@ -3,12 +3,12 @@
 
 #include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
 
-#include <utility>
 #include <unordered_set>
+#include <utility>
 
-#include "core/providers/qnn-abi/ort_api.h"
 #include "core/providers/qnn-abi/builder/qnn_def.h"
 #include "core/providers/qnn-abi/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {

@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/qnn_utils.h"
 
 namespace onnxruntime {
@@ -82,7 +82,7 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   const auto& inputs = node_unit.Inputs();
   for (size_t input_i = 0; input_i < inputs.size(); ++input_i) {
     QnnQuantParamsWrapper quantize_param;
-    RETURN_IF_ERROR(quantize_param.Init(qnn_model_wrapper.GetOrtApi(), qnn_model_wrapper, inputs[input_i]));
+    RETURN_IF_ERROR(quantize_param.Init(qnn_model_wrapper, inputs[input_i]));
 
     bool is_quantized_tensor = inputs[input_i].quant_param.has_value();
     const auto& input_name = inputs[input_i].name;
@@ -104,14 +104,13 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
     std::vector<uint8_t> unpacked_tensor;
     bool is_constant_input = qnn_model_wrapper.IsConstantInput(input_name);
     if (is_constant_input) {
-      const auto& input_tensor = qnn_model_wrapper.GetConstantTensor(input_name);
-      OrtValueInfo& input_tensor_ref = const_cast<OrtValueInfo&>(*input_tensor);
+      const auto* input_tensor = qnn_model_wrapper.GetConstantTensor(input_name);
       if (1 == input_trans_flag.at(input_i)) {
         RETURN_IF_ERROR(quantize_param.HandleTranspose<size_t>(std::vector<size_t>({1, 0})));
         RETURN_IF_ERROR(
-            utils::TwoDimensionTranspose(qnn_model_wrapper, input_shape, input_tensor_ref, unpacked_tensor));
+            utils::TwoDimensionTranspose(qnn_model_wrapper, input_shape, input_tensor, unpacked_tensor));
       } else {
-        RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_tensor_ref, unpacked_tensor));
+        RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_tensor, unpacked_tensor));
       }
     }
 

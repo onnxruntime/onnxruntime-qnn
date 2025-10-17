@@ -722,6 +722,7 @@ TEST_F(QnnABIHTPBackendTests, UnaryOp_Abs_U16) {
 TEST_F(QnnABIHTPBackendTests, DISABLED_UnaryOp_Ceil) {
 #else
 TEST_F(QnnABIHTPBackendTests, UnaryOp_Ceil) {
+#endif
   const std::vector<float> input_data = GetFloatDataInRangeABI(-12.0f, 12.0f, 6);
   RunQDQOpTest<uint8_t>("Ceil",
                         {TestInputDef<float>({1, 2, 3}, false, input_data)},

@@ -459,6 +459,7 @@ TEST_F(QnnABIHTPBackendTests, Gemm_Static_B_And_Bias) {
 TEST_F(QnnABIHTPBackendTests, DISABLED_Gemm_TransAB_Static_B_And_Bias_U8) {
 #else
 TEST_F(QnnABIHTPBackendTests, Gemm_TransAB_Static_B_And_Bias_U8) {
+#endif
   std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
   std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 24);
   std::vector<float> input_c_data = GetFloatDataInRangeABI(-1.0f, 1.0f, 4);
@@ -497,6 +498,7 @@ TEST_F(QnnABIHTPBackendTests, Gemm_TransAB_Static_B_And_Bias_U16Act_U8Weight) {
 TEST_F(QnnABIHTPBackendTests, DISABLED_Gemm_TransAB_Dynamic_B_And_Bias) {
 #else
 TEST_F(QnnABIHTPBackendTests, Gemm_TransAB_Dynamic_B_And_Bias) {
+#endif
   std::vector<float> input_a_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 6);
   std::vector<float> input_b_data = GetFloatDataInRangeABI(-5.0f, 5.0f, 24);
   std::vector<float> input_c_data = GetFloatDataInRangeABI(-1.0f, 1.0f, 4);

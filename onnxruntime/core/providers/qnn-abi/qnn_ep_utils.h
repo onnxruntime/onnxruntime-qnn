@@ -9,7 +9,7 @@
 #include <optional>
 #include <tuple>
 
-#include "ort_api.h"
+#include "core/providers/qnn-abi/ort_api.h"
 
 // Forward declaration of OrtNode
 struct OrtNode;

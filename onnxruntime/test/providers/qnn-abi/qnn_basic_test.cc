@@ -1387,7 +1387,7 @@ TEST_F(QnnABIHTPBackendTests, LoadingAndUnloadingOfQnnLibrary_FixSegFault) {
 // Tests autoEP feature to automatically select an EP that supports the NPU.
 // Currently only works on Windows.
 TEST_F(QnnABIHTPBackendTests, AutoEp_PreferNpu) {
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, onnxruntime::kQnnABIExecutionProvider,
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnABIExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn_abi.dll")));
 
   Ort::SessionOptions so;
@@ -1395,23 +1395,28 @@ TEST_F(QnnABIHTPBackendTests, AutoEp_PreferNpu) {
 
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
   Ort::Session session(*ort_env, ort_model_path, so);
-  EXPECT_TRUE(SessionHasEp(session, onnxruntime::kQnnABIExecutionProvider));
+  EXPECT_TRUE(SessionHasEp(session, kQnnABIExecutionProvider));
 
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, onnxruntime::kQnnABIExecutionProvider));
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnABIExecutionProvider));
 }
 
 TEST_F(QnnABIGPUBackendTests, AutoEp_PreferGpu) {
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnABIExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn_abi.dll")));
 
   Ort::SessionOptions so;
   so.SetEpSelectionPolicy(OrtExecutionProviderDevicePolicy_PREFER_GPU);
 
+  // QNN EP currently uses option "backend_type"/"backend_path" to determine the backend.
+  // Below is a workaround to enforce GPU backend before we decide to revise the logic.
+  const std::string prefix = OrtSessionOptions::GetProviderOptionPrefix(kQnnABIExecutionProvider);
+  so.AddConfigEntry((prefix + "backend_type").c_str(), "gpu");
+
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx";
   Ort::Session session(*ort_env, ort_model_path, so);
-  EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
+  EXPECT_TRUE(SessionHasEp(session, kQnnABIExecutionProvider));
 
-  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnABIExecutionProvider));
 }
 
 // Returns true if QNN EP was created and QNN HTP shared memory allocator is available, false otherwise.
@@ -1455,7 +1460,7 @@ static bool CreateSessionWithQnnEpAndQnnHtpSharedMemoryAllocator(const ORTCHAR_T
   }
 }
 
-TEST(QnnABIApiTest, get_allocator_qnn_htp_shared) {
+TEST_F(QnnABIHTPBackendTests, get_allocator_qnn_htp_shared) {
   Ort::Session session{nullptr};
 
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "capi_symbolic_dims.onnx";
@@ -1478,7 +1483,7 @@ TEST(QnnABIApiTest, get_allocator_qnn_htp_shared) {
   ASSERT_EQ(mem_allocation.size(), size_t{1024});
 }
 
-TEST(QnnABIApiTest, io_binding_qnn_htp_shared) {
+TEST_F(QnnABIHTPBackendTests, io_binding_qnn_htp_shared) {
   Ort::Session session{nullptr};
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "mul_1.onnx";
   if (!CreateSessionWithQnnEpAndQnnHtpSharedMemoryAllocator(ort_model_path, session)) {

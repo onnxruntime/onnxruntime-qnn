@@ -517,8 +517,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   if (provider.IsEnabled()) {
     auto level = provider.Level();
     auto keyword = provider.Keyword();
-    // TODO: onnxruntime::logging::ORTTraceLoggingKeyword::Profiling defined in core/common/logging/loggin.h.
-    if ((keyword & static_cast<uint64_t>(0x100)) != 0) {
+    if ((keyword & static_cast<uint64_t>(qnn::ORTTraceLoggingKeyword::Profiling)) != 0) {
       if (level != 0) {
         profiling_level_etw = GetProfilingLevelFromETWLevel(level, logger_);
       }
@@ -839,8 +838,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
 
           if (IsEnabled == EVENT_CONTROL_CODE_ENABLE_PROVIDER) {
             if ((MatchAnyKeyword & static_cast<ULONGLONG>(qnn::ORTTraceLoggingKeyword::Logs)) != 0) {
-              auto severity = etwRegistrationManager.MapLevelToSeverity();
-              auto ortETWSeverity = onnxruntime::logging::SeverityToOrtLoggingLevel(severity);
+              auto ortETWSeverity = etwRegistrationManager.MapLevelToOrtLoggingLevel();
               (void)qnn_backend_manager_->ResetQnnLogLevel(ortETWSeverity);
             }
             if ((MatchAnyKeyword & static_cast<ULONGLONG>(qnn::ORTTraceLoggingKeyword::Profiling)) != 0) {
@@ -973,7 +971,10 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
   };
 
   std::unordered_map<std::string, size_t> model_input_index_map;
-  // TODO: Handle initializers as inputs.
+  // Note that ort_api.GraphGetInputs includes initializers that are included in the list of graph inputs but
+  // in previous non-ABI, graph_viewer.GetInputs does not include them. Fortunately, this index map is only used in
+  // QnnModelWrapper::GetTensorType to determine APP_WRITE tensor type. Since STATIC tensor type is checked before
+  // APP_WRITE in current implementation, there should be no impact including initializers here.
   init_input_output_index_map(model_input_index_map, graph_inputs);
 
   std::unordered_map<std::string, size_t> model_output_index_map;
@@ -1276,7 +1277,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   }
 
   Ort::Status rt = ep->qnn_backend_manager_->SetupBackend(is_qnn_ctx_model,
-                                                          ep->context_cache_enabled_ && false,  // enable_spill_fill_buffer_ (not implemented)
+                                                          ep->context_cache_enabled_ && ep->enable_spill_fill_buffer_,
                                                           ep->share_ep_contexts_,
                                                           ep->enable_vtcm_backup_buffer_sharing_,
                                                           context_bin_map);
@@ -1284,7 +1285,9 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   context_bin_map.clear();
 
   if (!rt.IsOK()) {
-    return ep->ort_api.CreateStatus(ORT_EP_FAIL, ("QNN SetupBackend failed " + rt.GetErrorMessage()).c_str());
+    const std::string message = "QNN SetupBackend failed " + rt.GetErrorMessage();
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
   }
 
   if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType())) {
@@ -1814,7 +1817,7 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
   if (ep->IsHtpSharedMemoryAllocatorAvailable()) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating HtpSharedMemoryAllocator.");
 
-    auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(ep->ort_api, memory_info, ep->rpcmem_library_);
+    auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, ep->rpcmem_library_);
     *allocator = htp_allocator.release();
   }
   return nullptr;

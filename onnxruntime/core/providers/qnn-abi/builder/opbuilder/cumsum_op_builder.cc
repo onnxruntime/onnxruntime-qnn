@@ -1,10 +1,10 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn-abi/builder/qnn_utils.h"
-#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -16,7 +16,7 @@ Ort::Status GetOnnxAxis(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& n
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], axis_input_info));
   RETURN_IF_NOT(axis_input_info.is_initializer, "axis must be initializers");
   std::vector<uint8_t> axis_unpacked_tensor;
-  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*axis_input_info.initializer_tensor, axis_unpacked_tensor));
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(axis_input_info.initializer_tensor, axis_unpacked_tensor));
   RETURN_IF_NOT(1 == static_cast<uint32_t>(axis_unpacked_tensor.size() / sizeof(axis_input_info.qnn_data_type)),
                 "axis should be a single element");
 

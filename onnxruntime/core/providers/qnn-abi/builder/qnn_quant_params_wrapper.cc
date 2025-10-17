@@ -1,13 +1,16 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include "core/providers/qnn-abi/builder/qnn_quant_params_wrapper.h"
+
 #include <algorithm>
 #include <cassert>
 #include <optional>
 #include <vector>
+
 #include "QnnTypes.h"
+
 #include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn-abi/builder/qnn_quant_params_wrapper.h"
 
 #define ALIGN_PTR_UP(ptr, align, type) \
   reinterpret_cast<type>((reinterpret_cast<std::uintptr_t>(ptr) + (align) - 1) & ~((align) - 1))
@@ -228,8 +231,7 @@ Ort::Status QnnQuantParamsWrapper::Init(const Qnn_QuantizeParams_t& params) {
 
 // Initialize this object from a (potentially) quantized ONNX tensor.
 // QnnModelWrapper provides utilities for unpacking scale and zero-point ONNX initializers.
-Ort::Status QnnQuantParamsWrapper::Init(const OrtApi& ort_api,
-                                        const QnnModelWrapper& qnn_model_wrapper,
+Ort::Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper,
                                         const OrtNodeUnitIODef& io_def) {
   const std::optional<OrtNodeUnitIODef::QuantParam>& ort_quant_params = io_def.quant_param;
 
@@ -247,26 +249,13 @@ Ort::Status QnnQuantParamsWrapper::Init(const OrtApi& ort_api,
   std::vector<float> scales;
   std::vector<int32_t> zero_points;
 
-  // TODO: Check the type of io_def.quant_param->scale
-  // According to the type definition, it may need to be revised.
-  const OrtValueInfo* qparam_scale = static_cast<const OrtValueInfo*>(ort_quant_params->scale);
-  const char* qparam_scale_name = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoName(qparam_scale, &qparam_scale_name));
-  const std::string& scale_name = std::string(qparam_scale_name);
-  RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales(scale_name, scales));
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales(ort_quant_params->scale, scales));
 
   bool is_int4_type = false;
 
   if (ort_quant_params->zero_point != nullptr) {
-    // TODO: Check the type of io_def.quant_param->zero_point
-    // According to the type definition, it may need to be revised.
-    const OrtValueInfo* qparam_zero_point = static_cast<const OrtValueInfo*>(ort_quant_params->zero_point);
-    const char* qparam_zero_point_name = nullptr;
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoName(qparam_zero_point, &qparam_zero_point_name));
-    const std::string& zero_point_name = std::string(qparam_zero_point_name);
-
     ONNXTensorElementDataType onnx_tp_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackZeroPoints(zero_point_name, zero_points, onnx_tp_type));
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackZeroPoints(ort_quant_params->zero_point, zero_points, onnx_tp_type));
 
     is_int4_type = (onnx_tp_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4) ||
                    (onnx_tp_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4);

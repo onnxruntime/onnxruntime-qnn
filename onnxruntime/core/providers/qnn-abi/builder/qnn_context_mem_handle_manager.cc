@@ -5,9 +5,9 @@
 
 #include "HTP/QnnHtpMem.h"
 
-#include "core/providers/qnn-abi/ort_api.h"
 #include "core/providers/qnn-abi/builder/qnn_def.h"
 #include "core/providers/qnn-abi/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/ort_api.h"
 #include "core/providers/qnn-abi/qnn_allocator.h"
 
 namespace onnxruntime::qnn {

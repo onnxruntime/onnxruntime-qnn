@@ -10,8 +10,8 @@
 #include <utility>
 #include <vector>
 
-#include "core/providers/qnn-abi/ort_api.h"
 #include "core/providers/qnn-abi/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -65,7 +65,7 @@ Ort::Status QnnModelWrapper::MakeTensorWrapper(const OrtNodeUnitIODef& tensor, Q
 
   std::vector<uint8_t> unpacked_tensor;
   if (tensor_info.is_initializer) {
-    RETURN_IF_ERROR(UnpackInitializerData(*tensor_info.initializer_tensor, unpacked_tensor));
+    RETURN_IF_ERROR(UnpackInitializerData(tensor_info.initializer_tensor, unpacked_tensor));
   }
 
   Qnn_TensorMemType_t mem_type = QNN_TENSORMEMTYPE_RAW;
@@ -87,7 +87,7 @@ Ort::Status QnnModelWrapper::MakeTensorWrapper(const TensorInfo& tensor_info,
                                                QnnTensorWrapper& tensor_wrapper) const {
   std::vector<uint8_t> unpacked_tensor;
   if (tensor_info.is_initializer) {
-    RETURN_IF_ERROR(UnpackInitializerData(*tensor_info.initializer_tensor, unpacked_tensor));
+    RETURN_IF_ERROR(UnpackInitializerData(tensor_info.initializer_tensor, unpacked_tensor));
   }
 
   tensor_wrapper = QnnTensorWrapper(tensor_name, GetTensorType(tensor_name), tensor_info.qnn_data_type,
@@ -329,8 +329,6 @@ bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
 }
 
 bool QnnModelWrapper::GetOnnxShape(const std::vector<int64_t>& onnx_shape, std::vector<uint32_t>& shape) {
-  // TODO: Check what OrtApi.GetDimensions returns if no shape presents and how we should handle.
-
   // Set shape to 1 for scalar.
   if (onnx_shape.size() < 1) {
     shape.push_back(1);
@@ -338,7 +336,6 @@ bool QnnModelWrapper::GetOnnxShape(const std::vector<int64_t>& onnx_shape, std::
   }
 
   for (const int64_t& dim : onnx_shape) {
-    // TODO: Check whether -1 really represents dynamic shape.
     if (dim < 0) {
       return false;
     }
@@ -348,14 +345,10 @@ bool QnnModelWrapper::GetOnnxShape(const std::vector<int64_t>& onnx_shape, std::
   return true;
 }
 
-Ort::Status QnnModelWrapper::UnpackZeroPoints(const std::string& initializer_name,
+Ort::Status QnnModelWrapper::UnpackZeroPoints(const OrtValueInfo* zp_tensor,
                                               /*out*/ std::vector<int32_t>& zero_points,
                                               /*out*/ ONNXTensorElementDataType& onnx_data_type) const {
-  // Find the initializer by name
-  const OrtValueInfo* zp_tensor = nullptr;
-  RETURN_IF_ERROR(FindInitializer(initializer_name, &zp_tensor));
-
-  RETURN_IF(zp_tensor == nullptr, ("Unable to find initializer for zero-point(s): " + initializer_name).c_str());
+  RETURN_IF(zp_tensor == nullptr, "Given zero point(s) to be unpacked is null.");
 
   const OrtTypeInfo* type_info = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetValueInfoTypeInfo(zp_tensor, &type_info));
@@ -366,7 +359,7 @@ Ort::Status QnnModelWrapper::UnpackZeroPoints(const std::string& initializer_nam
 
   std::vector<uint8_t> initializer_bytes;
 
-  RETURN_IF_ERROR(UnpackInitializerData(*const_cast<OrtValueInfo*>(zp_tensor), initializer_bytes));
+  RETURN_IF_ERROR(UnpackInitializerData(zp_tensor, initializer_bytes));
 
   // Helper to transform zero points (QNN uses -offset for some reason)
   auto transform_zero_points = [&zero_points](auto input_span) {
@@ -417,12 +410,8 @@ Ort::Status QnnModelWrapper::UnpackZeroPoints(const std::string& initializer_nam
   return Ort::Status();
 }
 
-Ort::Status QnnModelWrapper::UnpackScales(const std::string& initializer_name, std::vector<float>& scales) const {
-  // Find the initializer by name
-  const OrtValueInfo* scale_tensor = nullptr;
-  RETURN_IF_ERROR(FindInitializer(initializer_name, &scale_tensor));
-
-  RETURN_IF(scale_tensor == nullptr, ("Unable to find initializer for scale(s): " + initializer_name).c_str());
+Ort::Status QnnModelWrapper::UnpackScales(const OrtValueInfo* scale_tensor, std::vector<float>& scales) const {
+  RETURN_IF(scale_tensor == nullptr, "Given scale(s) to be unpacked is null.");
 
   const OrtTypeInfo* type_info = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetValueInfoTypeInfo(scale_tensor, &type_info));
@@ -435,7 +424,7 @@ Ort::Status QnnModelWrapper::UnpackScales(const std::string& initializer_name, s
                 "Expected scale initializer to be of type FLOAT");
 
   std::vector<uint8_t> initializer_bytes;
-  RETURN_IF_ERROR(UnpackInitializerData(*const_cast<OrtValueInfo*>(scale_tensor), initializer_bytes));
+  RETURN_IF_ERROR(UnpackInitializerData(scale_tensor, initializer_bytes));
 
   gsl::span<const float> src = gsl::make_span(reinterpret_cast<const float*>(initializer_bytes.data()),
                                               initializer_bytes.size() / sizeof(float));
@@ -453,17 +442,9 @@ Ort::Status QnnModelWrapper::IsPerChannelQuantized(const OrtNodeUnitIODef& io_de
     return Ort::Status();
   }
 
-  // TODO: Check the type of io_def.quant_param->scale
-  // According to the type definition, it may need to be revised.
-  const OrtValueInfo* qparam_scale = static_cast<const OrtValueInfo*>(io_def.quant_param->scale);
-  const char* qparam_scale_name = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetValueInfoName(qparam_scale, &qparam_scale_name));
-  const std::string& scale_name = std::string(qparam_scale_name);
-
-  const OrtValueInfo* scale_tensor = nullptr;
-  RETURN_IF_ERROR(FindInitializer(scale_name, &scale_tensor));
-  RETURN_IF(scale_tensor == nullptr, ("Unable to find initializer for scale(s): " + scale_name).c_str());
-  std::vector<int64_t> scale_shape = utils::GetInitializerShape(*scale_tensor, api_ptrs_.ort_api);
+  const OrtValueInfo* scale_tensor = io_def.quant_param->scale;
+  RETURN_IF(scale_tensor == nullptr, "Given IO def has null scale.");
+  std::vector<int64_t> scale_shape = utils::GetInitializerShape(scale_tensor, api_ptrs_.ort_api);
 
   // Check the number of scale values to determine if the tensor is per-channel.
   // This is consistent with CPU EP's Quant/Dequant logic. We can't use the presence of an axis because even a
@@ -498,7 +479,7 @@ Ort::Status QnnModelWrapper::GetTensorInfo(const OrtNodeUnitIODef& tensor, Tenso
   const std::string& name = tensor.name;
 
   // Fill in quantization param info.
-  RETURN_IF_ERROR(tensor_info.quant_param.Init(api_ptrs_.ort_api, *this, tensor));
+  RETURN_IF_ERROR(tensor_info.quant_param.Init(*this, tensor));
 
   // Fill in QNN data type.
   tensor_info.qnn_data_type = QNN_DATATYPE_FLOAT_32;
@@ -512,7 +493,7 @@ Ort::Status QnnModelWrapper::GetTensorInfo(const OrtNodeUnitIODef& tensor, Tenso
   // Fill in initializer info.
   tensor_info.is_initializer = IsConstantInput(name);
   if (tensor_info.is_initializer) {
-    tensor_info.initializer_tensor = const_cast<OrtValueInfo*>(GetConstantTensor(name));
+    tensor_info.initializer_tensor = GetConstantTensor(name);
   }
 
   return Ort::Status();
@@ -632,7 +613,7 @@ void QnnModelWrapper::GetGraphInputOutputTensorWrapper(const std::vector<std::st
   return;
 }
 
-Ort::Status QnnModelWrapper::UnpackInitializerData(OrtValueInfo& initializer,
+Ort::Status QnnModelWrapper::UnpackInitializerData(const OrtValueInfo* initializer,
                                                    std::vector<uint8_t>& unpacked_tensor) const {
   const ORTCHAR_T* model_path = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetModelPath(&ort_graph_, &model_path));
@@ -642,8 +623,7 @@ Ort::Status QnnModelWrapper::UnpackInitializerData(OrtValueInfo& initializer,
                                                unpacked_tensor));
 
   const OrtTypeInfo* type_info = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(
-      api_ptrs_.ort_api.GetValueInfoTypeInfo(static_cast<const OrtValueInfo*>(&initializer), &type_info));
+  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetValueInfoTypeInfo(initializer, &type_info));
   const OrtTensorTypeAndShapeInfo* tensor_type_and_shape_info = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_type_and_shape_info));
   ONNXTensorElementDataType onnx_data_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
@@ -659,92 +639,6 @@ Ort::Status QnnModelWrapper::UnpackInitializerData(OrtValueInfo& initializer,
     const size_t num_uint4_elems = std::accumulate(shape.begin(), shape.end(), static_cast<size_t>(1), std::multiplies<size_t>());
     RETURN_IF_ERROR(utils::UnpackInt4ToInt8<false>(num_uint4_elems, unpacked_tensor));
   }
-
-  return Ort::Status();
-}
-
-// Implementation of TransposeTensor method for 2D matrix transpose
-Ort::Status QnnModelWrapper::TransposeTensor(std::vector<uint32_t>& data_shape,
-                                             const OrtValueInfo& initializer,
-                                             std::vector<uint8_t>& transposed_data) const {
-  RETURN_IF_NOT(data_shape.size() == 2, "Expected shape of rank 2 for 2D matrix transpose");
-
-  // Get the type info from the initializer
-  const OrtTypeInfo* type_info = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetValueInfoTypeInfo(&initializer, &type_info));
-
-  // Cast to tensor type info
-  const OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info));
-
-  // Get the tensor element type
-  ONNXTensorElementDataType data_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorElementType(tensor_info, &data_type));
-
-  // Get the initializer value
-  const OrtValue* initializer_value = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.ValueInfo_GetInitializerValue(&initializer, &initializer_value));
-
-  // Get the raw data from the initializer value
-  const void* raw_data = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorData(initializer_value, &raw_data));
-
-  // Get the tensor size in bytes
-  size_t raw_data_size = 0;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorSizeInBytes(initializer_value, &raw_data_size));
-
-  // Calculate element size based on data type
-  size_t elem_size = 0;
-  switch (data_type) {
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
-      elem_size = sizeof(float);
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
-      elem_size = sizeof(uint8_t);
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
-      elem_size = sizeof(int8_t);
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16:
-      elem_size = sizeof(uint16_t);
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16:
-      elem_size = sizeof(int16_t);
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:
-      elem_size = sizeof(int32_t);
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:
-      elem_size = sizeof(int64_t);
-      break;
-    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16:
-      elem_size = 2;  // 16 bits = 2 bytes
-      break;
-    default:
-      return MAKE_EP_FAIL("Unsupported data type for tensor transpose");
-  }
-
-  // Prepare output buffer
-  transposed_data.resize(raw_data_size);
-
-  // Perform 2D transpose
-  const uint32_t rows = data_shape[0];
-  const uint32_t cols = data_shape[1];
-
-  for (uint32_t row = 0; row < rows; row++) {
-    for (uint32_t col = 0; col < cols; col++) {
-      const size_t src_idx = (row * cols + col) * elem_size;
-      const size_t dst_idx = (col * rows + row) * elem_size;
-
-      // Copy element byte by byte
-      std::memcpy(&transposed_data[dst_idx],
-                  static_cast<const uint8_t*>(raw_data) + src_idx,
-                  elem_size);
-    }
-  }
-
-  // Update shape to reflect the transpose
-  std::swap(data_shape[0], data_shape[1]);
 
   return Ort::Status();
 }

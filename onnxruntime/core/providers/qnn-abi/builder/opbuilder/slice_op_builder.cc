@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/qnn_utils.h"
 
 namespace onnxruntime {
@@ -11,6 +11,7 @@ namespace qnn {
 
 namespace {
 
+// QNN-EP COPY START
 // Below implementations are directly copied from core/providers/cpu/tensor/slice_helper.h.
 struct PrepareForComputeMetadata {
   explicit PrepareForComputeMetadata(gsl::span<const int64_t> input_dimensions)
@@ -124,6 +125,7 @@ inline Ort::Status PrepareForComputeHelper(const gsl::span<const int64_t>& raw_s
 
   return Ort::Status();
 }
+// QNN-EP COPY END
 
 }  // namespace
 
@@ -197,8 +199,7 @@ static Ort::Status GetInitializerInputData(const OrtNodeUnitIODef& input, const 
 
   // Deserialize initializer into byte buffer
   std::vector<uint8_t> initializer_bytes;
-  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(const_cast<OrtValueInfo&>(*initializer_valueinfo),
-                                                          initializer_bytes));
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(initializer_valueinfo, initializer_bytes));
 
   // Copy Tensor of int32_t or int64_t elems into output (int64_ts).
   ONNXTensorElementDataType onnx_type = input.type;

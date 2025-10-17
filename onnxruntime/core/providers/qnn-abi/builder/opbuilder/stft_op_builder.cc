@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/qnn_utils.h"
 
 namespace onnxruntime {
@@ -234,7 +234,7 @@ Ort::Status STFTOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     const auto& frame_step_input = inputs[frame_step_index];
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(frame_step_input, frame_step));
     std::vector<uint8_t> frame_step_data;
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*frame_step.initializer_tensor, frame_step_data));
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(frame_step.initializer_tensor, frame_step_data));
     frame_step_info = *reinterpret_cast<uint32_t*>(frame_step_data.data());
     Qnn_Scalar_t frame_step_param = QNN_SCALAR_INIT;
     frame_step_param.dataType = QNN_DATATYPE_UINT_32;
@@ -253,7 +253,7 @@ Ort::Status STFTOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(frame_length_input, frame_length));
 
     std::vector<uint8_t> frame_length_data;
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*frame_length.initializer_tensor, frame_length_data));
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(frame_length.initializer_tensor, frame_length_data));
     frame_length_info = *reinterpret_cast<uint32_t*>(frame_length_data.data());
 
     // Create frame_length parameter

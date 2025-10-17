@@ -6,10 +6,10 @@
 #include <mutex>
 #include <vector>
 
-#include "core/providers/qnn-abi/ort_api.h"
 #include "core/providers/qnn-abi/builder/qnn_def.h"
 #include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn-abi/builder/qnn_backend_manager.h"
+#include "core/providers/qnn-abi/ort_api.h"
 #include "core/providers/qnn-abi/rpcmem_library.h"
 
 namespace onnxruntime {

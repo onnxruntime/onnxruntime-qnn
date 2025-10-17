@@ -75,6 +75,7 @@ namespace onnxruntime {
     }                                                                 \
   } while (0)
 
+// QNN-EP COPY START
 // Below are macors copied from core/common/common.h directly.
 #ifdef _WIN32
 #define ORT_UNUSED_PARAMETER(x) (x)
@@ -99,13 +100,17 @@ namespace onnxruntime {
 #define ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(TypeName) \
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(TypeName);           \
   ORT_DISALLOW_MOVE(TypeName)
+// QNN-EP COPY END
 
+// Since ORT_TSTR expands to wstring and string on WIN32 and non-WIN32, respectively, this macro provides convenient
+// usage to convert std::filesystem::path accordingly.
 #ifdef _WIN32
 #define FILEPATH_TO_STRING(filepath) (filepath).wstring();
 #else
 #define FILEPATH_TO_STRING(filepath) (filepath).string();
 #endif
 
+// QNN-EP COPY START
 // Below are GSL utilities copied from core/common/span_utils.h directly.
 template <class U, class T>
 [[nodiscard]] inline gsl::span<U> ReinterpretAsSpan(gsl::span<T> src) {
@@ -119,6 +124,7 @@ template <class U, class T>
 constexpr const char* kOnnxDomain = "";
 constexpr const char* kMSDomain = "com.microsoft";
 constexpr const char* kMSInternalNHWCDomain = "com.ms.internal.nhwc";
+// QNN-EP COPY END
 
 class OrtLoggingManager {
  public:
@@ -191,7 +197,6 @@ struct OrtNodeGroup {
 }  // namespace QDQ
 
 struct OrtNodeUnitIODef {
-  // TODO: Update this.
   struct QuantParam {
     const OrtValueInfo* scale;
     const OrtValueInfo* zero_point{nullptr};
@@ -227,7 +232,7 @@ class OrtNodeUnit {
   std::string OpType() const noexcept { return Ort::ConstNode(target_node_).GetOperatorType(); }
   std::string Name() const noexcept { return Ort::ConstNode(target_node_).GetName(); }
   int SinceVersion() const noexcept { return Ort::ConstNode(target_node_).GetSinceVersion(); }
-  // TODO: Id is in fact not equal to index.
+  // Align NodeUnit to name as Index although returning Id since index is inaccessible.
   size_t Index() const noexcept { return Ort::ConstNode(target_node_).GetId(); }
 
   const OrtNode& GetNode() const noexcept { return *target_node_; }
@@ -338,9 +343,9 @@ inline std::string GetLowercaseString(std::string str) {
 // Refer to OrtSessionOptions::GetProviderOptionPrefix.
 std::string GetProviderOptionPrefix(const std::string& provider_name);
 
-// TODO
-// Not sure why Env::Default() fails inside EP, replicate below implementations from "core/platform/posix/env.cc" and
-// "core/platform/windows/env.cc" to here.
+// QNN-EP COPY START
+// Below implementations are directly copied from "core/platform/posix/env.cc" and "core/platform/windows/env.cc"
+// with few modifications to eliminate additional dependencies.
 std::basic_string<ORTCHAR_T> OrtGetRuntimePath();
 
 Ort::Status OrtLoadDynamicLibrary(const std::basic_string<ORTCHAR_T>& wlibrary_filename,
@@ -351,17 +356,7 @@ Ort::Status OrtUnloadDynamicLibrary(void* handle);
 
 Ort::Status OrtGetSymbolFromLibrary(void* handle, const std::string& symbol_name, void** symbol);
 
-// non-macro equivalent of TEMP_FAILURE_RETRY, described here:
-// https://www.gnu.org/software/libc/manual/html_node/Interrupted-Primitives.html
-template <typename TFunc, typename... TFuncArgs>
-long int TempFailureRetry(TFunc retriable_operation, TFuncArgs&&... args) {
-  long int result;
-  do {
-    result = retriable_operation(std::forward<TFuncArgs>(args)...);
-  } while (result == -1 && errno == EINTR);
-  return result;
-}
-
 Ort::Status ReadFileIntoBuffer(const ORTCHAR_T* file_path, int64_t offset, size_t length, gsl::span<char> buffer);
+// QNN-EP COPY END
 
 }  // namespace onnxruntime

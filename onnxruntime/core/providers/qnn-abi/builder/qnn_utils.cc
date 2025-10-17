@@ -12,10 +12,11 @@
 #include <utility>
 #include <vector>
 
+#include "nlohmann/json.hpp"
+
 #include "core/providers/qnn-abi/ort_api.h"
 #include "core/providers/qnn-abi/builder/qnn_def.h"
 #include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
-#include "nlohmann/json.hpp"
 
 namespace onnxruntime {
 namespace qnn {
@@ -1135,7 +1136,7 @@ static Ort::Status TransposeDataRank5(gsl::span<const int64_t> input_shape,
 
 Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
                                   std::vector<uint32_t>& data_shape,
-                                  OrtValueInfo& initializer,
+                                  const OrtValueInfo* initializer,
                                   std::vector<uint8_t>& transposed_data) {
   const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
 
@@ -1146,7 +1147,7 @@ Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR((qnn::utils::PermuteShape<uint32_t, size_t>(data_shape, perm, output_shape)));
 
   const OrtTypeInfo* type_info = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(static_cast<const OrtValueInfo*>(&initializer), &type_info));
+  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(initializer, &type_info));
 
   const OrtTensorTypeAndShapeInfo* type_shape = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.CastTypeInfoToTensorInfo(type_info, &type_shape));
@@ -1179,12 +1180,12 @@ Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
 }
 
 Ort::Status TransposeFromNchwToHwcn(const QnnModelWrapper& qnn_model_wrapper,
-                                    OrtValueInfo& initializer,
+                                    const OrtValueInfo* initializer,
                                     std::vector<uint8_t>& transposed_data,
                                     bool is_3d) {
   const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
   const OrtTypeInfo* type_info = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(static_cast<const OrtValueInfo*>(&initializer), &type_info));
+  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(initializer, &type_info));
 
   const OrtTensorTypeAndShapeInfo* type_shape = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.CastTypeInfoToTensorInfo(type_info, &type_shape));
@@ -1227,12 +1228,12 @@ Ort::Status TransposeFromNchwToHwcn(std::vector<int64_t>&& original_input_shape_
 }
 
 Ort::Status TransposeFromCnhwToHwcn(const QnnModelWrapper& qnn_model_wrapper,
-                                    OrtValueInfo& initializer,
+                                    const OrtValueInfo* initializer,
                                     std::vector<uint8_t>& transposed_data,
                                     bool is_3d) {
   const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
   const OrtTypeInfo* type_info = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(static_cast<const OrtValueInfo*>(&initializer), &type_info));
+  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(initializer, &type_info));
 
   const OrtTensorTypeAndShapeInfo* type_shape = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.CastTypeInfoToTensorInfo(type_info, &type_shape));
@@ -1358,11 +1359,11 @@ Ort::Status ReadExternalData(const OrtApi& ort_api,
 }
 
 Ort::Status UnpackInitializerData(const OrtApi& ort_api,
-                                  OrtValueInfo& initializer,
+                                  const OrtValueInfo* initializer,
                                   const std::filesystem::path& model_path,
                                   std::vector<uint8_t>& unpacked_tensor) {
   OrtExternalInitializerInfo* external_initializer = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.ValueInfo_GetExternalInitializerInfo(&initializer, &external_initializer));
+  ORT_CXX_RETURN_ON_API_FAIL(ort_api.ValueInfo_GetExternalInitializerInfo(initializer, &external_initializer));
   if (external_initializer) {
     RETURN_IF_ERROR(ReadExternalData(ort_api, external_initializer, model_path, unpacked_tensor));
     ort_api.ReleaseExternalInitializerInfo(external_initializer);
@@ -1370,7 +1371,7 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
   }
 
   const OrtTypeInfo* type_info = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(static_cast<const OrtValueInfo*>(&initializer), &type_info));
+  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(initializer, &type_info));
   const OrtTensorTypeAndShapeInfo* tensor_type_and_shape_info = nullptr;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_type_and_shape_info));
   ONNXTensorElementDataType onnx_data_type;

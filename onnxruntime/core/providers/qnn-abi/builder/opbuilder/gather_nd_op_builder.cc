@@ -2,9 +2,10 @@
 // Licensed under the MIT License.
 
 #include <cassert>
+
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/qnn_utils.h"
 
 namespace onnxruntime {
@@ -87,7 +88,7 @@ Ort::Status GatherNDOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 
   if (indices_info.is_initializer) {
     std::vector<uint8_t> onnx_indices_bytes;
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*indices_info.initializer_tensor, onnx_indices_bytes));
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(indices_info.initializer_tensor, onnx_indices_bytes));
 
     std::vector<uint32_t> data_shape;
     RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(data_input.shape, data_shape),
@@ -166,7 +167,7 @@ Ort::Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
   const std::string& output_name = output.name;
 
   QnnQuantParamsWrapper quant_params;
-  RETURN_IF_ERROR(quant_params.Init(qnn_model_wrapper.GetOrtApi(), qnn_model_wrapper, output));
+  RETURN_IF_ERROR(quant_params.Init(qnn_model_wrapper, output));
 
   ONNXTensorElementDataType output_type = output.type;
   Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;

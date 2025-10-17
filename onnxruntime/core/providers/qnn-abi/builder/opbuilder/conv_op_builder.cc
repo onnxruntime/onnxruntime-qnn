@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/qnn_utils.h"
 
 namespace onnxruntime {
@@ -210,9 +210,9 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
     if (input_info.is_initializer) {
       // Get transposed initializer bytes.
       if (conv_type == OnnxConvType::kConv) {
-        RETURN_IF_ERROR(utils::TransposeFromNchwToHwcn(qnn_model_wrapper, *input_info.initializer_tensor, unpacked_tensor, is_3d));
+        RETURN_IF_ERROR(utils::TransposeFromNchwToHwcn(qnn_model_wrapper, input_info.initializer_tensor, unpacked_tensor, is_3d));
       } else if (conv_type == OnnxConvType::kConvTranspose) {
-        RETURN_IF_ERROR(utils::TransposeFromCnhwToHwcn(qnn_model_wrapper, *input_info.initializer_tensor, unpacked_tensor, is_3d));
+        RETURN_IF_ERROR(utils::TransposeFromCnhwToHwcn(qnn_model_wrapper, input_info.initializer_tensor, unpacked_tensor, is_3d));
       } else {
         return MAKE_EP_FAIL(("QNN EP: Unexpected convolution op type: " + node_unit.OpType()).c_str());
       }
@@ -380,7 +380,7 @@ Ort::Status ConvOpBuilder::ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrappe
     if (!qnn_model_wrapper.IsQnnTensorWrapperExist(conv_input0_name)) {
       std::vector<uint8_t> unpacked_tensor;
       if (input0_info.is_initializer) {
-        RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*input0_info.initializer_tensor, unpacked_tensor));
+        RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input0_info.initializer_tensor, unpacked_tensor));
       }
 
       std::vector<uint32_t> shape = {
@@ -479,7 +479,7 @@ Ort::Status ConvOpBuilder::ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrappe
       // Get transposed initializer bytes.
       //
       std::vector<uint8_t> original_tensor_bytes;
-      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*input_info.initializer_tensor,
+      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info.initializer_tensor,
                                                               original_tensor_bytes));
       unpacked_tensor.resize(original_tensor_bytes.size());
 
@@ -768,7 +768,7 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   }
 
   QnnQuantParamsWrapper output_quantize_param;
-  RETURN_IF_ERROR(output_quantize_param.Init(qnn_model_wrapper.GetOrtApi(), qnn_model_wrapper, outputs[0]));
+  RETURN_IF_ERROR(output_quantize_param.Init(qnn_model_wrapper, outputs[0]));
   bool is_quantized_tensor = outputs[0].quant_param.has_value();
 
   ONNXTensorElementDataType output_type = outputs[0].type;

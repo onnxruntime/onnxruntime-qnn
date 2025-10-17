@@ -27,43 +27,16 @@ QnnEpFactory::QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in)
   CreateDataTransfer = CreateDataTransferImpl;
   IsStreamAware = IsStreamAwareImpl;
 
-  // setup the OrtMemoryInfo instances required by the EP.
+  // HOST_ACCESSIBLE memory.
   OrtMemoryInfo* mem_info = nullptr;
-  auto* status = ort_api.CreateMemoryInfo_V2("QnnEp",
+  auto* status = ort_api.CreateMemoryInfo_V2("QnnHtpShared",
                                              OrtMemoryInfoDeviceType_CPU,
-                                             /*vendor_id*/ 0x0000,  // No vendor ID. Valid for DeviceType::CPU + MemType::DEFAULT or for generic allocators
+                                             /*vendor*/ 0x5143,
                                              /*device_id*/ 0,
-                                             OrtDeviceMemoryType_DEFAULT,
+                                             OrtDeviceMemoryType_HOST_ACCESSIBLE,
                                              /*alignment*/ 0,
                                              OrtAllocatorType::OrtDeviceAllocator,
                                              &mem_info);
-  assert(status == nullptr);  // should never fail.
-  default_memory_info_ = MemoryInfoUniquePtr(mem_info, ort_api.ReleaseMemoryInfo);
-
-  // create read-only allocator for use with initializers. same info as DEFAULT memory apart from the allocator type.
-  status = ort_api.CreateMemoryInfo_V2("QnnEp readonly",
-                                       OrtMemoryInfoDeviceType_CPU,
-                                       /*vendor_id*/ 0x0000,
-                                       /*device_id*/ 0,
-                                       OrtDeviceMemoryType_DEFAULT,
-                                       /*alignment*/ 0,
-                                       OrtAllocatorType::OrtReadOnlyAllocator,
-                                       &mem_info);
-  assert(status == nullptr);  // should never fail.
-
-  readonly_memory_info_ = MemoryInfoUniquePtr(mem_info, ort_api.ReleaseMemoryInfo);
-
-  // HOST_ACCESSIBLE memory.
-  // we infer from the type of HOST_ACCESSIBLE that it's CPU accessible.
-  mem_info = nullptr;
-  status = ort_api.CreateMemoryInfo_V2("QnnEp shared",
-                                       OrtMemoryInfoDeviceType_CPU,
-                                       /*vendor*/ 0x5143,
-                                       /*device_id*/ 0,
-                                       OrtDeviceMemoryType_HOST_ACCESSIBLE,
-                                       /*alignment*/ 0,
-                                       OrtAllocatorType::OrtDeviceAllocator,
-                                       &mem_info);
   if (status != nullptr) {
     ort_api.ReleaseMemoryInfo(mem_info);
   }
@@ -146,6 +119,10 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
   try {
     qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *session_options, logger);
 
+    // Setting allocator info is delayed from GetSupportedDevices to here as QNN-EP relies on provider options to
+    // determine whether to use HTP shared memory but they are not available until now. This workaround works since
+    // PluginExecutionProvider collects the allocator infos after creating the EP (refer to
+    // ep_plugin_provider_interfaces.cc for the detail flow).
     std::string enable_htp_shared_memory_allocator_str;
     GetSessionConfigEntryOrDefault(factory->ort_api,
                                    *session_options,

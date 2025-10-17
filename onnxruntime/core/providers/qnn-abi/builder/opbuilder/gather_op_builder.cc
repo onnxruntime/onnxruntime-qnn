@@ -2,9 +2,10 @@
 // Licensed under the MIT License.
 
 #include <cassert>
+
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/qnn_utils.h"
 
 namespace onnxruntime {
@@ -135,7 +136,7 @@ static Ort::Status ProcessIndicesInput(QnnModelWrapper& qnn_model_wrapper,
   // If indices are int64, convert them to int32 and update indices_info.qnn_data_type.
   if (indices_info.is_initializer) {
     std::vector<uint8_t> onnx_indices_bytes;
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*indices_info.initializer_tensor, onnx_indices_bytes));
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(indices_info.initializer_tensor, onnx_indices_bytes));
 
     if (indices_info.qnn_data_type == QNN_DATATYPE_INT_64) {
       RETURN_IF_NOT((FixStaticIndices<int64_t, int32_t>(onnx_indices_bytes, input0_axis_dim, qnn_indices_bytes)),
@@ -255,7 +256,7 @@ Ort::Status GatherOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   const auto& output_name = gather_output.name;
 
   QnnQuantParamsWrapper quantize_param;
-  RETURN_IF_ERROR(quantize_param.Init(qnn_model_wrapper.GetOrtApi(), qnn_model_wrapper, gather_output));
+  RETURN_IF_ERROR(quantize_param.Init(qnn_model_wrapper, gather_output));
 
   ONNXTensorElementDataType gather_output_type = gather_output.type;
   Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;

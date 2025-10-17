@@ -4,9 +4,9 @@
 #include <cassert>
 #include <limits>
 
+#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/qnn_utils.h"
 
 namespace onnxruntime {
@@ -40,7 +40,7 @@ static Ort::Status ProcessClipMinMax(QnnModelWrapper& qnn_model_wrapper,
   std::vector<uint8_t> val_bytes;
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input, input_info));
   assert(input_info.is_initializer);  // Checked by ExplicitOpCheck().
-  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*input_info.initializer_tensor, val_bytes));
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info.initializer_tensor, val_bytes));
   switch (input_info.qnn_data_type) {
     case QNN_DATATYPE_INT_8: {
       float_value = static_cast<float>(*reinterpret_cast<int8_t*>(val_bytes.data()));

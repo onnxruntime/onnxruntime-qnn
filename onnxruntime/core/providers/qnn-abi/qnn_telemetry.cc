@@ -153,27 +153,25 @@ UINT64 QnnTelemetry::Keyword() const {
 #endif
 }
 
-logging::Severity QnnTelemetry::MapLevelToSeverity() {
+OrtLoggingLevel QnnTelemetry::MapLevelToOrtLoggingLevel() {
 #if BUILD_QNN_EP_STATIC_LIB
-  const Env& env = GetDefaultEnv();
-  auto& provider = env.GetTelemetryProvider();
-  return provider.MapLevelToSeverity();
+  ORT_CXX_API_THROW("Unexpected reach to QnnTelemetry::MapLevelToOrtLoggingLevel.", ORT_EP_FAIL);
 #else
   switch (level_) {
     case TRACE_LEVEL_NONE:
-      return logging::Severity::kFATAL;  // There is no none severity option
+      return ORT_LOGGING_LEVEL_FATAL;  // There is no none logging level option
     case TRACE_LEVEL_VERBOSE:
-      return logging::Severity::kVERBOSE;
+      return ORT_LOGGING_LEVEL_VERBOSE;
     case TRACE_LEVEL_INFORMATION:
-      return logging::Severity::kINFO;
+      return ORT_LOGGING_LEVEL_INFO;
     case TRACE_LEVEL_WARNING:
-      return logging::Severity::kWARNING;
+      return ORT_LOGGING_LEVEL_WARNING;
     case TRACE_LEVEL_ERROR:
-      return logging::Severity::kERROR;
+      return ORT_LOGGING_LEVEL_ERROR;
     case TRACE_LEVEL_CRITICAL:
-      return logging::Severity::kFATAL;
+      return ORT_LOGGING_LEVEL_FATAL;
     default:
-      return logging::Severity::kVERBOSE;
+      return ORT_LOGGING_LEVEL_VERBOSE;
   }
 #endif
 }
@@ -188,8 +186,7 @@ void QnnTelemetry::LogQnnProfileEvent(uint64_t timestamp,
   TraceLoggingWrite(
       telemetry_provider_handle,
       "QNNProfilingEvent",
-      // TODO: onnxruntime::logging::ORTTraceLoggingKeyword::Profiling defined in core/common/logging/loggin.h.
-      TraceLoggingKeyword(static_cast<uint64_t>(0x100)),
+      TraceLoggingKeyword(static_cast<uint64_t>(qnn::ORTTraceLoggingKeyword::Profiling)),
       TraceLoggingLevel(WINEVENT_LEVEL_VERBOSE),
       TraceLoggingValue(timestamp, "Timestamp"),
       TraceLoggingString(message.c_str(), "Message"),

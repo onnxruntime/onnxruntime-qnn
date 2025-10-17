@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #pragma once
+
 #ifdef _WIN32
 #include <windows.h>
 #include <psapi.h>
@@ -23,11 +24,11 @@
 #include "QnnTypes.h"
 #include "System/QnnSystemInterface.h"
 
-#include "core/providers/qnn-abi/ort_api.h"
 #include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/qnn_context_mem_handle_manager.h"
 #include "core/providers/qnn-abi/builder/qnn_def.h"
 #include "core/providers/qnn-abi/builder/qnn_node_group/qnn_node_group.h"
+#include "core/providers/qnn-abi/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -441,7 +442,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
  private:
   const std::string backend_path_;
   std::recursive_mutex logger_recursive_mutex_;
-  // const logging::Logger* logger_ = nullptr;
   QNN_INTERFACE_VER_TYPE qnn_interface_ = QNN_INTERFACE_VER_TYPE_INIT;
   QNN_SYSTEM_INTERFACE_VER_TYPE qnn_sys_interface_ = QNN_SYSTEM_INTERFACE_VER_TYPE_INIT;
   void* backend_lib_handle_ = nullptr;

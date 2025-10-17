@@ -43,6 +43,8 @@ OrtStatus* ParseOrtValueInfo(const OrtValueInfo* io,
   ONNXTensorElementDataType elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   RETURN_IF_NOT_NULL(ort_api.GetTensorElementType(type_shape, &elem_type));
 
+  // TODO: Is it possible shape not exist? And how should it be handled?
+  // ort_api.TensorTypeAndShape_HasShape can be used for checking
   size_t num_dims = 0;
   RETURN_IF_NOT_NULL(ort_api.GetDimensionsCount(type_shape, &num_dims));
 
@@ -107,7 +109,6 @@ std::vector<OrtNodeUnitIODef> GetQDQIODefs(const OrtNode* target_node,
         continue;
       }
     } else {
-      // TODO: Not sure whether functionally identical to old implementation.
       size_t num_consumers = 0;
       auto status = ort_api.ValueInfo_GetValueNumConsumers(target_node_ios[io_idx], &num_consumers);
       if (status != nullptr) {
@@ -689,6 +690,7 @@ std::string GetProviderOptionPrefix(const std::string& provider_name) {
   return key_prefix;
 }
 
+// QNN-EP COPY START
 std::basic_string<ORTCHAR_T> OrtGetRuntimePath() {
 #ifdef _WIN32
   IMAGE_DOS_HEADER __ImageBase;
@@ -956,5 +958,6 @@ Ort::Status ReadFileIntoBuffer(const ORTCHAR_T* file_path, int64_t offset, size_
   return Ort::Status();
 #endif
 }
+// QNN-EP COPY END
 
 }  // namespace onnxruntime

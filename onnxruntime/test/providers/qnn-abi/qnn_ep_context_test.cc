@@ -721,8 +721,6 @@ TEST_F(QnnABIHTPBackendTests, CompileApi_ErrorIfCompilingACompiledModel) {
     compile_options.SetInputModelPath(output_model_file);  // Set the compiled model as the input!
     compile_options.SetOutputModelPath(new_output_model_file);
 
-    // TODO
-    // Check what is the expected failure.
     // Currently it would failed at ConvertEpContextNodes in ep_plugin_provider_interfaces.cc.
     Ort::Status status = Ort::CompileModel(*ort_env, compile_options);
     ASSERT_EQ(status.GetErrorCode(), ORT_FAIL);
@@ -786,8 +784,6 @@ TEST_F(QnnABIHTPBackendTests, QnnContextBinary_OriginalCompileApproach_IgnoreCom
     RegisteredEpDeviceUniquePtr registered_ep_device;
     RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, qnn_options);
 
-    // TODO
-    // Check what is the expected failure.
     // Currently it would failed at ConvertEpContextNodes in ep_plugin_provider_interfaces.cc.
     try {
       Ort::Session session(*ort_env, ToPathString(output_model_file).c_str(), so);

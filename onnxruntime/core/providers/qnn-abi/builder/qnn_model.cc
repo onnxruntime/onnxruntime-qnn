@@ -1,11 +1,12 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "qnn_model.h"
+#include "core/providers/qnn-abi/builder/qnn_model.h"
 
 #include <iostream>
 #include <fstream>
 #include <gsl/gsl>
+
 #include "QnnOpDef.h"
 
 #include "core/providers/qnn-abi/builder/op_builder_factory.h"
@@ -91,7 +92,6 @@ Ort::Status QnnModel::ParseGraphInputOrOutput(const OrtGraph& ort_graph,
     std::vector<int64_t> shape;
     shape.resize(num_dims, 0);
     ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetDimensions(type_shape, shape.data(), shape.size()));
-    // TODO: Check whether -1 really represents dynamic shape.
     for (const auto& s : shape) {
       RETURN_IF(s < 0, ("Dynamic shape is not supported yet, for output: " + name).c_str());
     }
@@ -235,14 +235,11 @@ static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
                                                        Qnn_ContextHandle_t qnn_context,
                                                        Qnn_Tensor_t& qnn_tensor) {
   // either set qnn_tensor memHandle or clientBuf
-  const static auto htp_shared_mem_info = HtpSharedMemoryAllocator::AssociatedMemoryInfo(ort_api);
-  OrtMemoryInfoDeviceType ort_value_memory_info_device_type, htp_shared_mem_info_device_type;
-  (void)ort_api.MemoryInfoGetDeviceType(ort_value_memory_info, &ort_value_memory_info_device_type);
-  (void)ort_api.MemoryInfoGetDeviceType(htp_shared_mem_info, &htp_shared_mem_info_device_type);
+  OrtMemoryInfoDeviceType ort_value_memory_info_device_type;
+  ort_api.MemoryInfoGetDeviceType(ort_value_memory_info, &ort_value_memory_info_device_type);
   OrtDeviceMemoryType ort_value_memory_info_device_memory_type = ort_api.MemoryInfoGetDeviceMemType(ort_value_memory_info);
-  OrtDeviceMemoryType htp_shared_mem_info_device_memory_type = ort_api.MemoryInfoGetDeviceMemType(htp_shared_mem_info);
-  const bool uses_shared_memory = (ort_value_memory_info_device_type == htp_shared_mem_info_device_type &&
-                                   ort_value_memory_info_device_memory_type == htp_shared_mem_info_device_memory_type);
+  const bool uses_shared_memory = (ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_CPU &&
+                                   ort_value_memory_info_device_memory_type == OrtDeviceMemoryType_HOST_ACCESSIBLE);
 
   if (!uses_shared_memory) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Setting Qnn_Tensor_t clientBuf to ORT tensor memory.");

@@ -2,7 +2,9 @@
 // Licensed under the MIT License.
 
 #pragma once
+
 #include "core/providers/qnn-abi/ort_api.h"
+
 #ifdef _WIN32
 #include <Windows.h>
 
@@ -20,35 +22,6 @@ TRACELOGGING_DECLARE_PROVIDER(telemetry_provider_handle);
 #endif
 
 namespace onnxruntime {
-namespace logging {
-// Severity enum copied from core/common/logging/severity.h to avoid dependency
-enum class Severity {
-  kVERBOSE = 0,
-  kINFO = 1,
-  kWARNING = 2,
-  kERROR = 3,
-  kFATAL = 4
-};
-
-// Helper function to convert Severity to OrtLoggingLevel
-inline OrtLoggingLevel SeverityToOrtLoggingLevel(Severity severity) {
-  switch (severity) {
-    case Severity::kVERBOSE:
-      return ORT_LOGGING_LEVEL_VERBOSE;
-    case Severity::kINFO:
-      return ORT_LOGGING_LEVEL_INFO;
-    case Severity::kWARNING:
-      return ORT_LOGGING_LEVEL_WARNING;
-    case Severity::kERROR:
-      return ORT_LOGGING_LEVEL_ERROR;
-    case Severity::kFATAL:
-      return ORT_LOGGING_LEVEL_FATAL;
-    default:
-      return ORT_LOGGING_LEVEL_VERBOSE;
-  }
-}
-}  // namespace logging
-
 namespace qnn {
 
 /// <summary>
@@ -74,8 +47,8 @@ class QnnTelemetry {
   // Get the current logging level
   unsigned char Level() const;
 
-  // Map ETW level to ORT Severity
-  logging::Severity MapLevelToSeverity();
+  // Map ETW level to OrtLoggingLevel
+  OrtLoggingLevel MapLevelToOrtLoggingLevel();
 
   // Get the current keyword
   UINT64 Keyword() const;

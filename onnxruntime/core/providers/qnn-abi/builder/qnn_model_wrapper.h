@@ -7,13 +7,13 @@
 #include <string>
 #include <vector>
 
-#include "QnnInterface.h"
 #include "nlohmann/json.hpp"
+#include "QnnInterface.h"
 
-#include "core/providers/qnn-abi/ort_api.h"
 #include "core/providers/qnn-abi/builder/qnn_def.h"
 #include "core/providers/qnn-abi/builder/qnn_quant_params_wrapper.h"
 #include "core/providers/qnn-abi/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -25,7 +25,7 @@ struct TensorInfo {
   Qnn_DataType_t qnn_data_type;
   QnnQuantParamsWrapper quant_param;
   bool is_initializer;
-  OrtValueInfo* initializer_tensor;
+  const OrtValueInfo* initializer_tensor;
 };
 
 struct ModelSettings {
@@ -303,13 +303,8 @@ class QnnModelWrapper {
                             tensor_data_type, quantize_param, do_op_validation, is_for_input, is_for_output);
   }
 
-  Ort::Status UnpackInitializerData(OrtValueInfo& initializer,
+  Ort::Status UnpackInitializerData(const OrtValueInfo* initializer,
                                     std::vector<uint8_t>& unpacked_tensor) const;
-
-  // Perform a 2D matrix transpose on a tensor
-  Ort::Status TransposeTensor(std::vector<uint32_t>& data_shape,
-                              const OrtValueInfo& initializer,
-                              std::vector<uint8_t>& transposed_data) const;
 
   QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
 
@@ -318,10 +313,10 @@ class QnnModelWrapper {
   const OrtApi& GetOrtApi() const { return api_ptrs_.ort_api; }
 
   // Unpack float scales from initializer (1 scale for per-tensor, > 1 for per-axis).
-  Ort::Status UnpackScales(const std::string& initializer_name, std::vector<float>& scales) const;
+  Ort::Status UnpackScales(const OrtValueInfo* scale_tensor, std::vector<float>& scales) const;
 
   // Unpack zero-points from initializer and convert to int32_t (1 zero-point for per-tensor, > 1 for per-channel).
-  Ort::Status UnpackZeroPoints(const std::string& initializer_name,
+  Ort::Status UnpackZeroPoints(const OrtValueInfo* zp_tensor,
                                /*out*/ std::vector<int32_t>& zero_points,
                                /*out*/ ONNXTensorElementDataType& onnx_data_type) const;
 
