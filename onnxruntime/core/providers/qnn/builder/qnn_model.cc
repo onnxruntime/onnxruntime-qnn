@@ -378,12 +378,12 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
   // dimensions_ is a pointer and won't be reset when new input data arrives.
   // To recover the original batch size, we need to divide by the batch_multiplier.
   if (batch_multiplier > 1) {
-    for (int i = 0; i < qnn_input_infos_.size(); i++) {
-      GetQnnTensorDims(qnn_inputs[i])[0] = qnn_input_infos_[0].ori_dimensions_[0];
+    for (size_t i = 0; i < qnn_input_infos_.size(); i++) {
+      GetQnnTensorDims(qnn_inputs[i])[0] = qnn_input_infos_[i].ori_dimensions_[0];
       LOGS(logger, INFO) << "recover input batch size: " << GetQnnTensorDims(qnn_inputs[i])[0];
     }
-    for (int i = 0; i < qnn_output_infos_.size(); i++) {
-      GetQnnTensorDims(qnn_outputs[i])[0] = qnn_output_infos_[0].ori_dimensions_[0];
+    for (size_t i = 0; i < qnn_output_infos_.size(); i++) {
+      GetQnnTensorDims(qnn_outputs[i])[0] = qnn_output_infos_[i].ori_dimensions_[0];
       LOGS(logger, INFO) << "recover output batch size: " << GetQnnTensorDims(qnn_outputs[i])[0];
     }
   }
