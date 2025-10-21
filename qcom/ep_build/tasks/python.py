@@ -119,6 +119,27 @@ class CreateVenvTask(CompositeTask):
 WheelPeArchT = Literal["arm64", "arm64ec", "arm64x"]
 
 
+class FetchCMakeDepsTask(CompositeTask):
+    def __init__(self, venv_path: Path, mirror_dir: Path) -> None:
+        cmd = [
+            "python",
+            str(REPO_ROOT / "qcom" / "scripts" / "all" / "fetch_cmake_deps.py"),
+            "--use-copy"
+        ]
+        if mirror_dir:
+            cmd += ["--mirror-dir", str(mirror_dir)]
+        super().__init__(
+            group_name="Fetch CMake dependencies",
+            tasks=[
+                RunExecutablesWithVenvTask(
+                    group_name=None,
+                    venv=venv_path,
+                    executables_and_args=[cmd],
+                )
+            ],
+        )
+
+
 class OrtWheelTestTask(RunInTempDirectoryTask):
     def __init__(
         self,

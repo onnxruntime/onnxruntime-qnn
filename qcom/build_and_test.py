@@ -36,7 +36,7 @@ from ep_build.tasks.build import (
     QdcTestsTask,
     TargetPyVersionT,
 )
-from ep_build.tasks.python import CreateOrtVenvTask, OrtWheelSmokeTestTask, RunLinterTask
+from ep_build.tasks.python import CreateOrtVenvTask, OrtWheelSmokeTestTask, RunLinterTask, FetchCMakeDepsTask
 from ep_build.util import (
     DEFAULT_PYTHON,
     REPO_ROOT,
@@ -478,6 +478,11 @@ class TaskLibrary:
                 REPO_ROOT / "build" / "windows-x86_64" / self.__config,
             )
         )
+
+    @public_task("Fetch CMake dependencies")
+    @depends(["create_venv"])
+    def fetch_cmake_dependency(self, plan: Plan) -> str:
+        return plan.add_step(FetchCMakeDepsTask(self.__venv_path, None))
 
     if is_host_windows():
 

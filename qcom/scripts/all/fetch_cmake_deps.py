@@ -19,7 +19,7 @@ DEFAULT_MIRROR_DIR = REPO_ROOT / "mirror"
 DEPS_TXT = REPO_ROOT / "cmake" / "deps.txt"
 
 
-def main(deps_dir: Path, mirror_dir: Path) -> None:
+def main(deps_dir: Path, mirror_dir: Path, use_copy: bool) -> None:
     deps = _parse_deps_txt()
     cache = FileCache(deps_dir)
 
@@ -38,7 +38,7 @@ def main(deps_dir: Path, mirror_dir: Path) -> None:
         dest = Path(https.sub(str(mirror_dir.as_posix()) + "/", url))
         logging.debug(f"{dest} --> {cached_path}")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if platform.uname().system == "Windows":
+        if use_copy or platform.uname().system == "Windows":
             shutil.copyfile(cached_path, dest)
         else:
             dest.symlink_to(cached_path)
@@ -67,6 +67,12 @@ def make_parser() -> argparse.ArgumentParser:
         help="Directory into which to copy all dependencies.",
     )
 
+    parser.add_argument(
+        "--use-copy",
+        action="store_true",
+        help="If specified, copy all dependencies instead of using symlink",
+    )
+
     return parser
 
 
@@ -77,4 +83,4 @@ if __name__ == "__main__":
     parser = make_parser()
     args = parser.parse_args()
 
-    main(args.deps_dir, args.mirror_dir)
+    main(args.deps_dir, args.mirror_dir, args.use_copy)
