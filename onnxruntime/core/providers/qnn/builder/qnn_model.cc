@@ -241,7 +241,7 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
 
   auto LogTensorShape = [](const auto& dimensions) -> std::string {
     std::ostringstream oss;
-    for (auto& dimension : dimensions) {
+    for (const auto& dimension : dimensions) {
       oss << dimension << " ";
     }
     return oss.str();
@@ -250,6 +250,7 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
   std::vector<Qnn_Tensor_t> qnn_inputs;
   qnn_inputs.reserve(qnn_input_infos_.size());
   uint32_t batch_multiplier = 0;
+  constexpr size_t BATCH_DIMENSION_INDEX = 0;
 
   for (const auto& qnn_input_info : qnn_input_infos_) {
     LOGS(logger, VERBOSE) << "model_input = " << qnn_input_info.tensor_wrapper->GetName()
@@ -268,7 +269,7 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
     uint32_t bm = static_cast<uint32_t>(ort_tensor_size / qnn_input_info.tensor_byte_size);
     if (batch_multiplier == 0) {  // Set batch multiplier just ONCE.
       if (bm > 1) {
-        LOGS(logger, VERBOSE) << "batch multiplir: " << bm;
+        LOGS(logger, VERBOSE) << "batch multiplier: " << bm;
         auto backend_type = qnn_backend_manager_->GetQnnBackendType();
         ORT_RETURN_IF_NOT(backend_type == qnn::QnnBackendType::HTP ||
                               backend_type == qnn::QnnBackendType::HTP_FP16,
@@ -283,10 +284,8 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
     qnn_inputs.push_back(qnn_input_info.tensor_wrapper->GetQnnTensor());
     // modify Qnn inputs batch size with batch multiplier, if batch multiplier > 1
     if (batch_multiplier > 1) {
-      LOGS(logger, VERBOSE) << "qnn_inputs batch size: " << GetQnnTensorDims(qnn_input_info.tensor_wrapper->GetQnnTensor())[0];
-      GetQnnTensorDims(qnn_inputs.back())[0] = static_cast<uint32_t>(ort_input_tensor.GetTensorTypeAndShapeInfo().GetShape()[0]);
-      LOGS(logger, VERBOSE) << "qnn_inputs batch size (bm triggered): " << GetQnnTensorDims(qnn_inputs.back())[0];
-      LOGS(logger, VERBOSE) << "check ori dims: " << qnn_input_info.ori_dimensions_[0];
+      GetQnnTensorDims(qnn_inputs.back())[BATCH_DIMENSION_INDEX] = static_cast<uint32_t>(ort_input_tensor.GetTensorTypeAndShapeInfo().GetShape()[BATCH_DIMENSION_INDEX]);
+      LOGS(logger, VERBOSE) << "qnn_inputs batch size (bm triggered): " << GetQnnTensorDims(qnn_inputs.back())[BATCH_DIMENSION_INDEX];
     }
 
     ORT_RETURN_IF_ERROR(BindQnnTensorMemoryToOrtValueMemory(
@@ -308,10 +307,9 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
     // Adjust output shape to match input batch size
     std::vector<int64_t> output_shape = ort_output_info->shape_;
     if (batch_multiplier > 1) {
-      // TODO: need to fix if ORT tensor pre-allocated
-      output_shape[0] *= batch_multiplier;
+      output_shape[BATCH_DIMENSION_INDEX] *= batch_multiplier;
       LOGS(logger, VERBOSE) << "batch multiplier triggered: " << batch_multiplier;
-      LOGS(logger, VERBOSE) << "Modify ORT output batch size to : " << output_shape[0];
+      LOGS(logger, VERBOSE) << "Modify ORT output batch size to : " << output_shape[BATCH_DIMENSION_INDEX];
     }
     auto ort_output_tensor = context.GetOutput(qnn_output_info.ort_index, output_shape.data(), output_shape.size());
     auto ort_tensor_size = TensorDataSize(ort_output_tensor);
@@ -325,12 +323,11 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
     uint32_t bm = static_cast<uint32_t>(ort_tensor_size / qnn_output_info.tensor_byte_size);
     ORT_RETURN_IF(batch_multiplier != bm, "Inconsistent batch multiplier. Expected: ", batch_multiplier, ", Got: ", bm);
 
-    LOGS(logger, INFO) << "qnn_outputs batch_size: " << GetQnnTensorDims(qnn_output_info.tensor_wrapper->GetQnnTensor())[0];
+    LOGS(logger, VERBOSE) << "qnn_outputs batch_size: " << GetQnnTensorDims(qnn_output_info.tensor_wrapper->GetQnnTensor())[BATCH_DIMENSION_INDEX];
     qnn_outputs.push_back(qnn_output_info.tensor_wrapper->GetQnnTensor());
     if (batch_multiplier > 1) {
-      GetQnnTensorDims(qnn_outputs.back())[0] = static_cast<uint32_t>(ort_output_tensor.GetTensorTypeAndShapeInfo().GetShape()[0]);
-      LOGS(logger, VERBOSE) << "qnn_outputs batch_size (bm triggered): " << GetQnnTensorDims(qnn_outputs.back())[0];
-      LOGS(logger, VERBOSE) << "check ori dims: " << qnn_output_info.ori_dimensions_[0];
+      GetQnnTensorDims(qnn_outputs.back())[BATCH_DIMENSION_INDEX] = static_cast<uint32_t>(ort_output_tensor.GetTensorTypeAndShapeInfo().GetShape()[BATCH_DIMENSION_INDEX]);
+      LOGS(logger, VERBOSE) << "qnn_outputs batch_size (bm triggered): " << GetQnnTensorDims(qnn_outputs.back())[BATCH_DIMENSION_INDEX];
     }
 
     ORT_RETURN_IF_ERROR(BindQnnTensorMemoryToOrtValueMemory(
@@ -375,16 +372,17 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN graph execute error. Error code: ", execute_status);
   }
 
-  // dimensions_ is a pointer and won't be reset when new input data arrives.
-  // To recover the original batch size, we need to divide by the batch_multiplier.
+  // QNN tensor dimensions are stored as pointers and persist across executions.
+  // After execution with batch multiplier > 1, restore the original batch size
+  // to ensure correct behavior for subsequent inference calls.
   if (batch_multiplier > 1) {
     for (size_t i = 0; i < qnn_input_infos_.size(); i++) {
-      GetQnnTensorDims(qnn_inputs[i])[0] = qnn_input_infos_[i].ori_dimensions_[0];
-      LOGS(logger, INFO) << "recover input batch size: " << GetQnnTensorDims(qnn_inputs[i])[0];
+      GetQnnTensorDims(qnn_inputs[i])[BATCH_DIMENSION_INDEX] = qnn_input_infos_[i].ori_dimensions_[BATCH_DIMENSION_INDEX];
+      LOGS(logger, INFO) << "recover input batch size: " << GetQnnTensorDims(qnn_inputs[i])[BATCH_DIMENSION_INDEX];
     }
     for (size_t i = 0; i < qnn_output_infos_.size(); i++) {
-      GetQnnTensorDims(qnn_outputs[i])[0] = qnn_output_infos_[i].ori_dimensions_[0];
-      LOGS(logger, INFO) << "recover output batch size: " << GetQnnTensorDims(qnn_outputs[i])[0];
+      GetQnnTensorDims(qnn_outputs[i])[BATCH_DIMENSION_INDEX] = qnn_output_infos_[i].ori_dimensions_[BATCH_DIMENSION_INDEX];
+      LOGS(logger, INFO) << "recover output batch size: " << GetQnnTensorDims(qnn_outputs[i])[BATCH_DIMENSION_INDEX];
     }
   }
 
