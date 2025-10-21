@@ -121,15 +121,31 @@ WheelPeArchT = Literal["arm64", "arm64ec", "arm64x"]
 
 class FetchCMakeDepsTask(CompositeTask):
     def __init__(self, venv_path: Path, mirror_dir: Path) -> None:
-        cmd = [
-            "python",
-            str(REPO_ROOT / "qcom" / "scripts" / "all" / "fetch_cmake_deps.py"),
-            "--use-copy"
-        ]
+        cmd = ["python", str(REPO_ROOT / "qcom" / "scripts" / "all" / "fetch_cmake_deps.py"), "--use-copy"]
         if mirror_dir:
             cmd += ["--mirror-dir", str(mirror_dir)]
         super().__init__(
             group_name="Fetch CMake dependencies",
+            tasks=[
+                RunExecutablesWithVenvTask(
+                    group_name=None,
+                    venv=venv_path,
+                    executables_and_args=[cmd],
+                )
+            ],
+        )
+
+
+class FetchPythonWheelsTask(CompositeTask):
+    def __init__(self, venv_path: Path, local_wheels_dir: Path) -> None:
+        cmd = [
+            "python",
+            str(REPO_ROOT / "qcom" / "scripts" / "all" / "fetch_python_wheels.py"),
+        ]
+        if local_wheels_dir:
+            cmd += ["--local-wheels-dir", str(local_wheels_dir)]
+        super().__init__(
+            group_name="Fetch Python Wheels dependencies",
             tasks=[
                 RunExecutablesWithVenvTask(
                     group_name=None,

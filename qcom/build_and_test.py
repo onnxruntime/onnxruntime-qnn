@@ -36,7 +36,13 @@ from ep_build.tasks.build import (
     QdcTestsTask,
     TargetPyVersionT,
 )
-from ep_build.tasks.python import CreateOrtVenvTask, OrtWheelSmokeTestTask, RunLinterTask, FetchCMakeDepsTask
+from ep_build.tasks.python import (
+    CreateOrtVenvTask,
+    FetchCMakeDepsTask,
+    FetchPythonWheelsTask,
+    OrtWheelSmokeTestTask,
+    RunLinterTask,
+)
 from ep_build.util import (
     DEFAULT_PYTHON,
     REPO_ROOT,
@@ -483,6 +489,11 @@ class TaskLibrary:
     @depends(["create_venv"])
     def fetch_cmake_dependency(self, plan: Plan) -> str:
         return plan.add_step(FetchCMakeDepsTask(self.__venv_path, None))
+
+    @public_task("Fetch Python wheels")
+    @depends(["create_venv"])
+    def fetch_python_wheels(self, plan: Plan) -> str:
+        return plan.add_step(FetchPythonWheelsTask(self.__venv_path, None))
 
     if is_host_windows():
 
