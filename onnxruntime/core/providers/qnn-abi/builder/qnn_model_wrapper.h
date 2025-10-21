@@ -312,8 +312,49 @@ class QnnModelWrapper {
 
   const OrtApi& GetOrtApi() const { return api_ptrs_.ort_api; }
 
-  // Unpack float scales from initializer (1 scale for per-tensor, > 1 for per-axis).
-  Ort::Status UnpackScales(const OrtValueInfo* scale_tensor, std::vector<float>& scales) const;
+  // Unpack scales from initializer (1 scale for per-tensor, > 1 for per-axis or per-block).
+  // Template parameter T allows handling both float and uint8_t scale types.
+  template <typename T = float>
+  Ort::Status UnpackScales(const OrtValueInfo* scale_tensor, std::vector<T>& scales) const {
+    RETURN_IF(scale_tensor == nullptr, "Given scale(s) to be unpacked is null.");
+
+    const OrtTypeInfo* type_info = nullptr;
+    ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetValueInfoTypeInfo(scale_tensor, &type_info));
+
+    const OrtTensorTypeAndShapeInfo* tensor_type_and_shape_info = nullptr;
+    ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_type_and_shape_info));
+    ONNXTensorElementDataType onnx_data_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+    ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorElementType(tensor_type_and_shape_info, &onnx_data_type));
+
+    // Handle float scales
+    if constexpr (std::is_same_v<T, float>) {
+      // Verify data type for float scales
+      RETURN_IF_NOT(onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+                    "Expected scale initializer to be of type FLOAT");
+
+      std::vector<uint8_t> initializer_bytes;
+      RETURN_IF_ERROR(UnpackInitializerData(scale_tensor, initializer_bytes));
+
+      gsl::span<const float> src = gsl::make_span(reinterpret_cast<const float*>(initializer_bytes.data()),
+                                                  initializer_bytes.size() / sizeof(float));
+
+      scales.insert(scales.end(), src.begin(), src.end());
+    }
+    // Handle uint8_t scales (for block quantization)
+    else if constexpr (std::is_same_v<T, uint8_t>) {
+      // Verify data type for uint8_t scales
+      RETURN_IF_NOT(onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8,
+                    "Expected uint8_t scale initializer to be of type UINT8");
+
+      RETURN_IF_ERROR(UnpackInitializerData(scale_tensor, scales));
+    } else {
+      return MAKE_EP_FAIL(("Scale ONNX data type `" +
+                           std::string(typeid(T).name()) +
+                           "` is not supported for unpacking.")
+                              .c_str());
+    }
+    return Ort::Status();
+  }
 
   // Unpack zero-points from initializer and convert to int32_t (1 zero-point for per-tensor, > 1 for per-channel).
   Ort::Status UnpackZeroPoints(const OrtValueInfo* zp_tensor,

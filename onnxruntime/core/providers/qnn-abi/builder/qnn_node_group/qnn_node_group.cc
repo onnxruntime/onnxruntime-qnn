@@ -16,6 +16,8 @@
 #include "core/providers/qnn-abi/builder/qnn_node_group/dq_q_fusion.h"
 #include "core/providers/qnn-abi/builder/qnn_node_group/gelu_fusion.h"
 #include "core/providers/qnn-abi/builder/qnn_node_group/hardsigmoid_mul_fusion.h"
+#include "core/providers/qnn-abi/builder/qnn_node_group/lpbqgemm_fusion.h"
+#include "core/providers/qnn-abi/builder/qnn_node_group/lpbqmatmul_fusion.h"
 #include "core/providers/qnn-abi/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn-abi/builder/qnn_node_group/reshape_gemm_fusion.h"
 #include "core/providers/qnn-abi/builder/qnn_node_group/reshape_transpose_rank5.h"
@@ -76,11 +78,12 @@ using FusionFunc = std::function<std::unique_ptr<IQnnNodeGroup>(QnnModelWrapper&
                                                                 const Ort::Logger& logger)>;
 
 // Maps a starting operator type to the fusion function.
-static std::unordered_map<std::string, FusionFunc> fusions = {
-    {"DequantizeLinear", DQQFusion::TryFusion},
-    {"HardSigmoid", HardSigmoidMulFusion::TryFusion},
-    {"Gemm", ReshapeGemmFusion::TryFusion},
-    {"Mul", ScaleSoftmaxFusion::TryFusion},
+static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
+    {"DequantizeLinear", {DQQFusion::TryFusion}},
+    {"HardSigmoid", {HardSigmoidMulFusion::TryFusion}},
+    {"MatMul", {LowPowerBlockQuantizedMatMulFusion::TryFusion}},
+    {"Gemm", {LowPowerBlockQuantizedGemmFusion::TryFusion, ReshapeGemmFusion::TryFusion}},
+    {"Mul", {ScaleSoftmaxFusion::TryFusion}},
     {"Cast", {CastLoneQFusion::TryFusion}},
     {"Reshape", {Rank6ToRank5Fusion::TryFusion}},
     {"Transpose", {ChannelShuffleFusion::TryFusion}},
@@ -100,7 +103,7 @@ void registerUDO(const std::string& node_type, const std::string& op_package) {
                                 /*node_to_node_unit=*/std::placeholders::_3,
                                 /*node_unit_to_qnn_node_group=*/std::placeholders::_4,
                                 /*logger=*/std::placeholders::_5);
-  fusions[node_type] = boundFunction;
+  fusions[node_type] = {boundFunction};
 }
 /// <summary>
 /// Given a starting NodeUnit, this function tries all possible fusions that start with that NodeUnit.
@@ -119,7 +122,8 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
-  // For now, all fusions involve standalone node units (i.e., no wrapping DQ/Q nodes) except MatMul w/ LPBQ encodings and Reshape
+  // For now, all fusions involve standalone node units (i.e., no wrapping DQ/Q nodes) except MatMul w/ LPBQ encodings
+  // Reshape and Erf
   if (starting_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode &&
       starting_node_unit.OpType() != "MatMul" &&
       starting_node_unit.OpType() != "Reshape" &&
@@ -129,9 +133,13 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
 
   auto iter = fusions.find(starting_node_unit.OpType());
   if (iter != fusions.end()) {
-    FusionFunc fusion_func = iter->second;
-    return fusion_func(qnn_model_wrapper, starting_node_unit, node_to_node_unit,
-                       node_unit_to_qnn_node_group, logger);
+    for (auto& fusion_func : iter->second) {
+      std::unique_ptr<IQnnNodeGroup> fused_node_group = fusion_func(qnn_model_wrapper, starting_node_unit, node_to_node_unit,
+                                                                    node_unit_to_qnn_node_group, logger);
+      if (fused_node_group) {
+        return fused_node_group;
+      }
+    }
   }
   return nullptr;
 }

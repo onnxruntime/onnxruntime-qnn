@@ -410,29 +410,6 @@ Ort::Status QnnModelWrapper::UnpackZeroPoints(const OrtValueInfo* zp_tensor,
   return Ort::Status();
 }
 
-Ort::Status QnnModelWrapper::UnpackScales(const OrtValueInfo* scale_tensor, std::vector<float>& scales) const {
-  RETURN_IF(scale_tensor == nullptr, "Given scale(s) to be unpacked is null.");
-
-  const OrtTypeInfo* type_info = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetValueInfoTypeInfo(scale_tensor, &type_info));
-
-  const OrtTensorTypeAndShapeInfo* tensor_type_and_shape_info = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_type_and_shape_info));
-  ONNXTensorElementDataType onnx_data_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
-  ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.GetTensorElementType(tensor_type_and_shape_info, &onnx_data_type));
-  RETURN_IF_NOT(onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
-                "Expected scale initializer to be of type FLOAT");
-
-  std::vector<uint8_t> initializer_bytes;
-  RETURN_IF_ERROR(UnpackInitializerData(scale_tensor, initializer_bytes));
-
-  gsl::span<const float> src = gsl::make_span(reinterpret_cast<const float*>(initializer_bytes.data()),
-                                              initializer_bytes.size() / sizeof(float));
-
-  scales.insert(scales.end(), src.begin(), src.end());
-  return Ort::Status();
-}
-
 // Checks if a tensor in the ONNX graph is per-channel quantized.
 Ort::Status QnnModelWrapper::IsPerChannelQuantized(const OrtNodeUnitIODef& io_def,
                                                    /*out*/ bool& is_per_channel,
