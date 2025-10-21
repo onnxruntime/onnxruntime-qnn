@@ -70,15 +70,15 @@ Status BaseOpBuilder::ProcessDataTypes(QnnModelWrapper& qnn_model_wrapper,
     Qnn_DataType_t qnn_data_type = tensor_info.qnn_data_type;
     output_qnn_dtypes.push_back(qnn_data_type);
   }
-  if (IsIrBackend(qnn_model_wrapper.GetQnnBackendType())) {
-    // Currently QnnIr has no constraints on datatypes
-    return Status::OK();
-  } else if (IsCpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+  if (IsCpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     return CheckCpuDataTypes(input_qnn_dtypes, output_qnn_dtypes);
   } else if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     return CheckHtpDataTypes(input_qnn_dtypes, output_qnn_dtypes);
   } else if (IsGpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
     return CheckGpuDataTypes(input_qnn_dtypes, output_qnn_dtypes);
+  } else if (IsIrBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    // TODO: CheckIrDataTypes
+    return Status::OK();
   }
   return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Only support backend: CPU, HTP and GPU");
 }

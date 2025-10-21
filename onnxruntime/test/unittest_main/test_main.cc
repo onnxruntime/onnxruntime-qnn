@@ -29,6 +29,7 @@
 #include "core/session/onnxruntime_cxx_api.h"
 #include "core/util/thread_utils.h"
 
+
 #if !defined(ORT_MINIMAL_BUILD) && defined(ORT_UNIT_TEST_ENABLE_DYNAMIC_PLUGIN_EP_USAGE)
 #define TEST_MAIN_ENABLE_DYNAMIC_PLUGIN_EP_USAGE
 #endif  // !defined(ORT_MINIMAL_BUILD) && defined(ORT_UNIT_TEST_ENABLE_DYNAMIC_PLUGIN_EP_USAGE)
@@ -37,10 +38,12 @@
 #include "test/unittest_util/test_dynamic_plugin_ep.h"
 #endif  // defined(TEST_MAIN_ENABLE_DYNAMIC_PLUGIN_EP_USAGE)
 
+#include "test/providers/qnn/qnn_test_utils.h"
+
+
 std::unique_ptr<Ort::Env> ort_env;
-bool dump_onnx = false;
-bool dump_json = false;
-bool dump_dlc = false;
+onnxruntime::test::ONNXRuntimeTestEnvironment * qnn_env;
+
 
 // define environment variable name constants here
 namespace env_var_names {
@@ -155,20 +158,9 @@ int TEST_MAIN(int argc, char** argv) {
     ortenv_setup();
     ort_env->UpdateEnvWithCustomLogLevel(ORT_LOGGING_LEVEL_WARNING);
     ::testing::InitGoogleTest(&argc, argv);
-    // Parse custom command-line arguments *after* InitGoogleTest
+    qnn_env = new onnxruntime::test::ONNXRuntimeTestEnvironment(argc, argv);
+    ::testing::AddGlobalTestEnvironment(qnn_env);
     for (int i = 1; i < argc; ++i) {  // argv[0] is the program
-      if (std::string(argv[i]) == "--dump_onnx") {
-        std::cout << "[QNN only] ONNX model dumping enabled." << std::endl;
-        dump_onnx = true;
-      }
-      if (std::string(argv[i]) == "--dump_json") {
-        std::cout << "[QNN only] Json QNN Graph dumping enabled." << std::endl;
-        dump_json = true;
-      }
-      if (std::string(argv[i]) == "--dump_dlc") {
-        std::cout << "[QNN only] DLC dumping enabled." << std::endl;
-        dump_dlc = true;
-      }
       if (std::string(argv[i]) == "--verbose") {
         std::cout << "Verbose enabled" << std::endl;
         ort_env->UpdateEnvWithCustomLogLevel(ORT_LOGGING_LEVEL_VERBOSE);

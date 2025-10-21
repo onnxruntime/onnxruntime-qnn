@@ -20,13 +20,52 @@
 
 #include "gtest/gtest.h"
 
-// in test_main.cc
-extern bool dump_onnx;
-extern bool dump_json;
-extern bool dump_dlc;
-
 namespace onnxruntime {
 namespace test {
+
+class ONNXRuntimeTestEnvironment : public ::testing::Environment {
+public:
+  // Constructor takes argc and argv directly
+  explicit ONNXRuntimeTestEnvironment(int argc, char** argv) {
+    ParseCommandLineFlags(argc, argv);
+  }
+
+  void SetUp() override {
+    // Parse command-line arguments here
+    return;
+  }
+
+  bool dump_onnx() const { return dump_onnx_; }
+  bool dump_json() const { return dump_json_; }
+  bool dump_dlc() const { return dump_dlc_; }
+  bool verbose() const { return verbose_; }
+
+private:
+  void ParseCommandLineFlags(int argc, char** argv) {
+    for (int i = 1; i < argc; ++i) {
+      const std::string arg = argv[i];
+      if (arg == "--dump_onnx") {
+        std::cout << "[QNN only] ONNX model dumping enabled." << std::endl;
+        dump_onnx_ = true;
+      } else if (arg == "--dump_json") {
+        std::cout << "[QNN only] Json QNN Graph dumping enabled." << std::endl;
+        dump_json_ = true;
+      } else if (arg == "--dump_dlc") {
+        std::cout << "[QNN only] DLC dumping enabled." << std::endl;
+        dump_dlc_ = true;
+      } else if (arg == "--verbose") {
+        std::cout << "Verbose enabled" << std::endl;
+        verbose_ = true;
+      }
+    }
+  }
+
+  bool dump_onnx_ = false;
+  bool dump_json_ = false;
+  bool dump_dlc_ = false;
+  bool verbose_ = false;
+  // friend int TEST_MAIN(int argc, char** argv);
+};
 
 // Signature for function that builds a float32 model.
 using GetTestModelFn = std::function<void(ModelTestBuilder& builder)>;
@@ -563,7 +602,9 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
   f32_model.ToProto().SerializeToString(&f32_model_data);
 
   if (dump_onnx) {
-    ASSERT_STATUS_OK(onnxruntime::Model::Save(f32_model, output_dir / ToPathString("cmp_accuracy.f32.onnx")));
+    auto dump_path = output_dir / ToPathString("dumped_f32_model.onnx");
+    LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx float32 model at: " << dump_path;
+    ASSERT_STATUS_OK(onnxruntime::Model::Save(f32_model, dump_path));
   }
 
   // Run f32 model on CPU EP and collect outputs.
@@ -607,7 +648,9 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
   qdq_model.ToProto().SerializeToString(&qdq_model_data);
 
   if (dump_onnx) {
-    ASSERT_STATUS_OK(onnxruntime::Model::Save(qdq_model, output_dir / ToPathString("cmp_accuracy.qdq.onnx")));
+    auto dump_path = output_dir / ToPathString("dumped_qdq_model.onnx");
+    LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx QDQ model at: " << dump_path;
+    ASSERT_STATUS_OK(onnxruntime::Model::Save(qdq_model, dump_path));
   }
 
   bool is_qnn_ep = true;

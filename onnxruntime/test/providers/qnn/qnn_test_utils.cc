@@ -104,7 +104,8 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   std::string test_suite_name = ::testing::UnitTest::GetInstance()->current_test_info()->test_suite_name();
   std::string test_name = ::testing::UnitTest::GetInstance()->current_test_info()->name();
   std::filesystem::path output_dir = std::filesystem::current_path() / (test_suite_name + "_" + test_name);
-  if (dump_onnx || dump_dlc || dump_json) {
+  auto dump_onnx = ::testing::UnitTest::
+  if ( || dump_dlc || dump_json) {
     std::filesystem::create_directories(output_dir);
   }
   EPVerificationParams verification_params;
@@ -131,7 +132,9 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   model.ToProto().SerializeToString(&model_data);
 
   if (dump_onnx) {
-    ASSERT_STATUS_OK(onnxruntime::Model::Save(model, output_dir / ToPathString("cmp_accuracy.f32.onnx")));
+    auto dump_path = output_dir / ToPathString("dumped_f32_model.onnx");
+    LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx model at: " << dump_path;
+    ASSERT_STATUS_OK(onnxruntime::Model::Save(model, dump_path));
   }
 
   TryEnableQNNSaver(provider_options);
