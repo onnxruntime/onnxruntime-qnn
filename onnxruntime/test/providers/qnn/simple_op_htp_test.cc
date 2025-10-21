@@ -1871,6 +1871,109 @@ TEST_F(QnnHTPBackendTests, RandomUniformLikeAddTest) {
                              ExpectedEPNodeAssignment::All);
 }
 
+
+
+
+// Check if output for QNN EP with batch multiplier and ORT CPU EP without batch multiplier match.
+static void RunBatchMultiplierFP32OpTest(const std::string& op_type,
+                          const std::vector<TestInputDef<float>>& input_defs,
+                          const std::vector<TestInputDef<float>>& input_bm_defs,
+                          const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                          int opset_version,
+                          ExpectedEPNodeAssignment expected_ep_assignment,
+                          const std::string& op_domain = kOnnxDomain,
+                          float tolerance = 0.004f) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  // provider_options["htp_performance_mode|burst"] = "burst";
+  // provider_options["htp_graph_finalization_optimization_mode"] = "3";
+  // provider_options["soc_model"] = "60";
+  // provider_options["htp_arch"] = "73";
+  // provider_options["vtcm_mb"] = "8";
+
+
+  std::vector<TestInputDef<MLFloat16>> input_fp16_defs;
+  input_fp16_defs.reserve(input_defs.size());
+
+  for (size_t i = 0; i < input_defs.size(); i++) {
+    input_fp16_defs.push_back(ConvertToFP16InputDef(input_defs[i]));
+  }
+
+  std::vector<TestInputDef<MLFloat16>> input_bm_fp16_defs;
+  input_bm_fp16_defs.reserve(input_bm_defs.size());
+  for (size_t i = 0; i < input_bm_defs.size(); i++) {
+    input_bm_fp16_defs.push_back(ConvertToFP16InputDef(input_bm_defs[i]));
+  }
+
+  auto model_fp32_fn = BuildOpTestCase<float>(op_type, input_defs, {}, attrs, op_domain); // build model with original batch size
+  auto model_bm_fp32_fn = BuildOpTestCase<float>(op_type, input_bm_defs, {}, attrs, op_domain); // build model with batch multiplier batch size
+  auto model_fp16_fn = BuildOpTestCase<MLFloat16>(op_type, input_fp16_defs, {}, attrs, op_domain);
+  auto model_bm_fp16_fn = BuildOpTestCase<MLFloat16>(op_type, input_bm_fp16_defs, {}, attrs, op_domain);
+
+  std::unordered_map<std::string, std::string> session_option_pairs;
+  session_option_pairs["session.disable_cpu_ep_fallback"] = "1";
+  TestModelBatchMultiplierAccuracy<float, float>(model_bm_fp32_fn,
+                        model_fp32_fn,
+                        provider_options,
+                        opset_version,
+                        expected_ep_assignment,
+                        tolerance,
+                        logging::Severity::kVERBOSE,
+                        "",
+                        session_option_pairs
+                      );
+}
+
+// Run testing between "QNN HTP backend with batch multiplier" and "ORT CPU backend without batch multiplier".
+// For ORT CPU backend, use batch multiplier batch size for both compiling & inferencing to generate golden.
+// For QNN HTP backend, use original batch size for compiling and batch multiplier batch size for inferencing.
+TEST_F(QnnHTPBackendTests, BatchMultiplier_Conv) {
+  // collect original batch size input defs
+  std::vector<TestInputDef<float>> input_defs;
+
+  // generate fix weight data for different build function for comparison
+  std::vector<float> weight_data(9);
+  std::default_random_engine generator(12345);
+  std::uniform_real_distribution<float> distribution(-10.0f, 10.0f);
+  for (auto& val : weight_data) {
+    val = distribution(generator);
+  }
+  auto weight_fp32_def = TestInputDef<float>({1, 1, 3, 3}, true, weight_data);
+  auto bias_fp32_def = TestInputDef<float>({1}, true, {2.0f});
+  auto input_fp32_def = TestInputDef<float>({1, 1, 5, 5}, false, 0.0f, 10.0f); // only used for compiling, so can use random data
+  input_defs.push_back(input_fp32_def);
+  input_defs.push_back(weight_fp32_def);
+  input_defs.push_back(bias_fp32_def);
+  // collect running batch size input defs
+  std::vector<TestInputDef<float>> input_bm_defs; // batch multiplier input defs
+  // generate fix input data
+  std::vector<float> input_data(200);
+  std::default_random_engine generator_input(6677);
+  std::uniform_real_distribution<float> distribution_input(0.0f, 10.0f);
+  for (auto& val : input_data) {
+    val = distribution_input(generator_input);
+  }
+  auto input_bm_fp32_def = TestInputDef<float>({8, 1, 5, 5}, false, input_data);
+  input_bm_defs.push_back(input_bm_fp32_def);
+  input_bm_defs.push_back(weight_fp32_def);
+  input_bm_defs.push_back(bias_fp32_def);
+
+  // Conv attributes
+  std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+  attrs.push_back(utils::MakeAttribute("auto_pad", "NOTSET"));
+  attrs.push_back(utils::MakeAttribute("strides", std::vector<int64_t>{1, 1}));
+  attrs.push_back(utils::MakeAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}));
+  attrs.push_back(utils::MakeAttribute("dilations", std::vector<int64_t>{1, 1}));
+
+  RunBatchMultiplierFP32OpTest("Conv",
+                input_defs,
+                input_bm_defs,
+                attrs,
+                21,
+                ExpectedEPNodeAssignment::All,
+                kOnnxDomain);
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
