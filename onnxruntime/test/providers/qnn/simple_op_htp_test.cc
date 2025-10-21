@@ -1871,94 +1871,99 @@ TEST_F(QnnHTPBackendTests, RandomUniformLikeAddTest) {
                              ExpectedEPNodeAssignment::All);
 }
 
-
-
-
-// Check if output for QNN EP with batch multiplier and ORT CPU EP without batch multiplier match.
-static void RunBatchMultiplierFP32OpTest(const std::string& op_type,
-                          const std::vector<TestInputDef<float>>& input_defs,
-                          const std::vector<TestInputDef<float>>& input_bm_defs,
-                          const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                          int opset_version,
-                          ExpectedEPNodeAssignment expected_ep_assignment,
-                          const std::string& op_domain = kOnnxDomain,
-                          float tolerance = 0.004f) {
+/**
+ * Tests batch multiplier accuracy by comparing QNN HTP backend (with batch multiplier)
+ * against ORT CPU backend (without batch multiplier).
+ *
+ * @param op_type The operator type (e.g., "Conv", "MatMul")
+ * @param input_defs Input definitions with original batch size (for compilation)
+ * @param input_bm_defs Input definitions with batch multiplier size (for inference)
+ * @param attrs Operator attributes
+ * @param opset_version ONNX opset version
+ * @param expected_ep_assignment Expected EP node assignment
+ * @param op_domain Operator domain (default: kOnnxDomain)
+ * @param tolerance Relative error tolerance (default: 0.4%)
+ */
+static void RunBatchMultiplierFP32OpTest(
+    const std::string& op_type,
+    const std::vector<TestInputDef<float>>& input_defs,
+    const std::vector<TestInputDef<float>>& input_bm_defs,
+    const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+    int opset_version,
+    ExpectedEPNodeAssignment expected_ep_assignment,
+    const std::string& op_domain = kOnnxDomain,
+    float tolerance = 0.004f) {
+  // Configure QNN HTP backend options
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
-  // provider_options["htp_performance_mode|burst"] = "burst";
-  // provider_options["htp_graph_finalization_optimization_mode"] = "3";
-  // provider_options["soc_model"] = "60";
-  // provider_options["htp_arch"] = "73";
-  // provider_options["vtcm_mb"] = "8";
 
+  // Build FP32 models
+  auto model_bm_fp32_fn = BuildOpTestCase<float>(op_type, input_bm_defs, {}, attrs, op_domain);
+  auto model_fp32_fn = BuildOpTestCase<float>(op_type, input_defs, {}, attrs, op_domain);
 
-  std::vector<TestInputDef<MLFloat16>> input_fp16_defs;
-  input_fp16_defs.reserve(input_defs.size());
-
-  for (size_t i = 0; i < input_defs.size(); i++) {
-    input_fp16_defs.push_back(ConvertToFP16InputDef(input_defs[i]));
-  }
-
-  std::vector<TestInputDef<MLFloat16>> input_bm_fp16_defs;
-  input_bm_fp16_defs.reserve(input_bm_defs.size());
-  for (size_t i = 0; i < input_bm_defs.size(); i++) {
-    input_bm_fp16_defs.push_back(ConvertToFP16InputDef(input_bm_defs[i]));
-  }
-
-  auto model_fp32_fn = BuildOpTestCase<float>(op_type, input_defs, {}, attrs, op_domain); // build model with original batch size
-  auto model_bm_fp32_fn = BuildOpTestCase<float>(op_type, input_bm_defs, {}, attrs, op_domain); // build model with batch multiplier batch size
-  auto model_fp16_fn = BuildOpTestCase<MLFloat16>(op_type, input_fp16_defs, {}, attrs, op_domain);
-  auto model_bm_fp16_fn = BuildOpTestCase<MLFloat16>(op_type, input_bm_fp16_defs, {}, attrs, op_domain);
-
-  std::unordered_map<std::string, std::string> session_option_pairs;
-  session_option_pairs["session.disable_cpu_ep_fallback"] = "1";
-  TestModelBatchMultiplierAccuracy<float, float>(model_bm_fp32_fn,
-                        model_fp32_fn,
-                        provider_options,
-                        opset_version,
-                        expected_ep_assignment,
-                        tolerance,
-                        logging::Severity::kVERBOSE,
-                        "",
-                        session_option_pairs
-                      );
+  // Test FP32 batch multiplier accuracy
+  TestModelBatchMultiplierFP32Accuracy(
+      model_bm_fp32_fn,
+      model_fp32_fn,
+      provider_options,
+      opset_version,
+      expected_ep_assignment,
+      tolerance,
+      logging::Severity::kVERBOSE);
 }
 
-// Run testing between "QNN HTP backend with batch multiplier" and "ORT CPU backend without batch multiplier".
-// For ORT CPU backend, use batch multiplier batch size for both compiling & inferencing to generate golden.
-// For QNN HTP backend, use original batch size for compiling and batch multiplier batch size for inferencing.
-TEST_F(QnnHTPBackendTests, BatchMultiplier_Conv) {
-  // collect original batch size input defs
-  std::vector<TestInputDef<float>> input_defs;
+/**
+ * Helper function to test Conv operator with different batch multiplier sizes.
+ *
+ * @param batch_multiplier_size The batch size to use for inference (e.g., 2, 4, 8, 16)
+ */
+static void TestConvBatchMultiplier(int64_t batch_multiplier_size) {
+  // Constants
+  constexpr int64_t kOriginalBatchSize = 1;
+  constexpr int64_t kInputChannels = 1;
+  constexpr int64_t kInputHeight = 5;
+  constexpr int64_t kInputWidth = 5;
+  constexpr int64_t kKernelSize = 3;
+  constexpr size_t kWeightDataSize = kInputChannels * kInputChannels * kKernelSize * kKernelSize;
+  const size_t kInputDataSize = batch_multiplier_size * kInputChannels * kInputHeight * kInputWidth;
 
-  // generate fix weight data for different build function for comparison
-  std::vector<float> weight_data(9);
-  std::default_random_engine generator(12345);
-  std::uniform_real_distribution<float> distribution(-10.0f, 10.0f);
+  // Generate fixed weight data to ensure consistency across model builds
+  std::vector<float> weight_data(kWeightDataSize);
+  std::default_random_engine weight_generator(12345);
+  std::uniform_real_distribution<float> weight_distribution(-10.0f, 10.0f);
   for (auto& val : weight_data) {
-    val = distribution(generator);
+    val = weight_distribution(weight_generator);
   }
-  auto weight_fp32_def = TestInputDef<float>({1, 1, 3, 3}, true, weight_data);
-  auto bias_fp32_def = TestInputDef<float>({1}, true, {2.0f});
-  auto input_fp32_def = TestInputDef<float>({1, 1, 5, 5}, false, 0.0f, 10.0f); // only used for compiling, so can use random data
-  input_defs.push_back(input_fp32_def);
-  input_defs.push_back(weight_fp32_def);
-  input_defs.push_back(bias_fp32_def);
-  // collect running batch size input defs
-  std::vector<TestInputDef<float>> input_bm_defs; // batch multiplier input defs
-  // generate fix input data
-  std::vector<float> input_data(200);
-  std::default_random_engine generator_input(6677);
-  std::uniform_real_distribution<float> distribution_input(0.0f, 10.0f);
-  for (auto& val : input_data) {
-    val = distribution_input(generator_input);
-  }
-  auto input_bm_fp32_def = TestInputDef<float>({8, 1, 5, 5}, false, input_data);
-  input_bm_defs.push_back(input_bm_fp32_def);
-  input_bm_defs.push_back(weight_fp32_def);
-  input_bm_defs.push_back(bias_fp32_def);
 
-  // Conv attributes
+  // Generate fixed input data for reproducible results
+  std::vector<float> input_data(kInputDataSize);
+  std::default_random_engine input_generator(6677);
+  std::uniform_real_distribution<float> input_distribution(0.0f, 10.0f);
+  for (auto& val : input_data) {
+    val = input_distribution(input_generator);
+  }
+
+  // Create input definitions with original batch size (for compilation)
+  std::vector<TestInputDef<float>> input_defs;
+  input_defs.push_back(TestInputDef<float>(
+      {kOriginalBatchSize, kInputChannels, kInputHeight, kInputWidth},
+      false, 0.0f, 10.0f));  // Random data OK for compilation only
+  input_defs.push_back(TestInputDef<float>(
+      {kInputChannels, kInputChannels, kKernelSize, kKernelSize},
+      true, weight_data));
+  input_defs.push_back(TestInputDef<float>({kInputChannels}, true, {2.0f}));
+
+  // Create input definitions with batch multiplier size (for inference)
+  std::vector<TestInputDef<float>> input_bm_defs;
+  input_bm_defs.push_back(TestInputDef<float>(
+      {batch_multiplier_size, kInputChannels, kInputHeight, kInputWidth},
+      false, input_data));
+  input_bm_defs.push_back(TestInputDef<float>(
+      {kInputChannels, kInputChannels, kKernelSize, kKernelSize},
+      true, weight_data));
+  input_bm_defs.push_back(TestInputDef<float>({kInputChannels}, true, {2.0f}));
+
+  // Configure Conv operator attributes
   std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
   attrs.push_back(utils::MakeAttribute("auto_pad", "NOTSET"));
   attrs.push_back(utils::MakeAttribute("strides", std::vector<int64_t>{1, 1}));
@@ -1966,12 +1971,45 @@ TEST_F(QnnHTPBackendTests, BatchMultiplier_Conv) {
   attrs.push_back(utils::MakeAttribute("dilations", std::vector<int64_t>{1, 1}));
 
   RunBatchMultiplierFP32OpTest("Conv",
-                input_defs,
-                input_bm_defs,
-                attrs,
-                21,
-                ExpectedEPNodeAssignment::All,
-                kOnnxDomain);
+                               input_defs,
+                               input_bm_defs,
+                               attrs,
+                               21,  // opset version
+                               ExpectedEPNodeAssignment::All,
+                               kOnnxDomain);
+}
+
+/**
+ * Test batch multiplier accuracy for Conv operator with batch size 2.
+ *
+ * Test setup:
+ * - CPU baseline: Uses batch size 2 for both compilation and inference (golden output)
+ * - QNN HTP test: Compiles with batch size 1, infers with batch size 2 (batch multiplier)
+ */
+TEST_F(QnnHTPBackendTests, BatchMultiplier_Conv_Batch2) {
+  TestConvBatchMultiplier(2);
+}
+
+/**
+ * Test batch multiplier accuracy for Conv operator with batch size 4.
+ *
+ * Test setup:
+ * - CPU baseline: Uses batch size 4 for both compilation and inference (golden output)
+ * - QNN HTP test: Compiles with batch size 1, infers with batch size 4 (batch multiplier)
+ */
+TEST_F(QnnHTPBackendTests, BatchMultiplier_Conv_Batch4) {
+  TestConvBatchMultiplier(4);
+}
+
+/**
+ * Test batch multiplier accuracy for Conv operator with batch size 8.
+ *
+ * Test setup:
+ * - CPU baseline: Uses batch size 8 for both compilation and inference (golden output)
+ * - QNN HTP test: Compiles with batch size 1, infers with batch size 8 (batch multiplier)
+ */
+TEST_F(QnnHTPBackendTests, BatchMultiplier_Conv_Batch8) {
+  TestConvBatchMultiplier(8);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

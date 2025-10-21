@@ -897,32 +897,29 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   }
 }
 
-
-
-
 /**
- * Test batch multiplier accuracy
+ * Tests batch multiplier accuracy by comparing QNN HTP backend (with batch multiplier)
+ * against ORT CPU backend (without batch multiplier).
  *
  * \param bm_model_fn Function that builds the model with batch multiplier batch size (baseline for comparison).
  * \param ori_model_fn Function that builds the model with original batch size (run by QNN HTP EP with batch multiplier).
  * \param qnn_options QNN EP provider options.
  * \param opset_version The opset version.
- * \param expected_ep_assignment Describes "which nodes" should be assigned to the EP.
+ * \param expected_ep_assignment Describes which nodes should be assigned to the EP.
  * \param tolerance The percent tolerance (as fraction) QNN EP results are allowed to differ from baseline.
  * \param log_severity The logger's severity setting.
+ * \param qnn_ctx_model_path Optional path to a QNN context cache model.
  */
-template <typename bmModelType, typename oriModelType>
-inline void TestModelBatchMultiplierAccuracy(
+inline void TestModelBatchMultiplierFP32Accuracy(
     const GetTestModelFn& bm_model_fn,
     const GetTestModelFn& ori_model_fn,
-    ProviderOptions qnn_options,
+    const ProviderOptions& qnn_options,
     int opset_version,
     ExpectedEPNodeAssignment expected_ep_assignment,
-    float tolerance = 0.004,
+    float tolerance = 0.004f,
     logging::Severity log_severity = logging::Severity::kERROR,
     const std::string& qnn_ctx_model_path = "",
     const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
-
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
   auto& logging_manager = DefaultLoggingManager();
@@ -930,8 +927,8 @@ inline void TestModelBatchMultiplierAccuracy(
 
   // 1. Create model with batch multiplier batch size and serialize it to a string.
   onnxruntime::Model bm_model("bm_model", false, ModelMetaData(), PathString(),
-                               IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                               logging_manager.DefaultLogger());
+                              IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
+                              logging_manager.DefaultLogger());
   ModelTestBuilder bm_helper(bm_model.MainGraph());
   std::string bm_model_data;
   bm_model_fn(bm_helper);
@@ -939,7 +936,7 @@ inline void TestModelBatchMultiplierAccuracy(
   ASSERT_STATUS_OK(bm_model.MainGraph().Resolve());
   bm_model.ToProto().SerializeToString(&bm_model_data);
 
-  // Run f32 model on CPU EP and collect outputs (baseline).
+  // Run FP32 model on CPU EP and collect outputs (baseline).
   std::vector<OrtValue> cpu_bm_outputs;
   InferenceModel(bm_model_data, "bm_model_logger", {}, ExpectedEPNodeAssignment::All,
                  bm_helper.feeds_, cpu_bm_outputs);
@@ -948,14 +945,13 @@ inline void TestModelBatchMultiplierAccuracy(
   const size_t num_outputs = cpu_bm_outputs.size();
 
   // Collect output values for comparison.
-  std::vector<gsl::span<const bmModelType>> output_vals;
+  std::vector<gsl::span<const float>> output_vals;
   output_vals.resize(num_outputs);
 
   for (size_t i = 0; i < num_outputs; i++) {
     auto& tensor = cpu_bm_outputs[i].Get<Tensor>();
-    output_vals[i] = tensor.DataAsSpan<bmModelType>();
+    output_vals[i] = tensor.DataAsSpan<float>();
   }
-
 
   // 2. Create model with original batch size and serialize it to a string.
   onnxruntime::Model ori_model("ori_model", false, ModelMetaData(), PathString(),
@@ -968,9 +964,9 @@ inline void TestModelBatchMultiplierAccuracy(
   ASSERT_STATUS_OK(ori_model.MainGraph().Resolve());
   ori_model.ToProto().SerializeToString(&ori_model_data);
 
-  // Run FP16 model on QNN HTP EP with batch multiplier
-  bool is_qnn_ep = true;
-  TryEnableQNNSaver(qnn_options);
+  // 3. Run original batch size model on QNN HTP EP with batch multiplier batch size input
+  const bool is_qnn_ep = true;
+  TryEnableQNNSaver(const_cast<ProviderOptions&>(qnn_options));
   std::vector<OrtValue> qnn_ori_outputs;
 
   if (!qnn_ctx_model_path.empty()) {
@@ -983,37 +979,38 @@ inline void TestModelBatchMultiplierAccuracy(
                    expected_ep_assignment, bm_helper.feeds_, qnn_ori_outputs, is_qnn_ep, session_option_pairs);
   } else {
     // To test batch multiplier, run original batch size model using batch multiplier batch size input data.
-    // Change ori_helper.feeds_ to bm_helper.feeds_ to use batch multiplier batch size to inference
+    // Use bm_helper.feeds_ (batch multiplier size) instead of ori_helper.feeds_ (original size) for inference.
     InferenceModel(ori_model_data, "ori_model_logger", qnn_options, expected_ep_assignment,
                    bm_helper.feeds_, qnn_ori_outputs, is_qnn_ep, session_option_pairs);
   }
-  // 3. Validate the output
+
+  // 4. Validate the outputs
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
     ASSERT_EQ(qnn_ori_outputs.size(), num_outputs);
 
-    // Limit the error message count in case test with large data failed
-    size_t max_error_count = 10;
+    // Limit the error message count in case test with large data fails
+    constexpr size_t max_error_count = 10;
     size_t error_count = 0;
 
-    // Compare accuracy of ori@QNN_HTP results with bm@CPU baseline
+    // Compare accuracy of ori@QNN_HTP results with bm@CPU_EP baseline
     const std::string base_output_name = "output_";
     for (size_t i = 0; i < num_outputs; i++) {
-      std::string debug_output_name = base_output_name + std::to_string(i);
+      const std::string debug_output_name = base_output_name + std::to_string(i);
       auto& qnn_ori_tensor = qnn_ori_outputs[i].Get<Tensor>();
 
       const size_t num_vals = output_vals[i].size();
-      gsl::span<const bmModelType> cpu_bm_vals = output_vals[i];
-      gsl::span<const oriModelType> qnn_ori_vals = qnn_ori_tensor.DataAsSpan<oriModelType>();
+      gsl::span<const float> cpu_bm_vals = output_vals[i];
+      gsl::span<const float> qnn_ori_vals = qnn_ori_tensor.DataAsSpan<float>();
 
       ASSERT_EQ(num_vals, qnn_ori_vals.size());
 
       float max_qnn_err = 0.0f;
 
       for (size_t j = 0; j < num_vals && error_count < max_error_count; j++) {
-        const float expected_val = cpu_bm_vals[j];      // bm@CPU_EP val ("ground-truth")
-        const float qnn_ori_val = qnn_ori_vals[j];      // ori@QNN_HTP val
+        const float expected_val = cpu_bm_vals[j];  // bm@CPU_EP val ("ground-truth")
+        const float qnn_ori_val = qnn_ori_vals[j];  // ori@QNN_HTP val
 
-        // Get error of ori@QNN_HTP against bm@CPU_EP
+        // Calculate relative error of ori@QNN_HTP against bm@CPU_EP
         constexpr float epsilon = 1e-16f;
         const float qnn_relative_err = std::fabs(expected_val - qnn_ori_val) / (std::fabs(expected_val) + epsilon);
 
@@ -1040,9 +1037,7 @@ inline void TestModelBatchMultiplierAccuracy(
       }
     }
   }
-
 }
-
 
 /**
  * Creates and returns an input in a test model graph. The input's characteristics are defined
