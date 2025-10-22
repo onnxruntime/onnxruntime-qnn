@@ -2022,12 +2022,12 @@ static void TestConvBatchMultiplier(int64_t batch_multiplier_size) {
   attrs.push_back(utils::MakeAttribute("dilations", std::vector<int64_t>{1, 1}));
 
   RunBatchMultiplierOpTest("Conv",
-                               input_defs,
-                               input_bm_defs,
-                               attrs,
-                               21,  // opset version
-                               ExpectedEPNodeAssignment::All,
-                               kOnnxDomain);
+                           input_defs,
+                           input_bm_defs,
+                           attrs,
+                           21,  // opset version
+                           ExpectedEPNodeAssignment::All,
+                           kOnnxDomain);
 }
 
 // Test batch multiplier accuracy for Conv operator with batch size 2, 8, 128.
