@@ -2596,6 +2596,21 @@ const ExternalDataLoaderManager& InferenceSession::GetExternalDataLoaderManager(
   return external_data_loader_mgr_;
 }
 
+bool InferenceSession::IsGraphFullyAssignedToQnnEP(const Graph& graph) const {
+  // check if QNN EP is used
+  if (execution_providers_.Get(kQnnExecutionProvider) == nullptr) {
+    return false;
+  }
+  // check if all nodes are assigned to QNN EP
+  for (const auto& node : graph.Nodes()) {
+    const auto& node_provider = node.GetExecutionProviderType();
+    if (node_provider.empty() || node_provider != kQnnExecutionProvider) {
+      return false;
+    }
+  }
+  return true;
+}
+
 common::Status InferenceSession::CheckShapes(const std::string& input_output_name, const TensorShape& input_output_shape,
                                              const TensorShape& expected_shape, const char* input_output_moniker) const {
   const auto shape_size = input_output_shape.NumDimensions();
@@ -2610,18 +2625,7 @@ common::Status InferenceSession::CheckShapes(const std::string& input_output_nam
   // and relax the constraint to support batch multiplier on the first dimension.
   // We will check whether only the Htp backend is used inside QnnModel::ExecuteGraph.
   auto is_valid_qnn_batch_multiplier = [this](int64_t input_dim, int64_t expected_dim, const Graph& graph) -> bool {
-    // check if QNN EP is used
-    if (execution_providers_.Get(kQnnExecutionProvider) == nullptr) {
-      return false;
-    }
-    // check if all nodes are assigned to QNN EP
-    for (const auto& node : graph.Nodes()) {
-      const auto& node_provider = node.GetExecutionProviderType();
-      if (node_provider.empty() || node_provider != kQnnExecutionProvider) {
-        return false;
-      }
-    }
-
+    if (!IsGraphFullyAssignedToQnnEP(graph)) return false;
     return expected_dim > 0 && input_dim % expected_dim == 0;
   };
 
