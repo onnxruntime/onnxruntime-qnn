@@ -898,19 +898,26 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
 }
 
 /**
- * Tests batch multiplier accuracy by comparing QNN HTP backend (with batch multiplier)
- * against ORT CPU backend (without batch multiplier).
+ * Tests the accuracy of using batch multiplier on QNN EP by running 3 inferences:
  *
- * \param bm_model_fn Function that builds the model with batch multiplier batch size (baseline for comparison).
- * \param ori_model_fn Function that builds the model with original batch size (run by QNN HTP EP with batch multiplier).
+ * 1. Run data with "batch multiplier batch size" on CPU EP (with model compiled with batch multiplier batch size) - baseline
+ * 2. Run data with "batch multiplier batch size" on QNN HTP (with model compiled with original batch size)
+ * 3. Run data with "batch multiplier batch size" on QNN HTP (with model compiled with batch multiplier batch size)
+ *
+ * This function checks that running #3 is at least as accurate (+- small tolerance) as running #2.
+ * We primarily measure accuracy by comparing both #2 and #3 to the baseline (#1).
+ *
+ * \param bm_model_fn Function that builds the model with "batch multiplier batch size".
+ * \param ori_model_fn Function that builds the model with "original batch size".
  * \param qnn_options QNN EP provider options.
  * \param opset_version The opset version.
  * \param expected_ep_assignment Describes which nodes should be assigned to the EP.
- * \param tolerance The percent tolerance (as fraction) QNN EP results are allowed to differ from baseline.
+ * \param tolerance The percent tolerance (as fraction) QNN HTP using batch multiplier results are allowed to differ from wihtout batch multiplier
+ *                  on QNN HTP. This tolerance is a percentage of the output range.
  * \param log_severity The logger's severity setting.
  * \param qnn_ctx_model_path Optional path to a QNN context cache model.
  */
-inline void TestModelBatchMultiplierFP32Accuracy(
+inline void TestModelBatchMultiplierAccuracy(
     const GetTestModelFn& bm_model_fn,
     const GetTestModelFn& ori_model_fn,
     const ProviderOptions& qnn_options,
@@ -985,8 +992,16 @@ inline void TestModelBatchMultiplierFP32Accuracy(
   }
 
   // 4. Validate the outputs
+  // Since HTP runs on FP16, we check whether the error between HTP with batch multiplier and ORT CPU
+  // is smaller than the error between HTP without batch multiplier and ORT CPU.
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
+    // Run batch multiplier batch size model using bathc muliplier batch size input data on QNN EP.
+    std::vector<OrtValue> qnn_bm_outputs;
+    InferenceModel(bm_model_data, "bm_model_logger", qnn_options, expected_ep_assignment,
+                   bm_helper.feeds_, qnn_bm_outputs, is_qnn_ep, session_option_pairs);
+
     ASSERT_EQ(qnn_ori_outputs.size(), num_outputs);
+    ASSERT_EQ(qnn_bm_outputs.size(), num_outputs);
 
     // Limit the error message count in case test with large data fails
     constexpr size_t max_error_count = 10;
@@ -997,24 +1012,35 @@ inline void TestModelBatchMultiplierFP32Accuracy(
     for (size_t i = 0; i < num_outputs; i++) {
       const std::string debug_output_name = base_output_name + std::to_string(i);
       auto& qnn_ori_tensor = qnn_ori_outputs[i].Get<Tensor>();
+      auto& qnn_bm_tensor = qnn_bm_outputs[i].Get<Tensor>();
 
       const size_t num_vals = output_vals[i].size();
       gsl::span<const float> cpu_bm_vals = output_vals[i];
       gsl::span<const float> qnn_ori_vals = qnn_ori_tensor.DataAsSpan<float>();
+      gsl::span<const float> qnn_bm_vals = qnn_bm_tensor.DataAsSpan<float>();
 
       ASSERT_EQ(num_vals, qnn_ori_vals.size());
+      ASSERT_EQ(num_vals, qnn_bm_vals.size());
 
-      float max_qnn_err = 0.0f;
+      float max_qnn_ori_err = 0.0f;
+      float max_qnn_bm_err = 0.0f;
 
       for (size_t j = 0; j < num_vals && error_count < max_error_count; j++) {
         const float expected_val = cpu_bm_vals[j];  // bm@CPU_EP val ("ground-truth")
         const float qnn_ori_val = qnn_ori_vals[j];  // ori@QNN_HTP val
+        const float qnn_bm_val = qnn_bm_vals[j];
 
         // Calculate relative error of ori@QNN_HTP against bm@CPU_EP
         constexpr float epsilon = 1e-16f;
-        const float qnn_relative_err = std::fabs(expected_val - qnn_ori_val) / (std::fabs(expected_val) + epsilon);
+        const float qnn_ori_relative_err = std::fabs(expected_val - qnn_ori_val) / (std::fabs(expected_val) + epsilon);
+        const float qnn_bm_relative_err = std::fabs(expected_val - qnn_bm_val) / (std::fabs(expected_val) + epsilon);
 
-        const bool passed_test = qnn_relative_err <= tolerance;
+        // error between w/ and w/o batch multiplier on QNN HTP
+        const float qnn_vals_err = std::fabs(qnn_ori_relative_err - qnn_bm_relative_err);
+        const bool is_as_accurate_as_without_bm = qnn_bm_relative_err <= qnn_ori_relative_err;
+        const bool qnn_vals_diff_within_tolerance = qnn_vals_err <= tolerance;
+
+        const bool passed_test = is_as_accurate_as_without_bm || qnn_vals_diff_within_tolerance;
         if (!passed_test) {
           ++error_count;
         }
@@ -1023,16 +1049,20 @@ inline void TestModelBatchMultiplierFP32Accuracy(
             << "', element " << j << ", tolerance=" << (tolerance * 100) << "%"
             << ".\nExpected val (bm@CPU_EP): " << expected_val
             << "\nori@QNN_HTP val: " << qnn_ori_val
-            << "\nRelative error: " << (qnn_relative_err * 100) << "%";
+            << "\nbm@QNN_HTP val: " << qnn_bm_val
+            << "\nQNN HTP 'original batch size' Relative error: " << (qnn_ori_relative_err * 100) << "%"
+            << "\nQNN HTP 'batch multiplier batch size' Relative error: " << (qnn_bm_relative_err * 100) << "%";
 
-        max_qnn_err = std::max(max_qnn_err, qnn_relative_err);
+        max_qnn_ori_err = std::max(max_qnn_ori_err, qnn_ori_relative_err);
+        max_qnn_bm_err = std::max(max_qnn_bm_err, qnn_bm_relative_err);
       }
 
       if (error_count > 0) {
         std::cerr << std::endl
                   << "[WARNING]: Output " << i
                   << " required larger tolerance to pass accuracy checks" << std::endl
-                  << "Max relative error against bm@CPU_EP = " << (max_qnn_err * 100) << "%" << std::endl
+                  << "Max ori relative error against bm@CPU_EP = " << (max_qnn_ori_err * 100) << "%" << std::endl
+                  << "Max bm relative error against bm@CPU_EP = " << (max_qnn_bm_err * 100) << "%" << std::endl
                   << "Tolerance used = " << (tolerance * 100) << "%" << std::endl;
       }
     }
