@@ -1407,11 +1407,6 @@ TEST_F(QnnABIGPUBackendTests, AutoEp_PreferGpu) {
   Ort::SessionOptions so;
   so.SetEpSelectionPolicy(OrtExecutionProviderDevicePolicy_PREFER_GPU);
 
-  // QNN EP currently uses option "backend_type"/"backend_path" to determine the backend.
-  // Below is a workaround to enforce GPU backend before we decide to revise the logic.
-  const std::string prefix = OrtSessionOptions::GetProviderOptionPrefix(kQnnABIExecutionProvider);
-  so.AddConfigEntry((prefix + "backend_type").c_str(), "gpu");
-
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx";
   Ort::Session session(*ort_env, ort_model_path, so);
   EXPECT_TRUE(SessionHasEp(session, kQnnABIExecutionProvider));

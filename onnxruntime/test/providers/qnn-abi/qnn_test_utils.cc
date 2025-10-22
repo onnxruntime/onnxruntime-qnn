@@ -151,6 +151,19 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
 #else
     target_hw_device_type = OrtHardwareDeviceType_NPU;
 #endif
+  } else if ((ep_options.find("backend_type") != ep_options.end() && ep_options.at("backend_type") == "gpu") ||
+             (ep_options.find("backend_path") != ep_options.end() && ep_options.at("backend_path") ==
+#if _WIN32
+                                                                         "QnnGpu.dll"
+#else
+                                                                         "libQnnGpu.so"
+#endif
+              )) {
+#if defined(__linux__)
+    target_hw_device_type = OrtHardwareDeviceType_CPU;
+#else
+    target_hw_device_type = OrtHardwareDeviceType_GPU;
+#endif
   }
 
   auto it = std::find_if(ep_devices, ep_devices + num_devices,

@@ -690,6 +690,32 @@ std::string GetProviderOptionPrefix(const std::string& provider_name) {
   return key_prefix;
 }
 
+std::basic_string<ORTCHAR_T> GetDynamicLibraryLocationByAddress(const void* address) {
+#ifdef _WIN32
+  HMODULE moduleHandle;
+  if (!::GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCWSTR>(address), &moduleHandle)) {
+    return {};
+  }
+  std::wstring buffer;
+  for (std::uint32_t size{70}; size < 4096; size *= 2) {
+    buffer.resize(size, L'\0');
+    const std::uint32_t requiredSize = ::GetModuleFileNameW(moduleHandle, buffer.data(), size);
+    if (requiredSize == 0) {
+      break;
+    }
+    if (requiredSize == size) {
+      continue;
+    }
+    buffer.resize(requiredSize);
+    return buffer;
+  }
+#else
+  std::ignore = address;
+#endif
+  return {};
+}
+
 // QNN-EP COPY START
 std::basic_string<ORTCHAR_T> OrtGetRuntimePath() {
 #ifdef _WIN32

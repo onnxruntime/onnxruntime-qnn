@@ -343,6 +343,11 @@ inline std::string GetLowercaseString(std::string str) {
 // Refer to OrtSessionOptions::GetProviderOptionPrefix.
 std::string GetProviderOptionPrefix(const std::string& provider_name);
 
+/// @brief Gets the path of directory containing the dynamic library that contains the address.
+/// @param address An address of a function or variable in the dynamic library.
+/// @return The path of the directory containing the dynamic library, or an empty string if the path cannot be determined.
+std::basic_string<ORTCHAR_T> GetDynamicLibraryLocationByAddress(const void* address);
+
 // QNN-EP COPY START
 // Below implementations are directly copied from "core/platform/posix/env.cc" and "core/platform/windows/env.cc"
 // with few modifications to eliminate additional dependencies.
