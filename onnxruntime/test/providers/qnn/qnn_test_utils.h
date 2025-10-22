@@ -901,8 +901,8 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
  * Tests the accuracy of using batch multiplier on QNN EP by running 3 inferences:
  *
  * 1. Run data with "batch multiplier batch size" on CPU EP (with model compiled with batch multiplier batch size) - baseline
- * 2. Run data with "batch multiplier batch size" on QNN HTP (with model compiled with original batch size)
- * 3. Run data with "batch multiplier batch size" on QNN HTP (with model compiled with batch multiplier batch size)
+ * 2. Run data with "batch multiplier batch size" on QNN HTP (with model compiled with batch multiplier batch size)
+ * 3. Run data with "batch multiplier batch size" on QNN HTP (with model compiled with original batch size)
  *
  * This function checks that running #3 is at least as accurate (+- small tolerance) as running #2.
  * We primarily measure accuracy by comparing both #2 and #3 to the baseline (#1).
@@ -912,7 +912,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
  * \param qnn_options QNN EP provider options.
  * \param opset_version The opset version.
  * \param expected_ep_assignment Describes which nodes should be assigned to the EP.
- * \param tolerance The percent tolerance (as fraction) QNN HTP using batch multiplier results are allowed to differ from wihtout batch multiplier
+ * \param tolerance The percent tolerance (as fraction) QNN HTP using batch multiplier results are allowed to differ from without batch multiplier
  *                  on QNN HTP. This tolerance is a percentage of the output range.
  * \param log_severity The logger's severity setting.
  * \param qnn_ctx_model_path Optional path to a QNN context cache model.
@@ -1037,7 +1037,7 @@ inline void TestModelBatchMultiplierAccuracy(
 
         // error between w/ and w/o batch multiplier on QNN HTP
         const float qnn_vals_err = std::fabs(qnn_ori_relative_err - qnn_bm_relative_err);
-        const bool is_as_accurate_as_without_bm = qnn_bm_relative_err <= qnn_ori_relative_err;
+        const bool is_as_accurate_as_without_bm = qnn_ori_relative_err <= qnn_bm_relative_err;
         const bool qnn_vals_diff_within_tolerance = qnn_vals_err <= tolerance;
 
         const bool passed_test = is_as_accurate_as_without_bm || qnn_vals_diff_within_tolerance;
