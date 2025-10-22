@@ -20,52 +20,13 @@
 
 #include "gtest/gtest.h"
 
+#include "qnn_test_env.h"
+
+// in test_main.cc
+extern QNNTestEnvironment* qnn_env;
+
 namespace onnxruntime {
 namespace test {
-
-class ONNXRuntimeTestEnvironment : public ::testing::Environment {
-public:
-  // Constructor takes argc and argv directly
-  explicit ONNXRuntimeTestEnvironment(int argc, char** argv) {
-    ParseCommandLineFlags(argc, argv);
-  }
-
-  void SetUp() override {
-    // Parse command-line arguments here
-    return;
-  }
-
-  bool dump_onnx() const { return dump_onnx_; }
-  bool dump_json() const { return dump_json_; }
-  bool dump_dlc() const { return dump_dlc_; }
-  bool verbose() const { return verbose_; }
-
-private:
-  void ParseCommandLineFlags(int argc, char** argv) {
-    for (int i = 1; i < argc; ++i) {
-      const std::string arg = argv[i];
-      if (arg == "--dump_onnx") {
-        std::cout << "[QNN only] ONNX model dumping enabled." << std::endl;
-        dump_onnx_ = true;
-      } else if (arg == "--dump_json") {
-        std::cout << "[QNN only] Json QNN Graph dumping enabled." << std::endl;
-        dump_json_ = true;
-      } else if (arg == "--dump_dlc") {
-        std::cout << "[QNN only] DLC dumping enabled." << std::endl;
-        dump_dlc_ = true;
-      } else if (arg == "--verbose") {
-        std::cout << "Verbose enabled" << std::endl;
-        verbose_ = true;
-      }
-    }
-  }
-
-  bool dump_onnx_ = false;
-  bool dump_json_ = false;
-  bool dump_dlc_ = false;
-  bool verbose_ = false;
-  // friend int TEST_MAIN(int argc, char** argv);
-};
 
 // Signature for function that builds a float32 model.
 using GetTestModelFn = std::function<void(ModelTestBuilder& builder)>;
@@ -576,18 +537,20 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
   std::string test_suite_name = ::testing::UnitTest::GetInstance()->current_test_info()->test_suite_name();
   std::string test_name = ::testing::UnitTest::GetInstance()->current_test_info()->name();
   std::filesystem::path output_dir = std::filesystem::current_path() / (test_suite_name + "_" + test_name);
-  if (dump_onnx || dump_dlc || dump_json) {
+  if (qnn_env->dump_onnx() || qnn_env->dump_dlc() || qnn_env->dump_json()) {
     std::filesystem::create_directories(output_dir);
   }
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
   auto& logging_manager = DefaultLoggingManager();
-
-  // Uncomment to dump LOGGER() output to stdout.
-  // logging_manager.RemoveSink(logging::SinkType::EtwSink);
-
   logging_manager.SetDefaultLoggerSeverity(log_severity);
+  if (qnn_env->verbose()) {
+    logging_manager.RemoveSink(logging::SinkType::EtwSink);
+    logging_manager.SetDefaultLoggerSeverity(logging::Severity::kVERBOSE);
+  }
+
+  LOGS(logging_manager.DefaultLogger(), ERROR) << "After test";
 
   // Create float model and serialize it to a string.
   onnxruntime::Model f32_model("f32_model", false, ModelMetaData(), PathString(),
@@ -601,7 +564,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
   ASSERT_STATUS_OK(f32_model.MainGraph().Resolve());
   f32_model.ToProto().SerializeToString(&f32_model_data);
 
-  if (dump_onnx) {
+  if (qnn_env->dump_onnx()) {
     auto dump_path = output_dir / ToPathString("dumped_f32_model.onnx");
     LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx float32 model at: " << dump_path;
     ASSERT_STATUS_OK(onnxruntime::Model::Save(f32_model, dump_path));
@@ -647,7 +610,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
   ASSERT_STATUS_OK(qdq_model.MainGraph().Resolve());
   qdq_model.ToProto().SerializeToString(&qdq_model_data);
 
-  if (dump_onnx) {
+  if (qnn_env->dump_onnx()) {
     auto dump_path = output_dir / ToPathString("dumped_qdq_model.onnx");
     LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx QDQ model at: " << dump_path;
     ASSERT_STATUS_OK(onnxruntime::Model::Save(qdq_model, dump_path));
@@ -655,7 +618,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
 
   bool is_qnn_ep = true;
   TryEnableQNNSaver(qnn_options);
-  if (dump_dlc) {
+  if (qnn_env->dump_dlc()) {
     qnn_options["dump_qnn_ir_dlc"] = "1";
     qnn_options["dump_qnn_ir_dlc_dir"] = output_dir.string();
 #if defined(_WIN32)
@@ -664,7 +627,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
     qnn_options["qnn_ir_backend_path"] = "libQnnIr.so";
 #endif  // defined(_WIN32)
   }
-  if (dump_json) {
+  if (qnn_env->dump_json()) {
     qnn_options["dump_json_qnn_graph"] = "1";
     qnn_options["json_qnn_graph_dir"] = output_dir.string();
   }
@@ -812,11 +775,21 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                                   logging::Severity log_severity = logging::Severity::kERROR,
                                   const std::string& qnn_ctx_model_path = "",
                                   const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
+  std::string test_suite_name = ::testing::UnitTest::GetInstance()->current_test_info()->test_suite_name();
+  std::string test_name = ::testing::UnitTest::GetInstance()->current_test_info()->name();
+  std::filesystem::path output_dir = std::filesystem::current_path() / (test_suite_name + "_" + test_name);
+  if (qnn_env->dump_onnx() || qnn_env->dump_dlc() || qnn_env->dump_json()) {
+    std::filesystem::create_directories(output_dir);
+  }
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
   auto& logging_manager = DefaultLoggingManager();
   logging_manager.SetDefaultLoggerSeverity(log_severity);
+  if (qnn_env->verbose()) {
+    logging_manager.RemoveSink(logging::SinkType::EtwSink);
+    logging_manager.SetDefaultLoggerSeverity(logging::Severity::kVERBOSE);
+  }
 
   // Create float model and serialize it to a string.
   onnxruntime::Model f32_model("f32_model", false, ModelMetaData(), PathString(),
@@ -828,6 +801,12 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   f32_helper.SetGraphOutputs();
   ASSERT_STATUS_OK(f32_model.MainGraph().Resolve());
   f32_model.ToProto().SerializeToString(&f32_model_data);
+
+  if (qnn_env->dump_onnx()) {
+    auto dump_path = output_dir / ToPathString("dumped_f32_model.onnx");
+    LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx float32 model at: " << dump_path;
+    ASSERT_STATUS_OK(onnxruntime::Model::Save(f32_model, dump_path));
+  }
 
   // Run f32 model on CPU EP and collect outputs.
   std::vector<OrtValue> cpu_f32_outputs;
@@ -865,8 +844,27 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   ASSERT_STATUS_OK(f16_model.MainGraph().Resolve());
   f16_model.ToProto().SerializeToString(&f16_model_data);
 
+  if (qnn_env->dump_onnx()) {
+    auto dump_path = output_dir / ToPathString("dumped_f16_model.onnx");
+    LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx float16 model at: " << dump_path;
+    ASSERT_STATUS_OK(onnxruntime::Model::Save(f16_model, dump_path));
+  }
+
   bool is_qnn_ep = true;
   TryEnableQNNSaver(qnn_options);
+  if (qnn_env->dump_dlc()) {
+    qnn_options["dump_qnn_ir_dlc"] = "1";
+    qnn_options["dump_qnn_ir_dlc_dir"] = output_dir.string();
+#if defined(_WIN32)
+    qnn_options["qnn_ir_backend_path"] = "QnnIr.dll";
+#else
+    qnn_options["qnn_ir_backend_path"] = "libQnnIr.so";
+#endif  // defined(_WIN32)
+  }
+  if (qnn_env->dump_json()) {
+    qnn_options["dump_json_qnn_graph"] = "1";
+    qnn_options["json_qnn_graph_dir"] = output_dir.string();
+  }
   std::vector<OrtValue> qnn_f16_outputs;
   if (!qnn_ctx_model_path.empty()) {
     onnx::ModelProto model_proto;

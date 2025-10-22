@@ -104,8 +104,7 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   std::string test_suite_name = ::testing::UnitTest::GetInstance()->current_test_info()->test_suite_name();
   std::string test_name = ::testing::UnitTest::GetInstance()->current_test_info()->name();
   std::filesystem::path output_dir = std::filesystem::current_path() / (test_suite_name + "_" + test_name);
-  auto dump_onnx = ::testing::UnitTest::
-  if ( || dump_dlc || dump_json) {
+  if (qnn_env->dump_onnx() || qnn_env->dump_dlc() || qnn_env->dump_json()) {
     std::filesystem::create_directories(output_dir);
   }
   EPVerificationParams verification_params;
@@ -117,6 +116,10 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
 
   auto& logging_manager = DefaultLoggingManager();
   logging_manager.SetDefaultLoggerSeverity(log_severity);
+  if (qnn_env->verbose()) {
+    logging_manager.RemoveSink(logging::SinkType::EtwSink);
+    logging_manager.SetDefaultLoggerSeverity(logging::Severity::kVERBOSE);
+  }
 
   onnxruntime::Model model("QNN_EP_TestModel", false, ModelMetaData(), PathString(),
                            IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
@@ -131,14 +134,14 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   std::string model_data;
   model.ToProto().SerializeToString(&model_data);
 
-  if (dump_onnx) {
+  if (qnn_env->dump_onnx()) {
     auto dump_path = output_dir / ToPathString("dumped_f32_model.onnx");
     LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx model at: " << dump_path;
     ASSERT_STATUS_OK(onnxruntime::Model::Save(model, dump_path));
   }
 
   TryEnableQNNSaver(provider_options);
-  if (dump_dlc) {
+  if (qnn_env->dump_dlc()) {
     provider_options["dump_qnn_ir_dlc"] = "1";
     provider_options["dump_qnn_ir_dlc_dir"] = output_dir.string();
 #if defined(_WIN32)
@@ -147,7 +150,7 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
     provider_options["qnn_ir_backend_path"] = "libQnnIr.so";
 #endif  // defined(_WIN32)
   }
-  if (dump_json) {
+  if (qnn_env->dump_json()) {
     provider_options["dump_json_qnn_graph"] = "1";
     provider_options["json_qnn_graph_dir"] = output_dir.string();
   }
@@ -161,11 +164,21 @@ void RunQnnModelTestHTPNoVerify(const GetTestModelFn& build_test_case, ProviderO
                                 int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                                 logging::Severity log_severity,
                                 std::function<void(const Graph&)>* ep_graph_checker) {
+  std::string test_suite_name = ::testing::UnitTest::GetInstance()->current_test_info()->test_suite_name();
+  std::string test_name = ::testing::UnitTest::GetInstance()->current_test_info()->name();
+  std::filesystem::path output_dir = std::filesystem::current_path() / (test_suite_name + "_" + test_name);
+  if (qnn_env->dump_onnx() || qnn_env->dump_dlc() || qnn_env->dump_json()) {
+    std::filesystem::create_directories(output_dir);
+  }
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
   auto& logging_manager = DefaultLoggingManager();
   logging_manager.SetDefaultLoggerSeverity(log_severity);
+  if (qnn_env->verbose()) {
+    logging_manager.RemoveSink(logging::SinkType::EtwSink);
+    logging_manager.SetDefaultLoggerSeverity(logging::Severity::kVERBOSE);
+  }
 
   onnxruntime::Model model("QNN_EP_TestModel", false, ModelMetaData(), PathString(),
                            IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
@@ -179,7 +192,27 @@ void RunQnnModelTestHTPNoVerify(const GetTestModelFn& build_test_case, ProviderO
   // Serialize the model to a string.
   std::string model_data;
   model.ToProto().SerializeToString(&model_data);
+
+  if (qnn_env->dump_onnx()) {
+    auto dump_path = output_dir / ToPathString("dumped_f32_model.onnx");
+    LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx model at: " << dump_path;
+    ASSERT_STATUS_OK(onnxruntime::Model::Save(model, dump_path));
+  }
+
   TryEnableQNNSaver(provider_options);
+  if (qnn_env->dump_dlc()) {
+    provider_options["dump_qnn_ir_dlc"] = "1";
+    provider_options["dump_qnn_ir_dlc_dir"] = output_dir.string();
+#if defined(_WIN32)
+    provider_options["qnn_ir_backend_path"] = "QnnIr.dll";
+#else
+    provider_options["qnn_ir_backend_path"] = "libQnnIr.so";
+#endif  // defined(_WIN32)
+  }
+  if (qnn_env->dump_json()) {
+    provider_options["dump_json_qnn_graph"] = "1";
+    provider_options["json_qnn_graph_dir"] = output_dir.string();
+  }
 
   SessionOptions so;
   so.session_logid = "QNN_EP_TestLogID";

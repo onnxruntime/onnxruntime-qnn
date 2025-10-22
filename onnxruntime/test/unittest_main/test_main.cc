@@ -38,12 +38,11 @@
 #include "test/unittest_util/test_dynamic_plugin_ep.h"
 #endif  // defined(TEST_MAIN_ENABLE_DYNAMIC_PLUGIN_EP_USAGE)
 
-#include "test/providers/qnn/qnn_test_utils.h"
+#include "test/providers/qnn/qnn_test_env.h"
 
 
 std::unique_ptr<Ort::Env> ort_env;
-onnxruntime::test::ONNXRuntimeTestEnvironment * qnn_env;
-
+QNNTestEnvironment* qnn_env;
 
 // define environment variable name constants here
 namespace env_var_names {
@@ -158,11 +157,11 @@ int TEST_MAIN(int argc, char** argv) {
     ortenv_setup();
     ort_env->UpdateEnvWithCustomLogLevel(ORT_LOGGING_LEVEL_WARNING);
     ::testing::InitGoogleTest(&argc, argv);
-    qnn_env = new onnxruntime::test::ONNXRuntimeTestEnvironment(argc, argv);
-    ::testing::AddGlobalTestEnvironment(qnn_env);
+    qnn_env = new QNNTestEnvironment(argc, argv);
+    // ::testing::AddGlobalTestEnvironment(qnn_env);
     for (int i = 1; i < argc; ++i) {  // argv[0] is the program
       if (std::string(argv[i]) == "--verbose") {
-        std::cout << "Verbose enabled" << std::endl;
+        std::cout << "General Verbose enabled" << std::endl;
         ort_env->UpdateEnvWithCustomLogLevel(ORT_LOGGING_LEVEL_VERBOSE);
       }
     }
