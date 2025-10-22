@@ -1842,6 +1842,17 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
         ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, ("Invalid EP Workload Type: " + value).c_str());
         return ep->ort_api.CreateStatus(ORT_INVALID_ARGUMENT, "Invalid EP Workload Type.");
       }
+    } else if (key == kOrtEpDynamicOptionsQnnHtpPerformanceMode) {
+      auto backend_type = ep->qnn_backend_manager_->GetQnnBackendType();
+      if (qnn::QnnBackendType::HTP != backend_type && qnn::QnnBackendType::DSP != backend_type) {
+        return nullptr;
+      }
+      qnn::HtpPerformanceMode htp_performance_mode = qnn::HtpPerformanceMode::kHtpDefault;
+      ParseHtpPerformanceMode(value, htp_performance_mode, ep->logger_);
+      if (ep->GetPerThreadContext().IsHtpPowerConfigIdValid()) {
+        RETURN_IF_NOT_OK(ep->qnn_backend_manager_->SetHtpPowerConfig(ep->GetPerThreadContext().GetHtpPowerConfigId(),
+                                                                     htp_performance_mode));
+      }
     } else {
       ORT_CXX_LOG(ep->logger_,
                   ORT_LOGGING_LEVEL_ERROR,

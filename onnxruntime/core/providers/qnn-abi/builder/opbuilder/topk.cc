@@ -59,11 +59,6 @@ Ort::Status TopKOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, co
   const auto& input_1 = node_unit.Inputs()[1].name;
   RETURN_IF(!qnn_model_wrapper.IsConstantInput(input_1),
             "The number of top elements to retrieve must be specified as constant input.");
-  OrtNodeAttrHelper node_helper(node_unit);
-  auto largest = node_helper.Get("largest", 1);
-  auto sorted = node_helper.Get("sorted", 1);
-  RETURN_IF(0 == sorted, "QNN TopK output is always sorted");
-  RETURN_IF(0 == largest, "QNN TopK output is always largest values");
 
   return Ort::Status();
 }
@@ -141,6 +136,16 @@ Ort::Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   std::string k_param_name = k_param.GetParamTensorName();
   qnn_model_wrapper.AddParamWrapper(std::move(k_param));
   std::vector<std::string> param_tensor_names{k_param_name};
+
+  // Add largest to TopK attr
+  uint8_t largest = static_cast<uint8_t>(OrtNodeAttrHelper(node_unit).Get("largest", 1));
+  Qnn_Scalar_t qnn_largest_k = QNN_SCALAR_INIT;
+  qnn_largest_k.dataType = QNN_DATATYPE_BOOL_8;
+  qnn_largest_k.bool8Value = largest;
+  QnnParamWrapper k_largest(node_unit.Index(), node_unit.Name(), QNN_OP_TOP_K_PARAM_LARGEST, qnn_largest_k);
+  std::string k_largest_name = k_largest.GetParamTensorName();
+  qnn_model_wrapper.AddParamWrapper(std::move(k_largest));
+  param_tensor_names.push_back(k_largest_name);
 
   // HTP only supports TopK at the last axis, and thus check whether extra Transpose is required.
   TensorInfo input_info = {};
