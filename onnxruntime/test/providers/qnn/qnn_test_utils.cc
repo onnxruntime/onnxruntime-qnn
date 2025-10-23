@@ -101,11 +101,9 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                      float fp32_abs_err, logging::Severity log_severity, bool verify_outputs,
                      std::function<void(const Graph&)>* ep_graph_checker) {
-  std::string test_suite_name = ::testing::UnitTest::GetInstance()->current_test_info()->test_suite_name();
-  std::string test_name = ::testing::UnitTest::GetInstance()->current_test_info()->name();
-  std::filesystem::path output_dir = std::filesystem::current_path() / (test_suite_name + "_" + test_name);
+  std::filesystem::path output_dir;
   if (qnn_env->dump_onnx() || qnn_env->dump_dlc() || qnn_env->dump_json()) {
-    std::filesystem::create_directories(output_dir);
+    output_dir = qnn_env->CreateTestcaseDirs();
   }
   EPVerificationParams verification_params;
   verification_params.ep_node_assignment = expected_ep_assignment;
@@ -164,11 +162,9 @@ void RunQnnModelTestHTPNoVerify(const GetTestModelFn& build_test_case, ProviderO
                                 int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                                 logging::Severity log_severity,
                                 std::function<void(const Graph&)>* ep_graph_checker) {
-  std::string test_suite_name = ::testing::UnitTest::GetInstance()->current_test_info()->test_suite_name();
-  std::string test_name = ::testing::UnitTest::GetInstance()->current_test_info()->name();
-  std::filesystem::path output_dir = std::filesystem::current_path() / (test_suite_name + "_" + test_name);
+  std::filesystem::path output_dir;
   if (qnn_env->dump_onnx() || qnn_env->dump_dlc() || qnn_env->dump_json()) {
-    std::filesystem::create_directories(output_dir);
+    output_dir = qnn_env->CreateTestcaseDirs();
   }
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};

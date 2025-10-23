@@ -534,11 +534,9 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
                                  const std::string& qnn_ctx_model_path = "",
                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                                  std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr) {
-  std::string test_suite_name = ::testing::UnitTest::GetInstance()->current_test_info()->test_suite_name();
-  std::string test_name = ::testing::UnitTest::GetInstance()->current_test_info()->name();
-  std::filesystem::path output_dir = std::filesystem::current_path() / (test_suite_name + "_" + test_name);
+  std::filesystem::path output_dir;
   if (qnn_env->dump_onnx() || qnn_env->dump_dlc() || qnn_env->dump_json()) {
-    std::filesystem::create_directories(output_dir);
+    output_dir = qnn_env->CreateTestcaseDirs();
   }
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
@@ -773,11 +771,9 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                                   logging::Severity log_severity = logging::Severity::kERROR,
                                   const std::string& qnn_ctx_model_path = "",
                                   const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
-  std::string test_suite_name = ::testing::UnitTest::GetInstance()->current_test_info()->test_suite_name();
-  std::string test_name = ::testing::UnitTest::GetInstance()->current_test_info()->name();
-  std::filesystem::path output_dir = std::filesystem::current_path() / (test_suite_name + "_" + test_name);
+  std::filesystem::path output_dir;
   if (qnn_env->dump_onnx() || qnn_env->dump_dlc() || qnn_env->dump_json()) {
-    std::filesystem::create_directories(output_dir);
+    output_dir = qnn_env->CreateTestcaseDirs();
   }
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};

@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include <filesystem>
+
 class QNNTestEnvironment {
  public:
   // Constructor takes argc and argv directly
@@ -12,6 +14,16 @@ class QNNTestEnvironment {
   bool dump_json() const { return dump_json_; }
   bool dump_dlc() const { return dump_dlc_; }
   bool verbose() const { return verbose_; }
+
+ public:
+  std::filesystem::path CreateTestcaseDirs() {
+    std::string test_suite_name = ::testing::UnitTest::GetInstance()->current_test_info()->test_suite_name();
+    std::string test_name = ::testing::UnitTest::GetInstance()->current_test_info()->name();
+    std::filesystem::path output_dir = std::filesystem::current_path() / (test_suite_name + "_" + test_name);
+    std::filesystem::create_directories(output_dir);
+
+    return output_dir;
+  }
 
  private:
   void ParseCommandLineFlags(int argc, char** argv) {

@@ -11,22 +11,30 @@ The tests are built as part of the regular ONNX Runtime build. After a successfu
 ## Running the Tests
 1. QNN supports several backends. You can use the standard Google‑Test syntax for filtering:
     - `onnxruntime_provider_test.exe --gtest_filter=QnnCPUBackendTests.*`
+    - `onnxruntime_provider_test.exe --gtest_filter=QnnHTPBackendTests.*`
+    - `onnxruntime_provider_test.exe --gtest_filter=QnnGPUBackendTests.*`
+    - `onnxruntime_provider_test.exe --gtest_filter=QnnIRBackendTests.*`
 2. Saving Test Artifacts
     - For debugging it is often helpful to keep the intermediate files that the tests generate. The following custom flags are
     recognized by the test binary:
         - `--dump_onnx`: Saves the input ONNX model used for the test
         - `--dump_json`: Save json qnn graph with provider_option `dump_json_qnn_graph`
         - `--dump_dlc`: Saves the compiled QNN DLC file by specifying the provider_option `backend_path` to `QnnIr.dll`
-    - The artifacts will be saved to a directory named with <TestSuite>_<TestName>
+    - The artifacts will be saved to a directory named with `<TestSuite>_<TestName>`
         ```
         .
-        ├── QnnCPUBackendTests_BatchNorm2D_fp32
-        │   ├── cmp_accuracy.f32.onnx                   # original ONNX model
-        │   ├── QNNExecutionProvider_QNN_XXXX_X_X.dlc   # compiled DLC
-        │   └── QNNExecutionProvider_QNN_XXXX_X_X.json  # JSON graph
-        └── QnnCPUBackendTests_BatchNorm2D_int8
-            ├── cmp_accuracy.f32.onnx
-            ├── cmp_accuracy.qdq.onnx
+        ├── QnnCPUBackendTests_BatchNorm2D_fp32         # RunQnnModelTest
+        │   ├── dumped_f32_model.onnx                   # float32 ONNX model
+        │   ├── QNNExecutionProvider_QNN_XXXX_X_X.dlc
+        │   └── QNNExecutionProvider_QNN_XXXX_X_X.json
+        ├── QnnHTPBackendTests_BatchNorm_FP16           # TestFp16ModelAccuracy
+        │   ├── dumped_f16_model.onnx                   # float16 ONNX model
+        │   ├── dumped_f32_model.onnx                   # float32 ONNX model
+        │   ├── QNNExecutionProvider_QNN_XXXX_X_X.dlc
+        │   └── QNNExecutionProvider_QNN_XXXX_X_X.json
+        └── QnnHTPBackendTests_BatchNorm2D_U8U8S32      # TestQDQModelAccuracy
+            ├── dumped_f32_model.onnx                   # float32 ONNX model
+            ├── dumped_qdq_model.onnx                   # QDQ ONNX model
             ├── QNNExecutionProvider_QNN_XXXX_X_X.dlc
             └── QNNExecutionProvider_QNN_XXXX_X_X.json
 
