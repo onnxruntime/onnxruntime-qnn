@@ -153,15 +153,8 @@ int TEST_MAIN(int argc, char** argv) {
 
   ORT_TRY {
     ortenv_setup();
-    ort_env->UpdateEnvWithCustomLogLevel(ORT_LOGGING_LEVEL_WARNING);
     ::testing::InitGoogleTest(&argc, argv);
     qnn_env = std::make_unique<QNNTestEnvironment>(argc, argv);
-    for (int i = 1; i < argc; ++i) {  // argv[0] is the program
-      if (std::string(argv[i]) == "--verbose") {
-        std::cout << "General Verbose enabled" << std::endl;
-        ort_env->UpdateEnvWithCustomLogLevel(ORT_LOGGING_LEVEL_VERBOSE);
-      }
-    }
 
     status = RUN_ALL_TESTS();
   }
