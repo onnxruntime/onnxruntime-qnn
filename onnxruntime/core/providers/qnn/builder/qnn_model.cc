@@ -271,8 +271,7 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
       if (bm > 1) {
         LOGS(logger, VERBOSE) << "batch multiplier: " << bm;
         auto backend_type = qnn_backend_manager_->GetQnnBackendType();
-        ORT_RETURN_IF_NOT(backend_type == qnn::QnnBackendType::HTP ||
-                              backend_type == qnn::QnnBackendType::HTP_FP16,
+        ORT_RETURN_IF_NOT(IsNpuBackend(backend_type),
                           "Batch multiplier is only supported on HTP backend, but current backend is: ",
                           static_cast<int>(backend_type));
       }

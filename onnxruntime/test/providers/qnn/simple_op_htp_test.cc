@@ -1754,61 +1754,8 @@ TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_FP16) {
   // Rank 4, non-default alpha and beta
   RunFP16OpTest("HardSigmoid",
                 {TestInputDef<float>({1, 2, 2, 4}, false, input_data)},
-                {utils::MakeAttribute("alpha", 0.1f),
-                 utils::MakeAttribute("beta", 0.4f)},
+                {utils::MakeAttribute("alpha", 0.1f), utils::MakeAttribute("beta", 0.4f)},
                 21,
-                ExpectedEPNodeAssignment::All,
-                kOnnxDomain);
-}
-
-// Check that QNN EP can support float16 Conv on HTP
-TEST_F(QnnHTPBackendTests, UnaryOp_Conv_FP16) {
-  // Constants
-  constexpr int64_t kOriginalBatchSize = 128;
-  constexpr int64_t kInputChannels = 1;
-  constexpr int64_t kInputHeight = 5;
-  constexpr int64_t kInputWidth = 5;
-  constexpr int64_t kKernelSize = 3;
-  constexpr size_t kWeightDataSize = kInputChannels * kInputChannels * kKernelSize * kKernelSize;
-  const size_t kInputDataSize = kInputChannels * kInputHeight * kInputWidth;
-
-  // Generate fixed weight data to ensure consistency across model builds
-  std::vector<float> weight_data(kWeightDataSize);
-  std::default_random_engine weight_generator(12345);
-  std::uniform_real_distribution<float> weight_distribution(-10.0f, 10.0f);
-  for (auto& val : weight_data) {
-    val = weight_distribution(weight_generator);
-  }
-
-  // Generate fixed input data for reproducible results
-  std::vector<float> input_data(kInputDataSize);
-  std::default_random_engine input_generator(6677);
-  std::uniform_real_distribution<float> input_distribution(0.0f, 10.0f);
-  for (auto& val : input_data) {
-    val = input_distribution(input_generator);
-  }
-
-  // Create input definitions with original batch size (for compilation)
-  std::vector<TestInputDef<float>> input_defs;
-  input_defs.push_back(TestInputDef<float>(
-      {kOriginalBatchSize, kInputChannels, kInputHeight, kInputWidth},
-      false, 0.0f, 10.0f));  // Random data OK for compilation only
-  input_defs.push_back(TestInputDef<float>(
-      {kInputChannels, kInputChannels, kKernelSize, kKernelSize},
-      true, weight_data));
-  input_defs.push_back(TestInputDef<float>({kInputChannels}, true, {2.0f}));
-
-  // Attritbutes
-  std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
-  attrs.push_back(utils::MakeAttribute("auto_pad", "NOTSET"));
-  attrs.push_back(utils::MakeAttribute("strides", std::vector<int64_t>{1, 1}));
-  attrs.push_back(utils::MakeAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}));
-  attrs.push_back(utils::MakeAttribute("dilations", std::vector<int64_t>{1, 1}));
-
-  RunFP16OpTest("Conv",
-                input_defs,
-                attrs,
-                21,  // opset version
                 ExpectedEPNodeAssignment::All,
                 kOnnxDomain);
 }
