@@ -40,7 +40,7 @@
 #include "test/providers/qnn/qnn_test_env.h"
 
 std::unique_ptr<Ort::Env> ort_env;
-QNNTestEnvironment* qnn_env;
+std::unique_ptr<QNNTestEnvironment> qnn_env;
 
 // define environment variable name constants here
 namespace env_var_names {
@@ -155,8 +155,7 @@ int TEST_MAIN(int argc, char** argv) {
     ortenv_setup();
     ort_env->UpdateEnvWithCustomLogLevel(ORT_LOGGING_LEVEL_WARNING);
     ::testing::InitGoogleTest(&argc, argv);
-    qnn_env = new QNNTestEnvironment(argc, argv);
-    // ::testing::AddGlobalTestEnvironment(qnn_env);
+    qnn_env = std::make_unique<QNNTestEnvironment>(argc, argv);
     for (int i = 1; i < argc; ++i) {  // argv[0] is the program
       if (std::string(argv[i]) == "--verbose") {
         std::cout << "General Verbose enabled" << std::endl;

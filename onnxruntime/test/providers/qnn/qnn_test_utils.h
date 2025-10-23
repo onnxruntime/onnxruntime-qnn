@@ -23,7 +23,7 @@
 #include "qnn_test_env.h"
 
 // in test_main.cc
-extern QNNTestEnvironment* qnn_env;
+extern std::unique_ptr<QNNTestEnvironment> qnn_env;
 
 namespace onnxruntime {
 namespace test {
@@ -549,8 +549,6 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
     logging_manager.RemoveSink(logging::SinkType::EtwSink);
     logging_manager.SetDefaultLoggerSeverity(logging::Severity::kVERBOSE);
   }
-
-  LOGS(logging_manager.DefaultLogger(), ERROR) << "After test";
 
   // Create float model and serialize it to a string.
   onnxruntime::Model f32_model("f32_model", false, ModelMetaData(), PathString(),

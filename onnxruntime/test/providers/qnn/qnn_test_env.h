@@ -1,15 +1,11 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-class QNNTestEnvironment : public ::testing::Environment {
+class QNNTestEnvironment {
  public:
   // Constructor takes argc and argv directly
   explicit QNNTestEnvironment(int argc, char** argv) {
     ParseCommandLineFlags(argc, argv);
-  }
-
-  void SetUp() override {
-    return;
   }
 
   bool dump_onnx() const { return dump_onnx_; }
