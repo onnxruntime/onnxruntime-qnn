@@ -29,7 +29,6 @@
 #include "core/session/onnxruntime_cxx_api.h"
 #include "core/util/thread_utils.h"
 
-
 #if !defined(ORT_MINIMAL_BUILD) && defined(ORT_UNIT_TEST_ENABLE_DYNAMIC_PLUGIN_EP_USAGE)
 #define TEST_MAIN_ENABLE_DYNAMIC_PLUGIN_EP_USAGE
 #endif  // !defined(ORT_MINIMAL_BUILD) && defined(ORT_UNIT_TEST_ENABLE_DYNAMIC_PLUGIN_EP_USAGE)
@@ -39,7 +38,6 @@
 #endif  // defined(TEST_MAIN_ENABLE_DYNAMIC_PLUGIN_EP_USAGE)
 
 #include "test/providers/qnn/qnn_test_env.h"
-
 
 std::unique_ptr<Ort::Env> ort_env;
 QNNTestEnvironment* qnn_env;

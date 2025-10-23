@@ -1,7 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-
 class QNNTestEnvironment : public ::testing::Environment {
  public:
   // Constructor takes argc and argv directly
