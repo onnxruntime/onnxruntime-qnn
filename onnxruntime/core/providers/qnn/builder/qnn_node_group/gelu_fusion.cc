@@ -130,7 +130,7 @@ static std::optional<float> GetConstantInitializerFloatScalar(QnnModelWrapper& q
 static bool IsInitializerWithExpectedValue(QnnModelWrapper& qnn_model_wrapper,
                                            const NodeUnitIODef& io_def,
                                            float expected_value,
-                                           float tolerance = 1e-5f) {
+                                           float tolerance = 1e-3f) {
   std::optional<float> actual_value = GetConstantInitializerFloatScalar(qnn_model_wrapper, io_def);
   if (!actual_value.has_value()) {
     return false;
@@ -184,7 +184,7 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
 
   // Check second input of Div is sqrt(2) ≈ 1.4142
   // Use a larger tolerance to handle approximations used in some models
-  if (!IsInitializerWithExpectedValue(qnn_model_wrapper, div_inputs[1], static_cast<float>(M_SQRT2), 1e-4f)) {
+  if (!IsInitializerWithExpectedValue(qnn_model_wrapper, div_inputs[1], static_cast<float>(M_SQRT2))) {
     return nullptr;
   }
 
@@ -209,7 +209,7 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
   // Check the other input node (e.g. not the Erf) is 1.0f
   bool is_erf_first_input = (add_inputs[0].node_arg.Name() == erf_outputs[0].node_arg.Name());
   const auto& add_const_input = add_inputs[is_erf_first_input ? 1 : 0];
-  if (!IsInitializerWithExpectedValue(qnn_model_wrapper, add_const_input, 1.0f)) {
+  if (!IsInitializerWithExpectedValue(qnn_model_wrapper, add_const_input, 1.0f, 1e-02f)) {
     return nullptr;
   }
 
