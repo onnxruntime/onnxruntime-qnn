@@ -249,8 +249,14 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
 
   std::vector<Qnn_Tensor_t> qnn_inputs;
   qnn_inputs.reserve(qnn_input_infos_.size());
-  uint32_t batch_multiplier = 0;
   constexpr size_t BATCH_DIMENSION_INDEX = 0;
+  uint32_t batch_multiplier = static_cast<uint32_t>(
+      TensorDataSize(context.GetInput(qnn_input_infos_[BATCH_DIMENSION_INDEX].ort_index)) / qnn_input_infos_[BATCH_DIMENSION_INDEX].tensor_byte_size);
+  auto backend_type = qnn_backend_manager_->GetQnnBackendType();
+  // Check if batch multiplier is used, and it's only supported on the HTP backend.
+  ORT_RETURN_IF(batch_multiplier != 1 && !IsNpuBackend(backend_type),
+                "Batch multiplier is only supported on   HTP backend, but current backend is: ",
+                static_cast<int>(backend_type));
 
   for (const auto& qnn_input_info : qnn_input_infos_) {
     LOGS(logger, VERBOSE) << "model_input = " << qnn_input_info.tensor_wrapper->GetName()
@@ -262,23 +268,15 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
     LOGS(logger, VERBOSE) << "Original Qnn input tensor shape: " << LogTensorShape(qnn_input_info.ori_dimensions_);
     LOGS(logger, VERBOSE) << "Qnn input tensor shape: " << LogTensorShape(qnn_input_info.tensor_wrapper->GetTensorDims());
     LOGS(logger, VERBOSE) << "Ort input tensor shape: " << LogTensorShape(ort_input_tensor.GetTensorTypeAndShapeInfo().GetShape());
-    ORT_RETURN_IF_NOT((qnn_input_info.tensor_byte_size == ort_tensor_size) || (ort_tensor_size % qnn_input_info.tensor_byte_size == 0),
-                      "ORT Tensor data size does not match QNN tensor data size.");
+    ORT_RETURN_IF_NOT(ort_tensor_size % qnn_input_info.tensor_byte_size == 0,
+                      "ORT tensor size (", ort_tensor_size, " bytes) must match QNN tensor size (",
+                      qnn_input_info.tensor_byte_size, " bytes) or be a valid batch multiplier. ",
+                      "Expected: exact match or integer multiple.");
 
     // check if there is only one batch multiplier value.
     uint32_t bm = static_cast<uint32_t>(ort_tensor_size / qnn_input_info.tensor_byte_size);
-    if (batch_multiplier == 0) {  // Set batch multiplier just ONCE.
-      if (bm > 1) {
-        LOGS(logger, VERBOSE) << "batch multiplier: " << bm;
-        auto backend_type = qnn_backend_manager_->GetQnnBackendType();
-        ORT_RETURN_IF_NOT(IsNpuBackend(backend_type),
-                          "Batch multiplier is only supported on HTP backend, but current backend is: ",
-                          static_cast<int>(backend_type));
-      }
-      batch_multiplier = bm;
-    } else {
-      ORT_RETURN_IF(batch_multiplier != bm, "Inconsistent batch multiplier. Expected: ", batch_multiplier, ", Got: ", bm);
-    }
+    ORT_RETURN_IF_NOT(bm == batch_multiplier,
+                      "Batch multiplier should be the same across all the inputs. Expected: ", batch_multiplier, ", Got: ", bm);
 
     qnn_inputs.push_back(qnn_input_info.tensor_wrapper->GetQnnTensor());
     // modify Qnn inputs batch size with batch multiplier, if batch multiplier > 1
@@ -317,10 +315,13 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
     LOGS(logger, VERBOSE) << "Original Qnn output tensor shape: " << LogTensorShape(qnn_output_info.ori_dimensions_);
     LOGS(logger, VERBOSE) << "ORT output tensor shape: " << LogTensorShape(ort_output_tensor.GetTensorTypeAndShapeInfo().GetShape());
     LOGS(logger, VERBOSE) << "Qnn output tensor shape: " << LogTensorShape(qnn_output_info.tensor_wrapper->GetTensorDims());
-    ORT_RETURN_IF_NOT((qnn_output_info.tensor_byte_size == ort_tensor_size) || (ort_tensor_size % qnn_output_info.tensor_byte_size == 0),
-                      "ORT Tensor data size does not match QNN tensor data size");
+    ORT_RETURN_IF_NOT(ort_tensor_size % qnn_output_info.tensor_byte_size == 0,
+                      "ORT tensor size (", ort_tensor_size, " bytes) must match QNN tensor size (",
+                      qnn_output_info.tensor_byte_size, " bytes) or be a valid batch multiplier. ",
+                      "Expected: exact match or integer multiple.");
     uint32_t bm = static_cast<uint32_t>(ort_tensor_size / qnn_output_info.tensor_byte_size);
-    ORT_RETURN_IF(batch_multiplier != bm, "Inconsistent batch multiplier. Expected: ", batch_multiplier, ", Got: ", bm);
+    ORT_RETURN_IF_NOT(bm == batch_multiplier,
+                      "Batch multiplier should be the same across all the inputs. Expected: ", batch_multiplier, ", Got: ", bm);
 
     LOGS(logger, VERBOSE) << "qnn_outputs batch_size: " << GetQnnTensorDims(qnn_output_info.tensor_wrapper->GetQnnTensor())[BATCH_DIMENSION_INDEX];
     qnn_outputs.push_back(qnn_output_info.tensor_wrapper->GetQnnTensor());

@@ -2612,7 +2612,9 @@ common::Status InferenceSession::CheckShapes(const std::string& input_output_nam
 #ifdef USE_QNN
   auto is_valid_qnn_batch_multiplier = [this](int64_t input_dim, int64_t expected_dim, const Graph& graph) -> bool {
     if (!AreAllNodesInMainGraphAssignedToOneEp(graph, kQnnExecutionProvider)) {
-      LOGS_IF(input_dim != expected_dim, *session_logger_, WARNING) << "Batch multiplier is only supported on the QNN EP, but some nodes in the graph are assigned to other EPs";
+      LOGS_IF(input_dim != expected_dim, *session_logger_, WARNING) << "input batch size and expected batch size are different. "
+                                                                    << "Batch multiplier is only supported on the QNN EP, "
+                                                                    << "but some nodes in the graph are assigned to other EPs";
       return false;
     }
     return expected_dim > 0 && input_dim % expected_dim == 0;
