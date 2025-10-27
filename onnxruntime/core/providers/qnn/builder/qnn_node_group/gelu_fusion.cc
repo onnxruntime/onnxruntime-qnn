@@ -140,17 +140,28 @@ static bool IsInitializerWithExpectedValue(QnnModelWrapper& qnn_model_wrapper,
   return std::abs(actual_value.value() - expected_value) <= tolerance;
 }
 
-// Forward declarations.
-#define ValidateOnQnn(qnn_model_wrapper, node_units, root_input, final_output) \
-  CreateOrValidateOnQnn((qnn_model_wrapper), (node_units), (root_input), (final_output), true)
-#define CreateOnQnn(qnn_model_wrapper, node_units, root_input, final_output) \
-  CreateOrValidateOnQnn((qnn_model_wrapper), (node_units), (root_input), (final_output), false)
-
+// Forward declaration.
 static Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                     gsl::span<const NodeUnit* const> node_units,
                                     const NodeUnitIODef& root_input,
                                     const NodeUnitIODef& final_output,
                                     bool validate);
+
+// Helper function to validate on QNN
+static Status ValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
+                            gsl::span<const NodeUnit* const> node_units,
+                            const NodeUnitIODef& root_input,
+                            const NodeUnitIODef& final_output) {
+  return CreateOrValidateOnQnn(qnn_model_wrapper, node_units, root_input, final_output, true);
+}
+
+// Helper function to create on QNN
+static Status CreateOnQnn(QnnModelWrapper& qnn_model_wrapper,
+                          gsl::span<const NodeUnit* const> node_units,
+                          const NodeUnitIODef& root_input,
+                          const NodeUnitIODef& final_output) {
+  return CreateOrValidateOnQnn(qnn_model_wrapper, node_units, root_input, final_output, false);
+}
 
 std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
     QnnModelWrapper& qnn_model_wrapper,
