@@ -280,11 +280,14 @@ std::ostream& operator<<(std::ostream& out, const Qnn_QuantizationEncoding_t& en
     case QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET:
       out << "QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET";
       break;
+    case QNN_QUANTIZATION_ENCODING_BLOCK:
+      out << "QNN_QUANTIZATION_ENCODING_BLOCK";
+      break;
     case QNN_QUANTIZATION_ENCODING_UNDEFINED:
       out << "QNN_QUANTIZATION_ENCODING_UNDEFINED";
       break;
     default:
-      out << "Uknown quantization encoding";
+      out << "Unknown quantization encoding";
   }
   return out;
 }
@@ -330,6 +333,31 @@ std::ostream& operator<<(std::ostream& out, const Qnn_QuantizeParams_t& quantize
         out << quantize_params.bwAxisScaleOffsetEncoding.offsets[i] << (i == num_elems - 1 ? "" : " ");
       }
       out << (truncate ? "...)" : ")");
+    } else if (quantize_params.quantizationEncoding == QNN_QUANTIZATION_ENCODING_BLOCK) {
+      // Handle block quantization encoding - display scales and offsets similar to matmulnbits
+      if (quantize_params.blockEncoding.scaleOffset != nullptr) {
+        // Determine number of blocks from the scaleOffset array
+        // Note: We don't have direct access to the number of blocks, so we'll display what we can
+        out << " block_scales_offsets=(";
+        // Display first few scale/offset pairs (similar to other encodings)
+        const size_t max_display = 5;  // Limit display to avoid too much output
+        for (size_t i = 0; i < max_display; i++) {
+          out << "scale=" << quantize_params.blockEncoding.scaleOffset[i].scale;
+          out << ",offset=" << quantize_params.blockEncoding.scaleOffset[i].offset;
+          if (i < max_display - 1) out << " ";
+        }
+        out << "...)";
+      }
+      if (quantize_params.blockEncoding.blockSize != nullptr) {
+        out << " block_sizes=(";
+        // Display block sizes - we don't know the exact count, so display a few
+        const size_t max_block_sizes = 4;
+        for (size_t i = 0; i < max_block_sizes; i++) {
+          out << quantize_params.blockEncoding.blockSize[i];
+          if (i < max_block_sizes - 1) out << " ";
+        }
+        out << "...)";
+      }
     } else {
       out << " encoding not supported.";
     }
