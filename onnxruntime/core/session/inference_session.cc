@@ -2606,10 +2606,10 @@ common::Status InferenceSession::CheckShapes(const std::string& input_output_nam
                            " Please fix either the inputs/outputs or the model.");
   }
 
+#ifdef USE_QNN
   // Helper function to check whether QNN EP is used & all nodes are assigned to QNN EP,
   // and relax the constraint to support batch multiplier on the first dimension.
   // We will check whether only the Htp backend is used inside QnnModel::ExecuteGraph.
-#ifdef USE_QNN
   auto is_valid_qnn_batch_multiplier = [this](int64_t input_dim, int64_t expected_dim, const Graph& graph) -> bool {
     if (!AreAllNodesInMainGraphAssignedToOneEp(graph, kQnnExecutionProvider)) {
       LOGS_IF(input_dim != expected_dim, *session_logger_, WARNING) << "input batch size and expected batch size are different. "
