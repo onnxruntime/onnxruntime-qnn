@@ -211,7 +211,6 @@ template <typename F, class T>
 Status QnnBackendManager::GetQnnInterfaceProvider(const char* lib_path,
                                                   const char* interface_provider_name,
                                                   void** backend_lib_handle,
-                                                  Qnn_Version_t req_version,
                                                   T** interface_provider) {
   std::string error_msg;
   *backend_lib_handle = LoadLib(lib_path,
@@ -269,9 +268,6 @@ Status QnnBackendManager::LoadBackend() {
                                     QnnInterface_t>(backend_path_.c_str(),
                                                     "QnnInterface_getProviders",
                                                     &backend_lib_handle_,
-                                                    {QNN_API_VERSION_MAJOR,
-                                                     QNN_API_VERSION_MINOR,
-                                                     QNN_API_VERSION_PATCH},
                                                     &backend_interface_provider);
   ORT_RETURN_IF_ERROR(rt);
   qnn_interface_ = backend_interface_provider->QNN_INTERFACE_VER_NAME;
@@ -319,9 +315,6 @@ Status QnnBackendManager::LoadQnnSerializerBackend() {
                                     QnnInterface_t>(backend_path_.c_str(),
                                                     "QnnInterface_getProviders",
                                                     &backend_lib_handle,
-                                                    {QNN_API_VERSION_MAJOR,
-                                                     QNN_API_VERSION_MINOR,
-                                                     QNN_API_VERSION_PATCH},
                                                     &backend_interface_provider);
   ORT_RETURN_IF_ERROR(rt);
 
@@ -335,9 +328,6 @@ Status QnnBackendManager::LoadQnnSerializerBackend() {
                                           QnnInterface_t>(qnn_serializer_config_->GetBackendPath().c_str(),
                                                           "QnnInterface_getProviders",
                                                           &backend_lib_handle_,  // NOTE: QnnSaver/Ir library handle is set
-                                                          {QNN_API_VERSION_MAJOR,
-                                                           QNN_API_VERSION_MINOR,
-                                                           QNN_API_VERSION_PATCH},
                                                           &serializer_interface_provider);
   ORT_RETURN_IF_ERROR(saver_rt);
   qnn_interface_ = serializer_interface_provider->QNN_INTERFACE_VER_NAME;  // NOTE: QnnSaver/Ir will provide the interfaces
@@ -372,9 +362,6 @@ Status QnnBackendManager::LoadQnnSystemLib() {
                                       QnnSystemInterface_t>(sys_file_path.c_str(),
                                                             "QnnSystemInterface_getProviders",
                                                             &system_lib_handle_,
-                                                            {QNN_SYSTEM_API_VERSION_MAJOR,
-                                                             QNN_SYSTEM_API_VERSION_MINOR,
-                                                             QNN_SYSTEM_API_VERSION_PATCH},
                                                             &system_interface_provider);
     ORT_RETURN_IF_ERROR(rt);
     Qnn_Version_t system_interface_version = GetQnnInterfaceApiVersion(system_interface_provider);

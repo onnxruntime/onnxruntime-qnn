@@ -295,7 +295,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Status GetQnnInterfaceProvider(const char* lib_path,
                                  const char* interface_provider_name,
                                  void** backend_lib_handle,
-                                 Qnn_Version_t req_version,
                                  T** interface_provider);
 
   bool IsDevicePropertySupported();
