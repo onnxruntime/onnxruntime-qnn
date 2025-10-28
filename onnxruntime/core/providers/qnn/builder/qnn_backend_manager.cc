@@ -227,7 +227,7 @@ Status QnnBackendManager::GetQnnInterfaceProvider(const char* lib_path,
   uint32_t num_providers{0};
 
   auto result = GetInterfaceProviders((const T***)&interface_providers, &num_providers);
-  ORT_RETURN_IF((QNN_SUCCESS != result || nullptr == *interface_providers || 1 == num_providers),
+  ORT_RETURN_IF((QNN_SUCCESS != result || nullptr == *interface_providers || 1 != num_providers),
                 "Failed to get QNN providers.");
 
   Qnn_Version_t interface_version = GetQnnInterfaceApiVersion(interface_providers[0]);
