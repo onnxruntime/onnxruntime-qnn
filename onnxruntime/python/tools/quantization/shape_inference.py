@@ -82,12 +82,9 @@ def quant_pre_process(
         ai_onnx_domain = [opset for opset in model.opset_import if not opset.domain or opset.domain == "ai.onnx"]
         if len(ai_onnx_domain) == 1:
             opset_version = ai_onnx_domain[0].version
-            if opset_version < 10:
+            if opset_version <= 10:
                 ReplaceUpsampleWithResize(ONNXModel(model), opset_version).apply()
-                model.opset_import.remove(ai_onnx_domain[0])
-                opset_version = 11
-                model.opset_import.extend([onnx.helper.make_opsetid("", opset_version)])
-                model = onnx.version_converter.convert_version(model, opset_version)
+                model = onnx.version_converter.convert_version(model, 11)
                 model = save_and_reload_model_with_shape_infer(model)
 
         if not skip_symbolic_shape:
