@@ -228,31 +228,13 @@ Status QnnBackendManager::GetQnnInterfaceProvider(const char* lib_path,
   uint32_t num_providers{0};
 
   auto result = GetInterfaceProviders((const T***)&interface_providers, &num_providers);
-  ORT_RETURN_IF((QNN_SUCCESS != result || nullptr == *interface_providers || 0 == num_providers),
+  ORT_RETURN_IF((QNN_SUCCESS != result || nullptr == *interface_providers || 1 == num_providers),
                 "Failed to get QNN providers.");
 
-  bool found_valid_interface{false};
-  for (size_t pIdx = 0; pIdx < num_providers; pIdx++) {
-    Qnn_Version_t interface_version = GetQnnInterfaceApiVersion(interface_providers[pIdx]);
-
-    LOGS_DEFAULT(VERBOSE) << lib_path << " interface version: " << interface_version.major << "."
-                          << interface_version.minor << "." << interface_version.patch;
-
-    // Check the interface's API version against the required version.
-    // Major versions must match. The interface's minor version must be greater OR equal with a suitable patch version.
-    if (interface_version.major == req_version.major) {
-      bool minor_and_patch_version_ok = (interface_version.minor > req_version.minor) ||
-                                        (interface_version.minor == req_version.minor &&
-                                         interface_version.patch >= req_version.patch);
-      if (minor_and_patch_version_ok) {
-        found_valid_interface = true;
-        *interface_provider = interface_providers[pIdx];
-        break;
-      }
-    }
-  }
-
-  ORT_RETURN_IF_NOT(found_valid_interface, "Unable to find a valid interface for ", lib_path);
+  Qnn_Version_t interface_version = GetQnnInterfaceApiVersion(interface_providers[0]);
+  LOGS_DEFAULT(INFO) << lib_path << " interface version: " << interface_version.major << "."
+                     << interface_version.minor << "." << interface_version.patch;
+  *interface_provider = interface_providers[0];
 
   return Status::OK();
 }
