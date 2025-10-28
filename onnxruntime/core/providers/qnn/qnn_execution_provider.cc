@@ -1232,7 +1232,15 @@ Status QNNExecutionProvider::CompileFromOrtGraph(const std::vector<FusedNodeAndG
 
     ORT_RETURN_IF_ERROR(qnn_model->ComposeGraph(graph_viewer, fused_node, model_settings_, logger,
                                                 all_graph_configs_ptr, json_graph_filepath));
-    ORT_RETURN_IF_ERROR(qnn_model->FinalizeGraphs(logger));
+
+    ORT_RETURN_IF_ERROR(qnn_backend_manager_->SetState(onnxruntime::qnn::GraphState::INIT_START, GetPerThreadContext().GetHtpPowerConfigId(), default_htp_performance_mode_));
+
+    auto rtVal = qnn_model->FinalizeGraphs(logger);
+
+    ORT_RETURN_IF_ERROR(qnn_backend_manager_->SetState(onnxruntime::qnn::GraphState::INIT_DONE, GetPerThreadContext().GetHtpPowerConfigId(), default_htp_performance_mode_));
+
+    ORT_RETURN_IF_ERROR(rtVal);
+
     ORT_RETURN_IF_ERROR(qnn_model->SetupQnnInputOutput(logger));
 
     LOGS(logger, VERBOSE) << "fused node name: " << fused_node.Name();
@@ -1299,7 +1307,7 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
     for (auto main_context_pos : main_context_pos_list) {
       const onnxruntime::GraphViewer& main_ctx_graph_viewer(fused_nodes_and_graphs[main_context_pos].filtered_graph);
       // Create QNN context from the cached binary, deserialize the QNN graph from the binary
-      ORT_RETURN_IF_ERROR(qnn_backend_manager_->setState(onnxruntime::qnn::GraphState::INIT_START, GetPerThreadContext().GetHtpPowerConfigId(), default_htp_performance_mode_));
+      ORT_RETURN_IF_ERROR(qnn_backend_manager_->SetState(onnxruntime::qnn::GraphState::INIT_START, GetPerThreadContext().GetHtpPowerConfigId(), default_htp_performance_mode_));
 
       Status rtVal = qnn::LoadQnnCtxFromOnnxGraph(main_ctx_graph_viewer,
                                                   context_model_path,
@@ -1308,7 +1316,7 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
                                                   logger,
                                                   max_spill_fill_size);
 
-      ORT_RETURN_IF_ERROR(qnn_backend_manager_->setState(onnxruntime::qnn::GraphState::INIT_DONE, GetPerThreadContext().GetHtpPowerConfigId(), default_htp_performance_mode_));
+      ORT_RETURN_IF_ERROR(qnn_backend_manager_->SetState(onnxruntime::qnn::GraphState::INIT_DONE, GetPerThreadContext().GetHtpPowerConfigId(), default_htp_performance_mode_));
 
       ORT_RETURN_IF_ERROR(rtVal);
     }

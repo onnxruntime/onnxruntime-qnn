@@ -1,72 +1,79 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License
+
 #include "timer.h"
 
-void Timer::deinitialize() {
-  std::unique_lock<std::mutex> lk(mtx);
-  isTimerDeinit = true;
-  kcv.notify_all();
+void Timer::DeInitialize() {
+  std::unique_lock<std::mutex> lk(mtx_);
+  is_timer_deinit_ = true;
+  cv_.notify_all();
   lk.unlock();
-  if (bkgThread.joinable()) {
-    bkgThread.join();
+  if (bkg_thread_.joinable()) {
+    bkg_thread_.join();
   }
 }
 
-Timer::~Timer() { this->deinitialize(); }
+Timer::~Timer() { this->DeInitialize(); }
 
-void Timer::bkgTimer() {
+void Timer::BkgTimer() {
   {
-    std::unique_lock<std::mutex> lk(mtx);
-    threadStatus = threadState::IDLE;
-    kcv.notify_all();
+    std::unique_lock<std::mutex> lk(mtx_);
+    thread_status_ = threadState::IDLE;
+    cv_.notify_all();
   }
   while (true) {
-    std::unique_lock<std::mutex> lk(mtx);
+    std::unique_lock<std::mutex> lk(mtx_);
 
-    if (threadStatus == threadState::IDLE) {
-      kcv.wait(lk, [&]() {
-        return isTimerLaunched || isTimerStopped || isTimerDeinit;
+    if (thread_status_ == threadState::IDLE) {
+      cv_.wait(lk, [&]() {
+        return is_timer_launched_ || is_timer_stopped_ || is_timer_deinit_;
       });
     }
 
-    if (isTimerDeinit) {
-      threadStatus = threadState::DEINIT;
-      isTimerDeinit = false;
+    if (is_timer_deinit_) {
+      thread_status_ = threadState::DEINIT;
+      is_timer_deinit_ = false;
       return;
     }
 
-    if (isTimerStopped) {
-      threadStatus = threadState::IDLE;
-      isTimerStopped = false;
-      kcv.notify_all();
+    if (is_timer_stopped_) {
+      thread_status_ = threadState::IDLE;
+      is_timer_stopped_ = false;
+      cv_.notify_all();
     }
 
-    if (threadStatus == threadState::LAUNCH) {
-      bool isElapsed = !kcv.wait_until(lk, endTime, [&]() {
-        return isTimerStopped || isTimerDeinit;
+    if (thread_status_ == threadState::LAUNCH) {
+      bool isElapsed = !cv_.wait_until(lk, end_time_, [&]() {
+        return is_timer_stopped_ || is_timer_deinit_;
       });
       if (isElapsed) {
-        threadStatus = threadState::CALLING;
+        thread_status_ = threadState::CALLING;
         lk.unlock();
-        ktimeoutFn(ktimeoutArg);
+        timeout_fn_(timeout_arg_);
         lk.lock();
-        threadStatus = threadState::IDLE;
+        thread_status_ = threadState::IDLE;
       }
-      isTimerLaunched = false;
+      is_timer_launched_ = false;
     }
   }
 }
 
-bool Timer::initialize(std::function<void(void*)> callbackFn, void* callbackArg) {
-  std::unique_lock<std::mutex> lk(mtx);
-  ktimeoutArg = callbackArg;
-  ktimeoutFn = callbackFn;
-  bkgThread = std::thread(&Timer::bkgTimer, this);
-  kcv.wait(lk, [&] { return threadStatus == threadState::IDLE; });
+bool Timer::Initialize(std::function<void(void*)> callbackFn, void* callbackArg) {
+  std::unique_lock<std::mutex> lk(mtx_);
+  timeout_arg_ = callbackArg;
+  timeout_fn_ = callbackFn;
+  bkg_thread_ = std::thread(&Timer::BkgTimer, this);
+  cv_.wait(lk, [&] { return thread_status_ == threadState::IDLE; });
   return true;
 }
 
-void Timer::abortTimer() {
-  std::unique_lock<std::mutex> lk(mtx);
-  isTimerStopped = true;
-  kcv.notify_all();
-  kcv.wait(lk, [&] { return threadStatus == threadState::IDLE; });
+void Timer::AbortTimer() {
+  std::unique_lock<std::mutex> lk(mtx_);
+  is_timer_stopped_ = true;
+  cv_.notify_all();
+  cv_.wait(lk, [&] { return thread_status_ == threadState::IDLE; });
+}
+
+bool Timer::TimerInUse() {
+  return thread_status_ == threadState::LAUNCH;
 }

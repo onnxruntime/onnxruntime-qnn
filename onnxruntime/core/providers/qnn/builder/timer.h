@@ -1,3 +1,6 @@
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Licensed under the MIT License
+
 #include <iostream>
 #include <thread>
 #include <mutex>
@@ -19,12 +22,12 @@ class Timer {
   ~Timer();
 
   template <class T_Rep, class T_Period>
-  bool remainingDuration(std::chrono::duration<T_Rep, T_Period>& duration) {
-    std::unique_lock<std::mutex> lk(mtx);
-    if (threadStatus == threadState::LAUNCH) {
-      duration = std::chrono::duration_cast<std::chrono::duration<T_Rep, T_Period>>(endTime - std::chrono::steady_clock::now());
+  bool RemainingDuration(std::chrono::duration<T_Rep, T_Period>& duration) {
+    std::unique_lock<std::mutex> lk(mtx_);
+    if (thread_status_ == threadState::LAUNCH) {
+      duration = std::chrono::duration_cast<std::chrono::duration<T_Rep, T_Period>>(end_time_ - std::chrono::steady_clock::now());
       return true;
-    } else if (threadStatus == threadState::CALLING || threadStatus == threadState::IDLE) {
+    } else if (thread_status_ == threadState::CALLING || thread_status_ == threadState::IDLE) {
       duration = std::chrono::duration<T_Rep, T_Period>::zero();
       return true;
     } else {
@@ -34,32 +37,34 @@ class Timer {
   }
 
   template <class T_Rep, class T_Period>
-  bool launch(const std::chrono::duration<T_Rep, T_Period>& timeoutVal) {
-    std::unique_lock<std::mutex> lk(mtx);
-    if (threadStatus != threadState::IDLE) {
+  bool Launch(const std::chrono::duration<T_Rep, T_Period>& timeoutVal) {
+    std::unique_lock<std::mutex> lk(mtx_);
+    if (thread_status_ != threadState::IDLE) {
       return false;
     }
-    endTime = std::chrono::steady_clock::now() + timeoutVal;
-    threadStatus = threadState::LAUNCH;
-    isTimerLaunched = true;
-    kcv.notify_all();
+    end_time_ = std::chrono::steady_clock::now() + timeoutVal;
+    thread_status_ = threadState::LAUNCH;
+    is_timer_launched_ = true;
+    cv_.notify_all();
     return true;
   }
 
-  bool initialize(std::function<void(void*)> callbackFn, void* callbackArg);
-  void deinitialize();
-  void abortTimer();
+  bool Initialize(std::function<void(void*)> callbackFn, void* callbackArg);
+  void DeInitialize();
+  void AbortTimer();
+
+  bool TimerInUse();
 
  private:
-  std::thread bkgThread;
-  void bkgTimer();
-  std::mutex mtx;
-  std::condition_variable kcv;
-  std::function<void(void*)> ktimeoutFn;
-  void* ktimeoutArg{nullptr};
-  std::atomic<threadState> threadStatus{threadState::DEINIT};
-  std::chrono::time_point<std::chrono::steady_clock> endTime;
-  std::atomic<bool> isTimerStopped = false;
-  std::atomic<bool> isTimerDeinit = false;
-  std::atomic<bool> isTimerLaunched = false;
+  std::thread bkg_thread_;
+  void BkgTimer();
+  std::mutex mtx_;
+  std::condition_variable cv_;
+  std::function<void(void*)> timeout_fn_;
+  void* timeout_arg_{nullptr};
+  std::atomic<threadState> thread_status_{threadState::DEINIT};
+  std::chrono::time_point<std::chrono::steady_clock> end_time_;
+  std::atomic<bool> is_timer_stopped_ = false;
+  std::atomic<bool> is_timer_deinit_ = false;
+  std::atomic<bool> is_timer_launched_ = false;
 };

@@ -156,197 +156,178 @@ Status ReadBinaryFromFile(const std::string& file_path, uint8_t* buffer, size_t 
   return Status::OK();
 }
 
-void QnnBackendManager::ReleaseTimerThread(uint32_t htp_power_config_client_id) {
-  std::lock_guard<std::mutex> lk(state_mutex_);
-  if (timer_resource.timer_created && timer_ != nullptr) {
-    timer_->deinitialize();
-    graphState = GraphState::NONE;
-    timer_resource.caller_busy = false;
-    timer_resource.timer_thread_in_use = false;
-    timer_resource.timer_created = false;
-  }
-
-  if (timer_callback_arg != nullptr) {
-    delete timer_callback_arg;
-    timer_callback_arg = nullptr;
-  }
-
-  timer_.reset();
-
-  auto status = setReleasedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
-  if (status != Status::OK()) {
-    LOGS_DEFAULT(VERBOSE) << "Not able to set Power config to relaxed";
-  }
-}
-
-bool QnnBackendManager::isTimerThreadRunning() {
+bool QnnBackendManager::IsTimerThreadRunning() {
   std::chrono::microseconds remainUs = std::chrono::microseconds::zero();
   unsigned long remaining_duration = 0;
-  if (timer_resource.timer_thread_in_use && timer_->remainingDuration(remainUs)) {
+  if (timer_->TimerInUse() && timer_->RemainingDuration(remainUs)) {
     remaining_duration = static_cast<unsigned long>(remainUs.count());
-    return remaining_duration > 0 && remaining_duration < timer_resource.sustainedTimerDuration;
+    return remaining_duration > 0 && remaining_duration < timer_resource_.sustained_timer_duration_;
   }
   return false;
 }
 
-Status QnnBackendManager::setSustainedHighPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
+Status QnnBackendManager::SetSustainedHighPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
   std::lock_guard<std::mutex> lk(perf_mutex_);
   Status status = Status::OK();
 
-  std::chrono::microseconds sustainedDurationMs(timer_resource.sustainedTimerDuration);
+  std::chrono::microseconds sustainedDurationMs(timer_resource_.sustained_timer_duration_);
 
-  switch (graphState) {
+  switch (graph_state_) {
     case GraphState::RUN_DONE:
-      if (isTimerThreadRunning()) {
-        timer_->abortTimer();
+      if (IsTimerThreadRunning()) {
+        timer_->AbortTimer();
       }
-      if (timer_->launch(sustainedDurationMs)) {
-        timer_resource.timer_thread_in_use = true;
-        graphState = GraphState::NONE;
-        timer_resource.caller_busy = false;
-      } else {
-        return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Not able to launch timer thread");
-      }
+      ORT_RETURN_IF_NOT(timer_->Launch(sustainedDurationMs), "Not able to launch timer thread.");
+      graph_state_ = GraphState::NONE;
+      timer_resource_.caller_busy_ = false;
       break;
     case GraphState::RUN_START:
-      if (isTimerThreadRunning()) {
-        timer_->abortTimer();
-        timer_resource.timer_thread_in_use = false;
+      if (IsTimerThreadRunning()) {
+        timer_->AbortTimer();
       } else {
         status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
       }
-      graphState = GraphState::NONE;
-      timer_resource.caller_busy = true;
+      graph_state_ = GraphState::NONE;
+      timer_resource_.caller_busy_ = true;
       break;
     case GraphState::INIT_DONE:
-      status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
-      graphState = GraphState::NONE;
-      timer_resource.caller_busy = false;
+      status = SetRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+      graph_state_ = GraphState::NONE;
+      timer_resource_.caller_busy_ = false;
       break;
     case GraphState::INIT_START:
-      if (isTimerThreadRunning()) {
-        timer_->abortTimer();
-        timer_resource.timer_thread_in_use = false;
+      if (IsTimerThreadRunning()) {
+        timer_->AbortTimer();
       } else {
         status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
       }
-      graphState = GraphState::NONE;
-      timer_resource.caller_busy = true;
+      graph_state_ = GraphState::NONE;
+      timer_resource_.caller_busy_ = true;
       break;
     case GraphState::TIMEOUT:
-      if (!timer_resource.caller_busy) {
-        status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
-        graphState = GraphState::NONE;
-        timer_resource.caller_busy = false;
-        timer_resource.timer_thread_in_use = false;
+      if (!timer_resource_.caller_busy_) {
+        status = SetRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+        graph_state_ = GraphState::NONE;
       }
       break;
     default:
-      LOGS_DEFAULT(VERBOSE) << "Invalid graph state";
+      LOGS(*logger_, VERBOSE) << "Invalid graph state";
       break;
   }
   return status;
 }
 
-Status QnnBackendManager::setPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
+Status QnnBackendManager::SetPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
   std::lock_guard<std::mutex> lk(perf_mutex_);
   Status status = Status::OK();
-  switch (graphState) {
+  switch (graph_state_) {
     case GraphState::RUN_DONE:
     case GraphState::INIT_DONE:
       switch (performance_mode) {
         case qnn::HtpPerformanceMode::kHtpLowBalanced:
         case qnn::HtpPerformanceMode::kHtpBalanced:
         case qnn::HtpPerformanceMode::kHtpHighPerformance:
-          status = setRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+          status = SetRelaxedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
           break;
         case qnn::HtpPerformanceMode::kHtpExtremePowerSaver:
-          status = setExtremeLowPerfPowerConfig(htp_power_config_client_id);
+          status = SetExtremeLowPerfPowerConfig(htp_power_config_client_id);
           break;
         case qnn::HtpPerformanceMode::kHtpLowPowerSaver:
         case qnn::HtpPerformanceMode::kHtpHighPowerSaver:
         case qnn::HtpPerformanceMode::kHtpPowerSaver:
-          status = setReleasedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+          status = SetReleasedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
           break;
         default:
-          LOGS_DEFAULT(VERBOSE) << "Invalid performance mode";
+          LOGS(*logger_, VERBOSE) << "Invalid performance mode";
           break;
       }
-      graphState = GraphState::NONE;
+      graph_state_ = GraphState::NONE;
       break;
     case GraphState::RUN_START:
     case GraphState::INIT_START:
       status = SetHtpPowerConfig(htp_power_config_client_id, performance_mode);
-      graphState = GraphState::NONE;
+      graph_state_ = GraphState::NONE;
       break;
     default:
-      LOGS_DEFAULT(VERBOSE) << "Invalid graph state";
+      LOGS(*logger_, VERBOSE) << "Invalid graph state";
       break;
   }
   return status;
 }
 
-Status QnnBackendManager::applyPerformanceMode(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode) {
-  if (perfMode == qnn::HtpPerformanceMode::kHtpSustainedHighPerformance || perfMode == qnn::HtpPerformanceMode::kHtpBurst) {
-    return setSustainedHighPerformance(htp_power_config_client_id, perfMode);
-  } else if (perfMode == qnn::HtpPerformanceMode::kHtpDefault) {
-    return Status::OK();
-  } else {
-    return setPerformance(htp_power_config_client_id, perfMode);
-  }
-}
-
-Status QnnBackendManager::setState(GraphState state, uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode) {
+Status QnnBackendManager::SetState(GraphState state, uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode) {
   std::lock_guard<std::mutex> lk(state_mutex_);
-
-  if (perfMode == qnn::HtpPerformanceMode::kHtpSustainedHighPerformance || perfMode == qnn::HtpPerformanceMode::kHtpBurst) {
-    ORT_RETURN_IF(timer_ == nullptr, "timer is not started");
-  }
-
-  if (state != graphState) {
-    graphState = state;
-    ORT_RETURN_IF_ERROR(applyPerformanceMode(htp_power_config_client_id, perfMode));
+  if (state != graph_state_) {
+    graph_state_ = state;
+    if (perfMode == qnn::HtpPerformanceMode::kHtpSustainedHighPerformance || perfMode == qnn::HtpPerformanceMode::kHtpBurst) {
+      ORT_RETURN_IF(timer_ == nullptr, "timer is not started");
+      return SetSustainedHighPerformance(htp_power_config_client_id, perfMode);
+    } else if (perfMode == qnn::HtpPerformanceMode::kHtpDefault) {
+      return Status::OK();
+    } else {
+      return SetPerformance(htp_power_config_client_id, perfMode);
+    }
   }
   return Status::OK();
 }
 
-void QnnBackendManager::timerCallback(void* user_data) {
+void QnnBackendManager::TimerCallback(void* user_data) {
   TimerCallbackArg* args = static_cast<TimerCallbackArg*>(user_data);
-  QnnBackendManager* instance = args->instance;
-  auto rt = instance->setState(GraphState::TIMEOUT, args->power_config_id, qnn::HtpPerformanceMode::kHtpSustainedHighPerformance);
+  QnnBackendManager* instance = args->instance_;
+  auto rt = instance->SetState(GraphState::TIMEOUT, args->power_config_id_, qnn::HtpPerformanceMode::kHtpSustainedHighPerformance);
   if (rt != Status::OK()) {
     LOGS_DEFAULT(VERBOSE) << "State update failed";
   }
 }
 
-void QnnBackendManager::createTimerThread(uint32_t htp_power_config_client_id) {
+void QnnBackendManager::CreateTimerThread(uint32_t htp_power_config_client_id) {
   std::lock_guard<std::mutex> lk(state_mutex_);
-  if (!timer_resource.timer_created) {
+  if (timer_ == nullptr) {
     std::unique_ptr<Timer> temp(new Timer());
     if (temp != nullptr) {
       timer_ = std::move(temp);
 
-      if (timer_callback_arg != nullptr) {
-        delete timer_callback_arg;
-        timer_callback_arg = nullptr;
+      if (timer_callback_arg_ != nullptr) {
+        delete timer_callback_arg_;
+        timer_callback_arg_ = nullptr;
       }
-      timer_callback_arg = new TimerCallbackArg({htp_power_config_client_id, this});
-      if (timer_callback_arg == nullptr) {
-        LOGS_DEFAULT(VERBOSE) << "Failed to create Timer argument";
+      timer_callback_arg_ = new TimerCallbackArg({htp_power_config_client_id, this});
+      if (timer_callback_arg_ == nullptr) {
+        LOGS(*logger_, VERBOSE) << "Failed to create Timer argument";
       }
 
-      if (!timer_->initialize(timerCallback, timer_callback_arg)) {
-        LOGS_DEFAULT(VERBOSE) << "Failed to create timer to set performance";
-        delete timer_callback_arg;
-        timer_callback_arg = nullptr;
+      if (!timer_->Initialize(TimerCallback, timer_callback_arg_)) {
+        LOGS(*logger_, VERBOSE) << "Failed to create timer to set performance";
+        delete timer_callback_arg_;
+        timer_callback_arg_ = nullptr;
         timer_.reset();
       }
-      timer_resource.timer_created = true;
     } else {
-      LOGS_DEFAULT(VERBOSE) << "Failed: Timer is nullptr";
+      LOGS(*logger_, VERBOSE) << "Failed: Timer is nullptr";
     }
   } else {
-    LOGS_DEFAULT(VERBOSE) << "Timer already created";
+    LOGS(*logger_, VERBOSE) << "Timer already created";
+  }
+}
+
+void QnnBackendManager::ReleaseTimerThread(uint32_t htp_power_config_client_id) {
+  std::lock_guard<std::mutex> lk(state_mutex_);
+  if (timer_ != nullptr) {
+    timer_->DeInitialize();
+    graph_state_ = GraphState::NONE;
+    timer_resource_.caller_busy_ = false;
+  }
+
+  if (timer_callback_arg_ != nullptr) {
+    delete timer_callback_arg_;
+    timer_callback_arg_ = nullptr;
+  }
+
+  timer_.reset();
+
+  auto status = SetReleasedPerfPowerConfig(htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+  if (status != Status::OK()) {
+    LOGS_DEFAULT(VERBOSE) << "Not able to set Power config to relaxed";
   }
 }
 
@@ -1117,7 +1098,6 @@ Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing) {
     LOGS_DEFAULT(INFO) << "Context created already.";
     return Status::OK();
   }
-
   QnnContext_Config_t context_config_weight_sharing = QNN_CONTEXT_CONFIG_INIT;
   QnnHtpContext_CustomConfig_t custom_config;
   custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_WEIGHT_SHARING_ENABLED;
@@ -1557,7 +1537,7 @@ Status QnnBackendManager::SetupBackend(const logging::Logger& logger,
   return status;
 }
 
-Status QnnBackendManager::setExtremeLowPerfPowerConfig(uint32_t htp_power_config_client_id) {
+Status QnnBackendManager::SetExtremeLowPerfPowerConfig(uint32_t htp_power_config_client_id) {
   QnnDevice_Infrastructure_t qnn_device_infra = nullptr;
   auto status = qnn_interface_.deviceGetInfrastructure(&qnn_device_infra);
   ORT_RETURN_IF(QNN_SUCCESS != status, "backendGetPerfInfrastructure failed.");
@@ -1596,7 +1576,7 @@ Status QnnBackendManager::setExtremeLowPerfPowerConfig(uint32_t htp_power_config
   return Status::OK();
 }
 
-Status QnnBackendManager::setRelaxedPerfPowerConfig(uint32_t htp_power_config_client_id, DcvsState_t dcvsState) {
+Status QnnBackendManager::SetRelaxedPerfPowerConfig(uint32_t htp_power_config_client_id, DcvsState_t dcvsState) {
   QnnDevice_Infrastructure_t qnn_device_infra = nullptr;
   auto status = qnn_interface_.deviceGetInfrastructure(&qnn_device_infra);
   ORT_RETURN_IF(QNN_SUCCESS != status, "backendGetPerfInfrastructure failed.");
@@ -1640,7 +1620,7 @@ Status QnnBackendManager::setRelaxedPerfPowerConfig(uint32_t htp_power_config_cl
   return Status::OK();
 }
 
-Status QnnBackendManager::setReleasedPerfPowerConfig(uint32_t htp_power_config_client_id, DcvsState_t dcvsState) {
+Status QnnBackendManager::SetReleasedPerfPowerConfig(uint32_t htp_power_config_client_id, DcvsState_t dcvsState) {
   QnnDevice_Infrastructure_t qnn_device_infra = nullptr;
   auto status = qnn_interface_.deviceGetInfrastructure(&qnn_device_infra);
   ORT_RETURN_IF(QNN_SUCCESS != status, "backendGetPerfInfrastructure failed.");
@@ -1681,6 +1661,18 @@ Status QnnBackendManager::setReleasedPerfPowerConfig(uint32_t htp_power_config_c
   status = htp_perf_infra.setPowerConfig(htp_power_config_client_id, perf_power_configs_ptr.data());
   ORT_RETURN_IF(QNN_SUCCESS != status, "setPowerConfig failed for HTP performance mode.");
 
+  return Status::OK();
+}
+
+Status QnnBackendManager::InitializePowerCfgId(uint32_t device_id, uint32_t core_id, uint32_t& htp_power_config_id) {
+  ORT_RETURN_IF_ERROR(CreateHtpPowerCfgId(device_id, core_id, htp_power_config_id));
+  CreateTimerThread(htp_power_config_id);
+  return Status::OK();
+}
+
+Status QnnBackendManager::DeInitializePowerCfgId(uint32_t htp_power_config_id) {
+  ReleaseTimerThread(htp_power_config_id);
+  ORT_RETURN_IF_ERROR(DestroyHTPPowerConfigID(htp_power_config_id));
   return Status::OK();
 }
 
@@ -1816,9 +1808,9 @@ Status QnnBackendManager::TerminateQnnLog() {
 }
 
 void QnnBackendManager::ReleaseResources() {
-  if (timer_callback_arg != nullptr) {
-    delete timer_callback_arg;
-    timer_callback_arg = nullptr;
+  if (timer_callback_arg_ != nullptr) {
+    delete timer_callback_arg_;
+    timer_callback_arg_ = nullptr;
   }
 
   auto result = ReleaseContext();
