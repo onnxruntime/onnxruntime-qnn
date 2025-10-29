@@ -46,6 +46,16 @@ class TopKOpBuilder : public BaseOpBuilder {
 
  private:
   Status ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit) const;
+
+  // Helper to check if data type is unsupported SFIXED_POINT (16 or 32 bit)
+  // TopK supports SFIXED_POINT_8, UFIXED_POINT_8, UFIXED_POINT_16, but NOT SFIXED_POINT_16/32
+  static bool IsUnsupportedQuantizedType(Qnn_DataType_t qnn_data_type) {
+    return qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16 ||
+           qnn_data_type == QNN_DATATYPE_SFIXED_POINT_32;
+  }
+
+  // Store original quantization info for later use in ProcessAttributesAndOutputs
+  mutable std::optional<TensorInfo> original_input_info_;
 };
 
 Status TopKOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit) const {
@@ -76,10 +86,51 @@ Status TopKOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   const auto& inputs = node_unit.Inputs();
   ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
 
-  // HTP only supports TopK at the last axis, and thus check whether extra Transpose is required.
+  // Get input tensor info to check if it's an unsupported quantized type
   TensorInfo input_info = {};
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
 
+  // Check if input is SFIXED_POINT_16 or SFIXED_POINT_32 (unsupported by TopK)
+  // If so, insert a DequantizeLinear node to convert to float
+  if (IsUnsupportedQuantizedType(input_info.qnn_data_type)) {
+    // Store original input info for later use in ProcessAttributesAndOutputs
+    original_input_info_ = input_info;
+
+    LOGS(logger, VERBOSE) << "TopK input has unsupported quantized type. Inserting DequantizeLinear node to convert to float.";
+
+    // Create DequantizeLinear output tensor (float)
+    const std::string dq_output_name = utils::GetUniqueName(input_names[0], "_dq_float");
+    Qnn_DataType_t float_data_type = QNN_DATATYPE_FLOAT_32;
+
+    QnnTensorWrapper dq_output_tensor(dq_output_name,
+                                      QNN_TENSOR_TYPE_NATIVE,
+                                      float_data_type,
+                                      QnnQuantParamsWrapper(),  // No quantization for float
+                                      std::vector<uint32_t>(input_info.shape));
+
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(dq_output_tensor)),
+                      "Failed to add DequantizeLinear output tensor.");
+
+    // Create DequantizeLinear node
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                          utils::GetUniqueName(node_unit, "_dequantize"),
+                          QNN_OP_PACKAGE_NAME_QTI_AISW,
+                          QNN_OP_DEQUANTIZE,
+                          {input_names[0]},
+                          {dq_output_name},
+                          {},
+                          do_op_validation),
+                      "Failed to create DequantizeLinear node.");
+
+    // Update input to use the dequantized float tensor
+    input_names[0] = dq_output_name;
+
+    // Update input_info to reflect the new float data type
+    input_info.qnn_data_type = float_data_type;
+    input_info.quant_param = QnnQuantParamsWrapper();
+  }
+
+  // HTP only supports TopK at the last axis, and thus check whether extra Transpose is required.
   size_t input_rank = input_info.shape.size();
   int32_t axis = NodeAttrHelper(node_unit).Get("axis", -1);
   if (axis == -1 || axis == static_cast<int32_t>(input_rank - 1)) {
@@ -154,14 +205,91 @@ Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
 
   size_t input_rank = input_info.shape.size();
   int32_t axis = NodeAttrHelper(node_unit).Get("axis", -1);
+
+  // Check if we need to handle quantization (i.e., if we inserted a DQ node earlier)
+  bool need_quantize_output = original_input_info_.has_value();
+
   if (axis == -1 || axis == static_cast<int32_t>(input_rank - 1)) {
-    ORT_RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper,
-                                       node_unit,
-                                       std::move(input_names),
-                                       std::move(param_tensor_names),
-                                       logger,
-                                       do_op_validation,
-                                       GetQnnOpType(node_unit.OpType())));
+    // Simple case: no transpose needed
+    if (need_quantize_output) {
+      // We need to insert Q node after TopK's first output
+      const auto& outputs = node_unit.Outputs();
+
+      // Create intermediate float output for TopK
+      const std::string topk_float_output_0 = utils::GetUniqueName(outputs[0].node_arg.Name(), "_topk_float");
+
+      // Get output info
+      TensorInfo output_info_0 = {};
+      ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], output_info_0));
+
+      // Create float tensor for TopK output[0]
+      QnnTensorWrapper topk_float_tensor_0(topk_float_output_0,
+                                           QNN_TENSOR_TYPE_NATIVE,
+                                           QNN_DATATYPE_FLOAT_32,
+                                           QnnQuantParamsWrapper(),
+                                           std::vector<uint32_t>(output_info_0.shape));
+      ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(topk_float_tensor_0)),
+                        "Failed to add TopK float output tensor.");
+
+      // Create TopK node with float output for values
+      std::vector<std::string> topk_output_names = {topk_float_output_0, outputs[1].node_arg.Name()};
+
+      // Add output[1] (indices) tensor - this remains INT32
+      TensorInfo output_info_1 = {};
+      ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[1], output_info_1));
+      bool is_graph_output_1 = qnn_model_wrapper.IsGraphOutput(outputs[1].node_arg.Name());
+      Qnn_TensorType_t tensor_type_1 = is_graph_output_1 ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+
+      QnnTensorWrapper output_tensor_1(outputs[1].node_arg.Name(),
+                                       tensor_type_1,
+                                       output_info_1.qnn_data_type,
+                                       output_info_1.quant_param.Copy(),
+                                       std::vector<uint32_t>(output_info_1.shape));
+      ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor_1)),
+                        "Failed to add TopK indices output tensor.");
+
+      // Create TopK node
+      ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                            utils::GetUniqueName(node_unit),
+                            QNN_OP_PACKAGE_NAME_QTI_AISW,
+                            GetQnnOpType(node_unit.OpType()),
+                            std::move(input_names),
+                            std::move(topk_output_names),
+                            std::move(param_tensor_names),
+                            do_op_validation),
+                        "Failed to create TopK node.");
+
+      // Add QuantizeLinear node to convert output[0] back to original quantized type
+      bool is_graph_output_0 = qnn_model_wrapper.IsGraphOutput(outputs[0].node_arg.Name());
+      Qnn_TensorType_t tensor_type_0 = is_graph_output_0 ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+
+      QnnTensorWrapper q_output_tensor(outputs[0].node_arg.Name(),
+                                       tensor_type_0,
+                                       original_input_info_->qnn_data_type,
+                                       original_input_info_->quant_param.Copy(),
+                                       std::vector<uint32_t>(output_info_0.shape));
+      ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(q_output_tensor)),
+                        "Failed to add QuantizeLinear output tensor.");
+
+      ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                            utils::GetUniqueName(node_unit, "_quantize"),
+                            QNN_OP_PACKAGE_NAME_QTI_AISW,
+                            QNN_OP_QUANTIZE,
+                            {topk_float_output_0},
+                            {outputs[0].node_arg.Name()},
+                            {},
+                            do_op_validation),
+                        "Failed to create QuantizeLinear node.");
+    } else {
+      // No quantization handling needed, use standard processing
+      ORT_RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper,
+                                         node_unit,
+                                         std::move(input_names),
+                                         std::move(param_tensor_names),
+                                         logger,
+                                         do_op_validation,
+                                         GetQnnOpType(node_unit.OpType())));
+    }
     return Status::OK();
   }
 
@@ -189,10 +317,19 @@ Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
     transpose_input_shape[axis] = output_info.shape[output_rank - 1];
     transpose_input_shapes.push_back(std::move(transpose_input_shape));
 
+    // If we inserted DQ node, TopK output[0] should be float, not quantized
+    Qnn_DataType_t topk_output_dtype = output_info.qnn_data_type;
+    QnnQuantParamsWrapper topk_output_qparams = output_info.quant_param.Copy();
+
+    if (need_quantize_output && output_idx == 0) {
+      topk_output_dtype = QNN_DATATYPE_FLOAT_32;
+      topk_output_qparams = QnnQuantParamsWrapper();
+    }
+
     QnnTensorWrapper output_tensorwrapper(transpose_input_names[output_idx],
                                           QNN_TENSOR_TYPE_NATIVE,
-                                          output_info.qnn_data_type,
-                                          output_info.quant_param.Copy(),
+                                          topk_output_dtype,
+                                          std::move(topk_output_qparams),
                                           std::vector<uint32_t>(transpose_input_shapes[output_idx]));
     ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
   }
@@ -223,6 +360,14 @@ Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
     std::string transpose_output_name = output_name;
     bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
 
+    // Check if we need to add QuantizeLinear after Transpose for output[0]
+    bool need_quantize_after_transpose = need_quantize_output && output_idx == 0;
+    if (need_quantize_after_transpose) {
+      // Transpose outputs float, then we need to quantize it
+      transpose_output_name = utils::GetUniqueName(output_name, "_transpose_float");
+      is_graph_output = false;  // The Q node will be the graph output
+    }
+
     // TopK's second output is indices which could be INT64 dtype, and QnnTensorWrapper directly changes the dtype to
     // INT32 during the wrapper construction. Nevertheless, if this output happens to be graph output, an additional
     // Cast must be added to cast dtype from INT32 back to INT64.
@@ -236,17 +381,49 @@ Status TopKOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
       is_graph_output = false;
     }
 
+    // Determine the data type and quant params for the transpose output
+    Qnn_DataType_t transpose_out_dtype = output_info.qnn_data_type;
+    QnnQuantParamsWrapper transpose_out_qparams = output_info.quant_param.Copy();
+    if (need_quantize_after_transpose) {
+      transpose_out_dtype = QNN_DATATYPE_FLOAT_32;
+      transpose_out_qparams = QnnQuantParamsWrapper();
+    }
+
     ORT_RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(),
                                                            transpose_input_names[output_idx],
                                                            transpose_output_name,
                                                            transpose_input_shapes[output_idx],
                                                            transpose_perm,
                                                            output_info.shape,
-                                                           output_info.qnn_data_type,
-                                                           output_info.quant_param,
+                                                           transpose_out_dtype,
+                                                           transpose_out_qparams,
                                                            do_op_validation,
                                                            false,
                                                            is_graph_output));
+
+    if (need_quantize_after_transpose) {
+      // Add QuantizeLinear node to convert float back to original quantized type
+      bool is_final_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
+      Qnn_TensorType_t tensor_type = is_final_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+
+      QnnTensorWrapper q_output_tensor(output_name,
+                                       tensor_type,
+                                       original_input_info_->qnn_data_type,
+                                       original_input_info_->quant_param.Copy(),
+                                       std::vector<uint32_t>(output_info.shape));
+      ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(q_output_tensor)),
+                        "Failed to add QuantizeLinear output tensor.");
+
+      ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                            utils::GetUniqueName(node_unit, "_quantize"),
+                            QNN_OP_PACKAGE_NAME_QTI_AISW,
+                            QNN_OP_QUANTIZE,
+                            {transpose_output_name},
+                            {output_name},
+                            {},
+                            do_op_validation),
+                        "Failed to create QuantizeLinear node.");
+    }
 
     if (is_cast_required) {
       QnnTensorWrapper cast_output_tensorwrapper(output_name,
