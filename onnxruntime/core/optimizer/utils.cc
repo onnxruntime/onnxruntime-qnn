@@ -97,7 +97,7 @@ bool IsInitializerWithExpectedValue(const Graph& graph, const NodeArg& input_arg
   return true;
 }
 
-// Check whether input is a constant scalar with expected intger value.
+// Check whether input is a constant scalar with expected integer value.
 bool IsInitializerWithExpectedValue(const Graph& graph, const NodeArg& input_arg, int64_t expected_value, bool is_constant) {
   if (!IsScalar(input_arg)) {
     return false;
@@ -406,6 +406,9 @@ bool GetClipConstantMinMax(const Graph& graph, const Node& node, float& min, flo
             }
             // Restore original input value
             Initializer x_initializer(graph, *dq_input, graph.ModelPath());
+            if (x_initializer.dims().size() != 0) {
+              return false;  // Not scalar
+            }
             switch (dq_input->data_type()) {
               case ONNX_NAMESPACE::TensorProto_DataType_UINT8: {
                 value = scale * (static_cast<float>(*x_initializer.data<uint8_t>()) - zero_point);
@@ -479,7 +482,7 @@ bool CheckOutputEdges(const Graph& graph, const Node& node, size_t expected_outp
 bool IsScalar(const NodeArg& input_arg) {
   auto shape = input_arg.Shape();
   if (shape == nullptr) {
-    // shape infenencing wasn't able to populate shape information for this NodeArg
+    // shape inferencing wasn't able to populate shape information for this NodeArg
     return false;
   }
 
