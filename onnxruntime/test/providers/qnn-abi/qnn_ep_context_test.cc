@@ -1732,8 +1732,7 @@ static void CreateQdqModel(const std::string& model_file_name, const Logger& log
 
 static void DumpModelWithSharedCtx(ProviderOptions provider_options,
                                    const std::string& onnx_model_path1,
-                                   const std::string& onnx_model_path2,
-                                   bool use_abi = false) {
+                                   const std::string& onnx_model_path2) {
   Ort::SessionOptions so;
   so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
   so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
@@ -1748,11 +1747,7 @@ static void DumpModelWithSharedCtx(ProviderOptions provider_options,
 #endif  // !__aarch64__
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  if (use_abi) {
-    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
-  } else {
-    so.AppendExecutionProvider("QNN", provider_options);
-  }
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
 
   // Create 2 sessions to generate context binary models, the 1st session will share the QnnBackendManager
   // to the 2nd session, so graphs from these 2 models are all included in the 2nd context binary
@@ -1817,7 +1812,7 @@ TEST_F(QnnABIHTPBackendTests, QnnContextShareAcrossSessions) {
     std::remove(ctx_model_path.c_str());
   }
 
-  DumpModelWithSharedCtx(provider_options, onnx_model_paths[0], onnx_model_paths[1], true);
+  DumpModelWithSharedCtx(provider_options, onnx_model_paths[0], onnx_model_paths[1]);
 
   std::string qnn_ctx_binary_file_name1;
   GetContextBinaryFileName(ctx_model_paths[0], qnn_ctx_binary_file_name1,
@@ -1924,7 +1919,7 @@ TEST_F(QnnABIHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
     std::remove(ctx_model_path.c_str());
   }
 
-  DumpModelWithSharedCtx(provider_options, onnx_model_paths[0], onnx_model_paths[1], true);
+  DumpModelWithSharedCtx(provider_options, onnx_model_paths[0], onnx_model_paths[1]);
 
   std::string qnn_ctx_binary_file_name1;
   GetContextBinaryFileName(ctx_model_paths[0], qnn_ctx_binary_file_name1,
@@ -2030,7 +2025,7 @@ TEST_F(QnnABIHTPBackendTests, QnnContextGenWeightSharingSessionAPI) {
     std::remove(ctx_model_path.c_str());
   }
 
-  DumpModelWithSharedCtx(provider_options, onnx_model_paths[0], onnx_model_paths[1], true);
+  DumpModelWithSharedCtx(provider_options, onnx_model_paths[0], onnx_model_paths[1]);
 
   std::string qnn_ctx_binary_file_name1;
   GetContextBinaryFileName(ctx_model_paths[0], qnn_ctx_binary_file_name1,

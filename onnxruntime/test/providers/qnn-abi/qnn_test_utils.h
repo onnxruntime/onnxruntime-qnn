@@ -1251,6 +1251,9 @@ enum class BackendSupport {
 // The test is skipped if HTP is unavailable (may occur on Windows ARM64).
 // TODO: Remove once HTP can be emulated on Windows ARM64.
 class QnnABIHTPBackendTests : public ::testing::Test {
+ public:
+  static void TearDownTestSuite();
+
  protected:
   void SetUp() override;
 
