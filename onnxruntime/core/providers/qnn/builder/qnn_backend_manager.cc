@@ -289,6 +289,8 @@ void QnnBackendManager::CreateTimerThread(uint32_t htp_power_config_client_id) {
       timer_callback_arg_ = std::make_unique<TimerCallbackArg>(htp_power_config_client_id, this);
       if (timer_callback_arg_ == nullptr) {
         LOGS(*logger_, VERBOSE) << "Failed to create Timer argument";
+        timer_.reset();
+        return;
       }
       if (!timer_->Initialize(TimerCallback, timer_callback_arg_.get())) {
         LOGS(*logger_, VERBOSE) << "Failed to create timer to set performance";
