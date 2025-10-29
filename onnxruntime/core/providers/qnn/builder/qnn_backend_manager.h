@@ -527,8 +527,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   struct TimerCallbackArg {
     uint32_t power_config_id_;
     QnnBackendManager* instance_;
+
+    TimerCallbackArg(uint32_t id, QnnBackendManager* manager)
+        : power_config_id_(id), instance_(manager) {}
   };
-  TimerCallbackArg* timer_callback_arg_{nullptr};
 };
 
 }  // namespace qnn

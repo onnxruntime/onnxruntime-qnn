@@ -276,7 +276,7 @@ void QnnBackendManager::TimerCallback(void* user_data) {
   QnnBackendManager* instance = args->instance_;
   auto rt = instance->SetState(GraphState::TIMEOUT, args->power_config_id_, qnn::HtpPerformanceMode::kHtpSustainedHighPerformance);
   if (rt != Status::OK()) {
-    LOGS_DEFAULT(VERBOSE) << "State update failed";
+    LOGS(*(instance->logger_), VERBOSE) << "State update failed";
   }
 }
 
@@ -286,20 +286,12 @@ void QnnBackendManager::CreateTimerThread(uint32_t htp_power_config_client_id) {
     std::unique_ptr<Timer> temp(new Timer());
     if (temp != nullptr) {
       timer_ = std::move(temp);
-
-      if (timer_callback_arg_ != nullptr) {
-        delete timer_callback_arg_;
-        timer_callback_arg_ = nullptr;
-      }
-      timer_callback_arg_ = new TimerCallbackArg({htp_power_config_client_id, this});
-      if (timer_callback_arg_ == nullptr) {
+      std::unique_ptr<TimerCallbackArg> timer_callback_arg = std::make_unique<TimerCallbackArg>(htp_power_config_client_id, this);
+      if (timer_callback_arg == nullptr) {
         LOGS(*logger_, VERBOSE) << "Failed to create Timer argument";
       }
-
-      if (!timer_->Initialize(TimerCallback, timer_callback_arg_)) {
+      if (!timer_->Initialize(TimerCallback, timer_callback_arg.get())) {
         LOGS(*logger_, VERBOSE) << "Failed to create timer to set performance";
-        delete timer_callback_arg_;
-        timer_callback_arg_ = nullptr;
         timer_.reset();
       }
     } else {
@@ -316,11 +308,6 @@ void QnnBackendManager::ReleaseTimerThread(uint32_t htp_power_config_client_id) 
     timer_->DeInitialize();
     graph_state_ = GraphState::NONE;
     timer_resource_.caller_busy_ = false;
-  }
-
-  if (timer_callback_arg_ != nullptr) {
-    delete timer_callback_arg_;
-    timer_callback_arg_ = nullptr;
   }
 
   timer_.reset();
@@ -1808,11 +1795,6 @@ Status QnnBackendManager::TerminateQnnLog() {
 }
 
 void QnnBackendManager::ReleaseResources() {
-  if (timer_callback_arg_ != nullptr) {
-    delete timer_callback_arg_;
-    timer_callback_arg_ = nullptr;
-  }
-
   auto result = ReleaseContext();
   if (Status::OK() != result) {
     LOGS_DEFAULT(ERROR) << "Failed to ReleaseContext: " << result.ErrorMessage();
