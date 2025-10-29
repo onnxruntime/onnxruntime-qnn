@@ -389,6 +389,14 @@ bool GetClipConstantMinMax(const Graph& graph, const Node& node, float& min, flo
                 zero_point = static_cast<float>(*zero_point_initializer.data<int8_t>());
                 break;
               }
+              case ONNX_NAMESPACE::TensorProto_DataType_UINT16: {
+                zero_point = static_cast<float>(*zero_point_initializer.data<uint16_t>());
+                break;
+              }
+              case ONNX_NAMESPACE::TensorProto_DataType_INT16: {
+                zero_point = static_cast<float>(*zero_point_initializer.data<int16_t>());
+                break;
+              }
               case ONNX_NAMESPACE::TensorProto_DataType_INT32: {
                 zero_point = static_cast<float>(*zero_point_initializer.data<int32_t>());
                 break;
@@ -406,6 +414,16 @@ bool GetClipConstantMinMax(const Graph& graph, const Node& node, float& min, flo
               }
               case ONNX_NAMESPACE::TensorProto_DataType_INT8: {
                 value = scale * (static_cast<float>(*x_initializer.data<int8_t>()) - zero_point);
+                is_constant = true;
+                break;
+              }
+              case ONNX_NAMESPACE::TensorProto_DataType_UINT16: {
+                value = scale * (static_cast<float>(*x_initializer.data<uint16_t>()) - zero_point);
+                is_constant = true;
+                break;
+              }
+              case ONNX_NAMESPACE::TensorProto_DataType_INT16: {
+                value = scale * (static_cast<float>(*x_initializer.data<int16_t>()) - zero_point);
                 is_constant = true;
                 break;
               }
