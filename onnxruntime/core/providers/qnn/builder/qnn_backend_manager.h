@@ -440,7 +440,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   // Binary buffer of Qnn Context to handle SSR
   std::unique_ptr<unsigned char[]> qnn_save_buffer_;
-  uint64_t qnn_save_buffer_size_;
+  uint64_t qnn_save_buffer_size_ = 0;
 
   ProfilingLevel profiling_level_etw_;
   ProfilingLevel profiling_level_;

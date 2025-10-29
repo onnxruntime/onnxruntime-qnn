@@ -73,6 +73,8 @@ class QNNExecutionProvider : public IExecutionProvider {
                              std::vector<NodeComputeInfo>& node_compute_funcs,
                              const logging::Logger& logger);
 
+  Status SSRCleanUp();
+
   void ParseHtpGraphFinalizationOptimizationMode(const std::string& htp_graph_finalization_opt_mode_string);
 
   void InitQnnHtpGraphConfigs(qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t>& configs_builder) const;

@@ -960,8 +960,7 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
                                             enable_vtcm_backup_buffer_sharing_,
                                             context_bin_map);
     retry_cnt += 1;
-  } while (enable_ssr_handling_ && retry_cnt <= 3 &&
-           rt.ErrorMessage().find(std::to_string(QNN_COMMON_ERROR_SYSTEM_COMMUNICATION)) != std::string::npos);
+  } while (enable_ssr_handling_ && retry_cnt <= 3 && qnn::utils::IsSSRCapture(rt));
 
   context_bin_map.clear();
 
@@ -1124,35 +1123,17 @@ Status QNNExecutionProvider::CreateComputeFunc(std::vector<NodeComputeInfo>& nod
     do {
       if (retry_cnt > 0) {
         LOGS(logger, VERBOSE) << "[SSR Handle during Inference] Retry " << retry_cnt << "th";
-        // Customer Recover Routines
-        qnn::QnnModelLookupTable qnn_models;
-        // ReleaseContext helps contextFree with custom deleter
-        ORT_RETURN_IF_ERROR(qnn_backend_manager_->ReleaseContext());
-        uint64_t max_spill_fill_buffer_size = 0;
-        ORT_RETURN_IF_ERROR(qnn_backend_manager_->GetMaxSpillFillBufferSize(
-            qnn_backend_manager_->GetSaveBuffer().get(),
-            qnn_backend_manager_->GetSaveBufferSize(),
-            max_spill_fill_buffer_size));
-        ORT_RETURN_IF_ERROR(qnn_backend_manager_->LoadCachedQnnContextFromBuffer(
-            reinterpret_cast<char*>(qnn_backend_manager_->GetSaveBuffer().get()),
-            qnn_backend_manager_->GetSaveBufferSize(),
-            model->Name(),
-            qnn_models,
-            max_spill_fill_buffer_size));
+        ORT_RETURN_IF_ERROR(SSRCleanUp());
         // Check if the model exists in the recovered models
-        ORT_RETURN_IF_NOT(qnn_models.find(model->Name()) != qnn_models.end(),
+        ORT_RETURN_IF_NOT(qnn_models_.find(model->Name()) != qnn_models_.end(),
                           "Failed to recover model: ", model->Name(), ". Model not found in recovered models map.");
-        // Recover the graph and context handle of model with qnn_models
-        model->GetGraphInfo()->SetGraphContext(qnn_models[model->Name()]->GetGraphInfo()->GraphContext());
-        model->GetGraphInfo()->SetGraph(qnn_models[model->Name()]->GetGraphInfo()->Graph());
+        // Recover the graph and context handle of model with QNNExecutionProvider's qnn_models_
+        model->GetGraphInfo()->SetGraphContext(qnn_models_[model->Name()]->GetGraphInfo()->GraphContext());
+        model->GetGraphInfo()->SetGraph(qnn_models_[model->Name()]->GetGraphInfo()->Graph());
       }
       result = model->ExecuteGraph(ctx, logger);
-      if (retry_cnt > 0 && result.IsOK()) {
-        LOGS(logger, VERBOSE) << "[SSR Handle during Inference] Successfully Recover";
-      }
       retry_cnt += 1;
-    } while (enable_ssr_handling_ && retry_cnt <= 3 &&
-             result.ErrorMessage().find(std::to_string(QNN_COMMON_ERROR_SYSTEM_COMMUNICATION)) != std::string::npos);
+    } while (enable_ssr_handling_ && retry_cnt <= 3 && qnn::utils::IsSSRCapture(result));
 
     return result;
   };
@@ -1365,17 +1346,12 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
       LOGS(logger, VERBOSE) << "[SSR Handle during Compile] Retry " << retry_cnt << "th";
       ORT_RETURN_IF(is_qnn_ctx_model || enable_vtcm_backup_buffer_sharing_ || share_ep_contexts_,
                     "SSR during Compile is not supported with Qnn Context model, VTCM backup buffer sharing, share EP contexts");
-      ORT_RETURN_IF_ERROR(qnn_backend_manager_->ReleaseContext());
-      ORT_RETURN_IF_ERROR(qnn_backend_manager_->CreateContext(false));
+      ORT_RETURN_IF_ERROR(SSRCleanUp());
     }
     // CompileFromOrtGraph will re-create the graph
     compile_res = CompileFromOrtGraph(fused_nodes_and_graphs, node_compute_funcs, logger);
-    if (retry_cnt > 0 && compile_res.IsOK()) {
-      LOGS(logger, VERBOSE) << "[SSR Handle during Compile] Successfully Recover";
-    }
     retry_cnt += 1;
-  } while (enable_ssr_handling_ && retry_cnt <= 3 &&
-           compile_res.ErrorMessage().find(std::to_string(QNN_COMMON_ERROR_SYSTEM_COMMUNICATION)) != std::string::npos);
+  } while (enable_ssr_handling_ && retry_cnt <= 3 && qnn::utils::IsSSRCapture(compile_res));
 
   ORT_RETURN_IF_ERROR(compile_res);
 
@@ -1414,6 +1390,31 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
       ORT_RETURN_IF_NOT(SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_),
                         "Failed to set shared QnnBackendManager.");
     }
+  }
+  return Status::OK();
+}
+
+Status QNNExecutionProvider::SSRCleanUp() {
+  // Customer Recover Routines
+  // ReleaseContext helps contextFree with custom deleter
+  ORT_RETURN_IF_ERROR(qnn_backend_manager_->ReleaseContext());
+  if (qnn_backend_manager_->GetSaveBufferSize() == 0) {
+    ORT_RETURN_IF_ERROR(qnn_backend_manager_->CreateContext(false));
+  }
+  else {
+    uint64_t max_spill_fill_buffer_size = 0;
+    ORT_RETURN_IF_ERROR(qnn_backend_manager_->GetMaxSpillFillBufferSize(
+        qnn_backend_manager_->GetSaveBuffer().get(),
+        qnn_backend_manager_->GetSaveBufferSize(),
+        max_spill_fill_buffer_size));
+    // If there are multiple graphs in the buffer, LoadCachedQnnContextFromBuffer will fetch
+    // graph names from QnnSystemContext_GraphInfo_t
+    ORT_RETURN_IF_ERROR(qnn_backend_manager_->LoadCachedQnnContextFromBuffer(
+        reinterpret_cast<char*>(qnn_backend_manager_->GetSaveBuffer().get()),
+        qnn_backend_manager_->GetSaveBufferSize(),
+        qnn_models_.begin()->first,
+        qnn_models_,
+        max_spill_fill_buffer_size));
   }
   return Status::OK();
 }
