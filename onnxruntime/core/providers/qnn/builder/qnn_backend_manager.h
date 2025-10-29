@@ -242,6 +242,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
   bool ProfilingEnabled() { return profiling_enabled_; }
 #endif
+
   Status CreateContext(bool enable_htp_weight_sharing);
 
   Status ReleaseContext();

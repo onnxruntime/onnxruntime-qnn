@@ -1400,8 +1400,7 @@ Status QNNExecutionProvider::SSRCleanUp() {
   ORT_RETURN_IF_ERROR(qnn_backend_manager_->ReleaseContext());
   if (qnn_backend_manager_->GetSaveBufferSize() == 0) {
     ORT_RETURN_IF_ERROR(qnn_backend_manager_->CreateContext(false));
-  }
-  else {
+  } else {
     uint64_t max_spill_fill_buffer_size = 0;
     ORT_RETURN_IF_ERROR(qnn_backend_manager_->GetMaxSpillFillBufferSize(
         qnn_backend_manager_->GetSaveBuffer().get(),
