@@ -531,6 +531,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
     TimerCallbackArg(uint32_t id, QnnBackendManager* manager)
         : power_config_id_(id), instance_(manager) {}
   };
+  std::unique_ptr<TimerCallbackArg> timer_callback_arg_;
 };
 
 }  // namespace qnn
