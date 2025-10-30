@@ -174,14 +174,18 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   const auto& node_name = utils::GetUniqueName(conv_node_unit);
   const NodeUnitIODef& w_dql_input_0_def = w_dql_node_unit.Inputs()[0];  // Quantized weight
   const NodeUnitIODef& conv_input_0_def = conv_node_unit.Inputs()[0];    // Activation input (float from DQ)
-  const NodeUnitIODef& conv_output_def = conv_node_unit.Outputs()[0];    // Conv output
 
   std::vector<std::string> input_names;  // Track input names for the final Conv node
 
-  // Input 0: Activation tensor with fp32 → fp16 Cast
+  // Input 0: Activation tensor - Add Cast from FP32 to FP16 for HTP
+  std::string activation_fp16_name;
   {
     const auto& input0_name = conv_input_0_def.node_arg.Name();
     LOGS(logger, VERBOSE) << "CreateOrValidateOnQnn: Processing activation input: " << input0_name;
+
+    // Get activation tensor info
+    TensorInfo activation_info = {};
+    ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(conv_input_0_def, activation_info));
 
     if (!qnn_model_wrapper.IsQnnTensorWrapperExist(input0_name)) {
       QnnTensorWrapper input_tensorwrapper;
@@ -189,38 +193,40 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
       ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
     }
 
-    // Add Cast op to convert activation from fp32 to fp16
-    const std::string cast_to_fp16_name = utils::GetUniqueName(input0_name, "_cast_fp16");
-    std::vector<uint32_t> input0_shape;
-    ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(conv_input_0_def.node_arg, input0_shape),
-                      "Cannot get activation shape");
+    // Add Cast node: FP32 -> FP16 for HTP requirement
+    if (activation_info.qnn_data_type == QNN_DATATYPE_FLOAT_32) {
+      activation_fp16_name = input0_name + "_fp16";
+      std::string cast_node_name = utils::GetUniqueName(conv_node_unit, "_activation_cast_fp16");
 
-    if (!qnn_model_wrapper.IsQnnTensorWrapperExist(cast_to_fp16_name)) {
-      QnnTensorWrapper cast_fp16_tensorwrapper(cast_to_fp16_name,
-                                               QNN_TENSOR_TYPE_NATIVE,
-                                               QNN_DATATYPE_FLOAT_16,
-                                               QnnQuantParamsWrapper(),
-                                               std::vector<uint32_t>(input0_shape));
-      ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(cast_fp16_tensorwrapper)),
-                        "Failed to add fp16 cast tensor.");
-      LOGS(logger, VERBOSE) << "CreateOrValidateOnQnn: Created fp16 cast tensor: " << cast_to_fp16_name;
+      LOGS(logger, VERBOSE) << "CreateOrValidateOnQnn: Adding Cast node for activation: "
+                            << input0_name << "->" << activation_fp16_name;
 
-      // Create Cast node fp32 → fp16
-      ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-          utils::GetUniqueName(node_name, "_cast_to_fp16"),
-          QNN_OP_PACKAGE_NAME_QTI_AISW,
-          QNN_OP_CAST,
-          {input0_name},
-          {cast_to_fp16_name},
-          {},
-          validate),
-          "Failed to create Cast node for fp32→fp16");
-      LOGS(logger, VERBOSE) << "CreateOrValidateOnQnn: Created Cast node fp32→fp16";
+      // Create FP16 activation tensor
+      QnnTensorWrapper activation_fp16_tensor(activation_fp16_name,
+                                              QNN_TENSOR_TYPE_NATIVE,
+                                              QNN_DATATYPE_FLOAT_16,
+                                              QnnQuantParamsWrapper(),
+                                              std::vector<uint32_t>(activation_info.shape));
+      ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(activation_fp16_tensor)),
+                        "Failed to add FP16 activation tensor.");
+
+      // Create Cast node
+      ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(cast_node_name,
+                                                        QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                        QNN_OP_CAST,
+                                                        {input0_name},
+                                                        {activation_fp16_name},
+                                                        {},
+                                                        validate),
+                        "Failed to create Cast node for activation.");
+
+      input_names.push_back(activation_fp16_name);
+    } else {
+      // Already FP16 or other type, use as-is
+      input_names.push_back(input0_name);
     }
 
-    // Use fp16 tensor as Conv input
-    input_names.push_back(cast_to_fp16_name);
-    LOGS(logger, VERBOSE) << "CreateOrValidateOnQnn: Activation input processed with fp16 cast";
+    LOGS(logger, VERBOSE) << "CreateOrValidateOnQnn: Activation input processed successfully";
   }
 
   // Input 1: W4BQ Weight tensor
@@ -366,9 +372,13 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
         ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(weight_tensor_wrapper)), "Failed to add weight tensor.");
       }
 
-      // Create empty quantization params for now (no block quantization)
-      // TODO: Re-enable block quantization when QNN SDK supports it for Conv2d
-      QnnQuantParamsWrapper weight_qparams;  // Empty quantization params
+      // Create block quantization params
+      const std::vector<uint32_t> block_sizes = {1, static_cast<uint32_t>(block_size)};
+      QnnQuantParamsWrapper weight_qparams = QnnQuantParamsWrapper(
+          per_block_float_scales,
+          per_block_int32_offsets,
+          block_sizes,
+          input_info.qnn_data_type);
 
       ORT_RETURN_IF_ERROR(qnn_model_wrapper.AddNchwToHwcnTranspose(conv_node_unit.Index(),
                                                                    input1_name,
@@ -396,24 +406,94 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   }
 
   //
-  // Input 2: Bias tensor (optional) - Following conv_op_builder pattern
+  // Input 2: Bias tensor (optional) - Convert to FP16
   //
   const bool has_bias_input = conv_node_unit.Inputs().size() == 3;
   if (has_bias_input) {
     const auto& bias_name = conv_node_unit.Inputs()[2].node_arg.Name();
+    LOGS(logger, VERBOSE) << "CreateOrValidateOnQnn: Processing bias input: " << bias_name;
 
-    if (!qnn_model_wrapper.IsQnnTensorWrapperExist(bias_name)) {
-      QnnTensorWrapper input_tensorwrapper;
-      ORT_RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(conv_node_unit.Inputs()[2], input_tensorwrapper));
-      ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
+    TensorInfo bias_info = {};
+    ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(conv_node_unit.Inputs()[2], bias_info));
+
+    if (bias_info.is_initializer && bias_info.qnn_data_type == QNN_DATATYPE_FLOAT_32) {
+      // Bias is an initializer - convert in-place to FP16
+      LOGS(logger, VERBOSE) << "CreateOrValidateOnQnn: Converting bias initializer to FP16";
+
+      const auto& bias_tensor_proto = qnn_model_wrapper.GetConstantTensor(bias_name);
+      std::vector<uint8_t> fp32_data;
+      ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*bias_tensor_proto, fp32_data));
+
+      // Convert FP32 to FP16
+      size_t num_elements = fp32_data.size() / sizeof(float);
+      std::vector<uint8_t> fp16_data(num_elements * sizeof(MLFloat16));
+
+      const float* fp32_ptr = reinterpret_cast<const float*>(fp32_data.data());
+      MLFloat16* fp16_ptr = reinterpret_cast<MLFloat16*>(fp16_data.data());
+
+      for (size_t i = 0; i < num_elements; ++i) {
+        fp16_ptr[i] = MLFloat16(fp32_ptr[i]);
+      }
+
+      // Create FP16 bias tensor
+      Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(bias_name);
+      QnnTensorWrapper bias_fp16_tensor(bias_name,
+                                        tensor_type,
+                                        QNN_DATATYPE_FLOAT_16,
+                                        QnnQuantParamsWrapper(),
+                                        std::vector<uint32_t>(bias_info.shape),
+                                        std::move(fp16_data));
+      ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(bias_fp16_tensor)),
+                        "Failed to add FP16 bias tensor.");
+
+      input_names.push_back(bias_name);
+    } else if (!bias_info.is_initializer && bias_info.qnn_data_type == QNN_DATATYPE_FLOAT_32) {
+      // Bias is a graph input - add Cast node
+      LOGS(logger, VERBOSE) << "CreateOrValidateOnQnn: Adding Cast node for bias input";
+
+      if (!qnn_model_wrapper.IsQnnTensorWrapperExist(bias_name)) {
+        QnnTensorWrapper input_tensorwrapper;
+        ORT_RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(conv_node_unit.Inputs()[2], input_tensorwrapper));
+        ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
+      }
+
+      std::string bias_fp16_name = bias_name + "_fp16";
+      std::string cast_node_name = utils::GetUniqueName(conv_node_unit, "_bias_cast_fp16");
+
+      // Create FP16 bias tensor
+      QnnTensorWrapper bias_fp16_tensor(bias_fp16_name,
+                                        QNN_TENSOR_TYPE_NATIVE,
+                                        QNN_DATATYPE_FLOAT_16,
+                                        QnnQuantParamsWrapper(),
+                                        std::vector<uint32_t>(bias_info.shape));
+      ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(bias_fp16_tensor)),
+                        "Failed to add FP16 bias tensor.");
+
+      // Create Cast node
+      ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(cast_node_name,
+                                                        QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                        QNN_OP_CAST,
+                                                        {bias_name},
+                                                        {bias_fp16_name},
+                                                        {},
+                                                        validate),
+                        "Failed to create Cast node for bias.");
+
+      input_names.push_back(bias_fp16_name);
+    } else {
+      // Bias is already FP16 or other type, use as-is
+      if (!qnn_model_wrapper.IsQnnTensorWrapperExist(bias_name)) {
+        QnnTensorWrapper input_tensorwrapper;
+        ORT_RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(conv_node_unit.Inputs()[2], input_tensorwrapper));
+        ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
+      }
+      input_names.push_back(bias_name);
     }
 
-    input_names.push_back(bias_name);
+    LOGS(logger, VERBOSE) << "CreateOrValidateOnQnn: Bias input processed successfully";
   }
 
-  //
-  // Output tensor with fp16 → fp32 Cast - Following conv_op_builder pattern
-  //
+  // Output: Create intermediate FP16 output, then Cast back to FP32
   const auto& outputs = conv_node_unit.Outputs();
   const auto& output_name = outputs[0].node_arg.Name();
   std::vector<uint32_t> output_shape;
@@ -424,22 +504,35 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   bool is_quantized_tensor = outputs[0].quant_param.has_value();
 
   const auto* type_proto = outputs[0].node_arg.TypeAsProto();
-  Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
-  ORT_RETURN_IF_ERROR(utils::GetQnnDataType(is_quantized_tensor, type_proto, qnn_data_type));
+  Qnn_DataType_t original_output_qnn_data_type = QNN_DATATYPE_FLOAT_32;
+  ORT_RETURN_IF_ERROR(utils::GetQnnDataType(is_quantized_tensor, type_proto, original_output_qnn_data_type));
 
   const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
-  Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
 
-  // Create intermediate fp16 output tensor for Conv
-  const std::string conv_fp16_output_name = utils::GetUniqueName(output_name, "_conv_fp16");
-  QnnTensorWrapper conv_fp16_output_tensorwrapper(conv_fp16_output_name,
-                                                  QNN_TENSOR_TYPE_NATIVE,
-                                                  QNN_DATATYPE_FLOAT_16,
-                                                  QnnQuantParamsWrapper(),
-                                                  std::vector<uint32_t>(output_shape));
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(conv_fp16_output_tensorwrapper)),
-                    "Failed to add Conv fp16 output tensor.");
-  LOGS(logger, VERBOSE) << "CreateOrValidateOnQnn: Created Conv fp16 output tensor: " << conv_fp16_output_name;
+  // Create intermediate FP16 output for Conv
+  std::string conv_output_fp16_name = output_name + "_fp16";
+  std::string conv_output_name;
+
+  if (original_output_qnn_data_type == QNN_DATATYPE_FLOAT_32) {
+    // Conv will output FP16, need Cast back to FP32
+    conv_output_name = conv_output_fp16_name;
+    LOGS(logger, VERBOSE) << "CreateOrValidateOnQnn: Conv will output FP16, adding Cast back to FP32";
+
+    QnnTensorWrapper conv_output_fp16_tensor(conv_output_fp16_name,
+                                             QNN_TENSOR_TYPE_NATIVE,
+                                             QNN_DATATYPE_FLOAT_16,
+                                             QnnQuantParamsWrapper(),
+                                             std::vector<uint32_t>(output_shape));
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(conv_output_fp16_tensor)),
+                      "Failed to add FP16 Conv output tensor.");
+  } else {
+    // Output is already FP16 or other type, use original name
+    conv_output_name = output_name;
+    Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+    QnnTensorWrapper output_tensorwrapper(output_name, tensor_type, original_output_qnn_data_type,
+                                          std::move(output_quantize_param), std::vector<uint32_t>(output_shape));
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
+  }
 
   //
   // Process Conv attributes (following conv_op_builder pattern)
@@ -531,35 +624,40 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   param_tensor_names.push_back(group_paramwrapper.GetParamTensorName());
   qnn_model_wrapper.AddParamWrapper(std::move(group_paramwrapper));
 
-  // Create the QNN Conv2d node with fp16 output - use validate parameter
+  // Create the QNN Conv2d node
   ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
                                                     QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                     QNN_OP_CONV_2D,
                                                     std::move(input_names),
-                                                    {conv_fp16_output_name},
+                                                    {conv_output_name},
                                                     std::move(param_tensor_names),
                                                     validate),
-                    "Failed to add Conv node.");
-  LOGS(logger, VERBOSE) << "CreateOrValidateOnQnn: Created Conv2d node with fp16 output";
+                    "Failed to add node.");
 
-  // Create final fp32 output tensor
-  QnnTensorWrapper output_tensorwrapper(output_name, tensor_type, qnn_data_type,
-                                        std::move(output_quantize_param), std::move(output_shape));
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)),
-                    "Failed to add final output tensor.");
-  LOGS(logger, VERBOSE) << "CreateOrValidateOnQnn: Created final fp32 output tensor: " << output_name;
+  // Add Cast node to convert FP16 output back to FP32 if needed
+  if (original_output_qnn_data_type == QNN_DATATYPE_FLOAT_32) {
+    std::string output_cast_node_name = utils::GetUniqueName(conv_node_unit, "_output_cast_fp32");
+    LOGS(logger, VERBOSE) << "CreateOrValidateOnQnn: Adding Cast node for output: "
+                          << conv_output_fp16_name << " -> " << output_name;
 
-  // Add Cast op to convert Conv output from fp16 to fp32
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-      utils::GetUniqueName(node_name, "_cast_to_fp32"),
-      QNN_OP_PACKAGE_NAME_QTI_AISW,
-      QNN_OP_CAST,
-      {conv_fp16_output_name},
-      {output_name},
-      {},
-      validate),
-      "Failed to create Cast node for fp16→fp32");
-  LOGS(logger, VERBOSE) << "CreateOrValidateOnQnn: Created Cast node fp16→fp32";
+    Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+    QnnTensorWrapper output_fp32_tensor(output_name,
+                                        tensor_type,
+                                        QNN_DATATYPE_FLOAT_32,
+                                        std::move(output_quantize_param),
+                                        std::move(output_shape));
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_fp32_tensor)),
+                      "Failed to add FP32 output tensor.");
+
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(output_cast_node_name,
+                                                      QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                      QNN_OP_CAST,
+                                                      {conv_output_fp16_name},
+                                                      {output_name},
+                                                      {},
+                                                      validate),
+                      "Failed to create Cast node for output.");
+  }
 
   return Status::OK();
 }
