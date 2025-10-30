@@ -74,9 +74,41 @@ function Exit-PyVenv() {
     # Figure out what $env:Path should be
     $PathNoVenv = (($env:Path.Split(";") | Where-Object { $_ -ne "${env:VIRTUAL_ENV}\Scripts"}) -join ";")
 
-    deactivate
+    # deactivate is only defined in the shell that activated the venv and not inherited by subproceeses :ug:
+    # So this is mostly copied from Activate.ps1
 
+    # The prior prompt:
+    if (Test-Path -Path Function:_OLD_VIRTUAL_PROMPT) {
+        Copy-Item -Path Function:_OLD_VIRTUAL_PROMPT -Destination Function:prompt
+        Remove-Item -Path Function:_OLD_VIRTUAL_PROMPT
+    }
+
+    # The prior PYTHONHOME:
+    if (Test-Path -Path Env:_OLD_VIRTUAL_PYTHONHOME) {
+        Copy-Item -Path Env:_OLD_VIRTUAL_PYTHONHOME -Destination Env:PYTHONHOME
+        Remove-Item -Path Env:_OLD_VIRTUAL_PYTHONHOME
+    }
+
+    # The prior PATH:
     $env:Path = $PathNoVenv
+    if (Test-Path -Path Env:_OLD_VIRTUAL_PATH) {
+        Remove-Item -Path Env:_OLD_VIRTUAL_PATH
+    }
+
+    # Just remove the VIRTUAL_ENV altogether:
+    if (Test-Path -Path Env:VIRTUAL_ENV) {
+        Remove-Item -Path env:VIRTUAL_ENV
+    }
+
+    # Just remove VIRTUAL_ENV_PROMPT altogether.
+    if (Test-Path -Path Env:VIRTUAL_ENV_PROMPT) {
+        Remove-Item -Path env:VIRTUAL_ENV_PROMPT
+    }
+
+    # Just remove the _PYTHON_VENV_PROMPT_PREFIX altogether:
+    if (Get-Variable -Name "_PYTHON_VENV_PROMPT_PREFIX" -ErrorAction SilentlyContinue) {
+        Remove-Variable -Name _PYTHON_VENV_PROMPT_PREFIX -Scope Global -Force
+    }
 }
 
 function Get-DefaultCMakeGenerator() {

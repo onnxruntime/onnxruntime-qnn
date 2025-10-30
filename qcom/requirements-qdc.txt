@@ -1,0 +1,6 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+# Python packages required by QCOM internal CI pipeline to submit jobs to QDC
+-r requirements.txt
+qdc-public-api-client == 0.0.14

@@ -493,7 +493,7 @@ class QdcRunner:
             self._job_config[Platform.WINDOWS] = QdcRunner.QdcJobConfig(
                 [windows_test_uuid],
                 TestFramework.POWERSHELL,
-                "C:\\Temp\\TestContent\\run_tests.ps1",
+                "C:\\Temp\\TestContent\\run.ps1",
             )
 
         if override_android_id and enable_android:

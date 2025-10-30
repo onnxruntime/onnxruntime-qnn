@@ -52,6 +52,10 @@ class FileCache:
         self.__cache_dir.mkdir(exist_ok=True)
         self.__max_cache_size_bytes = max_cache_size_bytes
 
+    @property
+    def cache_dir(self) -> Path:
+        return self.__cache_dir
+
     def fetch(
         self,
         cache_key: str,
@@ -167,6 +171,10 @@ class PackageManager:
         self.__package_root = package_root if package_root is not None else DEFAULT_TOOLS_DIR
         self.__package_root.mkdir(parents=True, exist_ok=True)
 
+    @property
+    def cache(self) -> FileCache:
+        return self.__cache
+
     @classmethod
     def clean(cls, package_root: Path) -> None:
         config = cls.__parse_config(PACKAGE_CONFIG)
@@ -207,7 +215,7 @@ class PackageManager:
         rootdir = self.get_rel_package_dir()
         content_root = self.__config.get("content_root", None)
         if content_root is not None:
-            rootdir = rootdir / Path(self.__format(content_root))
+            rootdir = rootdir / Path(self.format(content_root))
         return rootdir
 
     def get_rel_package_dir(self) -> Path:
@@ -226,7 +234,7 @@ class PackageManager:
         if pkg_rootdir.exists():
             logging.debug(f"{pkg_rootdir} already exists.")
             return
-        package_path = self.__fetch()
+        package_path = self.fetch()
 
         if package_path.suffix == ".exe":
             self.__run_installer(package_path)
@@ -250,15 +258,15 @@ class PackageManager:
             self.__cache.prune()
 
     def repair(self) -> None:
-        package_path = self.__fetch()
+        package_path = self.fetch()
         if package_path.suffix != ".exe":
             raise RuntimeError("Cannot repair non-installer package.")
         self.__run_installer(package_path, repair=True)
 
-    def __fetch(self) -> Path:
+    def fetch(self) -> Path:
         """Fetch the package archive."""
         cache_key = str(self.get_rel_package_dir())
-        url = self.__format(self.__config["url"])
+        url = self.format(self.__config["url"])
         package_path = self.__cache.fetch(
             cache_key,
             url,
@@ -268,16 +276,19 @@ class PackageManager:
         )
         return package_path
 
-    def __format(self, fmt_str: str) -> str:
+    def format(self, fmt_str: str) -> str:
         """Format a config file string, performing any necessary substitutions."""
         replacements = {key: self.__config.get(key) for key in ["major_version", "version"]}
         replacements["root_dir"] = self.get_root_dir()
         return fmt_str.format_map(replacements)
 
+    def get_config(self) -> dict[str, Any]:
+        return self.__config.copy()
+
     def __run_installer(self, installer_path: Path, repair: bool = False) -> None:
-        install_args = [self.__format(a) for a in self.__config.get("install_args", [])]
-        uninstall_args = [self.__format(a) for a in self.__config.get("uninstall_args", [])]
-        repair_args = [self.__format(a) for a in self.__config.get("repair_args", [])]
+        install_args = [self.format(a) for a in self.__config.get("install_args", [])]
+        uninstall_args = [self.format(a) for a in self.__config.get("uninstall_args", [])]
+        repair_args = [self.format(a) for a in self.__config.get("repair_args", [])]
 
         # Run the installer
         self.__execute(installer_path, repair_args if repair else install_args)

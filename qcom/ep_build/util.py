@@ -146,15 +146,24 @@ def run_with_venv(
     capture_output: bool = False,
     quiet: bool = False,
 ) -> subprocess.CompletedProcess:
-    if venv is None:
-        full_command = command
+    if venv is not None:
+        env = dict(env) if env is not None else dict(os.environ)
+        if is_host_windows():
+            pathvars = [k for k in env if k.lower() == "path"]
+            assert len(pathvars) == 1, f"Got wrong number of PATH-like variables in the environment: {pathvars}."
+            pathvar = pathvars[0]
+        else:
+            pathvar = "PATH"
+        env[pathvar] = f"{venv / VENV_BIN_RELPATH}{os.pathsep}{env[pathvar]}"
+        env["VIRTUAL_ENV"] = str(venv.absolute())
+        env["VIRTUAL_ENV_PROMPT"] = f"({venv.name})"
+        command = command if isinstance(command, str) else shlex.join(command)
+        prompt = f"{env['VIRTUAL_ENV_PROMPT']} $ "
     else:
-        # `source` requires paths with forward slashes
-        activate_path = str((venv / Path(VENV_ACTIVATE_RELPATH)).absolute()).replace("\\", "/")
-        shell_command = f"source {activate_path} && " + (command if isinstance(command, str) else shlex.join(command))
-        full_command = [BASH_EXECUTABLE, "-c", shell_command]
+        prompt = "$ "
+
     if not quiet:
-        echo(f"$ {full_command if isinstance(full_command, str) else shlex.join(full_command)}")
+        echo(f"{prompt}{command if isinstance(command, str) else shlex.join(command)}")
 
     if capture_output:
         stdout = subprocess.PIPE
@@ -164,11 +173,11 @@ def run_with_venv(
         stderr = None
 
     proc = subprocess.Popen(
-        full_command,
+        command,
         stdout=stdout,
         stderr=stderr,
-        shell=isinstance(full_command, str),
-        executable=BASH_EXECUTABLE if isinstance(full_command, str) else None,
+        shell=isinstance(command, str),
+        executable=SHELL_EXECUTABLE if isinstance(command, str) else None,
         env=env,
         cwd=cwd,
     )
@@ -177,8 +186,8 @@ def run_with_venv(
         stdout_out = outs if stdout is not None else None
         stderr_out = errs if stderr is not None else None
     if check and proc.returncode != 0:
-        raise subprocess.CalledProcessError(proc.returncode, full_command, stdout_out, stderr_out)
-    return subprocess.CompletedProcess(full_command, proc.returncode, stdout_out, stderr_out)
+        raise subprocess.CalledProcessError(proc.returncode, command, stdout_out, stderr_out)
+    return subprocess.CompletedProcess(command, proc.returncode, stdout_out, stderr_out)
 
 
 def run_with_venv_and_get_output(
@@ -238,10 +247,11 @@ class TemporarySignalHandler:
 
 
 if is_host_windows():
-    BASH_EXECUTABLE = str(Path(os.environ["ProgramW6432"], "Git/bin/bash.exe"))  # noqa: SIM112
-    assert os.path.isfile(BASH_EXECUTABLE), f"Bash executable not found in {BASH_EXECUTABLE}."
+    POWERSHELL_EXECUTABLE = run_and_get_output(["cmd", "/c", "where", "powershell.exe"], quiet=True)
+    SHELL_EXECUTABLE = POWERSHELL_EXECUTABLE
 else:
     BASH_EXECUTABLE = run_and_get_output(["which", "bash"], quiet=True)
+    SHELL_EXECUTABLE = BASH_EXECUTABLE
 
 
 DEFAULT_PYTHON_LINUX = Path("python3.10")
@@ -257,5 +267,7 @@ MSFT_CI_REQUIREMENTS_RELPATH = (
 
 REPO_ROOT = Path(__file__).parent.parent.parent
 
-VENV_ACTIVATE_RELPATH = "Scripts/activate" if is_host_windows() else "bin/activate"
+VENV_BIN_RELPATH = "Scripts" if is_host_windows() else "bin"
+
+VENV_ACTIVATE_RELPATH = f"{VENV_BIN_RELPATH}/activate"
 """Where to find the bash script to source to activate a virtual environment."""

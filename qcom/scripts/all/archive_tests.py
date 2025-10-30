@@ -16,7 +16,7 @@ REPO_ROOT = QCOM_ROOT.parent
 
 _ALWAYS_REJECT_PATTERNS = [r".*/__pycache__/.*", r".*/.pytest_cache/.*"]
 
-_ALWAYS_REJECT_RE = re.compile("|".join(_ALWAYS_REJECT_PATTERNS))
+ALWAYS_REJECT_RE = re.compile("|".join(_ALWAYS_REJECT_PATTERNS))
 
 _ORT_REJECT_PATTERNS = [
     *_ALWAYS_REJECT_PATTERNS,
@@ -46,12 +46,12 @@ def _add_node_models(add_file: Callable[[Path, Path], None]) -> None:
     node_tests_root = REPO_ROOT / "cmake" / "external" / "onnx" / "onnx" / "backend" / "test" / "data" / "node"
     logging.debug(f"Adding node model tests from ONNX submodule in {node_tests_root}")
     for filename in node_tests_root.glob("**/*"):
-        if _should_archive(filename, reject=_ORT_REJECT_RE):
+        if should_archive(filename, reject=_ORT_REJECT_RE):
             arcname = filename.relative_to(REPO_ROOT)
             add_file(filename, arcname)
 
 
-def _should_archive(path: Path, accept: re.Pattern | None = None, reject: re.Pattern | None = None) -> bool:
+def should_archive(path: Path, accept: re.Pattern | None = None, reject: re.Pattern | None = None) -> bool:
     if (platform.system() == "Windows" and path.is_symlink()) or not path.is_file():
         return False
     posix_path = str(path.as_posix())
@@ -73,20 +73,20 @@ def archive_android(target_platform: str, config: str, qairt_sdk_root: Path) -> 
     with zipfile.ZipFile(archive_path, "x", compression=zipfile.ZIP_DEFLATED) as archive:
         logging.debug(f"Adding items from ONNX Runtime build in {build_dir}.")
         for filename in build_dir.glob(f"{config}/**/*"):
-            if _should_archive(filename, reject=_ORT_REJECT_RE):
+            if should_archive(filename, reject=_ORT_REJECT_RE):
                 arcname = filename.relative_to(REPO_ROOT)
                 archive.write(filename, arcname)
 
         qdc_test_root = QCOM_ROOT / "scripts" / "linux" / "appium"
         logging.debug(f"Adding QDC test framework from {qdc_test_root}.")
         for filename in qdc_test_root.glob("**/*"):
-            if _should_archive(filename, reject=_ALWAYS_REJECT_RE):
+            if should_archive(filename, reject=ALWAYS_REJECT_RE):
                 arcname = filename.relative_to(qdc_test_root)
                 archive.write(filename, arcname)
 
         logging.debug(f"Adding QNN libraries from {qairt_sdk_root}.")
         for filename in (qairt_sdk_root / "lib").glob("**/*"):
-            if _should_archive(filename, accept=_QAIRT_ACCEPT_RE):
+            if should_archive(filename, accept=_QAIRT_ACCEPT_RE):
                 arcname = filename.relative_to(qairt_sdk_root)
                 archive.write(filename, arcname)
 
@@ -104,7 +104,7 @@ def archive_linux(target_platform: str, config: str) -> None:
     with tarfile.open(archive_path, "w:bz2") as archive:
         logging.debug(f"Adding ONNX build from {build_dir / config}")
         for filename in (build_dir / config).glob("**/*"):
-            if _should_archive(filename, reject=_ORT_REJECT_RE):
+            if should_archive(filename, reject=_ORT_REJECT_RE):
                 arcname = filename.relative_to(REPO_ROOT)
                 archive.add(filename, arcname)
         _add_node_models(archive.add)
@@ -125,14 +125,12 @@ def archive_windows(target_platform: str, config: str) -> None:
             logging.debug("Adding individual files.")
             arc_build_dir = (build_dir / config).relative_to(REPO_ROOT)
             archive.write(build_dir / config / "CTestTestfile.cmake", arc_build_dir / "CTestTestfile.cmake")
-            archive.write(build_dir / config / "ctest.exe", arc_build_dir / "ctest.exe")
-            archive.write(build_dir / config / "run_tests.ps1", arc_build_dir / "run_tests.ps1")
         else:
             ep_build_dir = build_dir / config
 
         logging.debug(f"Adding ONNX build from {ep_build_dir}")
         for filename in ep_build_dir.glob("**/*"):
-            if _should_archive(filename, reject=_ORT_REJECT_RE):
+            if should_archive(filename, reject=_ORT_REJECT_RE):
                 arcname = str(filename.relative_to(REPO_ROOT))
                 archive.write(filename, arcname)
         _add_node_models(archive.write)

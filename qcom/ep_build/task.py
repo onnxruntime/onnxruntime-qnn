@@ -11,7 +11,7 @@ from collections.abc import Callable, Generator, Iterable, Mapping
 from pathlib import Path
 
 from .github import end_group, start_group
-from .util import BASH_EXECUTABLE, run_with_venv
+from .util import run_with_venv
 
 REPO_ROOT = (Path(__file__).parent / ".." / "..").resolve()
 
@@ -225,38 +225,6 @@ class RunExecutablesTask(RunExecutablesWithVenvTask):
         cwd: Path | None = None,
     ) -> None:
         super().__init__(group_name, None, executables_and_args, env, cwd)
-
-
-class BashScriptsWithVenvTask(RunExecutablesWithVenvTask):
-    """
-    A Task that runs bash scripts with a specific Python virtual environment enabled.
-    """
-
-    def __init__(
-        self,
-        group_name: str | None,
-        venv: Path | None,
-        scripts_and_args: list[list[str]],
-        env: Mapping[str, str] | None = None,
-        cwd: Path | None = None,
-    ) -> None:
-        executables_and_args = [[BASH_EXECUTABLE] + s_a for s_a in scripts_and_args]  # noqa: RUF005
-        super().__init__(group_name, venv, executables_and_args, env, cwd)
-
-
-class BashScriptsTask(BashScriptsWithVenvTask):
-    """
-    A Task that runs bash scripts.
-    """
-
-    def __init__(
-        self,
-        group_name: str | None,
-        scripts_and_args: list[list[str]],
-        env: Mapping[str, str] | None = None,
-        cwd: Path | None = None,
-    ) -> None:
-        super().__init__(group_name, None, scripts_and_args, env, cwd)
 
 
 class CompositeTask(Task):

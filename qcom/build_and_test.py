@@ -32,13 +32,14 @@ from ep_build.task import (
     PyTestTask,
 )
 from ep_build.tasks.build import (
+    ArchiveEpStandaloneTask,
     BuildEpDockerTask,
     BuildEpLinuxTask,
     BuildEpWindowsTask,
     QdcTestsTask,
 )
 from ep_build.tasks.docker import MANYLINUX_2_34_AARCH64_TAG, DockerBuildTask
-from ep_build.tasks.python import CreateOrtVenvTask, OrtWheelSmokeTestTask, RunLinterTask
+from ep_build.tasks.python import CreateOrtVenvTask, CreateQdcVenvTask, OrtWheelSmokeTestTask, RunLinterTask
 from ep_build.typing import BuildConfigT, TargetPyVersionT
 from ep_build.util import (
     DEFAULT_PYTHON,
@@ -55,6 +56,8 @@ QAIRT_SDK_ROOT_ENV_VAR = "QAIRT_SDK_ROOT"
 QNN_SDK_ROOT_ENV_VAR = "QNN_SDK_ROOT"
 SNPE_ROOT_ENV_VAR = "SNPE_ROOT"
 DEFAULT_VENV_PATH = REPO_ROOT / "venv"
+DEFAULT_QDC_VENV_PATH = REPO_ROOT / "build" / "venv.qdc"
+STANDALONE_PY_VERSION = "3.13"
 
 
 if __name__ == "__main__":
@@ -159,6 +162,7 @@ class TaskLibrary:
         self,
         python_executable: Path,
         venv_path: Path,
+        qdc_venv_path: Path,
         config: BuildConfigT,
         target_py_version: TargetPyVersionT | None,
         qairt_sdk_root: Path | None,
@@ -166,6 +170,7 @@ class TaskLibrary:
     ) -> None:
         self.__python_executable = python_executable
         self.__venv_path = venv_path
+        self.__qdc_venv_path = qdc_venv_path
         self.__config: BuildConfigT = config
         # pylance somehow cannot correctly deduce the type of self.__target_py_version
         self.__target_py_version: TargetPyVersionT | None = target_py_version
@@ -279,6 +284,24 @@ class TaskLibrary:
                     self.__qairt_sdk_root,
                     "archive",
                 )
+            )
+
+    if is_host_windows():
+
+        @task
+        @depends(["archive_ort_windows_arm64"])
+        def archive_ort_windows_arm64_standalone(self, plan: Plan) -> str:
+            return plan.add_step(
+                ArchiveEpStandaloneTask(
+                    "Making a standalone archive of ONNX Runtime for Windows on ARM64",
+                    self.__venv_path,
+                    "windows",
+                    "arm64",
+                    self.__target_py_version,
+                    STANDALONE_PY_VERSION,
+                    ["create_venv", "test_ort_windows_arm64", "--only"],
+                    ["onnx_models"],
+                ),
             )
 
     if is_host_windows():
@@ -524,6 +547,10 @@ class TaskLibrary:
             )
 
     @task
+    def create_qdc_venv(self, plan: Plan) -> str:
+        return plan.add_step(CreateQdcVenvTask(self.__python_executable, self.__qdc_venv_path))
+
+    @task
     def create_venv(self, plan: Plan) -> str:
         return plan.add_step(CreateOrtVenvTask(self.__python_executable, self.__venv_path))
 
@@ -685,12 +712,12 @@ class TaskLibrary:
     if is_host_linux() or is_host_mac():
 
         @task
-        @depends(["archive_ort_android_aarch64"])
+        @depends(["create_qdc_venv", "archive_ort_android_aarch64"])
         def test_ort_qdc_android_aarch64(self, plan: Plan) -> str:
             return plan.add_step(
                 QdcTestsTask(
                     "Testing ONNX Runtime for Android in QDC",
-                    self.__venv_path,
+                    self.__qdc_venv_path,
                     ["android"],
                     extra_args=[
                         "--append-android-package=onnx_models:model_tests/onnx_models",
@@ -701,16 +728,13 @@ class TaskLibrary:
     if is_host_windows():
 
         @task
-        @depends(["archive_ort_windows_arm64"])
+        @depends(["create_qdc_venv", "archive_ort_windows_arm64_standalone"])
         def test_ort_qdc_windows_arm64(self, plan: Plan) -> str:
             return plan.add_step(
                 QdcTestsTask(
                     "Testing ONNX Runtime for Windows on ARM64 in QDC",
-                    self.__venv_path,
+                    self.__qdc_venv_path,
                     ["windows"],
-                    extra_args=[
-                        "--append-windows-package=onnx_models:model_tests/onnx_models",
-                    ],
                 )
             )
 
@@ -866,6 +890,7 @@ def plan_from_dependencies(
     main_tasks: list[str],
     python_executable: Path,
     venv_path: Path,
+    qdc_venv_path: Path,
     config: BuildConfigT,
     target_py_version: TargetPyVersionT | None,
     qairt_sdk_root: Path | None,
@@ -876,7 +901,7 @@ def plan_from_dependencies(
     dependencies in a valid order. This is the default planner.
     """
     task_library = TaskLibrary(
-        python_executable, venv_path, config, target_py_version, qairt_sdk_root, docker_ccache_root
+        python_executable, venv_path, qdc_venv_path, config, target_py_version, qairt_sdk_root, docker_ccache_root
     )
     plan = Plan()
 
@@ -923,6 +948,7 @@ def plan_from_task_list(
     tasks: list[str],
     python_executable: Path,
     venv_path: Path,
+    qdc_venv_path: Path,
     config: BuildConfigT,
     target_py_version: TargetPyVersionT | None,
     qairt_sdk_root: Path | None,
@@ -933,7 +959,7 @@ def plan_from_task_list(
     Used by --only.
     """
     task_library = TaskLibrary(
-        python_executable, venv_path, config, target_py_version, qairt_sdk_root, docker_ccache_root
+        python_executable, venv_path, qdc_venv_path, config, target_py_version, qairt_sdk_root, docker_ccache_root
     )
     plan = Plan()
     for task_name in tasks:
@@ -963,6 +989,7 @@ def build_and_test():
             args.task,
             DEFAULT_PYTHON,
             args.venv_path,
+            DEFAULT_QDC_VENV_PATH,
             args.config,
             args.target_py_version,
             qairt_sdk_root,

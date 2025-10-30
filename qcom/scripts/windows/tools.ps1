@@ -93,29 +93,77 @@ function Get-PythonBinDir() {
 
     # An appropriate Python might exist on the system already. If so, let's use it
     # so we don't clobber something someone might be using.
-    $PythonExePath = (py "-$PyVsn" -c "import sys; print(sys.executable)")
+    $Status = Get-PythonStatus -PyVersion $PyVsn
 
     $PkgName = "python_$($Version.Replace('.', ''))_windows_$PkgArch"
 
-    # See https://docs.python.org/3/using/windows.html#return-codes
-    # 101 --> Failed to launch Python
-    # 103 --> Unable to locate the requested version
-    switch ($LASTEXITCODE) {
-        0 {
-            Write-Host "Using existing $PyVsn in $PythonExePath"
-            return (Resolve-Path (Split-Path -Parent $PythonExePath))
+    switch ($Status.Status) {
+        Installed {
+            $BinDir = Resolve-Path (Split-Path -Parent $Status.ExePath)
+            Write-Host "Using existing Python $PyVsn in $BinDir"
+            return $BinDir
         }
-        103 {
+        NotInstalled {
             Write-Host "Installing $PkgName"
             return Get-PackageBinDir $PkgName
         }
-        101 {
+        Broken {
             Write-Host "Repairing $PkgName"
             Repair-Package $PkgName
             return Get-PackageBinDir $PkgName
         }
-        Default {
-            throw "Could not locate/install Python $Version for $Arch."
+        default {
+            throw "Unknown PythonStatus $($Status.Status)"
+        }
+    }
+}
+
+enum PythonStatus {
+    Installed
+    NotInstalled
+    Broken
+}
+
+function Get-PythonStatus() {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PyVersion
+    )
+
+    try {
+        $PythonExePath = (py "-$PyVersion" -c "import sys; print(sys.executable)")
+
+        # See https://docs.python.org/3/using/windows.html#return-codes
+        # 101 --> Failed to launch Python
+        # 103 --> Unable to locate the requested version
+        switch ($LASTEXITCODE) {
+            0 {
+                return [PSCustomObject]@{
+                    Status = [PythonStatus]::Installed
+                    ExePath = $PythonExePath
+                }
+            }
+            103 {
+                return [PSCustomObject]@{
+                    Status = [PythonStatus]::NotInstalled
+                    ExePath = $null
+                }
+            }
+            101 {
+                return [PSCustomObject]@{
+                    Status = [PythonStatus]::Broken
+                    ExePath = $null
+                }
+            }
+            Default {
+                throw "Could not locate/install Python $PyVersion."
+            }
+        }
+    }
+    catch [System.Management.Automation.CommandNotFoundException] {
+        return [PSCustomObject]@{
+            Status = [PythonStatus]::NotInstalled
+            ExePath = $null
         }
     }
 }

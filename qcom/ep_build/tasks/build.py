@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 from ..github import is_host_github_runner
-from ..task import BashScriptsWithVenvTask, CompositeTask, RemovePathsTask, RunExecutablesWithVenvTask
+from ..task import CompositeTask, RemovePathsTask, RunExecutablesWithVenvTask
 from ..typing import BuildConfigT, TargetArchLinuxT, TargetArchWindowsT, TargetPyVersionT
 from ..util import REPO_ROOT, git_head_sha
 from .docker import DOCKER_REPO_ROOT, MANYLINUX_2_34_AARCH64_TAG, DockerBuildAndTestTask, DockerRunTask
@@ -16,6 +16,32 @@ from .windows import RunPowershellScriptsTask
 
 def get_ort_version() -> str:
     return (REPO_ROOT / "VERSION_NUMBER").read_text().strip()
+
+
+class ArchiveEpStandaloneTask(RunExecutablesWithVenvTask):
+    def __init__(
+        self,
+        group_name: str | None,
+        venv: Path | None,
+        target_platform: Literal["windows"],
+        target_arch: TargetArchWindowsT,
+        target_py_version: TargetPyVersionT | None,
+        bootstrap_py_version: TargetPyVersionT,
+        build_and_test_args: Iterable[str],
+        include_packages: Iterable[str],
+    ) -> None:
+        # fmt: off
+        cmd = [
+            "python",
+            str(REPO_ROOT / "qcom" / "scripts" / "all" / "make_standalone_archive.py"),
+            f"--target-platform={target_platform}-{target_arch}",
+            f"--target-py-version={target_py_version}",
+            f"--bootstrap-py-version={bootstrap_py_version}",
+            f"--build-and-test-args={','.join(build_and_test_args)}",
+            f"--include-packages={','.join(include_packages)}",
+        ]
+        # fmt: on
+        super().__init__(group_name, venv, [cmd])
 
 
 class BuildEpDockerTask(CompositeTask):
@@ -69,7 +95,7 @@ class BuildEpDockerTask(CompositeTask):
         )
 
 
-class BuildEpLinuxTask(BashScriptsWithVenvTask):
+class BuildEpLinuxTask(RunExecutablesWithVenvTask):
     """Build ONNX Runtime on a Linux host."""
 
     def __init__(
@@ -86,6 +112,7 @@ class BuildEpLinuxTask(BashScriptsWithVenvTask):
         env: Mapping[str, str] | None = None,
     ) -> None:
         cmd = [
+            "bash",
             str(REPO_ROOT / "qcom" / "scripts" / "linux" / "build.sh"),
             f"--target-arch={target_arch}",
             f"--target-platform={target_platform}",

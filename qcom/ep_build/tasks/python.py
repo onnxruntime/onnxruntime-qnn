@@ -3,6 +3,7 @@
 
 import functools
 import operator
+import os
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Literal
@@ -60,6 +61,27 @@ class CreateOrtVenvTask(CompositeTask):
                         uv_pip_install_cmd(
                             requirements=[
                                 REPO_ROOT / "qcom" / "requirements.txt",
+                            ],
+                        ),
+                    ],
+                ),
+            ],
+        )
+
+
+class CreateQdcVenvTask(CompositeTask):
+    def __init__(self, python_executable: Path, venv_path: Path) -> None:
+        super().__init__(
+            group_name=None,
+            tasks=[
+                CreateVenvTask(python_executable=python_executable, venv_path=venv_path),
+                RunExecutablesWithVenvTask(
+                    group_name=f"Installing required packages into {venv_path}",
+                    venv=venv_path,
+                    executables_and_args=[
+                        uv_pip_install_cmd(
+                            requirements=[
+                                REPO_ROOT / "qcom" / "requirements-qdc.txt",
                             ],
                             index_url="http://ort-ep-win-01.na.qualcomm.com:8080",
                         ),
@@ -234,6 +256,7 @@ class OrtWheelSmokeTestTask(OrtWheelTestTask):
     def __get_test_env(self) -> Mapping[str, str]:
         """Get an environment that tells the tests where to find their models."""
         return {
+            **os.environ,
             "ORT_WHEEL_SMOKE_TEST_ROOT": str(get_onnx_models_root(self.__venv) / "testdata" / "smoke"),
             "ORT_MODEL_ZOO_TEST_ROOTS": str(get_model_zoo_root(self.__venv) / "winml-cert"),
         }
