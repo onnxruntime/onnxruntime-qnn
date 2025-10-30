@@ -320,9 +320,9 @@ void SelectorManager::CreateSelectors() {
   RegisterLogicalComparisonSelectors(qdq_selectors_);
   RegisterWhereSelectors(qdq_selectors_);
   RegisterPadSelectors(qdq_selectors_);
-  RegisterTopKSelector(qdq_selectors_);
+  // RegisterTopKSelector(qdq_selectors_);
   RegisterCumSumSelector(qdq_selectors_);
-  RegisterScatterElementsSelector(qdq_selectors_);
+  // RegisterScatterElementsSelector(qdq_selectors_);
 }
 
 void SelectorManager::InitializeSelectorsMap() {
