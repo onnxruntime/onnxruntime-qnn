@@ -34,6 +34,6 @@ class QnnMockSSRController {
   QnnMockSSRController(const QnnMockSSRController&) = delete;
   QnnMockSSRController& operator=(const QnnMockSSRController&) = delete;
 
-  // The timing to trigger SSR
-  Timing timing_;
+  // The timing to trigger SSR. Default to triggering SSR at graphExecute
+  Timing timing_ = Timing::GraphExecute;
 };

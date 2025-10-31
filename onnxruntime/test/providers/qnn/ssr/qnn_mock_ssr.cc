@@ -10,31 +10,24 @@ extern "C" QnnMockSSRController* GetQnnMockSSRController() { return &QnnMockSSRC
 
 const QnnInterface_t** real_providerList{nullptr};
 uint32_t real_numProviders{0};
-#if defined(_WIN32)
-HMODULE lib_handle = nullptr;
-#endif  // defined(_WIN32)
 
-bool InitializeQnnMockSSR() {
-#if defined(_WIN32)
-  lib_handle = LoadLibraryW(L"QnnHtp.dll");
-  FARPROC addr = GetProcAddress(lib_handle, "QnnInterface_getProviders");
-  typedef Qnn_ErrorHandle_t (*QnnApiFnType_t)(const QnnInterface_t***, uint32_t*);
-  QnnApiFnType_t real_QnnInterface_getProviders = reinterpret_cast<QnnApiFnType_t>(addr);
-  auto res = real_QnnInterface_getProviders((const QnnInterface_t***)&real_providerList, &real_numProviders);
-  return (res == QNN_SUCCESS);
-#else
-  return true;
-#endif  // defined(_WIN32)
-}
+namespace {
+// Register a free_qnn_htp_fn to ensure we release QnnHtp.dll before
+// destructing QnnMockSSR.dll
+auto free_qnn_htp_fn = [](HMODULE m) {
+  if (m) FreeLibrary(m);
+};
 
-void ShutDownQnnMockSSR() {
+std::unique_ptr<std::remove_pointer_t<HMODULE>, decltype(free_qnn_htp_fn)> qnn_htp(
+    LoadLibraryW(L"QnnHtp.dll"), free_qnn_htp_fn);
+
 #if defined(_WIN32)
-  if (lib_handle) {
-    FreeLibrary(lib_handle);
-    lib_handle = nullptr;
-  }
+FARPROC addr = GetProcAddress(qnn_htp.get(), "QnnInterface_getProviders");
+typedef Qnn_ErrorHandle_t (*QnnApiFnType_t)(const QnnInterface_t***, uint32_t*);
+QnnApiFnType_t real_QnnInterface_getProviders = reinterpret_cast<QnnApiFnType_t>(addr);
+auto res = real_QnnInterface_getProviders((const QnnInterface_t***)&real_providerList, &real_numProviders);
 #endif  // defined(_WIN32)
-}
+}  // namespace
 
 #if defined(_WIN32)
 
