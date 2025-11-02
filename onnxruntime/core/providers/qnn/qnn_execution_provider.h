@@ -81,6 +81,13 @@ class QNNExecutionProvider : public IExecutionProvider {
 
   qnn::ProfilingLevel GetProfilingLevelFromETWLevel(unsigned char level);
 
+  // Unified logic for SSR (SubSystem Restart) handle
+  Status InvokeWithSSRHandle(
+      const std::function<Status()>& operation,
+      const std::function<Status()>& ssr_cleanup,
+      const std::string& operation_name,
+      const logging::Logger& logger) const;
+
   bool IsHtpSharedMemoryAllocatorAvailable() const { return rpcmem_library_ != nullptr; }
 
  private:

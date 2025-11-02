@@ -256,6 +256,38 @@ qnn::ProfilingLevel QNNExecutionProvider::GetProfilingLevelFromETWLevel(unsigned
   }
 }
 
+// Unified retry logic for SSR (System State Recovery) handling
+Status QNNExecutionProvider::InvokeWithSSRHandle(
+    const std::function<Status()>& operation,
+    const std::function<Status()>& ssr_recover,
+    const std::string& operation_name,
+    const logging::Logger& logger) const {
+  Status result;
+  enum class SSRHandleState { Init = 0,
+                              Retry = 1,
+                              End = 2 };
+  SSRHandleState retry_state = SSRHandleState::Init;
+  ORT_RETURN_IF_NOT(operation, "Operation function cannot be null");
+  ORT_RETURN_IF_NOT(ssr_recover, "SSR recover function cannot be null");
+
+  do {
+    result = operation();
+
+    if (retry_state == SSRHandleState::Init) {
+      bool handle_ssr = enable_ssr_handling_ && qnn::utils::IsSSRCapture(result);
+      if (handle_ssr) {
+        ORT_RETURN_IF_ERROR(ssr_recover());
+      }
+      retry_state = handle_ssr ? SSRHandleState::Retry : SSRHandleState::End;
+    } else if (retry_state == SSRHandleState::Retry) {
+      LOGS(logger, VERBOSE) << "[SSR Handle during " << operation_name << "] " << result;
+      retry_state = SSRHandleState::End;
+    }
+  } while (retry_state != SSRHandleState::End);
+
+  return result;
+}
+
 static std::unique_ptr<qnn::QnnSerializerConfig> ParseSerializerBackendOptions(const ProviderOptions& provider_options_map) {
   // Enable use of QNN Saver if the user provides a path the QNN Saver backend library.
   static const std::string QNN_SAVER_PATH_KEY = "qnn_saver_path";
@@ -947,20 +979,19 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
   // It will load the QnnSystem lib if is_qnn_ctx_model=true, and
   // delay the Qnn context creation to Compile() using the cached context binary
   // or generate context cache enable, need to use use QnnSystem lib to parse the binary to get the max spill fill buffer size
-  int retry_cnt = 0;
-  Status rt;
-  do {
-    if (retry_cnt > 0) {
-      LOGS(logger, VERBOSE) << "[SSR Handle during SetupBackend] Retry " << retry_cnt << "th";
-    }
-    // SetupBackend help release resource if failed
-    rt = qnn_backend_manager_->SetupBackend(logger, is_qnn_ctx_model,
-                                            enable_ssr_handling_ || (context_cache_enabled_ && enable_spill_fill_buffer_),
-                                            share_ep_contexts_,
-                                            enable_vtcm_backup_buffer_sharing_,
-                                            context_bin_map);
-    retry_cnt += 1;
-  } while (enable_ssr_handling_ && retry_cnt <= 3 && qnn::utils::IsSSRCapture(rt));
+  Status rt = InvokeWithSSRHandle(
+      [&]() {
+        return qnn_backend_manager_->SetupBackend(logger, is_qnn_ctx_model,
+                                                  enable_ssr_handling_ || (context_cache_enabled_ && enable_spill_fill_buffer_),
+                                                  share_ep_contexts_,
+                                                  enable_vtcm_backup_buffer_sharing_,
+                                                  context_bin_map);
+      },
+      [&]() {
+        return Status::OK();  // No SSR recover needed since SetupBackend help clean up on failure"
+      },
+      "SetupBackend",
+      logger);
 
   context_bin_map.clear();
 
@@ -1118,23 +1149,24 @@ Status QNNExecutionProvider::CreateComputeFunc(std::vector<NodeComputeInfo>& nod
   compute_info.compute_func = [&logger, this](FunctionState state, const OrtApi*, OrtKernelContext* context) {
     Ort::KernelContext ctx(context);
     qnn::QnnModel* model = reinterpret_cast<qnn::QnnModel*>(state);
-    Status result;
-    int retry_cnt = 0;
-    do {
-      if (retry_cnt > 0) {
-        LOGS(logger, VERBOSE) << "[SSR Handle during Inference] Retry " << retry_cnt << "th";
-        ORT_RETURN_IF_ERROR(SSRCleanUp());
-        // Check if the model exists in the recovered models
-        ORT_RETURN_IF_NOT(qnn_models_.find(model->Name()) != qnn_models_.end(),
-                          "Failed to recover model: ", model->Name(), ". Model not found in recovered models map.");
-        // Recover the graph and context handle of model with QNNExecutionProvider's qnn_models_
-        model->GetGraphInfo()->SetGraphContext(qnn_models_[model->Name()]->GetGraphInfo()->GraphContext());
-        model->GetGraphInfo()->SetGraph(qnn_models_[model->Name()]->GetGraphInfo()->Graph());
-      }
-      result = model->ExecuteGraph(ctx, logger);
-      retry_cnt += 1;
-    } while (enable_ssr_handling_ && retry_cnt <= 3 && qnn::utils::IsSSRCapture(result));
-
+    Status result = InvokeWithSSRHandle(
+        [&]() {
+          return model->ExecuteGraph(ctx, logger);
+        },
+        [&]() {
+          // Cleanup after SSR capture and recover model state
+          ORT_RETURN_IF_ERROR(SSRCleanUp());
+          ORT_RETURN_IF_NOT(qnn_models_.find(model->Name()) != qnn_models_.end(),
+                            "Failed to recover model: ", model->Name(),
+                            ". Model not found in recovered models map.");
+          model->GetGraphInfo()->SetGraphContext(
+              qnn_models_[model->Name()]->GetGraphInfo()->GraphContext());
+          model->GetGraphInfo()->SetGraph(
+              qnn_models_[model->Name()]->GetGraphInfo()->Graph());
+          return Status::OK();
+        },
+        "Inference",
+        logger);
     return result;
   };
 
@@ -1339,20 +1371,17 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
     return Status::OK();
   }
 
-  Status compile_res;
-  int retry_cnt = 0;
-  do {
-    if (retry_cnt > 0) {
-      LOGS(logger, VERBOSE) << "[SSR Handle during Compile] Retry " << retry_cnt << "th";
-      ORT_RETURN_IF(is_qnn_ctx_model || enable_vtcm_backup_buffer_sharing_ || share_ep_contexts_,
-                    "SSR during Compile is not supported with Qnn Context model, VTCM backup buffer sharing, share EP contexts");
-      ORT_RETURN_IF_ERROR(SSRCleanUp());
-    }
-    // CompileFromOrtGraph will re-create the graph
-    compile_res = CompileFromOrtGraph(fused_nodes_and_graphs, node_compute_funcs, logger);
-    retry_cnt += 1;
-  } while (enable_ssr_handling_ && retry_cnt <= 3 && qnn::utils::IsSSRCapture(compile_res));
-
+  Status compile_res = InvokeWithSSRHandle(
+      [&]() {
+        return CompileFromOrtGraph(fused_nodes_and_graphs, node_compute_funcs, logger);
+      },
+      [&]() {
+        // Cleanup after SSR capture
+        ORT_RETURN_IF_ERROR(SSRCleanUp());
+        return Status::OK();
+      },
+      "Compile",
+      logger);
   ORT_RETURN_IF_ERROR(compile_res);
 
   if (enable_ssr_handling_) {

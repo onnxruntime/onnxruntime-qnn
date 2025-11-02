@@ -12,6 +12,7 @@ const QnnInterface_t** real_providerList{nullptr};
 uint32_t real_numProviders{0};
 
 namespace {
+#if defined(_WIN32)
 // Register a free_qnn_htp_fn to ensure we release QnnHtp.dll before
 // destructing QnnMockSSR.dll
 auto free_qnn_htp_fn = [](HMODULE m) {
@@ -21,7 +22,6 @@ auto free_qnn_htp_fn = [](HMODULE m) {
 std::unique_ptr<std::remove_pointer_t<HMODULE>, decltype(free_qnn_htp_fn)> qnn_htp(
     LoadLibraryW(L"QnnHtp.dll"), free_qnn_htp_fn);
 
-#if defined(_WIN32)
 FARPROC addr = GetProcAddress(qnn_htp.get(), "QnnInterface_getProviders");
 typedef Qnn_ErrorHandle_t (*QnnApiFnType_t)(const QnnInterface_t***, uint32_t*);
 QnnApiFnType_t real_QnnInterface_getProviders = reinterpret_cast<QnnApiFnType_t>(addr);
