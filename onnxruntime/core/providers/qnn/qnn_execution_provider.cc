@@ -256,13 +256,34 @@ qnn::ProfilingLevel QNNExecutionProvider::GetProfilingLevelFromETWLevel(unsigned
   }
 }
 
-// Unified retry logic for SSR (System State Recovery) handling
+/**
+ * @brief Executes an operation with SubSystem Restart (SSR) handling.
+ *
+ * This function provides a unified approach for handling SSR events
+ * that may occur during QNN operations. SSR events happen when the DSP/NPU hardware enters
+ * a bad state and needs to be reset. When an SSR event is detected, this function:
+ * 1. Attempts the operation
+ * 2. If an SSR event occurs, executes recovery logic
+ * 3. Retries the operation once after recovery
+ *
+ * @param operation The function to execute that may encounter an SSR event
+ * @param ssr_recover The recovery function to execute if an SSR event occurs
+ * @param operation_name Name of the operation for logging purposes
+ * @param logger Logger instance for diagnostic messages
+ *
+ * @return Status The status of the operation (success or error)
+ */
 Status QNNExecutionProvider::InvokeWithSSRHandle(
-    const std::function<Status()>& operation,
-    const std::function<Status()>& ssr_recover,
-    const std::string& operation_name,
+    const std::function<Status()>& operation,    // Operation that might encounter SSR
+    const std::function<Status()>& ssr_recover,  // Recovery function to execute after SSR
+    const std::string& operation_name,           // Name of operation for logging
     const logging::Logger& logger) const {
   Status result;
+
+  // State machine to track SSR handling progress:
+  // - Init: First attempt at operation
+  // - Retry: Attempting operation after SSR recovery
+  // - End: Processing complete (success or unrecoverable failure)
   enum class SSRHandleState { Init = 0,
                               Retry = 1,
                               End = 2 };
@@ -271,6 +292,7 @@ Status QNNExecutionProvider::InvokeWithSSRHandle(
   ORT_RETURN_IF_NOT(ssr_recover, "SSR recover function cannot be null");
 
   do {
+    // Execute the operation (first attempt or retry)
     result = operation();
 
     if (retry_state == SSRHandleState::Init) {
@@ -278,6 +300,7 @@ Status QNNExecutionProvider::InvokeWithSSRHandle(
       if (handle_ssr) {
         ORT_RETURN_IF_ERROR(ssr_recover());
       }
+      // Determine next state: retry if SSR occurred, otherwise we're done
       retry_state = handle_ssr ? SSRHandleState::Retry : SSRHandleState::End;
     } else if (retry_state == SSRHandleState::Retry) {
       LOGS(logger, VERBOSE) << "[SSR Handle during " << operation_name << "] " << result;

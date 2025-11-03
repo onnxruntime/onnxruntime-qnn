@@ -999,7 +999,8 @@ std::unique_ptr<unsigned char[]> QnnBackendManager::GetContextBinaryBuffer(uint6
   return context_buffer;
 }
 
-Status QnnBackendManager::SaveContextToBinary(const logging::Logger&) {
+Status QnnBackendManager::SaveContextToBinary(const logging::Logger& logger) {
+  LOGS(logger, VERBOSE) << "[SSR Handle] SaveContextToBinary for recover";
   uint64_t writtenBufferSize{0};
   qnn_save_buffer_ = GetContextBinaryBuffer(writtenBufferSize);
   qnn_save_buffer_size_ = writtenBufferSize;

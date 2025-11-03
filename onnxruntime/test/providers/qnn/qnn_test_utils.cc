@@ -383,10 +383,15 @@ void QnnMockSSRBackendTests::SetUp() {
 #include <windows.h>
   QnnHTPBackendTests::SetUp();
   lib_handle = LoadLibraryW(L"QnnMockSSR.dll");
+  ASSERT_NE(lib_handle, nullptr) << "Failed to load QnnMockSSR.dll";
+
   typedef QnnMockSSRController* (*GetQnnMockSSRControllerFn_t)();
   GetQnnMockSSRControllerFn_t GetQnnMockSSRController = reinterpret_cast<GetQnnMockSSRControllerFn_t>(
       GetProcAddress(lib_handle, "GetQnnMockSSRController"));
+  ASSERT_NE(GetQnnMockSSRController, nullptr) << "Failed to get GetQnnMockSSRController function";
+
   controller = GetQnnMockSSRController();
+  ASSERT_NE(controller, nullptr) << "GetQnnMockSSRController returned null";
 
 #endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
   input_def = TestInputDef<float>({1, 2, 3, 3}, false, {-10.0f, 10.0f});
