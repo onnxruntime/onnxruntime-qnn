@@ -296,12 +296,13 @@ Status QNNExecutionProvider::InvokeWithSSRHandle(
     result = operation();
 
     if (retry_state == SSRHandleState::Init) {
-      bool handle_ssr = enable_ssr_handling_ && qnn::utils::IsSSRCapture(result);
-      if (handle_ssr) {
-        ORT_RETURN_IF_ERROR(ssr_recover());
-      }
       // Determine next state: retry if SSR occurred, otherwise we're done
-      retry_state = handle_ssr ? SSRHandleState::Retry : SSRHandleState::End;
+      if (enable_ssr_handling_ && qnn::utils::IsSSRCapture(result)) {
+        ORT_RETURN_IF_ERROR(ssr_recover());
+        retry_state = SSRHandleState::Retry;
+      } else {
+        retry_state = SSRHandleState::End;
+      }
     } else if (retry_state == SSRHandleState::Retry) {
       LOGS(logger, VERBOSE) << "[SSR Handle during " << operation_name << "] " << result;
       retry_state = SSRHandleState::End;
