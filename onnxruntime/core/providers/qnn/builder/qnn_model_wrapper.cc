@@ -10,7 +10,6 @@
 #include <utility>
 #include <vector>
 
-#include "core/common/common.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 

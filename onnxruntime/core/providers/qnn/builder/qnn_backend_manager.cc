@@ -1189,7 +1189,6 @@ Status QnnBackendManager::LoadCachedQnnContextFromBuffer(char* buffer, uint64_t 
     if (ProfilingEnabled()) {
       profiling_info.stop_time = qnn::utils::GetTimeStampInUs();
       profiling_info.method_type = ProfilingMethodType::CREATE_FROM_BINARY;
-      ORT_RETURN_IF(node_name.empty(), "ProfilingEnabled with empty node_name");
       profiling_info.graph_name = node_name;
     }
 #endif
@@ -1208,8 +1207,7 @@ Status QnnBackendManager::LoadCachedQnnContextFromBuffer(char* buffer, uint64_t 
     // the graph name from the context binary may not match the EPContext node name
     auto qnn_model = std::make_unique<qnn::QnnModel>(this);
     ORT_RETURN_IF_ERROR(qnn_model->DeserializeGraphInfoFromBinaryInfo(graphs_info[0], context));
-    auto graph_name = node_name.empty()? graphs_info[0].graphInfoV1.graphName : node_name;
-    qnn_models.emplace(graph_name, std::move(qnn_model));
+    qnn_models.emplace(node_name, std::move(qnn_model));
   } else {
     for (uint32_t i = 0; i < graph_count; ++i) {
       auto qnn_model = std::make_unique<qnn::QnnModel>(this);
@@ -2135,16 +2133,13 @@ Status QnnBackendManager::InvokeWithSSRHandle(
     result = operation();
 
     if (retry_state == SSRHandleState::Init) {
-      // Check if this is an SSR event and if SSR handling is enabled
-      bool handle_ssr = enable_ssr_handling_ && qnn::utils::IsSSRCapture(result);
-
-      if (handle_ssr) {
-        // Execute recovery logic (e.g., reinitialize QNN context)
-        ORT_RETURN_IF_ERROR(ssr_recover());
-      }
-
       // Determine next state: retry if SSR occurred, otherwise we're done
-      retry_state = handle_ssr ? SSRHandleState::Retry : SSRHandleState::End;
+      if (enable_ssr_handling_ && qnn::utils::IsSSRCapture(result)) {
+        ORT_RETURN_IF_ERROR(ssr_recover());
+        retry_state = SSRHandleState::Retry;
+      } else {
+        retry_state = SSRHandleState::End;
+      }
     } else if (retry_state == SSRHandleState::Retry) {
       // Log the result of the retry attempt
       LOGS(logger, VERBOSE) << "[SSR Handle during " << operation_name << "] " << result;
@@ -2155,27 +2150,26 @@ Status QnnBackendManager::InvokeWithSSRHandle(
   return result;  // Return final status (success or error)
 }
 
-Status QnnBackendManager::SSRCleanUp(std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
-                                     const logging::Logger& logger) {
-  LOGS(logger, VERBOSE) << "SSRCleanUp";
+Status QnnBackendManager::SSRCleanUp(const logging::Logger& logger) {
+  LOGS(logger, VERBOSE) << "[SSR Handle] SSRCleanUp";
   // Customer Recover Routines
   // ReleaseContext helps contextFree with custom deleter
   ORT_RETURN_IF_ERROR(ReleaseContext());
-  if (GetSaveBufferSize() == 0) {
+  if (qnn_save_buffer_size_ == 0) {
     ORT_RETURN_IF_ERROR(CreateContext(false));
   } else {
     uint64_t max_spill_fill_buffer_size = 0;
     ORT_RETURN_IF_ERROR(GetMaxSpillFillBufferSize(
-        GetSaveBuffer().get(),
-        GetSaveBufferSize(),
+        qnn_save_buffer_.get(),
+        qnn_save_buffer_size_,
         max_spill_fill_buffer_size));
     // If there are multiple graphs in the buffer, LoadCachedQnnContextFromBuffer will fetch
     // graph names from QnnSystemContext_GraphInfo_t
     ORT_RETURN_IF_ERROR(LoadCachedQnnContextFromBuffer(
-        reinterpret_cast<char*>(GetSaveBuffer().get()),
-        GetSaveBufferSize(),
-        "", // Load the graph name from buffer
-        qnn_models,
+        reinterpret_cast<char*>(qnn_save_buffer_.get()),
+        qnn_save_buffer_size_,
+        qnn_models_.begin()->first,
+        qnn_models_,
         max_spill_fill_buffer_size));
   }
   return Status::OK();

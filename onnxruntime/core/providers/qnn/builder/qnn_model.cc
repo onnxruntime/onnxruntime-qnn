@@ -6,10 +6,8 @@
 #include <iostream>
 #include <fstream>
 #include <gsl/gsl>
-#include "QnnCommon.h"
 #include "QnnOpDef.h"
 
-#include "core/common/common.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
@@ -108,7 +106,6 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
   // This name must be same with the EPContext node name
   const auto& graph_name = fused_node.Name();
   ORT_RETURN_IF_ERROR(SetGraphInputOutputInfo(graph_viewer, fused_node, logger));
-
   QnnModelWrapper qnn_model_wrapper = QnnModelWrapper(graph_viewer, logger,
                                                       qnn_backend_manager_->GetQnnInterface(),
                                                       qnn_backend_manager_->GetQnnBackendHandle(),
@@ -200,15 +197,8 @@ Status QnnModel::FinalizeGraphs(const logging::Logger& logger) {
   }
 #endif
 
-  if (QNN_GRAPH_NO_ERROR != status) {
-    if (status == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION) {
-      auto error_message = "NPU crashed. SSR detected. Caused QNN graph finalize error. Error code: ";
-      LOGS(logger, WARNING) << error_message << status;
-      return ORT_MAKE_STATUS(ONNXRUNTIME, ENGINE_ERROR, error_message, status);
-    }
-    LOGS(logger, ERROR) << "Failed to finalize QNN graph. Error code: " << status;
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to finalize QNN graph.");
-  }
+  ORT_RETURN_IF(status == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION, "NPU crashed. SSR detected. Caused QNN graph finalize error. Error code: ", status);
+  ORT_RETURN_IF(status != QNN_GRAPH_NO_ERROR, "Failed to finalize QNN graph. Error code: ", status);
 
   // NOTE: This function returns immediately when profiling is disabled.
   // Extracting profiling data can be expensive, but it is typically only enabled for debugging purposes
@@ -354,34 +344,25 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
     execute_status = qnn_backend_manager_->InvokeWithSSRHandle(
         [&]() {
           Qnn_ErrorHandle_t res = qnn_interface.graphExecute(graph_info_->Graph(),
-                                                  qnn_inputs.data(),
-                                                  static_cast<uint32_t>(qnn_inputs.size()),
-                                                  qnn_outputs.data(),
-                                                static_cast<uint32_t>(qnn_outputs.size()),
-                                                profile_backend_handle,
-                                                nullptr);
+                                                             qnn_inputs.data(),
+                                                             static_cast<uint32_t>(qnn_inputs.size()),
+                                                             qnn_outputs.data(),
+                                                             static_cast<uint32_t>(qnn_outputs.size()),
+                                                             profile_backend_handle,
+                                                             nullptr);
 
-          if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == res) {
-            auto error_message = "NPU crashed. SSR detected. Caused QNN graph execute error. Error code: ";
-            LOGS(logger, WARNING) << error_message << res;
-            return ORT_MAKE_STATUS(ONNXRUNTIME, ENGINE_ERROR, error_message, res);
-          }
-
-          if (QNN_GRAPH_NO_ERROR != res) {
-            return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN graph execute error. Error code: ", execute_status);
-          }
+          ORT_RETURN_IF(res == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION, "NPU crashed. SSR detected. Caused QNN graph execute error. Error code: ", res);
+          ORT_RETURN_IF(res != QNN_GRAPH_NO_ERROR, "QNN graph execute error. Error code: ", res);
 
           return Status::OK();
         },
         [&]() {
-          std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> qnn_models;
           // Cleanup after SSR capture and recover model state
-          ORT_RETURN_IF_ERROR(qnn_backend_manager_->SSRCleanUp(qnn_models, logger));
-          ORT_RETURN_IF_NOT(qnn_models.find(Name()) != qnn_models.end(),
-                            "Failed to recover model: ", Name(),
-                            ". Model not found in recovered models map.");
-          GetGraphInfo()->SetGraphContext(qnn_models[Name()]->GetGraphInfo()->GraphContext());
-          GetGraphInfo()->SetGraph(qnn_models[Name()]->GetGraphInfo()->Graph());
+          ORT_RETURN_IF_ERROR(qnn_backend_manager_->SSRCleanUp(logger));
+          ORT_RETURN_IF_NOT(qnn_backend_manager_->GetQnnModels().find(Name()) != qnn_backend_manager_->GetQnnModels().end(),
+                            "Failed to recover model: ", Name(), ". Model not found in recovered models map.");
+          graph_info_->SetGraphContext(qnn_backend_manager_->GetQnnModels()[Name()]->GetGraphInfo()->GraphContext());
+          graph_info_->SetGraph(qnn_backend_manager_->GetQnnModels()[Name()]->GetGraphInfo()->Graph());
           return Status::OK();
         },
         "Inference",

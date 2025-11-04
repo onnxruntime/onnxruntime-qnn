@@ -8,9 +8,6 @@
 #include <string_view>
 #include <unordered_set>
 
-#include "QnnCommon.h"
-#include "QnnTypes.h"
-#include "core/common/common.h"
 #include "core/common/string_utils.h"
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -255,8 +252,6 @@ qnn::ProfilingLevel QNNExecutionProvider::GetProfilingLevelFromETWLevel(unsigned
     return qnn::ProfilingLevel::DETAILED;
   }
 }
-
-
 
 static std::unique_ptr<qnn::QnnSerializerConfig> ParseSerializerBackendOptions(const ProviderOptions& provider_options_map) {
   // Enable use of QNN Saver if the user provides a path the QNN Saver backend library.
@@ -1108,7 +1103,7 @@ Status QNNExecutionProvider::CreateComputeFunc(std::vector<NodeComputeInfo>& nod
   NodeComputeInfo compute_info;
   compute_info.create_state_func = [&](ComputeContext* context, FunctionState* state) {
     LOGS(logger, VERBOSE) << "compute_info.create_state_func context->node_name: " << context->node_name;
-    *state = qnn_models_[context->node_name].get();
+    *state = qnn_backend_manager_->GetQnnModels()[context->node_name].get();
     return 0;
   };
 
@@ -1221,7 +1216,7 @@ Status QNNExecutionProvider::CompileFromOrtGraph(const std::vector<FusedNodeAndG
     ORT_RETURN_IF_ERROR(qnn_model->SetupQnnInputOutput(logger));
 
     LOGS(logger, VERBOSE) << "fused node name: " << fused_node.Name();
-    qnn_models_.emplace(fused_node.Name(), std::move(qnn_model));
+    qnn_backend_manager_->GetQnnModels().emplace(fused_node.Name(), std::move(qnn_model));
 
     ORT_RETURN_IF_ERROR(CreateComputeFunc(node_compute_funcs, logger));
   }
@@ -1257,7 +1252,7 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
           ORT_RETURN_IF(nullptr == qnn_model_shared, "Graph: " + key + " not found from shared EP contexts.");
           ORT_RETURN_IF_ERROR(qnn_model_shared->SetGraphInputOutputInfo(graph_viewer, fused_node, logger));
           ORT_RETURN_IF_ERROR(qnn_model_shared->SetupQnnInputOutput(logger));
-          qnn_models_.emplace(graph_meta_id, std::move(qnn_model_shared));
+          qnn_backend_manager_->GetQnnModels().emplace(graph_meta_id, std::move(qnn_model_shared));
           ORT_RETURN_IF_ERROR(CreateComputeFunc(node_compute_funcs, logger));
         }
         return Status::OK();
@@ -1305,7 +1300,7 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
 
       // fused node name is QNNExecutionProvider_QNN_[hash_id]_[id]
       // the name here must be same with context->node_name in compute_info
-      qnn_models_.emplace(graph_meta_id, std::move(qnn_model));
+      qnn_backend_manager_->GetQnnModels().emplace(graph_meta_id, std::move(qnn_model));
       qnn_models.erase(key);
 
       ORT_RETURN_IF_ERROR(CreateComputeFunc(node_compute_funcs, logger));
@@ -1331,7 +1326,7 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
       },
       [&]() {
         // Cleanup after SSR capture
-        ORT_RETURN_IF_ERROR(qnn_backend_manager_->SSRCleanUp(qnn_models_, logger));
+        ORT_RETURN_IF_ERROR(qnn_backend_manager_->SSRCleanUp(logger));
         return Status::OK();
       },
       "Compile",
@@ -1359,7 +1354,7 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
                                                   buffer_size,
                                                   qnn_backend_manager_->GetSdkVersion(),
                                                   fused_nodes_and_graphs,
-                                                  qnn_models_,
+                                                  qnn_backend_manager_->GetQnnModels(),
                                                   context_model_path,
                                                   qnn_context_embed_mode_,
 

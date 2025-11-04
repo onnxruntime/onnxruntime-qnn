@@ -188,10 +188,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   const Qnn_ProfileHandle_t& GetQnnProfileHandle() { return profile_backend_handle_; }
 
-  const std::unique_ptr<unsigned char[]>& GetSaveBuffer() const { return qnn_save_buffer_; }
-
-  const uint64_t& GetSaveBufferSize() const { return qnn_save_buffer_size_; }
-
   // Resets the QNN log level to the given ORT log level or to the default log level if the argument is
   // std::nullopt.
   // NOTE: This function locks the internal `logger_recursive_mutex_`.
@@ -229,9 +225,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   QnnSerializerConfig* GetQnnSerializerConfig();
 
   /**
-   * @brief Executes an operation with System State Recovery (SSR) handling.
+   * @brief Executes an operation with SubSystem Restart (SSR) handling.
    *
-   * This function provides a unified approach for handling SSR (System State Recovery) events
+   * This function provides a unified approach for handling SSR events
    * that may occur during QNN operations. SSR events happen when the DSP/NPU hardware enters
    * a bad state and needs to be reset. When an SSR event is detected, this function:
    * 1. Attempts the operation
@@ -252,20 +248,18 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       const logging::Logger& logger) const;
 
   /**
-   * @brief Performs cleanup and recovery operations after an SSR (System State Recovery) event.
+   * @brief Performs cleanup operations on invalid objects after an SubSystem Restart (SSR) event.
    *
    * This function handles the recovery process after a DSP/NPU subsystem restart by:
    * 1. Releasing the current QNN context
    * 2. Recreating the context from saved binary buffer (if available)
    * 3. Restoring QNN models and their associated graphs
    *
-   * @param qnn_models Reference to the QNN models map that needs to be restored
    * @param logger Logger instance for diagnostic messages
    *
    * @return Status indicating success or failure of the cleanup operation
    */
-  Status SSRCleanUp(std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
-                    const logging::Logger& logger);
+  Status SSRCleanUp(const logging::Logger& logger);
 
   // Handler to be called upon successful context creation via contextCreateFromBinaryListAsync()
   // This handler is expected to be called in the callback ContextCreateAsyncCallback() in the .cc file
@@ -283,9 +277,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool ProfilingEnabled() { return profiling_enabled_; }
 #endif
 
-  Status CreateContext(bool enable_htp_weight_sharing);
-
-  Status ReleaseContext();
+  // QNN Models management
+  std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& GetQnnModels() { return qnn_models_; }
 
  private:
   Status LoadBackend();
@@ -302,8 +295,12 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Status ReleaseProfilehandle();
 
+  Status CreateContext(bool enable_htp_weight_sharing);
+
   Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
                                                                         std::unique_ptr<std::vector<std::string>>>& context_bin_map);
+
+  Status ReleaseContext();
 
   // Sets the ORT logger and creates a corresponding QNN logger with the same log level.
   // NOTE: caller must lock the `logger_recursive_mutex_` before calling this function.
@@ -465,6 +462,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   QnnBackend_Config_t** backend_config_ = nullptr;
   Qnn_LogHandle_t log_handle_ = nullptr;
   Qnn_DeviceHandle_t device_handle_ = nullptr;
+
+  // QNN models managed by this backend
+  std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> qnn_models_;
 
   // Map of Qnn_ContextHandle_t to QnnContextHandleRecord.
   // The QnnContextHandleRecord has ownership of the Qnn_ContextHandle_t.
