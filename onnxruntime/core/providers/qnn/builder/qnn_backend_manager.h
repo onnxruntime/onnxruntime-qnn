@@ -161,6 +161,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Status SetupBackend(const logging::Logger& logger, bool load_from_cached_context,
                       bool need_load_system_lib, bool share_ep_contexts,
                       bool enable_vtcm_backup_buffer_sharing,
+                      bool enable_ssr_handling,
                       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map);
 
   Status CreateHtpPowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
@@ -226,6 +227,45 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Status ParseLoraConfig(std::string lora_config);
 
   QnnSerializerConfig* GetQnnSerializerConfig();
+
+  /**
+   * @brief Executes an operation with System State Recovery (SSR) handling.
+   *
+   * This function provides a unified approach for handling SSR (System State Recovery) events
+   * that may occur during QNN operations. SSR events happen when the DSP/NPU hardware enters
+   * a bad state and needs to be reset. When an SSR event is detected, this function:
+   * 1. Attempts the operation
+   * 2. If an SSR event occurs, executes recovery logic
+   * 3. Retries the operation once after recovery
+   *
+   * @param operation The function to execute that may trigger an SSR event
+   * @param ssr_recover The recovery function to execute if an SSR event occurs
+   * @param operation_name Name of the operation for logging purposes
+   * @param logger Logger instance for diagnostic messages
+   *
+   * @return Status The status of the operation (success or error)
+   */
+  Status InvokeWithSSRHandle(
+      const std::function<Status()>& operation,
+      const std::function<Status()>& ssr_recover,
+      const std::string& operation_name,
+      const logging::Logger& logger) const;
+
+  /**
+   * @brief Performs cleanup and recovery operations after an SSR (System State Recovery) event.
+   *
+   * This function handles the recovery process after a DSP/NPU subsystem restart by:
+   * 1. Releasing the current QNN context
+   * 2. Recreating the context from saved binary buffer (if available)
+   * 3. Restoring QNN models and their associated graphs
+   *
+   * @param qnn_models Reference to the QNN models map that needs to be restored
+   * @param logger Logger instance for diagnostic messages
+   *
+   * @return Status indicating success or failure of the cleanup operation
+   */
+  Status SSRCleanUp(std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
+                    const logging::Logger& logger);
 
   // Handler to be called upon successful context creation via contextCreateFromBinaryListAsync()
   // This handler is expected to be called in the callback ContextCreateAsyncCallback() in the .cc file
@@ -458,6 +498,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool context_created_ = false;
   bool backend_setup_completed_ = false;
   bool vtcm_backup_buffer_sharing_enabled_ = false;
+  bool enable_ssr_handling_ = false;
   // NPU backend requires quantized model
   QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;
   Qnn_ProfileHandle_t profile_backend_handle_ = nullptr;

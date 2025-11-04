@@ -73,19 +73,11 @@ class QNNExecutionProvider : public IExecutionProvider {
                              std::vector<NodeComputeInfo>& node_compute_funcs,
                              const logging::Logger& logger);
 
-  Status SSRCleanUp();
-
   void ParseHtpGraphFinalizationOptimizationMode(const std::string& htp_graph_finalization_opt_mode_string);
 
   void InitQnnHtpGraphConfigs(qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t>& configs_builder) const;
 
   qnn::ProfilingLevel GetProfilingLevelFromETWLevel(unsigned char level);
-
-  Status InvokeWithSSRHandle(
-      const std::function<Status()>& operation,
-      const std::function<Status()>& ssr_cleanup,
-      const std::string& operation_name,
-      const logging::Logger& logger) const;
 
   bool IsHtpSharedMemoryAllocatorAvailable() const { return rpcmem_library_ != nullptr; }
 

@@ -256,61 +256,7 @@ qnn::ProfilingLevel QNNExecutionProvider::GetProfilingLevelFromETWLevel(unsigned
   }
 }
 
-/**
- * @brief Executes an operation with SubSystem Restart (SSR) handling.
- *
- * This function provides a unified approach for handling SSR events
- * that may occur during QNN operations. SSR events happen when the DSP/NPU hardware enters
- * a bad state and needs to be reset. When an SSR event is detected, this function:
- * 1. Attempts the operation
- * 2. If an SSR event occurs, executes recovery logic
- * 3. Retries the operation once after recovery
- *
- * @param operation The function to execute that may encounter an SSR event
- * @param ssr_recover The recovery function to execute if an SSR event occurs
- * @param operation_name Name of the operation for logging purposes
- * @param logger Logger instance for diagnostic messages
- *
- * @return Status The status of the operation (success or error)
- */
-Status QNNExecutionProvider::InvokeWithSSRHandle(
-    const std::function<Status()>& operation,    // Operation that might encounter SSR
-    const std::function<Status()>& ssr_recover,  // Recovery function to execute after SSR
-    const std::string& operation_name,           // Name of operation for logging
-    const logging::Logger& logger) const {
-  Status result;
 
-  // State machine to track SSR handling progress:
-  // - Init: First attempt at operation
-  // - Retry: Attempting operation after SSR recovery
-  // - End: Processing complete (success or unrecoverable failure)
-  enum class SSRHandleState { Init = 0,
-                              Retry = 1,
-                              End = 2 };
-  SSRHandleState retry_state = SSRHandleState::Init;
-  ORT_RETURN_IF_NOT(operation, "Operation function cannot be null");
-  ORT_RETURN_IF_NOT(ssr_recover, "SSR recover function cannot be null");
-
-  do {
-    // Execute the operation (first attempt or retry)
-    result = operation();
-
-    if (retry_state == SSRHandleState::Init) {
-      // Determine next state: retry if SSR occurred, otherwise we're done
-      if (enable_ssr_handling_ && qnn::utils::IsSSRCapture(result)) {
-        ORT_RETURN_IF_ERROR(ssr_recover());
-        retry_state = SSRHandleState::Retry;
-      } else {
-        retry_state = SSRHandleState::End;
-      }
-    } else if (retry_state == SSRHandleState::Retry) {
-      LOGS(logger, VERBOSE) << "[SSR Handle during " << operation_name << "] " << result;
-      retry_state = SSRHandleState::End;
-    }
-  } while (retry_state != SSRHandleState::End);
-
-  return result;
-}
 
 static std::unique_ptr<qnn::QnnSerializerConfig> ParseSerializerBackendOptions(const ProviderOptions& provider_options_map) {
   // Enable use of QNN Saver if the user provides a path the QNN Saver backend library.
@@ -1003,12 +949,13 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
   // It will load the QnnSystem lib if is_qnn_ctx_model=true, and
   // delay the Qnn context creation to Compile() using the cached context binary
   // or generate context cache enable, need to use use QnnSystem lib to parse the binary to get the max spill fill buffer size
-  Status rt = InvokeWithSSRHandle(
+  Status rt = qnn_backend_manager_->InvokeWithSSRHandle(
       [&]() {
         return qnn_backend_manager_->SetupBackend(logger, is_qnn_ctx_model,
                                                   enable_ssr_handling_ || (context_cache_enabled_ && enable_spill_fill_buffer_),
                                                   share_ep_contexts_,
                                                   enable_vtcm_backup_buffer_sharing_,
+                                                  enable_ssr_handling_,
                                                   context_bin_map);
       },
       [&]() {
@@ -1170,27 +1117,10 @@ Status QNNExecutionProvider::CreateComputeFunc(std::vector<NodeComputeInfo>& nod
     ORT_UNUSED_PARAMETER(state);
   };
 
-  compute_info.compute_func = [&logger, this](FunctionState state, const OrtApi*, OrtKernelContext* context) {
+  compute_info.compute_func = [&logger](FunctionState state, const OrtApi*, OrtKernelContext* context) {
     Ort::KernelContext ctx(context);
     qnn::QnnModel* model = reinterpret_cast<qnn::QnnModel*>(state);
-    Status result = InvokeWithSSRHandle(
-        [&]() {
-          return model->ExecuteGraph(ctx, logger);
-        },
-        [&]() {
-          // Cleanup after SSR capture and recover model state
-          ORT_RETURN_IF_ERROR(SSRCleanUp());
-          ORT_RETURN_IF_NOT(qnn_models_.find(model->Name()) != qnn_models_.end(),
-                            "Failed to recover model: ", model->Name(),
-                            ". Model not found in recovered models map.");
-          model->GetGraphInfo()->SetGraphContext(
-              qnn_models_[model->Name()]->GetGraphInfo()->GraphContext());
-          model->GetGraphInfo()->SetGraph(
-              qnn_models_[model->Name()]->GetGraphInfo()->Graph());
-          return Status::OK();
-        },
-        "Inference",
-        logger);
+    Status result = model->ExecuteGraph(ctx, logger);
     return result;
   };
 
@@ -1395,13 +1325,13 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
     return Status::OK();
   }
 
-  Status compile_res = InvokeWithSSRHandle(
+  Status compile_res = qnn_backend_manager_->InvokeWithSSRHandle(
       [&]() {
         return CompileFromOrtGraph(fused_nodes_and_graphs, node_compute_funcs, logger);
       },
       [&]() {
         // Cleanup after SSR capture
-        ORT_RETURN_IF_ERROR(SSRCleanUp());
+        ORT_RETURN_IF_ERROR(qnn_backend_manager_->SSRCleanUp(qnn_models_, logger));
         return Status::OK();
       },
       "Compile",
@@ -1443,30 +1373,6 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
       ORT_RETURN_IF_NOT(SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_),
                         "Failed to set shared QnnBackendManager.");
     }
-  }
-  return Status::OK();
-}
-
-Status QNNExecutionProvider::SSRCleanUp() {
-  // Customer Recover Routines
-  // ReleaseContext helps contextFree with custom deleter
-  ORT_RETURN_IF_ERROR(qnn_backend_manager_->ReleaseContext());
-  if (qnn_backend_manager_->GetSaveBufferSize() == 0) {
-    ORT_RETURN_IF_ERROR(qnn_backend_manager_->CreateContext(false));
-  } else {
-    uint64_t max_spill_fill_buffer_size = 0;
-    ORT_RETURN_IF_ERROR(qnn_backend_manager_->GetMaxSpillFillBufferSize(
-        qnn_backend_manager_->GetSaveBuffer().get(),
-        qnn_backend_manager_->GetSaveBufferSize(),
-        max_spill_fill_buffer_size));
-    // If there are multiple graphs in the buffer, LoadCachedQnnContextFromBuffer will fetch
-    // graph names from QnnSystemContext_GraphInfo_t
-    ORT_RETURN_IF_ERROR(qnn_backend_manager_->LoadCachedQnnContextFromBuffer(
-        reinterpret_cast<char*>(qnn_backend_manager_->GetSaveBuffer().get()),
-        qnn_backend_manager_->GetSaveBufferSize(),
-        qnn_models_.begin()->first,
-        qnn_models_,
-        max_spill_fill_buffer_size));
   }
   return Status::OK();
 }
