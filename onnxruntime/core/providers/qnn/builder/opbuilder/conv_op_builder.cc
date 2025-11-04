@@ -109,8 +109,7 @@ Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                     "QNN EP: QNN's TransposeConv2d operator only supports default dilation values of 1.");
     }
   }
-
-  // Validate that weight is signed type for per-channel quantization (required by QNN docs).
+  // Validate quantization axis for per-channel quantized weights.
   bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
   if (is_npu_backend) {
     const auto& input_1 = inputs[1];  // weight
