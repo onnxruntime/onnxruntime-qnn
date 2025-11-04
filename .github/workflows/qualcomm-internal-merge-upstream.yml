@@ -24,7 +24,7 @@ jobs:
         with:
           # Set fetch-depth to 0 (pulls in full history) to allow the histories to be merged
           fetch-depth: 0
-          submodules: false
+          submodules: recursive
           token: ${{ secrets.ORTQNNEPCI_PAT }}
       - name: Configure git as ortqnnepci
         run: |
@@ -48,8 +48,17 @@ jobs:
           fi
       - name: Resolve conflicts automatically and commit
         run: |
+          # Resolve main repository conflicts
           git checkout --theirs .
+
+          # Handle submodule conflicts and updates
+          git submodule sync --recursive
+          git submodule update --init --recursive
+
           git add .
+          # Ensures that deleted files are also staged
+          git add -u
+
           git commit -m "[MERGE-UPSTREAM] Automated upstream merge for $TODAY"
       - name: Authenticate service account with GitHub CLI
         run: |

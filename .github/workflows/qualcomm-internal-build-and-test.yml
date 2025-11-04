@@ -52,7 +52,7 @@ jobs:
       nightly_build: ${{ inputs.nightly_build }}
       target_os: linux
       target_arch: aarch64_oe_gcc11_2
-      target_py_vsn: ${{ inputs.target_py_vsn }}
+      target_py_vsn: None
       upload_test_archive: false
       upload_wheel: false
       run_tests: false
@@ -76,9 +76,11 @@ jobs:
     with:
       nightly_build: ${{ inputs.nightly_build }}
       target_arch: arm64ec
-      upload_wheel: false  # ARM64x is the way to go so let's not confuse matters by publishing artifacts
+      upload_wheel: true
+      test_wheel: true
       target_py_vsn: ${{ inputs.target_py_vsn }}
-      run_tests: false  # ARM64ec tests are horribly broken so this is a build-only config in CI.
+      run_tests: false  # ARM64ec unit tests are horribly broken (though model tests seem fine).
+      test_runner_arch: arm64
 
   build-and-test-windows-x86_64:
     if: ${{ inputs.do_all }}
@@ -95,7 +97,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: false
+          submodules: recursive
 
       - name: Run Linting Tool
         run: |
@@ -107,7 +109,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: false
+          submodules: recursive
 
       - name: Build Android
         run: |
@@ -127,7 +129,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          submodules: false
+          submodules: recursive
 
       - uses: actions/download-artifact@v3
         with:
@@ -138,8 +140,11 @@ jobs:
       - name: Test Android
         env:
           QDC_API_TOKEN: ${{ secrets.QDC_API_TOKEN }}
+        # Use exec so that workflow cancel signals are sent directly to build_and_test.py, which will then
+        # forward them to qdc_runner.py and in-flight jobs can be aborted to preserve our QDC slots and
+        # not leak huge files on the runner.
         run: |
-          python3 qcom/build_and_test.py create_venv test_ort_qdc_android_aarch64 --only
+          exec python3 qcom/build_and_test.py create_venv test_ort_qdc_android_aarch64 --only
 
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v4.0.4

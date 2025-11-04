@@ -18,12 +18,12 @@ from ..task import (
     RunInTempDirectoryTask,
     Task,
 )
-from ..tools import PythonExecutableArchT, get_onnx_models_root, get_python_executable
+from ..tools import PythonExecutableArchT, get_model_zoo_root, get_onnx_models_root, get_python_executable
 from ..util import (
     MSFT_CI_REQUIREMENTS_RELPATH,
     REPO_ROOT,
 )
-from .build import ConfigT, TargetPyVersionT, get_ort_version
+from .build import BuildConfigT, TargetPyVersionT, get_ort_version
 
 
 def uv_pip_install_cmd(
@@ -61,7 +61,7 @@ class CreateOrtVenvTask(CompositeTask):
                             requirements=[
                                 REPO_ROOT / "qcom" / "requirements.txt",
                             ],
-                            index_url="http://ort-ep-win-01:8080",
+                            index_url="http://ort-ep-win-01.na.qualcomm.com:8080",
                         ),
                     ],
                 ),
@@ -181,7 +181,7 @@ class OrtWheelSmokeTestTask(OrtWheelTestTask):
         group_name: str | None,
         venv: Path | None,
         wheel_pe_arch: WheelPeArchT,
-        config: ConfigT,
+        config: BuildConfigT,
         py_version: TargetPyVersionT,
     ) -> None:
         self.__venv = venv
@@ -195,7 +195,10 @@ class OrtWheelSmokeTestTask(OrtWheelTestTask):
             wheel_pe_arch,
             py_version,
             self.__find_wheel,
-            [str(REPO_ROOT / "qcom" / "model_test" / "smoke_test.py")],
+            [
+                str(REPO_ROOT / "qcom" / "model_test" / "smoke_test.py"),
+                str(REPO_ROOT / "qcom" / "model_test" / "model_zoo_test.py"),
+            ],
             get_test_env=self.__get_test_env,
         )
 
@@ -229,8 +232,11 @@ class OrtWheelSmokeTestTask(OrtWheelTestTask):
         return found_wheels[0]
 
     def __get_test_env(self) -> Mapping[str, str]:
-        """Get an environment that tells the smoke test where to find its model."""
-        return {"ORT_WHEEL_SMOKE_TEST_ROOT": str(get_onnx_models_root(self.__venv) / "testdata" / "smoke")}
+        """Get an environment that tells the tests where to find their models."""
+        return {
+            "ORT_WHEEL_SMOKE_TEST_ROOT": str(get_onnx_models_root(self.__venv) / "testdata" / "smoke"),
+            "ORT_MODEL_ZOO_TEST_ROOTS": str(get_model_zoo_root(self.__venv) / "winml-cert"),
+        }
 
 
 class RunLinterTask(CompositeTask):

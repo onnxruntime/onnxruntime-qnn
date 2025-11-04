@@ -18,6 +18,10 @@ from .util import (
 PACKAGE_MANAGER = REPO_ROOT / "qcom" / "scripts" / "all" / "package_manager.py"
 
 
+def get_model_zoo_root(package_manager_venv: Path | None) -> Path:
+    return get_package_content_dir(package_manager_venv, "model_zoo")
+
+
 def get_onnx_models_root(package_manager_venv: Path | None) -> Path:
     return get_package_content_dir(package_manager_venv, "onnx_models")
 
@@ -71,6 +75,15 @@ def get_python_executable(
     if rc != 0:
         raise RuntimeError("Could not find Python executable, even after attempting to install/repair it.")
     return Path(py_exe)
+
+
+def get_package_dir() -> Path:
+    return Path(
+        os.environ.get(
+            "ORT_BUILD_PACKAGE_CACHE_PATH",
+            str((Path("~") / ".ort-package-cache").expanduser()),
+        )
+    )
 
 
 def get_tools_dir() -> Path:
