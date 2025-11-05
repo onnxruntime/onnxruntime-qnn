@@ -1178,6 +1178,11 @@ TensorShape GetTensorProtoShape(const ONNX_NAMESPACE::TensorShapeProto& tensor_s
   for (int i = 0; i < static_cast<int>(num_dims); i++) {
     const auto& onnx_dim = tensor_shape_proto.dim(i);
     tensor_shape_vec[i] = onnx_dim.has_dim_value() ? onnx_dim.dim_value() : -1;  // -1 is for symbolic dim in ORT
+    // should not hardcode here to 1 for dynamic shape
+    // Cause we want to pass the checkShape for batch multiplier
+    // current dynamic batch size is not supported
+    // if model is dynamic batch size, we will hardcode it to 1 fot the batch multiplier
+    // So actually, it use batch size = 1 to compile the model
   }
 
   return TensorShape(std::move(tensor_shape_vec));

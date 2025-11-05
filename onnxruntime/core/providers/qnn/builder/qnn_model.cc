@@ -67,9 +67,21 @@ Status QnnModel::ParseGraphInputOrOutput(const GraphViewer& graph_viewer,
     const auto& dims = shape_proto->dim();
     std::vector<int64_t> shape;
     shape.reserve(dims.size());
+    int j = 0;
+    LOGS(logger, VERBOSE) << "ParseGraphInputOrOutput shape: ";
     for (const auto& dim : dims) {
-      ORT_RETURN_IF_NOT(dim.has_dim_value(), "Dynamic shape is not supported yet, for output: ", name);
-      shape.push_back(dim.dim_value());
+      // ORT_RETURN_IF_NOT(dim.has_dim_value(), "Dynamic shape is not supported yet, for output: ", name);
+      // shape.push_back(dim.dim_value());
+      if (j == 0 && dim.has_dim_param()) {
+        shape.push_back(1); // harcoded to 1
+        std::cout << 1;
+      } else {
+        ORT_RETURN_IF_NOT(dim.has_dim_value(), "Dynamic shape is not supported yet, for output: ", name);
+        shape.push_back(dim.dim_value());
+        std::cout << dim.dim_value();
+      }
+      std::cout << std::endl;
+      j++;
     }
     const auto* type_proto = input_output_defs[i]->TypeAsProto();
     int32_t data_type = type_proto->tensor_type().elem_type();

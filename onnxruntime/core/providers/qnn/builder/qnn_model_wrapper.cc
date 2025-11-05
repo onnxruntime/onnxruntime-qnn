@@ -331,12 +331,29 @@ bool QnnModelWrapper::GetOnnxShape(const NodeArg& node_arg, std::vector<uint32_t
     return true;
   }
 
+  int i = 0;
+  std::cout << "DIM shape: ";
   for (const auto& dim : shape_proto->dim()) {
+    // std::cout << "has dim param (e.g. batch_size): " << dim.has_dim_param() << std::endl;
+    // std::cout << "dim param: " << dim.dim_param() << std::endl;
+    // std::cout << "has dim value (e.g. 1): " << dim.has_dim_value() << std::endl;
+    // std::cout << "dim value: " << dim.dim_value() << std::endl;
+
     if (!dim.has_dim_value()) {
-      return false;  // Do not support dynamic shapes.
+      if (i == 0 && dim.has_dim_param()) {
+        shape.push_back(1); // if use dynamic batch size hardcoded to 1
+        std::cout << 1 << " ";
+      }
+      else return false;
+      // return false;  // Do not support dynamic shapes.
     }
-    shape.push_back(SafeInt<uint32_t>(dim.dim_value()));
+    else {
+      shape.push_back(SafeInt<uint32_t>(dim.dim_value()));
+      std::cout << dim.dim_value() << " ";
+    }
+    i++;
   }
+  std::cout << std::endl;
 
   return true;
 }
