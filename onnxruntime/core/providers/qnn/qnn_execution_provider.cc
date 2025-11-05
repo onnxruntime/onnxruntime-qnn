@@ -700,6 +700,216 @@ static void LogNodeSupport(const logging::Logger& logger,
       << oss.str();
 }
 
+void QNNExecutionProvider::IdentifySpecialDQNodes(
+    const GraphViewer& graph_viewer,
+    const std::unordered_map<const Node*, const NodeUnit*>& node_unit_map,
+    const std::unordered_set<const Node*>& supported_nodes,
+    const std::vector<std::unique_ptr<qnn::IQnnNodeGroup>>& qnn_node_groups,
+    std::unordered_map<NodeIndex, NodeIndex>& consumer_to_special_dq,
+    std::unordered_set<const Node*>& special_dq_nodes) const {
+  // Only apply special DQ handling if there are unsupported nodes in the graph
+  bool has_unsupported_node = false;
+  for (const auto& node : graph_viewer.Nodes()) {
+    if (supported_nodes.find(&node) == supported_nodes.end()) {
+      has_unsupported_node = true;
+      break;
+    }
+  }
+
+  if (!has_unsupported_node) {
+    return;
+  }
+
+  // Build a set of nodes that are part of QNN Node Groups
+  std::unordered_set<const Node*> nodes_in_qnn_groups;
+  for (const auto& qnn_node_group : qnn_node_groups) {
+    for (const NodeUnit* node_unit : qnn_node_group->GetNodeUnits()) {
+      for (const Node* node : node_unit->GetAllNodesInGroup()) {
+        nodes_in_qnn_groups.insert(node);
+      }
+    }
+  }
+
+  // Build topological order mapping
+  const auto& node_ids = graph_viewer.GetNodesInTopologicalOrder();
+  std::unordered_map<NodeIndex, size_t> node_to_topo_order;
+  for (size_t i = 0; i < node_ids.size(); ++i) {
+    node_to_topo_order[node_ids[i]] = i;
+  }
+
+  // Find the first unsupported node in topological order
+  size_t first_unsupported_topo_order = SIZE_MAX;
+  for (const auto& node : graph_viewer.Nodes()) {
+    if (supported_nodes.find(&node) == supported_nodes.end()) {
+      size_t topo_order = node_to_topo_order[node.Index()];
+      if (topo_order < first_unsupported_topo_order) {
+        first_unsupported_topo_order = topo_order;
+      }
+    }
+  }
+
+  // Identify DQ nodes that require special handling
+  for (const auto& node : graph_viewer.Nodes()) {
+    if (node.OpType() != "DequantizeLinear") {
+      continue;
+    }
+
+    // Skip if DQ is not a root node (no input edges from other nodes)
+    if (node.InputEdgesBegin() != node.InputEdgesEnd()) {
+      continue;
+    }
+
+    // Check if DQ is part of a single node unit
+    auto node_unit_it = node_unit_map.find(&node);
+    if (node_unit_it == node_unit_map.end()) {
+      continue;
+    }
+
+    const NodeUnit* node_unit = node_unit_it->second;
+    if (node_unit->UnitType() != NodeUnit::Type::SingleNode) {
+      continue;
+    }
+
+    // Check if DQ is part of a QNN Node Group
+    if (nodes_in_qnn_groups.find(&node) == nodes_in_qnn_groups.end()) {
+      continue;
+    }
+
+    // Check all consumers of the DQ node
+    bool has_valid_consumer = false;
+    for (auto it = node.OutputNodesBegin(); it != node.OutputNodesEnd(); ++it) {
+      const Node& consumer_node = *it;
+
+      // Check if consumer is part of a QNN Node Group
+      if (nodes_in_qnn_groups.find(&consumer_node) == nodes_in_qnn_groups.end()) {
+        continue;
+      }
+
+      // Check if consumer comes after the first unsupported node in topological order
+      size_t consumer_topo_order = node_to_topo_order[consumer_node.Index()];
+      if (consumer_topo_order <= first_unsupported_topo_order) {
+        continue;
+      }
+
+      consumer_to_special_dq[consumer_node.Index()] = node.Index();
+      has_valid_consumer = true;
+    }
+
+    if (has_valid_consumer) {
+      special_dq_nodes.insert(&node);
+    }
+  }
+}
+
+std::unique_ptr<ComputeCapability> QNNExecutionProvider::RecreatePartitionWithDQNodes(
+    const GraphViewer& graph_viewer,
+    const std::vector<NodeIndex>& partition_nodes,
+    const std::function<std::string()>& generate_metadef_name) const {
+  // Build node set for quick lookup
+  std::unordered_set<NodeIndex> node_set(partition_nodes.begin(), partition_nodes.end());
+
+  // Track outputs produced by nodes in the partition
+  std::unordered_set<const NodeArg*> node_outputs;
+  std::unordered_set<const NodeArg*> subgraph_inputs;
+  std::unordered_set<const NodeArg*> subgraph_outputs;
+  std::vector<const NodeArg*> ordered_subgraph_inputs;
+  std::vector<const NodeArg*> ordered_subgraph_outputs;
+
+  // Get graph outputs
+  const auto& graph_output_list = graph_viewer.GetOutputs();
+  std::unordered_set<const NodeArg*> graph_outputs(graph_output_list.cbegin(), graph_output_list.cend());
+
+  // First pass: Track all outputs produced by nodes in the partition
+  // This must be done before processing inputs to correctly identify internal edges
+  for (NodeIndex node_index : partition_nodes) {
+    const Node* node = graph_viewer.GetNode(node_index);
+    if (!node) {
+      continue;
+    }
+
+    const auto& output_defs = node->OutputDefs();
+    for (const auto* output_def : output_defs) {
+      node_outputs.insert(output_def);
+    }
+  }
+
+  // Second pass: Process inputs and outputs
+  for (NodeIndex node_index : partition_nodes) {
+    const Node* node = graph_viewer.GetNode(node_index);
+    if (!node) {
+      continue;
+    }
+
+    // Process inputs
+    for (const auto* input : node->InputDefs()) {
+      if (!input->Exists()) {
+        continue;  // Skip placeholder inputs
+      }
+
+      // If input was not produced by this partition, it's a partition input
+      if (node_outputs.count(input) == 0) {
+        if (subgraph_inputs.count(input) == 0) {
+          subgraph_inputs.insert(input);
+          ordered_subgraph_inputs.push_back(input);
+        }
+      }
+    }
+
+    // Process outputs
+    const auto& output_defs = node->OutputDefs();
+    for (const auto* output_def : output_defs) {
+      // If output is a graph output, it's a partition output
+      if (graph_outputs.count(output_def) > 0) {
+        if (subgraph_outputs.count(output_def) == 0) {
+          subgraph_outputs.insert(output_def);
+          ordered_subgraph_outputs.push_back(output_def);
+        }
+      }
+    }
+
+    // Check if output connects to a node outside this partition
+    for (auto it = node->OutputEdgesBegin(), end = node->OutputEdgesEnd(); it != end; ++it) {
+      if (node_set.count(it->GetNode().Index()) == 0) {
+        // Output connects to node outside partition
+        const auto* output_def = output_defs[it->GetSrcArgIndex()];
+        if (subgraph_outputs.count(output_def) == 0) {
+          subgraph_outputs.insert(output_def);
+          ordered_subgraph_outputs.push_back(output_def);
+        }
+      }
+    }
+  }
+
+  // Create new IndexedSubGraph
+  std::unique_ptr<IndexedSubGraph> sub_graph = IndexedSubGraph::Create();
+  for (NodeIndex node_index : partition_nodes) {
+    sub_graph->Nodes().push_back(node_index);
+  }
+
+  // Create MetaDef with correct inputs/outputs
+  auto meta_def = IndexedSubGraph_MetaDef::Create();
+  meta_def->name() = generate_metadef_name();
+  meta_def->domain() = kQnnExecutionProvider;
+  meta_def->since_version() = 1;
+  meta_def->status() = ONNX_NAMESPACE::EXPERIMENTAL;
+
+  // Add inputs (skip constant initializers)
+  for (const auto* input : ordered_subgraph_inputs) {
+    if (!graph_viewer.IsConstantInitializer(input->Name(), true)) {
+      meta_def->inputs().push_back(input->Name());
+    }
+  }
+
+  // Add outputs
+  for (const auto* output : ordered_subgraph_outputs) {
+    meta_def->outputs().push_back(output->Name());
+  }
+
+  sub_graph->SetMetaDef(std::move(meta_def));
+
+  return ComputeCapability::Create(std::move(sub_graph));
+}
+
 std::unordered_set<const Node*>
 QNNExecutionProvider::GetSupportedNodes(const GraphViewer& graph_viewer,
                                         const std::unordered_map<const Node*, const NodeUnit*>& node_unit_map,
@@ -988,9 +1198,38 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
 
   std::tie(node_unit_holder, node_unit_map) = GetQDQNodeUnits(graph_viewer, logger);
 
-  // remove is_qnn_ctx_model related code
-  const auto supported_nodes = GetSupportedNodes(graph_viewer, node_unit_map,
-                                                 node_unit_holder.size(), logger);
+  // Get supported nodes
+  auto supported_nodes = GetSupportedNodes(graph_viewer, node_unit_map,
+                                           node_unit_holder.size(), logger);
+
+  // Get QNN node groups
+  auto qnn_model_wrapper = qnn::QnnModelWrapper(graph_viewer, logger,
+                                                qnn_backend_manager_->GetQnnInterface(),
+                                                qnn_backend_manager_->GetQnnBackendHandle(),
+                                                std::unordered_map<std::string, size_t>{},
+                                                std::unordered_map<std::string, size_t>{},
+                                                qnn_backend_manager_->GetQnnBackendType(),
+                                                model_settings_);
+
+  std::vector<std::unique_ptr<qnn::IQnnNodeGroup>> qnn_node_groups;
+  qnn_node_groups.reserve(node_unit_holder.size());
+
+  if (Status status = qnn::GetQnnNodeGroups(qnn_node_groups, qnn_model_wrapper,
+                                            node_unit_map, node_unit_holder.size(), logger);
+      !status.IsOK()) {
+    LOGS(logger, ERROR) << status.ErrorMessage();
+  }
+
+  // Identify and handle special DQ nodes
+  std::unordered_map<NodeIndex, NodeIndex> consumer_to_special_dq;
+  std::unordered_set<const Node*> special_dq_nodes;
+  IdentifySpecialDQNodes(graph_viewer, node_unit_map, supported_nodes, qnn_node_groups,
+                         consumer_to_special_dq, special_dq_nodes);
+
+  // Remove special DQ nodes from supported nodes before partitioning
+  for (const Node* dq_node : special_dq_nodes) {
+    supported_nodes.erase(dq_node);
+  }
 
   // Helper function that returns a string that lists all unsupported nodes.
   // Ex: { name: mul_123, type: Mul }, {}, ...
@@ -1019,12 +1258,73 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
 
   size_t num_of_supported_nodes = 0;
 
-  // Create partitions from supported nodes.
+  // Create partitions from supported nodes
   std::vector<std::unique_ptr<ComputeCapability>> partitions = utils::CreateSupportedPartitions(
       graph_viewer, supported_nodes, {}, gen_metadef_name, QNN, kQnnExecutionProvider, &node_unit_map);
 
-  // Filter out partitions that consist of a single QuantizeLinear or DequantizeLinear node.
-  // We also count the number of supported nodes in all valid partitions.
+  // Post-process partitions to add special DQ nodes with correct inputs/outputs
+  std::unordered_set<NodeIndex> added_dq_nodes;
+  std::vector<std::unique_ptr<ComputeCapability>> updated_partitions;
+  updated_partitions.reserve(partitions.size());
+
+  for (auto& partition : partitions) {
+    if (!partition || !ComputeCapability__SubGraph(*partition)) {
+      updated_partitions.push_back(std::move(partition));
+      continue;
+    }
+
+    auto& old_subgraph = ComputeCapability__SubGraph(*partition);
+    const auto& old_nodes = IndexedSubGraph__Nodes(*old_subgraph);
+
+    // Check if this partition needs DQ nodes added
+    std::vector<NodeIndex> dq_nodes_to_add;
+    for (NodeIndex node_idx : old_nodes) {
+      const Node* node = graph_viewer.GetNode(node_idx);
+      if (!node) {
+        continue;
+      }
+
+      auto it = consumer_to_special_dq.find(node->Index());
+      if (it != consumer_to_special_dq.end()) {
+        NodeIndex dq_node_index = it->second;
+
+        // Only add if not already added to another partition
+        if (added_dq_nodes.count(dq_node_index) == 0) {
+          dq_nodes_to_add.push_back(dq_node_index);
+          added_dq_nodes.insert(dq_node_index);
+        }
+      }
+    }
+
+    if (dq_nodes_to_add.empty()) {
+      // No DQ nodes to add, keep original partition
+      updated_partitions.push_back(std::move(partition));
+      continue;
+    }
+
+    // Create new partition with DQ nodes and correct inputs/outputs
+    std::vector<NodeIndex> new_partition_nodes;
+    new_partition_nodes.reserve(old_nodes.size() + dq_nodes_to_add.size());
+
+    // Add original nodes
+    for (NodeIndex node_idx : old_nodes) {
+      new_partition_nodes.push_back(node_idx);
+    }
+
+    // Add DQ nodes
+    for (NodeIndex dq_idx : dq_nodes_to_add) {
+      new_partition_nodes.push_back(dq_idx);
+    }
+
+    // Recreate partition with correct inputs/outputs
+    auto new_partition = RecreatePartitionWithDQNodes(graph_viewer, new_partition_nodes, gen_metadef_name);
+    updated_partitions.push_back(std::move(new_partition));
+  }
+
+  // Replace partitions with updated ones
+  partitions = std::move(updated_partitions);
+
+  // Filter out invalid partitions and count supported nodes
   for (auto& partition : partitions) {
     bool is_valid_partition = true;
     size_t nodes_in_partition = 0;

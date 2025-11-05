@@ -81,6 +81,23 @@ class QNNExecutionProvider : public IExecutionProvider {
 
   bool IsHtpSharedMemoryAllocatorAvailable() const { return rpcmem_library_ != nullptr; }
 
+  // Identifies DQ nodes that require special post-processing handling.
+  // These DQ nodes will be temporarily removed from supported nodes during partitioning,
+  // then added back to the appropriate partitions with correct input/output handling.
+  void IdentifySpecialDQNodes(
+      const GraphViewer& graph_viewer,
+      const std::unordered_map<const Node*, const NodeUnit*>& node_unit_map,
+      const std::unordered_set<const Node*>& supported_nodes,
+      const std::vector<std::unique_ptr<qnn::IQnnNodeGroup>>& qnn_node_groups,
+      std::unordered_map<NodeIndex, NodeIndex>& consumer_to_special_dq,
+      std::unordered_set<const Node*>& special_dq_nodes) const;
+
+  // Recreates a partition with additional DQ nodes and correct input/output definitions.
+  std::unique_ptr<ComputeCapability> RecreatePartitionWithDQNodes(
+      const GraphViewer& graph_viewer,
+      const std::vector<NodeIndex>& partition_nodes,
+      const std::function<std::string()>& generate_metadef_name) const;
+
  private:
   qnn::HtpGraphFinalizationOptimizationMode htp_graph_finalization_opt_mode_ = qnn::HtpGraphFinalizationOptimizationMode::kDefault;
   // Note: Using shared_ptr<QnnBackendManager> so that we can refer to it with a weak_ptr from a
