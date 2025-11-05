@@ -73,7 +73,7 @@ Status QnnModel::ParseGraphInputOrOutput(const GraphViewer& graph_viewer,
       // ORT_RETURN_IF_NOT(dim.has_dim_value(), "Dynamic shape is not supported yet, for output: ", name);
       // shape.push_back(dim.dim_value());
       if (j == 0 && dim.has_dim_param()) {
-        shape.push_back(1); // harcoded to 1
+        shape.push_back(1);  // harcoded to 1
         std::cout << 1;
       } else {
         ORT_RETURN_IF_NOT(dim.has_dim_value(), "Dynamic shape is not supported yet, for output: ", name);

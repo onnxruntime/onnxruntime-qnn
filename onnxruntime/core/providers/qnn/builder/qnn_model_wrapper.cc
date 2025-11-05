@@ -341,13 +341,12 @@ bool QnnModelWrapper::GetOnnxShape(const NodeArg& node_arg, std::vector<uint32_t
 
     if (!dim.has_dim_value()) {
       if (i == 0 && dim.has_dim_param()) {
-        shape.push_back(1); // if use dynamic batch size hardcoded to 1
+        shape.push_back(1);  // if use dynamic batch size hardcoded to 1
         std::cout << 1 << " ";
-      }
-      else return false;
+      } else
+        return false;
       // return false;  // Do not support dynamic shapes.
-    }
-    else {
+    } else {
       shape.push_back(SafeInt<uint32_t>(dim.dim_value()));
       std::cout << dim.dim_value() << " ";
     }
