@@ -239,6 +239,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
    * @param operation_name Name of the operation for logging purposes
    * @param logger Logger instance for diagnostic messages
    *
+   * Note: We explicitly pass 'logger' instead of using the member 'logger_' since 'logger_' is
+   * assigned in SetupBackend and can be nullptr. This ensures logging is always valid.
+   *
    * @return Status The status of the operation (success or error)
    */
   Status InvokeWithSSRHandle(
@@ -256,6 +259,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
    * 3. Restoring QNN models and their associated graphs
    *
    * @param logger Logger instance for diagnostic messages
+   *
+   * Note: We explicitly pass 'logger' instead of using the member 'logger_' since 'logger_' is
+   * assigned in SetupBackend and can be nullptr. This ensures logging is always valid.
    *
    * @return Status indicating success or failure of the cleanup operation
    */
