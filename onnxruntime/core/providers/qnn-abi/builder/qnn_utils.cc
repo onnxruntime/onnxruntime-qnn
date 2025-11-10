@@ -1498,6 +1498,13 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
   }
 }
 
+bool IsABISSRCapture(const Ort::Status& status) {
+  if (status.IsOK()) {
+    return false;
+  }
+  return status.GetErrorMessage().find(std::to_string(QNN_COMMON_ERROR_SYSTEM_COMMUNICATION)) != std::string::npos;
+}
+
 }  // namespace utils
 }  // namespace qnn
 }  // namespace onnxruntime

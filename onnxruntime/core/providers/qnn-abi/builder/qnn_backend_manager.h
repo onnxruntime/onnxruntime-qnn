@@ -152,6 +152,42 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   std::unique_ptr<unsigned char[]> GetContextBinaryBuffer(uint64_t& written_buffer_size);
 
+  Ort::Status SaveContextToBinary(const Ort::Logger& logger);
+
+  /**
+   * @brief Executes an operation with SubSystem Restart (SSR) handling.
+   *
+   * This function provides a unified approach for handling SSR events
+   * that may occur during QNN operations. SSR events happen when the DSP/NPU hardware enters
+   * a bad state and needs to be reset. When an SSR event occurs, this function:
+   * 1. Attempts the operation
+   * 2. If an SSR event occurs, executes recovery logic
+   * 3. Retries the operation once after recovery
+   *
+   * @param operation The function to execute that may trigger an SSR event
+   * @param ssr_recover The recovery function to execute if an SSR event occurs
+   * @param operation_name Name of the operation for logging purposes
+   *
+   * @return Ort::Status The status of the operation (success or error)
+   */
+  Ort::Status InvokeWithSSRHandle(
+      const std::function<Ort::Status()>& operation,
+      const std::function<Ort::Status()>& ssr_recover,
+      const std::string& operation_name,
+      const Ort::Logger& logger) const;
+
+  /**
+   * @brief Performs cleanup operations on invalid objects after an SubSystem Restart (SSR) event.
+   *
+   * This function handles the recovery process after a DSP/NPU subsystem restart by:
+   * 1. Releasing the current QNN context
+   * 2. Recreating the context from saved binary buffer (if available)
+   * 3. Restoring QNN models and their associated graphs
+   *
+   * @return Ort::Status indicating success or failure of the cleanup operation
+   */
+  Ort::Status SSRCleanUp(const Ort::Logger& logger);
+
   Ort::Status LoadCachedQnnContextFromBuffer(
       char* buffer,
       uint64_t buffer_length,
@@ -166,6 +202,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       bool need_load_system_lib,
       bool share_ep_contexts,
       bool enable_vtcm_backup_buffer_sharing,
+      bool enable_ssr_handling,
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map);
 
   Ort::Status CreateHtpPowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
@@ -239,6 +276,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Ort::Status SetContextPriority(ContextPriority context_priority);
   // Resets the context priority to the session default as defined by context_priority_
   Ort::Status ResetContextPriority();
+
+  // QNN Models management
+  std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& GetQnnModels() { return qnn_models_; }
 
  private:
   Ort::Status LoadBackend();
@@ -464,6 +504,13 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Vector of Qnn_ContextHandle_t. The context handles are owned by context_map_.
   std::vector<Qnn_ContextHandle_t> contexts_;
 
+  // Binary buffer of Qnn Context to handle SSR
+  std::unique_ptr<unsigned char[]> qnn_save_buffer_;
+  uint64_t qnn_save_buffer_size_ = 0;
+
+  // QNN models for SSR recovery
+  std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> qnn_models_;
+
   ProfilingLevel profiling_level_etw_;
   ProfilingLevel profiling_level_;
   ProfilingLevel profiling_level_merge_;
@@ -473,6 +520,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool context_created_ = false;
   bool backend_setup_completed_ = false;
   bool vtcm_backup_buffer_sharing_enabled_ = false;
+  bool enable_ssr_handling_ = false;
   // NPU backend requires quantized model
   QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;
   Qnn_ProfileHandle_t profile_backend_handle_ = nullptr;

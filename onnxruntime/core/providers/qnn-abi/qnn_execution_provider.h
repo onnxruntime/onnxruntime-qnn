@@ -185,6 +185,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool qnn_context_embed_mode_ = true;
   bool stop_share_ep_contexts_ = false;
   bool enable_spill_fill_buffer_ = false;
+  bool enable_ssr_handling_ = false;
 #if defined(_WIN32)
   qnn::QnnTelemetry::EtwInternalCallback callback_ETWSink_provider_ = nullptr;
 #endif
@@ -195,7 +196,6 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   // QNN-related.
   std::shared_ptr<qnn::QnnBackendManager> qnn_backend_manager_;
-  std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> qnn_models_;
 
   // Configurations for HTP backend.
   uint32_t device_id_{0};

@@ -142,8 +142,7 @@ Ort::Status QnnModel::ComposeGraph(const OrtGraph& ort_graph,
                                                       model_output_index_map_,
                                                       qnn_backend_manager_->GetQnnBackendType(),
                                                       model_settings);
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnGraph(qnn_backend_manager_->GetQnnContext(), graph_name, graph_configs),
-                "Failed to initialize qnn_model_wrapper.");
+  RETURN_IF_ERROR(qnn_model_wrapper.CreateQnnGraph(qnn_backend_manager_->GetQnnContext(), graph_name, graph_configs));
 
   std::vector<std::unique_ptr<qnn::IQnnNodeGroup>> qnn_node_groups;
   qnn_node_groups.reserve(node_unit_holder.size());
@@ -165,7 +164,7 @@ Ort::Status QnnModel::ComposeGraph(const OrtGraph& ort_graph,
   }
 
   const bool build_json_graph = !json_qnn_graph_path.empty();
-  RETURN_IF_NOT(qnn_model_wrapper.ComposeQnnGraph(build_json_graph), "Failed to compose Qnn graph.");
+  RETURN_IF_ERROR(qnn_model_wrapper.ComposeQnnGraph(build_json_graph));
 
   if (build_json_graph) {
     const nlohmann::json& json_graph = qnn_model_wrapper.GetQnnJSONGraph();
@@ -188,15 +187,13 @@ Ort::Status QnnModel::ComposeGraph(const OrtGraph& ort_graph,
 
 Ort::Status QnnModel::FinalizeGraphs(const Ort::Logger& logger) {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "FinalizeGraphs started.");
+
   Qnn_ErrorHandle_t status = qnn_backend_manager_->GetQnnInterface().graphFinalize(graph_info_->Graph(),
                                                                                    qnn_backend_manager_->GetQnnProfileHandle(),
                                                                                    nullptr);
-  if (QNN_GRAPH_NO_ERROR != status) {
-    std::ostringstream oss;
-    oss << "Failed to finalize QNN graph. Error code: " << status;
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
-    return MAKE_EP_FAIL("Failed to finalize QNN graph.");
-  }
+
+  RETURN_IF(status == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION, "NPU crashed. SSR detected. Caused QNN graph finalize error. Error code: 1007");
+  RETURN_IF(status != QNN_GRAPH_NO_ERROR, "Failed to finalize QNN graph.");
 
   RETURN_IF_ERROR(qnn_backend_manager_->ExtractBackendProfilingInfo());
 
@@ -373,7 +370,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
         qnn_outputs.back()));
   }
 
-  Qnn_ErrorHandle_t execute_status = QNN_GRAPH_NO_ERROR;
+  Ort::Status execute_status = Ort::Status();
   {
     const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
 
@@ -382,13 +379,33 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
 
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Start execute QNN graph:" + graph_info_->Name()).c_str());
     auto profile_backend_handle = qnn_backend_manager_->GetQnnProfileHandle();
-    execute_status = qnn_interface.graphExecute(graph_info_->Graph(),
-                                                qnn_inputs.data(),
-                                                static_cast<uint32_t>(qnn_inputs.size()),
-                                                qnn_outputs.data(),
-                                                static_cast<uint32_t>(qnn_outputs.size()),
-                                                profile_backend_handle,
-                                                nullptr);
+    execute_status = qnn_backend_manager_->InvokeWithSSRHandle(
+        [&]() {
+          Qnn_ErrorHandle_t res = qnn_interface.graphExecute(graph_info_->Graph(),
+                                                             qnn_inputs.data(),
+                                                             static_cast<uint32_t>(qnn_inputs.size()),
+                                                             qnn_outputs.data(),
+                                                             static_cast<uint32_t>(qnn_outputs.size()),
+                                                             profile_backend_handle,
+                                                             nullptr);
+
+          RETURN_IF(res == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION, "NPU crashed. SSR detected. Caused QNN graph execute error. Error code: 1007");
+          RETURN_IF(res != QNN_GRAPH_NO_ERROR, "QNN graph execute error.");
+
+          return Ort::Status();
+        },
+        [&]() {
+          // Cleanup after SSR capture and recover model state
+          RETURN_IF_ERROR(qnn_backend_manager_->SSRCleanUp(logger));
+          // TODO: log Name()
+          RETURN_IF(qnn_backend_manager_->GetQnnModels().find(Name()) == qnn_backend_manager_->GetQnnModels().end(),
+                    "Failed to recover model. Model not found in recovered models map.");
+          graph_info_->SetGraphContext(qnn_backend_manager_->GetQnnModels()[Name()]->GetGraphInfo()->GraphContext());
+          graph_info_->SetGraph(qnn_backend_manager_->GetQnnModels()[Name()]->GetGraphInfo()->Graph());
+          return Ort::Status();
+        },
+        "Inference",
+        logger);
 
     // NOTE: This function returns immediately when profiling is disabled.
     // Extracting profiling data can be expensive, but it is typically only enabled for debugging purposes
@@ -396,19 +413,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
     RETURN_IF_ERROR(qnn_backend_manager_->ExtractBackendProfilingInfo());
   }
 
-  if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
-    auto error_message = "NPU crashed. SSR detected. Caused QNN graph execute error. Error code: ";
-    std::ostringstream oss;
-    oss << error_message << execute_status;
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
-    return MAKE_EP_FAIL(oss.str().c_str());
-  }
-
-  if (QNN_GRAPH_NO_ERROR != execute_status) {
-    return MAKE_EP_FAIL(("QNN graph execute error. Error code: " + std::to_string(execute_status)).c_str());
-  }
-
-  return Ort::Status();
+  return execute_status;
 }
 
 // Setup information for Qnn inputs/outputs used during execution.

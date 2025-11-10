@@ -609,6 +609,9 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
                                   const std::filesystem::path& model_path,
                                   std::vector<uint8_t>& unpacked_tensor);
 
+// Check if the given status indicates an SSR (SubSystem Restart) event
+bool IsABISSRCapture(const Ort::Status& status);
+
 }  // namespace utils
 }  // namespace qnn
 }  // namespace onnxruntime

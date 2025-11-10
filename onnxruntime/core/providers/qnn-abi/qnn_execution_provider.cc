@@ -735,6 +735,13 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                  enable_htp_spill_fill_buffer_str);
   enable_spill_fill_buffer_ = enable_htp_spill_fill_buffer_str == "1";
 
+  // Handling SSR requires QnnSystem lib and it's no supported for Windows x86_64 platform
+  enable_ssr_handling_ = ParseBoolOption(ort_api,
+                                         session_options_,
+                                         FormatEPConfigKey("enable_ssr_handling"),
+                                         false,
+                                         logger_);
+
   model_settings_.offload_graph_io_quantization = ParseBoolOption(ort_api,
                                                                   session_options_,
                                                                   FormatEPConfigKey("offload_graph_io_quantization"),
@@ -880,8 +887,8 @@ QnnEp::~QnnEp() {
   ReleasePerThreadContext();
 
   // Explicitly clear the QNN models map to ensure proper cleanup
-  if (!qnn_models_.empty()) {
-    qnn_models_.clear();
+  if (!qnn_backend_manager_->GetQnnModels().empty()) {
+    qnn_backend_manager_->GetQnnModels().clear();
   }
 
   // Clean up any thread context resources
@@ -1284,11 +1291,20 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     }
   }
 
-  Ort::Status rt = ep->qnn_backend_manager_->SetupBackend(is_qnn_ctx_model,
-                                                          ep->context_cache_enabled_ && ep->enable_spill_fill_buffer_,
-                                                          ep->share_ep_contexts_,
-                                                          ep->enable_vtcm_backup_buffer_sharing_,
-                                                          context_bin_map);
+  Ort::Status rt = ep->qnn_backend_manager_->InvokeWithSSRHandle(
+      [&]() {
+        return ep->qnn_backend_manager_->SetupBackend(is_qnn_ctx_model,
+                                                      ep->enable_ssr_handling_ || (ep->context_cache_enabled_ && ep->enable_spill_fill_buffer_),
+                                                      ep->share_ep_contexts_,
+                                                      ep->enable_vtcm_backup_buffer_sharing_,
+                                                      ep->enable_ssr_handling_,
+                                                      context_bin_map);
+      },
+      [&]() {
+        return Ort::Status();  // No SSR recover needed since SetupBackend help clean up on failure
+      },
+      "SetupBackend",
+      ep->logger_);
 
   context_bin_map.clear();
 
@@ -1469,7 +1485,7 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
                                                                    *fused_nodes[graph_idx],
                                                                    logger_));
         RETURN_IF_NOT_OK(qnn_model_shared->SetupQnnInputOutput(logger_));
-        qnn_models_.emplace(names[graph_idx].first, std::move(qnn_model_shared));
+        qnn_backend_manager_->GetQnnModels().emplace(names[graph_idx].first, std::move(qnn_model_shared));
 
         auto node_compute_info = std::make_unique<QnnNodeComputeInfo>(*this);
         node_compute_infos[graph_idx] = node_compute_info.release();
@@ -1540,7 +1556,7 @@ OrtStatus* QnnEp::CompileContextModel(const OrtGraph** graphs,
 
     // fused node name is QNNExecutionProvider_QNN_[hash_id]_[id]
     // the name here must be same with context->node_name in compute_info
-    qnn_models_.emplace(graph_name, std::move(qnn_model));
+    qnn_backend_manager_->GetQnnModels().emplace(graph_name, std::move(qnn_model));
     qnn_models.erase(qnn_model_it->first);
 
     auto node_compute_info = std::make_unique<QnnNodeComputeInfo>(*this);
@@ -1592,7 +1608,7 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
                                              context_buffer.get(),
                                              buffer_size,
                                              qnn_backend_manager_->GetSdkVersion(),
-                                             qnn_models_,
+                                             qnn_backend_manager_->GetQnnModels(),
                                              context_model_path,
                                              qnn_context_embed_mode_,
                                              max_spill_fill_buffer_size,
@@ -1680,19 +1696,37 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
       json_graph_filepath = path.string();
     }
 
-    RETURN_IF_NOT_OK(qnn_model->ComposeGraph(*graph,
+    auto status = ep->qnn_backend_manager_->InvokeWithSSRHandle(
+        [&]() -> Ort::Status {
+          RETURN_IF_ERROR(qnn_model->ComposeGraph(*graph,
                                              *fused_node,
                                              ep->model_settings_,
                                              ep->logger_,
                                              all_graph_configs_ptr,
                                              json_graph_filepath));
-    RETURN_IF_NOT_OK(qnn_model->FinalizeGraphs(ep->logger_));
-    RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(ep->logger_));
+          RETURN_IF_ERROR(qnn_model->FinalizeGraphs(ep->logger_));
+          RETURN_IF_ERROR(qnn_model->SetupQnnInputOutput(ep->logger_));
 
-    ep->qnn_models_.emplace(fused_node_name, std::move(qnn_model));
+          return Ort::Status();
+        },
+        [&]() -> Ort::Status {
+          // Cleanup after SSR capture and recover model state
+          RETURN_IF_ERROR(ep->qnn_backend_manager_->SSRCleanUp(ep->logger_));
+          return Ort::Status();
+        },
+        "Inference",
+        ep->logger_);
+
+    RETURN_IF_ERROR(std::move(status));
+
+    ep->qnn_backend_manager_->GetQnnModels().emplace(fused_node_name, std::move(qnn_model));
 
     auto node_compute_info = std::make_unique<QnnNodeComputeInfo>(*ep);
     node_compute_infos[graph_idx] = node_compute_info.release();
+  }
+
+  if (ep->enable_ssr_handling_) {
+    RETURN_IF_ERROR(ep->qnn_backend_manager_->SaveContextToBinary(ep->logger_));
   }
 
   if (ep->context_cache_enabled_) {
@@ -1975,16 +2009,16 @@ OrtStatus* QnnEp::QnnNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_p
   QnnEp& ep = node_compute_info->ep;
 
   std::string fused_node_name = ep.ep_api.NodeComputeContext_NodeName(compute_context);
-  auto qnn_model_it = ep.qnn_models_.find(fused_node_name);
+  auto qnn_model_it = ep.qnn_backend_manager_->GetQnnModels().find(fused_node_name);
 
   // If not found with the fused_node_name, try to find with any available key
   // This handles the case where context models might have different naming
-  if (qnn_model_it == ep.qnn_models_.end() && !ep.qnn_models_.empty()) {
+  if (qnn_model_it == ep.qnn_backend_manager_->GetQnnModels().end() && !ep.qnn_backend_manager_->GetQnnModels().empty()) {
     // For context models, there might be only one model, so use the first available
-    qnn_model_it = ep.qnn_models_.begin();
+    qnn_model_it = ep.qnn_backend_manager_->GetQnnModels().begin();
   }
 
-  if (qnn_model_it == ep.qnn_models_.end()) {
+  if (qnn_model_it == ep.qnn_backend_manager_->GetQnnModels().end()) {
     std::string message = "Unable to get QnnModel with name " + fused_node_name;
     return ep.ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
   }
