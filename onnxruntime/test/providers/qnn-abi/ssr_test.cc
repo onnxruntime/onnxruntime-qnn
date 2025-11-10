@@ -9,7 +9,7 @@
 #include "core/session/inference_session.h"
 #include "core/framework/session_options.h"
 
-#include "test/providers/qnn/qnn_test_utils.h"
+#include "test/providers/qnn-abi/qnn_test_utils.h"
 
 #include "gtest/gtest.h"
 
@@ -20,7 +20,7 @@ namespace test {
 
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 
-class QnnMockSSRBackendTests : public QnnHTPBackendTests {
+class QnnABIMockSSRBackendTests : public QnnABIHTPBackendTests {
  protected:
   void SetUp() override;
   void TearDown() override;
@@ -35,10 +35,10 @@ class QnnMockSSRBackendTests : public QnnHTPBackendTests {
   ProviderOptions provider_options;
 };
 
-void QnnMockSSRBackendTests::SetUp() {
+void QnnABIMockSSRBackendTests::SetUp() {
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 #include <windows.h>
-  QnnHTPBackendTests::SetUp();
+  QnnABIHTPBackendTests::SetUp();
   lib_handle = LoadLibraryW(L"QnnMockSSR.dll");
   ASSERT_NE(lib_handle, nullptr) << "Failed to load QnnMockSSR.dll";
 
@@ -61,7 +61,7 @@ void QnnMockSSRBackendTests::SetUp() {
   };
 }
 
-void QnnMockSSRBackendTests::TearDown() {
+void QnnABIMockSSRBackendTests::TearDown() {
 #if defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
   if (lib_handle) {
     FreeLibrary(lib_handle);
@@ -69,9 +69,9 @@ void QnnMockSSRBackendTests::TearDown() {
 #endif  // defined(_WIN32) && (defined(_M_ARM64) || defined(_M_ARM64EC))
 }
 
-TEST_F(QnnMockSSRBackendTests, SSRBackendGetBuildId) {
+TEST_F(QnnABIMockSSRBackendTests, SSRBackendGetBuildId) {
   controller->SetTiming(QnnMockSSRController::Timing::BackendGetBuildId);
-  RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
+  RunQnnModelTestABI(BuildOpTestCase<float>("InstanceNormalization",
                                          {input_def, scale_def, bias_def}, {}, {}),
                   provider_options,
                   18,
@@ -79,9 +79,9 @@ TEST_F(QnnMockSSRBackendTests, SSRBackendGetBuildId) {
                   5e-3f);
 }
 
-TEST_F(QnnMockSSRBackendTests, SSRBackendCreate) {
+TEST_F(QnnABIMockSSRBackendTests, SSRBackendCreate) {
   controller->SetTiming(QnnMockSSRController::Timing::BackendCreate);
-  RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
+  RunQnnModelTestABI(BuildOpTestCase<float>("InstanceNormalization",
                                          {input_def, scale_def, bias_def}, {}, {}),
                   provider_options,
                   18,
@@ -89,9 +89,9 @@ TEST_F(QnnMockSSRBackendTests, SSRBackendCreate) {
                   5e-3f);
 }
 
-TEST_F(QnnMockSSRBackendTests, SSRContextCreate) {
+TEST_F(QnnABIMockSSRBackendTests, SSRContextCreate) {
   controller->SetTiming(QnnMockSSRController::Timing::ContextCreate);
-  RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
+  RunQnnModelTestABI(BuildOpTestCase<float>("InstanceNormalization",
                                          {input_def, scale_def, bias_def}, {}, {}),
                   provider_options,
                   18,
@@ -99,9 +99,9 @@ TEST_F(QnnMockSSRBackendTests, SSRContextCreate) {
                   5e-3f);
 }
 
-TEST_F(QnnMockSSRBackendTests, DISABLED_SSRBackendValidateOpConfig) {
+TEST_F(QnnABIMockSSRBackendTests, DISABLED_SSRBackendValidateOpConfig) {
   controller->SetTiming(QnnMockSSRController::Timing::BackendValidateOpConfig);
-  RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
+  RunQnnModelTestABI(BuildOpTestCase<float>("InstanceNormalization",
                                          {input_def, scale_def, bias_def}, {}, {}),
                   provider_options,
                   18,
@@ -109,9 +109,9 @@ TEST_F(QnnMockSSRBackendTests, DISABLED_SSRBackendValidateOpConfig) {
                   5e-3f);
 }
 
-TEST_F(QnnMockSSRBackendTests, SSRLogCreate) {
+TEST_F(QnnABIMockSSRBackendTests, SSRLogCreate) {
   controller->SetTiming(QnnMockSSRController::Timing::LogCreate);
-  RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
+  RunQnnModelTestABI(BuildOpTestCase<float>("InstanceNormalization",
                                          {input_def, scale_def, bias_def}, {}, {}),
                   provider_options,
                   18,
@@ -119,9 +119,9 @@ TEST_F(QnnMockSSRBackendTests, SSRLogCreate) {
                   5e-3f);
 }
 
-TEST_F(QnnMockSSRBackendTests, SSRGraphCreate) {
+TEST_F(QnnABIMockSSRBackendTests, SSRGraphCreate) {
   controller->SetTiming(QnnMockSSRController::Timing::GraphCreate);
-  RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
+  RunQnnModelTestABI(BuildOpTestCase<float>("InstanceNormalization",
                                          {input_def, scale_def, bias_def}, {}, {}),
                   provider_options,
                   18,
@@ -129,9 +129,9 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphCreate) {
                   5e-3f);
 }
 
-TEST_F(QnnMockSSRBackendTests, SSRGraphRetrieve) {
+TEST_F(QnnABIMockSSRBackendTests, SSRGraphRetrieve) {
   controller->SetTiming(QnnMockSSRController::Timing::GraphRetrieve);
-  RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
+  RunQnnModelTestABI(BuildOpTestCase<float>("InstanceNormalization",
                                          {input_def, scale_def, bias_def}, {}, {}),
                   provider_options,
                   18,
@@ -139,9 +139,9 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphRetrieve) {
                   5e-3f);
 }
 
-TEST_F(QnnMockSSRBackendTests, SSRContextGetBinarySize) {
+TEST_F(QnnABIMockSSRBackendTests, SSRContextGetBinarySize) {
   controller->SetTiming(QnnMockSSRController::Timing::ContextGetBinarySize);
-  RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
+  RunQnnModelTestABI(BuildOpTestCase<float>("InstanceNormalization",
                                          {input_def, scale_def, bias_def}, {}, {}),
                   provider_options,
                   18,
@@ -149,9 +149,9 @@ TEST_F(QnnMockSSRBackendTests, SSRContextGetBinarySize) {
                   5e-3f);
 }
 
-TEST_F(QnnMockSSRBackendTests, SSRContextGetBinary) {
+TEST_F(QnnABIMockSSRBackendTests, SSRContextGetBinary) {
   controller->SetTiming(QnnMockSSRController::Timing::ContextGetBinary);
-  RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
+  RunQnnModelTestABI(BuildOpTestCase<float>("InstanceNormalization",
                                          {input_def, scale_def, bias_def}, {}, {}),
                   provider_options,
                   18,
@@ -159,9 +159,9 @@ TEST_F(QnnMockSSRBackendTests, SSRContextGetBinary) {
                   5e-3f);
 }
 
-TEST_F(QnnMockSSRBackendTests, SSRTensorCreateGraphTensor) {
+TEST_F(QnnABIMockSSRBackendTests, SSRTensorCreateGraphTensor) {
   controller->SetTiming(QnnMockSSRController::Timing::TensorCreateGraphTensor);
-  RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
+  RunQnnModelTestABI(BuildOpTestCase<float>("InstanceNormalization",
                                          {input_def, scale_def, bias_def}, {}, {}),
                   provider_options,
                   18,
@@ -169,9 +169,9 @@ TEST_F(QnnMockSSRBackendTests, SSRTensorCreateGraphTensor) {
                   5e-3f);
 }
 
-TEST_F(QnnMockSSRBackendTests, SSRGraphAddNode) {
+TEST_F(QnnABIMockSSRBackendTests, SSRGraphAddNode) {
   controller->SetTiming(QnnMockSSRController::Timing::GraphAddNode);
-  RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
+  RunQnnModelTestABI(BuildOpTestCase<float>("InstanceNormalization",
                                          {input_def, scale_def, bias_def}, {}, {}),
                   provider_options,
                   18,
@@ -179,9 +179,9 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphAddNode) {
                   5e-3f);
 }
 
-TEST_F(QnnMockSSRBackendTests, SSRGraphFinalize) {
+TEST_F(QnnABIMockSSRBackendTests, SSRGraphFinalize) {
   controller->SetTiming(QnnMockSSRController::Timing::GraphFinalize);
-  RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
+  RunQnnModelTestABI(BuildOpTestCase<float>("InstanceNormalization",
                                          {input_def, scale_def, bias_def}, {}, {}),
                   provider_options,
                   18,
@@ -189,9 +189,9 @@ TEST_F(QnnMockSSRBackendTests, SSRGraphFinalize) {
                   5e-3f);
 }
 
-TEST_F(QnnMockSSRBackendTests, SSRGraphExecute) {
+TEST_F(QnnABIMockSSRBackendTests, SSRGraphExecute) {
   controller->SetTiming(QnnMockSSRController::Timing::GraphExecute);
-  RunQnnModelTest(BuildOpTestCase<float>("InstanceNormalization",
+  RunQnnModelTestABI(BuildOpTestCase<float>("InstanceNormalization",
                                          {input_def, scale_def, bias_def}, {}, {}),
                   provider_options,
                   18,
