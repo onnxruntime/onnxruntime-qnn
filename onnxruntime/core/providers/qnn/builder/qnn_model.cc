@@ -130,7 +130,7 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
   }
 #endif
 
-  ORT_RETURN_IF_ERROR(rt);
+  ORT_RETURN_IF_NOT(rt.IsOK(), "Failed to initialize qnn_model_wrapper.");
 
   // NOTE: This function returns immediately when profiling is disabled.
   // Extracting profiling data can be expensive, but it is typically only enabled for debugging purposes
@@ -154,7 +154,7 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
   }
 
   const bool build_json_graph = !json_qnn_graph_path.empty();
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.ComposeQnnGraph(build_json_graph));
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.ComposeQnnGraph(build_json_graph).IsOK(), "Failed to compose Qnn graph.");
 
   if (build_json_graph) {
     const nlohmann::json& json_graph = qnn_model_wrapper.GetQnnJSONGraph();
