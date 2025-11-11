@@ -4,9 +4,9 @@
 name: Qualcomm Internal PR Workflow
 on:
   push:
-    branches: [main, rel-*]
+    branches: [main, rel-*, dev/hungjuiw/aisw-155884-migrate-ssr]
   pull_request:
-    branches: [main, rel-*]
+    branches: [main, rel-*, dev/hungjuiw/aisw-155884-migrate-ssr]
   merge_group:
     types: [checks_requested]
 
