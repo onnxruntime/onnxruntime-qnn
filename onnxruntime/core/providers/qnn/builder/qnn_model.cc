@@ -113,6 +113,8 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
                                                       model_output_index_map_,
                                                       qnn_backend_manager_->GetQnnBackendType(),
                                                       model_settings);
+  bool rt = true;
+
   qnn::profile::ProfilingInfo profiling_info;
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
   if (qnn_backend_manager_->ProfilingEnabled()) {
@@ -121,7 +123,7 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
   }
 #endif
 
-  Status rt = qnn_model_wrapper.CreateQnnGraph(qnn_backend_manager_->GetQnnContext(), graph_name, graph_configs);
+  rt = qnn_model_wrapper.CreateQnnGraph(qnn_backend_manager_->GetQnnContext(), graph_name, graph_configs);
 
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
   if (qnn_backend_manager_->ProfilingEnabled()) {
@@ -130,7 +132,9 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
   }
 #endif
 
-  ORT_RETURN_IF_ERROR(rt);
+  if (!rt) {
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to initialize qnn_model_wrapper.");
+  }
 
   // NOTE: This function returns immediately when profiling is disabled.
   // Extracting profiling data can be expensive, but it is typically only enabled for debugging purposes
@@ -154,7 +158,7 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
   }
 
   const bool build_json_graph = !json_qnn_graph_path.empty();
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.ComposeQnnGraph(build_json_graph));
+  ORT_RETURN_IF_NOT(qnn_model_wrapper.ComposeQnnGraph(build_json_graph), "Failed to compose Qnn graph.");
 
   if (build_json_graph) {
     const nlohmann::json& json_graph = qnn_model_wrapper.GetQnnJSONGraph();
@@ -168,7 +172,8 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
     }
   }
 
-  if (!GetGraphInfoFromModel(qnn_model_wrapper, logger)) {
+  rt = GetGraphInfoFromModel(qnn_model_wrapper, logger);
+  if (!rt) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "GetGraphInfoFromModel failed.");
   }
   LOGS(logger, VERBOSE) << "GetGraphInfoFromModel completed.";
@@ -197,8 +202,10 @@ Status QnnModel::FinalizeGraphs(const logging::Logger& logger) {
   }
 #endif
 
-  ORT_RETURN_IF(status == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION, "NPU crashed. SSR detected. Caused QNN graph finalize error. Error code: ", status);
-  ORT_RETURN_IF(status != QNN_GRAPH_NO_ERROR, "Failed to finalize QNN graph. Error code: ", status);
+  if (QNN_GRAPH_NO_ERROR != status) {
+    LOGS(logger, ERROR) << "Failed to finalize QNN graph. Error code: " << status;
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to finalize QNN graph.");
+  }
 
   // NOTE: This function returns immediately when profiling is disabled.
   // Extracting profiling data can be expensive, but it is typically only enabled for debugging purposes
@@ -324,7 +331,7 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
         qnn_outputs.back()));
   }
 
-  Status execute_status = Status::OK();
+  Qnn_ErrorHandle_t execute_status = QNN_GRAPH_NO_ERROR;
   {
     const auto& qnn_interface = qnn_backend_manager_->GetQnnInterface();
 
@@ -341,33 +348,13 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
 #endif
 
     auto profile_backend_handle = qnn_backend_manager_->GetQnnProfileHandle();
-    execute_status = qnn_backend_manager_->InvokeWithSSRHandle(
-        [&]() {
-          Qnn_ErrorHandle_t res = qnn_interface.graphExecute(graph_info_->Graph(),
-                                                             qnn_inputs.data(),
-                                                             static_cast<uint32_t>(qnn_inputs.size()),
-                                                             qnn_outputs.data(),
-                                                             static_cast<uint32_t>(qnn_outputs.size()),
-                                                             profile_backend_handle,
-                                                             nullptr);
-
-          ORT_RETURN_IF(res == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION, "NPU crashed. SSR detected. Caused QNN graph execute error. Error code: ", res);
-          ORT_RETURN_IF(res != QNN_GRAPH_NO_ERROR, "QNN graph execute error. Error code: ", res);
-
-          return Status::OK();
-        },
-        [&]() {
-          // Cleanup after SSR capture and recover model state
-          ORT_RETURN_IF_ERROR(qnn_backend_manager_->SSRCleanUp(logger));
-          ORT_RETURN_IF_NOT(qnn_backend_manager_->GetQnnModels().find(Name()) != qnn_backend_manager_->GetQnnModels().end(),
-                            "Failed to recover model: ", Name(), ". Model not found in recovered models map.");
-          graph_info_->SetGraphContext(qnn_backend_manager_->GetQnnModels()[Name()]->GetGraphInfo()->GraphContext());
-          graph_info_->SetGraph(qnn_backend_manager_->GetQnnModels()[Name()]->GetGraphInfo()->Graph());
-          return Status::OK();
-        },
-        "Inference",
-        logger);
-
+    execute_status = qnn_interface.graphExecute(graph_info_->Graph(),
+                                                qnn_inputs.data(),
+                                                static_cast<uint32_t>(qnn_inputs.size()),
+                                                qnn_outputs.data(),
+                                                static_cast<uint32_t>(qnn_outputs.size()),
+                                                profile_backend_handle,
+                                                nullptr);
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
     if (qnn_backend_manager_->ProfilingEnabled()) {
       profiling_info.stop_time = qnn::utils::GetTimeStampInUs();
@@ -382,7 +369,17 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
     ORT_RETURN_IF_ERROR(qnn_backend_manager_->ExtractBackendProfilingInfo(profiling_info));
   }
 
-  return execute_status;
+  if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
+    auto error_message = "NPU crashed. SSR detected. Caused QNN graph execute error. Error code: ";
+    LOGS(logger, ERROR) << error_message << execute_status;
+    return ORT_MAKE_STATUS(ONNXRUNTIME, ENGINE_ERROR, error_message, execute_status);
+  }
+
+  if (QNN_GRAPH_NO_ERROR != execute_status) {
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QNN graph execute error. Error code: ", execute_status);
+  }
+
+  return Status::OK();
 }
 
 // Setup information for Qnn inputs/outputs used during execution.

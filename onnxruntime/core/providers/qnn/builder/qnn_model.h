@@ -105,8 +105,6 @@ class QnnModel {
     return outputs_info_;
   }
 
-  const std::unique_ptr<GraphInfo>& GetGraphInfo() const { return graph_info_; }
-
   const std::string& Name() const { return graph_info_->Name(); }
 
  private:
