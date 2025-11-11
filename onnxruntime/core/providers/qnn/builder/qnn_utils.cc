@@ -1258,7 +1258,8 @@ static Status TransposeDataRank5(const TensorShape& input_shape,
 Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
                              std::vector<uint32_t>& data_shape,
                              const onnx::TensorProto& initializer,
-                             std::vector<uint8_t>& transposed_data) {
+                             std::vector<uint8_t>& transposed_data,
+                             bool validate) {
   ORT_RETURN_IF_NOT(data_shape.size() == 2, "Expected shape of rank 2");
 
   std::array<size_t, 2> perm = {1, 0};
@@ -1273,16 +1274,24 @@ Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(initializer, input_buffer));
   transposed_data.resize(input_buffer.size());
 
-  for (size_t row = 0; row < data_shape[0]; row++) {
-    for (size_t col = 0; col < data_shape[1]; col++) {
-      const size_t src_elem_index = (row * data_shape[1] + col);
-      const size_t dst_elem_index = (col * output_shape[1] + row);
-      const size_t src_byte_index = src_elem_index * elem_byte_size;
-      const size_t dst_byte_index = dst_elem_index * elem_byte_size;
-      assert(src_byte_index < input_buffer.size());
-      assert(dst_byte_index < transposed_data.size());
+  if (validate) {  // Only shape validation is needed, filling with dummy data
+    std::fill(transposed_data.begin(), transposed_data.end(), 0);
+  } else {  // Actual tensor content is required.
+    const size_t rows = data_shape[0];
+    const size_t cols = data_shape[1];
+    const size_t output_cols = output_shape[1];
 
-      std::memcpy(&transposed_data[dst_byte_index], &input_buffer[src_byte_index], elem_byte_size);
+    for (size_t row = 0; row < rows; row++) {
+      for (size_t col = 0; col < cols; col++) {
+        const size_t src_elem_index = (row * cols + col);
+        const size_t dst_elem_index = (col * output_cols + row);
+        const size_t src_byte_index = src_elem_index * elem_byte_size;
+        const size_t dst_byte_index = dst_elem_index * elem_byte_size;
+        assert(src_byte_index < input_buffer.size());
+        assert(dst_byte_index < transposed_data.size());
+
+        std::memcpy(&transposed_data[dst_byte_index], &input_buffer[src_byte_index], elem_byte_size);
+      }
     }
   }
 

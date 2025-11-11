@@ -91,7 +91,7 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper, const NodeUnit&
   ORT_RETURN_IF_ERROR(utils::GetQnnDataType(false, weight_def.node_arg.TypeAsProto(), data_type));
   const auto& weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
   ORT_RETURN_IF_ERROR(
-      utils::TwoDimensionTranspose(qnn_model_wrapper, weight_shape, *weight_tensor_proto, unpacked_tensor));
+      utils::TwoDimensionTranspose(qnn_model_wrapper, weight_shape, *weight_tensor_proto, unpacked_tensor, validate));
   QnnTensorWrapper weight_tensor(weight_tensor_name, tensor_type, data_type, QnnQuantParamsWrapper(),
                                  std::move(weight_shape), std::move(unpacked_tensor));
   if (has_bias) {
