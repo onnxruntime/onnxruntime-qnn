@@ -66,7 +66,7 @@ bool CheckShape(const Node& reshape_node) {
 }
 
 Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& reshape_node_unit,
-                             const NodeUnit& gemm_node_unit, bool validate) {
+                             const NodeUnit& gemm_node_unit, bool validate, const logging::Logger& logger) {
   assert(reshape_node_unit.OpType() == "Reshape" && gemm_node_unit.OpType() == "Gemm");
   const auto& node_name = utils::GetUniqueName(gemm_node_unit);
   const NodeUnitIODef& input_def = reshape_node_unit.Inputs()[0];
@@ -122,6 +122,7 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper, const NodeUnit&
         qnn_model_wrapper.CreateQnnNode(node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_FULLY_CONNECTED,
                                         std::move(input_names), {output_def.node_arg.Name()}, {}, validate),
         "Failed to add fused Gemm node.");
+    LOGS(logger, INFO) << "[ReshapeGemmFusion] Pattern matched: Reshape -> Gemm";
   }
 
   return Status::OK();
@@ -169,12 +170,12 @@ ReshapeGemmFusion::ReshapeGemmFusion(const NodeUnit& reshape_node_unit, const No
   node_units_[1] = &gemm_node_unit;
 }
 
-Status ReshapeGemmFusion::IsSupported(QnnModelWrapper& qmw, const logging::Logger& /*logger*/) const {
-  return CreateOrValidateOnQnn(qmw, *node_units_[0], *node_units_[1], true);
+Status ReshapeGemmFusion::IsSupported(QnnModelWrapper& qmw, const logging::Logger& logger) const {
+  return CreateOrValidateOnQnn(qmw, *node_units_[0], *node_units_[1], true, logger);
 }
 
-Status ReshapeGemmFusion::AddToModelBuilder(QnnModelWrapper& qmw, const logging::Logger& /*logger*/) const {
-  return CreateOrValidateOnQnn(qmw, *node_units_[0], *node_units_[1], false);
+Status ReshapeGemmFusion::AddToModelBuilder(QnnModelWrapper& qmw, const logging::Logger& logger) const {
+  return CreateOrValidateOnQnn(qmw, *node_units_[0], *node_units_[1], false, logger);
 }
 
 gsl::span<const NodeUnit* const> ReshapeGemmFusion::GetNodeUnits() const {
