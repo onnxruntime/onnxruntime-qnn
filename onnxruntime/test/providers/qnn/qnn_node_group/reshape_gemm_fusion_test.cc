@@ -37,7 +37,7 @@ GetQDQTestCaseFn BuildReshapeGemmTestCase() {
     builder.AddNode("Reshape", {input, reshape_shape_arg}, {reshaped_output});
 
     // NodeArg* gemm_bias = builder.MakeInitializer<float>({5}, -1.0f, 1.0f);
-    NodeArg* gemm_weights = builder.MakeInitializer<float>({8, 5}, -1.0f, 1.0f);
+    NodeArg* gemm_weights = builder.MakeInitializer<float>({8, 5000}, -1.0f, 1.0f);
     NodeArg* gemm_output = builder.MakeOutput();
     builder.AddNode("Gemm", {reshaped_output, gemm_weights}, {gemm_output});
   };
