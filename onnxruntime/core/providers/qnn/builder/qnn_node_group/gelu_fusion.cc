@@ -130,7 +130,7 @@ static std::optional<float> GetConstantInitializerFloatScalar(QnnModelWrapper& q
 static bool IsInitializerWithExpectedValue(QnnModelWrapper& qnn_model_wrapper,
                                            const NodeUnitIODef& io_def,
                                            float expected_value,
-                                           float tolerance = 1e-3f) {
+                                           float tolerance = 1e-5f) {
   std::optional<float> actual_value = GetConstantInitializerFloatScalar(qnn_model_wrapper, io_def);
   if (!actual_value.has_value()) {
     return false;
@@ -168,8 +168,7 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
     const NodeUnit& erf_node_unit,
     const std::unordered_map<const Node*, const NodeUnit*>& node_to_node_unit,
     const std::unordered_map<const NodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
-    const logging::Logger& logger) {
-  ORT_UNUSED_PARAMETER(logger);
+    const logging::Logger& /*logger*/) {
   if (erf_node_unit.OpType() != "Erf") {
     return nullptr;
   }
@@ -205,8 +204,8 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
     return nullptr;
   }
 
-  const NodeUnit* add_node_unit = GetChildOfOutput(graph_viewer, erf_node_unit, erf_outputs[0],
-                                                   node_to_node_unit, node_unit_to_qnn_node_group);
+  const NodeUnit* add_node_unit = GetOnlyChildOfOutput(graph_viewer, erf_node_unit, erf_outputs[0],
+                                                       node_to_node_unit, node_unit_to_qnn_node_group);
   if (add_node_unit == nullptr || add_node_unit->OpType() != "Add") {
     return nullptr;
   }
@@ -220,7 +219,7 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
   // Check the other input node (e.g. not the Erf) is 1.0f
   bool is_erf_first_input = (add_inputs[0].node_arg.Name() == erf_outputs[0].node_arg.Name());
   const auto& add_const_input = add_inputs[is_erf_first_input ? 1 : 0];
-  if (!IsInitializerWithExpectedValue(qnn_model_wrapper, add_const_input, 1.0f, 1e-02f)) {
+  if (!IsInitializerWithExpectedValue(qnn_model_wrapper, add_const_input, 1.0f)) {
     return nullptr;
   }
 
@@ -230,8 +229,8 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
     return nullptr;
   }
 
-  const NodeUnit* mul_node_unit = GetChildOfOutput(graph_viewer, *add_node_unit, add_outputs[0],
-                                                   node_to_node_unit, node_unit_to_qnn_node_group);
+  const NodeUnit* mul_node_unit = GetOnlyChildOfOutput(graph_viewer, *add_node_unit, add_outputs[0],
+                                                       node_to_node_unit, node_unit_to_qnn_node_group);
   if (mul_node_unit == nullptr || mul_node_unit->OpType() != "Mul") {
     return nullptr;
   }
@@ -315,8 +314,8 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
       return nullptr;
     }
 
-    const NodeUnit* mul2_node_unit_pattern2 = GetChildOfOutput(graph_viewer, *mul_node_unit, mul_outputs[0],
-                                                               node_to_node_unit, node_unit_to_qnn_node_group);
+    const NodeUnit* mul2_node_unit_pattern2 = GetOnlyChildOfOutput(graph_viewer, *mul_node_unit, mul_outputs[0],
+                                                                   node_to_node_unit, node_unit_to_qnn_node_group);
     if (mul2_node_unit_pattern2 == nullptr || mul2_node_unit_pattern2->OpType() != "Mul") {
       return nullptr;
     }
@@ -358,15 +357,13 @@ GeluFusion::GeluFusion(std::vector<const NodeUnit*>&& node_units, const NodeUnit
     : node_units_(std::move(node_units)), target_node_unit_(target_node_unit) {
 }
 
-Status GeluFusion::IsSupported(QnnModelWrapper& qmw, const logging::Logger& logger) const {
-  ORT_UNUSED_PARAMETER(logger);
+Status GeluFusion::IsSupported(QnnModelWrapper& qmw, const logging::Logger& /*logger*/) const {
   const NodeUnitIODef& root_input = node_units_[0]->Inputs()[0];
   const NodeUnitIODef& final_output = node_units_.back()->Outputs()[0];
   return ValidateOnQnn(qmw, node_units_, root_input, final_output);
 }
 
-Status GeluFusion::AddToModelBuilder(QnnModelWrapper& qmw, const logging::Logger& logger) const {
-  ORT_UNUSED_PARAMETER(logger);
+Status GeluFusion::AddToModelBuilder(QnnModelWrapper& qmw, const logging::Logger& /*logger*/) const {
   const NodeUnitIODef& root_input = node_units_[0]->Inputs()[0];
   const NodeUnitIODef& final_output = node_units_.back()->Outputs()[0];
   return CreateOnQnn(qmw, node_units_, root_input, final_output);
