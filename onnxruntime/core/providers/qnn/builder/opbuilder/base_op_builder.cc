@@ -353,7 +353,8 @@ Status BaseOpBuilder::ProcessOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                       QNN_OP_CAST,
                                                       {cast_node_info.input_name},
                                                       {cast_node_info.output_name},
-                                                      {}),
+                                                      {},
+                                                      do_op_validation),
                       " Failed to add Cast node");
   }
   return Status::OK();

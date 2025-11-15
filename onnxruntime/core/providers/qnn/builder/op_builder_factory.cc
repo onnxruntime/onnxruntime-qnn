@@ -65,8 +65,6 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
     CreateSimpleOpBuilder("GridSample", *this);
 
     CreateSimpleOpBuilder("LpNormalization", *this);
-
-    CreateSimpleOpBuilder("ScatterElements", *this);
   }
 
   {
@@ -234,7 +232,12 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
 
   {
     CreateFusedMatMulOpBuilder("FusedMatMul", *this);
+  }
+  {
     CreateMatMulNBitsOpBuilder("MatMulNBits", *this);
+  }
+  {
+    CreateScatterElementsOpBuilder("ScatterElements", *this);
   }
 }
 

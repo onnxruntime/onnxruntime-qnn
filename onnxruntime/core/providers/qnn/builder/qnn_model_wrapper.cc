@@ -441,7 +441,6 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
         !CreateQnnParamTensors(qnn_node_name, param_tensor_names, params, do_op_validation)) {
       return false;
     }
-
     QnnOpConfigWrapper op_config_wrapper(qnn_node_name,
                                          package_name,
                                          qnn_node_type,
