@@ -321,20 +321,17 @@ const NodeUnit* GetParentOfInputByName(const GraphViewer& graph_viewer,
                                        const std::unordered_map<const NodeUnit*, const IQnnNodeGroup*>& qnn_node_group_map) {
   const Node* p_child_node = nullptr;
 
-  for (auto node : node_unit.GetAllNodesInGroup()) {
-    for (auto node_input : node->InputDefs()) {
-      if (node_input->Name() == input_name) {
-        p_child_node = node;
-        break;
-      }
-
-      if (p_child_node != nullptr) {
-        break;
-      }
-    }
-  }
-
-  if (p_child_node == nullptr) {
+  auto it = std::find_if(node_unit.GetAllNodesInGroup().begin(),
+                         node_unit.GetAllNodesInGroup().end(),
+                         [&](const Node* node) {
+                          return std::any_of(node->InputDefs().begin(), node->InputDefs().end(),
+                                             [&](const NodeArg* node_input) {
+                                              return node_input->Name() == input_name;
+                                             });
+                         });
+  if (it != node_unit.GetAllNodesInGroup().end()) {
+    p_child_node = *it;
+  } else {
     return nullptr;
   }
 

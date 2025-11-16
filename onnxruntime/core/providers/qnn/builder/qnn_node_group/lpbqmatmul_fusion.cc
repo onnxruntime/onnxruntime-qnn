@@ -125,17 +125,17 @@ Status LowPowerBlockQuantizedMatMulFusion::AddToModelBuilder(QnnModelWrapper& qm
 }
 
 gsl::span<const NodeUnit* const> LowPowerBlockQuantizedMatMulFusion::GetNodeUnits() const {
-  static std::vector<const NodeUnit*> filtered_units;
-  filtered_units.clear();
-
-  // Add only non-nullptr node units
-  for (size_t i = 0; i < node_units_.size(); ++i) {
-    if (node_units_[i] != nullptr) {
-      filtered_units.push_back(node_units_[i]);
+  if (!filtered_node_units_initialized_) {
+    // Add only non-nullptr node units
+    for (size_t i = 0; i < node_units_.size(); ++i) {
+      if (node_units_[i] != nullptr) {
+        filtered_node_units_.push_back(node_units_[i]);
+      }
     }
+    filtered_node_units_initialized_ = true;
   }
 
-  return gsl::make_span(filtered_units);
+  return gsl::make_span(filtered_node_units_);
 }
 
 const NodeUnit* LowPowerBlockQuantizedMatMulFusion::GetTargetNodeUnit() const {
