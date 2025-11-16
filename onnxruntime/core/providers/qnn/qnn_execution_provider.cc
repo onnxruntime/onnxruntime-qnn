@@ -881,13 +881,13 @@ std::unique_ptr<ComputeCapability> QNNExecutionProvider::RecreatePartitionWithDQ
   }
 
   // Create new IndexedSubGraph
-  std::unique_ptr<IndexedSubGraph> sub_graph = IndexedSubGraph::Create();
+  std::unique_ptr<IndexedSubGraph> sub_graph = Factory<IndexedSubGraph>::Create();
   for (NodeIndex node_index : partition_nodes) {
-    sub_graph->Nodes().push_back(node_index);
+    IndexedSubGraph__Nodes(*sub_graph).push_back(node_index);
   }
 
   // Create MetaDef with correct inputs/outputs
-  auto meta_def = IndexedSubGraph_MetaDef::Create();
+  auto meta_def = Factory<IndexedSubGraph_MetaDef>::Create();
   meta_def->name() = generate_metadef_name();
   meta_def->domain() = kQnnExecutionProvider;
   meta_def->since_version() = 1;
@@ -907,7 +907,7 @@ std::unique_ptr<ComputeCapability> QNNExecutionProvider::RecreatePartitionWithDQ
 
   sub_graph->SetMetaDef(std::move(meta_def));
 
-  return ComputeCapability::Create(std::move(sub_graph));
+  return Factory<ComputeCapability>::Create(std::move(sub_graph));
 }
 
 std::unordered_set<const Node*>
