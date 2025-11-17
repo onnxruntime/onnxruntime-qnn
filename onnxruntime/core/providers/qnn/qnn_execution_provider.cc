@@ -884,6 +884,83 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
                                     IResourceAccountant* /* resource_accountant */) const {
   std::vector<std::unique_ptr<ComputeCapability>> result;
 
+  // workaround to modify the graph_viwer->GetGraph
+  // Graph& mutable_graph = const_cast<Graph&>(graph_viewer.GetGraph());
+  // std::cout << "Max node index: " << mutable_graph.MaxNodeIndex() << std::endl;
+  // if use batch multiplier, the batch dimension must be dynamic for input ONNX model
+  // here we overide the batch dimension of the inputs of ONNX model to 1 (we don't care about other dimension, if they're dynamic, should raise erro)
+  // Then do Graph.Resolve to run the inference shape again
+  // And if use batch multiplier should run all nodes on QNN EP HTP backend, if fallback, should directly raise error
+
+  Graph& mutable_graph = const_cast<Graph&>(graph_viewer.GetGraph());
+
+  std::vector<const NodeArg*> new_inputs;
+  bool modified = false;
+
+  for (const auto* input : graph_viewer.GetInputs()) {
+    const auto* type_proto = input->TypeAsProto();
+
+    if (!type_proto || !type_proto->has_tensor_type() ||
+        !type_proto->tensor_type().has_shape()) {
+      new_inputs.push_back(input);  // 保持原樣
+      continue;
+    }
+
+    // 檢查是否有動態維度
+    const auto& shape = type_proto->tensor_type().shape();
+    bool has_dynamic_dim = false;
+    for (int i = 0; i < shape.dim_size(); i++) {
+      if (shape.dim(i).has_dim_param()) {
+        has_dynamic_dim = true;
+        break;
+      }
+    }
+
+    if (!has_dynamic_dim) {
+      new_inputs.push_back(input);  // 沒有動態維度，保持原樣
+      continue;
+    }
+
+    // 創建新的 TypeProto（修改動態維度為靜態）
+    auto mutable_input_type = ONNX_NAMESPACE::TypeProto::Create();
+    mutable_input_type->copy_from(type_proto);
+    auto* mutable_tensor_type = mutable_input_type->mutable_tensor_type();
+    auto* mutable_shape = mutable_tensor_type->mutable_shape();
+
+    for (int i = 0; i < mutable_shape->dim_size(); i++) {
+      auto* dim = mutable_shape->mutable_dim(i);
+      if (dim->has_dim_param()) {
+        LOGS_DEFAULT(INFO) << "Overriding dynamic dimension '"
+                          << dim->dim_param() << "' to 1 for input: "
+                          << input->Name();
+        dim->set_dim_value(1);
+      }
+    }
+
+    // 創建新的 NodeArg（使用 GetOrCreateNodeArg 會創建新的或返回已存在的）
+    // 但因為我們改了 type，需要用新的名字或直接替換
+    NodeArg& new_input = mutable_graph.GetOrCreateNodeArg(input->Name(), mutable_input_type.get());
+    new_inputs.push_back(&new_input);
+    modified = true;
+  }
+
+  if (modified) {
+    // 用新的 inputs 替換原有的
+    mutable_graph.SetInputs(new_inputs);
+
+    // 標記需要 resolve
+    mutable_graph.SetGraphResolveNeeded();
+    auto status = mutable_graph.Resolve();
+    if (!status.IsOK()) {
+      LOGS_DEFAULT(ERROR) << "Failed to resolve graph: " << status.ErrorMessage();
+      return result;
+    }
+
+    LOGS_DEFAULT(INFO) << "Successfully overridden dynamic dimensions for QNN EP";
+  }
+
+
+
   if (graph_viewer.IsSubgraph()) {
     return result;
   }
