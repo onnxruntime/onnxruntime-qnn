@@ -887,7 +887,28 @@ std::unique_ptr<ComputeCapability> QNNExecutionProvider::RecreatePartitionWithDQ
   }
 
   // Create MetaDef with correct inputs/outputs
-  auto meta_def = Factory<IndexedSubGraph_MetaDef>::Create();
+#if BUILD_QNN_EP_STATIC_LIB
+  auto meta_def = std::make_unique<IndexedSubGraph::MetaDef>();
+  meta_def->name = generate_metadef_name();
+  meta_def->domain = kQnnExecutionProvider;
+  meta_def->since_version = 1;
+  meta_def->status = ONNX_NAMESPACE::EXPERIMENTAL;
+
+  // Add inputs (skip constant initializers)
+  for (const auto* input : ordered_subgraph_inputs) {
+    if (!graph_viewer.IsConstantInitializer(input->Name(), true)) {
+      meta_def->inputs.push_back(input->Name());
+    }
+  }
+
+  // Add outputs
+  for (const auto* output : ordered_subgraph_outputs) {
+    meta_def->outputs.push_back(output->Name());
+  }
+
+  sub_graph->SetMetaDef(std::move(meta_def));
+#else
+  auto meta_def = IndexedSubGraph_MetaDef::Create();
   meta_def->name() = generate_metadef_name();
   meta_def->domain() = kQnnExecutionProvider;
   meta_def->since_version() = 1;
@@ -906,6 +927,7 @@ std::unique_ptr<ComputeCapability> QNNExecutionProvider::RecreatePartitionWithDQ
   }
 
   sub_graph->SetMetaDef(std::move(meta_def));
+#endif
 
   return Factory<ComputeCapability>::Create(std::move(sub_graph));
 }
