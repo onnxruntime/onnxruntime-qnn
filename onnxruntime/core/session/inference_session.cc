@@ -2982,8 +2982,8 @@ Status InferenceSession::Run(const RunOptions& run_options,
       // log evaluation start to trace logging provider
       env.GetTelemetryProvider().LogEvaluationStart(session_id_);
 #ifdef USE_QNN
-      const std::string& batch_multiplier = run_options.config_options.GetConfigOrDefault(kOrtRunOptionsConfigQnnBatchMultiplier, "");
-      if (batch_multiplier.empty()) {
+      const bool batch_multiplier = session_options_.config_options.GetConfigOrDefault(kOrtSessionOptionsQnnHtpBatchMultiplier, "0") == "1";
+      if (!batch_multiplier) {
         LOGS(*session_logger_, INFO) << "Enable QNN HTP batch mutliplier. Don't validate the inputs/outptus";
         ORT_RETURN_IF_ERROR_SESSIONID_(ValidateInputs(feed_names, feeds));
         ORT_RETURN_IF_ERROR_SESSIONID_(ValidateOutputs(output_names, p_fetches));
