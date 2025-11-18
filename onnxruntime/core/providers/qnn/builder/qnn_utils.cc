@@ -1259,6 +1259,7 @@ Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
                              std::vector<uint32_t>& data_shape,
                              const onnx::TensorProto& initializer,
                              std::vector<uint8_t>& transposed_data,
+                             const logging::Logger& logger,
                              bool validate) {
   ORT_RETURN_IF_NOT(data_shape.size() == 2, "Expected shape of rank 2");
 
@@ -1274,23 +1275,48 @@ Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(initializer, input_buffer));
   transposed_data.resize(input_buffer.size());
 
-  if (validate) {  // Only shape validation is needed, filling with dummy data
+  if (validate) {  // Only shape & dtype validation are needed, filling with dummy data
     std::fill(transposed_data.begin(), transposed_data.end(), 0);
-  } else {  // Actual tensor content is required.
-    const size_t rows = data_shape[0];
-    const size_t cols = data_shape[1];
-    const size_t output_cols = output_shape[1];
+    LOGS(logger, VERBOSE) << "Only shape and dtype validation are required, so we can fill with a dummy tensor to avoid heavy memcpy.";
+    data_shape = std::move(output_shape);  // Update parameter with final transposed shape
+    return Status::OK();
+  }
 
-    for (size_t row = 0; row < rows; row++) {
-      for (size_t col = 0; col < cols; col++) {
-        const size_t src_elem_index = (row * cols + col);
-        const size_t dst_elem_index = (col * output_cols + row);
-        const size_t src_byte_index = src_elem_index * elem_byte_size;
-        const size_t dst_byte_index = dst_elem_index * elem_byte_size;
-        assert(src_byte_index < input_buffer.size());
-        assert(dst_byte_index < transposed_data.size());
+  // // Actual tensor content is required.
+  // const size_t rows = data_shape[0];
+  // const size_t cols = data_shape[1];
+  // const size_t output_cols = output_shape[1];
 
-        std::memcpy(&transposed_data[dst_byte_index], &input_buffer[src_byte_index], elem_byte_size);
+  // for (size_t row = 0; row < rows; row++) {
+  //   for (size_t col = 0; col < cols; col++) {
+  //     const size_t src_elem_index = (row * cols + col);
+  //     const size_t dst_elem_index = (col * output_cols + row);
+  //     const size_t src_byte_index = src_elem_index * elem_byte_size;
+  //     const size_t dst_byte_index = dst_elem_index * elem_byte_size;
+  //     assert(src_byte_index < input_buffer.size());
+  //     assert(dst_byte_index < transposed_data.size());
+
+  //     std::memcpy(&transposed_data[dst_byte_index], &input_buffer[src_byte_index], elem_byte_size);
+  //   }
+  // }
+
+  // Block transpose for better cache locality
+  const size_t rows = data_shape[0];
+  const size_t cols = data_shape[1];
+  const size_t block_size = 64;
+  for (size_t i = 0; i < rows; i += block_size) {
+    for (size_t j = 0; j < cols; j += block_size) {
+      size_t max_i = std::min(i + block_size, rows);
+      size_t max_j = std::min(j + block_size, cols);
+
+      for (size_t row = i; row < max_i; row++) {
+        for (size_t col = j; col < max_j; col++) {
+        const size_t src_byte_index = (row * cols + col) * elem_byte_size;
+        const size_t dst_byte_index = (col * rows + row) * elem_byte_size;
+        std::memcpy(&transposed_data[dst_byte_index],
+        &input_buffer[src_byte_index],
+        elem_byte_size);
+        }
       }
     }
   }
