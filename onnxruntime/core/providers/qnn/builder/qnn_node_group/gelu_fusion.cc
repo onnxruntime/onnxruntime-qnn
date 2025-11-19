@@ -137,7 +137,7 @@ static bool IsInitializerWithExpectedValue(QnnModelWrapper& qnn_model_wrapper,
   }
 
   // Compare with expected value within tolerance
-  return std::fabs(actual_value.value() - expected_value) <= tolerance;
+  return std::abs(actual_value.value() - expected_value) <= tolerance;
 }
 
 // Forward declaration.
@@ -249,25 +249,44 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
 
   // Check if either input to mul_node_unit comes from a Mul node
   for (size_t i = 0; i < 2; ++i) {
-    const auto& mul_input = mul_inputs[i];
+    const auto& mul_input_name = mul_inputs[i].node_arg.Name();
 
-    const NodeUnit* producer_unit = GetParentOfInput(graph_viewer, *mul_node_unit, mul_input,
-                                                     node_to_node_unit, node_unit_to_qnn_node_group);
-    if (producer_unit && producer_unit->OpType() == "Mul") {
-      const auto& mul2_inputs = producer_unit->Inputs();
-      if (mul2_inputs.size() >= 2) {
-        bool has_root_input = (mul2_inputs[0].node_arg.Name() == root_input_name ||
-                               mul2_inputs[1].node_arg.Name() == root_input_name);
-        if (has_root_input) {
-          int root_index = (mul2_inputs[0].node_arg.Name() == root_input_name) ? 0 : 1;
-          const auto& mul_const_input = mul2_inputs[1 - root_index];
+    // Find the node that produces this input
+    for (const auto& node_index : graph_viewer.GetNodesInTopologicalOrder()) {
+      const Node* node = graph_viewer.GetNode(node_index);
+      if (node == nullptr) continue;
 
-          if (IsInitializerWithExpectedValue(qnn_model_wrapper, mul_const_input, 0.5f)) {
-            mul2_node_unit = producer_unit;
-            break;
+      // Check if this node's output matches our input
+      for (const auto* output_def : node->OutputDefs()) {
+        if (output_def && output_def->Name() == mul_input_name) {
+          // Found the producer node, check if it's a Mul
+          auto it = node_to_node_unit.find(node);
+          if (it != node_to_node_unit.end()) {
+            const NodeUnit* producer_unit = it->second;
+            if (producer_unit->OpType() == "Mul" &&
+                node_unit_to_qnn_node_group.find(producer_unit) == node_unit_to_qnn_node_group.end()) {
+              // Check if this Mul has root as one input
+              const auto& mul2_inputs = producer_unit->Inputs();
+              if (mul2_inputs.size() >= 2) {
+                bool has_root_input = (mul2_inputs[0].node_arg.Name() == root_input_name ||
+                                       mul2_inputs[1].node_arg.Name() == root_input_name);
+
+                if (has_root_input) {
+                  // Check the other input is 0.5f
+                  int root_index = (mul2_inputs[0].node_arg.Name() == root_input_name) ? 0 : 1;
+                  const auto& mul_const_input = mul2_inputs[1 - root_index];
+
+                  if (IsInitializerWithExpectedValue(qnn_model_wrapper, mul_const_input, 0.5f)) {
+                    mul2_node_unit = producer_unit;
+                    break;
+                  }
+                }
+              }
+            }
           }
         }
       }
+      if (mul2_node_unit != nullptr) break;
     }
     if (mul2_node_unit != nullptr) break;
   }
@@ -339,14 +358,12 @@ GeluFusion::GeluFusion(std::vector<const NodeUnit*>&& node_units, const NodeUnit
 }
 
 Status GeluFusion::IsSupported(QnnModelWrapper& qmw, const logging::Logger& /*logger*/) const {
-  ORT_RETURN_IF_NOT(!node_units_.empty(), "GeluFusion node_units_ is empty");
   const NodeUnitIODef& root_input = node_units_[0]->Inputs()[0];
   const NodeUnitIODef& final_output = node_units_.back()->Outputs()[0];
   return ValidateOnQnn(qmw, node_units_, root_input, final_output);
 }
 
 Status GeluFusion::AddToModelBuilder(QnnModelWrapper& qmw, const logging::Logger& /*logger*/) const {
-  ORT_RETURN_IF_NOT(!node_units_.empty(), "GeluFusion node_units_ is empty");
   const NodeUnitIODef& root_input = node_units_[0]->Inputs()[0];
   const NodeUnitIODef& final_output = node_units_.back()->Outputs()[0];
   return CreateOnQnn(qmw, node_units_, root_input, final_output);
