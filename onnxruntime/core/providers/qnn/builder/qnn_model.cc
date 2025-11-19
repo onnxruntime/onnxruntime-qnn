@@ -220,8 +220,8 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
     size_t num_initializers = 0;
 
     // Collect input tensor information
-    const auto& graph_viewer = qnn_model_wrapper.GetGraphViewer();
-    for (const auto& input : graph_viewer.GetInputs()) {
+    const auto& model_graph_viewer = qnn_model_wrapper.GetGraphViewer();
+    for (const auto& input : model_graph_viewer.GetInputs()) {
       const std::string& input_name = input->Name();
 
       // Skip if it's an initializer
@@ -253,10 +253,10 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
 
     // Build a map of initializer names to the operators that use them
     std::unordered_map<std::string, std::vector<std::string>> initializer_to_ops;
-    const std::vector<NodeIndex>& sorted_node_indices = graph_viewer.GetNodesInTopologicalOrder();
+    const std::vector<NodeIndex>& sorted_node_indices = model_graph_viewer.GetNodesInTopologicalOrder();
 
     for (NodeIndex node_index : sorted_node_indices) {
-      const Node* node = graph_viewer.GetNode(node_index);
+      const Node* node = model_graph_viewer.GetNode(node_index);
       if (node == nullptr) {
         continue;
       }
