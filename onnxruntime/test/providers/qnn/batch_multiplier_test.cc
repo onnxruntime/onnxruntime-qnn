@@ -215,6 +215,10 @@ static void RunBatchMultiplierOpTest(
   // Configure QNN HTP backend options
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
+  ProviderOptions session_options;
+  session_options["session.disable_cpu_ep_fallback"] = "1";
+  session_options["ep.qnn.enable_htp_batch_multiplier"] = "1";
+
 
   // Build FP32 models
   auto model_bm_fn = BuildOpTestCase<float>(op_type, input_bm_defs, {}, attrs, op_domain);
@@ -227,7 +231,10 @@ static void RunBatchMultiplierOpTest(
       provider_options,
       opset_version,
       expected_ep_assignment,
-      tolerance);
+      tolerance,
+      logging::Severity::kERROR,
+      "",
+      session_options);
 }
 
 /**
