@@ -305,7 +305,7 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
                                    kOrtSessionOptionsDisableCPUEPFallback, "0") == "1";
 
     qnn_htp_batch_multiplier_ = config_options->GetConfigOrDefault(
-                                   kOrtSessionOptionsQnnHtpBatchMultiplier, "0") == "1";
+                                    kOrtSessionOptionsQnnHtpBatchMultiplier, "0") == "1";
 
     context_cache_enabled_ = config_options->GetConfigOrDefault(
                                  kOrtSessionOptionEpContextEnable, "0") == "1";
