@@ -46,9 +46,6 @@ static const char* const kOrtRunOptionsConfigQnnRpcControlLatency = "qnn.rpc_con
 // Set QNN Lora Config File for apply Lora in QNN context binary
 static const char* const kOrtRunOptionsConfigQnnLoraConfig = "qnn.lora_config";
 
-// Set QNN enable batch mutiplier for htp backend
-static const char* const kOrtRunOptionsConfigQnnBatchMultiplier = "qnn.enable_htp_batch_multiplier";
-
 // Set graph annotation id for CUDA EP. Use with enable_cuda_graph=true.
 // The value should be an integer. If the value is not set, the default value is 0 and
 // ORT session only captures one cuda graph before another capture is requested.
