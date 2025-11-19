@@ -165,26 +165,46 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
     // Helper lambda to convert Qnn_DataType_t to string
     auto QnnDataTypeToString = [](Qnn_DataType_t data_type) -> std::string {
       switch (data_type) {
-        case QNN_DATATYPE_INT_8: return "QNN_DATATYPE_INT_8";
-        case QNN_DATATYPE_INT_16: return "QNN_DATATYPE_INT_16";
-        case QNN_DATATYPE_INT_32: return "QNN_DATATYPE_INT_32";
-        case QNN_DATATYPE_INT_64: return "QNN_DATATYPE_INT_64";
-        case QNN_DATATYPE_UINT_8: return "QNN_DATATYPE_UINT_8";
-        case QNN_DATATYPE_UINT_16: return "QNN_DATATYPE_UINT_16";
-        case QNN_DATATYPE_UINT_32: return "QNN_DATATYPE_UINT_32";
-        case QNN_DATATYPE_UINT_64: return "QNN_DATATYPE_UINT_64";
-        case QNN_DATATYPE_FLOAT_16: return "QNN_DATATYPE_FLOAT_16";
-        case QNN_DATATYPE_FLOAT_32: return "QNN_DATATYPE_FLOAT_32";
-        case QNN_DATATYPE_SFIXED_POINT_8: return "QNN_DATATYPE_SFIXED_POINT_8";
-        case QNN_DATATYPE_SFIXED_POINT_16: return "QNN_DATATYPE_SFIXED_POINT_16";
-        case QNN_DATATYPE_SFIXED_POINT_32: return "QNN_DATATYPE_SFIXED_POINT_32";
-        case QNN_DATATYPE_UFIXED_POINT_8: return "QNN_DATATYPE_UFIXED_POINT_8";
-        case QNN_DATATYPE_UFIXED_POINT_16: return "QNN_DATATYPE_UFIXED_POINT_16";
-        case QNN_DATATYPE_UFIXED_POINT_32: return "QNN_DATATYPE_UFIXED_POINT_32";
-        case QNN_DATATYPE_BOOL_8: return "QNN_DATATYPE_BOOL_8";
-        case QNN_DATATYPE_SFIXED_POINT_4: return "QNN_DATATYPE_SFIXED_POINT_4";
-        case QNN_DATATYPE_UFIXED_POINT_4: return "QNN_DATATYPE_UFIXED_POINT_4";
-        default: return "QNN_DATATYPE_UNDEFINED";
+        case QNN_DATATYPE_INT_8:
+          return "QNN_DATATYPE_INT_8";
+        case QNN_DATATYPE_INT_16:
+          return "QNN_DATATYPE_INT_16";
+        case QNN_DATATYPE_INT_32:
+          return "QNN_DATATYPE_INT_32";
+        case QNN_DATATYPE_INT_64:
+          return "QNN_DATATYPE_INT_64";
+        case QNN_DATATYPE_UINT_8:
+          return "QNN_DATATYPE_UINT_8";
+        case QNN_DATATYPE_UINT_16:
+          return "QNN_DATATYPE_UINT_16";
+        case QNN_DATATYPE_UINT_32:
+          return "QNN_DATATYPE_UINT_32";
+        case QNN_DATATYPE_UINT_64:
+          return "QNN_DATATYPE_UINT_64";
+        case QNN_DATATYPE_FLOAT_16:
+          return "QNN_DATATYPE_FLOAT_16";
+        case QNN_DATATYPE_FLOAT_32:
+          return "QNN_DATATYPE_FLOAT_32";
+        case QNN_DATATYPE_SFIXED_POINT_8:
+          return "QNN_DATATYPE_SFIXED_POINT_8";
+        case QNN_DATATYPE_SFIXED_POINT_16:
+          return "QNN_DATATYPE_SFIXED_POINT_16";
+        case QNN_DATATYPE_SFIXED_POINT_32:
+          return "QNN_DATATYPE_SFIXED_POINT_32";
+        case QNN_DATATYPE_UFIXED_POINT_8:
+          return "QNN_DATATYPE_UFIXED_POINT_8";
+        case QNN_DATATYPE_UFIXED_POINT_16:
+          return "QNN_DATATYPE_UFIXED_POINT_16";
+        case QNN_DATATYPE_UFIXED_POINT_32:
+          return "QNN_DATATYPE_UFIXED_POINT_32";
+        case QNN_DATATYPE_BOOL_8:
+          return "QNN_DATATYPE_BOOL_8";
+        case QNN_DATATYPE_SFIXED_POINT_4:
+          return "QNN_DATATYPE_SFIXED_POINT_4";
+        case QNN_DATATYPE_UFIXED_POINT_4:
+          return "QNN_DATATYPE_UFIXED_POINT_4";
+        default:
+          return "QNN_DATATYPE_UNDEFINED";
       }
     };
 
@@ -310,7 +330,7 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
     LOGS(logger, INFO) << "Inputs: " << num_inputs << " | Total input size: " << total_input_size << " bytes";
     LOGS(logger, INFO) << "Initializers: " << num_initializers << " | Total initializer size: " << total_initializer_size << " bytes";
     LOGS(logger, INFO) << "Total graph size: " << (total_input_size + total_initializer_size) << " bytes ("
-                      << ((total_input_size + total_initializer_size) / 1024.0 / 1024.0) << " MB)";
+                       << ((total_input_size + total_initializer_size) / 1024.0 / 1024.0) << " MB)";
 
     // Write JSON log to file if path is available
     if (!json_qnn_graph_path.empty()) {
