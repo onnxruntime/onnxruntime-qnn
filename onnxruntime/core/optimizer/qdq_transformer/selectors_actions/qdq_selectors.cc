@@ -182,8 +182,9 @@ bool DropQDQNodeGroupSelector::Check(const GraphViewer& graph_viewer, const Node
   // Disable same scale and offset check for Resize.
   if (node.OpType() == "Resize"){
     return true;
+  }else{
+    return IsQDQPairSupported(graph_viewer.GetGraph(), q_node, dq_node, get_const_initializer, graph_viewer.ModelPath());
   }
-  return IsQDQPairSupported(graph_viewer.GetGraph(), q_node, dq_node, get_const_initializer, graph_viewer.ModelPath());
 }
 
 bool DropDQNodeGroupSelector::Check(const GraphViewer& graph_viewer, const Node& node, const Node* redundant_clip_node,
