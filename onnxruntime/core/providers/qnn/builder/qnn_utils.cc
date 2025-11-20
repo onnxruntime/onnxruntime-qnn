@@ -1282,24 +1282,6 @@ Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
     return Status::OK();
   }
 
-  // // Actual tensor content is required.
-  // const size_t rows = data_shape[0];
-  // const size_t cols = data_shape[1];
-  // const size_t output_cols = output_shape[1];
-
-  // for (size_t row = 0; row < rows; row++) {
-  //   for (size_t col = 0; col < cols; col++) {
-  //     const size_t src_elem_index = (row * cols + col);
-  //     const size_t dst_elem_index = (col * output_cols + row);
-  //     const size_t src_byte_index = src_elem_index * elem_byte_size;
-  //     const size_t dst_byte_index = dst_elem_index * elem_byte_size;
-  //     assert(src_byte_index < input_buffer.size());
-  //     assert(dst_byte_index < transposed_data.size());
-
-  //     std::memcpy(&transposed_data[dst_byte_index], &input_buffer[src_byte_index], elem_byte_size);
-  //   }
-  // }
-
   // Block transpose for better cache locality
   const size_t rows = data_shape[0];
   const size_t cols = data_shape[1];
@@ -1311,11 +1293,11 @@ Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
 
       for (size_t row = i; row < max_i; row++) {
         for (size_t col = j; col < max_j; col++) {
-        const size_t src_byte_index = (row * cols + col) * elem_byte_size;
-        const size_t dst_byte_index = (col * rows + row) * elem_byte_size;
-        std::memcpy(&transposed_data[dst_byte_index],
-        &input_buffer[src_byte_index],
-        elem_byte_size);
+          const size_t src_byte_index = (row * cols + col) * elem_byte_size;
+          const size_t dst_byte_index = (col * rows + row) * elem_byte_size;
+          std::memcpy(&transposed_data[dst_byte_index],
+                      &input_buffer[src_byte_index],
+                      elem_byte_size);
         }
       }
     }
