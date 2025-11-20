@@ -39,7 +39,6 @@ static const OpVersionsAndSelector::OpVersionsMap GetMiscOpVersionsMap() {
           {"Flatten", {}},
           {"Transpose", {}},
           {"MaxPool", {12}},
-          {"Resize", {}},
           {"Squeeze", {}},
           {"Unsqueeze", {}},
           {"Tile", {}}};
@@ -62,6 +61,7 @@ static const OpVersionsAndSelector::OpVersionsMap GetUnaryOpVersionsMap() {
           {"ReduceProd", {}},
           {"ReduceSum", {}},
           {"Relu", {}},
+          {"Resize", {}},
           {"Gelu", {}},
           {"Elu", {}},
           {"HardSigmoid", {}},
