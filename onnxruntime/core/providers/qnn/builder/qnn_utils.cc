@@ -1255,6 +1255,7 @@ static Status TransposeDataRank5(const TensorShape& input_shape,
   return Status::OK();
 }
 
+// Use use_dummy_tensor flag when performing only QNN op validation and no real tensor data is required.
 Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
                              std::vector<uint32_t>& data_shape,
                              const onnx::TensorProto& initializer,
