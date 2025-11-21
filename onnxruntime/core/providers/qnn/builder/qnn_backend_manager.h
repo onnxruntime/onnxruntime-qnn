@@ -465,7 +465,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   uint32_t soc_model_ = QNN_SOC_MODEL_UNKNOWN;
   const std::vector<OpPackage> op_packages_;
   bool skip_qnn_version_check_ = false;
-  vector<QnnHtpDevice_Arch_t> supported_htp_arch_for_udma_ = {
+  const std::vector<QnnHtpDevice_Arch_t> supported_htp_arch_for_udma_ = {
       QNN_HTP_DEVICE_ARCH_V81
   };
 };
