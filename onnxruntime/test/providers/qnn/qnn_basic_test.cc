@@ -1314,7 +1314,7 @@ TEST_F(QnnHTPBackendTests, DumpJsonQNNGraph) {
 }
 
 // Test exended UDMA mode on supported hardware (should run successfully)
-TEST_F(QnnHTPBackendTests, ExtendedUdmaModeTest_SupportedHardware) {
+TEST_F(QnnHTPBackendTests, ExtendedUdmaModeTest) {
   std::unique_ptr<ModelAndBuilder> model;
   std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
   std::vector<int64_t> shape = {1, 3, 2};
@@ -1353,48 +1353,6 @@ TEST_F(QnnHTPBackendTests, ExtendedUdmaModeTest_SupportedHardware) {
   std::vector<OrtValue> fetches;
   status = session_obj.Run(run_opts, model->builder.feeds_, model->builder.output_names_, &fetches);
   ASSERT_TRUE(status.IsOK());
-}
-
-// Test extended UDMA mode on unsupported hardware (should fail to run)
-TEST_F(QnnHTPBackendTests, ExtendedUdmaModeTest_UnsupportedHardware) {
-  std::unique_ptr<ModelAndBuilder> model;
-  std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f};
-  std::vector<int64_t> shape = {1, 3, 2};
-
-  CreateModelInMemory(model,
-                      QDQBuildAdd3Tensors<uint8_t>(TestInputDef<float>(shape, false, input_data),
-                                                   TestInputDef<float>(shape, false, input_data),
-                                                   TestInputDef<float>(shape, false, input_data)),
-                      "add3.qdq");
-
-  SessionOptions session_opts;
-  session_opts.session_logid = "logger0";
-
-  RunOptions run_opts;
-  run_opts.run_tag = session_opts.session_logid;
-
-  InferenceSession session_obj{session_opts, GetEnvironment()};
-  onnxruntime::ProviderOptions options;
-
-#if defined(_WIN32)
-  options["backend_path"] = "QnnHtp.dll";
-#else
-  options["backend_path"] = "libQnnHtp.so";
-#endif
-  options["offload_graph_io_quantization"] = "0";
-  options["htp_arch"] = "73";
-  options["extended_udma"] = "1";
-
-  auto qnn_ep = QnnExecutionProviderWithOptions(options, &session_opts);
-  EXPECT_TRUE(session_obj.RegisterExecutionProvider(std::move(qnn_ep)).IsOK());
-
-  auto status = session_obj.Load(model->model_data.data(), static_cast<int>(model->model_data.size()));
-  ASSERT_TRUE(status.IsOK());
-  status = session_obj.Initialize();
-  ASSERT_TRUE(status.IsOK());
-  std::vector<OrtValue> fetches;
-  status = session_obj.Run(run_opts, model->builder.feeds_, model->builder.output_names_, &fetches);
-  ASSERT_FALSE(status.IsOK());
 }
 
 // Test option for offloading quantization of graph inputs and dequantization of graph outputs to the CPU EP.
