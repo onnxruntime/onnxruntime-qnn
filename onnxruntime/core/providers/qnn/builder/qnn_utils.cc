@@ -1274,11 +1274,10 @@ Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
 
   std::vector<uint8_t> input_buffer;
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(initializer, input_buffer));
-  transposed_data.resize(input_buffer.size());
+  transposed_data.resize(input_buffer.size(), 0);
 
-  if (use_dummy_tensor) {  // Only shape & dtype validation are needed, filling with dummy data
-    std::fill(transposed_data.begin(), transposed_data.end(), 0);
-    LOGS(logger, VERBOSE) << "Only shape and dtype validation are required, so we can fill with a dummy tensor to avoid heavy memcpy.";
+  if (use_dummy_tensor) {  // Only shape & dtype validation are needed, no need for real tensor
+    LOGS(logger, VERBOSE) << "Only shape and dtype validation are required, so we can use dummy tensor to avoid heavy memcpy.";
     data_shape = std::move(output_shape);  // Update parameter with final transposed shape
     return Status::OK();
   }
