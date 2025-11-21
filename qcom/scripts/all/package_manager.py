@@ -8,11 +8,14 @@ import logging
 import os
 import shutil
 import ssl
+import subprocess
 import tarfile
 import tempfile
+import time
 import urllib.parse
 import urllib.request
 import zipfile
+from collections.abc import Iterable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -21,6 +24,7 @@ import tqdm
 import yaml
 
 QCOM_ROOT = Path(__file__).parent.parent.parent
+REPO_ROOT = QCOM_ROOT.parent
 PACKAGE_CONFIG = QCOM_ROOT / "packages.yml"
 DEFAULT_PACKAGE_CACHE_DIR = Path(
     os.environ.get(
@@ -28,7 +32,14 @@ DEFAULT_PACKAGE_CACHE_DIR = Path(
         str((Path("~") / ".ort-package-cache").expanduser()),
     )
 )
-DEFAULT_MAX_CACHE_SIZE_BYTES = int(os.environ.get("ORT_BUILD_PACKAGE_CACHE_SIZE", f"{5 * 1024 * 1024 * 1024}"))  # 5 GiB
+
+AUTOPRUNE = os.environ.get("ORT_BUILD_PRUNE_PACKAGES", "1") == "1"
+
+DEFAULT_MAX_CACHE_SIZE_BYTES = int(
+    os.environ.get("ORT_BUILD_PACKAGE_CACHE_SIZE", f"{10 * 1024 * 1024 * 1024}")
+)  # 10 GiB
+
+DEFAULT_TOOLS_DIR = Path(os.environ.get("ORT_BUILD_TOOLS_PATH", REPO_ROOT / "build" / "tools"))
 
 CAFILE = os.environ.get("REQUESTS_CA_BUNDLE", certifi.where())
 
@@ -49,6 +60,7 @@ class FileCache:
         url: str,
         expected_sha256: str | None = None,
         expected_sha1: str | None = None,
+        expected_md5: str | None = None,
     ) -> Path:
         """
         Get path to a local copy of the given URL.
@@ -87,6 +99,7 @@ class FileCache:
                 for expected_sha, sha_name, sha_fn in [
                     (expected_sha1, "SHA1", hashlib.sha1),
                     (expected_sha256, "SHA256", hashlib.sha256),
+                    (expected_md5, "MD5", hashlib.md5),
                 ]:
                     if expected_sha is not None:
                         tmp_file.seek(0)
@@ -105,32 +118,39 @@ class FileCache:
                     shutil.copyfileobj(tmp_file, cache_file_stream)
 
         else:
-            logging.info(f"{url} already exists at {cache_file_path}")
+            logging.debug(f"{url} already exists at {cache_file_path}")
         return cache_file_path
 
     def prune(self) -> None:
         """Prune old entries from the cache until it's below our maximum size."""
 
-        # Collect package info into a list of tuple(name, create time, size bytes), sorted by size.
-        pkg_dirs = [
-            (d, d.stat().st_ctime, sum(f.stat().st_size for f in d.glob("*"))) for d in self.__cache_dir.glob("*")
-        ]
-        pkg_dirs.sort(key=lambda d: d[1])
+        # Prepare a list of files in the package directory sorted by access time
+        pkg_files = sorted(
+            ((pf, pf.stat().st_atime, pf.stat().st_size) for pf in self.__cache_dir.rglob("*") if pf.is_file()),
+            key=lambda f: f[1],
+        )
 
-        # Determine what we need to prune.
-        to_prune = []
-        total_size = sum(d[2] for d in pkg_dirs)
+        # Determine what we need to prune
+        to_prune: list[tuple[Path, float, int]] = []
+        total_size = sum(pf[2] for pf in pkg_files)
         logging.info(f"Cache size before pruning: {total_size / 1024.0 / 1024.0:.2f} MiB.")
-        for pkg_dir in pkg_dirs:
+        for pkg_file in pkg_files:
             if total_size <= self.__max_cache_size_bytes:
                 break
-            to_prune.append(pkg_dir)
-            total_size -= pkg_dir[2]
+            to_prune.append(pkg_file)
+            total_size -= pkg_file[2]
 
         # Prune
-        for pkg_dir in to_prune:
-            logging.debug(f"Pruning {pkg_dir[0]} to reclaim {pkg_dir[2] / 1024.0 / 1024.0:.2f} MiB.")
-            shutil.rmtree(pkg_dir[0])
+        for pkg_file in to_prune:
+            logging.debug(f"Pruning {pkg_file[0]} to reclaim {pkg_file[2] / 1024.0 / 1024.0:.2f} MiB.")
+            pkg_file[0].unlink()
+
+        # Remove empty directories
+        for pkg_dir in self.__cache_dir.iterdir():
+            if len([f for f in pkg_dir.rglob("*") if f.is_file()]) == 0:
+                logging.debug(f"Removing empty directory {pkg_dir}")
+                shutil.rmtree(pkg_dir)
+
         logging.info(f"Cache size after pruning: {total_size / 1024.0 / 1024.0:.2f} MiB.")
 
 
@@ -139,14 +159,14 @@ class PackageManager:
     A simple package manager.
     """
 
-    def __init__(self, package: str, package_root: Path) -> None:
+    def __init__(self, package: str, package_root: Path | None = None) -> None:
         full_config = self.__parse_config(PACKAGE_CONFIG)
         if package not in full_config:
             raise ValueError(f"Unknown package {package}.")
         self.__cache = FileCache()
         self.__config = full_config[package]
         self.__package = package
-        self.__package_root = package_root
+        self.__package_root = package_root if package_root is not None else DEFAULT_TOOLS_DIR
         self.__package_root.mkdir(parents=True, exist_ok=True)
 
     @classmethod
@@ -161,8 +181,8 @@ class PackageManager:
             if subdir.name in known:
                 logging.debug(f"{subdir.name} is up to date")
             else:
-                logging.info(f"Removing unknown/outdated package in {subdir.name}")
-                shutil.rmtree(subdir)
+                cls.__uninstall(subdir)
+        FileCache().prune()
 
     def get_bindir(self, assert_exists: bool = True) -> Path:
         """
@@ -204,67 +224,128 @@ class PackageManager:
 
     def install(self) -> None:
         """Ensure this package is installed."""
-        pkg_rootdir = self.get_content_dir()
+        pkg_rootdir = self.get_root_dir()
         if pkg_rootdir.exists():
-            logging.info(f"{pkg_rootdir} already exists.")
+            logging.debug(f"{pkg_rootdir} already exists.")
             return
+        package_path = self.__fetch()
 
-        # Fetch the package archive
+        if package_path.suffix == ".exe":
+            self.__run_installer(package_path)
+        else:
+            # Similar to downloads, we extract to a temporary directory and rename on
+            # success to avoid partial extractions if we get killed.
+            with tempfile.TemporaryDirectory(dir=self.__package_root) as tmp_dir:
+                # Extract it to tmp-dir/{package}-{version}
+                tmp_rootdir = tmp_dir / self.get_rel_package_dir()
+                if tarfile.is_tarfile(package_path):
+                    self.__install_tar(package_path, tmp_rootdir)
+                elif zipfile.is_zipfile(package_path):
+                    self.__install_zip(package_path, tmp_rootdir)
+                else:
+                    raise ValueError(f"{package_path.name} has unknown archive format.")
+
+                # Move fully extracted package to final location
+                logging.info(f"Moving {tmp_rootdir} to {self.__package_root}")
+                shutil.move(tmp_rootdir, self.get_root_dir())
+        if AUTOPRUNE:
+            self.__cache.prune()
+
+    def repair(self) -> None:
+        package_path = self.__fetch()
+        if package_path.suffix != ".exe":
+            raise RuntimeError("Cannot repair non-installer package.")
+        self.__run_installer(package_path, repair=True)
+
+    def __fetch(self) -> Path:
+        """Fetch the package archive."""
         cache_key = str(self.get_rel_package_dir())
         url = self.__format(self.__config["url"])
-        package_path = self.__cache.fetch(cache_key, url, self.__config.get("sha256", None))
-
-        # Similar to downloads, we extract to a temporary directory and rename on
-        # success to avoid partial extrations if we get killed.
-        with tempfile.TemporaryDirectory(dir=self.__package_root) as tmp_dir:
-            # Extract it to tmp-dir/{package}-{version}
-            tmp_rootdir = tmp_dir / self.get_rel_package_dir()
-            if tarfile.is_tarfile(package_path):
-                logging.info(f"Extracting tarball to {tmp_rootdir}")
-                with tarfile.open(package_path, "r") as t:
-                    t.extractall(tmp_rootdir)
-
-            elif zipfile.is_zipfile(package_path):
-                logging.info(f"Extracting zip file to {tmp_rootdir}")
-                with zipfile.ZipFile(package_path, "r") as z:
-                    z.extractall(tmp_rootdir)
-                # zipfile.extractall does not preserve executable bits
-                # https://github.com/python/cpython/issues/59999
-                for root, _, files in os.walk(tmp_rootdir):
-                    for file in files:
-                        file_path = Path(root) / file
-                        file_path.chmod(0o755)
-
-            elif package_path.suffix == ".exe":
-                # Example: nuget.exe, which is not in an archive
-                tmp_rootdir.mkdir()
-                shutil.copyfile(package_path, tmp_rootdir / package_path.name)
-
-            else:
-                raise ValueError(f"{package_path.name} has unknown archive format.")
-
-            # Move fully extracted package to final location
-            logging.info(f"Moving {tmp_rootdir} to {self.__package_root}")
-            try:
-                Path(tmp_rootdir).rename(self.get_root_dir())
-            except OSError:
-                # The fast path didn't work, perhaps we crossed mount boundaries.
-                shutil.move(tmp_rootdir, self.get_root_dir())
-        self.__cache.prune()
+        package_path = self.__cache.fetch(
+            cache_key,
+            url,
+            self.__config.get("sha256", None),
+            self.__config.get("sha1", None),
+            self.__config.get("md5", None),
+        )
+        return package_path
 
     def __format(self, fmt_str: str) -> str:
         """Format a config file string, performing any necessary substitutions."""
-        simple_substitutions = ["major_version", "version"]
-        return fmt_str.format_map({key: self.__config.get(key) for key in simple_substitutions})
+        replacements = {key: self.__config.get(key) for key in ["major_version", "version"]}
+        replacements["root_dir"] = self.get_root_dir()
+        return fmt_str.format_map(replacements)
+
+    def __run_installer(self, installer_path: Path, repair: bool = False) -> None:
+        install_args = [self.__format(a) for a in self.__config.get("install_args", [])]
+        uninstall_args = [self.__format(a) for a in self.__config.get("uninstall_args", [])]
+        repair_args = [self.__format(a) for a in self.__config.get("repair_args", [])]
+
+        # Run the installer
+        self.__execute(installer_path, repair_args if repair else install_args)
+
+        # Save the installer and enough info to run it
+        uninstaller_path = self.get_root_dir() / installer_path.name
+        shutil.copyfile(installer_path, uninstaller_path)
+        uninstall_info = {"uninstaller_path": str(uninstaller_path), "args": uninstall_args}
+        with (self.get_root_dir() / "uninstall.yml").open("wt") as uninstall_file:
+            yaml.safe_dump(uninstall_info, uninstall_file)
+
+    @staticmethod
+    def __execute(exe_path: Path, args: Iterable[str]) -> None:
+        logging.debug(f"Running {[exe_path, *args]}")
+        subprocess.run([exe_path, *args], check=True, timeout=60 * 3)
 
     @staticmethod
     def __format_package_dir(package_name: str, package_version: str) -> str:
         return f"{package_name}-{package_version}"
 
     @staticmethod
+    def __install_tar(archive_path: Path, destination: Path) -> None:
+        logging.info(f"Extracting tarball to {destination}")
+        with tarfile.open(archive_path, "r") as t:
+            t.extractall(destination)
+
+    @staticmethod
+    def __install_zip(archive_path: Path, destination: Path) -> None:
+        logging.info(f"Extracting zip file to {destination}")
+        with zipfile.ZipFile(archive_path, "r") as z:
+            z.extractall(destination)
+        # zipfile.extractall does not preserve executable bits
+        # https://github.com/python/cpython/issues/59999
+        for root, _, files in os.walk(destination):
+            for file in files:
+                file_path = Path(root) / file
+                file_path.chmod(0o755)
+
+    @staticmethod
     def __parse_config(config_path: Path) -> dict[str, dict[str, Any]]:
         with config_path.open() as config_file:
             return yaml.safe_load(config_file)
+
+    @classmethod
+    def __uninstall(cls, subdir: Path) -> None:
+        logging.info(f"Removing unknown/outdated package in {subdir.name}")
+        uninstall_yml_path = subdir / "uninstall.yml"
+        if uninstall_yml_path.exists():
+            with uninstall_yml_path.open("rt") as uninstall_file:
+                uninstall_config = yaml.safe_load(uninstall_file)
+            uninstaller_path = Path(uninstall_config["uninstaller_path"])
+            cls.__execute(uninstaller_path, uninstall_config.get("args", []))
+
+            # Windows sometimes takes a moment to close the uninstaller. Ug.
+            for i in range(5):
+                try:
+                    logging.debug(f"Trying to remove {uninstaller_path}")
+                    uninstaller_path.unlink()
+                    break
+                except PermissionError:
+                    sleep_duration = 1 + (i * 5)
+                    logging.warning(f"Could not delete {uninstaller_path}; trying again in {sleep_duration} seconds.")
+                    time.sleep(sleep_duration)
+        # If we couldn't delete the uninstaller, this will throw for us:
+        logging.debug(f"Clobbering {subdir}")
+        shutil.rmtree(subdir)
 
 
 def make_parser() -> argparse.ArgumentParser:
@@ -275,13 +356,13 @@ def make_parser() -> argparse.ArgumentParser:
         "--package-root",
         action="store",
         help="Path to the package installation directory",
-        required=True,
         type=Path,
     )
 
     action_group = parser.add_argument_group("Actions").add_mutually_exclusive_group(required=True)
     action_group.add_argument("--clean", action="store_true", help="Uninstall all outdated packages")
     action_group.add_argument("--install", action="store_true", help="Install the selected package")
+    action_group.add_argument("--repair", action="store_true", help="Repair the selected package")
     action_group.add_argument(
         "--print-bin-dir",
         action="store_true",
@@ -310,6 +391,8 @@ if __name__ == "__main__":
         packager = PackageManager(args.package, args.package_root)
         if args.install:
             packager.install()
+        elif args.repair:
+            packager.repair()
         elif args.print_bin_dir:
             print(packager.get_bindir())
         elif args.print_content_dir:

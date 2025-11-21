@@ -119,14 +119,6 @@ Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
     ORT_RETURN_IF_ERROR(qnn_model_wrapper.IsPerChannelQuantized(input_1, is_per_axis_quant, quant_axis));
 
     if (is_per_axis_quant) {
-      int32_t elem_data_type = 0;
-      ORT_RETURN_IF_ERROR(utils::GetOnnxTensorElemDataType(input_1.node_arg, elem_data_type));
-
-      const bool is_signed_type = (elem_data_type == ONNX_NAMESPACE::TensorProto_DataType_INT4) ||
-                                  (elem_data_type == ONNX_NAMESPACE::TensorProto_DataType_INT8) ||
-                                  (elem_data_type == ONNX_NAMESPACE::TensorProto_DataType_INT16);
-      ORT_RETURN_IF_NOT(is_signed_type, "Conv weights must be of a signed quantized type if quantized per-channel");
-
       if (conv_type == OnnxConvType::kConvTranspose) {
         ORT_RETURN_IF_NOT(quant_axis == 1,
                           "ConvTranspose's input[1] must be use axis == 1 for per-channel quantization");
@@ -244,6 +236,12 @@ Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
                     "Non-constant Conv inputs only support per-tensor quantization");
       bool is_graph_input = qnn_model_wrapper.IsGraphInput(input1_name);
       LOGS(logger, VERBOSE) << "Add HWCN Transpose node after input: " << input1_name;
+
+      if (!qnn_model_wrapper.IsQnnTensorWrapperExist(input1_name)) {
+        QnnTensorWrapper weight_tensor_wrapper;
+        ORT_RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(inputs[1], weight_tensor_wrapper));
+        ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(weight_tensor_wrapper)), "Failed to add weight tensor.");
+      }
 
       if (conv_type == OnnxConvType::kConv) {
         ORT_RETURN_IF_ERROR(qnn_model_wrapper.AddNchwToHwcnTranspose(node_unit.Index(),
@@ -425,7 +423,7 @@ Status ConvOpBuilder::ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrapper,
 
   //
   // Input 1: weight
-  // We need to first reshape the weight inorder to handle 1D convolutions with the Conv2d operator.
+  // We need to first reshape the weight in order to handle 1D convolutions with the Conv2d operator.
   // Next, we have to transpose the weight because ORT layout transformations do not change the weight layout.
   //
   {
@@ -510,6 +508,12 @@ Status ConvOpBuilder::ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrapper,
       // Dynamic weight: Add nodes to reshape to 2D, and then transpose.
       ORT_RETURN_IF(input_info.quant_param.IsPerChannel(),
                     "Non-constant Conv inputs only support per-tensor quantization");
+
+      if (!qnn_model_wrapper.IsQnnTensorWrapperExist(input1_name)) {
+        QnnTensorWrapper weight_tensor_wrapper;
+        ORT_RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(inputs[1], weight_tensor_wrapper));
+        ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(weight_tensor_wrapper)), "Failed to add weight tensor.");
+      }
 
       bool is_graph_input = qnn_model_wrapper.IsGraphInput(input1_name);
       LOGS(logger, VERBOSE) << "Adding Reshape (to 2D) and HWCN Transpose node after input: " << input1_name;
@@ -680,22 +684,16 @@ Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
 
       // input_dims for calculation are (H, W, D...) excluding N, C
       std::vector<uint32_t> input_dims(input_0_shape.begin() + 1, input_0_shape.end() - 1);
-      // output_dims for calculation are from the 'output_shape' attribute
-      std::vector<uint32_t> output_dims_from_attr;
-      output_dims_from_attr.reserve(output_shape_attribute_value.size());  // Use the new name
-      for (int64_t dim : output_shape_attribute_value) {                   // Use the new name
-        output_dims_from_attr.push_back(narrow<uint32_t>(dim));
-      }
 
-      if (is_1d_conv) {  // Adjust input_dims and output_dims_from_attr for 1D conv logic
+      if (is_1d_conv) {  // Adjust input_dims and output_shape_attribute_value for 1D conv logic
         input_dims.insert(input_dims.begin(), 1);
-        output_dims_from_attr.insert(output_dims_from_attr.begin(), 1);
+        output_shape_attribute_value.insert(output_shape_attribute_value.begin(), 1);
       }
 
       pads.assign(kernel_shape.size() * 2, 0);  // Reset pads before filling
       size_t rank = input_dims.size();
 
-      ORT_RETURN_IF_NOT(rank == output_dims_from_attr.size(),
+      ORT_RETURN_IF_NOT(rank == output_shape_attribute_value.size(),
                         "QNN EP: ConvTranspose 'output_shape' attribute rank mismatch "
                         "with input dims for padding calculation.");
 
@@ -705,7 +703,7 @@ Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
         AutoPadType pad_type = StringToAutoPadType(auto_pad);  // Use current auto_pad for distribution
 
         auto total_pad = ComputeTotalPad(input_dims[dim], strides[dim], output_padding[dim],
-                                         kernel_shape[dim], dilations[dim], output_dims_from_attr[dim]);
+                                         kernel_shape[dim], dilations[dim], output_shape_attribute_value[dim]);
         DistributePadding(pad_type, total_pad, pad_head, pad_tail);
 
         pads[dim] = narrow<uint32_t>(pad_head);
@@ -718,7 +716,7 @@ Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
       std::vector<uint32_t> input_dims(input_0_shape.begin() + 1, input_0_shape.end() - 1);
       std::vector<uint32_t> output_dims(output_shape.begin() + 1, output_shape.end() - 1);
       if (is_1d_conv) {
-        // insert Hight = 1 for 1D
+        // insert Height = 1 for 1D
         input_dims.insert(input_dims.begin(), 1);
         output_dims.insert(output_dims.begin(), 1);
       }
@@ -744,7 +742,6 @@ Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wra
       }
     } else {
       // Handle 1D conv by setting padding for height to 0.
-      // Only apply this 1D adjustment if not already done by auto_pad logic
       if (pads.size() == 2) {
         const uint32_t width_pad_begin = pads[0];
         const uint32_t width_pad_end = pads[1];

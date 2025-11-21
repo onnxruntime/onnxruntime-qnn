@@ -2183,12 +2183,10 @@ TEST_F(QnnHTPBackendTests, ConvTransposeU8U8S32_AutoPadValid) {
 // This test verifies that when 'output_shape' is provided, the QNN EP correctly
 // calculates and applies padding for ConvTranspose, overriding any 'pads' attribute,
 // and correctly distributes the padding according to 'auto_pad' rules.
-// CPU does not use "output_shape" in the node config and caluculates it with pad=0
-// qnn_test_utils.h(652): error: Expected equality of these values: num_vals Which is: 36  cpu_qdq_vals.size() Which is: 64
-TEST_F(QnnHTPBackendTests, DISABLED_ConvTransposeU8U8S32_OutputShape) {
+TEST_F(QnnHTPBackendTests, ConvTransposeU8U8S32_OutputShape) {
   // Explicit output shape: [N, C_out, H_out, W_out] = [1, 1, 6, 6]
   // This implies a total padding of 1 per spatial dim (H/W), distributed as (0, 1) for SAME_UPPER
-  std::vector<int64_t> output_shape = {1, 1, 6, 6};
+  std::vector<int64_t> output_shape = {6, 6};
   RunHTPConvOpTest<uint8_t, uint8_t>("ConvTranspose",
                                      TestInputDef<float>({1, 1, 4, 4}, false, 0.f, 10.f),  // Dynamic input
                                      TestInputDef<float>({1, 1, 2, 2}, true, -1.f, 1.f),   // Static weights
@@ -2205,8 +2203,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_ConvTransposeU8U8S32_OutputShape) {
                                      std::nullopt,   // No output activation
                                      output_shape);  // Pass the output_shape attribute
 
-  // Explicit output shape: [N, C_out, H_out, W_out] = [1, 1, 6, 6, 6]
-  std::vector<int64_t> output_shape_3d = {1, 1, 6, 6, 6};
+  std::vector<int64_t> output_shape_3d = {6, 6, 6};
   RunHTPConvOpTest<uint8_t, uint8_t>("ConvTranspose",
                                      TestInputDef<float>({1, 1, 4, 4, 4}, false, 0.f, 10.f),  // Dynamic input
                                      TestInputDef<float>({1, 1, 2, 2, 2}, true, -1.f, 1.f),   // Static weights

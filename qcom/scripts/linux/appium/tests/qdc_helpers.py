@@ -8,23 +8,37 @@ from adb_utils import Adb
 
 ORT_BUILD_CONFIG = "Release"
 
+# Where to find the build's executables relative to the test archive root.
+ORT_BUILD_ROOT_RELPATH = f"build/android-aarch64/{ORT_BUILD_CONFIG}"
+
 # this is where our zip file is extracted on the QDC host.
 QDC_HOST_PATH = os.environ.get("QDC_TEST_ROOT", "/qdc/appium")
+
+# Where to find the build's executables on the host
+ORT_HOST_BUILD_ROOT = f"{QDC_HOST_PATH}/{ORT_BUILD_ROOT_RELPATH}"
+
+# directory containing model test suites
+MODEL_TEST_PATH = os.environ.get("MODEL_TEST_ROOT", f"{QDC_HOST_PATH}/model_tests")
 
 # this is where we will copy our files on the Android device.
 ORT_DEVICE_PATH = "/data/local/tmp/onnxruntime"
 
+# Where to find the build's executables on the device
+ORT_DEVICE_BUILD_ROOT = f"{ORT_DEVICE_PATH}/{ORT_BUILD_ROOT_RELPATH}"
+
 # Glob matching test result files on the device
-ORT_TEST_RESULTS_DEVICE_GLOB = f"{ORT_DEVICE_PATH}/{ORT_BUILD_CONFIG}/onnxruntime_*.results.*"
+ORT_TEST_RESULTS_DEVICE_GLOB = f"{ORT_DEVICE_BUILD_ROOT}/onnxruntime_*.results.*"
 
 # Path to the on-device test log; this should match the glob in ORT_TEST_RESULTS_DEVICE_GLOB
-ORT_TEST_RESULTS_DEVICE_LOG = f"{ORT_DEVICE_PATH}/{ORT_BUILD_CONFIG}/onnxruntime_test.results.txt"
+ORT_TEST_RESULTS_DEVICE_LOG = f"{ORT_DEVICE_BUILD_ROOT}/onnxruntime_test.results.txt"
 
 # all files in this folder will be uploaded back to QDC.
 QDC_LOG_PATH = "/data/local/tmp/QDC_logs"
 
-QNN_ADSP_LIBRARY_PATH = "\\;".join([f"{ORT_DEVICE_PATH}/lib/hexagon-v{arch}/unsigned" for arch in [66, 68, 73, 75, 79]])
-QNN_LD_LIBRARY_PATH = f"{ORT_DEVICE_PATH}/{ORT_BUILD_CONFIG}:{ORT_DEVICE_PATH}/lib/aarch64-android"
+QNN_ADSP_LIBRARY_PATH = "\\;".join(
+    f"{ORT_DEVICE_PATH}/lib/hexagon-v{arch}/unsigned" for arch in [66, 68, 73, 75, 79, 81]
+)
+QNN_LD_LIBRARY_PATH = f"{ORT_DEVICE_BUILD_ROOT}:{ORT_DEVICE_PATH}/lib/aarch64-android"
 
 
 class TestBase:
@@ -52,6 +66,12 @@ class TestBase:
         for item in Path(QDC_HOST_PATH).iterdir():
             adb.push(item, Path(ORT_DEVICE_PATH))
 
+        # Push test models
+        adb.shell(["mkdir", "-p", f"{ORT_DEVICE_PATH}/model_tests"])
+        for item in Path(MODEL_TEST_PATH).iterdir():
+            # We're playing games with .resolve() and .name because adb push doesn't follow symlinks.
+            adb.push(item.resolve(), Path(ORT_DEVICE_PATH) / "model_tests" / item.name)
+
         # Builds sometimes come from Windows, where executable bits are not set.
         # fmt: off
         adb.shell(
@@ -63,7 +83,7 @@ class TestBase:
             ],
         )
         # fmt: on
-        adb.shell([f"sh -c 'chmod +x {ORT_DEVICE_PATH}/{ORT_BUILD_CONFIG}/*'"])
+        adb.shell([f"sh -c 'chmod +x {ORT_DEVICE_BUILD_ROOT}/*'"])
 
     def copy_logs(self):
         adb = Adb()

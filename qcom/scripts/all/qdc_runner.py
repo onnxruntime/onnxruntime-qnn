@@ -8,17 +8,22 @@ import functools
 import logging
 import os
 import random
+import shutil
+import signal
 import tempfile
 import time
 import uuid
 import zipfile
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from enum import Enum
 from pathlib import Path, PurePosixPath
+from types import FrameType
 from typing import ClassVar, NamedTuple
 
 import backoff
 import requests
+from package_manager import PackageManager
 from prettytable import PrettyTable
 from qdc_public_api_client import Client
 from qdc_public_api_client.api.artifacts import (
@@ -31,10 +36,12 @@ from qdc_public_api_client.api.jobs import (
     get_jobs_id,
     get_jobs_job_id_logs,
     post_jobs,
+    post_jobs_job_id_abort,
 )
 from qdc_public_api_client.models.artifact_type import ArtifactType
 from qdc_public_api_client.models.artifact_type_0 import ArtifactType0
 from qdc_public_api_client.models.create_job_type_0 import CreateJobType0
+from qdc_public_api_client.models.error_message_type_0 import ErrorMessageType0
 from qdc_public_api_client.models.job_logs_type_0 import JobLogsType0
 from qdc_public_api_client.models.job_mode import JobMode
 from qdc_public_api_client.models.job_result import JobResult
@@ -42,13 +49,16 @@ from qdc_public_api_client.models.job_state import JobState
 from qdc_public_api_client.models.job_submission_parameter import JobSubmissionParameter
 from qdc_public_api_client.models.job_type import JobType
 from qdc_public_api_client.models.job_type_0 import JobType0
+from qdc_public_api_client.models.log_upload_status import LogUploadStatus
 from qdc_public_api_client.models.post_artifacts_uuid_continueupload_body import (
     PostArtifactsUuidContinueuploadBody,
 )
 from qdc_public_api_client.models.test_framework import TestFramework
-from qdc_public_api_client.types import File, Response
+from qdc_public_api_client.types import File, Response, Unset
 
-ORT_APPIUM_ARCHIVE = (Path(__file__).parent.parent.parent.parent / "build" / "onnxruntime-tests-android.zip").absolute()
+ORT_APPIUM_ARCHIVE = (
+    Path(__file__).parent.parent.parent.parent / "build" / "onnxruntime-tests-android-aarch64.zip"
+).absolute()
 ORT_TEST_WIN_ARM64 = (
     Path(__file__).parent.parent.parent.parent / "build" / "onnxruntime-tests-windows-arm64.zip"
 ).absolute()
@@ -85,12 +95,13 @@ class TestConfig(NamedTuple):
 QDC_TESTS = [
     TestConfig("Mobile Device", Platform.ANDROID, [
         TestDevice("3625030", "Lanai SM8650"),
-        # TODO: [AISW-140749] Unit test failures on Pakala in QAIRT 2.35
-        # TestDevice("3700521", "Pakala SM8750"),
+        TestDevice("3700521", "Pakala SM8750"),
+        TestDevice("3922779", "Kaanapali SM8850"),
     ]),
     TestConfig("Windows on Snapdragon", Platform.WINDOWS, [
-        TestDevice("3748430", "Purwa SC8340XP"),
-        TestDevice("3625029", "Hamoa SC8380XP"),
+        # We have a Hamoa CI machine so we don't enable it in QDC.
+        # TestDevice("3625029", "Hamoa SC8380XP"),
+        TestDevice("3922782", "Glymur SC8480XP"),
     ]),
 ]
 # fmt: on
@@ -168,6 +179,7 @@ class RunStatus(Enum):
     RUNNING = 2
     SUCCESS = 3
     FAILED = 4
+    ABORTED = 5
 
 
 class Run(ABC):
@@ -177,7 +189,11 @@ class Run(ABC):
         self.url = url
 
     def is_done(self):
-        return self.status == RunStatus.SUCCESS or self.status == RunStatus.FAILED
+        return self.status in [RunStatus.SUCCESS, RunStatus.FAILED, RunStatus.ABORTED]
+
+    @abstractmethod
+    def abort(self) -> None:
+        pass
 
     @abstractmethod
     def poll(self) -> None:
@@ -190,6 +206,9 @@ class Run(ABC):
 
 class TestRuns:
     _runs: ClassVar[list[Run]] = []
+
+    def abort(self) -> None:
+        [r.abort() for r in self._runs]
 
     def add_run(self, run: Run) -> None:
         self._runs.append(run)
@@ -268,6 +287,19 @@ class QdcClient:
 
         self._client = Client(base_url=self.api_url, headers=qdc_headers)
 
+    def get_job_status(self, job_id: int) -> JobType0:
+        response = self.get_jobs_id(job_id)
+
+        if response.status_code != 200:
+            raise RuntimeError(
+                f"Error starting job on QDC. Response code={response.status_code}: {response.content.decode('utf-8')}"
+            )
+
+        if type(response.parsed) is not JobType0:
+            raise RuntimeError("QDC jobs_id response missing required fields.")
+
+        return response.parsed
+
     def get_job_url(self, job_id: int) -> str:
         if self.api_url == self._QDC_PROD_API_URL:
             return f"https://qdc.qualcomm.com/#/reports/job/automated/{job_id}"
@@ -294,43 +326,69 @@ class QdcClient:
 
     @retry_with_backoff()
     def post_artifacts_startupload(self, *args, **kwargs) -> Response["ArtifactType0 | None"]:
-        return post_artifacts_startupload.sync_detailed(
+        result = post_artifacts_startupload.sync_detailed(
             client=self._client,
             *args,  # noqa: B026
             **kwargs,
         )
+        if isinstance(result, ErrorMessageType0):
+            raise RuntimeError(result.message)
+        return result  # type: ignore[return-value]
+
+    @retry_with_backoff()
+    def abort_job(self, *args, **kwargs) -> Response["JobType0 | None"]:
+        result = post_jobs_job_id_abort.sync_detailed(
+            client=self._client,
+            *args,  # noqa: B026
+            **kwargs,
+        )
+        if isinstance(result, ErrorMessageType0):
+            raise RuntimeError(result.message)
+        return result  # type: ignore[return-value]
 
     @retry_with_backoff()
     def post_artifacts_uuid_endupload(self, *args, **kwargs) -> Response["ArtifactType0 | None"]:
-        return post_artifacts_uuid_endupload.sync_detailed(
+        result = post_artifacts_uuid_endupload.sync_detailed(
             client=self._client,
             *args,  # noqa: B026
             **kwargs,
         )
+        if isinstance(result, ErrorMessageType0):
+            raise RuntimeError(result.message)
+        return result  # type: ignore[return-value]
 
     @retry_with_backoff()
     def post_artifacts_uuid_continueupload(self, *args, **kwargs) -> Response["ArtifactType0 | None"]:
-        return post_artifacts_uuid_continueupload.sync_detailed(
+        result = post_artifacts_uuid_continueupload.sync_detailed(
             client=self._client,
             *args,  # noqa: B026
             **kwargs,
         )
+        if isinstance(result, ErrorMessageType0):
+            raise RuntimeError(result.message)
+        return result  # type: ignore[return-value]
 
     @retry_with_backoff()
     def post_jobs(self, *args, **kwargs) -> Response["JobType0 | None"]:
-        return post_jobs.sync_detailed(
+        result = post_jobs.sync_detailed(
             client=self._client,
             *args,  # noqa: B026
             **kwargs,
         )
+        if isinstance(result, ErrorMessageType0):
+            raise RuntimeError(result.message)
+        return result  # type: ignore[return-value]
 
     @retry_with_backoff()
     def get_jobs_id(self, *args, **kwargs) -> Response["JobType0 | None"]:
-        return get_jobs_id.sync_detailed(
+        result = get_jobs_id.sync_detailed(
             client=self._client,
             *args,  # noqa: B026
             **kwargs,
         )
+        if isinstance(result, ErrorMessageType0):
+            raise RuntimeError(result.message)
+        return result  # type: ignore[return-value]
 
     def _download_log(self, qdc_log_path: PurePosixPath, local_log_path: Path) -> None:
         logging.info(f"Downloading QDC log {qdc_log_path} to {local_log_path}.")
@@ -352,16 +410,36 @@ class QdcClient:
 
     @retry_with_backoff()
     def _download_zipped_log(self, qdc_log_path: PurePosixPath) -> Response[File]:
-        return get_jobs_downloadlogs.sync_detailed(client=self._client, path=str(qdc_log_path))
+        result = get_jobs_downloadlogs.sync_detailed(client=self._client, path=str(qdc_log_path))
+        if isinstance(result, ErrorMessageType0):
+            raise RuntimeError(result.message)
+        if result is None:
+            raise RuntimeError("get_jobs_downloadlogs returned None")
+        return result  # type: ignore[return-value]
 
     @retry_with_backoff()
     def _get_job_log_list(self, job_id: int) -> Response[list["JobLogsType0 | None"]]:
-        return get_jobs_job_id_logs.sync_detailed(job_id=job_id, client=self._client)
+        result = get_jobs_job_id_logs.sync_detailed(job_id=job_id, client=self._client)
+        if isinstance(result, ErrorMessageType0):
+            raise RuntimeError(result.message)
+        return result  # type: ignore[return-value]
 
-    # It takes some time after job completion for logs to show up. Until they do, we just get an
-    # empty log list. Poll until something (and there will always be something) shows up.
-    @backoff.on_predicate(backoff.constant, lambda logs: len(logs) == 0, max_time=60 * 10, interval=5)
     def _get_full_job_log_names(self, job_id: int) -> list[str]:
+        @backoff.on_predicate(
+            backoff.constant,
+            lambda status: status in (LogUploadStatus.INPROGRESS, LogUploadStatus.NOLOGS),
+            max_time=60 * 10,
+            interval=5,
+        )
+        def _get_final_log_status(job_id: int) -> LogUploadStatus:
+            log_status = self.get_job_status(job_id).log_upload_status
+            assert not isinstance(log_status, Unset)
+            return log_status
+
+        log_status = _get_final_log_status(job_id)
+        if log_status != LogUploadStatus.COMPLETED:
+            return []
+
         response = self._get_job_log_list(job_id)
         if response.status_code != 200:
             raise RuntimeError(
@@ -392,6 +470,8 @@ class QdcRunner:
         enable_platforms: list[Platform],
         override_android_id: str,
         override_windows_id: str,
+        android_archive: Path,
+        windows_archive: Path,
     ):
         logging.info("Initializing QDC test runner for project.")
         self._client = QdcClient(api_url, on_behalf_of)
@@ -405,11 +485,11 @@ class QdcRunner:
         self._job_config = {}
 
         if (not have_override or override_android_id) and enable_android:
-            apk_test_pkg_uuid = self._upload_artifact(ORT_APPIUM_ARCHIVE, ArtifactType.TESTSCRIPT)
+            apk_test_pkg_uuid = self._upload_artifact(android_archive, ArtifactType.TESTSCRIPT)
             self._job_config[Platform.ANDROID] = QdcRunner.QdcJobConfig([apk_test_pkg_uuid], TestFramework.APPIUM, None)
 
         if (not have_override or override_windows_id) and enable_windows:
-            windows_test_uuid = self._upload_artifact(ORT_TEST_WIN_ARM64, ArtifactType.TESTSCRIPT)
+            windows_test_uuid = self._upload_artifact(windows_archive, ArtifactType.TESTSCRIPT)
             self._job_config[Platform.WINDOWS] = QdcRunner.QdcJobConfig(
                 [windows_test_uuid],
                 TestFramework.POWERSHELL,
@@ -447,8 +527,9 @@ class QdcRunner:
     def _finish_run(self, job_id: int, platform: Platform, status: RunStatus) -> RunStatus:
         if self._log_dir is not None:
             log_dir = Path(str(self._log_dir).replace("%p", platform.name.lower()))
-            logging.info(f"Downloading log files to {log_dir}.")
-            self._client.download_logs(job_id, log_dir)
+            if status != RunStatus.ABORTED:
+                logging.info(f"Downloading log files to {log_dir}.")
+                self._client.download_logs(job_id, log_dir)
             return status
 
         return status
@@ -628,6 +709,9 @@ class QdcRunner:
 
         return QdcRun(self, platform, test_name, job_id, job_url)
 
+    def abort_run(self, job_id: int) -> None:
+        self._client.abort_job(job_id)
+
     def get_run_status(self, job_id: int, platform: Platform) -> RunStatus:
         # Approximate mapping of state and result
         #
@@ -637,18 +721,10 @@ class QdcRunner:
         # Completed                                 Successful, Unsuccessful, Error
         # Aborted                                   Aborted
 
-        response = self._client.get_jobs_id(job_id)
+        job_status = self._client.get_job_status(job_id)
 
-        if response.status_code != 200:
-            raise RuntimeError(
-                f"Error starting job on QDC. Response code={response.status_code}: {response.content.decode('utf-8')}"
-            )
-
-        if type(response.parsed) is not JobType0:
-            raise RuntimeError("QDC jobs_id response missing required fields.")
-
-        result = response.parsed.result
-        state = response.parsed.state
+        result = job_status.result
+        state = job_status.state
 
         if state == JobState.UNDEFINED:
             return RunStatus.UNKNOWN
@@ -658,6 +734,8 @@ class QdcRunner:
             return RunStatus.RUNNING
         elif state == JobState.COMPLETED and result == JobResult.SUCCESSFUL:
             return self._finish_run(job_id, platform, RunStatus.SUCCESS)
+        elif state == JobState.CANCELED:
+            return RunStatus.ABORTED
 
         return self._finish_run(job_id, platform, RunStatus.FAILED)
 
@@ -676,11 +754,32 @@ class QdcRun(Run):
         self.runner = runner
         self.job_id = job_id
 
+    def abort(self) -> None:
+        logging.warning(f"Aborting {self.test_name}")
+        self.runner.abort_run(self.job_id)
+
     def poll(self) -> None:
         self.status = self.runner.get_run_status(self.job_id, self.platform)
 
     def get_farm_name(self) -> str:
         return "QDC"
+
+
+# Caution: this class can also be found in qcom/ep_build/util.py. Consider copying any edits.
+class TemporarySignalHandler:
+    def __init__(self, handler: Callable[[int, FrameType | None], None], signum: int = signal.SIGINT) -> None:
+        self.__signum = signum
+        self.__handler = handler
+
+    def __enter__(self) -> None:
+        self.__prev_handler = signal.getsignal(self.__signum)
+        signal.signal(self.__signum, self.__handler)
+
+    def __exit__(self, exc_type, exc_value, exc_tb) -> None:
+        try:
+            signal.signal(self.__signum, self.__prev_handler)
+        except Exception as e:
+            logging.warning(f"Failed to restore signal handler: {e}")
 
 
 #
@@ -737,6 +836,22 @@ class RunnerCli:
             help="Run a QDC test using the specified Windows device device ID.",
             required=False,
         )
+        parser.add_argument(
+            "--append-android-package",
+            metavar="PACKAGE:SUBDIR",
+            type=str,
+            action="store",
+            help="Append the contents of this package to the Android test archive in the given subdirectory.",
+            required=False,
+        )
+        parser.add_argument(
+            "--append-windows-package",
+            metavar="PACKAGE:SUBDIR",
+            type=str,
+            action="store",
+            help="Append the contents of this package to the Windows test archive in the given subdirectory.",
+            required=False,
+        )
         args = parser.parse_args()
 
         provided_name = args.name[:100].replace("/", "_")
@@ -752,26 +867,41 @@ class RunnerCli:
         self.qdc_android_id: str = args.qdc_android_id
         self.qdc_windows_id: str = args.qdc_windows_id
 
+        self.append_android_package: str = args.append_android_package
+        self.append_windows_package: str = args.append_windows_package
+
         logging.info(f"Initialized runner. Test name prefix={self.test_name}")
 
     def run(self) -> bool:
         test_runs = TestRuns()
 
-        QdcRunner(
-            self.test_name,
-            self.on_behalf_of,
-            self.log_dir,
-            test_runs,
-            self.qdc_api_url,
-            self.enable_platforms,
-            self.qdc_android_id,
-            self.qdc_windows_id,
-        )
-        logging.info(f"Initialized runner. Test name prefix={self.test_name}")
+        android_archive = ORT_APPIUM_ARCHIVE
+        windows_archive = ORT_TEST_WIN_ARM64
 
-        while test_runs.has_pending_tasks():
-            test_runs.poll_runs()
-            time.sleep(10)
+        with tempfile.TemporaryDirectory(prefix="QdcRunner") as tmpdir:
+            if self.append_android_package is not None:
+                android_archive = self.__append_package(android_archive, Path(tmpdir), self.append_android_package)
+            if self.append_windows_package is not None:
+                windows_archive = self.__append_package(windows_archive, Path(tmpdir), self.append_windows_package)
+
+            with TemporarySignalHandler(lambda sig, frame: test_runs.abort()):
+                QdcRunner(
+                    self.test_name,
+                    self.on_behalf_of,
+                    self.log_dir,
+                    test_runs,
+                    self.qdc_api_url,
+                    self.enable_platforms,
+                    self.qdc_android_id,
+                    self.qdc_windows_id,
+                    android_archive,
+                    windows_archive,
+                )
+                logging.info(f"Initialized runner. Test name prefix={self.test_name}")
+
+                while test_runs.has_pending_tasks():
+                    test_runs.poll_runs()
+                    time.sleep(10)
 
         print()
         print(test_runs.get_status_table())
@@ -783,6 +913,32 @@ class RunnerCli:
             return False
 
         return True
+
+    @classmethod
+    def __add_directory(cls, archive_path: Path, addendum_root: Path, prefix: Path) -> None:
+        """Add a directory to an archive."""
+        for filename in addendum_root.glob("**/*"):
+            file_to_archive = filename
+            if filename.is_symlink():
+                file_to_archive = filename.resolve()
+                if filename.is_dir():
+                    cls.__add_directory(archive_path, filename, prefix / filename.name)
+            else:
+                with zipfile.ZipFile(archive_path, mode="a") as archive:
+                    arcname = prefix / file_to_archive.relative_to(addendum_root)
+                    archive.write(file_to_archive, arcname)
+
+    @classmethod
+    def __append_package(cls, orig_archive_path: Path, new_archive_dir: Path, package_and_subdir: str) -> Path:
+        """Add the contents of a package into the QDC payload archive."""
+        package, subdir = package_and_subdir.split(":")
+        logging.info(f"Adding contents of package {package} into payload archive's {subdir} directory.")
+        pm = PackageManager(package)
+        pm.install()
+        new_archive_path = new_archive_dir / orig_archive_path.name
+        shutil.copyfile(orig_archive_path, new_archive_path)
+        cls.__add_directory(new_archive_path, pm.get_content_dir(), Path(subdir))
+        return new_archive_path
 
 
 log_format = "[%(asctime)s] [qdc_runner.py] [%(levelname)s] %(message)s"

@@ -16,7 +16,31 @@ fi
 
 set -x
 
-sudo apt install libc++-dev python3.10-dev python3.10-venv
+# Add keys and apt source to install more recent clang versions
+apt_gpg_file=/etc/apt/trusted.gpg.d/apt.llvm.org.asc
+if [ ! -x "${apt_gpg_file}" ]; then
+    wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee "${apt_gpg_file}" > /dev/null
+else
+    echo "llvm apt gpg file already exists."
+fi
+
+# This is an awkward filename because of historical reasons, which matches the script based here:
+# https://apt.llvm.org/llvm.sh
+apt_source_file=/etc/apt/sources.list.d/archive_uri-http_apt_llvm_org_jammy_-jammy.list
+if [ ! -x "${apt_source_file}" ]; then
+    echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-16 main" | sudo tee "${apt_source_file}" > /dev/null
+else
+    echo "llvm apt repo already exists."
+fi
+
+sudo apt-get update
+
+sudo apt install \
+    clang-16 lld-16 libc++-dev \
+    python3.10-dev python3.10-venv \
+    docker.io docker-buildx qemu qemu-user-static
+
+sudo usermod -aG docker ortqnnepci
 
 # Configure GPG keyrings and other dependencies for GitHub CLI
 (type -p wget >/dev/null || (sudo apt update && sudo apt-get install wget -y)) \
@@ -38,6 +62,7 @@ cat > "${env_tmpfile}" <<EOF
 LANG=en_US.UTF-8
 HOME=${runner_home}
 
+ORT_BUILD_DOCKER_CCACHE_ROOT=${runner_home}/docker-ccache
 ORT_BUILD_PACKAGE_CACHE_PATH=${runner_home}/ort-package-cache
 ORT_BUILD_TOOLS_PATH=${runner_home}/ort-build-tools
 EOF
@@ -57,6 +82,18 @@ chmod 644 "${ccache_tmpfile}"
 sudo -u ortqnnepci mkdir -p "${runner_home}/.ccache"
 sudo -u ortqnnepci cp "${ccache_tmpfile}" "${runner_home}/.ccache/ccache.conf"
 rm "${ccache_tmpfile}"
+
+#################################
+# Clean up after docker every day
+docker_prune_tmpfile=$(mktemp --suffix=docker-prune)
+cat > "${docker_prune_tmpfile}" << EOF
+#!/bin/sh
+
+docker system prune --force
+EOF
+
+chmod 755 "${docker_prune_tmpfile}"
+sudo mv "${docker_prune_tmpfile}" /etc/cron.daily/docker-prune
 
 set +x
 echo

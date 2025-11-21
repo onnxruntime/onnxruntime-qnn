@@ -84,7 +84,7 @@ void usage() {
       "\t    '0', '1', '2', '3', default is '0'.\n"
       "\t    [QNN only] [soc_model]: The SoC Model number. Refer to QNN SDK documentation for specific values. Defaults to '0' (unknown). \n"
       "\t    [QNN only] [htp_arch]: The minimum HTP architecture. The driver will use ops compatible with this architecture. \n"
-      "\t    Options are '0', '68', '69', '73', '75'. Defaults to '0' (none). \n"
+      "\t    Options are '0', '68', '69', '73', '75', '81'. Defaults to '0' (none). \n"
       "\t    [QNN only] [device_id]: The ID of the device to use when setting 'htp_arch'. Defaults to '0' (for single device). \n"
       "\t    [QNN only] [enable_htp_fp16_precision]: Enable the HTP_FP16 precision so that the float32 model will be inferenced with fp16 precision. \n"
       "\t    Otherwise, it will be fp32 precision. Works for float32 model for HTP backend. Defaults to '1' (with FP16 precision.). \n"
@@ -607,7 +607,7 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
             ORT_THROW("Wrong value for htp_graph_finalization_optimization_mode. select from: " + str);
           }
         } else if (key == "htp_arch") {
-          std::unordered_set<std::string> supported_htp_archs = {"0", "68", "69", "73", "75"};
+          std::unordered_set<std::string> supported_htp_archs = {"0", "68", "69", "73", "75", "81"};
           if (supported_htp_archs.find(value) == supported_htp_archs.end()) {
             std::ostringstream str_stream;
             std::copy(supported_htp_archs.begin(), supported_htp_archs.end(),
@@ -919,7 +919,17 @@ select from 'TF8', 'TF16', 'UINT8', 'FLOAT', 'ITENSOR'. \n)");
         ORT_TSTR("gather_elements_negative_indices"),
         ORT_TSTR("rotary_embedding_3d_input_expanded"),
         ORT_TSTR("rotary_embedding_expanded"),
-        ORT_TSTR("rotary_embedding_interleaved_expanded")};
+        ORT_TSTR("rotary_embedding_interleaved_expanded"),
+        // QNN don't support fmod = 1
+        ORT_TSTR("mod_mixed_sign_float64"),
+        ORT_TSTR("mod_mixed_sign_float32"),
+        ORT_TSTR("mod_mixed_sign_float16"),
+        ORT_TSTR("mod_int64_fmod"),
+        // QNN lowers mod to cast -> a - b * floor(a/b) -> cast. Cast doesnt support these types
+        ORT_TSTR("mod_mixed_sign_int16"),
+        ORT_TSTR("mod_mixed_sign_int8"),
+        ORT_TSTR("mod_uint16"),
+        ORT_TSTR("mod_uint64")};
 
     std::unordered_set<std::basic_string<ORTCHAR_T>> all_disabled_tests(std::begin(immutable_broken_tests), std::end(immutable_broken_tests));
 
