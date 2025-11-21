@@ -900,9 +900,11 @@ Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing, bool ena
     return Status::OK();
   }
   // Validate that htp_arch is set and >= v81 when extended UDMA is enabled
-  if (enable_htp_extended_udma_mode && (htp_arch_ < QNN_HTP_DEVICE_ARCH_V81 || htp_arch_ == QNN_HTP_DEVICE_ARCH_NONE)) {
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, 
-      "Extended UDMA mode requires explicit htp_arch setting (must be v81 or higher)");
+  if (enable_htp_extended_udma_mode && ((std::find(supported_htp_arch_for_udma_.begin(), supported_htp_arch_for_udma_.end(), htp_arch_) == supported_htp_arch_for_udma_.end()) || htp_arch_ == QNN_HTP_DEVICE_ARCH_NONE)) {
+    return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT,
+                           "When HTP extended UDMA mode is enabled, the minimum HTP architecture must be v81 or higher. Current HTP architecture: ",
+                           htp_arch_);
+
   }
 
   QnnContext_Config_t context_config_weight_sharing = QNN_CONTEXT_CONFIG_INIT;
