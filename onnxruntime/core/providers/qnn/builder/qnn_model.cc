@@ -174,11 +174,15 @@ Status QnnModel::FinalizeGraphs(const logging::Logger& logger) {
   return Status::OK();
 }
 
-Status QnnModel::CheckShape(const std::vector<int64_t>& input_output_shape,
-                            const std::vector<uint32_t>& expected_shape,
-                            const std::string& tensor_name) const {
+// Helper function to check if ORT tensor shape matches expected QNN tensor shape (excluding batch dimension at index 0)
+template <typename OrtValueType>
+static Status CheckShape(const OrtValueType& ort_tensor,
+                        const QnnTensorInfo& qnn_io_info) {
+  const auto input_output_shape = ort_tensor.GetTensorTypeAndShapeInfo().GetShape();
   const auto shape_size = input_output_shape.size();
+  const auto& expected_shape = qnn_io_info.ori_dimensions_;
   const auto expected_shape_size = expected_shape.size();
+  const auto& tensor_name = qnn_io_info.tensor_wrapper->GetName();
 
   ORT_RETURN_IF_NOT(shape_size == expected_shape_size,
                     "Invalid rank for tensor: ", tensor_name,
@@ -323,9 +327,7 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
     // Modify batch dimensions
     if (batch_multiplier > 1) {
       // Check dimensions except for batch dimension (index 0)
-      const auto input_output_shape = ort_input_tensor.GetTensorTypeAndShapeInfo().GetShape();
-      ORT_RETURN_IF_ERROR(CheckShape(input_output_shape, qnn_input_info.ori_dimensions_,
-                                     qnn_input_info.tensor_wrapper->GetName()));
+      ORT_RETURN_IF_ERROR(CheckShape(ort_input_tensor, qnn_input_info));
 
       // Create independent dimensions copy to avoid race conditions
       std::vector<uint32_t> dims_copy = qnn_input_info.ori_dimensions_;
@@ -388,9 +390,7 @@ Status QnnModel::ExecuteGraph(const Ort::KernelContext& context,
     // Modify batch dimensions
     if (batch_multiplier > 1) {
       // Check dimensions except for batch dimension (index 0)
-      const auto input_output_shape = ort_output_tensor.GetTensorTypeAndShapeInfo().GetShape();
-      ORT_RETURN_IF_ERROR(CheckShape(input_output_shape, qnn_output_info.ori_dimensions_,
-                                     qnn_output_info.tensor_wrapper->GetName()));
+      ORT_RETURN_IF_ERROR(CheckShape(ort_output_tensor, qnn_output_info));
 
       // Create independent dimensions copy to avoid race conditions
       std::vector<uint32_t> dims_copy = qnn_output_info.ori_dimensions_;
