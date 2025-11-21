@@ -177,7 +177,7 @@ Status QnnModel::FinalizeGraphs(const logging::Logger& logger) {
 // Helper function to check if ORT tensor shape matches expected QNN tensor shape (excluding batch dimension at index 0)
 template <typename OrtValueType>
 static Status CheckShape(const OrtValueType& ort_tensor,
-                        const QnnTensorInfo& qnn_io_info) {
+                         const QnnTensorInfo& qnn_io_info) {
   const auto input_output_shape = ort_tensor.GetTensorTypeAndShapeInfo().GetShape();
   const auto shape_size = input_output_shape.size();
   const auto& expected_shape = qnn_io_info.ori_dimensions_;
