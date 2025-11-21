@@ -16,6 +16,7 @@
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "nlohmann/json.hpp"
+#include "Eigen/Core"
 
 namespace onnxruntime {
 namespace qnn {
@@ -1282,26 +1283,41 @@ Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
     return Status::OK();
   }
 
-  // Block transpose for better cache locality
-  const size_t rows = data_shape[0];
-  const size_t cols = data_shape[1];
-  const size_t block_size = 64;
-  for (size_t i = 0; i < rows; i += block_size) {
-    for (size_t j = 0; j < cols; j += block_size) {
-      size_t max_i = std::min(i + block_size, rows);
-      size_t max_j = std::min(j + block_size, cols);
+  // // Block transpose for better cache locality
+  // const size_t rows = data_shape[0];
+  // const size_t cols = data_shape[1];
+  // const size_t block_size = 32;
+  // for (size_t i = 0; i < rows; i += block_size) {
+  //   for (size_t j = 0; j < cols; j += block_size) {
+  //     size_t max_i = std::min(i + block_size, rows);
+  //     size_t max_j = std::min(j + block_size, cols);
 
-      for (size_t row = i; row < max_i; row++) {
-        for (size_t col = j; col < max_j; col++) {
-          const size_t src_byte_index = (row * cols + col) * elem_byte_size;
-          const size_t dst_byte_index = (col * rows + row) * elem_byte_size;
-          std::memcpy(&transposed_data[dst_byte_index],
-                      &input_buffer[src_byte_index],
-                      elem_byte_size);
-        }
-      }
-    }
-  }
+  //     for (size_t row = i; row < max_i; row++) {
+  //       for (size_t col = j; col < max_j; col++) {
+  //         const size_t src_byte_index = (row * cols + col) * elem_byte_size;
+  //         const size_t dst_byte_index = (col * rows + row) * elem_byte_size;
+  //         std::memcpy(&transposed_data[dst_byte_index],
+  //                     &input_buffer[src_byte_index],
+  //                     elem_byte_size);
+  //       }
+  //     }
+  //   }
+  // }
+
+  // for (size_t row = 0; row < data_shape[0]; row++) {
+  //   for (size_t col = 0; col < data_shape[1]; col++) {
+  //     const size_t src_elem_index = (row * data_shape[1] + col);
+  //     const size_t dst_elem_index = (col * output_shape[1] + row);
+  //     const size_t src_byte_index = src_elem_index * elem_byte_size;
+  //     const size_t dst_byte_index = dst_elem_index * elem_byte_size;
+  //     assert(src_byte_index < input_buffer.size());
+  //     assert(dst_byte_index < transposed_data.size());
+
+  //     std::memcpy(&transposed_data[dst_byte_index], &input_buffer[src_byte_index], elem_byte_size);
+  //   }
+  // }
+
+
 
   data_shape = std::move(output_shape);  // Update parameter with final transposed shape
   return Status::OK();
