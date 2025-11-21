@@ -433,7 +433,7 @@ Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
                              const onnx::TensorProto& initializer,
                              std::vector<uint8_t>& transposed_data,
                              const logging::Logger& logger,
-                             bool validate = false);
+                             bool use_dummy_tensor = false);
 
 Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                        const std::string& convert_input_name,

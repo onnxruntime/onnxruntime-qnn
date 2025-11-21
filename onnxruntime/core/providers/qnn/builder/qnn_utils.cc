@@ -16,7 +16,6 @@
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "nlohmann/json.hpp"
-#include "Eigen/Core"
 
 namespace onnxruntime {
 namespace qnn {
@@ -1261,7 +1260,7 @@ Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
                              const onnx::TensorProto& initializer,
                              std::vector<uint8_t>& transposed_data,
                              const logging::Logger& logger,
-                             bool validate) {
+                             bool use_dummy_tensor) {
   ORT_RETURN_IF_NOT(data_shape.size() == 2, "Expected shape of rank 2");
 
   std::array<size_t, 2> perm = {1, 0};
@@ -1276,7 +1275,7 @@ Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(initializer, input_buffer));
   transposed_data.resize(input_buffer.size());
 
-  if (validate) {  // Only shape & dtype validation are needed, filling with dummy data
+  if (use_dummy_tensor) {  // Only shape & dtype validation are needed, filling with dummy data
     std::fill(transposed_data.begin(), transposed_data.end(), 0);
     LOGS(logger, VERBOSE) << "Only shape and dtype validation are required, so we can fill with a dummy tensor to avoid heavy memcpy.";
     data_shape = std::move(output_shape);  // Update parameter with final transposed shape
