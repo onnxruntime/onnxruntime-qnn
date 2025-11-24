@@ -1008,7 +1008,6 @@ TEST_F(QnnHTPBackendTests, ConvU8U8S32_BiasRequantization) {
                        QDQTolerance(0.005f));
 }
 
-
 // Test per-channel bias requantization when bias scales don't match (weight_scale[i] * activation_scale)
 // This test uses a bias with intentionally wrong scales that would cause QDQ to fail against CPU,
 // but the requantization logic should correct it, allowing the test to pass.
