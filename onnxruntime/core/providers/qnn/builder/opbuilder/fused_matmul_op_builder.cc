@@ -41,11 +41,8 @@ class FusedMatMulOpBuilder : public BaseOpBuilder {
  private:
   Status ProcessMatMulInputs(QnnModelWrapper& qnn_model_wrapper,
                              const NodeUnit& node_unit,
-                             const TensorInfo& input_info_0,
-                             const TensorInfo& input_info_1,
                              const logging::Logger& logger,
-                             std::vector<std::string>& input_names,
-                             bool do_op_validation) const ORT_MUST_USE_RESULT;
+                             std::vector<std::string>& input_names) const ORT_MUST_USE_RESULT;
 
   Status GetFusedMatMulAttributes(const NodeUnit& node_unit,
                                   bool& transA,
@@ -96,7 +93,7 @@ Status FusedMatMulOpBuilder::GetFusedMatMulAttributes(const NodeUnit& node_unit,
 
 Status FusedMatMulOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper, const NodeUnit& node_unit,
                                            const logging::Logger& logger, std::vector<std::string>& input_names,
-                                           bool do_op_validation) const {
+                                           bool /*do_op_validation*/) const {
   const auto& inputs = node_unit.Inputs();
 
   // FusedMatMul requires exactly 2 inputs (A and B)
@@ -112,19 +109,15 @@ Status FusedMatMulOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper, c
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], input_info_1));
 
   // Process MatMul inputs (A and B)
-  ORT_RETURN_IF_ERROR(ProcessMatMulInputs(qnn_model_wrapper, node_unit, input_info_0, input_info_1,
-                                          logger, input_names, do_op_validation));
+  ORT_RETURN_IF_ERROR(ProcessMatMulInputs(qnn_model_wrapper, node_unit, logger, input_names));
 
   return Status::OK();
 }
 
 Status FusedMatMulOpBuilder::ProcessMatMulInputs(QnnModelWrapper& qnn_model_wrapper,
                                                  const NodeUnit& node_unit,
-                                                 const TensorInfo& input_info_0,
-                                                 const TensorInfo& input_info_1,
                                                  const logging::Logger& logger,
-                                                 std::vector<std::string>& input_names,
-                                                 bool do_op_validation) const {
+                                                 std::vector<std::string>& input_names) const {
   const auto& inputs = node_unit.Inputs();
 
   // Process input A
@@ -155,7 +148,7 @@ Status FusedMatMulOpBuilder::ProcessMatMulInputs(QnnModelWrapper& qnn_model_wrap
 Status FusedMatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                          const NodeUnit& node_unit,
                                                          std::vector<std::string>&& input_names,
-                                                         const logging::Logger& logger,
+                                                         const logging::Logger& /*logger*/,
                                                          bool do_op_validation) const {
   // Get attributes
   bool transA = false;
@@ -287,14 +280,27 @@ Status FusedMatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                       "Failed to create MatMul node for FusedMatMul.");
 
     // Create alpha tensor
+    // The alpha tensor data type should match the MatMul output data type for element-wise multiply
     std::string alpha_tensor_name = utils::GetUniqueName(node_unit.Name() + "_alpha");
     std::vector<uint32_t> alpha_shape{1};
-    std::vector<uint8_t> alpha_data(sizeof(float), 0);
-    memcpy(alpha_data.data(), &alpha, sizeof(float));
+    Qnn_DataType_t alpha_qnn_data_type = output_info.qnn_data_type;
+    std::vector<uint8_t> alpha_data;
+
+    // Convert alpha to the appropriate data type
+    if (alpha_qnn_data_type == QNN_DATATYPE_FLOAT_16) {
+      // Convert float32 alpha to float16
+      alpha_data.resize(sizeof(MLFloat16));
+      MLFloat16 alpha_fp16(alpha);
+      memcpy(alpha_data.data(), &alpha_fp16.val, sizeof(MLFloat16));
+    } else {
+      // Keep as float32
+      alpha_data.resize(sizeof(float));
+      memcpy(alpha_data.data(), &alpha, sizeof(float));
+    }
 
     QnnTensorWrapper alpha_tensor_wrapper(alpha_tensor_name,
                                           QNN_TENSOR_TYPE_STATIC,
-                                          QNN_DATATYPE_FLOAT_32,
+                                          alpha_qnn_data_type,
                                           QnnQuantParamsWrapper(),
                                           std::move(alpha_shape),
                                           std::move(alpha_data));
