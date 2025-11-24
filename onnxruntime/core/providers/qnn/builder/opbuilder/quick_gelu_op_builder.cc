@@ -42,42 +42,67 @@ Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   TensorInfo input_info = {};
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
 
-  // Create intermediate tensor names
-  const std::string alpha_mul_output_name = utils::GetUniqueName(node_unit.Name() + "_alpha_mul");
-  const std::string sigmoid_output_name = utils::GetUniqueName(node_unit.Name() + "_sigmoid");
+  // Skip alpha multiplication when alpha is 1.0 to reduce accumulated error
+  constexpr float alpha_epsilon = 1e-6f;
+  const bool skip_alpha_mul = std::abs(alpha - 1.0f) < alpha_epsilon;
 
-  // Create alpha tensor for multiplication
-  std::string alpha_tensor_name = utils::GetUniqueName(node_unit.Name() + "_alpha");
-  Qnn_Scalar_t alpha_qnn_scalar = QNN_SCALAR_INIT;
-  alpha_qnn_scalar.dataType = QNN_DATATYPE_FLOAT_32;
-  alpha_qnn_scalar.floatValue = alpha;
+  std::string sigmoid_input_name;
+  std::string sigmoid_output_name = utils::GetUniqueName(node_unit.Name() + "_sigmoid");
 
-  // Create alpha tensor wrapper
-  std::vector<uint32_t> alpha_shape{1};
-  std::vector<uint8_t> alpha_data(sizeof(float), 0);
-  memcpy(alpha_data.data(), &alpha, sizeof(float));
+  if (skip_alpha_mul) {
+    sigmoid_input_name = input_name;
+  } else {
+    const std::string alpha_mul_output_name = utils::GetUniqueName(node_unit.Name() + "_alpha_mul");
+    sigmoid_input_name = alpha_mul_output_name;
 
-  QnnTensorWrapper alpha_tensor_wrapper(alpha_tensor_name,
-                                        QNN_TENSOR_TYPE_STATIC,
-                                        input_info.qnn_data_type,
-                                        QnnQuantParamsWrapper(),
-                                        std::move(alpha_shape),
-                                        std::move(alpha_data));
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(alpha_tensor_wrapper)), "Failed to add alpha tensor.");
+    // Create alpha tensor for multiplication
+    // The alpha tensor data type should match the input data type for element-wise multiply
+    std::string alpha_tensor_name = utils::GetUniqueName(node_unit.Name() + "_alpha");
+    std::vector<uint32_t> alpha_shape{1};
+    Qnn_DataType_t alpha_qnn_data_type = input_info.qnn_data_type;
+    std::vector<uint8_t> alpha_data;
 
-  // Create intermediate tensor wrappers
-  // 1. alpha_mul_output: result of alpha * x
-  // Using default quantization parameters for intermediate tensors as per guideline
-  QnnTensorWrapper alpha_mul_output_tensor_wrapper(alpha_mul_output_name,
-                                                   QNN_TENSOR_TYPE_NATIVE,
-                                                   input_info.qnn_data_type,
-                                                   QnnQuantParamsWrapper(),
-                                                   std::vector<uint32_t>(input_info.shape));
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(alpha_mul_output_tensor_wrapper)),
-                    "Failed to add alpha_mul_output tensor.");
+    // Convert alpha to the appropriate data type
+    if (alpha_qnn_data_type == QNN_DATATYPE_FLOAT_16) {
+      // Convert float32 alpha to float16
+      alpha_data.resize(sizeof(MLFloat16));
+      MLFloat16 alpha_fp16(alpha);
+      memcpy(alpha_data.data(), &alpha_fp16.val, sizeof(MLFloat16));
+    } else {
+      // Keep as float32
+      alpha_data.resize(sizeof(float));
+      memcpy(alpha_data.data(), &alpha, sizeof(float));
+    }
 
-  // 2. sigmoid_output: result of sigmoid(alpha * x)
-  // Using default quantization parameters for intermediate tensors as per guideline
+    QnnTensorWrapper alpha_tensor_wrapper(alpha_tensor_name,
+                                          QNN_TENSOR_TYPE_STATIC,
+                                          alpha_qnn_data_type,
+                                          QnnQuantParamsWrapper(),
+                                          std::move(alpha_shape),
+                                          std::move(alpha_data));
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(alpha_tensor_wrapper)), "Failed to add alpha tensor.");
+
+    // Create intermediate tensor for alpha_mul_output: result of alpha * x
+    QnnTensorWrapper alpha_mul_output_tensor_wrapper(alpha_mul_output_name,
+                                                     QNN_TENSOR_TYPE_NATIVE,
+                                                     input_info.qnn_data_type,
+                                                     QnnQuantParamsWrapper(),
+                                                     std::vector<uint32_t>(input_info.shape));
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(alpha_mul_output_tensor_wrapper)),
+                      "Failed to add alpha_mul_output tensor.");
+
+    // Step 1: Create Mul node for alpha * x
+    ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit.Name() + "_alpha_mul"),
+                                                      QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                      QNN_OP_ELEMENT_WISE_MULTIPLY,
+                                                      {alpha_tensor_name, input_name},
+                                                      {alpha_mul_output_name},
+                                                      {},
+                                                      do_op_validation),
+                      "Failed to create alpha_mul node.");
+  }
+
+  // Create intermediate tensor for sigmoid_output
   QnnTensorWrapper sigmoid_output_tensor_wrapper(sigmoid_output_name,
                                                  QNN_TENSOR_TYPE_NATIVE,
                                                  input_info.qnn_data_type,
@@ -86,8 +111,7 @@ Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sigmoid_output_tensor_wrapper)),
                     "Failed to add sigmoid_output tensor.");
 
-  // 3. final_output: result of x * sigmoid(alpha * x)
-  // Check if the output is a graph output and set the tensor type accordingly
+  // Create final output tensor
   Qnn_TensorType_t tensor_type = qnn_model_wrapper.IsGraphOutput(output_name) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
   QnnTensorWrapper output_tensor_wrapper(output_name,
                                          tensor_type,
@@ -97,27 +121,17 @@ Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor_wrapper)),
                     "Failed to add output tensor.");
 
-  // Step 1: Create Mul node for alpha * x
-  ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit.Name() + "_alpha_mul"),
-                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                    QNN_OP_ELEMENT_WISE_MULTIPLY,
-                                                    {alpha_tensor_name, input_name},
-                                                    {alpha_mul_output_name},
-                                                    {},
-                                                    do_op_validation),
-                    "Failed to create alpha_mul node.");
-
-  // Step 2: Create Sigmoid node for sigmoid(alpha * x)
+  // Step 2: Create Sigmoid node for sigmoid(alpha * x) or sigmoid(x)
   ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit.Name() + "_sigmoid"),
                                                     QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                     QNN_OP_SIGMOID,
-                                                    {alpha_mul_output_name},
+                                                    {sigmoid_input_name},
                                                     {sigmoid_output_name},
                                                     {},
                                                     do_op_validation),
                     "Failed to create sigmoid node.");
 
-  // Step 3: Create Mul node for x * sigmoid(alpha * x)
+  // Step 3: Create Mul node for x * sigmoid(alpha * x) or x * sigmoid(x)
   ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit.Name() + "_final_mul"),
                                                     QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                     QNN_OP_ELEMENT_WISE_MULTIPLY,

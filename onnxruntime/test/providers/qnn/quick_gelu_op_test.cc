@@ -18,7 +18,8 @@ template <typename DataType>
 static void RunQuickGeluTest(const TestInputDef<DataType>& input_def,
                              float alpha,
                              ExpectedEPNodeAssignment expected_ep_assignment,
-                             const std::string& backend_name = "cpu") {
+                             const std::string& backend_name = "cpu",
+                             float fp32_abs_err = 5e-3f) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
 
@@ -38,7 +39,7 @@ static void RunQuickGeluTest(const TestInputDef<DataType>& input_def,
                   provider_options,
                   13,  // opset version for contrib ops
                   expected_ep_assignment,
-                  5e-3f);
+                  fp32_abs_err);
 }
 
 // Tests the accuracy of a QDQ QuickGelu model on QNN EP by comparing to CPU EP.
@@ -114,12 +115,12 @@ TEST_F(QnnCPUBackendTests, QuickGelu_Negative_Alpha) {
 // HTP tests:
 //
 
-// Test QuickGelu with default alpha value (1.0) on HTP
 TEST_F(QnnHTPBackendTests, QuickGelu_Default_Alpha) {
   RunQuickGeluTest<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
-                          1.0f,  // alpha
+                          1.0f,
                           ExpectedEPNodeAssignment::All,
-                          "htp");
+                          "htp",
+                          0.01f);
 }
 
 // Test QuickGelu with custom alpha value on HTP
@@ -136,6 +137,30 @@ TEST_F(QnnHTPBackendTests, QuickGelu_Negative_Alpha) {
                           -1.702f,  // alpha
                           ExpectedEPNodeAssignment::All,
                           "htp");
+}
+
+TEST_F(QnnHTPBackendTests, QuickGelu_Float16_Default_Alpha) {
+  RunQuickGeluTest<MLFloat16>(ConvertToFP16InputDef(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48))),
+                              1.0f,
+                              ExpectedEPNodeAssignment::All,
+                              "htp",
+                              0.01f);
+}
+
+// Test QuickGelu with float16 inputs and custom alpha on HTP
+TEST_F(QnnHTPBackendTests, QuickGelu_Float16_Custom_Alpha) {
+  RunQuickGeluTest<MLFloat16>(ConvertToFP16InputDef(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48))),
+                              1.702f,  // alpha
+                              ExpectedEPNodeAssignment::All,
+                              "htp");
+}
+
+// Test QuickGelu with float16 inputs and negative alpha on HTP
+TEST_F(QnnHTPBackendTests, QuickGelu_Float16_Negative_Alpha) {
+  RunQuickGeluTest<MLFloat16>(ConvertToFP16InputDef(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48))),
+                              -1.702f,  // alpha
+                              ExpectedEPNodeAssignment::All,
+                              "htp");
 }
 
 // Test 8-bit QDQ QuickGelu with default alpha value on HTP
