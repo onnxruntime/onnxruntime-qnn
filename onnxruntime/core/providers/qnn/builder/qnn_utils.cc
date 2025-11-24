@@ -1500,6 +1500,11 @@ Status GetPermToLastAxis(uint32_t axis, uint32_t rank, std::vector<uint32_t>& pe
   return Status::OK();
 }
 
+uint64_t GetTimeStampInUs() {
+  auto timestamp = std::chrono::steady_clock::now().time_since_epoch();
+  return std::chrono::duration_cast<std::chrono::microseconds>(timestamp).count();
+}
+
 // Helper function to print bias tensor values for debugging
 template <typename T>
 void PrintBiasTensorValues(const std::string& label, gsl::span<const uint8_t> data, size_t max_values = 10) {

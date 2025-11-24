@@ -31,7 +31,7 @@ param (
 
     [Parameter(Mandatory = $false,
                HelpMessage = "Build a wheel targeting this Python version.")]
-    [ValidateSet("", "3.10", "3.11", "3.12", "3.13")]
+    [ValidateSet("", "3.11", "3.12", "3.13")]
     [string]$TargetPyVersion = "",
 
     [Parameter(Mandatory = $true,
@@ -59,6 +59,10 @@ else {
         }
     }
     $BuildDir = (Join-Path $BuildRoot "windows-$BuildDirArch")
+}
+
+if (-not (Test-Path $BuildDir)) {
+    New-Item -ItemType Directory -Path $BuildDir | Out-Null
 }
 
 Enter-PyVenv $PyVEnv
@@ -115,9 +119,22 @@ $MakeTestArchive = $false
 $RunTests = $false
 $TestRunner = "$RepoRoot\qcom\scripts\windows\run_tests.ps1"
 
+# Don't miss the cache due to __TIME__, __DATE__, or __TIMESTAMP__.
+$env:CCACHE_SLOPPINESS = "time_macros"
+
 if ($CMakeGenerator -eq "Ninja") {
-    $CommonArgs += "--use_cache"
     $env:Path = "$(Get-CCacheBinDir);" + $env:Path
+    $CommonArgs += "--use_cache"
+}
+else {
+    # https://github.com/ccache/ccache/wiki/MS-Visual-Studio#usage-with-cmake
+    Assert-Success -ErrorMessage "Failed to copy ccache.exe to $BuildDir\cl.exe" {
+        Copy-Item "$(Get-CCacheBinDir)\ccache.exe" "$BuildDir\cl.exe"
+    }
+    $FakeClCcacheDir = $BuildDir.Replace("\", "/")
+    $CommonArgs += `
+        "--cmake_extra_defines", "CMAKE_VS_GLOBALS=CLToolExe=cl.exe;CLToolPath=$FakeClCcacheDir;UseMultiToolTask=true", `
+        "--cmake_extra_defines", 'CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=$"<"$"<"CONFIG:Debug,RelWithDebInfo">":Embedded">"'
 }
 
 $TargetPyExe = $null
@@ -173,7 +190,9 @@ switch ($Mode) {
 $CmakeBinDir = (Get-CMakeBinDir)
 $env:Path = "$CmakeBinDir;" + $env:Path
 
-Optimize-ToolsDir
+if ($env:ORT_BUILD_PRUNE_PACKAGES -eq $null -or $env:ORT_BUILD_PRUNE_PACKAGES -eq 1) {
+    Optimize-ToolsDir
+}
 
 Push-Location $RepoRoot
 
@@ -259,7 +278,7 @@ else {
 
         Push-Location (Join-Path $BuildDir $Config)
         $OnnxModelsRoot = (Get-OnnxModelsRoot)
-        & .\run_tests.ps1 -OnnxModelsRoot $OnnxModelsRoot
+        & .\run_tests.ps1 -Config $Config -OnnxModelsRoot $OnnxModelsRoot
 
         if (-not $?) {
             $failed = $true

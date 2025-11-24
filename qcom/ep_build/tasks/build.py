@@ -2,14 +2,55 @@
 # SPDX-License-Identifier: MIT
 
 import os
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
 from typing import Literal
 
 from ..github import is_host_github_runner
-from ..task import BashScriptsWithVenvTask, RunExecutablesWithVenvTask
+from ..task import BashScriptsWithVenvTask, CompositeTask, RemovePathsTask, RunExecutablesWithVenvTask
+from ..typing import BuildConfigT, TargetArchLinuxT, TargetArchWindowsT, TargetPyVersionT
 from ..util import REPO_ROOT, git_head_sha
+from .docker import DOCKER_REPO_ROOT, MANYLINUX_2_34_AARCH64_TAG, DockerBuildAndTestTask
 from .windows import RunPowershellScriptsTask
+
+
+def get_ort_version() -> str:
+    return (REPO_ROOT / "VERSION_NUMBER").read_text().strip()
+
+
+class BuildEpDockerTask(CompositeTask):
+    """Build ONNX Runtime for Linux inside a Docker container."""
+
+    def __init__(
+        self,
+        group_name: str | None,
+        target_arch: TargetArchLinuxT,
+        config: BuildConfigT,
+        target_py_version: TargetPyVersionT | None,
+        qairt_sdk_root: Path | None,
+        ccache_root: Path | None,
+    ) -> None:
+        dist_rel_dir = Path("build") / f"linux-{target_arch}" / config / "dist"
+
+        super().__init__(
+            group_name,
+            [
+                RemovePathsTask(
+                    "Deleting wheels to workaround ORT build bug",
+                    (REPO_ROOT / dist_rel_dir).glob("*.whl"),
+                ),
+                DockerBuildAndTestTask(
+                    "Building ONNX Runtime inside a container",
+                    ["_build_ort_linux_aarch64_manylinux_2_34"],
+                    target_py_version,
+                    MANYLINUX_2_34_AARCH64_TAG,
+                    volumes={REPO_ROOT: DOCKER_REPO_ROOT},
+                    venv_path=DOCKER_REPO_ROOT / "build" / "venv.build",
+                    qairt_sdk_root=qairt_sdk_root,
+                    ccache_root=ccache_root,
+                ),
+            ],
+        )
 
 
 class BuildEpLinuxTask(BashScriptsWithVenvTask):
@@ -20,25 +61,32 @@ class BuildEpLinuxTask(BashScriptsWithVenvTask):
         group_name: str | None,
         venv: Path | None,
         target_platform: Literal["android", "linux"],
-        target_arch: Literal["aarch64", "aarch64-oe-gcc11.2", "x86_64"],
+        target_arch: TargetArchLinuxT,
+        config: BuildConfigT,
+        target_py_version: TargetPyVersionT | None,
         qairt_sdk_root: Path | None,
         mode: str,
+        extra_args: Iterable[str] | None = None,
+        env: Mapping[str, str] | None = None,
     ) -> None:
         cmd = [
             str(REPO_ROOT / "qcom" / "scripts" / "linux" / "build.sh"),
             f"--target-arch={target_arch}",
             f"--target-platform={target_platform}",
+            f"--config={config}",
             f"--mode={mode}",
         ]
+
+        if target_py_version is not None:
+            cmd.append(f"--target-py-version={target_py_version}")
 
         if qairt_sdk_root is not None:
             cmd.append(f"--qairt-sdk-root={qairt_sdk_root}")
 
-        super().__init__(group_name, venv, [cmd], env=ort_build_env_vars())
+        if extra_args is not None:
+            cmd.extend(extra_args)
 
-
-TargetArchWindowsT = Literal["arm64", "arm64ec", "x86_64"]
-TargetPyVersionT = Literal["3.10", "3.11", "3.12", "3.13"]
+        super().__init__(group_name, venv, [cmd], env=ort_build_env_vars(env))
 
 
 class BuildEpWindowsTask(RunPowershellScriptsTask):
@@ -47,7 +95,7 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
         group_name: str | None,
         venv: Path | None,
         target_arch: TargetArchWindowsT,
-        config: Literal["Debug", "Release", "RelWithDebInfo"],
+        config: BuildConfigT,
         target_py_version: TargetPyVersionT | None,
         qairt_sdk_root: Path | None,
         mode: str,
@@ -109,8 +157,8 @@ class QdcTestsTask(RunExecutablesWithVenvTask):
         super().__init__(group_name, venv, [cmd])
 
 
-def ort_build_env_vars() -> dict[str, str]:
-    env = os.environ.copy()
+def ort_build_env_vars(old_env: Mapping[str, str] | None = None) -> dict[str, str]:
+    env = os.environ.copy() if old_env is None else dict(old_env)
     if env.get("ORT_NIGHTLY_BUILD", "0") == "1":
         env["NIGHTLY_BUILD"] = "1"
         env["Build_SourceVersion"] = git_head_sha()

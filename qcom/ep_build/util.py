@@ -5,10 +5,12 @@ import logging
 import os
 import platform
 import shlex
+import signal
 import subprocess
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from pathlib import Path
+from types import FrameType
 
 
 def default_parallelism() -> int:
@@ -153,16 +155,30 @@ def run_with_venv(
         full_command = [BASH_EXECUTABLE, "-c", shell_command]
     if not quiet:
         echo(f"$ {full_command if isinstance(full_command, str) else shlex.join(full_command)}")
-    return subprocess.run(
+
+    if capture_output:
+        stdout = subprocess.PIPE
+        stderr = subprocess.PIPE
+    else:
+        stdout = stdout if stdout is not None else None
+        stderr = None
+
+    proc = subprocess.Popen(
         full_command,
         stdout=stdout,
-        capture_output=capture_output,
+        stderr=stderr,
         shell=isinstance(full_command, str),
-        check=check,
         executable=BASH_EXECUTABLE if isinstance(full_command, str) else None,
         env=env,
         cwd=cwd,
     )
+    with TemporarySignalHandler(lambda sig, frame: proc.send_signal(sig)):
+        outs, errs = proc.communicate()
+        stdout_out = outs if stdout is not None else None
+        stderr_out = errs if stderr is not None else None
+    if check and proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, full_command, stdout_out, stderr_out)
+    return subprocess.CompletedProcess(full_command, proc.returncode, stdout_out, stderr_out)
 
 
 def run_with_venv_and_get_output(
@@ -204,6 +220,23 @@ class Colors:
     OFF = "\033[0m" if not is_host_windows() else ""
 
 
+# Caution: this class can also be found in qcom/scripts/all/qdc_runner.py. Consider copying any edits.
+class TemporarySignalHandler:
+    def __init__(self, handler: Callable[[int, FrameType | None], None], signum: int = signal.SIGINT) -> None:
+        self.__signum = signum
+        self.__handler = handler
+
+    def __enter__(self) -> None:
+        self.__prev_handler = signal.getsignal(self.__signum)
+        signal.signal(self.__signum, self.__handler)
+
+    def __exit__(self, exc_type, exc_value, exc_tb) -> None:
+        try:
+            signal.signal(self.__signum, self.__prev_handler)
+        except Exception as e:
+            logging.warning(f"Failed to restore signal handler: {e}")
+
+
 if is_host_windows():
     BASH_EXECUTABLE = str(Path(os.environ["ProgramW6432"], "Git/bin/bash.exe"))  # noqa: SIM112
     assert os.path.isfile(BASH_EXECUTABLE), f"Bash executable not found in {BASH_EXECUTABLE}."
@@ -211,14 +244,18 @@ else:
     BASH_EXECUTABLE = run_and_get_output(["which", "bash"], quiet=True)
 
 
-DEFAULT_PYTHON = Path("python.exe") if is_host_windows() else Path("python3.10")
+DEFAULT_PYTHON_LINUX = Path("python3.10")
+
+DEFAULT_PYTHON_WINDOWS = Path("python.exe")
+
+DEFAULT_PYTHON = DEFAULT_PYTHON_WINDOWS if is_host_windows() else DEFAULT_PYTHON_LINUX
 """Different python distributions have different executable names. Use this for a reasonable default."""
 
 MSFT_CI_REQUIREMENTS_RELPATH = (
     f"tools/ci_build/github/{'windows' if is_host_windows() else 'linux'}/python/requirements.txt"
 )
 
-REPO_ROOT = Path(run_and_get_output(["git", "rev-parse", "--show-toplevel"], quiet=True))
+REPO_ROOT = Path(__file__).parent.parent.parent
 
 VENV_ACTIVATE_RELPATH = "Scripts/activate" if is_host_windows() else "bin/activate"
 """Where to find the bash script to source to activate a virtual environment."""

@@ -14,6 +14,31 @@ Before proceeding, please join the following:
 * `ort-qnn-ep-ci-admin-contacts`
 * `pam.ort-qnn-ep.rw`
 
+## Service Account
+
+The account used to run the GitHub Actions service is `NA\OrtQnnEpCi`. We should generally avoid granting it unnecessary
+privileges such as remote login. It should never be an administrator.
+
+### Password Changes
+
+Every so often (six months?) we get an email notifying us that the account's password must be changed. To do so, visit
+`go/preset` and change the accounts `NA` domain password. Check the box to allow it to update PAM.
+
+After updating the password, you'll need to change it in each of the Windows services that it runs:
+
+* All Windows hosts: GitHub Actions runner
+* Only `ort-qnn-ep-win-01`: pypiserver
+
+Step-by-step:
+
+1. RDP into the host as an administrator. Recall that you'll need to download an `.rdp` file with embedded credentials
+   from `go/lockbox`.
+2. Confirm via the GitHub [Runners](https://github.qualcomm.com/MLG/onnxruntime-qnn-ep/settings/actions/runners) tab
+   that the device isn't busy.
+3. Search for `Services` and open what it finds and hunt through the service list to find the service you want to
+   modify.
+4. A pretty self-explanatory `Log On` tab will walk you through the rest, including restarting the service.
+
 ## Windows
 
 ### Provisioning
@@ -70,7 +95,7 @@ Add user:
 Enable Symlinks for `NA\OrtQnnEpCi`:
 
 1. Open the `Local Security Policy` app
-2. Navigate to `Security Settings` --> `Local Policies` --> `User Rights Assignment` and add `NA\OrtQnnEpCi` to
+2. Navigate to `Security Settings/Local Policies/User Rights Assignment` and add `NA\OrtQnnEpCi` to
    `Create symbolic links`. You'll probably be prompted for _your_ credentials so that `NA\OrtQnnEpCi` can be
    validated as a member of the domain.
 
@@ -102,6 +127,16 @@ Run the installer, ensuring to add the following:
   * (After files are copied): `Disable path length limit`
 * _ARM64 only_: Python 3.12.10 for ARM64
   * Same as above, except **do not `Add python.exe to PATH`**.
+* Other Python versions:
+  * Install the latest Pythons from the 3.11, and 3.13 releases.
+  * Options:
+    * No documentation
+    * No tcl/tl and IDLE
+    * No Python test suite
+    * Install for all users
+    * Do not create shortcuts for installed applications
+* _ARM64 only_: Other Python versions:
+  * Same as previous, just install the ARM64 versions as well.
 * [Git for Windows](https://git-scm.com/download/win)
   * Select "Git from the command line and also from 3rd-party software" during install.
   * Use bundled OpenSSH.
@@ -118,6 +153,14 @@ Install the Service
 The GitHub runner runs as a Windows service. Log in as the local administrator and follow the
 [standard instructions](https://github.qualcomm.com/MLG/onnxruntime-qnn-ep/settings/actions/runners/new?arch=x64&os=win).
 
+On ARM64 runners, it is necessary to specify labels since it'll assume the device is `X64` since that's the arch of
+the GitHub Actions executable. Include these or similar arguments when running `config.cmd`:
+
+```powershell
+# Tweak as appropriate, especially taking note of the device's hardware codename.
+--no-default-labels --labels self-hosted,Windows,Build,ARM64,Hamoa
+```
+
 #### Build Configuration
 
 * Set the environment variable `ORT_BUILD_TOOLS_PATH` to `C:\Users\OrtQnnEpCi\.ort-build-tools`.
@@ -131,7 +174,7 @@ The GitHub runner runs as a Windows service. Log in as the local administrator a
 We have experienced Python SSL issues caused by Windows VMs being initialized or updated with different root authority certificates.
 The following commands can be used to force an update for the root authority certificates via PowerShell:
 
-```
+```powershell
 certutil -generateSSTFromWU roots.sst
 certutil -addstore -f root roots.sst
 ```

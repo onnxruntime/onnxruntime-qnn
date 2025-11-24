@@ -32,7 +32,12 @@ DEFAULT_PACKAGE_CACHE_DIR = Path(
         str((Path("~") / ".ort-package-cache").expanduser()),
     )
 )
-DEFAULT_MAX_CACHE_SIZE_BYTES = int(os.environ.get("ORT_BUILD_PACKAGE_CACHE_SIZE", f"{5 * 1024 * 1024 * 1024}"))  # 5 GiB
+
+AUTOPRUNE = os.environ.get("ORT_BUILD_PRUNE_PACKAGES", "1") == "1"
+
+DEFAULT_MAX_CACHE_SIZE_BYTES = int(
+    os.environ.get("ORT_BUILD_PACKAGE_CACHE_SIZE", f"{10 * 1024 * 1024 * 1024}")
+)  # 10 GiB
 
 DEFAULT_TOOLS_DIR = Path(os.environ.get("ORT_BUILD_TOOLS_PATH", REPO_ROOT / "build" / "tools"))
 
@@ -113,32 +118,39 @@ class FileCache:
                     shutil.copyfileobj(tmp_file, cache_file_stream)
 
         else:
-            logging.info(f"{url} already exists at {cache_file_path}")
+            logging.debug(f"{url} already exists at {cache_file_path}")
         return cache_file_path
 
     def prune(self) -> None:
         """Prune old entries from the cache until it's below our maximum size."""
 
-        # Collect package info into a list of tuple(name, create time, size bytes), sorted by size.
-        pkg_dirs = [
-            (d, d.stat().st_ctime, sum(f.stat().st_size for f in d.glob("*"))) for d in self.__cache_dir.glob("*")
-        ]
-        pkg_dirs.sort(key=lambda d: d[1])
+        # Prepare a list of files in the package directory sorted by access time
+        pkg_files = sorted(
+            ((pf, pf.stat().st_atime, pf.stat().st_size) for pf in self.__cache_dir.rglob("*") if pf.is_file()),
+            key=lambda f: f[1],
+        )
 
-        # Determine what we need to prune.
-        to_prune = []
-        total_size = sum(d[2] for d in pkg_dirs)
+        # Determine what we need to prune
+        to_prune: list[tuple[Path, float, int]] = []
+        total_size = sum(pf[2] for pf in pkg_files)
         logging.info(f"Cache size before pruning: {total_size / 1024.0 / 1024.0:.2f} MiB.")
-        for pkg_dir in pkg_dirs:
+        for pkg_file in pkg_files:
             if total_size <= self.__max_cache_size_bytes:
                 break
-            to_prune.append(pkg_dir)
-            total_size -= pkg_dir[2]
+            to_prune.append(pkg_file)
+            total_size -= pkg_file[2]
 
         # Prune
-        for pkg_dir in to_prune:
-            logging.debug(f"Pruning {pkg_dir[0]} to reclaim {pkg_dir[2] / 1024.0 / 1024.0:.2f} MiB.")
-            shutil.rmtree(pkg_dir[0])
+        for pkg_file in to_prune:
+            logging.debug(f"Pruning {pkg_file[0]} to reclaim {pkg_file[2] / 1024.0 / 1024.0:.2f} MiB.")
+            pkg_file[0].unlink()
+
+        # Remove empty directories
+        for pkg_dir in self.__cache_dir.iterdir():
+            if len([f for f in pkg_dir.rglob("*") if f.is_file()]) == 0:
+                logging.debug(f"Removing empty directory {pkg_dir}")
+                shutil.rmtree(pkg_dir)
+
         logging.info(f"Cache size after pruning: {total_size / 1024.0 / 1024.0:.2f} MiB.")
 
 
@@ -170,6 +182,7 @@ class PackageManager:
                 logging.debug(f"{subdir.name} is up to date")
             else:
                 cls.__uninstall(subdir)
+        FileCache().prune()
 
     def get_bindir(self, assert_exists: bool = True) -> Path:
         """
@@ -213,7 +226,7 @@ class PackageManager:
         """Ensure this package is installed."""
         pkg_rootdir = self.get_root_dir()
         if pkg_rootdir.exists():
-            logging.info(f"{pkg_rootdir} already exists.")
+            logging.debug(f"{pkg_rootdir} already exists.")
             return
         package_path = self.__fetch()
 
@@ -221,7 +234,7 @@ class PackageManager:
             self.__run_installer(package_path)
         else:
             # Similar to downloads, we extract to a temporary directory and rename on
-            # success to avoid partial extrations if we get killed.
+            # success to avoid partial extractions if we get killed.
             with tempfile.TemporaryDirectory(dir=self.__package_root) as tmp_dir:
                 # Extract it to tmp-dir/{package}-{version}
                 tmp_rootdir = tmp_dir / self.get_rel_package_dir()
@@ -235,7 +248,8 @@ class PackageManager:
                 # Move fully extracted package to final location
                 logging.info(f"Moving {tmp_rootdir} to {self.__package_root}")
                 shutil.move(tmp_rootdir, self.get_root_dir())
-        self.__cache.prune()
+        if AUTOPRUNE:
+            self.__cache.prune()
 
     def repair(self) -> None:
         package_path = self.__fetch()
