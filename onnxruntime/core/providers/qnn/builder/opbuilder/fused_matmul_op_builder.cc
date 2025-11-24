@@ -10,21 +10,7 @@
 namespace onnxruntime {
 namespace qnn {
 
-/**
- * FusedMatMul is a contrib operator in the com.microsoft domain that performs a fused matrix multiplication
- * with optional transposition of inputs and scaling of output. Its mathematical formulation is:
- * Y = α⋅(TransposeBatchDims(A)^TA × TransposeBatchDims(B)^TB)
- *
- * Where:
- * - TA, TB are flags indicating whether to transpose the last two dimensions of A or B, respectively.
- * - TransposeBatchDims(·) indicates an optional permutation of 1st dim and batch dims (dim-1 to dim-rank-2)
- *   if the respective flag is set.
- * - α is a scalar multiplier (float) applied to the product.
- *
- * Since QNN does not have an equivalent FusedMatMul operator, we decompose it into:
- * 1. MatMul operation with appropriate transposition
- * 2. Optional alpha scaling
- */
+// FusedMatMul operator is decomposed into MatMul with optional transposition and alpha scaling.
 class FusedMatMulOpBuilder : public BaseOpBuilder {
  public:
   FusedMatMulOpBuilder() : BaseOpBuilder("FusedMatMulOpBuilder") {}
