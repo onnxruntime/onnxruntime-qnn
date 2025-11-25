@@ -393,9 +393,9 @@ Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
           if (bias_offset == 0 && utils::CheckBiasScaleMatch(bias_scale, weights_scales[0], activation_scale, 1e-5f)) {
             // No change needed - scales match and offset is 0
           } else {
-            LOGS(logger, INFO) << "Requantizing per-tensor bias '" << bias_input.node_arg.Name()
-                               << "' from scale=" << bias_scale << ", offset=" << bias_offset
-                               << " to scale=" << (weights_scales[0] * activation_scale) << ", offset=0";
+            LOGS(logger, VERBOSE) << "Requantizing per-tensor bias '" << bias_input.node_arg.Name()
+                                  << "' from scale=" << bias_scale << ", offset=" << bias_offset
+                                  << " to scale=" << (weights_scales[0] * activation_scale) << ", offset=0";
             // Need to requantize the bias tensor
             std::vector<uint8_t> original_bias_data;
             ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*bias_info.initializer_tensor, original_bias_data));
@@ -457,9 +457,8 @@ Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
               // No change needed - scales match and offsets are 0
             } else {
               // Need to requantize per-channel bias
-              LOGS(logger, INFO) << "Requantizing per-channel bias '" << bias_input.node_arg.Name()
-                                 << "' with " << bias_quant_params.axisScaleOffsetEncoding.numScaleOffsets << " channels"
-                                 << " (offsets_zero=" << all_offsets_zero << ", scales_match=" << all_scales_match << ")";
+              LOGS(logger, VERBOSE) << "Requantizing per-channel bias '" << bias_input.node_arg.Name()
+                                    << "' with " << bias_quant_params.axisScaleOffsetEncoding.numScaleOffsets << " channels";
               std::vector<float> current_scales;
               std::vector<int32_t> current_offsets;
               for (size_t i = 0; i < bias_quant_params.axisScaleOffsetEncoding.numScaleOffsets; ++i) {

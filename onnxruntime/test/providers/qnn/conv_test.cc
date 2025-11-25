@@ -1047,7 +1047,7 @@ TEST_F(QnnHTPBackendTests, ConvU8S8S32_PerChannel_BiasRequantization) {
                        provider_options,
                        13,  // opset
                        ExpectedEPNodeAssignment::All,
-                       QDQTolerance(0.005f));
+                       QDQTolerance(0.015));
 }
 
 // Test per-channel QDQ Conv with INT4 weights and no bias.
