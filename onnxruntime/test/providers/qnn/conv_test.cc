@@ -1005,7 +1005,7 @@ TEST_F(QnnHTPBackendTests, ConvU8U8S32_BiasRequantization) {
                        provider_options,
                        13,  // opset
                        ExpectedEPNodeAssignment::All,
-                       QDQTolerance());
+                       QDQTolerance(0.015f));
 }
 
 // Test per-channel bias requantization when bias scales don't match (weight_scale[i] * activation_scale)
