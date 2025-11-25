@@ -447,7 +447,6 @@ Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
               // Calculate expected scale for this channel
               // Use the corresponding weight scale if available, otherwise use the first one
               float weight_scale = (i < weights_scales.size()) ? weights_scales[i] : weights_scales[0];
-              float expected_scale = weight_scale * activation_scale;
 
               if (!utils::CheckBiasScaleMatch(current_scale, weight_scale, activation_scale, 1e-5f)) {
                 all_scales_match = false;
