@@ -472,7 +472,7 @@ uint64_t GetTimeStampInUs();
 // Checks if bias scale matches the expected scale (weights_scale * activation_scale)
 // Returns true if they match within a tolerance, false otherwise
 bool CheckBiasScaleMatch(float bias_scale, float weights_scale, float activation_scale,
-                         float tolerance = 1e-6f);
+                         float tolerance = 1e-5f);
 
 // Requantizes a static bias tensor with new quantization parameters
 // This function:

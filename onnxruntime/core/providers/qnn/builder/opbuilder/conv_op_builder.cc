@@ -390,7 +390,7 @@ Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
           int32_t bias_offset = bias_info.quant_param.Get().scaleOffsetEncoding.offset;
 
           // Check if bias_offset = 0 AND bias_scale = (weights_scale[0] * activation_scale)
-          if (bias_offset == 0 && utils::CheckBiasScaleMatch(bias_scale, weights_scales[0], activation_scale)) {
+          if (bias_offset == 0 && utils::CheckBiasScaleMatch(bias_scale, weights_scales[0], activation_scale, 1e-5f)) {
             // No change needed - scales match and offset is 0
           } else {
             LOGS(logger, INFO) << "Requantizing per-tensor bias '" << bias_input.node_arg.Name()
@@ -449,7 +449,7 @@ Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrapper,
               float weight_scale = (i < weights_scales.size()) ? weights_scales[i] : weights_scales[0];
               float expected_scale = weight_scale * activation_scale;
 
-              if (!utils::CheckBiasScaleMatch(current_scale, expected_scale, 1.0f)) {
+              if (!utils::CheckBiasScaleMatch(current_scale, weight_scale, activation_scale, 1e-5f)) {
                 all_scales_match = false;
               }
             }
