@@ -292,10 +292,12 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
     std::vector<uint8_t> unpacked_tensor;
     const NodeUnitIODef& w_ql_input_1_def = p_w_ql_node_unit->Inputs()[0];
     weight_tensor_name = w_ql_input_1_def.node_arg.Name();
-    const auto& weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
+    const auto* weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
+    ORT_RETURN_IF_NOT(weight_tensor_proto != nullptr, "Weight tensor not found: ", weight_tensor_name);
     ORT_RETURN_IF_ERROR(UnpackWeightTensorData(qnn_model_wrapper, weight_tensor_proto, weight_shape, input_channel_axis, unpacked_tensor, logger, validate));
 
     // Quantize weight tensor
+    ORT_RETURN_IF_NOT(unpacked_tensor.size() % sizeof(float) == 0, "Invalid weight tensor buffer size");
     size_t weight_elements = unpacked_tensor.size() / sizeof(float);
     auto float_data = gsl::make_span<const float>(reinterpret_cast<const float*>(unpacked_tensor.data()), weight_elements);
     std::vector<uint8_t> quant_data(weight_elements);
@@ -322,7 +324,8 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   } else {
     std::vector<uint8_t> unpacked_tensor;
     weight_tensor_name = w_dql_input_1_def.node_arg.Name();
-    const auto& weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
+    const auto* weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
+    ORT_RETURN_IF_NOT(weight_tensor_proto != nullptr, "Weight tensor not found: ", weight_tensor_name);
     ORT_RETURN_IF_ERROR(UnpackWeightTensorData(qnn_model_wrapper, weight_tensor_proto, weight_shape, input_channel_axis, unpacked_tensor));
 
     // Get weight tensor type from input of w_dql_tensor or output_dql_tensor
@@ -344,7 +347,8 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
     ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(bias_def_ptr->node_arg, bias_shape), "Failed to get bias shape");
     Qnn_DataType_t bias_data_type = QNN_DATATYPE_SFIXED_POINT_32;
     Qnn_TensorType_t bias_tensor_type = qnn_model_wrapper.GetTensorType(bias_tensor_name);
-    const auto& bias_tensor_proto = qnn_model_wrapper.GetConstantTensor(bias_tensor_name);
+    const auto* bias_tensor_proto = qnn_model_wrapper.GetConstantTensor(bias_tensor_name);
+    ORT_RETURN_IF_NOT(bias_tensor_proto != nullptr, "Bias tensor not found: ", bias_tensor_name);
 
     // Prepare scale for bias as input scale * per_channel_float_scales;
     std::vector<float> bias_scales(per_channel_float_scale.size());
@@ -359,6 +363,7 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
     ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*bias_tensor_proto, unpacked_bias_tensor));
 
     // Quantize bias tensor
+    ORT_RETURN_IF_NOT(unpacked_bias_tensor.size() % sizeof(float) == 0, "Invalid bias tensor buffer size");
     size_t bias_elements = unpacked_bias_tensor.size() / sizeof(float);
     auto bias_float_data = gsl::make_span<const float>(reinterpret_cast<const float*>(unpacked_bias_tensor.data()), bias_elements);
     std::vector<uint8_t> bias_quant_data(bias_elements * qnn::utils::GetElementSizeByType(bias_data_type));
