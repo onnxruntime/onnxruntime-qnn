@@ -94,7 +94,11 @@ std::unique_ptr<IQnnNodeGroup> LowPowerBlockQuantizedGemmFusion::TryFusion(
   } else {
     // Get DequantizeLinear contains per-block int scales and per-channel float scales
     // DequantizeLinear connects to scale (input 1) of DequantizeLinear node
-    const std::string& scale_name = (p_w_dql_node_unit->Inputs()[0]).quant_param->scale.Name();
+    const auto& w_dql_input_0 = p_w_dql_node_unit->Inputs()[0];
+    if (!w_dql_input_0.quant_param.has_value() || !w_dql_input_0.quant_param->scale.Exists()) {
+      return nullptr;
+    }
+    const std::string& scale_name = w_dql_input_0.quant_param->scale.Name();
     p_scale_dql_node_unit = GetParentOfInputByName(graph_viewer,
                                                    *p_w_dql_node_unit,
                                                    scale_name,
@@ -264,7 +268,7 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
 
   const std::optional<NodeUnitIODef::QuantParam>& w_dql_quant_param = w_dql_input_1_def.quant_param;
   bool is_int4_type = false;
-  if (w_dql_quant_param->zero_point != nullptr) {
+  if (w_dql_quant_param.has_value() && w_dql_quant_param->zero_point != nullptr) {
     int32_t elem_data_type = 0;
     ORT_RETURN_IF_ERROR(utils::GetOnnxTensorElemDataType(*w_dql_quant_param->zero_point, elem_data_type));
     is_int4_type = (elem_data_type == ONNX_NAMESPACE::TensorProto_DataType_INT4) ||
