@@ -302,7 +302,7 @@ Ort::Status QnnBackendManager::LoadBackend() {
   // QNN requires ADSP_LIBRARY_PATH to be set in order to find skel libs on Linux
   static std::once_flag set_adsp_path_once;
 
-  std::call_once(set_adsp_path_once, []() {
+  std::call_once(set_adsp_path_once, [&backend_path = backend_path_]() {
     constexpr std::string_view kAdspLibraryPathEnvVar{"ADSP_LIBRARY_PATH"};
     const char* existingPath = getenv(kAdspLibraryPathEnvVar.data());
     if (existingPath != nullptr) {
@@ -314,7 +314,10 @@ Ort::Status QnnBackendManager::LoadBackend() {
       return;
     }
 
-    std::filesystem::path qnnLibPath(OrtGetRuntimePath());
+    std::filesystem::path _backend_path(backend_path);
+    std::filesystem::path qnnLibPath = _backend_path.is_absolute()
+                                           ? _backend_path.parent_path()
+                                           : std::filesystem::path(OrtGetRuntimePath());
     ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
                 ORT_LOGGING_LEVEL_WARNING,
                 ("Setting " + std::string(kAdspLibraryPathEnvVar) + " = " + qnnLibPath.string()).c_str());
