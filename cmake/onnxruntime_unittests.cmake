@@ -779,7 +779,7 @@ if(onnxruntime_USE_QNN)
   endif()
   # QNN EP udo tests not require CPU EP op implementations for accuracy evaluation
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/udo/udo_op_test.cpp)
-  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  find_package(Python REQUIRED COMPONENTS Interpreter)
   if(UNIX)
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
       # set -Wno-parentheses for linux to avoid compile error of extra parentheses in included files
@@ -795,7 +795,7 @@ if(onnxruntime_USE_QNN)
 
           # generate op package
           COMMAND ${CMAKE_COMMAND} -E env PYTHONPATH=${onnxruntime_QNN_HOME}/lib/python
-            ${Python3_EXECUTABLE} ${onnxruntime_QNN_HOME}/bin/x86_64-linux-clang/qnn-op-package-generator -p ${TEST_SRC_DIR}/providers/qnn/udo/IncrementOpPackageCpu.xml -o ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/cpu
+            ${Python_EXECUTABLE} ${onnxruntime_QNN_HOME}/bin/x86_64-linux-clang/qnn-op-package-generator -p ${TEST_SRC_DIR}/providers/qnn/udo/IncrementOpPackageCpu.xml -o ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/cpu
 
           # copy pre-implement op package source file
           COMMAND ${CMAKE_COMMAND} -E copy ${TEST_SRC_DIR}/providers/qnn/udo/IncrementCPU.cpp
@@ -850,7 +850,7 @@ if(onnxruntime_USE_QNN)
 
       # generate op package
       COMMAND ${CMAKE_COMMAND} -E env PYTHONPATH=${onnxruntime_QNN_HOME}/lib/python
-        ${Python3_EXECUTABLE} ${onnxruntime_QNN_HOME}/bin/x86_64-windows-msvc/qnn-op-package-generator -p ${TEST_SRC_DIR}/providers/qnn/udo/IncrementOpPackageCpu.xml -o ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/cpu --gen_cmakelists
+        ${Python_EXECUTABLE} ${onnxruntime_QNN_HOME}/bin/x86_64-windows-msvc/qnn-op-package-generator -p ${TEST_SRC_DIR}/providers/qnn/udo/IncrementOpPackageCpu.xml -o ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/cpu --gen_cmakelists
 
       # copy pre-implement op package source file
       COMMAND ${CMAKE_COMMAND} -E copy ${TEST_SRC_DIR}/providers/qnn/udo/IncrementCPU.cpp
