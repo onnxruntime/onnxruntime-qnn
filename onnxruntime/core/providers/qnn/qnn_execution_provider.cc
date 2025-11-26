@@ -186,6 +186,16 @@ static void ParseHtpArchitecture(const std::string& htp_arch_string, QnnHtpDevic
 static void ParseOpPackages(const std::string& op_packages_string, std::vector<onnxruntime::qnn::OpPackage>& op_packages) {
   for (const auto& op_package : utils::SplitString(op_packages_string, ",", true)) {
     auto splitStrings = utils::SplitString(op_package, ":", true);
+#if defined(_WIN32)
+    // On Windows, paths include a drive letter followed by ":" (e.g., "C:\").
+    // This can cause the previous split logic to fail when extracting the library path.
+    // Adjust the path handling to correctly process such cases, e.g., "C:\XXX\YYY\IncrementOp.dll".
+    std::filesystem::path possibleAbsPath = std::filesystem::path(std::string(splitStrings[1]) + ":" + std::string(splitStrings[2]));
+    if (possibleAbsPath.is_absolute() && std::filesystem::exists(possibleAbsPath)) {
+      splitStrings[1] = std::string(splitStrings[1]) + ":" + std::string(splitStrings[2]);
+      splitStrings.erase(splitStrings.begin() + 2);
+    }
+#endif
     if (splitStrings.size() < 3 || splitStrings.size() > 4) {
       LOGS_DEFAULT(WARNING) << "Invalid op_package passed, expected <OpType>:<PackagePath>:<InterfaceSymbolName>[:<Target>], got " << op_package;
       LOGS_DEFAULT(WARNING) << "Skip registration.";

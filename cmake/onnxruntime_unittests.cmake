@@ -760,21 +760,120 @@ if(onnxruntime_USE_WEBGPU)
   list(APPEND onnxruntime_test_providers_libs onnxruntime_providers_webgpu)
 endif()
 
-# QNN EP tests require CPU EP op implementations for accuracy evaluation, so disable on minimal
-# or reduced op builds.
-if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_REDUCED_OPS_BUILD)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/*)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/*)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/optimizer/*)
-  list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn)
-  if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
-    list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn-abi/*)
-    list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn-abi/qnn_node_group/*)
-    list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn-abi/optimizer/*)
-    list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn_abi)
+if(onnxruntime_USE_QNN)
+  # QNN EP tests require CPU EP op implementations for accuracy evaluation, so disable on minimal
+  # or reduced op builds.
+  if(NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_REDUCED_OPS_BUILD)
+    list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/*)
+    list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/*)
+    list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/optimizer/*)
+    list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn)
+    if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
+      list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn-abi/*)
+      list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn-abi/qnn_node_group/*)
+      list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn-abi/optimizer/*)
+      list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn_abi)
 
-    list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_shared)
+      list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_shared)
+    endif()
   endif()
+  # QNN EP udo tests not require CPU EP op implementations for accuracy evaluation
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/udo/udo_op_test.cpp)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  if(UNIX)
+    if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
+      # set -Wno-parentheses for linux to avoid compile error of extra parentheses in included files
+      set_source_files_properties(${TEST_SRC_DIR}/providers/qnn/udo/udo_op_test.cpp PROPERTIES COMPILE_FLAGS "-Wno-parentheses")
+      find_program(MAKE_EXECUTABLE make)
+      add_custom_target(remove_cpu_udo_lib
+        # add this target to ensure udo is always delete before rebuild
+        COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/cpu
+        COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_CURRENT_BINARY_DIR}/libIncrementOpPackage_cpu.so
+      )
+      add_custom_command(
+          OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libIncrementOpPackage_cpu.so
+
+          # generate op package
+          COMMAND ${CMAKE_COMMAND} -E env PYTHONPATH=${onnxruntime_QNN_HOME}/lib/python
+            ${Python3_EXECUTABLE} ${onnxruntime_QNN_HOME}/bin/x86_64-linux-clang/qnn-op-package-generator -p ${TEST_SRC_DIR}/providers/qnn/udo/IncrementOpPackageCpu.xml -o ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/cpu
+
+          # copy pre-implement op package source file
+          COMMAND ${CMAKE_COMMAND} -E copy ${TEST_SRC_DIR}/providers/qnn/udo/IncrementCPU.cpp
+                                           ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/cpu/IncrementOpPackage/src/ops/Increment.cpp
+          # build op package
+          COMMAND ${CMAKE_COMMAND} -E env QNN_SDK_ROOT=${onnxruntime_QNN_HOME}
+            ${MAKE_EXECUTABLE} -C ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/cpu/IncrementOpPackage all_x86
+
+          # copy built op package
+          COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/cpu/IncrementOpPackage/libs/x86_64-linux-clang/libIncrementOpPackage.so
+                                           ${CMAKE_CURRENT_BINARY_DIR}/libIncrementOpPackage_cpu.so
+          DEPENDS remove_cpu_udo_lib
+      )
+      add_custom_target(QnnUDO_Increment
+        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/libIncrementOpPackage_cpu.so
+      )
+      # Disable since building the htp package require HEXAGON SDK, and it is not easy to downloaded it in the environment.
+      # TODO: uncomment the test if HEXAGON SDK become easier to install in the environment.
+      # add_custom_target(remove_htp_udo_lib
+      #   # add this target to ensure udo is always delete before rebuild
+      #   # COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/htp
+      #   COMMAND ${CMAKE_COMMAND} -E remove ${CMAKE_CURRENT_BINARY_DIR}/libIncrementOpPackage_htp.so
+      # )
+      # add_custom_command(
+      #     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/libIncrementOpPackage_htp.so
+      #
+      #     # generate op package
+      #     COMMAND ${CMAKE_COMMAND} -E copy ${TEST_SRC_DIR}/providers/qnn/udo/IncrementHTP.cpp
+      #                                      ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/htp/IncrementOpPackage/src/ops/Increment.cpp
+      #     # build op package
+      #     COMMAND ${CMAKE_COMMAND} -E env HEXAGON_SDK_ROOT=${HEXAGON_SDK_ROOT}
+      #       ${MAKE_EXECUTABLE} -C ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/htp/IncrementOpPackage htp_x86
+      #
+      #     # copy built op package
+      #     COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/htp/IncrementOpPackage/build/x86_64-linux-clang/libQnnIncrementOpPackage.so
+      #                                      ${CMAKE_CURRENT_BINARY_DIR}/libIncrementOpPackage_htp.so
+      #     DEPENDS remove_htp_udo_lib
+      # )
+      # list(APPEND onnxruntime_test_providers_dependencies QnnUDO_Increment_HTP)
+      # add_custom_target(QnnUDO_Increment_HTP
+      #   DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/libIncrementOpPackage_htp.so
+      # )
+    endif()
+  elseif(WIN32)
+    add_custom_target(remove_cpu_udo_lib
+      # add this target to ensure udo is always delete before rebuild
+      COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/cpu
+      COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_CURRENT_BINARY_DIR}/libIncrementOpPackage_cpu.so
+    )
+    add_custom_command(
+      OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}/IncrementOpPackage_cpu.dll
+
+      # generate op package
+      COMMAND ${CMAKE_COMMAND} -E env PYTHONPATH=${onnxruntime_QNN_HOME}/lib/python
+        ${Python3_EXECUTABLE} ${onnxruntime_QNN_HOME}/bin/x86_64-windows-msvc/qnn-op-package-generator -p ${TEST_SRC_DIR}/providers/qnn/udo/IncrementOpPackageCpu.xml -o ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/cpu --gen_cmakelists
+
+      # copy pre-implement op package source file
+      COMMAND ${CMAKE_COMMAND} -E copy ${TEST_SRC_DIR}/providers/qnn/udo/IncrementCPU.cpp
+                                        ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/cpu/IncrementOpPackage/src/ops/Increment.cpp
+      # build op package
+      COMMAND ${CMAKE_COMMAND} -E env QNN_SDK_ROOT=${onnxruntime_QNN_HOME}
+        ${CMAKE_COMMAND} -S ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/cpu/IncrementOpPackage
+                         -B ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/cpu
+                         -DCMAKE_CXX_STANDARD=17
+                         -G "Visual Studio 17 2022"
+                         -T ClangCL
+      COMMAND ${CMAKE_COMMAND} --build ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/cpu --config Release
+
+      # copy built op package
+      COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/cpu/Release/IncrementOpPackage.dll
+                                       ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}/IncrementOpPackage_cpu.dll
+      DEPENDS remove_cpu_udo_lib
+    )
+    add_custom_target(QnnUDO_Increment
+      DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}/IncrementOpPackage_cpu.dll
+    )
+  endif()
+    list(APPEND onnxruntime_test_providers_dependencies QnnUDO_Increment)
 endif()
 
 if(onnxruntime_USE_SNPE)
