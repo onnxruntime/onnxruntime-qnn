@@ -231,8 +231,8 @@ Status TwoDimensionTranspose(std::vector<uint8_t>& data,
       const size_t dst_elem_index = (col * output_shape[1] + row);
       const size_t src_byte_index = src_elem_index * elem_byte_size;
       const size_t dst_byte_index = dst_elem_index * elem_byte_size;
-      ORT_RETURN_IF_NOT(src_byte_index < data.size(), "Source byte index out of bounds");
-      ORT_RETURN_IF_NOT(dst_byte_index < transposed_data.size(), "Destination byte index out of bounds");
+      assert(src_byte_index < data.size());
+      assert(dst_byte_index < transposed_data.size());
 
       std::memcpy(&transposed_data[dst_byte_index], &data[src_byte_index], elem_byte_size);
     }
@@ -306,13 +306,11 @@ Status ProcessLPBQWeight(QnnModelWrapper& qnn_model_wrapper,
     auto block_size = helper.Get("block_size", static_cast<int64_t>(0));
 
     std::vector<uint8_t> unpacked_tensor;
-    const auto* weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
-    ORT_RETURN_IF_NOT(weight_tensor_proto != nullptr, "Weight tensor not found: ", weight_tensor_name);
+    const auto& weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
     // if input_channel_axis = 0, UnpackWeightTensorData will transpose and keep output_channel at 0
     ORT_RETURN_IF_ERROR(UnpackWeightTensorData(qnn_model_wrapper, weight_tensor_proto, weight_shape, input_channel_axis, unpacked_tensor));
 
     // Quantize weight tensor
-    ORT_RETURN_IF_NOT(unpacked_tensor.size() % sizeof(float) == 0, "Invalid weight tensor buffer size");
     size_t weight_elements = unpacked_tensor.size() / sizeof(float);
     auto float_data = gsl::make_span<const float>(reinterpret_cast<const float*>(unpacked_tensor.data()), weight_elements);
     std::vector<uint8_t> quant_data(weight_elements);
@@ -357,20 +355,15 @@ Status ProcessLPBQWeight(QnnModelWrapper& qnn_model_wrapper,
     const Node* p_w_dql_node = nullptr;
 
     for (auto node : matmul_node_unit->GetAllNodesInGroup()) {
-      if (node == nullptr) {
-        continue;
-      }
       for (auto node_input : node->InputDefs()) {
-        if (node_input == nullptr) {
-          continue;
-        }
         if (node_input->Name() == weight_tensor_name) {
           p_w_dql_node = node;
           break;
         }
-      }
-      if (p_w_dql_node != nullptr) {
-        break;
+
+        if (p_w_dql_node != nullptr) {
+          break;
+        }
       }
     }
     ORT_RETURN_IF_NOT((p_w_dql_node != nullptr), "Failed to get Dequantize node on Weight");
@@ -387,8 +380,7 @@ Status ProcessLPBQWeight(QnnModelWrapper& qnn_model_wrapper,
     ORT_RETURN_IF_NOT(qnn_model_wrapper.IsConstantInput(weight_tensor_name), "Weight must be a constant initializer");
 
     std::vector<uint8_t> quant_data;
-    const auto* weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
-    ORT_RETURN_IF_NOT(weight_tensor_proto != nullptr, "Weight tensor not found: ", weight_tensor_name);
+    const auto& weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
     // if input_channel_axis = 0, UnpackWeightTensorData will transpose and keep output_channel at 0
     ORT_RETURN_IF_ERROR(UnpackWeightTensorData(qnn_model_wrapper, weight_tensor_proto, weight_shape, input_channel_axis, quant_data));
 
