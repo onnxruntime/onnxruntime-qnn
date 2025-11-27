@@ -53,7 +53,16 @@ GetTestQDQModelFn<QuantType> BuildPadQDQTestCase(const TestInputDef<float>& data
     std::vector<NodeArg*> inputs;
     // data -> Q -> DQ ->
     NodeArg* data = MakeTestInput(builder, data_def);
-    QuantParams<QuantType> data_qparams = GetTestInputQuantParams<QuantType>(data_def);
+
+    QuantParams<QuantType> data_qparams;
+    if (has_constant_value) {
+      // Include constant padding value when computing QuantParams
+      std::vector<TestInputDef<float>> data_defs = {data_def, constant_value_def};
+      data_qparams = GetTestInputsQuantParams<QuantType>(data_defs);
+    } else {
+      data_qparams = GetTestInputQuantParams<QuantType>(data_def);
+    }
+    
     NodeArg* data_qdq = AddQDQNodePair<QuantType>(builder, data, data_qparams.scale, data_qparams.zero_point);
     inputs.push_back(data_qdq);
 
@@ -312,13 +321,11 @@ TEST_F(QnnHTPBackendTests, PadReflectMode_fp16) {
                2e-3f);
 }
 
-// HTP\HTP\src\hexagon\prepare\graph_prepare.cc:203:ERROR:could not create op: q::flat_from_vtcm
-// HTP\HTP\src\hexagon\prepare\graph_prepare.cc:1238:ERROR:Op 0x104100000011 preparation failed with err:-1
-// Completed stage: Graph Transformations and Optimizations (13372 us)
-// QnnDsp <E> "node" generated: could not create op
-// QnnDsp <E> RouterWindows graph prepare failed 12
-// QnnDsp <E> Failed to finalize graph (id: 1) with err 1002
-TEST_F(QnnHTPBackendTests, DISABLED_PadReflectMode_FP16_big_data) {
+// Since QAIRT 2.35, default float precision on QNN HTP became FP16.
+// Converting FP32 -> FP16 -> FP32 may introduce minor accuracy loss.
+// For example, a value of 8.00300312 could become 8.00000095 after the conversion.
+// The expected difference is approximately 0.00300217, so the tolerance is adjusted to 4e-3f.
+TEST_F(QnnHTPBackendTests, PadReflectMode_FP16_big_data) {
   bool has_constant_value_input = false;
   bool use_htp = true;
   bool enable_fp16_precision = true;
@@ -331,7 +338,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_PadReflectMode_FP16_big_data) {
                18,  // opset
                use_htp,
                enable_fp16_precision,
-               2e-3f);
+               4e-3f);
 }
 
 TEST_F(QnnHTPBackendTests, PadNoConstantNegValue_fp16_test) {
@@ -524,14 +531,7 @@ TEST_F(QnnHTPBackendTests, Pad4dMix) {
                            ExpectedEPNodeAssignment::All);
 }
 
-// Inaccuracy detected for output 'output', element 0.
-// Output quant params: scale=0.035294119268655777, zero_point=0.
-// Expected val: 9
-// QNN QDQ val: 8.0117654800415039 (err 0.98823451995849609)
-// CPU QDQ val: 9 (err 0)
-// QNN limitation? pad_constant_value has to be within the range of input[0].
-// Here pad_constant_value = 9.0 > max(input[0]) = 8.0
-TEST_F(QnnHTPBackendTests, DISABLED_Pad4dOutOfRangePadConstantValue) {
+TEST_F(QnnHTPBackendTests, Pad4dOutOfRangePadConstantValue) {
   RunQDQPadOpTest<uint8_t>(TestInputDef<float>({1, 2, 2, 2}, false,
                                                {1.0f, 2.0f,
                                                 3.0f, 4.0f,

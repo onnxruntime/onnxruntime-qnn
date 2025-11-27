@@ -316,6 +316,22 @@ inline QuantParams<QType> GetTestInputQuantParams(const TestInputDef<float>& inp
 }
 
 template <typename QType>
+inline QuantParams<QType> GetTestInputsQuantParams(const std::vector<TestInputDef<float>>& input_defs,
+                                                   bool symmetric = false) {
+  std::pair<float, float> frange = {std::numeric_limits<float>::max(), std::numeric_limits<float>::lowest()}; 
+
+  // Compute global range across all inputs
+  for (const auto& input_def : input_defs) {
+    const auto input_range = input_def.GetRange();
+    frange.first = std::min(frange.first, input_range.first);
+    frange.second = std::max(frange.second, input_range.second);
+  }
+
+  // Compute QuantParams using combined range
+  return QuantParams<QType>::Compute(frange.first, frange.second, symmetric);
+}
+
+template <typename QType>
 static void GetTestInputQuantParamsPerChannel(const TestInputDef<float>& input_def, std::vector<float>& scales,
                                               std::vector<QType>& zero_points, size_t axis, bool symmetric = false) {
   const auto f32_ranges = input_def.GetRangePerChannel(axis);
