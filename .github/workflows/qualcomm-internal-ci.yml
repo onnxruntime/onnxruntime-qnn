@@ -25,10 +25,10 @@ jobs:
     uses: ./.github/workflows/qualcomm-internal-build-and-test.yml
     secrets: inherit
     with:
-      do_linux_x86_64: false
-      do_linux_aarch64: false
-      do_windows_arm64: true
-      do_windows_arm64ec: true
-      do_windows_x86_64: true
-      do_android: false
-      do_lint: false
+      do_linux_x86_64: ${{ vars.DO_LINUX_X86_64 == '' || vars.DO_LINUX_X86_64 != '0' }}
+      do_linux_aarch64: ${{ vars.DO_LINUX_AARCH64 == '' || vars.DO_LINUX_AARCH64 != '0' }}
+      do_windows_arm64: ${{ vars.DO_WINDOWS_ARM64 == '' || vars.DO_WINDOWS_ARM64 != '0' }}
+      do_windows_arm64ec: ${{ vars.DO_WINDOWS_ARM64EC == '' || vars.DO_WINDOWS_ARM64EC != '0' }}
+      do_windows_x86_64: ${{ vars.DO_WINDOWS_X86_64 == '' || vars.DO_WINDOWS_X86_64 != '0' }}
+      do_android: ${{ vars.DO_ANDROID == '' || vars.DO_ANDROID != '0' }}
+      do_lint: ${{ vars.DO_LINT == '' || vars.DO_LINT != '0' }}

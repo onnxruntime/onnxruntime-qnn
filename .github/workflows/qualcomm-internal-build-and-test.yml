@@ -80,6 +80,7 @@ jobs:
       upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' }}
       target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
       test_runner_arch: arm64
+      run_tests: ${{ vars.RUN_TESTS == '' || vars.RUN_TESTS != '0' }}
 
   build-and-test-windows-arm64ec:
     if: ${{ inputs.do_windows_arm64ec }}
@@ -89,7 +90,7 @@ jobs:
       nightly_build: ${{ inputs.nightly_build }}
       target_arch: arm64ec
       upload_wheel: true
-      test_wheel: true
+      test_wheel: ${{ vars.TEST_WHEEL == '' || vars.TEST_WHEEL != '0' }}
       target_py_vsn: ${{ inputs.target_py_vsn }}
       run_tests: false  # ARM64ec unit tests are horribly broken (though model tests seem fine).
       test_runner_arch: arm64
@@ -102,6 +103,8 @@ jobs:
       nightly_build: ${{ inputs.nightly_build }}
       target_arch: x86_64
       target_py_vsn: ${{ inputs.target_py_vsn }}
+      test_wheel: ${{ vars.TEST_WHEEL == '' || vars.TEST_WHEEL != '0' }}
+      run_tests: ${{ vars.RUN_TESTS == '' || vars.RUN_TESTS != '0' }}
 
   lint:
     if: ${{ inputs.do_lint }}
