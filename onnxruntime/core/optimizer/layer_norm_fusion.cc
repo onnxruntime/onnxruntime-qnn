@@ -480,7 +480,7 @@ Status LayerNormFusion::ApplyImpl(Graph& graph, bool& modified, int graph_level,
       int64_t reduced_axis_length = div_output_arg->Shape()->dim(reduce_mean_axes).dim_value();
       int div_output_dtype = div_output_arg->TypeAsProto()->tensor_type().elem_type();
 
-      // LayerNorm requires two inputs: x and scale. If scale is unused, fill it with a 1D vector of 1.0f values.
+      // LayerNorm requires 2 input, x and scale. Fill 1.0f to 1D vecoter scale when scale is unused.
       ONNX_NAMESPACE::TensorProto scale_constant;
       std::string const_name = graph.GenerateNodeName(last_node_ptr->Name() + "/LayerNormFusion/Scale");
       scale_constant.set_name(const_name);
@@ -492,7 +492,7 @@ Status LayerNormFusion::ApplyImpl(Graph& graph, bool& modified, int graph_level,
       }
       graph.AddInitializedTensor(scale_constant);
       scale = &graph.GetOrCreateNodeArg(const_name, nullptr);
-    }
+    }  // end if (!skip_scale_bias_for_layer_norm)
 
     NodeArg* x_input = has_leading_cast ? graph.GetNode(p_reduce_mean_input_node->Index())->MutableInputDefs()[0]
                                         : reduce_mean_node.MutableInputDefs()[0];
@@ -529,7 +529,7 @@ Status LayerNormFusion::ApplyImpl(Graph& graph, bool& modified, int graph_level,
 
     // Set stash_type to double if any input is double, default value if float.
     if (x_input->TypeAsProto()->tensor_type().elem_type() == ONNX_NAMESPACE::TensorProto_DataType_DOUBLE ||
-        scale->TypeAsProto()->tensor_type().elem_type() == ONNX_NAMESPACE::TensorProto_DataType_DOUBLE) {
+        (!skip_scale_bias_for_layer_norm && scale->TypeAsProto()->tensor_type().elem_type() == ONNX_NAMESPACE::TensorProto_DataType_DOUBLE)) {
       layer_norm_node.AddAttribute("stash_type", static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType_DOUBLE));
     }
 
