@@ -413,9 +413,8 @@ static BackendSupport GetHTPSupport(const onnxruntime::logging::Logger& logger) 
   // Create QNN EP and call GetCapability().
   MockKernelLookup kernel_lookup;
   onnxruntime::GraphViewer graph_viewer(graph);
-  std::unique_ptr<onnxruntime::IExecutionProvider> qnn_ep = QnnExecutionProviderWithOptions({{"backend_type", "htp"},
-                                                                                             {"offload_graph_io_quantization", "0"},
-                                                                                             {"skip_qnn_version_check", "1"}});
+  std::unique_ptr<onnxruntime::IExecutionProvider> qnn_ep = QnnExecutionProviderWithOptions(
+      {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}, {"skip_qnn_version_check", "1"}});
   GraphOptimizerRegistry graph_optimizer_registry(nullptr, nullptr, nullptr);  // as a placeholder to feed into GetCapability
 
   qnn_ep->SetLogger(&logger);
@@ -473,7 +472,7 @@ static BackendSupport GetGPUSupport(const onnxruntime::logging::Logger& logger) 
   MockKernelLookup kernel_lookup;
   onnxruntime::GraphViewer graph_viewer(graph);
   std::unique_ptr<onnxruntime::IExecutionProvider> qnn_ep = QnnExecutionProviderWithOptions(
-      {{"backend_type", "gpu"}, {"offload_graph_io_quantization", "0"}});
+      {{"backend_type", "gpu"}, {"offload_graph_io_quantization", "0"}, {"skip_qnn_version_check", "1"}});
   GraphOptimizerRegistry graph_optimizer_registry(nullptr, nullptr, nullptr);  // as a placeholder to feed into GetCapability
 
   qnn_ep->SetLogger(&logger);
@@ -549,7 +548,7 @@ static BackendSupport GetCPUSupport(const onnxruntime::logging::Logger& logger, 
   MockKernelLookup kernel_lookup;
   onnxruntime::GraphViewer graph_viewer(graph);
   std::unique_ptr<onnxruntime::IExecutionProvider> qnn_ep = QnnExecutionProviderWithOptions(
-      {{"backend_type", backend_type}, {"offload_graph_io_quantization", "0"}});
+      {{"backend_type", backend_type}, {"offload_graph_io_quantization", "0"}, {"skip_qnn_version_check", "1"}});
   GraphOptimizerRegistry graph_optimizer_registry(nullptr, nullptr, nullptr);  // as a placeholder to feed into GetCapability
 
   qnn_ep->SetLogger(&logger);
