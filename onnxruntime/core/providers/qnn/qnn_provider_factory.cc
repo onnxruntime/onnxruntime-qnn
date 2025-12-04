@@ -161,7 +161,7 @@ struct QNN_Provider : Provider {
 
       auto default_backends_it = kDefaultBackends.find(device_to_use->type);
       ORT_RETURN_IF(default_backends_it == kDefaultBackends.end(),
-                   "Could not determine default backend path for device of type: ", device_to_use->type);
+                    "Could not determine default backend path for device of type: ", device_to_use->type);
 
       // Identify the path of the current dynamic library, and expect that the backend library is in the same directory.
       onnxruntime::PathString current_path = GetDynamicLibraryLocationByAddress(
