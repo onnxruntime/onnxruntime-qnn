@@ -41,10 +41,11 @@ class QnnNodeUnitWrapper : public IQnnNodeGroup {
   Status IsSupported(QnnModelWrapper& qmw, const logging::Logger& logger) const override {
     const std::string& op_type = node_unit_->OpType();
     const auto* op_builder = qnn::GetOpBuilder(op_type);
+    std::cout << "op_type: " << op_type << std::endl;
     ORT_RETURN_IF_NOT(op_builder != nullptr, "Operators of type `", op_type,
                       "` are not supported by QNN EP.", op_type, " node `",
                       node_unit_->Name(), "` will not be assigned to QNN EP.");
-
+    std::cout << op_type << " has corresponding op builder" << std::endl;
     return op_builder->IsOpSupported(qmw, *node_unit_, logger);
   }
 

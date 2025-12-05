@@ -739,10 +739,13 @@ QNNExecutionProvider::GetSupportedNodes(const GraphViewer& graph_viewer,
     LOGS(logger, ERROR) << status.ErrorMessage();
     return {};
   }
-
+  std::cout << "num node group: " << qnn_node_groups.size() << std::endl;
   for (const std::unique_ptr<qnn::IQnnNodeGroup>& qnn_node_group : qnn_node_groups) {
     Status status = qnn_node_group->IsSupported(qnn_model_wrapper, logger);
     const bool supported = status.IsOK();
+    if (!supported) {
+      std::cout << "Reason: " << status.ErrorMessage() << std::endl;
+    }
 
     constexpr auto log_severity = logging::Severity::kINFO;
     constexpr auto log_data_type = logging::DataType::SYSTEM;
