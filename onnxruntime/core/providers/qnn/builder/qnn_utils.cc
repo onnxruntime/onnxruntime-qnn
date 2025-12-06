@@ -33,6 +33,7 @@ size_t GetElementSizeByType(const Qnn_DataType_t& data_type) {
       {QNN_DATATYPE_UINT_64, 8},
       {QNN_DATATYPE_FLOAT_16, 2},
       {QNN_DATATYPE_FLOAT_32, 4},
+      {QNN_DATATYPE_BFLOAT_16, 2},
       {QNN_DATATYPE_BOOL_8, 1},
       {QNN_DATATYPE_SFIXED_POINT_8, 1},
       {QNN_DATATYPE_SFIXED_POINT_16, 2},
@@ -200,6 +201,9 @@ std::ostream& operator<<(std::ostream& out, const Qnn_DataType_t& data_type) {
       break;
     case QNN_DATATYPE_FLOAT_32:
       out << "QNN_DATATYPE_FLOAT_32";
+      break;
+    case QNN_DATATYPE_BFLOAT_16:
+      out << "QNN_DATATYPE_BFLOAT_16";
       break;
     case QNN_DATATYPE_SFIXED_POINT_8:
       out << "QNN_DATATYPE_SFIXED_POINT_8";
