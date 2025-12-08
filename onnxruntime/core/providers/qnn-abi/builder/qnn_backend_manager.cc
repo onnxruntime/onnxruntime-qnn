@@ -299,21 +299,21 @@ Ort::Status QnnBackendManager::LoadBackend() {
 
   std::call_once(set_adsp_path_once, []() {
     constexpr std::string_view kAdspLibraryPathEnvVar{"ADSP_LIBRARY_PATH"};
-    const char* existingPath = getenv(kAdspLibraryPathEnvVar.data());
-    if (existingPath != nullptr) {
+    const char* existing_path = getenv(kAdspLibraryPathEnvVar.data());
+    if (existing_path != nullptr) {
       ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
                   ORT_LOGGING_LEVEL_WARNING,
                   ("Using existing ADSP_LIBRARY_PATH setting of " +
-                   std::string(existingPath) + ", which may cause the HTP backend to fail.")
+                   std::string(existing_path) + ", which may cause the HTP backend to fail.")
                       .c_str());
       return;
     }
 
-    std::filesystem::path qnnLibPath(OrtGetRuntimePath());
+    std::filesystem::path qnn_lib_path(OrtGetRuntimePath());
     ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
                 ORT_LOGGING_LEVEL_WARNING,
-                ("Setting " + std::string(kAdspLibraryPathEnvVar) + " = " + qnnLibPath.string()).c_str());
-    setenv(kAdspLibraryPathEnvVar.data(), qnnLibPath.c_str(), 1);
+                ("Setting " + std::string(kAdspLibraryPathEnvVar) + " = " + qnn_lib_path.string()).c_str());
+    setenv(kAdspLibraryPathEnvVar.data(), qnn_lib_path.c_str(), 1);
   });
 #endif
 
