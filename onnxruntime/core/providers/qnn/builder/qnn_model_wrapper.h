@@ -324,6 +324,24 @@ class QnnModelWrapper {
   void GetGraphInputOutputTensorWrapper(const std::vector<std::string>& names,
                                         std::vector<QnnTensorWrapper>& wrappers_list);
 
+  // BF16 conversion helper methods
+  bool ProcessBF16InputConversion(const std::string& qnn_node_name,
+                                  const std::vector<std::string>& input_names,
+                                  std::vector<std::string>& converted_input_names);
+
+  bool ProcessBF16OutputConversion(const std::string& qnn_node_name,
+                                   const std::vector<std::string>& output_names,
+                                   std::vector<std::string>& converted_output_names,
+                                   std::vector<std::pair<std::string, std::string>>& graph_output_cast_ops);
+
+  bool ApplyBF16ConversionForValidation(const std::vector<std::string>& input_names,
+                                        const std::vector<std::string>& output_names,
+                                        std::vector<std::string>& validation_input_names,
+                                        std::vector<std::string>& validation_output_names);
+
+  void RestoreFP32AfterValidation(const std::vector<std::string>& input_names,
+                                  const std::vector<std::string>& output_names);
+
   const GraphViewer& graph_viewer_;
   const logging::Logger& logger_;
   const QNN_INTERFACE_VER_TYPE& qnn_interface_;

@@ -222,6 +222,176 @@ Status QnnModelWrapper::ValidateQnnNode(const std::string& node_name,
   return Status::OK();
 }
 
+bool QnnModelWrapper::ProcessBF16InputConversion(const std::string& qnn_node_name,
+                                                 const std::vector<std::string>& input_names,
+                                                 std::vector<std::string>& converted_input_names) {
+  ORT_UNUSED_PARAMETER(qnn_node_name);
+  for (size_t i = 0; i < input_names.size(); ++i) {
+    const auto& input_name = input_names[i];
+    auto it = model_tensors_map_.find(input_name);
+    if (it == model_tensors_map_.end()) {
+      LOGS(logger_, ERROR) << "Input tensor not found: " << input_name;
+      return false;
+    }
+
+    auto& tensor_wrapper = it->second;
+    Qnn_DataType_t tensor_dtype = tensor_wrapper.GetTensorDataType();
+    Qnn_TensorType_t tensor_type = tensor_wrapper.GetTensorType();
+    bool is_graph_input_or_init = IsGraphInput(input_name) || IsConstantInput(input_name);
+
+    if (is_graph_input_or_init && tensor_dtype == QNN_DATATYPE_FLOAT_32) {
+      // Insert Cast node for FP32 graph inputs/initializers: FP32 -> BF16
+      std::string cast_output_name = input_name + "_bf16";
+
+      if (!IsQnnTensorWrapperExist(cast_output_name)) {
+        std::vector<uint32_t> shape = tensor_wrapper.GetTensorDims();
+        QnnTensorWrapper bf16_tensor(cast_output_name, QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_BFLOAT_16,
+                                     QnnQuantParamsWrapper(), std::move(shape));
+        if (!AddTensorWrapper(std::move(bf16_tensor))) {
+          LOGS(logger_, ERROR) << "Failed to add BF16 cast output tensor: " << cast_output_name;
+          return false;
+        }
+
+        std::string cast_node_name = qnn_node_name + "_input_cast_" + std::to_string(i);
+        QnnOpProperty cast_op(cast_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
+                             std::vector<std::string>{input_name},
+                             std::vector<std::string>{cast_output_name},
+                             std::vector<std::string>{});
+        qnn_op_property_list_.push_back(std::move(cast_op));
+      }
+      converted_input_names.push_back(cast_output_name);
+    } else if (tensor_type == QNN_TENSOR_TYPE_NATIVE && tensor_dtype == QNN_DATATYPE_FLOAT_32) {
+      // Convert intermediate FP32 tensors to BF16 directly
+      SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_BFLOAT_16);
+      converted_input_names.push_back(input_name);
+    } else {
+      converted_input_names.push_back(input_name);
+    }
+  }
+  return true;
+}
+
+bool QnnModelWrapper::ProcessBF16OutputConversion(const std::string& qnn_node_name,
+                                                  const std::vector<std::string>& output_names,
+                                                  std::vector<std::string>& converted_output_names,
+                                                  std::vector<std::pair<std::string, std::string>>& graph_output_cast_ops) {
+  ORT_UNUSED_PARAMETER(qnn_node_name);
+  for (size_t i = 0; i < output_names.size(); ++i) {
+    const auto& output_name = output_names[i];
+    auto it = model_tensors_map_.find(output_name);
+
+    if (IsGraphOutput(output_name)) {
+      // For graph outputs, insert Cast node to convert BF16 back to FP32
+      std::string bf16_output_name = output_name + "_bf16_intermediate";
+
+      if (!IsQnnTensorWrapperExist(bf16_output_name)) {
+        if (it != model_tensors_map_.end()) {
+          auto& tensor_wrapper = it->second;
+          std::vector<uint32_t> shape = tensor_wrapper.GetTensorDims();
+          Qnn_DataType_t original_dtype = tensor_wrapper.GetTensorDataType();
+
+          QnnTensorWrapper bf16_tensor(bf16_output_name, QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_BFLOAT_16,
+                                       QnnQuantParamsWrapper(), std::move(shape));
+          if (!AddTensorWrapper(std::move(bf16_tensor))) {
+            LOGS(logger_, ERROR) << "Failed to add BF16 intermediate output tensor: " << bf16_output_name;
+            return false;
+          }
+
+          // Ensure the graph output tensor remains FP32
+          if (original_dtype != QNN_DATATYPE_FLOAT_32) {
+            LOGS(logger_, WARNING) << "Graph output tensor has unexpected dtype: " << original_dtype << ", forcing to FP32";
+            SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_FLOAT_32);
+          }
+          graph_output_cast_ops.push_back({bf16_output_name, output_name});
+        }
+      } else {
+        // Ensure the graph output tensor is FP32
+        if (it != model_tensors_map_.end()) {
+          auto& tensor_wrapper = it->second;
+          Qnn_DataType_t current_dtype = tensor_wrapper.GetTensorDataType();
+          if (current_dtype != QNN_DATATYPE_FLOAT_32) {
+            LOGS(logger_, WARNING) << "Graph output tensor " << output_name << " has dtype: " << current_dtype << ", forcing to FP32";
+            SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_FLOAT_32);
+          }
+        }
+        graph_output_cast_ops.push_back({bf16_output_name, output_name});
+      }
+      converted_output_names.push_back(bf16_output_name);
+    } else if (it != model_tensors_map_.end()) {
+      auto& tensor_wrapper = it->second;
+      Qnn_DataType_t tensor_dtype = tensor_wrapper.GetTensorDataType();
+      Qnn_TensorType_t tensor_type = tensor_wrapper.GetTensorType();
+
+      // Convert intermediate FP32 tensors to BF16 directly
+      if (tensor_type == QNN_TENSOR_TYPE_NATIVE && tensor_dtype == QNN_DATATYPE_FLOAT_32) {
+        SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_BFLOAT_16);
+      }
+      converted_output_names.push_back(output_name);
+    } else {
+      converted_output_names.push_back(output_name);
+    }
+  }
+  return true;
+}
+
+bool QnnModelWrapper::ApplyBF16ConversionForValidation(const std::vector<std::string>& input_names,
+                                                       const std::vector<std::string>& output_names,
+                                                       std::vector<std::string>& validation_input_names,
+                                                       std::vector<std::string>& validation_output_names) {
+  // Temporarily convert FP32 input tensors to BF16 for validation
+  for (const auto& input_name : input_names) {
+    auto it = model_tensors_map_.find(input_name);
+    if (it == model_tensors_map_.end()) {
+      LOGS(logger_, ERROR) << "Input tensor not found: " << input_name;
+      return false;
+    }
+
+    auto& tensor_wrapper = it->second;
+    if (tensor_wrapper.GetTensorDataType() == QNN_DATATYPE_FLOAT_32) {
+      SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_BFLOAT_16);
+    }
+    validation_input_names.push_back(input_name);
+  }
+
+  // Temporarily convert FP32 output tensors to BF16 for validation
+  for (const auto& output_name : output_names) {
+    auto it = model_tensors_map_.find(output_name);
+    if (it != model_tensors_map_.end()) {
+      auto& tensor_wrapper = it->second;
+      if (tensor_wrapper.GetTensorDataType() == QNN_DATATYPE_FLOAT_32) {
+        SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_BFLOAT_16);
+      }
+    }
+    validation_output_names.push_back(output_name);
+  }
+  return true;
+}
+
+void QnnModelWrapper::RestoreFP32AfterValidation(const std::vector<std::string>& input_names,
+                                                 const std::vector<std::string>& output_names) {
+  // Restore FP32 data types for inputs
+  for (const auto& input_name : input_names) {
+    auto it = model_tensors_map_.find(input_name);
+    if (it != model_tensors_map_.end()) {
+      auto& tensor_wrapper = it->second;
+      if (tensor_wrapper.GetTensorDataType() == QNN_DATATYPE_BFLOAT_16) {
+        SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_FLOAT_32);
+      }
+    }
+  }
+
+  // Restore FP32 data types for outputs
+  for (const auto& output_name : output_names) {
+    auto it = model_tensors_map_.find(output_name);
+    if (it != model_tensors_map_.end()) {
+      auto& tensor_wrapper = it->second;
+      if (tensor_wrapper.GetTensorDataType() == QNN_DATATYPE_BFLOAT_16) {
+        SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_FLOAT_32);
+      }
+    }
+  }
+}
+
 bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
                                     const std::string& package_name,
                                     const std::string& qnn_node_type,
@@ -230,133 +400,23 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
                                     std::vector<std::string>&& param_tensor_names,
                                     bool do_op_validation) {
   // Check if BF16 conversion is needed for HTP backend
-  bool needs_bf16_conversion = model_settings_.htp_bf16_enable && (qnn_backend_type_ == QnnBackendType::HTP ||
-                               qnn_backend_type_ == QnnBackendType::SERIALIZER);
+  bool needs_bf16_conversion = model_settings_.htp_bf16_enable &&
+                               (qnn_backend_type_ == QnnBackendType::HTP || qnn_backend_type_ == QnnBackendType::SERIALIZER);
 
+  // BF16 conversion for normal execution (not validation)
   if (needs_bf16_conversion && !do_op_validation) {
     LOGS(logger_, VERBOSE) << "Applying BF16 conversion for node: " << qnn_node_name;
 
-    // Convert FP32 inputs to BF16 by inserting Cast nodes for graph inputs/initializers
-    // or directly modifying intermediate tensor data types
     std::vector<std::string> converted_input_names;
-    for (size_t i = 0; i < input_names.size(); ++i) {
-      const auto& input_name = input_names[i];
+    std::vector<std::string> converted_output_names;
+    std::vector<std::pair<std::string, std::string>> graph_output_cast_ops;
 
-      auto it = model_tensors_map_.find(input_name);
-      if (it == model_tensors_map_.end()) {
-        LOGS(logger_, ERROR) << "Input tensor not found: " << input_name;
-        return false;
-      }
-
-      auto& tensor_wrapper = it->second;
-      Qnn_DataType_t tensor_dtype = tensor_wrapper.GetTensorDataType();
-      Qnn_TensorType_t tensor_type = tensor_wrapper.GetTensorType();
-      bool is_graph_input_or_init = IsGraphInput(input_name) || IsConstantInput(input_name);
-
-      if (is_graph_input_or_init && tensor_dtype == QNN_DATATYPE_FLOAT_32) {
-        // Insert Cast node for FP32 graph inputs/initializers: FP32 -> BF16
-        std::string cast_output_name = input_name + "_bf16";
-
-        if (!IsQnnTensorWrapperExist(cast_output_name)) {
-          std::vector<uint32_t> shape = tensor_wrapper.GetTensorDims();
-
-          QnnTensorWrapper bf16_tensor(cast_output_name,
-                                       QNN_TENSOR_TYPE_NATIVE,
-                                       QNN_DATATYPE_BFLOAT_16,
-                                       QnnQuantParamsWrapper(),
-                                       std::move(shape));
-          if (!AddTensorWrapper(std::move(bf16_tensor))) {
-            LOGS(logger_, ERROR) << "Failed to add BF16 cast output tensor: " << cast_output_name;
-            return false;
-          }
-
-          // Create Cast operation
-          std::string cast_node_name = qnn_node_name + "_input_cast_" + std::to_string(i);
-          QnnOpProperty cast_op(cast_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
-                               std::vector<std::string>{input_name},
-                               std::vector<std::string>{cast_output_name},
-                               std::vector<std::string>{});
-          qnn_op_property_list_.push_back(std::move(cast_op));
-        }
-
-        converted_input_names.push_back(cast_output_name);
-      } else if (tensor_type == QNN_TENSOR_TYPE_NATIVE && tensor_dtype == QNN_DATATYPE_FLOAT_32) {
-        // Convert intermediate FP32 tensors to BF16 directly
-        SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_BFLOAT_16);
-        converted_input_names.push_back(input_name);
-      } else {
-        converted_input_names.push_back(input_name);
-      }
+    if (!ProcessBF16InputConversion(qnn_node_name, input_names, converted_input_names)) {
+      return false;
     }
 
-    // Convert FP32 outputs to BF16 by inserting Cast nodes for graph outputs
-    // or directly modifying intermediate tensor data types
-    std::vector<std::string> converted_output_names;
-    std::vector<std::pair<std::string, std::string>> graph_output_cast_ops;  // Store (bf16_name, fp32_name) pairs
-
-    for (size_t i = 0; i < output_names.size(); ++i) {
-      const auto& output_name = output_names[i];
-      auto it = model_tensors_map_.find(output_name);
-
-      if (IsGraphOutput(output_name)) {
-        // For graph outputs, insert Cast node to convert BF16 back to FP32
-        std::string bf16_output_name = output_name + "_bf16_intermediate";
-
-        if (!IsQnnTensorWrapperExist(bf16_output_name)) {
-          if (it != model_tensors_map_.end()) {
-            auto& tensor_wrapper = it->second;
-            std::vector<uint32_t> shape = tensor_wrapper.GetTensorDims();
-            Qnn_DataType_t original_dtype = tensor_wrapper.GetTensorDataType();
-
-            // Create intermediate BF16 tensor
-            QnnTensorWrapper bf16_tensor(bf16_output_name,
-                                         QNN_TENSOR_TYPE_NATIVE,
-                                         QNN_DATATYPE_BFLOAT_16,
-                                         QnnQuantParamsWrapper(),
-                                         std::move(shape));
-            if (!AddTensorWrapper(std::move(bf16_tensor))) {
-              LOGS(logger_, ERROR) << "Failed to add BF16 intermediate output tensor: " << bf16_output_name;
-              return false;
-            }
-
-            // Ensure the graph output tensor remains FP32
-            if (original_dtype != QNN_DATATYPE_FLOAT_32) {
-              LOGS(logger_, WARNING) << "Graph output tensor has unexpected dtype: " << original_dtype
-                                     << ", forcing to FP32";
-              SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_FLOAT_32);
-            }
-
-            graph_output_cast_ops.push_back({bf16_output_name, output_name});
-          }
-        } else {
-          // Ensure the graph output tensor is FP32
-          if (it != model_tensors_map_.end()) {
-            auto& tensor_wrapper = it->second;
-            Qnn_DataType_t current_dtype = tensor_wrapper.GetTensorDataType();
-            if (current_dtype != QNN_DATATYPE_FLOAT_32) {
-              LOGS(logger_, WARNING) << "Graph output tensor " << output_name
-                                     << " has dtype: " << current_dtype << ", forcing to FP32";
-              SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_FLOAT_32);
-            }
-          }
-
-          graph_output_cast_ops.push_back({bf16_output_name, output_name});
-        }
-
-        converted_output_names.push_back(bf16_output_name);
-      } else if (it != model_tensors_map_.end()) {
-        auto& tensor_wrapper = it->second;
-        Qnn_DataType_t tensor_dtype = tensor_wrapper.GetTensorDataType();
-        Qnn_TensorType_t tensor_type = tensor_wrapper.GetTensorType();
-
-        // Convert intermediate FP32 tensors to BF16 directly
-        if (tensor_type == QNN_TENSOR_TYPE_NATIVE && tensor_dtype == QNN_DATATYPE_FLOAT_32) {
-          SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_BFLOAT_16);
-        }
-        converted_output_names.push_back(output_name);
-      } else {
-        converted_output_names.push_back(output_name);
-      }
+    if (!ProcessBF16OutputConversion(qnn_node_name, output_names, converted_output_names, graph_output_cast_ops)) {
+      return false;
     }
 
     // Create the main QNN node with BF16-converted tensor names
@@ -369,20 +429,17 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
     for (size_t i = 0; i < graph_output_cast_ops.size(); ++i) {
       const auto& [bf16_name, fp32_name] = graph_output_cast_ops[i];
       std::string cast_node_name = qnn_node_name + "_output_cast_" + std::to_string(i);
-
       QnnOpProperty cast_op(cast_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
                            std::vector<std::string>{bf16_name},
                            std::vector<std::string>{fp32_name},
                            std::vector<std::string>{});
       qnn_op_property_list_.push_back(std::move(cast_op));
     }
-
     return true;
   }
 
-  // Validation or non-BF16 execution path
+  // Validation path
   if (do_op_validation) {
-
     std::vector<Qnn_Tensor_t> input_tensors;
     std::vector<Qnn_Tensor_t> output_tensors;
     std::vector<Qnn_Param_t> params;
@@ -392,65 +449,19 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
       std::vector<std::string> validation_input_names;
       std::vector<std::string> validation_output_names;
 
-      // Temporarily convert FP32 input tensors to BF16 for validation
-      for (size_t i = 0; i < input_names.size(); ++i) {
-        const auto& input_name = input_names[i];
-
-        auto it = model_tensors_map_.find(input_name);
-        if (it == model_tensors_map_.end()) {
-          LOGS(logger_, ERROR) << "Input tensor not found: " << input_name;
-          return false;
-        }
-
-        auto& tensor_wrapper = it->second;
-        Qnn_DataType_t tensor_dtype = tensor_wrapper.GetTensorDataType();
-
-        if (tensor_dtype == QNN_DATATYPE_FLOAT_32) {
-          SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_BFLOAT_16);
-          validation_input_names.push_back(input_name);
-        } else {
-          validation_input_names.push_back(input_name);
-        }
-      }
-
-      // Temporarily convert FP32 output tensors to BF16 for validation
-      for (size_t i = 0; i < output_names.size(); ++i) {
-        const auto& output_name = output_names[i];
-
-        auto it = model_tensors_map_.find(output_name);
-        if (it != model_tensors_map_.end()) {
-          auto& tensor_wrapper = it->second;
-          Qnn_DataType_t tensor_dtype = tensor_wrapper.GetTensorDataType();
-
-          if (tensor_dtype == QNN_DATATYPE_FLOAT_32) {
-            SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_BFLOAT_16);
-          }
-        }
-        validation_output_names.push_back(output_name);
-      }
-
-      // Create tensors for validation
-      if (!CreateQnnInputOutputTensors(qnn_node_name, validation_input_names, input_tensors, do_op_validation)) {
-        LOGS(logger_, ERROR) << "Failed to create input tensors for validation";
+      if (!ApplyBF16ConversionForValidation(input_names, output_names, validation_input_names, validation_output_names)) {
         return false;
       }
 
-      if (!CreateQnnInputOutputTensors(qnn_node_name, validation_output_names, output_tensors, do_op_validation)) {
-        LOGS(logger_, ERROR) << "Failed to create output tensors for validation";
+      if (!CreateQnnInputOutputTensors(qnn_node_name, validation_input_names, input_tensors, do_op_validation) ||
+          !CreateQnnInputOutputTensors(qnn_node_name, validation_output_names, output_tensors, do_op_validation) ||
+          !CreateQnnParamTensors(qnn_node_name, param_tensor_names, params, do_op_validation)) {
+        LOGS(logger_, ERROR) << "Failed to create tensors for validation";
         return false;
       }
 
-      if (!CreateQnnParamTensors(qnn_node_name, param_tensor_names, params, do_op_validation)) {
-        LOGS(logger_, ERROR) << "Failed to create param tensors for validation";
-        return false;
-      }
-
-      QnnOpConfigWrapper op_config_wrapper(qnn_node_name,
-                                           package_name,
-                                           qnn_node_type,
-                                           std::move(input_tensors),
-                                           std::move(output_tensors),
-                                           std::move(params));
+      QnnOpConfigWrapper op_config_wrapper(qnn_node_name, package_name, qnn_node_type,
+                                           std::move(input_tensors), std::move(output_tensors), std::move(params));
 
       using namespace onnxruntime::qnn::utils;
       LOGS(logger_, VERBOSE) << op_config_wrapper;
@@ -458,32 +469,7 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
       std::string error_msg;
       bool rt = op_config_wrapper.QnnGraphOpValidation(qnn_interface_, backend_handle_, error_msg);
 
-      // Restore original FP32 data types after validation
-      for (size_t i = 0; i < input_names.size(); ++i) {
-        const auto& input_name = input_names[i];
-        auto it = model_tensors_map_.find(input_name);
-        if (it != model_tensors_map_.end()) {
-          auto& tensor_wrapper = it->second;
-          Qnn_DataType_t tensor_dtype = tensor_wrapper.GetTensorDataType();
-
-          if (tensor_dtype == QNN_DATATYPE_BFLOAT_16) {
-            SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_FLOAT_32);
-          }
-        }
-      }
-
-      for (size_t i = 0; i < output_names.size(); ++i) {
-        const auto& output_name = output_names[i];
-        auto it = model_tensors_map_.find(output_name);
-        if (it != model_tensors_map_.end()) {
-          auto& tensor_wrapper = it->second;
-          Qnn_DataType_t tensor_dtype = tensor_wrapper.GetTensorDataType();
-
-          if (tensor_dtype == QNN_DATATYPE_BFLOAT_16) {
-            SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_FLOAT_32);
-          }
-        }
-      }
+      RestoreFP32AfterValidation(input_names, output_names);
 
       if (!rt) {
         LOGS(logger_, WARNING) << "Validation failed: " << error_msg;
@@ -492,24 +478,14 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
     }
 
     // Standard validation without BF16 conversion
-    if (!CreateQnnInputOutputTensors(qnn_node_name, input_names, input_tensors, do_op_validation)) {
+    if (!CreateQnnInputOutputTensors(qnn_node_name, input_names, input_tensors, do_op_validation) ||
+        !CreateQnnInputOutputTensors(qnn_node_name, output_names, output_tensors, do_op_validation) ||
+        !CreateQnnParamTensors(qnn_node_name, param_tensor_names, params, do_op_validation)) {
       return false;
     }
 
-    if (!CreateQnnInputOutputTensors(qnn_node_name, output_names, output_tensors, do_op_validation)) {
-      return false;
-    }
-
-    if (!CreateQnnParamTensors(qnn_node_name, param_tensor_names, params, do_op_validation)) {
-      return false;
-    }
-
-    QnnOpConfigWrapper op_config_wrapper(qnn_node_name,
-                                         package_name,
-                                         qnn_node_type,
-                                         std::move(input_tensors),
-                                         std::move(output_tensors),
-                                         std::move(params));
+    QnnOpConfigWrapper op_config_wrapper(qnn_node_name, package_name, qnn_node_type,
+                                         std::move(input_tensors), std::move(output_tensors), std::move(params));
 
     using namespace onnxruntime::qnn::utils;
     LOGS(logger_, VERBOSE) << op_config_wrapper;
@@ -517,17 +493,16 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
     std::string error_msg;
     bool rt = op_config_wrapper.QnnGraphOpValidation(qnn_interface_, backend_handle_, error_msg);
     if (!rt) {
-      // TODO(adrianlizarraga): Return a Status with the error message so that aggregated logs show a more
-      // specific validation error (instead of "failed to add node").
       LOGS(logger_, WARNING) << error_msg;
     }
     return rt;
-  } else {
-    QnnOpProperty qnn_op(qnn_node_name, package_name, qnn_node_type,
-                         std::move(input_names), std::move(output_names), std::move(param_tensor_names));
-    qnn_op_property_list_.push_back(std::move(qnn_op));
-    return true;
   }
+
+  // Standard execution without BF16 conversion
+  QnnOpProperty qnn_op(qnn_node_name, package_name, qnn_node_type,
+                       std::move(input_names), std::move(output_names), std::move(param_tensor_names));
+  qnn_op_property_list_.push_back(std::move(qnn_op));
+  return true;
 }
 
 bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
