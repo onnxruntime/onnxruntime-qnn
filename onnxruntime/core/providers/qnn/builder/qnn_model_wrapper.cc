@@ -254,9 +254,9 @@ bool QnnModelWrapper::ProcessBF16InputConversion(const std::string& qnn_node_nam
 
         std::string cast_node_name = qnn_node_name + "_input_cast_" + std::to_string(i);
         QnnOpProperty cast_op(cast_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
-                             std::vector<std::string>{input_name},
-                             std::vector<std::string>{cast_output_name},
-                             std::vector<std::string>{});
+                              std::vector<std::string>{input_name},
+                              std::vector<std::string>{cast_output_name},
+                              std::vector<std::string>{});
         qnn_op_property_list_.push_back(std::move(cast_op));
       }
       converted_input_names.push_back(cast_output_name);
@@ -430,9 +430,9 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
       const auto& [bf16_name, fp32_name] = graph_output_cast_ops[i];
       std::string cast_node_name = qnn_node_name + "_output_cast_" + std::to_string(i);
       QnnOpProperty cast_op(cast_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
-                           std::vector<std::string>{bf16_name},
-                           std::vector<std::string>{fp32_name},
-                           std::vector<std::string>{});
+                            std::vector<std::string>{bf16_name},
+                            std::vector<std::string>{fp32_name},
+                            std::vector<std::string>{});
       qnn_op_property_list_.push_back(std::move(cast_op));
     }
     return true;

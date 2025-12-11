@@ -35,7 +35,6 @@ Status BaseOpBuilder::AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper,
                                         bool do_op_validation) const {
   LOGS(logger, VERBOSE) << "QNN node builder is trying to add node. Onnx node name: [" << node_unit.Name()
                         << "] onnx node type: [" << node_unit.OpType() << "].";
-  //do_op_validation = false;
   std::vector<std::string> input_names;
   // Inputs & output handling mostly same for most of the Ops, just node attributes are different
   ORT_RETURN_IF_ERROR(ProcessInputs(qnn_model_wrapper, node_unit, logger,
