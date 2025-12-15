@@ -1329,9 +1329,9 @@ TEST_F(QnnHTPBackendTests, ExtendedUdmaModeTest) {
   // Run the test - this should succeed because v81 supports extended UDMA
   RunQnnModelTest(BuildOpTestCase<float>("Add", input_defs, {}, {}, kOnnxDomain),
                   options,
-                  13,// opset version
-                  ExpectedEPNodeAssignment::All,// All nodes should be assigned to QNN EP
-                  1e-5f);// acceptable error
+                  13,
+                  ExpectedEPNodeAssignment::All,
+                  1e-5f);
 }
 
 // Test option for offloading quantization of graph inputs and dequantization of graph outputs to the CPU EP.
