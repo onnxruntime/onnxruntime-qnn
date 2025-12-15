@@ -1347,10 +1347,10 @@ TEST_F(QnnHTPBackendTests, ExtendedUdmaModeTest) {
 
   // Run the test - this should succeed because v81 supports extended UDMA
   RunQnnModelTest(BuildOpTestCase<float>("Add", input_defs, {}, {}, kOnnxDomain),
-                  provider_options,
-                  13,  // opset version
-                  ExpectedEPNodeAssignment::All,  // All nodes should be assigned to QNN EP
-                  1e-5f);  // acceptable error
+                  options,
+                  13, // opset version
+                  ExpectedEPNodeAssignment::All, // All nodes should be assigned to QNN EP
+                  1e-5f); // acceptable error
 
   /*auto qnn_ep = QnnExecutionProviderWithOptions(options, &session_opts);
   EXPECT_TRUE(session_obj.RegisterExecutionProvider(std::move(qnn_ep)).IsOK());
