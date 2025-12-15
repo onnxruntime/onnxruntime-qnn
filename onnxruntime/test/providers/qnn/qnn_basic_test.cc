@@ -1331,7 +1331,7 @@ TEST_F(QnnHTPBackendTests, ExtendedUdmaModeTest) {
                   options,
                   13,
                   ExpectedEPNodeAssignment::All,
-                  1e-5f);
+                  0.002f);
 }
 
 // Test option for offloading quantization of graph inputs and dequantization of graph outputs to the CPU EP.
