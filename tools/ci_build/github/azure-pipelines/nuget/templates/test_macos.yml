@@ -1,0 +1,51 @@
+parameters:
+  IsMacOS : 'true'
+  ArtifactSuffix: ''
+stages:
+- stage: NuGet_Test_MacOS
+  dependsOn:
+  - Setup
+  condition: succeeded()
+  jobs:
+  - job: NuGet_Test_MacOS
+    workspace:
+      clean: all
+    pool:
+      vmImage: 'macOS-15'
+
+    variables:
+    - name: OnnxRuntimeBuildDirectory
+      value: '$(Build.BinariesDirectory)'
+    steps:
+    - download: build
+      displayName: 'Download Nuget'
+      artifact: 'drop-signed-nuget-${{ parameters.ArtifactSuffix }}'
+
+    - download: build
+      displayName: 'Download Nuget'
+      artifact: 'onnxruntime-osx'
+
+    - script: |
+        mv $(Pipeline.Workspace)/build/drop-signed-nuget-${{ parameters.ArtifactSuffix }} $(Build.BinariesDirectory)/nuget-artifact
+        mv $(Pipeline.Workspace)/build/onnxruntime-osx $(Build.BinariesDirectory)/testdata
+
+    - template: get-nuget-package-version-as-variable.yml
+      parameters:
+        packageFolder: '$(Build.BinariesDirectory)/nuget-artifact'
+
+    - script: |
+       $(Build.SourcesDirectory)/csharp/test/Microsoft.ML.OnnxRuntime.EndToEndTests/runtest.sh \
+                 $(Build.BinariesDirectory)/nuget-artifact \
+                 $(NuGetPackageVersionNumber) \
+                 true
+  
+       if [ $? -ne 0 ]; then
+           echo "Failed to run test"
+           exit 1
+       fi
+      displayName: 'Run Test'
+      env:
+          OnnxRuntimeBuildDirectory: $(Build.BinariesDirectory)
+          DisableContribOps: $(DisableContribOps)
+          DisableMlOps: $(DisableMlOps)
+          IsReleaseBuild: $(IsReleaseBuild)

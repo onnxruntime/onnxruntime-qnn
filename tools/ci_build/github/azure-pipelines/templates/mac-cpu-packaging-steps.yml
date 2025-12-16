@@ -1,0 +1,47 @@
+parameters:
+- name: MacosArch
+  type: string
+  default: 'arm64'
+
+- name: AdditionalBuildFlags
+  displayName: Additional build flags for build.py
+  type: string
+  default: ''
+
+
+
+steps:
+- script: |
+      set -e -x
+      rm -rf $(Build.BinariesDirectory)/Release
+      python3 $(Build.SourcesDirectory)/tools/ci_build/build.py --update --build ${{ parameters.AdditionalBuildFlags }} --build_dir $(Build.BinariesDirectory) --skip_submodule_sync --parallel 3 --use_vcpkg --use_vcpkg_ms_internal_asset_cache --use_binskim_compliant_compile_flags --build_shared_lib --config Release --use_vcpkg --use_vcpkg_ms_internal_asset_cache
+      cd $(Build.BinariesDirectory)/Release
+      make install DESTDIR=$(Build.BinariesDirectory)/installed
+  displayName: 'Build ${{ parameters.MacosArch }}'
+
+- task: ShellScript@2
+  displayName: 'Copy build artifacts for zipping'
+  inputs:
+    scriptPath: 'tools/ci_build/github/linux/copy_strip_binary.sh'
+    args: '-r $(Build.BinariesDirectory) -a onnxruntime-osx-${{ parameters.MacosArch }}-$(OnnxRuntimeVersion) -l libonnxruntime.$(OnnxRuntimeVersion).dylib -c Release -s $(Build.SourcesDirectory) -t $(Build.SourceVersion)'
+    workingDirectory: '$(Build.BinariesDirectory)/Release'
+
+- task: ArchiveFiles@2
+  inputs:
+    rootFolderOrFile: '$(Build.BinariesDirectory)/onnxruntime-osx-${{ parameters.MacosArch }}-$(OnnxRuntimeVersion)'
+    includeRootFolder: true
+    archiveType: 'tar' # Options: zip, 7z, tar, wim
+    tarCompression: 'gz'
+    archiveFile: '$(Build.ArtifactStagingDirectory)/onnxruntime-osx-${{ parameters.MacosArch }}-$(OnnxRuntimeVersion).tgz'
+    replaceExistingArchive: true
+
+- task: 1ES.PublishPipelineArtifact@1
+  inputs:
+    targetPath: '$(Build.ArtifactStagingDirectory)'
+    artifactName: 'onnxruntime-osx-${{ parameters.MacosArch }}'
+
+- template: nodejs-artifacts-package-and-publish-steps-posix.yml
+  parameters:
+      arch: arm64
+      os: 'darwin'
+      artifactName: 'drop-onnxruntime-nodejs-osx-${{ parameters.MacosArch }}'

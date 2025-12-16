@@ -1,0 +1,105 @@
+#!/usr/bin/env bash
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+set -euo pipefail
+
+runner_root=/local/mnt/workspace/actions-runner
+runner_home="${runner_root}/_ort-cache"
+
+if [ ! -d "${runner_root}" ]; then
+    echo "Install (but do not enable) the GitHub Actions runner before running this script."
+    echo "Be sure to run everything as user ortqnnepci (e.g., sudo -u ortqnnepci mkdir actions-runner)."
+    echo "See https://github.qualcomm.com/MLG/onnxruntime-qnn-ep/settings/actions/runners"
+    exit 1
+fi
+
+set -x
+
+# Add keys and apt source to install more recent clang versions
+apt_gpg_file=/etc/apt/trusted.gpg.d/apt.llvm.org.asc
+if [ ! -x "${apt_gpg_file}" ]; then
+    wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee "${apt_gpg_file}" > /dev/null
+else
+    echo "llvm apt gpg file already exists."
+fi
+
+# This is an awkward filename because of historical reasons, which matches the script based here:
+# https://apt.llvm.org/llvm.sh
+apt_source_file=/etc/apt/sources.list.d/archive_uri-http_apt_llvm_org_jammy_-jammy.list
+if [ ! -x "${apt_source_file}" ]; then
+    echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-16 main" | sudo tee "${apt_source_file}" > /dev/null
+else
+    echo "llvm apt repo already exists."
+fi
+
+sudo apt-get update
+
+sudo apt install \
+    clang-16 lld-16 libc++-dev \
+    python3.10-dev python3.10-venv \
+    docker.io docker-buildx qemu qemu-user-static
+
+sudo usermod -aG docker ortqnnepci
+
+# Configure GPG keyrings and other dependencies for GitHub CLI
+(type -p wget >/dev/null || (sudo apt update && sudo apt-get install wget -y)) \
+	&& sudo mkdir -p -m 755 /etc/apt/keyrings \
+        && out=$(mktemp) && wget -nv -O$out https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+        && cat $out | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null \
+	&& sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+	&& sudo mkdir -p -m 755 /etc/apt/sources.list.d \
+	&& echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
+	&& sudo apt update \
+	&& sudo apt install gh -y
+
+sudo -u ortqnnepci mkdir -p "${runner_home}"
+
+##########################################
+# Configure runner's environment variables
+env_tmpfile=$(mktemp --suffix=-runner-env)
+cat > "${env_tmpfile}" <<EOF
+LANG=en_US.UTF-8
+HOME=${runner_home}
+
+ORT_BUILD_DOCKER_CCACHE_ROOT=${runner_home}/docker-ccache
+ORT_BUILD_PACKAGE_CACHE_PATH=${runner_home}/ort-package-cache
+ORT_BUILD_TOOLS_PATH=${runner_home}/ort-build-tools
+EOF
+
+chmod 644 "${env_tmpfile}"
+sudo -u ortqnnepci cp "${env_tmpfile}" "${runner_root}/.env"
+rm "${env_tmpfile}"
+
+##################
+# Configure ccache
+ccache_tmpfile=$(mktemp --suffix=-ccache-conf)
+cat > "${ccache_tmpfile}" <<EOF
+max_size = 10G
+EOF
+
+chmod 644 "${ccache_tmpfile}"
+sudo -u ortqnnepci mkdir -p "${runner_home}/.ccache"
+sudo -u ortqnnepci cp "${ccache_tmpfile}" "${runner_home}/.ccache/ccache.conf"
+rm "${ccache_tmpfile}"
+
+#################################
+# Clean up after docker every day
+docker_prune_tmpfile=$(mktemp --suffix=docker-prune)
+cat > "${docker_prune_tmpfile}" << EOF
+#!/bin/sh
+
+docker system prune --force
+EOF
+
+chmod 755 "${docker_prune_tmpfile}"
+sudo mv "${docker_prune_tmpfile}" /etc/cron.daily/docker-prune
+
+set +x
+echo
+echo "-=-=-=-=-=- Setup complete -=-=-=-=-=-"
+echo
+echo "Next steps:"
+echo "  cd ${runner_root}"
+echo "  sudo ./svc.sh install ortqnnepci"
+echo "  sudo ./svc.sh start"
