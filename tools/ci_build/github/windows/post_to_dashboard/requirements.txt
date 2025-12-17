@@ -1,2 +1,0 @@
-azure-kusto-data[pandas]==4.5.1
-azure-kusto-ingest[pandas]==4.5.1
