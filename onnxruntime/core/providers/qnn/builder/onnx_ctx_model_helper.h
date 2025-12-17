@@ -18,15 +18,27 @@ class QnnBackendManager;
 using QnnModelLookupTable = std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>;
 
 static const std::string EPCONTEXT_OP = "EPContext";
+static const std::string EP_CONTEXT_TYPE = "ep_context_type";
 static const std::string MAIN_CONTEXT = "main_context";
 static const std::string EMBED_MODE = "embed_mode";
 static const std::string EP_CACHE_CONTEXT = "ep_cache_context";
 static const std::string EP_SDK_VER = "ep_sdk_version";
+static const std::string EP_ZIP_CONTEXT = "ep_zip_context";
 static const std::string PARTITION_NAME = "partition_name";
 static const std::string SOURCE = "source";
 static const std::string MAX_SIZE = "max_size";
 
-bool GraphHasEpContextNode(const onnxruntime::GraphViewer& graph_viewer);
+// EP_CONTEXT_TYPES
+static const std::string EP_CONTEXT_TYPE_BIN = "bin";
+static const std::string EP_CONTEXT_TYPE_DLC = "dlc";
+static const std::string EP_CONTEXT_TYPE_ZIP = "zip";
+
+bool GraphHasEpContextNode(const onnxruntime::GraphViewer& graph_viewer,
+                           const std::string& ep_context_type = EP_CONTEXT_TYPE_BIN);
+
+bool GraphHasZipContextNode(const onnxruntime::GraphViewer& graph_viewer);
+
+bool GraphHasDlcContextNode(const onnxruntime::GraphViewer& graph_viewer);
 
 bool IsFusedGraphHasCtxNode(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs);
 

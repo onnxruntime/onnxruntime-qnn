@@ -15,20 +15,32 @@
 namespace onnxruntime {
 namespace qnn {
 
-bool GraphHasEpContextNode(const onnxruntime::GraphViewer& graph_viewer) {
+bool GraphHasEpContextNode(const onnxruntime::GraphViewer& graph_viewer,
+                           const std::string& ep_context_type) {
   // It's an Onnx model with Qnn context cache binary if it has a node with EPContext type
   // and the source is QNN or QNNExecutionProvider.
+
+  // Default implementation assumes EP_CONTEXT_TYPE_BIN for backwards compatibility
   for (const auto& node : graph_viewer.Nodes()) {
     if (EPCONTEXT_OP == node.OpType()) {
       NodeAttrHelper node_helper(node);
       std::string cache_source = qnn::utils::GetLowercaseString(node_helper.Get(SOURCE, ""));
+      std::string ep_context_type_of_node = qnn::utils::GetLowercaseString(node_helper.Get(EP_CONTEXT_TYPE, EP_CONTEXT_TYPE_BIN));
 
-      if (cache_source == "qnnexecutionprovider" || cache_source == "qnn") {
+      if ((cache_source == "qnnexecutionprovider" || cache_source == "qnn") && ep_context_type == ep_context_type_of_node) {
         return true;
       }
     }
   }
   return false;
+}
+
+bool GraphHasZipContextNode(const onnxruntime::GraphViewer& graph_viewer) {
+  return GraphHasEpContextNode(graph_viewer, EP_CONTEXT_TYPE_ZIP);
+}
+
+bool GraphHasDlcContextNode(const onnxruntime::GraphViewer& graph_viewer) {
+  return GraphHasEpContextNode(graph_viewer, EP_CONTEXT_TYPE_DLC);
 }
 
 bool IsFusedGraphHasCtxNode(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs) {

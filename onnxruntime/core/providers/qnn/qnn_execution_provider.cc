@@ -15,6 +15,7 @@
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/builder/genie_backend_manager.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/qnn_telemetry.h"
@@ -34,6 +35,7 @@ static std::string MakeSharedLibraryPath(std::string_view name) {
 }
 
 const std::string kDefaultCpuBackendPath = MakeSharedLibraryPath("QnnCpu");
+const std::string kDefaultGenieBackendPath = MakeSharedLibraryPath("Genie");
 const std::string kDefaultGpuBackendPath = MakeSharedLibraryPath("QnnGpu");
 const std::string kDefaultHtpBackendPath = MakeSharedLibraryPath("QnnHtp");
 const std::string kDefaultSaverBackendPath = MakeSharedLibraryPath("QnnSaver");
@@ -41,6 +43,7 @@ const std::string kDefaultIrBackendPath = MakeSharedLibraryPath("QnnIr");
 
 static bool ParseBackendTypeName(std::string_view backend_type_name, std::string& backend_path) {
   constexpr std::string_view kCpuBackendTypeName{"cpu"};
+  constexpr std::string_view kGenieBackendTypeName{"genie"};
   constexpr std::string_view kGpuBackendTypeName{"gpu"};
   constexpr std::string_view kHtpBackendTypeName{"htp"};
   constexpr std::string_view kSaverBackendTypeName{"saver"};
@@ -59,6 +62,8 @@ static bool ParseBackendTypeName(std::string_view backend_type_name, std::string
     associated_backend_path = kDefaultCpuBackendPath;
   } else if (backend_type_name == kGpuBackendTypeName) {
     associated_backend_path = kDefaultGpuBackendPath;
+  } else if (backend_type_name == kGenieBackendTypeName) {
+    associated_backend_path = kDefaultGenieBackendPath;
   } else if (backend_type_name == kHtpBackendTypeName) {
     associated_backend_path = kDefaultHtpBackendPath;
   } else if (backend_type_name == kSaverBackendTypeName) {
@@ -239,6 +244,19 @@ static bool ParseBoolOption(const std::string& key, bool default_value,
   return result;
 }
 
+// Returns true if backend_path contains genie in the name, otherwise false
+static bool IsGenieSession(const std::string& backend_path) {
+  constexpr std::string_view kGenieBackendTypeName{"genie"};
+
+  std::string lower_path(backend_path.size(), '\0');
+  for (std::string::size_type i = 0; i < backend_path.size(); ++i) {
+    unsigned char uc = static_cast<unsigned char>(backend_path[i]);
+    lower_path[i] = static_cast<char>(std::tolower(uc));
+  }
+
+  return lower_path.find(kGenieBackendTypeName) != std::string::npos;
+}
+
 qnn::ProfilingLevel QNNExecutionProvider::GetProfilingLevelFromETWLevel(unsigned char level) {
   if (level == 5) {
     LOGS_DEFAULT(INFO) << "Overriding profiling to basic based on ETW level: " << static_cast<int>(level);
@@ -305,6 +323,7 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
   metadef_id_generator_ = Factory<ModelMetadefIdGenerator>::Create();
 
   if (config_options) {
+
     disable_cpu_ep_fallback_ = config_options->GetConfigOrDefault(
                                    kOrtSessionOptionsDisableCPUEPFallback, "0") == "1";
 
@@ -572,6 +591,8 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
   static const std::string SKIP_QNN_VERSION_CHECK = "skip_qnn_version_check";
   auto skip_qnn_version_check = ParseBoolOption(SKIP_QNN_VERSION_CHECK, false, provider_options_map);
 
+  
+
   // For context binary generation with weight sharing enabled, use the QnnBackendManager from the shared context if it exits
   // So that all graphs from later sessions will be compiled into the same QNN context
   if (((context_cache_enabled_ && share_ep_contexts_) || enable_vtcm_backup_buffer_sharing_) && SharedContext::GetInstance().GetSharedQnnBackendManager()) {
@@ -580,19 +601,28 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
     if (stop_share_ep_contexts_) {
       SharedContext::GetInstance().ResetSharedQnnBackendManager();
     }
+  } else if (IsGenieSession(backend_path)) {
+    genie_backend_manager_ = qnn::GenieBackendManager::Create(
+      qnn::GenieBackendManagerConfig{
+        backend_path
+      }
+    );
+    return;
   } else {
     qnn_backend_manager_ = qnn::QnnBackendManager::Create(
-        qnn::QnnBackendManagerConfig{backend_path,
-                                     profiling_level_etw,
-                                     profiling_level,
-                                     profiling_file_path,
-                                     context_priority,
-                                     std::move(qnn_serializer_config),
-                                     device_id_,
-                                     htp_arch,
-                                     soc_model,
-                                     op_packages,
-                                     skip_qnn_version_check});
+      qnn::QnnBackendManagerConfig{backend_path,
+                                   profiling_level_etw,
+                                   profiling_level,
+                                   profiling_file_path,
+                                   context_priority,
+                                   std::move(qnn_serializer_config),
+                                   device_id_,
+                                   htp_arch,
+                                   soc_model,
+                                   op_packages,
+                                   skip_qnn_version_check}
+    );
+    
     if (enable_vtcm_backup_buffer_sharing_) {
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
     }
@@ -902,7 +932,18 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
   const size_t num_nodes_in_graph = static_cast<size_t>(graph_viewer.NumberOfNodes());
 
   const auto& logger = *GetLogger();
+   
   bool is_qnn_ctx_model = qnn::GraphHasEpContextNode(graph_viewer);
+
+  // TODO - Should maybe verify somewhere that Genie models only have one "native" node?
+  if (genie_backend_manager_) {
+    auto rt = genie_backend_manager_->SetupBackend(logger);
+
+    if (Status::OK() != rt) {
+      LOGS(logger, ERROR) << "Genie SetupBackend failed " << rt.ErrorMessage();
+    }
+    return result;
+  }
 
   const auto gen_metadef_name = [&]() {
     uint64_t model_hash;

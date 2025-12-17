@@ -2,6 +2,15 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#ifdef _WIN32
+#include <windows.h>
+#include <psapi.h>
+#include <libloaderapi.h>
+#include <set>
+#else
+#include <dlfcn.h>
+#endif
+
 #include "qnn_backend_manager.h"
 #include "qnn_model.h"
 #include <filesystem>

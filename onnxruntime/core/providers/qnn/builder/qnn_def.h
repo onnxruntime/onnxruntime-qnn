@@ -107,11 +107,14 @@ enum class QnnBackendType : uint8_t {
   HTP,
   HTP_FP16,
   SERIALIZER,
+  GENIE
 };
 
 bool IsIrBackend(QnnBackendType backend_type);
 
 bool IsCpuBackend(QnnBackendType backend_type);
+
+bool IsGenieBackend(QnnBackendType backend_type);
 
 bool IsNpuBackend(QnnBackendType backend_type);
 

@@ -2,14 +2,6 @@
 // Licensed under the MIT License.
 
 #pragma once
-#ifdef _WIN32
-#include <windows.h>
-#include <psapi.h>
-#include <libloaderapi.h>
-#include <set>
-#else
-#include <dlfcn.h>
-#endif
 
 #include <memory>
 #include <mutex>

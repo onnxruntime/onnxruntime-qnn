@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/builder/genie_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model.h"
@@ -127,6 +128,9 @@ class QNNExecutionProvider : public IExecutionProvider {
   // Whether this is set depends on a session option enabling it and if the RPCMEM dynamic library is available.
   // This is potentially shared with HtpSharedMemoryAllocator which may be returned by CreatePreferredAllocators().
   std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library_ = nullptr;
+
+  // Genie pathway-specific variables
+  std::shared_ptr<qnn::GenieBackendManager> genie_backend_manager_;
 };
 
 }  // namespace onnxruntime
