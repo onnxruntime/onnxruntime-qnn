@@ -121,9 +121,9 @@ template <class U, class T>
 }
 
 // Below are constants copied from core/graph/constants.h directly.
-constexpr const char* kOnnxDomain = "";
-constexpr const char* kMSDomain = "com.microsoft";
-constexpr const char* kMSInternalNHWCDomain = "com.ms.internal.nhwc";
+inline constexpr const char* kOnnxDomain = "";
+inline constexpr const char* kMSDomain = "com.microsoft";
+inline constexpr const char* kMSInternalNHWCDomain = "com.ms.internal.nhwc";
 // QNN-EP COPY END
 
 class OrtLoggingManager {

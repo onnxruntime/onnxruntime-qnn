@@ -5,6 +5,7 @@
 #include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn-abi/builder/qnn_utils.h"
+#include "core/providers/qnn-abi/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {

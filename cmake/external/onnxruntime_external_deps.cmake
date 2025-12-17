@@ -76,40 +76,6 @@ if (onnxruntime_BUILD_UNIT_TESTS)
   FetchContent_MakeAvailable(googletest)
 endif()
 
-if (onnxruntime_BUILD_BENCHMARKS)
-  # We will not need to test benchmark lib itself.
-  set(BENCHMARK_ENABLE_TESTING OFF CACHE BOOL "Disable benchmark testing as we don't need it.")
-  # We will not need to install benchmark since we link it statically.
-  set(BENCHMARK_ENABLE_INSTALL OFF CACHE BOOL "Disable benchmark install to avoid overwriting vendor install.")
-
-  onnxruntime_fetchcontent_declare(
-    google_benchmark
-    URL ${DEP_URL_google_benchmark}
-    URL_HASH SHA1=${DEP_SHA1_google_benchmark}
-    EXCLUDE_FROM_ALL
-    FIND_PACKAGE_ARGS NAMES benchmark
-  )
-  onnxruntime_fetchcontent_makeavailable(google_benchmark)
-endif()
-
-
-if(onnxruntime_USE_MIMALLOC)
-  add_definitions(-DUSE_MIMALLOC)
-
-  set(MI_OVERRIDE OFF CACHE BOOL "" FORCE)
-  set(MI_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-  set(MI_DEBUG_FULL OFF CACHE BOOL "" FORCE)
-  set(MI_BUILD_SHARED OFF CACHE BOOL "" FORCE)
-  onnxruntime_fetchcontent_declare(
-    mimalloc
-    URL ${DEP_URL_mimalloc}
-    URL_HASH SHA1=${DEP_SHA1_mimalloc}
-    EXCLUDE_FROM_ALL
-    FIND_PACKAGE_ARGS NAMES mimalloc
-  )
-  FetchContent_MakeAvailable(mimalloc)
-endif()
-
 # Download a protoc binary from Internet if needed
 if(NOT ONNX_CUSTOM_PROTOC_EXECUTABLE AND NOT onnxruntime_USE_VCPKG)
   # This part of code is only for users' convenience. The code couldn't handle all cases. Users always can manually
@@ -389,24 +355,13 @@ if (CPUINFO_SUPPORTED)
   endif()
 endif()
 
-if(onnxruntime_USE_CUDA)
-  onnxruntime_fetchcontent_declare(
-    GSL
-    URL ${DEP_URL_microsoft_gsl}
-    URL_HASH SHA1=${DEP_SHA1_microsoft_gsl}
-    PATCH_COMMAND ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${PROJECT_SOURCE_DIR}/patches/gsl/1064.patch
-    EXCLUDE_FROM_ALL
-    FIND_PACKAGE_ARGS 4.0 NAMES Microsoft.GSL
-  )
-else()
-  onnxruntime_fetchcontent_declare(
-    GSL
-    URL ${DEP_URL_microsoft_gsl}
-    URL_HASH SHA1=${DEP_SHA1_microsoft_gsl}
-    EXCLUDE_FROM_ALL
-    FIND_PACKAGE_ARGS 4.0 NAMES Microsoft.GSL
-  )
-endif()
+onnxruntime_fetchcontent_declare(
+  GSL
+  URL ${DEP_URL_microsoft_gsl}
+  URL_HASH SHA1=${DEP_SHA1_microsoft_gsl}
+  EXCLUDE_FROM_ALL
+  FIND_PACKAGE_ARGS 4.0 NAMES Microsoft.GSL
+)
 set(GSL_TARGET "Microsoft.GSL::GSL")
 set(GSL_INCLUDE_DIR "$<TARGET_PROPERTY:${GSL_TARGET},INTERFACE_INCLUDE_DIRECTORIES>")
 onnxruntime_fetchcontent_makeavailable(GSL)
@@ -471,23 +426,6 @@ if(NOT flatbuffers_FOUND)
   if(TARGET flatc AND NOT TARGET flatbuffers::flatc)
     add_executable(flatbuffers::flatc ALIAS flatc)
   endif()
-  if (GDK_PLATFORM)
-    # cstdlib only defines std::getenv when _CRT_USE_WINAPI_FAMILY_DESKTOP_APP is defined, which
-    # is probably an oversight for GDK/Xbox builds (::getenv exists and works).
-    file(WRITE ${CMAKE_BINARY_DIR}/gdk_cstdlib_wrapper.h [[
-#pragma once
-#ifdef __cplusplus
-#include <cstdlib>
-namespace std { using ::getenv; }
-#endif
-]])
-    if(TARGET flatbuffers)
-      target_compile_options(flatbuffers PRIVATE /FI${CMAKE_BINARY_DIR}/gdk_cstdlib_wrapper.h)
-    endif()
-    if(TARGET flatc)
-      target_compile_options(flatc PRIVATE /FI${CMAKE_BINARY_DIR}/gdk_cstdlib_wrapper.h)
-    endif()
-  endif()
 endif()
 endif()
 
@@ -504,21 +442,7 @@ else()
   set(ONNXRUNTIME_ONNX_PATCH_COMMAND "")
 endif()
 
-if(onnxruntime_ENABLE_PYTHON)
-  if(onnxruntime_USE_VCPKG)
-    find_package(pybind11 CONFIG REQUIRED)
-  else()
-    include(pybind11)
-  endif()
-if(TARGET pybind11::module)
-  message("Setting pybind11_lib")
-  set(pybind11_lib pybind11::module)
-else()
-  message("Setting pybind11_dep")
-  set(pybind11_dep pybind11::pybind11)
-endif()
 
-endif()
 onnxruntime_fetchcontent_declare(
   onnx
   URL ${DEP_URL_onnx}
@@ -538,48 +462,18 @@ if(TARGET ONNX::onnx_proto AND NOT TARGET onnx_proto)
   message(STATUS "Aliasing ONNX::onnx_proto to onnx_proto")
   add_library(onnx_proto ALIAS ONNX::onnx_proto)
 endif()
-if(onnxruntime_USE_VCPKG)
-  find_package(Eigen3 CONFIG REQUIRED)
-else()
-  include(external/eigen.cmake)
-endif()
+
 
 if(WIN32)
   if(onnxruntime_USE_VCPKG)
     find_package(wil CONFIG REQUIRED)
     set(WIL_TARGET "WIL::WIL")
   else()
-    include(wil) # FetchContent
+    include(external/wil.cmake) # FetchContent
   endif()
 endif()
 
-# XNNPACK EP
-if (onnxruntime_USE_XNNPACK)
-  if (onnxruntime_DISABLE_CONTRIB_OPS)
-    message(FATAL_ERROR "XNNPACK EP requires the internal NHWC contrib ops to be available "
-                         "but onnxruntime_DISABLE_CONTRIB_OPS is ON")
-  endif()
-  if(onnxruntime_USE_VCPKG)
-     FIND_PATH(XNNPACK_HDR xnnpack.h PATH_SUFFIXES include)
-     IF(NOT XNNPACK_HDR)
-       MESSAGE(FATAL_ERROR "Cannot find xnnpack")
-     ENDIF()
-     ADD_LIBRARY(xnnpack STATIC IMPORTED)
-     find_library(xnnpack_LIBRARY NAMES XNNPACK)
-     find_library(microkernels_prod_LIBRARY NAMES xnnpack-microkernels-prod)
-     find_package(unofficial-pthreadpool CONFIG REQUIRED)
-
-     target_include_directories(xnnpack INTERFACE "${XNNPACK_HDR}")
-     set(XNNPACK_INCLUDE_DIR ${XNNPACK_DIR}/include)
-     set(onnxruntime_EXTERNAL_LIBRARIES_XNNPACK ${xnnpack_LIBRARY} ${microkernels_prod_LIBRARY} unofficial::pthreadpool unofficial::pthreadpool_interface)
-  else()
-    include(xnnpack)
-  endif()
-endif()
-
-set(onnxruntime_EXTERNAL_LIBRARIES ${onnxruntime_EXTERNAL_LIBRARIES_XNNPACK} ${WIL_TARGET} nlohmann_json::nlohmann_json
-                                   onnx onnx_proto ${PROTOBUF_LIB} re2::re2 Boost::mp11 safeint_interface
-                                   flatbuffers::flatbuffers ${GSL_TARGET} ${ABSEIL_LIBS} date::date Eigen3::Eigen)
+set(onnxruntime_EXTERNAL_LIBRARIES ${WIL_TARGET} nlohmann_json::nlohmann_json Boost::mp11 safeint_interface ${GSL_TARGET} ${ABSEIL_LIBS})
 
 # The source code of onnx_proto is generated, we must build this lib first before starting to compile the other source code that uses ONNX protobuf types.
 # The other libs do not have the problem. All the sources are already there. We can compile them in any order.
@@ -592,275 +486,7 @@ if(NOT (onnx_FOUND OR ONNX_FOUND)) # building ONNX from source
   endif()
 endif()
 
-if(onnxruntime_ENABLE_DLPACK)
-  message(STATUS "dlpack is enabled.")
-
-  onnxruntime_fetchcontent_declare(
-    dlpack
-    URL ${DEP_URL_dlpack}
-    URL_HASH SHA1=${DEP_SHA1_dlpack}
-    EXCLUDE_FROM_ALL
-    FIND_PACKAGE_ARGS NAMES dlpack
-  )
-  onnxruntime_fetchcontent_makeavailable(dlpack)
-endif()
-
-if(onnxruntime_ENABLE_TRAINING OR (onnxruntime_ENABLE_TRAINING_APIS AND onnxruntime_BUILD_UNIT_TESTS))
-  # Once code under orttraining/orttraining/models dir is removed "onnxruntime_ENABLE_TRAINING" should be removed from
-  # this conditional
-  onnxruntime_fetchcontent_declare(
-    cxxopts
-    URL ${DEP_URL_cxxopts}
-    URL_HASH SHA1=${DEP_SHA1_cxxopts}
-    EXCLUDE_FROM_ALL
-    FIND_PACKAGE_ARGS NAMES cxxopts
-  )
-  set(CXXOPTS_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-  set(CXXOPTS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-  onnxruntime_fetchcontent_makeavailable(cxxopts)
-endif()
-
-
-if (onnxruntime_USE_WEBGPU)
-  # TODO: the following code is used to disable building Dawn using vcpkg temporarily
-  # until we figure out how to resolve the packaging pipeline failures
-  #
-  # if (onnxruntime_USE_VCPKG AND NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-  if (FALSE)
-    # vcpkg does not support Emscripten yet
-    find_package(dawn REQUIRED)
-  else()
-    #
-    # Please keep the following in sync with cmake/vcpkg-ports/dawn/portfile.cmake
-    #
-    set(DAWN_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
-    set(DAWN_ENABLE_NULL OFF CACHE BOOL "" FORCE)
-    set(DAWN_BUILD_PROTOBUF OFF CACHE BOOL "" FORCE)
-    set(DAWN_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-    if (NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-      if (onnxruntime_BUILD_DAWN_SHARED_LIBRARY)
-        set(DAWN_BUILD_MONOLITHIC_LIBRARY SHARED CACHE BOOL "" FORCE)
-        set(DAWN_ENABLE_INSTALL ON CACHE BOOL "" FORCE)
-
-        if (onnxruntime_USE_EXTERNAL_DAWN)
-          message(FATAL_ERROR "onnxruntime_USE_EXTERNAL_DAWN and onnxruntime_BUILD_DAWN_SHARED_LIBRARY cannot be enabled at the same time.")
-        endif()
-      else()
-        # use dawn::dawn_native and dawn::dawn_proc instead of the monolithic dawn::webgpu_dawn to minimize binary size
-        set(DAWN_BUILD_MONOLITHIC_LIBRARY OFF CACHE BOOL "" FORCE)
-        set(DAWN_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
-
-        # use the same protobuf/abseil for ORT and Dawn when static linking
-        if(abseil_cpp_SOURCE_DIR)
-          set(DAWN_ABSEIL_DIR ${abseil_cpp_SOURCE_DIR})
-        endif()
-        if(protobuf_SOURCE_DIR)
-          set(DAWN_PROTOBUF_DIR ${protobuf_SOURCE_DIR})
-        endif()
-      endif()
-
-      if (onnxruntime_ENABLE_PIX_FOR_WEBGPU_EP)
-        set(DAWN_ENABLE_DESKTOP_GL ON CACHE BOOL "" FORCE)
-        set(DAWN_ENABLE_OPENGLES ON CACHE BOOL "" FORCE)
-        set(DAWN_SUPPORTS_GLFW_FOR_WINDOWING ON CACHE BOOL "" FORCE)
-        set(DAWN_USE_GLFW ON CACHE BOOL "" FORCE)
-        set(DAWN_USE_WINDOWS_UI ON CACHE BOOL "" FORCE)
-        set(TINT_BUILD_GLSL_WRITER ON CACHE BOOL "" FORCE)
-        set(TINT_BUILD_GLSL_VALIDATOR ON CACHE BOOL "" FORCE)
-      else()
-        set(DAWN_ENABLE_DESKTOP_GL OFF CACHE BOOL "" FORCE)
-        set(DAWN_ENABLE_OPENGLES OFF CACHE BOOL "" FORCE)
-        set(DAWN_SUPPORTS_GLFW_FOR_WINDOWING OFF CACHE BOOL "" FORCE)
-        set(DAWN_USE_GLFW OFF CACHE BOOL "" FORCE)
-        set(DAWN_USE_WINDOWS_UI OFF CACHE BOOL "" FORCE)
-        set(TINT_BUILD_GLSL_WRITER OFF CACHE BOOL "" FORCE)
-        set(TINT_BUILD_GLSL_VALIDATOR OFF CACHE BOOL "" FORCE)
-      endif()
-
-      # disable things we don't use
-      set(DAWN_DXC_ENABLE_ASSERTS_IN_NDEBUG OFF)
-      set(DAWN_USE_X11 OFF CACHE BOOL "" FORCE)
-
-      set(TINT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-      set(TINT_BUILD_CMD_TOOLS OFF CACHE BOOL "" FORCE)
-      set(TINT_BUILD_IR_BINARY OFF CACHE BOOL "" FORCE)
-      set(TINT_BUILD_SPV_READER OFF CACHE BOOL "" FORCE)  # don't need. disabling is a large binary size saving
-      set(TINT_BUILD_WGSL_WRITER ON CACHE BOOL "" FORCE)  # needed to create cache key. runtime error if not enabled.
-
-      # SPIR-V validation shouldn't be required given we're using Tint to create the SPIR-V.
-      set(DAWN_ENABLE_SPIRV_VALIDATION OFF CACHE BOOL "" FORCE)
-
-      if (WIN32)
-        # building this requires the HLSL writer to be enabled in Tint. TBD if that we need either of these to be ON.
-        set(DAWN_USE_BUILT_DXC ON CACHE BOOL "" FORCE)
-        set(TINT_BUILD_HLSL_WRITER ON CACHE BOOL "" FORCE)
-
-        if ((NOT onnxruntime_ENABLE_DAWN_BACKEND_VULKAN) AND (NOT onnxruntime_ENABLE_DAWN_BACKEND_D3D12))
-          message(FATAL_ERROR "At least one of onnxruntime_ENABLE_DAWN_BACKEND_VULKAN or onnxruntime_ENABLE_DAWN_BACKEND_D3D12 must be enabled when using Dawn on Windows.")
-        endif()
-        if (onnxruntime_ENABLE_DAWN_BACKEND_VULKAN)
-          set(DAWN_ENABLE_VULKAN ON CACHE BOOL "" FORCE)
-          set(TINT_BUILD_SPV_WRITER ON CACHE BOOL "" FORCE)
-        else()
-          set(DAWN_ENABLE_VULKAN OFF CACHE BOOL "" FORCE)
-        endif()
-        if (onnxruntime_ENABLE_DAWN_BACKEND_D3D12)
-          set(DAWN_ENABLE_D3D12 ON CACHE BOOL "" FORCE)
-        else()
-          set(DAWN_ENABLE_D3D12 OFF CACHE BOOL "" FORCE)
-        endif()
-        # We are currently always using the D3D12 backend.
-        set(DAWN_ENABLE_D3D11 OFF CACHE BOOL "" FORCE)
-      endif()
-    endif()
-
-    if (onnxruntime_CUSTOM_DAWN_SRC_PATH)
-      set(DAWN_FETCH_DEPENDENCIES OFF CACHE BOOL "" FORCE)
-      # use the custom dawn source path if provided
-      #
-      # specified as:
-      # build.py --use_webgpu --cmake_extra_defines "onnxruntime_CUSTOM_DAWN_SRC_PATH=<PATH_TO_DAWN_SRC_ROOT>"
-      onnxruntime_fetchcontent_declare(
-        dawn
-        SOURCE_DIR ${onnxruntime_CUSTOM_DAWN_SRC_PATH}
-        EXCLUDE_FROM_ALL
-      )
-    else()
-      set(DAWN_FETCH_DEPENDENCIES ON CACHE BOOL "" FORCE)
-      set(ONNXRUNTIME_Dawn_PATCH_COMMAND
-          # The dawn_destroy_buffer_on_destructor.patch contains the following changes:
-          #
-          # - (private) Allow WGPUBufferImpl class to destroy the buffer in the destructor
-          #   In native implementation, wgpuBufferRelease will trigger the buffer destroy (if refcount decreased to 0). But
-          #   in emwgpu implementation, the buffer destroy won't happen. This change adds a destructor to the buffer class
-          #   to destroy the buffer when the refcount is 0 for non-external buffers.
-          #
-          ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${PROJECT_SOURCE_DIR}/patches/dawn/dawn_destroy_buffer_on_destructor.patch &&
-
-          # The dawn_force_enable_f16_nvidia_vulkan.patch contains the following changes:
-          #
-          # - (private) Force enable f16 support for NVIDIA Vulkan
-          #   Dawn disabled f16 support for NVIDIA Vulkan by default because of crashes in f16 CTS tests (crbug.com/tint/2164).
-          #   Since the crashes are limited to specific GPU models, we patched Dawn to remove the restriction.
-          #
-          ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${PROJECT_SOURCE_DIR}/patches/dawn/dawn_force_enable_f16_nvidia_vulkan.patch &&
-
-          # The dawn_binskim.patch contains the following changes:
-          #
-          # - (private) Fulfill the BinSkim requirements
-          #   Some build warnings are not allowed to be disabled in project level.
-          ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${PROJECT_SOURCE_DIR}/patches/dawn/dawn_binskim.patch &&
-
-          # The uniform_and_storage_buffer_16_bit_access.patch contains the following changes:
-          #
-          # - (private) Android devices don't seem to allow fp16 in uniforms so the WebGPU EP has to manually handle passing an fp32
-          #   in the uniform and converting to fp16 before using.
-          ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${PROJECT_SOURCE_DIR}/patches/dawn/uniform_and_storage_buffer_16_bit_access.patch &&
-
-          # The safari_polyfill.patch contains the following changes:
-          #
-          # - (private) Fix compatibility issues with Safari. Contains the following changes:
-          #   - Polyfill for `device.AdapterInfo` (returns `undefined` in Safari v26.0)
-          #
-          ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${PROJECT_SOURCE_DIR}/patches/dawn/safari_polyfill.patch)
-
-      onnxruntime_fetchcontent_declare(
-        dawn
-        URL ${DEP_URL_dawn}
-        URL_HASH SHA1=${DEP_SHA1_dawn}
-        PATCH_COMMAND ${ONNXRUNTIME_Dawn_PATCH_COMMAND}
-        EXCLUDE_FROM_ALL
-      )
-    endif()
-
-    onnxruntime_fetchcontent_makeavailable(dawn)
-  endif()
-
-  if (NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-    if (onnxruntime_BUILD_DAWN_SHARED_LIBRARY)
-      list(APPEND onnxruntime_EXTERNAL_LIBRARIES dawn::webgpu_dawn)
-    else()
-      if (NOT onnxruntime_USE_EXTERNAL_DAWN)
-        list(APPEND onnxruntime_EXTERNAL_LIBRARIES dawn::dawn_native)
-      endif()
-      list(APPEND onnxruntime_EXTERNAL_LIBRARIES dawn::dawn_proc)
-    endif()
-  endif()
-
-  if (onnxruntime_ENABLE_PIX_FOR_WEBGPU_EP)
-    list(APPEND onnxruntime_EXTERNAL_LIBRARIES webgpu_glfw glfw)
-  endif()
-
-  if (NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten" AND onnxruntime_WGSL_TEMPLATE STREQUAL "dynamic")
-    if(onnxruntime_USE_VCPKG)
-      find_package(unofficial-duktape CONFIG REQUIRED)
-      add_library(duktape_static ALIAS unofficial::duktape::duktape)
-    else()
-      onnxruntime_fetchcontent_declare(
-        duktape
-        URL ${DEP_URL_duktape}
-        URL_HASH SHA1=${DEP_SHA1_duktape}
-        EXCLUDE_FROM_ALL
-      )
-      onnxruntime_fetchcontent_makeavailable(duktape)
-
-      if(NOT TARGET duktape_static)
-        add_library(duktape_static STATIC "${duktape_SOURCE_DIR}/src/duktape.c")
-        target_compile_features(duktape_static PRIVATE c_std_99)
-        target_include_directories(duktape_static INTERFACE $<BUILD_INTERFACE:${duktape_SOURCE_DIR}/src>)
-      endif()
-    endif()
-  endif()
-endif()
-
-if(onnxruntime_USE_COREML)
-  # Setup coremltools fp16 and json dependencies for creating an mlpackage.
-  #
-  # fp16 depends on psimd
-  onnxruntime_fetchcontent_declare(psimd URL ${DEP_URL_psimd} URL_HASH SHA1=${DEP_SHA1_psimd} EXCLUDE_FROM_ALL)
-  onnxruntime_fetchcontent_makeavailable(psimd)
-  set(PSIMD_SOURCE_DIR ${psimd_SOURCE_DIR})
-  onnxruntime_fetchcontent_declare(fp16 URL ${DEP_URL_fp16} URL_HASH SHA1=${DEP_SHA1_fp16} EXCLUDE_FROM_ALL)
-  set(FP16_BUILD_TESTS OFF CACHE INTERNAL "")
-  set(FP16_BUILD_BENCHMARKS OFF CACHE INTERNAL "")
-  onnxruntime_fetchcontent_makeavailable(fp16)
-
-  onnxruntime_fetchcontent_declare(
-    coremltools
-    URL ${DEP_URL_coremltools}
-    URL_HASH SHA1=${DEP_SHA1_coremltools}
-    PATCH_COMMAND ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${PROJECT_SOURCE_DIR}/patches/coremltools/crossplatformbuild.patch
-    EXCLUDE_FROM_ALL
-  )
-  # we don't build directly so use Populate. selected files are built from onnxruntime_providers_coreml.cmake
-  FetchContent_Populate(coremltools)
-
-endif()
-
-if(onnxruntime_USE_KLEIDIAI)
-  # Disable the KleidiAI tests
-  set(KLEIDIAI_BUILD_TESTS  OFF)
-
-  onnxruntime_fetchcontent_declare(kleidiai URL ${DEP_URL_kleidiai} URL_HASH SHA1=${DEP_SHA1_kleidiai} EXCLUDE_FROM_ALL)
-  onnxruntime_fetchcontent_makeavailable(kleidiai)
-endif()
-
 set(onnxruntime_LINK_DIRS)
-if (onnxruntime_USE_CUDA)
-  find_package(CUDAToolkit REQUIRED)
-
-  if(onnxruntime_CUDNN_HOME)
-    file(TO_CMAKE_PATH ${onnxruntime_CUDNN_HOME} onnxruntime_CUDNN_HOME)
-    set(CUDNN_PATH ${onnxruntime_CUDNN_HOME})
-  endif()
-
-  include(cuDNN)
-endif()
-
-if(onnxruntime_USE_SNPE)
-  include(external/find_snpe.cmake)
-  list(APPEND onnxruntime_EXTERNAL_LIBRARIES ${SNPE_NN_LIBS})
-endif()
 
 FILE(TO_NATIVE_PATH ${CMAKE_BINARY_DIR} ORT_BINARY_DIR)
 FILE(TO_NATIVE_PATH ${PROJECT_SOURCE_DIR} ORT_SOURCE_DIR)

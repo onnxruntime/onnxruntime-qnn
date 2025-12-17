@@ -568,34 +568,7 @@ if path.isdir(path.join("onnxruntime", "external")):
     )
 
 packages = [
-    "onnxruntime",
-    "onnxruntime.backend",
-    "onnxruntime.capi",
-    "onnxruntime.datasets",
-    "onnxruntime.tools",
-    "onnxruntime.tools.mobile_helpers",
-    "onnxruntime.tools.ort_format_model",
-    "onnxruntime.tools.ort_format_model.ort_flatbuffers_py",
-    "onnxruntime.tools.ort_format_model.ort_flatbuffers_py.fbs",
-    "onnxruntime.tools.qdq_helpers",
-    "onnxruntime.tools.qnn",
-    "onnxruntime.quantization",
-    "onnxruntime.quantization.operators",
-    "onnxruntime.quantization.CalTableFlatBuffers",
-    "onnxruntime.quantization.fusions",
-    "onnxruntime.quantization.execution_providers.qnn",
-    "onnxruntime.quantization.neural_compressor",
-    "onnxruntime.transformers",
-    "onnxruntime.transformers.models.bart",
-    "onnxruntime.transformers.models.bert",
-    "onnxruntime.transformers.models.gpt2",
-    "onnxruntime.transformers.models.llama",
-    "onnxruntime.transformers.models.longformer",
-    "onnxruntime.transformers.models.phi2",
-    "onnxruntime.transformers.models.sam2",
-    "onnxruntime.transformers.models.stable_diffusion",
-    "onnxruntime.transformers.models.t5",
-    "onnxruntime.transformers.models.whisper",
+    "onnxruntime_qnn",
 ]
 
 package_data = {"onnxruntime.tools.mobile_helpers": ["*.md", "*.config"]}
@@ -697,18 +670,25 @@ if enable_training or enable_training_apis:
                 if cuda_version:
                     # removing '.' to make Cuda version number in the same form as Pytorch.
                     local_version = "+cu" + cuda_version.replace(".", "")
+                elif rocm_version:
+                    # removing '.' to make Rocm version number in the same form as Pytorch.
+                    local_version = "+rocm" + rocm_version.replace(".", "")
                 else:
                     # cpu version for documentation
                     local_version = "+cpu"
         else:
-            if not cuda_version:
+            if not (cuda_version or rocm_version):
                 # Training CPU package for ADO feeds is called onnxruntime-training-cpu
                 package_name = "onnxruntime-training-cpu"
+
+            if rocm_version:
+                # Training ROCM package for ADO feeds is called onnxruntime-training-rocm
+                package_name = "onnxruntime-training-rocm"
 
 if package_name == "onnxruntime-tvm":
     packages += ["onnxruntime.providers.tvm"]
 
-package_data["onnxruntime"] = data + examples + extra
+package_data["onnxruntime_qnn"] = data + examples + extra
 
 version_number = ""
 with open("VERSION_NUMBER") as f:
@@ -806,55 +786,20 @@ if package_name == "onnxruntime-trt-rtx":
     install_requires.append(f"nvidia-cuda-runtime-cu{major}~={major}.0")
 
 
-def save_build_and_package_info(package_name, version_number, cuda_version, qnn_version):
+def save_build_and_package_info(package_name, version_number, qnn_version):
     sys.path.append(path.join(path.dirname(__file__), "onnxruntime", "python"))
-    from onnxruntime_collect_build_info import find_cudart_versions  # noqa: PLC0415
 
-    version_path = path.join("onnxruntime", "capi", "build_and_package_info.py")
+    version_path = path.join("onnxruntime_qnn", "build_and_package_info.py")
     with open(version_path, "w") as f:
         f.write(f"package_name = '{package_name}'\n")
         f.write(f"__version__ = '{version_number}'\n")
-
-        if cuda_version:
-            f.write(f"cuda_version = '{cuda_version}'\n")
-
-            # The cudart version used in building training packages in Linux.
-            # It is possible to parse version.json at cuda_home in build.py, then pass in the parameter directly.
-            if enable_training and platform.system().lower() == "linux":
-                cudart_versions = find_cudart_versions(build_env=True)
-                if cudart_versions and len(cudart_versions) == 1:
-                    f.write(f"cudart_version = {cudart_versions[0]}\n")
-                else:
-                    print(
-                        "Error getting cudart version. ",
-                        (
-                            "did not find any cudart library"
-                            if not cudart_versions or len(cudart_versions) == 0
-                            else "found multiple cudart libraries"
-                        ),
-                    )
-        elif qnn_version:
+        if qnn_version:
             f.write(f"qnn_version = '{qnn_version}'\n")
 
 
-save_build_and_package_info(package_name, version_number, cuda_version, qnn_version)
+save_build_and_package_info(package_name, version_number, qnn_version)
 
 extras_require = {}
-if package_name == "onnxruntime-gpu" and cuda_major_version:
-    # Determine cufft version: CUDA 13 uses cufft 12, CUDA 12 uses cufft 11
-    cufft_version = "12.0" if cuda_major_version == "13" else "11.0"
-    extras_require = {
-        "cuda": [
-            f"nvidia-cuda-nvrtc-cu{cuda_major_version}~={cuda_major_version}.0",
-            f"nvidia-cuda-runtime-cu{cuda_major_version}~={cuda_major_version}.0",
-            f"nvidia-cufft-cu{cuda_major_version}~={cufft_version}",
-            f"nvidia-curand-cu{cuda_major_version}~=10.0",
-        ],
-        "cudnn": [
-            f"nvidia-cudnn-cu{cuda_major_version}~=9.0",
-        ],
-    }
-
 setup(
     name=package_name,
     version=version_number,
