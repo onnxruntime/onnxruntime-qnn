@@ -274,20 +274,18 @@ Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
       DQQToSignedFixedPoint4(quant_data, num_blocks, block_size);
 
       // 2.5 Create Quantization Parameter and create Weight Tensor
-      QnnQuantParamsWrapper quantize_param = QnnQuantParamsWrapper(
-          per_block_float_scale,
-          per_block_int32_offset,
-          block_sizes,
-          QNN_DATATYPE_SFIXED_POINT_4);
+      QnnQuantParamsWrapper quantize_param = QnnQuantParamsWrapper(per_block_float_scale,
+                                                                   per_block_int32_offset,
+                                                                   block_sizes,
+                                                                   QNN_DATATYPE_SFIXED_POINT_4);
 
       std::vector<uint32_t> weight_shape = {static_cast<uint32_t>(N), static_cast<uint32_t>(K)};
-      QnnTensorWrapper weight_tensor_wrapper(
-          weight_tensor_name,
-          weight_tensor_type,
-          QNN_DATATYPE_SFIXED_POINT_4,
-          std::move(quantize_param),
-          std::move(weight_shape),
-          std::move(quant_data));
+      QnnTensorWrapper weight_tensor_wrapper(weight_tensor_name,
+                                             weight_tensor_type,
+                                             QNN_DATATYPE_SFIXED_POINT_4,
+                                             std::move(quantize_param),
+                                             std::move(weight_shape),
+                                             std::move(quant_data));
       ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(weight_tensor_wrapper)),
                         "Failed to add tensor.");
     }
@@ -334,12 +332,11 @@ Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                                std::multiplies<>()) /
                                                N);
   pre_reshape_shape[1] = gsl::narrow_cast<uint32_t>(N);
-  QnnTensorWrapper output_tensor_wrapper(
-      pre_reshape_name,
-      QNN_TENSOR_TYPE_NATIVE,
-      output_info.qnn_data_type,
-      output_info.quant_param.Copy(),
-      std::vector<uint32_t>(pre_reshape_shape));
+  QnnTensorWrapper output_tensor_wrapper(pre_reshape_name,
+                                         QNN_TENSOR_TYPE_NATIVE,
+                                         output_info.qnn_data_type,
+                                         output_info.quant_param.Copy(),
+                                         std::vector<uint32_t>(pre_reshape_shape));
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor_wrapper)),
                     "Failed to add tensor.");
 
@@ -356,16 +353,15 @@ Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
   // 4. Add Reshape Op
   const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_tensor_name);
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(
-      pre_reshape_name,
-      output_tensor_name,
-      pre_reshape_shape,
-      output_info.shape,
-      output_info.qnn_data_type,
-      output_info.quant_param,
-      do_op_validation,
-      false,
-      is_graph_output));
+  ORT_RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(pre_reshape_name,
+                                                       output_tensor_name,
+                                                       pre_reshape_shape,
+                                                       output_info.shape,
+                                                       output_info.qnn_data_type,
+                                                       output_info.quant_param,
+                                                       do_op_validation,
+                                                       false,
+                                                       is_graph_output));
 
   return Status::OK();
 }
