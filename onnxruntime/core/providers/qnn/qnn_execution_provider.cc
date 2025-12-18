@@ -255,6 +255,8 @@ qnn::ProfilingLevel QNNExecutionProvider::GetProfilingLevelFromETWLevel(unsigned
 
 static std::unique_ptr<qnn::QnnSerializerConfig> ParseSerializerBackendOptions(const ProviderOptions& provider_options_map) {
   // Enable use of QNN Saver if the user provides a path the QNN Saver backend library.
+  std::cout << " ==== ParseSerializerBackendOptions ==== " << std::endl;
+  
   static const std::string QNN_SAVER_PATH_KEY = "qnn_saver_path";
   auto qnn_saver_path_pos = provider_options_map.find(QNN_SAVER_PATH_KEY);
   if (qnn_saver_path_pos != provider_options_map.end()) {
@@ -1206,6 +1208,7 @@ Status QNNExecutionProvider::CompileFromOrtGraph(const std::vector<FusedNodeAndG
     ORT_RETURN_IF_ERROR(qnn_model->ComposeGraph(graph_viewer, fused_node, model_settings_, logger,
                                                 all_graph_configs_ptr, json_graph_filepath));
     ORT_RETURN_IF_ERROR(qnn_model->FinalizeGraphs(logger));
+    std::cout << "L1209 FinalizeGraphs" << std::endl;
     ORT_RETURN_IF_ERROR(qnn_model->SetupQnnInputOutput(logger));
 
     LOGS(logger, VERBOSE) << "fused node name: " << fused_node.Name();

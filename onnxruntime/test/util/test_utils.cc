@@ -147,7 +147,7 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes, std::string
   std::vector<std::byte> model_data_buffer{};
   const auto model_data = GetModelBytes(model_path_or_bytes, model_data_buffer);
 
-  SessionOptions so;
+  SessionOptions so; so.session_log_severity_level = 0;
   if (session_options_updater) {
     session_options_updater(so);
   }

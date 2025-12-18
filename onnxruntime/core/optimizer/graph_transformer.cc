@@ -12,6 +12,12 @@ Status GraphTransformer::Apply(Graph& graph, bool& modified, const logging::Logg
   // ORT_RETURN_IF_ERROR(graph.Resolve());
 
   auto status = ApplyImpl(graph, modified, 0, logger);
+  if ("Level1_RuleBasedTransformer" == Name()){
+    LOGS(logger, INFO) << "New layer1";
+  }
+  if ("Level2_RuleBasedTransformer" == Name()){
+    LOGS(logger, INFO) << "New layer2";
+  }
   LOGS(logger, INFO) << "GraphTransformer " << Name() << " modified: " << modified << " with status: " << status;
   ORT_RETURN_IF_ERROR(status);
 

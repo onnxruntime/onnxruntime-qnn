@@ -42,9 +42,11 @@ Status RuleBasedGraphTransformer::ApplyRulesOnNode(Graph& graph, Node& node,
 Status RuleBasedGraphTransformer::ApplyImpl(Graph& graph, bool& modified, int graph_level, const logging::Logger& logger) const {
   GraphViewer graph_viewer(graph);
   auto& order = graph_viewer.GetNodesInTopologicalOrder();
-
+  LOGS(logger, INFO) << "RuleBasedGraphTransformer::ApplyImpl";
   for (NodeIndex i : order) {
     auto* node = graph.GetNode(i);
+    LOGS(logger, INFO) << "L48 ApplyImpl: Op: " << node->OpType() << ". Name " << node->Name();
+
     // A node might not be found as it might have already been deleted from one of the rules.
     if (!node) {
       continue;
@@ -57,6 +59,7 @@ Status RuleBasedGraphTransformer::ApplyImpl(Graph& graph, bool& modified, int gr
     if (!graph_utils::IsSupportedProvider(*node, GetCompatibleExecutionProviders())) {
       continue;
     }
+    LOGS(logger, INFO) << "L62 IsSupportedProvider - True";
 
     // First apply rewrite rules that are registered for the op type of the current node; then apply rules that are
     // registered to be applied regardless of the op type; then recursively apply rules to subgraphs (if any).
@@ -64,6 +67,9 @@ Status RuleBasedGraphTransformer::ApplyImpl(Graph& graph, bool& modified, int gr
     const InlinedVector<std::reference_wrapper<const RewriteRule>>* rules = nullptr;
 
     rules = GetRewriteRulesForOpType(node->OpType());
+    if (rules){
+      LOGS(logger, INFO) << "ApplyImpl: Op: " << node->OpType() << ". Name " << node->Name() << ". Rule nums: " << rules->size();
+    }
     if (rules) {
       ORT_RETURN_IF_ERROR(ApplyRulesOnNode(graph, *node, *rules, rule_effect, logger));
     }

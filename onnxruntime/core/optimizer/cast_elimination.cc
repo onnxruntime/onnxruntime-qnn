@@ -19,6 +19,7 @@ Status CastElimination::Apply(Graph& graph, Node& node, RewriteRuleEffect& rule_
 }
 
 bool CastElimination::SatisfyCondition(const Graph& graph, const Node& node, const logging::Logger& logger) const {
+  LOGS(logger, WARNING) << "CastElimination::SatisfyCondition";
   if (!graph_utils::CanRemoveNode(graph, node, logger)) {
     return false;
   }
@@ -26,6 +27,17 @@ bool CastElimination::SatisfyCondition(const Graph& graph, const Node& node, con
   const auto* input_type = node.InputDefs()[0]->TypeAsProto();
   if (input_type == nullptr || !input_type->tensor_type().has_elem_type()) {
     return false;
+  }
+
+  bool result = optimizer_utils::IsAttributeWithExpectedValue(node, "to", static_cast<int64_t>(input_type->tensor_type().elem_type()));
+  
+  const auto* attr_proto = graph_utils::GetNodeAttribute(node, "to");
+  const int64_t expected_value = static_cast<int64_t>(input_type->tensor_type().elem_type());
+  LOGS(logger, WARNING) << "In type: " << attr_proto->i() << ". Out type: " << expected_value;
+  if (result){
+    LOGS(logger, WARNING) << "CastElimination::SatisfyCondition -> True"; 
+  }else{
+    LOGS(logger, WARNING) << "CastElimination::SatisfyCondition -> False";
   }
 
   return optimizer_utils::IsAttributeWithExpectedValue(node, "to", static_cast<int64_t>(input_type->tensor_type().elem_type()));

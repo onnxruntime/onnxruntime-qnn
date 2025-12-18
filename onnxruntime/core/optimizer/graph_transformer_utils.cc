@@ -148,6 +148,7 @@ InlinedVector<std::unique_ptr<RewriteRule>> GenerateRewriteRules(
       break;
 
     case TransformerLevel::Level2:
+      rules.push_back(std::make_unique<CastElimination>());
       rules.push_back(std::make_unique<ClipQuantFusion>());
       rules.push_back(std::make_unique<ReluQuantFusion>());
       rules.push_back(std::make_unique<GemmTransposeFusion>());
