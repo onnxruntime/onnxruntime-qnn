@@ -43,4 +43,4 @@ def GenerateModel(model_name):  # noqa: N802
     onnx.save(model, model_name)
 
 
-GenerateModel("layer_norm_without_bias_scale.onnx")
+GenerateModel("layer_norm_without_scale_bias.onnx")
