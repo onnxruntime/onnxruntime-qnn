@@ -5,15 +5,27 @@ name: Qualcomm Internal Build & Test
 on:
   workflow_call:
     inputs:
-      do_all:
-        type: boolean
-        default: true
       do_linux_x86_64:
         type: boolean
-        default: false
+        default: true
+      do_linux_aarch64:
+        type: boolean
+        default: true
       do_windows_arm64:
         type: boolean
-        default: false
+        default: true
+      do_windows_arm64ec:
+        type: boolean
+        default: true
+      do_windows_x86_64:
+        type: boolean
+        default: true
+      do_android:
+        type: boolean
+        default: true
+      do_lint:
+        type: boolean
+        default: true
       # If true, build with NIGHTLY_BUILD=1, etc. to enable --nightly_build
       nightly_build:
         type: boolean
@@ -32,7 +44,7 @@ env:
 jobs:
 
   build-and-test-linux-x86_64:
-    if: ${{ inputs.do_all }}
+    if: ${{ inputs.do_linux_x86_64 }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
@@ -45,7 +57,7 @@ jobs:
       target_py_vsn: "3.10"
 
   build-linux-aarch64-oe-gcc11_2:
-    if: ${{ inputs.do_all }}
+    if: ${{ inputs.do_linux_aarch64 }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
@@ -58,7 +70,7 @@ jobs:
       run_tests: false
 
   build-and-test-windows-arm64:
-    if: ${{ inputs.do_all || inputs.do_windows_arm64 }}
+    if: ${{ inputs.do_windows_arm64 }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
@@ -68,31 +80,34 @@ jobs:
       upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' }}
       target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
       test_runner_arch: arm64
+      run_tests: ${{ vars.RUN_TESTS == '' || vars.RUN_TESTS != '0' }}
 
   build-and-test-windows-arm64ec:
-    if: ${{ inputs.do_all }}
+    if: ${{ inputs.do_windows_arm64ec }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
       nightly_build: ${{ inputs.nightly_build }}
       target_arch: arm64ec
       upload_wheel: true
-      test_wheel: true
+      test_wheel: ${{ vars.TEST_WHEEL == '' || vars.TEST_WHEEL != '0' }}
       target_py_vsn: ${{ inputs.target_py_vsn }}
       run_tests: false  # ARM64ec unit tests are horribly broken (though model tests seem fine).
       test_runner_arch: arm64
 
   build-and-test-windows-x86_64:
-    if: ${{ inputs.do_all }}
+    if: ${{ inputs.do_windows_x86_64 }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
       nightly_build: ${{ inputs.nightly_build }}
       target_arch: x86_64
       target_py_vsn: ${{ inputs.target_py_vsn }}
+      test_wheel: ${{ vars.TEST_WHEEL == '' || vars.TEST_WHEEL != '0' }}
+      run_tests: ${{ vars.RUN_TESTS == '' || vars.RUN_TESTS != '0' }}
 
   lint:
-    if: ${{ inputs.do_all }}
+    if: ${{ inputs.do_lint }}
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
       - uses: actions/checkout@v4
@@ -104,7 +119,7 @@ jobs:
           python3 qcom/build_and_test.py lint
 
   build-android-aarch64:
-    if: ${{ inputs.do_all }}
+    if: ${{ inputs.do_android }}
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
       - uses: actions/checkout@v4
@@ -123,7 +138,7 @@ jobs:
 
   # Intentionally not "test-android-aarch64" to avoid breaking required PR checks
   test-android:
-    if: ${{ inputs.do_all }}
+    if: ${{ inputs.do_android }}
     runs-on: ["self-hosted", "Linux", "QDC"]
     needs: [build-android-aarch64]
     steps:
