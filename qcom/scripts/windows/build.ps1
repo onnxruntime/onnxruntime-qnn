@@ -143,7 +143,6 @@ if ($TargetPyVersion -ne "")
     # Wheels only supported when we can run Python for the target arch.
     $TargetPyExe = (Join-Path (Get-PythonBinDir -Version $TargetPyVersion -Arch $Arch) "python.exe")
     $BuildWheel = $true
-    $ArchArgs += "--enable_pybind"
     $BuildVEnv = (Join-Path $BuildDir "venv-$TargetPyVersion")
     Write-Host "Building Python wheel using $TargetPyExe"
 }
@@ -155,10 +154,6 @@ else {
 if ($BuildAsX) {
     $CommonArgs += "--buildasx"
 }
-
-# The ORT build incorrectly enables use of Kleidiai when using Ninja on Windows,
-# even if ArmNN is not requested. Manually turn it off.
-$PlatformArgs = @("--no_kleidiai")
 
 if ($CMakeGenerator -eq "Ninja") {
     # The default somehow gives us paths that are too long in CI

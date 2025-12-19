@@ -38,64 +38,6 @@ def _qnn_verify_library_kind(library_kind: str) -> str:
     return library_kind
 
 
-def _openvino_verify_device_type(device_read: str) -> str:
-    """Verifies the device type string for the OpenVINO Execution Provider."""
-    choices = ["CPU", "GPU", "NPU"]
-    choices1 = [
-        "CPU_NO_PARTITION",
-        "GPU_NO_PARTITION",
-        "NPU_NO_PARTITION",
-        "NPU_NO_CPU_FALLBACK",
-    ]
-    status_hetero = True
-    res = False
-    if device_read in choices:
-        res = True
-    elif device_read in choices1:
-        res = True
-    elif device_read.startswith(("HETERO:", "MULTI:", "AUTO:")):
-        res = True
-        parts = device_read.split(":")
-        if len(parts) < 2 or not parts[1]:
-            print("Hetero/Multi/Auto mode requires devices to be specified after the colon.")
-            status_hetero = False
-        else:
-            comma_separated_devices = parts[1].split(",")
-            if len(comma_separated_devices) < 2:
-                print("At least two devices required in Hetero/Multi/Auto Mode")
-                status_hetero = False
-            dev_options = ["CPU", "GPU", "NPU"]
-            for dev in comma_separated_devices:
-                if dev not in dev_options:
-                    status_hetero = False
-                    print(f"Invalid device '{dev}' found in Hetero/Multi/Auto specification.")
-                    break
-
-    def invalid_hetero_build() -> None:
-        print("\nIf trying to build Hetero/Multi/Auto, specify the supported devices along with it.\n")
-        print("Specify the keyword HETERO or MULTI or AUTO followed by a colon and comma-separated devices ")
-        print("in the order of priority you want to build (e.g., HETERO:GPU,CPU).\n")
-        print("The different hardware devices that can be added are ['CPU','GPU','NPU'] \n")
-        print("An example of how to specify the hetero build type: --use_openvino HETERO:GPU,CPU \n")
-        print("An example of how to specify the MULTI build type: --use_openvino MULTI:GPU,CPU \n")
-        print("An example of how to specify the AUTO build type: --use_openvino AUTO:GPU,CPU \n")
-        sys.exit("Wrong Build Type selected")
-
-    if res is False:
-        print("\nYou have selected wrong configuration for the build.")
-        print("Pick the build type for specific Hardware Device from following options: ", choices)
-        print("(or) from the following options with graph partitioning disabled: ", choices1)
-        print("\n")
-        if not (device_read.startswith(("HETERO", "MULTI", "AUTO"))):
-            invalid_hetero_build()  # Will exit
-        sys.exit("Wrong Build Type selected")  # Should not be reached if invalid_hetero_build exits
-
-    if status_hetero is False:
-        invalid_hetero_build()  # Will exit
-
-    return device_read
-
-
 # --- Argument Grouping Functions ---
 
 
@@ -212,25 +154,10 @@ def add_testing_args(parser: argparse.ArgumentParser) -> None:
         help="Run symbolic shape inference tests.",
     )
     parser.add_argument("--skip_onnx_tests", action="store_true", help="Explicitly disable ONNX related tests.")
-    parser.add_argument("--skip_winml_tests", action="store_true", help="Explicitly disable WinML related tests.")
-    parser.add_argument("--skip_nodejs_tests", action="store_true", help="Explicitly disable Node.js binding tests.")
     parser.add_argument("--ctest_timeout", default="10800", help="Timeout provided to CTest --timeout (seconds).")
     parser.add_argument("--enable_transformers_tool_test", action="store_true", help="Enable transformers tool test.")
     parser.add_argument("--build_micro_benchmarks", action="store_true", help="Build ONNXRuntime micro-benchmarks.")
     parser.add_argument("--code_coverage", action="store_true", help="Generate code coverage report (Android only).")
-
-
-def add_training_args(parser: argparse.ArgumentParser) -> None:
-    """Adds arguments related to ONNX Runtime Training."""
-    parser.add_argument(
-        "--enable_training",
-        action="store_true",
-        help="Enable full ORT Training (ORTModule, Training APIs).",
-    )
-    parser.add_argument("--enable_training_apis", action="store_true", help="Enable ORT Training APIs.")
-    parser.add_argument("--enable_training_ops", action="store_true", help="Enable training ops in inference graph.")
-    parser.add_argument("--enable_nccl", action="store_true", help="Enable NCCL for distributed training.")
-    parser.add_argument("--nccl_home", help="Path to NCCL installation directory.")
 
 
 def add_general_profiling_args(parser: argparse.ArgumentParser) -> None:
@@ -303,113 +230,6 @@ def add_android_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def add_apple_args(parser: argparse.ArgumentParser) -> None:
-    """Adds arguments for Apple platform builds (iOS, macOS, visionOS, tvOS)."""
-    platform_group = parser.add_mutually_exclusive_group()
-    platform_group.add_argument("--ios", action="store_true", help="Build for iOS.")
-    platform_group.add_argument("--visionos", action="store_true", help="Build for visionOS.")
-    platform_group.add_argument("--tvos", action="store_true", help="Build for tvOS.")
-    platform_group.add_argument(
-        "--macos",
-        choices=["MacOSX", "Catalyst"],
-        help="Target platform for macOS build (requires --build_apple_framework).",
-    )
-
-    parser.add_argument("--apple_sysroot", default="", help="Specify the macOS platform SDK location name.")
-    parser.add_argument(
-        "--ios_toolchain_file",
-        default="",
-        help="Path to iOS CMake toolchain file (defaults to cmake/onnxruntime_ios.toolchain.cmake).",
-    )
-    parser.add_argument(
-        "--visionos_toolchain_file",
-        default="",
-        help="Path to visionOS CMake toolchain file (defaults to cmake/onnxruntime_visionos.toolchain.cmake).",
-    )
-    parser.add_argument(
-        "--tvos_toolchain_file",
-        default="",
-        help="Path to tvOS CMake toolchain file (defaults to cmake/onnxruntime_tvos.toolchain.cmake).",
-    )
-    parser.add_argument("--xcode_code_signing_team_id", default="", help="Development team ID for Xcode code signing.")
-    parser.add_argument(
-        "--xcode_code_signing_identity", default="", help="Development identity for Xcode code signing."
-    )
-    parser.add_argument(
-        "--use_xcode",
-        action="store_const",
-        const="Xcode",
-        dest="cmake_generator",  # Overwrites the general cmake_generator if specified
-        help="Use Xcode CMake generator (macOS only, non-Catalyst).",
-    )
-    parser.add_argument(
-        "--osx_arch",
-        default="arm64" if platform.machine() == "arm64" else "x86_64",
-        choices=["arm64", "arm64e", "x86_64"],
-        help="Target architecture for macOS/iOS (macOS host only).",
-    )
-    parser.add_argument(
-        "--apple_deploy_target",
-        type=str,
-        help="Minimum deployment target version (e.g., 11.0 for macOS).",
-    )
-
-
-def add_webassembly_args(parser: argparse.ArgumentParser) -> None:
-    """Adds arguments for WebAssembly (WASM) platform builds."""
-    parser.add_argument("--build_wasm", action="store_true", help="Build for WebAssembly.")
-    parser.add_argument("--build_wasm_static_lib", action="store_true", help="Build WebAssembly static library.")
-    parser.add_argument("--emsdk_version", default="4.0.11", help="Specify version of emsdk.")
-    parser.add_argument(
-        "--enable_wasm_jspi", action="store_true", help="Enable WebAssembly JavaScript Promise Integration."
-    )
-    parser.add_argument("--enable_wasm_simd", action="store_true", help="Enable WebAssembly SIMD.")
-    parser.add_argument("--enable_wasm_relaxed_simd", action="store_true", help="Enable WebAssembly Relaxed SIMD.")
-    parser.add_argument("--enable_wasm_threads", action="store_true", help="Enable WebAssembly multi-threading.")
-    parser.add_argument("--disable_wasm_exception_catching", action="store_true", help="Disable exception catching.")
-    parser.add_argument(
-        "--enable_wasm_api_exception_catching",
-        action="store_true",
-        help="Catch exceptions only at top-level API calls.",
-    )
-    parser.add_argument(
-        "--enable_wasm_exception_throwing_override",
-        action="store_true",
-        help="Override default behavior to allow throwing exceptions even when catching is generally disabled.",
-    )
-    parser.add_argument("--wasm_run_tests_in_browser", action="store_true", help="Run WASM tests in a browser.")
-    parser.add_argument(
-        "--enable_wasm_profiling", action="store_true", help="Enable WASM profiling and preserve function names."
-    )
-    parser.add_argument("--enable_wasm_debug_info", action="store_true", help="Build WASM with DWARF debug info.")
-    parser.add_argument("--wasm_malloc", help="Specify memory allocator for WebAssembly (e.g., dlmalloc).")
-    parser.add_argument(
-        "--emscripten_settings",
-        nargs="+",
-        action="extend",
-        default=[],
-        help="Extra emscripten settings (-s <key>=<value>). Provide as <key>=<value>.",
-    )
-
-
-def add_gdk_args(parser: argparse.ArgumentParser) -> None:
-    """Adds arguments for GDK (Xbox) platform builds."""
-    parser.add_argument("--use_gdk", action="store_true", help="Build with the GDK toolchain.")
-    default_gdk_edition = ""
-    gdk_latest_env = os.environ.get("GameDKLatest", "")  # noqa: SIM112
-    if gdk_latest_env:
-        try:
-            default_gdk_edition = os.path.basename(os.path.normpath(gdk_latest_env))
-        except Exception as e:
-            warnings.warn(f"Failed to determine GDK edition from GameDKLatest env var: {e}")
-    parser.add_argument(
-        "--gdk_edition",
-        default=default_gdk_edition,
-        help="Specific GDK edition to build with (defaults to latest installed via GameDKLatest env var).",
-    )
-    parser.add_argument("--gdk_platform", default="Scarlett", help="GDK target platform (e.g., Scarlett, XboxOne).")
-
-
 def add_windows_specific_args(parser: argparse.ArgumentParser) -> None:
     """Adds arguments specific to Windows builds or Windows cross-compilation."""
     # Build tools / config
@@ -461,17 +281,6 @@ def add_windows_specific_args(parser: argparse.ArgumentParser) -> None:
         help="Build for Windows Core OS. Link to Windows umbrella libraries instead of kernel32.lib.",
     )
 
-    add_gdk_args(parser)
-
-    # --- WinML ---
-    winml_group = parser.add_argument_group("WinML API (Windows)")
-    winml_group.add_argument(
-        "--use_winml", action="store_true", help="Enable WinML API (Windows). Requires --enable_wcos."
-    )
-    winml_group.add_argument(
-        "--winml_root_namespace_override", type=str, help="Override the namespace WinML builds into."
-    )
-
 
 def add_linux_specific_args(parser: argparse.ArgumentParser) -> None:
     """Adds arguments specific to Linux builds."""
@@ -493,20 +302,6 @@ def add_dependency_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--use_mimalloc", action="store_true", help="Use mimalloc memory allocator.")
     parser.add_argument(
         "--external_graph_transformer_path", type=str, help="Path to external graph transformer directory."
-    )
-
-
-def add_extension_args(parser: argparse.ArgumentParser) -> None:
-    """Adds arguments related to ONNX Runtime Extensions."""
-    parser.add_argument(
-        "--use_extensions",
-        action="store_true",
-        help="Enable ONNX Runtime Extensions (uses submodule by default).",
-    )
-    parser.add_argument(
-        "--extensions_overridden_path",
-        type=str,
-        help="Path to an external ONNX Runtime Extensions source directory.",
     )
 
 
@@ -559,7 +354,6 @@ def add_client_package_args(parser: argparse.ArgumentParser) -> None:
 
 def add_python_binding_args(parser: argparse.ArgumentParser) -> None:
     """Adds arguments for Python bindings."""
-    parser.add_argument("--enable_pybind", action="store_true", help="Enable Python bindings.")
     parser.add_argument("--build_wheel", action="store_true", help="Build Python wheel package.")
     parser.add_argument(
         "--wheel_name_suffix",
@@ -568,150 +362,8 @@ def add_python_binding_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--skip-keras-test", action="store_true", help="Skip Keras-related tests.")
 
 
-def add_csharp_binding_args(parser: argparse.ArgumentParser) -> None:
-    """Adds arguments for C# bindings."""
-    parser.add_argument(
-        "--build_csharp",
-        action="store_true",
-        help="Build C# DLL and NuGet package (CI usage). Use --build_nuget for local build.",
-    )
-    parser.add_argument(
-        "--build_nuget",
-        action="store_true",
-        help="Build C# DLL and NuGet package locally (Windows/Linux only).",
-    )
-    parser.add_argument(
-        "--msbuild_extra_options",
-        nargs="+",
-        action="extend",
-        default=[],
-        help="Extra MSBuild properties (/p:key=value). Provide as key=value.",
-    )
-
-
-def add_java_binding_args(parser: argparse.ArgumentParser) -> None:
-    """Adds arguments for Java bindings."""
-    parser.add_argument("--build_java", action="store_true", help="Build Java bindings.")
-
-
-def add_nodejs_binding_args(parser: argparse.ArgumentParser) -> None:
-    """Adds arguments for Node.js bindings."""
-    parser.add_argument("--build_nodejs", action="store_true", help="Build Node.js binding and NPM package.")
-    # Note: --skip_nodejs_tests is handled in add_testing_args
-
-
-def add_objc_binding_args(parser: argparse.ArgumentParser) -> None:
-    """Adds arguments for Objective-C bindings."""
-    parser.add_argument("--build_objc", action="store_true", help="Build Objective-C binding.")
-
-
 def add_execution_provider_args(parser: argparse.ArgumentParser) -> None:
     """Adds arguments for enabling various Execution Providers (EPs)."""
-    # --- CUDA ---
-    cuda_group = parser.add_argument_group("CUDA Execution Provider")
-    cuda_group.add_argument("--use_cuda", action="store_true", help="Enable CUDA EP.")
-    cuda_group.add_argument("--cuda_version", help="CUDA toolkit version (e.g., 11.8). Auto-detect if omitted.")
-    cuda_group.add_argument("--cuda_home", help="Path to CUDA toolkit (uses CUDA_HOME env var if unset).")
-    cuda_group.add_argument("--cudnn_home", help="Path to cuDNN (uses CUDNN_HOME env var if unset).")
-    cuda_group.add_argument("--enable_cuda_line_info", action="store_true", help="Enable CUDA line info for debugging.")
-    cuda_group.add_argument("--enable_cuda_nhwc_ops", action="store_true", help="[Deprecated] Default enabled.")
-    cuda_group.add_argument("--disable_cuda_nhwc_ops", action="store_true", help="Disable CUDA NHWC layout ops.")
-    cuda_group.add_argument("--enable_cuda_minimal_build", action="store_true", help="Enable CUDA minimal build.")
-    cuda_group.add_argument(
-        "--nvcc_threads",
-        nargs="?",
-        default=-1,  # -1 signifies auto-detect based on jobs/memory
-        type=int,
-        help="Max NVCC threads per parallel job (-1=auto).",
-    )
-    # CUDA-specific profiling
-    cuda_group.add_argument(
-        "--enable_nvtx_profile", action="store_true", help="Enable NVTX profile markers for CUDA EP."
-    )
-    cuda_group.add_argument(
-        "--enable_cuda_profiling",
-        action="store_true",
-        help="Enable CUDA kernel profiling (requires CUPTI in PATH).",
-    )
-
-    # --- CPU ---
-    cpu_group = parser.add_argument_group("CPU Execution Provider")
-    cpu_group.add_argument("--no_sve", action="store_true", help="Disable building with SVE support.")
-    # The following enables building ORT with NCHWc Neon ARM kernels.
-    # At the time of writing, it is turned OFF by default because its performance relative to "regular" NCHW kernels
-    # is not good at smaller thread counts. But its speed-up is non-negligible with higher thread counts on supporting
-    # ARM platforms.
-    # Once the gap is closed for smaller thread counts, it can be turned on by default.
-    # See https://github.com/microsoft/onnxruntime/pull/25580#issuecomment-3335056846 for benchmarking details.
-    cpu_group.add_argument(
-        "--enable_arm_neon_nchwc", action="store_true", help="Enables building with NCHWc ARM kernels."
-    )
-
-    # --- DNNL (formerly MKL-DNN / oneDNN) ---
-    dnnl_group = parser.add_argument_group("DNNL Execution Provider")
-    dnnl_group.add_argument("--use_dnnl", action="store_true", help="Enable DNNL EP.")
-    dnnl_group.add_argument(
-        "--dnnl_gpu_runtime",
-        action="store",
-        default="",
-        type=str.lower,
-        choices=["ocl", ""],
-        help="DNNL GPU backend (e.g., ocl for OpenCL).",
-    )
-    dnnl_group.add_argument("--dnnl_opencl_root", action="store", default="", help="Path to OpenCL SDK (for DNNL GPU).")
-    dnnl_group.add_argument(
-        "--dnnl_aarch64_runtime",
-        action="store",
-        default="",
-        type=str.lower,
-        choices=["acl", ""],
-        help="DNNL AArch64 backend (e.g., acl for Arm Compute Library).",
-    )
-    dnnl_group.add_argument(
-        "--dnnl_acl_root", action="store", default="", help="Path to Arm Compute Library (ACL) root."
-    )
-
-    # --- OpenVINO ---
-    openvino_group = parser.add_argument_group("OpenVINO Execution Provider")
-    openvino_group.add_argument(
-        "--use_openvino",
-        nargs="?",
-        const="CPU",  # Default device if only flag is present
-        type=_openvino_verify_device_type,
-        help="Enable OpenVINO EP for specific hardware (e.g., CPU, GPU, NPU, HETERO:GPU,CPU).",
-    )
-
-    # --- TensorRT ---
-    trt_group = parser.add_argument_group("TensorRT Execution Provider")
-    trt_group.add_argument("--use_tensorrt", action="store_true", help="Enable TensorRT EP.")
-    trt_group.add_argument(
-        "--use_tensorrt_builtin_parser",
-        action="store_true",
-        default=True,
-        help="Use TensorRT internal ONNX parser (default).",
-    )
-    trt_group.add_argument("--use_tensorrt_oss_parser", action="store_true", help="Use TensorRT OSS ONNX parser.")
-    trt_group.add_argument("--tensorrt_home", help="Path to TensorRT installation directory.")
-    trt_group.add_argument("--tensorrt_rtx_home", help="Path to TensorRT RTX installation directory.")
-
-    # --- Nv ---
-    nv_group = parser.add_argument_group("Nv Execution Provider")
-    nv_group.add_argument("--use_nv_tensorrt_rtx", action="store_true", help="Enable Nv EP.")
-
-    # --- DirectML ---
-    dml_group = parser.add_argument_group("DirectML Execution Provider (Windows)")
-    dml_group.add_argument("--use_dml", action="store_true", help="Enable DirectML EP (Windows).")
-    dml_group.add_argument("--dml_path", type=str, default="", help="Path to custom DirectML SDK.")
-    dml_group.add_argument("--dml_external_project", action="store_true", help="Build DirectML as an external project.")
-
-    # --- NNAPI ---
-    nnapi_group = parser.add_argument_group("NNAPI Execution Provider (Android)")
-    nnapi_group.add_argument("--use_nnapi", action="store_true", help="Enable NNAPI EP (Android).")
-    nnapi_group.add_argument("--nnapi_min_api", type=int, help="Minimum Android API level for NNAPI (>= 27).")
-
-    # --- CoreML ---
-    coreml_group = parser.add_argument_group("CoreML Execution Provider (Apple)")
-    coreml_group.add_argument("--use_coreml", action="store_true", help="Enable CoreML EP (Apple platforms).")
 
     # --- QNN ---
     qnn_group = parser.add_argument_group("QNN Execution Provider (Qualcomm)")
@@ -724,90 +376,10 @@ def add_execution_provider_args(parser: argparse.ArgumentParser) -> None:
     )
     qnn_group.add_argument("--qnn_home", help="Path to QNN SDK directory.")
 
-    # --- SNPE ---
-    snpe_group = parser.add_argument_group("SNPE Execution Provider (Qualcomm)")
-    snpe_group.add_argument("--use_snpe", action="store_true", help="Enable SNPE EP.")
-    snpe_group.add_argument("--snpe_root", help="Path to SNPE SDK root directory.")
-
-    # --- Vitis-AI ---
-    vitis_group = parser.add_argument_group("Vitis-AI Execution Provider (Xilinx)")
-    vitis_group.add_argument("--use_vitisai", action="store_true", help="Enable Vitis-AI EP.")
-
-    # --- ArmNN ---
-    armnn_group = parser.add_argument_group("ArmNN Execution Provider")
-    armnn_group.add_argument("--use_armnn", action="store_true", help="Enable ArmNN EP.")
-    armnn_group.add_argument("--armnn_relu", action="store_true", help="Use ArmNN Relu implementation.")
-    armnn_group.add_argument("--armnn_bn", action="store_true", help="Use ArmNN BatchNormalization implementation.")
-    armnn_group.add_argument("--armnn_home", help="Path to ArmNN home directory.")
-    armnn_group.add_argument("--armnn_libs", help="Path to ArmNN libraries directory.")
-
-    # --- ACL (Arm Compute Library) ---
-    acl_group = parser.add_argument_group("ACL Execution Provider")
-    acl_group.add_argument("--use_acl", action="store_true", help="Enable ACL EP (ARM architectures).")
-    acl_group.add_argument("--acl_home", help="Path to ACL home directory.")
-    acl_group.add_argument("--acl_libs", help="Path to ACL libraries directory.")
-    acl_group.add_argument(
-        "--no_kleidiai", action="store_true", help="Disable KleidiAI integration (used with ACL/ArmNN)."
-    )
-
-    # --- RKNPU ---
-    rknpu_group = parser.add_argument_group("RKNPU Execution Provider")
-    rknpu_group.add_argument("--use_rknpu", action="store_true", help="Enable RKNPU EP.")
-
-    # --- CANN (Huawei Ascend) ---
-    cann_group = parser.add_argument_group("CANN Execution Provider")
-    cann_group.add_argument("--use_cann", action="store_true", help="Enable CANN EP.")
-    cann_group.add_argument("--cann_home", help="Path to CANN installation directory.")
-
-    # --- MIGraphX (AMD) ---
-    migx_group = parser.add_argument_group("MIGraphX Execution Provider")
-    migx_group.add_argument("--use_migraphx", action="store_true", help="Enable MIGraphX EP.")
-    migx_group.add_argument("--migraphx_home", help="Path to MIGraphX installation directory.")
-    migx_group.add_argument("--use_rocm", action="store_true", help="Enable ROCm EP.")
-    migx_group.add_argument("--rocm_version", help="ROCm stack version.")
-    migx_group.add_argument("--rocm_home", help="Path to ROCm installation directory.")
-
-    # --- WebNN ---
-    webnn_group = parser.add_argument_group("WebNN Execution Provider")
-    webnn_group.add_argument("--use_webnn", action="store_true", help="Enable WebNN EP.")
-
-    # --- JSEP (JavaScript EP for WASM) ---
-    jsep_group = parser.add_argument_group("JSEP Execution Provider (WebAssembly)")
-    jsep_group.add_argument("--use_jsep", action="store_true", help="Enable JavaScript EP (used with WebAssembly).")
-
-    # --- WebGPU ---
-    webgpu_group = parser.add_argument_group("WebGPU Execution Provider")
-    webgpu_group.add_argument("--use_webgpu", action="store_true", help="Enable WebGPU EP.")
-    webgpu_group.add_argument(
-        "--use_external_dawn", action="store_true", help="Use external Dawn dependency for WebGPU."
-    )
-    webgpu_group.add_argument(
-        "--wgsl_template",
-        choices=["static", "dynamic"],
-        default="static",  # By default, use static WGSL template generation
-        help="Specify the generator for WebGPU WGSL template generation.",
-    )
-
-    # --- XNNPACK ---
-    xnn_group = parser.add_argument_group("XNNPACK Execution Provider")
-    xnn_group.add_argument("--use_xnnpack", action="store_true", help="Enable XNNPACK EP.")
-
-    # --- VSINPU (VeriSilicon NPU) ---
-    vsi_group = parser.add_argument_group("VSINPU Execution Provider")
-    vsi_group.add_argument("--use_vsinpu", action="store_true", help="Enable VSINPU EP.")
-
-    # --- Azure ---
-    azure_group = parser.add_argument_group("Azure Execution Provider")
-    azure_group.add_argument("--use_azure", action="store_true", help="Enable Azure EP.")
-
 
 def add_other_feature_args(parser: argparse.ArgumentParser) -> None:
     """Adds arguments for other miscellaneous features."""
     parser.add_argument("--enable_lazy_tensor", action="store_true", help="Enable ORT backend for PyTorch LazyTensor.")
-    parser.add_argument("--ms_experimental", action="store_true", help="Build Microsoft experimental operators.")
-    parser.add_argument(
-        "--enable_msinternal", action="store_true", help="[MS Internal] Enable Microsoft internal build features."
-    )
     parser.add_argument("--use_lock_free_queue", action="store_true", help="Use lock-free task queue for threadpool.")
     parser.add_argument(
         "--enable_generic_interface",
@@ -830,8 +402,6 @@ def is_cross_compiling(args: argparse.Namespace) -> bool:
             getattr(args, "ios", False),
             getattr(args, "visionos", False),
             getattr(args, "tvos", False),
-            args.build_wasm,
-            getattr(args, "use_gdk", False),  # GDK args added conditionally
         ]
     )
 
@@ -864,24 +434,17 @@ def parse_arguments() -> argparse.Namespace:
     add_core_build_args(parser)
     add_cmake_build_config_args(parser)
     add_testing_args(parser)
-    add_training_args(parser)
     add_general_profiling_args(parser)
     add_debugging_sanitizer_args(parser)
     add_documentation_args(parser)
     add_cross_compile_args(parser)  # Non-Windows cross-compile args
     add_android_args(parser)
-    add_webassembly_args(parser)
     add_dependency_args(parser)
-    add_extension_args(parser)
     add_size_reduction_args(parser)
     add_client_package_args(parser)
 
     # Language Bindings
     add_python_binding_args(parser)
-    add_csharp_binding_args(parser)
-    add_java_binding_args(parser)
-    add_nodejs_binding_args(parser)
-    add_objc_binding_args(parser)
 
     # Execution Providers (now includes EP-specific profiling args)
     add_execution_provider_args(parser)
@@ -892,8 +455,6 @@ def parse_arguments() -> argparse.Namespace:
     # Platform specific args (now includes Windows cross-compile targets & specific config/debug args)
     if is_windows():
         add_windows_specific_args(parser)
-    elif is_macOS():
-        add_apple_args(parser)
     else:  # Assuming Linux or other non-Windows, non-macOS Unix-like
         add_linux_specific_args(parser)
 
@@ -908,25 +469,13 @@ def parse_arguments() -> argparse.Namespace:
     if args.android_ndk_path:
         args.android_ndk_path = os.path.normpath(args.android_ndk_path)
 
-    # Handle WASM exception logic
-    if args.enable_wasm_api_exception_catching:
-        args.disable_wasm_exception_catching = True  # Catching at API level implies disabling broader catching
-    if not args.disable_wasm_exception_catching or args.enable_wasm_api_exception_catching:
-        # Doesn't make sense to catch if nothing throws
-        args.enable_wasm_exception_throwing_override = True
-
     # Set default CMake generator if not specified
     # Check if cmake_generator attribute exists (it might if --use_xcode was used)
     # before checking if it's None.
     if not hasattr(args, "cmake_generator") or args.cmake_generator is None:
         if is_windows():
-            # Default to Ninja for WASM on Windows for potential speedup, VS otherwise
-            args.cmake_generator = "Ninja" if args.build_wasm else "Visual Studio 17 2022"
+            args.cmake_generator = "Visual Studio 17 2022"
         # else: Linux/macOS default (usually Makefiles or Ninja) is handled by CMake itself
-
-    # Handle deprecated args
-    if hasattr(args, "enable_cuda_nhwc_ops") and args.enable_cuda_nhwc_ops:
-        warnings.warn("The argument '--enable_cuda_nhwc_ops' is deprecated and enabled by default.", DeprecationWarning)
 
     # Default behavior (update/build/test) if no action flags are specified
     # Determine if it's a cross-compiled build (approximated by checking common cross-compile flags)
@@ -945,8 +494,6 @@ def parse_arguments() -> argparse.Namespace:
     if args.disable_exceptions and args.minimal_build is None:
         parser.error("--disable_exceptions requires --minimal_build to be specified.")
     if is_windows():
-        if getattr(args, "use_winml", False) and not getattr(args, "enable_wcos", False):
-            parser.error("--use_winml requires --enable_wcos to be specified.")
         if hasattr(args, "msvc_toolset") and args.msvc_toolset:
             try:
                 # Extract major.minor version parts (e.g., "14.36")
