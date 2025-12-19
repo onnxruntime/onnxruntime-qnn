@@ -279,54 +279,31 @@ bool QnnModelWrapper::ProcessBF16OutputConversion(const std::string& qnn_node_na
   for (size_t i = 0; i < output_names.size(); ++i) {
     const auto& output_name = output_names[i];
     auto it = model_tensors_map_.find(output_name);
+    if (it == model_tensors_map_.end()) {
+      continue;
+    }
+    auto& tensor_wrapper = it->second;
+    Qnn_DataType_t tensor_dtype = tensor_wrapper.GetTensorDataType();
+    Qnn_TensorType_t tensor_type = tensor_wrapper.GetTensorType();
 
-    if (IsGraphOutput(output_name)) {
-      // For graph outputs, insert Cast node to convert BF16 back to FP32
-      std::string bf16_output_name = output_name + "_bf16_intermediate";
-
+    if (IsGraphOutput(output_name) && tensor_dtype == QNN_DATATYPE_FLOAT_32) {
+      // For FP32 graph outputs, insert Cast node to convert BF16 back to FP32
+      std::string bf16_output_name = utils::GetUniqueName(output_name, "_bf16_intermediate");
       if (!IsQnnTensorWrapperExist(bf16_output_name)) {
-        if (it != model_tensors_map_.end()) {
-          auto& tensor_wrapper = it->second;
           std::vector<uint32_t> shape = tensor_wrapper.GetTensorDims();
-          Qnn_DataType_t original_dtype = tensor_wrapper.GetTensorDataType();
-
           QnnTensorWrapper bf16_tensor(bf16_output_name, QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_BFLOAT_16,
                                        QnnQuantParamsWrapper(), std::move(shape));
           if (!AddTensorWrapper(std::move(bf16_tensor))) {
             LOGS(logger_, ERROR) << "Failed to add BF16 intermediate output tensor: " << bf16_output_name;
             return false;
           }
-
-          // Ensure the graph output tensor remains FP32
-          if (original_dtype != QNN_DATATYPE_FLOAT_32) {
-            LOGS(logger_, WARNING) << "Graph output tensor has unexpected dtype: " << original_dtype << ", forcing to FP32";
-            SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_FLOAT_32);
-          }
           graph_output_cast_ops.push_back({bf16_output_name, output_name});
-        }
-      } else {
-        // Ensure the graph output tensor is FP32
-        if (it != model_tensors_map_.end()) {
-          auto& tensor_wrapper = it->second;
-          Qnn_DataType_t current_dtype = tensor_wrapper.GetTensorDataType();
-          if (current_dtype != QNN_DATATYPE_FLOAT_32) {
-            LOGS(logger_, WARNING) << "Graph output tensor " << output_name << " has dtype: " << current_dtype << ", forcing to FP32";
-            SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_FLOAT_32);
-          }
-        }
-        graph_output_cast_ops.push_back({bf16_output_name, output_name});
       }
       converted_output_names.push_back(bf16_output_name);
-    } else if (it != model_tensors_map_.end()) {
-      auto& tensor_wrapper = it->second;
-      Qnn_DataType_t tensor_dtype = tensor_wrapper.GetTensorDataType();
-      Qnn_TensorType_t tensor_type = tensor_wrapper.GetTensorType();
-
+    } else if (tensor_type == QNN_TENSOR_TYPE_NATIVE && tensor_dtype == QNN_DATATYPE_FLOAT_32) {
       // Convert intermediate FP32 tensors to BF16 directly
-      if (tensor_type == QNN_TENSOR_TYPE_NATIVE && tensor_dtype == QNN_DATATYPE_FLOAT_32) {
         SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_BFLOAT_16);
-      }
-      converted_output_names.push_back(output_name);
+        converted_output_names.push_back(output_name);
     } else {
       converted_output_names.push_back(output_name);
     }
