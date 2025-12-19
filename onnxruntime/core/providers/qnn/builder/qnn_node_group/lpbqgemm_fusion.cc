@@ -215,7 +215,6 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                              const NodeUnit& output_ql_node_unit,
                              const logging::Logger& logger,
                              bool validate) {
-  // No need to dereference reference parameters - they're already references
   assert(scale_dql_node_unit.OpType() == "DequantizeLinear" &&
          w_dql_node_unit.OpType() == "DequantizeLinear" &&
          act_dql_node_unit.OpType() == "DequantizeLinear" &&
