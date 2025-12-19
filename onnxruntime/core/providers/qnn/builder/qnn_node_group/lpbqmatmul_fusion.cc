@@ -308,7 +308,7 @@ Status ProcessLPBQWeight(QnnModelWrapper& qnn_model_wrapper,
     std::vector<uint8_t> unpacked_tensor;
     const auto& weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
     // if input_channel_axis = 0, UnpackWeightTensorData will transpose and keep output_channel at 0
-    ORT_RETURN_IF_ERROR(UnpackWeightTensorData(qnn_model_wrapper, weight_tensor_proto, weight_shape, input_channel_axis, unpacked_tensor));
+    ORT_RETURN_IF_ERROR(UnpackWeightTensorData(qnn_model_wrapper, weight_tensor_proto, weight_shape, input_channel_axis, unpacked_tensor, logger));
 
     // Quantize weight tensor
     size_t weight_elements = unpacked_tensor.size() / sizeof(float);
@@ -382,7 +382,7 @@ Status ProcessLPBQWeight(QnnModelWrapper& qnn_model_wrapper,
     std::vector<uint8_t> quant_data;
     const auto& weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
     // if input_channel_axis = 0, UnpackWeightTensorData will transpose and keep output_channel at 0
-    ORT_RETURN_IF_ERROR(UnpackWeightTensorData(qnn_model_wrapper, weight_tensor_proto, weight_shape, input_channel_axis, quant_data));
+    ORT_RETURN_IF_ERROR(UnpackWeightTensorData(qnn_model_wrapper, weight_tensor_proto, weight_shape, input_channel_axis, quant_data, logger));
 
     size_t output_channel_axis = 0;  // MatMul requires axis to be rank-1
 

@@ -318,7 +318,7 @@ Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
     std::vector<uint8_t> unpacked_tensor;
     weight_tensor_name = w_dql_input_1_def.node_arg.Name();
     const auto& weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
-    ORT_RETURN_IF_ERROR(UnpackWeightTensorData(qnn_model_wrapper, weight_tensor_proto, weight_shape, input_channel_axis, unpacked_tensor));
+    ORT_RETURN_IF_ERROR(UnpackWeightTensorData(qnn_model_wrapper, weight_tensor_proto, weight_shape, input_channel_axis, unpacked_tensor, logger, validate));
 
     // Get weight tensor type from input of w_dql_tensor or output_dql_tensor
     Qnn_TensorType_t weight_tensor_type = qnn_model_wrapper.GetTensorType(weight_tensor_name);
