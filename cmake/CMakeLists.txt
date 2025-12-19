@@ -9,7 +9,7 @@ cmake_minimum_required(VERSION 3.28)
 cmake_policy(SET CMP0104 OLD)
 
 # Project
-project(onnxruntime_qnn_abi C CXX ASM)
+project(onnxruntime_qnn C CXX ASM)
 
 # Disable fast-math for Intel oneAPI compiler
 if("${CMAKE_CXX_COMPILER_ID}" MATCHES "IntelLLVM")
@@ -761,7 +761,7 @@ if (onnxruntime_CALLER_FRAMEWORK)
 endif()
 
 
-# Required by core/providers/qnn-abi/onnxruntime_providers_qnn_abi.rc
+# Required by core/providers/qnn/onnxruntime_providers_qnn.rc
 set(VERSION_MAJOR_PART   0 CACHE STRING "First part of numeric file/product version.")
 set(VERSION_MINOR_PART   0 CACHE STRING "Second part of numeric file/product version.")
 set(VERSION_BUILD_PART       0 CACHE STRING "Third part of numeric file/product version.")
@@ -829,9 +829,9 @@ if (WIN32 AND NOT GDK_PLATFORM AND NOT CMAKE_CROSSCOMPILING)
   endif()
 endif()
 
-include(onnxruntime_providers_qnn_abi.cmake)
-# TODO: Enable the onnxruntime_providers_qnn_abi_simulation.cmake if needed
-# include(onnxruntime_providers_qnn_abi_simulation.cmake)
+include(onnxruntime_providers_qnn.cmake)
+# TODO: Enable the onnxruntime_providers_qnn_simulation.cmake if needed
+# include(onnxruntime_providers_qnn_simulation.cmake)
 
 if (UNIX)
   option(BUILD_PKGCONFIG_FILES "Build and install pkg-config files" ON)
@@ -910,7 +910,7 @@ if(DEFINED BUILD_AS_ARM64X)
     set(ARM64X_TARGETS onnxruntime)
 
     # Add additional ARM64X build targets
-    list(APPEND ARM64X_TARGETS onnxruntime_providers_qnn_abi)
+    list(APPEND ARM64X_TARGETS onnxruntime_providers_qnn)
 
     include("${CMAKE_CURRENT_SOURCE_DIR}/arm64x.cmake")
 endif()
