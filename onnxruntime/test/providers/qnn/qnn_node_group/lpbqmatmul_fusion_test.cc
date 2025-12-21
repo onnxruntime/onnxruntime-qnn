@@ -108,12 +108,12 @@ ProviderOptions GetProviderOptions() {
 
 #if defined(_WIN32)
 // Graph fails to compose on ARM64 Windows since QNN 2.37.0
-TEST_F(QnnABIHTPBackendTests, DISABLED_LPBQMatMulFusion) {
+TEST_F(QnnHTPBackendTests, DISABLED_LPBQMatMulFusion) {
 #else
-TEST_F(QnnABIHTPBackendTests, LPBQMatMulFusion) {
+TEST_F(QnnHTPBackendTests, LPBQMatMulFusion) {
 #endif
   ProviderOptions provider_options = GetProviderOptions();
-  RunQnnModelTestABI(BuildLPBQMatMulTestCase(),
+  RunQnnModelTest(BuildLPBQMatMulTestCase(),
                      provider_options,
                      /*opset_version=*/21,
                      /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some,

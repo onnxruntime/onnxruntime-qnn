@@ -64,9 +64,9 @@ ProviderOptions GetProviderOptions() {
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
-TEST_F(QnnABIHTPBackendTests, ChannelShuffleFusion) {
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion) {
   ProviderOptions provider_options = GetProviderOptions();
-  RunQnnModelTestABI(BuildTestCase(),
+  RunQnnModelTest(BuildTestCase(),
                      provider_options,
                      /*opset_version=*/10,
                      /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,

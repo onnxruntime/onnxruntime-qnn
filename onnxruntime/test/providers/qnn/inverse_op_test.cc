@@ -29,7 +29,7 @@ static void RunInverseTest(const std::vector<TestInputDef<DataType>>& input_defs
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTestABI(BuildOpTestCase<DataType>("Inverse", input_defs, {}, attrs, kMSDomain),  // Inverse Op exist in kMSDomain
+  RunQnnModelTest(BuildOpTestCase<DataType>("Inverse", input_defs, {}, attrs, kMSDomain),  // Inverse Op exist in kMSDomain
                      provider_options,
                      opset,
                      expected_ep_assignment,
@@ -40,7 +40,7 @@ static void RunInverseTest(const std::vector<TestInputDef<DataType>>& input_defs
 // CPU tests:
 //
 
-TEST_F(QnnABICPUBackendTests, Inverse_2d_test) {
+TEST_F(QnnCPUBackendTests, Inverse_2d_test) {
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
@@ -50,7 +50,7 @@ TEST_F(QnnABICPUBackendTests, Inverse_2d_test) {
                         ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnABICPUBackendTests, Inverse_3d_test) {
+TEST_F(QnnCPUBackendTests, Inverse_3d_test) {
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{5, 2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
@@ -60,7 +60,7 @@ TEST_F(QnnABICPUBackendTests, Inverse_3d_test) {
                         ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnABICPUBackendTests, Inverse_4d_test) {
+TEST_F(QnnCPUBackendTests, Inverse_4d_test) {
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{1, 5, 2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
@@ -117,7 +117,7 @@ static void RunQDQInverseOpTest(const TestInputDef<float>& input_defs,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  TestQDQModelAccuracyABI(BuildOpTestCase<float>("Inverse", {input_defs}, {}, attrs, kMSDomain),  // Inverse Op exist in kMSDomain
+  TestQDQModelAccuracy(BuildOpTestCase<float>("Inverse", {input_defs}, {}, attrs, kMSDomain),  // Inverse Op exist in kMSDomain
                           BuildQDQInverseTestCase<QuantType>({input_defs}, attrs, true),
                           provider_options,
                           opset,
@@ -125,7 +125,7 @@ static void RunQDQInverseOpTest(const TestInputDef<float>& input_defs,
                           tolerance);
 }
 
-TEST_F(QnnABIHTPBackendTests, Inverse_2d) {
+TEST_F(QnnHTPBackendTests, Inverse_2d) {
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
@@ -137,7 +137,7 @@ TEST_F(QnnABIHTPBackendTests, Inverse_2d) {
                         "htp");
 }
 
-TEST_F(QnnABIHTPBackendTests, Inverse_3d) {
+TEST_F(QnnHTPBackendTests, Inverse_3d) {
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{10, 2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
@@ -149,7 +149,7 @@ TEST_F(QnnABIHTPBackendTests, Inverse_3d) {
                         "htp");
 }
 
-TEST_F(QnnABIHTPBackendTests, Inverse_4d) {
+TEST_F(QnnHTPBackendTests, Inverse_4d) {
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{1, 10, 2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
@@ -161,7 +161,7 @@ TEST_F(QnnABIHTPBackendTests, Inverse_4d) {
                         "htp");
 }
 
-TEST_F(QnnABIHTPBackendTests, Inverse_qdq_2d) {
+TEST_F(QnnHTPBackendTests, Inverse_qdq_2d) {
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -10.0f, 10.0f);
@@ -171,7 +171,7 @@ TEST_F(QnnABIHTPBackendTests, Inverse_qdq_2d) {
                                ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnABIHTPBackendTests, Inverse_qdq_3d) {
+TEST_F(QnnHTPBackendTests, Inverse_qdq_3d) {
 #ifdef _M_ARM64
   // output_range=0.31888091564178467, tolerance=0.40000000596046448%.
   // Expected val (f32@CPU_EP): 0.069747790694236755
@@ -191,7 +191,7 @@ TEST_F(QnnABIHTPBackendTests, Inverse_qdq_3d) {
                                tolerance);
 }
 
-TEST_F(QnnABIHTPBackendTests, Inverse_qdq_4d) {
+TEST_F(QnnHTPBackendTests, Inverse_qdq_4d) {
 #ifdef _M_ARM64
   // output_range=0.31888091564178467, tolerance=0.40000000596046448%.
   // Expected val (f32@CPU_EP): 0.069747790694236755

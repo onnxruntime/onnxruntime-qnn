@@ -46,7 +46,7 @@ static void RunArgMxxOpTest(const std::string& op_type, TestInputDef<float> inpu
 
   provider_options["backend_type"] = backend_name;
 
-  RunQnnModelTestABI(BuildOpTestCase<float>(op_type, {input_def}, {}, attrs),
+  RunQnnModelTest(BuildOpTestCase<float>(op_type, {input_def}, {}, attrs),
                      provider_options,
                      opset,
                      expected_ep_assignment);
@@ -64,7 +64,7 @@ static void RunQDQArgMxxOpTest(const std::string& op_type, TestInputDef<float> i
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  TestQDQModelAccuracyABI(BuildOpTestCase<float>(op_type, {input_def}, {}, attrs),   // baseline float32 model
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type, {input_def}, {}, attrs),   // baseline float32 model
                           BuildQDQArgMxxTestCase<QType>(op_type, input_def, attrs),  // QDQ model
                           provider_options,
                           opset,
@@ -76,7 +76,7 @@ static void RunQDQArgMxxOpTest(const std::string& op_type, TestInputDef<float> i
 //
 
 // Test that ArgMax/ArgMin with default attributes works on QNN CPU backend. Compares output with CPU EP.
-TEST_F(QnnABICPUBackendTests, ArgMaxMin_DefaultAttrs) {
+TEST_F(QnnCPUBackendTests, ArgMaxMin_DefaultAttrs) {
   RunArgMxxOpTest("ArgMax",
                   TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),  // Random input.
                   {},                                                       // All default ONNX attributes.
@@ -94,7 +94,7 @@ TEST_F(QnnABICPUBackendTests, ArgMaxMin_DefaultAttrs) {
 
 // Test that Q/DQ(uint8) ArgMax/ArgMin with default attributes works on HTP backend.
 // Compares output with CPU EP.
-TEST_F(QnnABIHTPBackendTests, ArgMaxMinU8_DefaultAttrs) {
+TEST_F(QnnHTPBackendTests, ArgMaxMinU8_DefaultAttrs) {
   RunQDQArgMxxOpTest<uint8_t>("ArgMax",
                               TestInputDef<float>({1, 3, 4}, false, -10.0f, 10.0f),  // Random input.
                               {},                                                    // All default ONNX attributes.
@@ -107,7 +107,7 @@ TEST_F(QnnABIHTPBackendTests, ArgMaxMinU8_DefaultAttrs) {
 
 // Tests that Q/DQ(uint8) ArgMax/ArgMin with axis of -1 works on HTP backend.
 // Compares output with CPU EP.
-TEST_F(QnnABIHTPBackendTests, ArgMaxMinU8_AxisLast) {
+TEST_F(QnnHTPBackendTests, ArgMaxMinU8_AxisLast) {
   RunQDQArgMxxOpTest<uint8_t>("ArgMax",
                               TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),   // Random input.
                               {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},  // axis is -1
@@ -120,7 +120,7 @@ TEST_F(QnnABIHTPBackendTests, ArgMaxMinU8_AxisLast) {
 
 // Tests that Q/DQ(uint8) ArgMax/ArgMin with axis of -1 and keepdims = false works on HTP backend.
 // Compares output with CPU EP.
-TEST_F(QnnABIHTPBackendTests, ArgMaxMinU8_NotKeepDims) {
+TEST_F(QnnHTPBackendTests, ArgMaxMinU8_NotKeepDims) {
   RunQDQArgMxxOpTest<uint8_t>("ArgMax",
                               TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),  // Random input.
                               {utils::MakeAttribute("axis", static_cast<int64_t>(-1)),
@@ -133,7 +133,7 @@ TEST_F(QnnABIHTPBackendTests, ArgMaxMinU8_NotKeepDims) {
 }
 
 // Tests that Q/DQ ArgMax/ArgMin with select_last_index = 1 is not supported.
-TEST_F(QnnABIHTPBackendTests, ArgMaxMinU8_SelectLastIndex_NonZero_Unsupported) {
+TEST_F(QnnHTPBackendTests, ArgMaxMinU8_SelectLastIndex_NonZero_Unsupported) {
   RunQDQArgMxxOpTest<uint8_t>("ArgMax",
                               TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),  // Random input.
                               {utils::MakeAttribute("select_last_index", static_cast<int64_t>(1))},
@@ -145,7 +145,7 @@ TEST_F(QnnABIHTPBackendTests, ArgMaxMinU8_SelectLastIndex_NonZero_Unsupported) {
 }
 
 // Tests that Q/DQ ArgMax/ArgMin with input rank > 4 on HTP is not supported.
-TEST_F(QnnABIHTPBackendTests, ArgMaxMinU8_RankGreaterThan4_Unsupported) {
+TEST_F(QnnHTPBackendTests, ArgMaxMinU8_RankGreaterThan4_Unsupported) {
   RunQDQArgMxxOpTest<uint8_t>("ArgMax",
                               TestInputDef<float>({1, 3, 4, 4, 4}, false, -10.0f, 10.0f),  // Random input.
                               {},
@@ -166,7 +166,7 @@ TEST_F(QnnABIHTPBackendTests, ArgMaxMinU8_RankGreaterThan4_Unsupported) {
 // Test that ArgMax/ArgMin with default attributes works on QNN GPU backend. Compares output with CPU EP.
 // Disable Reason : Onnx Op need Int64 output. Can enable after CastOp Int32 to Int64 is done.
 // Can enable after CastOp int32 to int64 is implemented in QnnGpu.
-TEST_F(QnnABIGPUBackendTests, DISABLED_ArgMaxMin_DefaultAttrs) {
+TEST_F(QnnGPUBackendTests, DISABLED_ArgMaxMin_DefaultAttrs) {
   RunArgMxxOpTest("ArgMax",
                   TestInputDef<float>({3, 4, 4}, false, -10.0f, 10.0f),  // Random input.
                   {},                                                    // All default ONNX attributes.
@@ -180,7 +180,7 @@ TEST_F(QnnABIGPUBackendTests, DISABLED_ArgMaxMin_DefaultAttrs) {
 // Test that ArgMax/ArgMin with axis attribute works on QNN GPU backend. Compares output with CPU EP.
 // Disable Reason : Onnx Op need Int64 output. Can enable after CastOp Int32 to Int64 is done.
 // Can enable after CastOp int32 to int64 is implemented in QnnGpu.
-TEST_F(QnnABIGPUBackendTests, DISABLED_ArgMaxMin_AxisAttr) {
+TEST_F(QnnGPUBackendTests, DISABLED_ArgMaxMin_AxisAttr) {
   RunArgMxxOpTest("ArgMax",
                   TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),  // Random input.
                   {utils::MakeAttribute("axis", static_cast<int64_t>(1))},  // axis is 1

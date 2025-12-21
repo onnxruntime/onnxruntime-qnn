@@ -274,11 +274,11 @@ ProviderOptions GetProviderOptions() {
 }  // namespace
 
 // Test GELU Pattern 1 with float32 model (for baseline comparison)
-TEST_F(QnnABIHTPBackendTests, GeluFusionPattern1_Float32) {
+TEST_F(QnnHTPBackendTests, GeluFusionPattern1_Float32) {
   ProviderOptions provider_options = GetProviderOptions();
   auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
 
-  RunQnnModelTestABI(BuildGeluPattern1TestCase(input_def),
+  RunQnnModelTest(BuildGeluPattern1TestCase(input_def),
                      provider_options,
                      /*opset_version=*/13,
                      /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
@@ -286,11 +286,11 @@ TEST_F(QnnABIHTPBackendTests, GeluFusionPattern1_Float32) {
 }
 
 // Test GELU Pattern 2 with float32 model (for baseline comparison)
-TEST_F(QnnABIHTPBackendTests, GeluFusionPattern2_Float32) {
+TEST_F(QnnHTPBackendTests, GeluFusionPattern2_Float32) {
   ProviderOptions provider_options = GetProviderOptions();
   auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
 
-  RunQnnModelTestABI(BuildGeluPattern2TestCase(input_def),
+  RunQnnModelTest(BuildGeluPattern2TestCase(input_def),
                      provider_options,
                      /*opset_version=*/13,
                      /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
@@ -298,11 +298,11 @@ TEST_F(QnnABIHTPBackendTests, GeluFusionPattern2_Float32) {
 }
 
 // Test GELU Pattern 1 with larger input shape
-TEST_F(QnnABIHTPBackendTests, GeluFusionPattern1_LargeInput) {
+TEST_F(QnnHTPBackendTests, GeluFusionPattern1_LargeInput) {
   ProviderOptions provider_options = GetProviderOptions();
   auto input_def = TestInputDef<float>({1, 128, 768}, false, -1.5f, 1.5f);
 
-  RunQnnModelTestABI(BuildGeluPattern1TestCase(input_def),
+  RunQnnModelTest(BuildGeluPattern1TestCase(input_def),
                      provider_options,
                      /*opset_version=*/13,
                      /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
@@ -310,11 +310,11 @@ TEST_F(QnnABIHTPBackendTests, GeluFusionPattern1_LargeInput) {
 }
 
 // Test GELU Pattern 2 with larger input shape
-TEST_F(QnnABIHTPBackendTests, GeluFusionPattern2_LargeInput) {
+TEST_F(QnnHTPBackendTests, GeluFusionPattern2_LargeInput) {
   ProviderOptions provider_options = GetProviderOptions();
   auto input_def = TestInputDef<float>({1, 128, 768}, false, -1.5f, 1.5f);
 
-  RunQnnModelTestABI(BuildGeluPattern2TestCase(input_def),
+  RunQnnModelTest(BuildGeluPattern2TestCase(input_def),
                      provider_options,
                      /*opset_version=*/13,
                      /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
@@ -322,11 +322,11 @@ TEST_F(QnnABIHTPBackendTests, GeluFusionPattern2_LargeInput) {
 }
 
 // Test GELU Pattern 1 with 3D input
-TEST_F(QnnABIHTPBackendTests, GeluFusionPattern1_3D) {
+TEST_F(QnnHTPBackendTests, GeluFusionPattern1_3D) {
   ProviderOptions provider_options = GetProviderOptions();
   auto input_def = TestInputDef<float>({1, 16, 32}, false, -1.0f, 1.0f);
 
-  RunQnnModelTestABI(BuildGeluPattern1TestCase(input_def),
+  RunQnnModelTest(BuildGeluPattern1TestCase(input_def),
                      provider_options,
                      /*opset_version=*/13,
                      /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
@@ -334,11 +334,11 @@ TEST_F(QnnABIHTPBackendTests, GeluFusionPattern1_3D) {
 }
 
 // Test GELU Pattern 2 with 3D input
-TEST_F(QnnABIHTPBackendTests, GeluFusionPattern2_3D) {
+TEST_F(QnnHTPBackendTests, GeluFusionPattern2_3D) {
   ProviderOptions provider_options = GetProviderOptions();
   auto input_def = TestInputDef<float>({1, 16, 32}, false, -1.0f, 1.0f);
 
-  RunQnnModelTestABI(BuildGeluPattern2TestCase(input_def),
+  RunQnnModelTest(BuildGeluPattern2TestCase(input_def),
                      provider_options,
                      /*opset_version=*/13,
                      /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
@@ -346,11 +346,11 @@ TEST_F(QnnABIHTPBackendTests, GeluFusionPattern2_3D) {
 }
 
 // Test GELU Pattern 1 with 2D input (typical for linear layers)
-TEST_F(QnnABIHTPBackendTests, GeluFusionPattern1_2D) {
+TEST_F(QnnHTPBackendTests, GeluFusionPattern1_2D) {
   ProviderOptions provider_options = GetProviderOptions();
   auto input_def = TestInputDef<float>({32, 512}, false, -1.5f, 1.5f);
 
-  RunQnnModelTestABI(BuildGeluPattern1TestCase(input_def),
+  RunQnnModelTest(BuildGeluPattern1TestCase(input_def),
                      provider_options,
                      /*opset_version=*/13,
                      /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
@@ -358,11 +358,11 @@ TEST_F(QnnABIHTPBackendTests, GeluFusionPattern1_2D) {
 }
 
 // Test GELU Pattern 2 with 2D input (typical for linear layers)
-TEST_F(QnnABIHTPBackendTests, GeluFusionPattern2_2D) {
+TEST_F(QnnHTPBackendTests, GeluFusionPattern2_2D) {
   ProviderOptions provider_options = GetProviderOptions();
   auto input_def = TestInputDef<float>({32, 512}, false, -1.5f, 1.5f);
 
-  RunQnnModelTestABI(BuildGeluPattern2TestCase(input_def),
+  RunQnnModelTest(BuildGeluPattern2TestCase(input_def),
                      provider_options,
                      /*opset_version=*/13,
                      /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
@@ -370,11 +370,11 @@ TEST_F(QnnABIHTPBackendTests, GeluFusionPattern2_2D) {
 }
 
 // Test GELU Pattern 1 with QDQ
-TEST_F(QnnABIHTPBackendTests, GeluFusionPattern1_QDQ_U8) {
+TEST_F(QnnHTPBackendTests, GeluFusionPattern1_QDQ_U8) {
   ProviderOptions provider_options = GetProviderOptions();
   auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
 
-  TestQDQModelAccuracyABI(BuildGeluPattern1TestCase(input_def),
+  TestQDQModelAccuracy(BuildGeluPattern1TestCase(input_def),
                           BuildQDQGeluPattern1TestCase<uint8_t>(input_def),
                           provider_options,
                           /*opset_version=*/13,
@@ -382,11 +382,11 @@ TEST_F(QnnABIHTPBackendTests, GeluFusionPattern1_QDQ_U8) {
 }
 
 // Test GELU Pattern 2 with QDQ
-TEST_F(QnnABIHTPBackendTests, GeluFusionPattern2_QDQ_U8) {
+TEST_F(QnnHTPBackendTests, GeluFusionPattern2_QDQ_U8) {
   ProviderOptions provider_options = GetProviderOptions();
   auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
 
-  TestQDQModelAccuracyABI(BuildGeluPattern2TestCase(input_def),
+  TestQDQModelAccuracy(BuildGeluPattern2TestCase(input_def),
                           BuildQDQGeluPattern2TestCase<uint8_t>(input_def),
                           provider_options,
                           /*opset_version=*/13,

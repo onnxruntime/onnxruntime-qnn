@@ -25,21 +25,21 @@ static void RunTileTestOnCPU(const TestInputDef<DataType>& input_def,
 
   provider_options["backend_type"] = "cpu";
 
-  RunQnnModelTestABI(BuildOpTestCase<DataType, int64_t>("Tile", {input_def}, {repeats_def}, {}),
+  RunQnnModelTest(BuildOpTestCase<DataType, int64_t>("Tile", {input_def}, {repeats_def}, {}),
                      provider_options,
                      opset,
                      expected_ep_assignment);
 }
 
 // Test that Tile with a dynamic repeats input is not supported by QNN EP.
-TEST_F(QnnABICPUBackendTests, Tile_DynamicRepeats_Unsupported) {
+TEST_F(QnnCPUBackendTests, Tile_DynamicRepeats_Unsupported) {
   RunTileTestOnCPU(TestInputDef<float>({2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                    TestInputDef<int64_t>({2}, false /* is_initializer */, {1, 2}),
                    ExpectedEPNodeAssignment::None);  // Should not be assigned to QNN EP.
 }
 
 // Test that Tile with rank 4 float input.
-TEST_F(QnnABICPUBackendTests, Tile_F32_Rank4) {
+TEST_F(QnnCPUBackendTests, Tile_F32_Rank4) {
   std::vector<float> input_data = {-4.0f, -3.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f, 4.0f};
   RunTileTestOnCPU(TestInputDef<float>({1, 2, 2, 2}, false, input_data),
                    TestInputDef<int64_t>({4}, true /* is_initializer */, {1, 2, 1, 1}),
@@ -94,7 +94,7 @@ static void RunQDQTileTestOnHTP(const TestInputDef<float>& input_def,
 
   auto f32_model_builder = BuildOpTestCase<float, int64_t>("Tile", {input_def}, {repeats_def}, {});
   auto qdq_model_builder = BuildQDQTileTestCase<QType>(input_def, repeats_def, use_contrib_qdq);
-  TestQDQModelAccuracyABI(f32_model_builder,
+  TestQDQModelAccuracy(f32_model_builder,
                           qdq_model_builder,
                           provider_options,
                           opset,
@@ -102,7 +102,7 @@ static void RunQDQTileTestOnHTP(const TestInputDef<float>& input_def,
 }
 
 // Test 8-bit QDQ Tile with rank 4 input.
-TEST_F(QnnABIHTPBackendTests, Tile_U8_Rank4) {
+TEST_F(QnnHTPBackendTests, Tile_U8_Rank4) {
   std::vector<float> input_data = {-4.0f, -3.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f, 4.0f};
   RunQDQTileTestOnHTP<uint8_t>(TestInputDef<float>({1, 2, 2, 2}, false, input_data),
                                TestInputDef<int64_t>({4}, true /* is_initializer */, {1, 2, 1, 1}),
@@ -110,7 +110,7 @@ TEST_F(QnnABIHTPBackendTests, Tile_U8_Rank4) {
 }
 
 // Test 16-bit QDQ Tile with rank 4 input.
-TEST_F(QnnABIHTPBackendTests, Tile_U16_Rank4) {
+TEST_F(QnnHTPBackendTests, Tile_U16_Rank4) {
   std::vector<float> input_data = {-4.0f, -3.0f, -1.0f, 0.0f, 1.0f, 2.0f, 3.0f, 4.0f};
   RunQDQTileTestOnHTP<uint16_t>(TestInputDef<float>({1, 2, 2, 2}, false, input_data),
                                 TestInputDef<int64_t>({4}, true /* is_initializer */, {1, 2, 1, 1}),

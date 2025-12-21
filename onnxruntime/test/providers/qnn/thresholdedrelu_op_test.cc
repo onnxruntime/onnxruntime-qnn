@@ -29,7 +29,7 @@ static void RunThresholdedReluTest(const std::vector<TestInputDef<DataType>>& in
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTestABI(BuildOpTestCase<DataType>("ThresholdedRelu", input_defs, {}, attrs),
+  RunQnnModelTest(BuildOpTestCase<DataType>("ThresholdedRelu", input_defs, {}, attrs),
                      provider_options,
                      opset,
                      expected_ep_assignment,
@@ -39,7 +39,7 @@ static void RunThresholdedReluTest(const std::vector<TestInputDef<DataType>>& in
 //
 // CPU tests:
 //
-TEST_F(QnnABICPUBackendTests, ThresholdedRelu) {
+TEST_F(QnnCPUBackendTests, ThresholdedRelu) {
   // Test that ThresholdedRelu with fp32 input.
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> dividend_shape{1, 4, 5};
@@ -101,7 +101,7 @@ static void RunQDQThresholdedReluTestOnHTP(const std::vector<TestInputDef<float>
 
   auto f32_model_builder = BuildOpTestCase<float>("ThresholdedRelu", input_defs, {}, attrs);
   auto qdq_model_builder = BuildQDQThresholdedReluTestCase<InputAQType, InputBQType>(input_defs, attrs, use_contrib_qdq);
-  TestQDQModelAccuracyABI<InputAQType>(f32_model_builder,
+  TestQDQModelAccuracy<InputAQType>(f32_model_builder,
                                        qdq_model_builder,
                                        provider_options,
                                        opset,
@@ -110,15 +110,15 @@ static void RunQDQThresholdedReluTestOnHTP(const std::vector<TestInputDef<float>
 }
 
 // Test ThresholdedRelu QDQ.
-TEST_F(QnnABIHTPBackendTests, ThresholdedRelu_qdq) {
-  std::vector<float> input = GetFloatDataInRangeABI(-10.0f, 10.0f, 20);
+TEST_F(QnnHTPBackendTests, ThresholdedRelu_qdq) {
+  std::vector<float> input = GetFloatDataInRange(-10.0f, 10.0f, 20);
   RunQDQThresholdedReluTestOnHTP<uint8_t, uint8_t>({TestInputDef<float>({1, 4, 5}, false, input)},
                                                    {utils::MakeAttribute("alpha", 4.5f)},
                                                    ExpectedEPNodeAssignment::All);
 }
 
 // Test ThresholdedRelu.
-TEST_F(QnnABIHTPBackendTests, ThresholdedRelu_fp32) {
+TEST_F(QnnHTPBackendTests, ThresholdedRelu_fp32) {
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> dividend_shape{1, 4, 5};
   auto input = rand_gen_.Uniform<float>(dividend_shape, -10.0f, 10.0f);

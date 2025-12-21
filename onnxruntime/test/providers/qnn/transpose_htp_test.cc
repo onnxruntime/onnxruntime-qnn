@@ -69,7 +69,7 @@ static void RunTransposeQDQTest(const TestInputDef<float>& input_def,
   provider_options["offload_graph_io_quantization"] = "0";
 
   // Runs model with DQ-> Transpose -> Q and compares the outputs of the CPU and QNN EPs.
-  TestQDQModelAccuracyABI(BuildTransposeTestCase<float>(input_def, attrs),
+  TestQDQModelAccuracy(BuildTransposeTestCase<float>(input_def, attrs),
                           BuildQDQTransposeTestCase<QuantType>(input_def, attrs),
                           provider_options,
                           18,
@@ -98,7 +98,7 @@ static void RunTransposeNonQDQOnHTP(const TestInputDef<DataType>& input_def,
     provider_options["enable_htp_fp16_precision"] = "0";
   }
 
-  RunQnnModelTestABI(BuildTransposeTestCase<DataType>(input_def, attrs),
+  RunQnnModelTest(BuildTransposeTestCase<DataType>(input_def, attrs),
                      provider_options,
                      13,
                      expected_ep_assignment,
@@ -106,14 +106,14 @@ static void RunTransposeNonQDQOnHTP(const TestInputDef<DataType>& input_def,
 }
 
 // Check that QNN compiles DQ -> Transpose -> Q as a single unit.
-TEST_F(QnnABIHTPBackendTests, TransposeQDQU8) {
+TEST_F(QnnHTPBackendTests, TransposeQDQU8) {
   RunTransposeQDQTest(TestInputDef<float>({1, 3, 224, 128}, false, 0.0f, 1.0f),
                       {utils::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
                       ExpectedEPNodeAssignment::All);
 }
 
 // Check that QNN supports Transpose with int32 data input on HTP
-TEST_F(QnnABIHTPBackendTests, TransposeInt32OnHTP) {
+TEST_F(QnnHTPBackendTests, TransposeInt32OnHTP) {
   RunTransposeNonQDQOnHTP<int32_t>(TestInputDef<int32_t>({1, 3, 224, 128}, false, -100, 100),
                                    {utils::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
                                    ExpectedEPNodeAssignment::All);
@@ -122,7 +122,7 @@ TEST_F(QnnABIHTPBackendTests, TransposeInt32OnHTP) {
 // Check that QNN supports Transpose with float32 data input on HTP
 // Fails with QNN SDK 2.35.0:
 // value pair (0.183528364, 0.183471695) at index #0 don't match, which is -5.66691e-05 from 0.183528
-TEST_F(QnnABIHTPBackendTests, DISABLED_TransposeFloatOnHTP) {
+TEST_F(QnnHTPBackendTests, DISABLED_TransposeFloatOnHTP) {
   RunTransposeNonQDQOnHTP<float>(TestInputDef<float>({1, 3, 224, 128}, false, 0, 10.0f),
                                  {utils::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
                                  ExpectedEPNodeAssignment::All, false);

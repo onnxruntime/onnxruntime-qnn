@@ -26,7 +26,7 @@ static void RunLeakyReluOpQDQTest(const TestInputDef<float>& input_def,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  TestQDQModelAccuracyABI(BuildOpTestCase<float>("LeakyRelu", {input_def}, {}, attrs),
+  TestQDQModelAccuracy(BuildOpTestCase<float>("LeakyRelu", {input_def}, {}, attrs),
                           BuildQDQOpTestCase<QuantType>("LeakyRelu", {input_def}, {}, attrs),
                           provider_options,
                           opset,
@@ -37,7 +37,7 @@ static void RunLeakyReluOpQDQTest(const TestInputDef<float>& input_def,
 // nodes are supported by the QNN EP, and that the inference results match the CPU EP results.
 //
 // - Uses uint8 as the quantization type.
-TEST_F(QnnABIHTPBackendTests, LeakyReluOpSet15) {
+TEST_F(QnnHTPBackendTests, LeakyReluOpSet15) {
   RunLeakyReluOpQDQTest<uint8_t>(TestInputDef<float>({1, 2, 3}, false, {-40.0f, -20.0f, 0.0f, 10.0f, 30.0f, 40.0f}),
                                  {utils::MakeAttribute("alpha", 0.2f)},
                                  15,
@@ -48,7 +48,7 @@ TEST_F(QnnABIHTPBackendTests, LeakyReluOpSet15) {
 // nodes are supported by the QNN EP, and that the inference results match the CPU EP results.
 //
 // - Uses uint8 as the quantization type.
-TEST_F(QnnABIHTPBackendTests, LeakyReluOpSet16) {
+TEST_F(QnnHTPBackendTests, LeakyReluOpSet16) {
   RunLeakyReluOpQDQTest<uint8_t>(TestInputDef<float>({1, 2, 3}, false, {-40.0f, -20.0f, 0.0f, 10.0f, 30.0f, 40.0f}),
                                  {utils::MakeAttribute("alpha", 0.2f)},
                                  16,
@@ -56,15 +56,15 @@ TEST_F(QnnABIHTPBackendTests, LeakyReluOpSet16) {
 }
 
 // Test Leaky Relu where input is FP16 and alpha is FP32
-TEST_F(QnnABIHTPBackendTests, LeakyReluFP16OpSet16) {
+TEST_F(QnnHTPBackendTests, LeakyReluFP16OpSet16) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
   auto input_def = TestInputDef<float>({1, 2, 3}, false, {-40.0f, -20.0f, 1.0f, 10.0f, 30.0f, 40.0f});
-  TestInputDef<MLFloat16> input_fp16_def = ConvertToFP16InputDefABI(input_def);
+  TestInputDef<MLFloat16> input_fp16_def = ConvertToFP16InputDef(input_def);
   auto attrs = {utils::MakeAttribute("alpha", 0.2f)};
-  TestFp16ModelAccuracyABI(BuildOpTestCase<float>("LeakyRelu", {input_def}, {}, attrs),
+  TestFp16ModelAccuracy(BuildOpTestCase<float>("LeakyRelu", {input_def}, {}, attrs),
                            BuildOpTestCase<MLFloat16>("LeakyRelu", {input_fp16_def}, {}, attrs),
                            provider_options,
                            16,

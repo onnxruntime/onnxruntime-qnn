@@ -62,14 +62,14 @@ static void RunStftOpTest(const TestInputDef<SignalType>& signal_def,
   };
 
   // Run the model test
-  RunQnnModelTestABI(build_test_case,
+  RunQnnModelTest(build_test_case,
                      provider_options,
                      opset_version,
                      expected_ep_assignment,
                      fp32_abs_err);
 }
 
-TEST_F(QnnABIHTPBackendTests, StftOp_Float_WithWindowOnly) {
+TEST_F(QnnHTPBackendTests, StftOp_Float_WithWindowOnly) {
   std::vector<float> signal_data(128, 1.0f);  // Signal: shape [1, 128, 1]
   std::vector<float> window_data(16, 1.0f);   // Window: shape [16]
 
@@ -83,7 +83,7 @@ TEST_F(QnnABIHTPBackendTests, StftOp_Float_WithWindowOnly) {
       ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnABIHTPBackendTests, StftOp_Float_WithOnesidedFalse) {
+TEST_F(QnnHTPBackendTests, StftOp_Float_WithOnesidedFalse) {
   std::vector<float> signal_data(128, 1.0f);  // Signal: shape [1, 128, 1]
   std::vector<float> window_data(16, 1.0f);   // Window: shape [16]
 
@@ -97,7 +97,7 @@ TEST_F(QnnABIHTPBackendTests, StftOp_Float_WithOnesidedFalse) {
       ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnABIHTPBackendTests, StftOp_Float_SimpleExample) {
+TEST_F(QnnHTPBackendTests, StftOp_Float_SimpleExample) {
   std::vector<float> signal_data(128, 1.0f);  // Signal: shape [1, 128, 1]
   std::vector<float> window_data(16, 1.0f);   // Window: shape [16]
 
@@ -111,7 +111,7 @@ TEST_F(QnnABIHTPBackendTests, StftOp_Float_SimpleExample) {
       ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnABIHTPBackendTests, StftOp_Float_Rank2Signal) {
+TEST_F(QnnHTPBackendTests, StftOp_Float_Rank2Signal) {
   std::vector<float> signal_data(128, 1.0f);  // Signal: shape [1, 128]
   std::vector<float> window_data(16, 1.0f);   // Window: shape [16]
 

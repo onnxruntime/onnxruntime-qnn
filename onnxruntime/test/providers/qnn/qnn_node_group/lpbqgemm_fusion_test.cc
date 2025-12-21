@@ -109,12 +109,12 @@ ProviderOptions GetProviderOptions() {
 
 #if defined(_WIN32)
 // Graph fails to compose on ARM64 Windows since QNN 2.37.0
-TEST_F(QnnABIHTPBackendTests, DISABLED_LPBQGemmFusion) {
+TEST_F(QnnHTPBackendTests, DISABLED_LPBQGemmFusion) {
 #else
-TEST_F(QnnABIHTPBackendTests, LPBQGemmFusion) {
+TEST_F(QnnHTPBackendTests, LPBQGemmFusion) {
 #endif
   ProviderOptions provider_options = GetProviderOptions();
-  RunQnnModelTestABI(BuildLPBQGemmTestCase(),
+  RunQnnModelTest(BuildLPBQGemmTestCase(),
                      provider_options,
                      /*opset_version=*/21,
                      /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some,

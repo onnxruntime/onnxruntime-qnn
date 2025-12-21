@@ -140,7 +140,7 @@ inline QuantParams<QType> GetDataQuantParams(gsl::span<const float> data, bool s
  * \param num_elems The number of elements in the result. Should be at least 3 to include min, 0, and max.
  * \return A vector of floats with elements set to values in the specified range.
  */
-std::vector<float> GetFloatDataInRangeABI(float min_val, float max_val, size_t num_elems);
+std::vector<float> GetFloatDataInRange(float min_val, float max_val, size_t num_elems);
 
 /**
  * Returns a float vector with sequential data.
@@ -150,7 +150,7 @@ std::vector<float> GetFloatDataInRangeABI(float min_val, float max_val, size_t n
  * \param step The step size.
  * \return A vector of sequential floats.
  */
-std::vector<float> GetSequentialFloatDataABI(const std::vector<int64_t>& shape, float start = 0.0f, float step = 1.0f);
+std::vector<float> GetSequentialFloatData(const std::vector<int64_t>& shape, float start = 0.0f, float step = 1.0f);
 
 // Class that defines an input that can be created with ModelTestBuilder.
 // Defines whether the input is an initializer and if the data should be randomized or if
@@ -308,7 +308,7 @@ struct TestInputDef {
 };
 
 // Convert a float input definition to a float16 input definition.
-TestInputDef<MLFloat16> ConvertToFP16InputDefABI(const TestInputDef<float>& input_def);
+TestInputDef<MLFloat16> ConvertToFP16InputDef(const TestInputDef<float>& input_def);
 
 template <typename QType>
 inline QuantParams<QType> GetTestInputQuantParams(const TestInputDef<float>& input_def, bool symmetric = false) {
@@ -477,7 +477,7 @@ void InferenceModelCPU(const std::string& model_data,
                        const NameMLValMap& feeds,
                        std::vector<OrtValue>& output_vals);
 
-void InferenceModelABI(const std::string& model_data,
+void InferenceModel(const std::string& model_data,
                        const char* log_id,
                        const ProviderOptions& provider_options,
                        ExpectedEPNodeAssignment expected_ep_assignment,
@@ -499,11 +499,11 @@ void InferenceModelABI(const std::string& model_data,
  * 2. Inference output returns dummy data.
  *
  * Because output files from QNN Saver are always overwritten, it is recommended to run individual unit tests via the
- * --gtest_filter command-line option. Ex: --gtest_filter=QnnABIHTPBackendTests.Resize_DownSample_Linear_AlignCorners
+ * --gtest_filter command-line option. Ex: --gtest_filter=QnnHTPBackendTests.Resize_DownSample_Linear_AlignCorners
  *
  * \param qnn_options QNN EP provider options that may be modified to enable QNN Saver.
  */
-void TryEnableQNNSaverABI(ProviderOptions& qnn_options);
+void TryEnableQNNSaver(ProviderOptions& qnn_options);
 
 struct QDQTolerance {
   // When comparing output activations between QNN EP and CPU EP (both running the QDQ model),
@@ -641,7 +641,7 @@ void VerifyQDQOutput(const std::vector<OrtValue>& cpu_qdq_outputs,
  *                         EP assignment.
  */
 template <typename QuantType>
-inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn,
+inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                                     const GetTestQDQModelFn<QuantType>& qdq_model_fn,
                                     ProviderOptions qnn_options, int opset_version,
                                     ExpectedEPNodeAssignment expected_ep_assignment,
@@ -723,7 +723,7 @@ inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn,
   InferenceModelCPU(qdq_model_data, "qdq_model_logger", ExpectedEPNodeAssignment::All,
                     qdq_helper.feeds_, cpu_qdq_outputs);
 
-  TryEnableQNNSaverABI(qnn_options);
+  TryEnableQNNSaver(qnn_options);
 
   // Run with QNN-ABI.
   std::vector<OrtValue> qnn_qdq_outputs;
@@ -733,7 +733,7 @@ inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn,
     ASSERT_STATUS_OK(qnn_ctx_model.Load(ToPathString(qnn_ctx_model_path), model_proto));
     std::string qnn_ctx_model_data;
     model_proto.SerializeToString(&qnn_ctx_model_data);
-    InferenceModelABI(qnn_ctx_model_data,
+    InferenceModel(qnn_ctx_model_data,
                       "qnn_ctx_model_logger",
                       qnn_options,
                       expected_ep_assignment,
@@ -741,7 +741,7 @@ inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn,
                       qnn_qdq_outputs,
                       session_option_pairs);
   } else {
-    InferenceModelABI(qdq_model_data,
+    InferenceModel(qdq_model_data,
                       "qdq_model_logger",
                       qnn_options,
                       expected_ep_assignment,
@@ -862,7 +862,7 @@ inline void VerifyFp16Output(const std::vector<OrtValue>& cpu_f16_outputs,
  *                  on CPU EP. This tolerance is a percentage of the output range.
  * \param log_severity The logger's severity setting.
  */
-inline void TestFp16ModelAccuracyABI(const GetTestModelFn& f32_model_fn,
+inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                                      const GetTestModelFn& f16_model_fn,
                                      ProviderOptions qnn_options,
                                      int opset_version,
@@ -929,7 +929,7 @@ inline void TestFp16ModelAccuracyABI(const GetTestModelFn& f32_model_fn,
   InferenceModelCPU(f16_model_data, "fp16_model_logger", ExpectedEPNodeAssignment::All,
                     f16_helper.feeds_, cpu_f16_outputs);
 
-  TryEnableQNNSaverABI(qnn_options);
+  TryEnableQNNSaver(qnn_options);
 
   // Run with QNN-ABI.
   std::vector<OrtValue> qnn_f16_outputs;
@@ -939,7 +939,7 @@ inline void TestFp16ModelAccuracyABI(const GetTestModelFn& f32_model_fn,
     ASSERT_STATUS_OK(qnn_ctx_model.Load(ToPathString(qnn_ctx_model_path), model_proto));
     std::string qnn_ctx_model_data;
     model_proto.SerializeToString(&qnn_ctx_model_data);
-    InferenceModelABI(qnn_ctx_model_data,
+    InferenceModel(qnn_ctx_model_data,
                       "qnn_ctx_model_logger",
                       qnn_options,
                       expected_ep_assignment,
@@ -947,7 +947,7 @@ inline void TestFp16ModelAccuracyABI(const GetTestModelFn& f32_model_fn,
                       qnn_f16_outputs,
                       session_option_pairs);
   } else {
-    InferenceModelABI(f16_model_data,
+    InferenceModel(f16_model_data,
                       "fp16_model_logger",
                       qnn_options,
                       expected_ep_assignment,
@@ -1030,7 +1030,7 @@ inline NodeArg* MakeTestInput(ModelTestBuilder& builder, const TestInputDef<bool
 // See quantization tool: onnx_quantizer.py::quantize_bias_static()
 //
 // i.e., initial bias => manual quantization (int32) => DQ => final float bias
-NodeArg* MakeTestQDQBiasInputABI(ModelTestBuilder& builder, const TestInputDef<float>& bias_def, float bias_scale,
+NodeArg* MakeTestQDQBiasInput(ModelTestBuilder& builder, const TestInputDef<float>& bias_def, float bias_scale,
                                  bool use_contrib_qdq = false);
 
 /**
@@ -1233,7 +1233,7 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
  * \param ep_graph_checker Function called on the Graph generated for the EP's session. Used to check node
  *                         EP assignment.
  */
-void RunQnnModelTestABI(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
+void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                         int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                         float fp32_abs_err = 1e-5f,
                         logging::Severity log_severity = logging::Severity::kERROR,
@@ -1250,7 +1250,7 @@ enum class BackendSupport {
 // Testing fixture class for tests that require the QNN HTP backend. Checks if HTP is available before the test begins.
 // The test is skipped if HTP is unavailable (may occur on Windows ARM64).
 // TODO: Remove once HTP can be emulated on Windows ARM64.
-class QnnABIHTPBackendTests : public ::testing::Test {
+class QnnHTPBackendTests : public ::testing::Test {
  public:
   static void TearDownTestSuite();
 
@@ -1266,7 +1266,7 @@ class QnnABIHTPBackendTests : public ::testing::Test {
 
 // Testing fixture class for tests that require the QNN GPU backend. Checks if QNN GPU is available before the test
 // begins. The test is skipped if the GPU backend is unavailable (may occur on Windows ARM64).
-class QnnABIGPUBackendTests : public ::testing::Test {
+class QnnGPUBackendTests : public ::testing::Test {
  protected:
   void SetUp() override;
 
@@ -1276,7 +1276,7 @@ class QnnABIGPUBackendTests : public ::testing::Test {
 // Testing fixture class for tests that require the QNN CPU backend. Checks if QNN CPU is available before the test
 // begins. The test is skipped if the CPU backend is unavailable (may occur on Windows ARM64 VM).
 // TODO: Remove once QNN CPU backend works on Windows ARM64 pipeline VM.
-class QnnABICPUBackendTests : public ::testing::Test {
+class QnnCPUBackendTests : public ::testing::Test {
  protected:
   void SetUp() override;
 
@@ -1285,7 +1285,7 @@ class QnnABICPUBackendTests : public ::testing::Test {
 
 // Testing fixture class for tests that require the QNN Ir backend. Checks if QNN IR is available before the test
 // begins. The test is skipped if the IR backend is unavailable (may occur with certain QNN versions).
-class QnnABIIRBackendTests : public ::testing::Test {
+class QnnIRBackendTests : public ::testing::Test {
  protected:
   void SetUp() override;
 
@@ -1301,7 +1301,7 @@ class QnnABIIRBackendTests : public ::testing::Test {
  *
  * \return True if "axes" is an input, or false if "axes" is an attribute.
  */
-bool ReduceOpHasAxesInputABI(const std::string& op_type, int opset_version);
+bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
 
 }  // namespace test
 }  // namespace onnxruntime

@@ -122,7 +122,7 @@ GetTestQDQModelFn<InputQType> BuildQDQBatchNormTestCase(const TestInputDef<float
 
     NodeArg* bias_qdq;
     // bias (as int32) => DQ =>
-    bias_qdq = MakeTestQDQBiasInputABI(builder, bias_def, input_qparams.scale * scale_qparams.scale, true);
+    bias_qdq = MakeTestQDQBiasInput(builder, bias_def, input_qparams.scale * scale_qparams.scale, true);
 
     std::vector<float> mean_vals(num_channels);
     std::vector<float> var_vals(num_channels);
@@ -157,7 +157,7 @@ static void RunBatchNormQDQTestOnCPU(const TestInputDef<float>& input_def,
   provider_options["offload_graph_io_quantization"] = "0";
 
   // Runs model with DQ-> InstanceNorm -> Q and compares the outputs of the CPU and QNN EPs.
-  TestQDQModelAccuracyABI(BuildBatchNormTestCase(input_def, scale_def, bias_def),
+  TestQDQModelAccuracy(BuildBatchNormTestCase(input_def, scale_def, bias_def),
                           BuildQDQBatchNormTestCase<InputQType, ScaleQType>(input_def, scale_def, bias_def),
                           provider_options,
                           21,
@@ -165,7 +165,7 @@ static void RunBatchNormQDQTestOnCPU(const TestInputDef<float>& input_def,
                           tolerance);
 }
 
-TEST_F(QnnABICPUBackendTests, BatchNorm2D_fp32) {
+TEST_F(QnnCPUBackendTests, BatchNorm2D_fp32) {
   constexpr int64_t num_channels = 2;
   std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
                                    -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
@@ -173,7 +173,7 @@ TEST_F(QnnABICPUBackendTests, BatchNorm2D_fp32) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
 
-  RunQnnModelTestABI(
+  RunQnnModelTest(
       BuildBatchNormTestCase(
           TestInputDef<float>({2, num_channels, 2, 2}, false, input_data),  // Input data
           TestInputDef<float>({num_channels}, true, {1.0f, 2.0f}),          // Scale initializer
@@ -184,7 +184,7 @@ TEST_F(QnnABICPUBackendTests, BatchNorm2D_fp32) {
       ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnABICPUBackendTests, BatchNorm2D_int8) {
+TEST_F(QnnCPUBackendTests, BatchNorm2D_int8) {
   constexpr int64_t num_channels = 2;
   std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
                                    -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
@@ -217,7 +217,7 @@ static void RunBatchNormQDQTest(const TestInputDef<float>& input_def,
   provider_options["offload_graph_io_quantization"] = "0";
 
   // Runs model with DQ-> InstanceNorm -> Q and compares the outputs of the CPU and QNN EPs.
-  TestQDQModelAccuracyABI(BuildBatchNormTestCase(input_def, scale_def, bias_def),
+  TestQDQModelAccuracy(BuildBatchNormTestCase(input_def, scale_def, bias_def),
                           BuildQDQBatchNormTestCase<InputQType, ScaleQType>(input_def, scale_def, bias_def),
                           provider_options,
                           21,
@@ -233,12 +233,12 @@ static void RunBatchNormFP16Test(const TestInputDef<float>& input_def,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  TestInputDef<MLFloat16> input_fp16_def = ConvertToFP16InputDefABI(input_def);
-  TestInputDef<MLFloat16> scale_fp16_def = ConvertToFP16InputDefABI(scale_def);
-  TestInputDef<MLFloat16> bias_fp16_def = ConvertToFP16InputDefABI(bias_def);
+  TestInputDef<MLFloat16> input_fp16_def = ConvertToFP16InputDef(input_def);
+  TestInputDef<MLFloat16> scale_fp16_def = ConvertToFP16InputDef(scale_def);
+  TestInputDef<MLFloat16> bias_fp16_def = ConvertToFP16InputDef(bias_def);
 
   // Runs model with DQ-> InstanceNorm -> Q and compares the outputs of the CPU and QNN EPs.
-  TestFp16ModelAccuracyABI(BuildBatchNormTestCase<float>(input_def, scale_def, bias_def),
+  TestFp16ModelAccuracy(BuildBatchNormTestCase<float>(input_def, scale_def, bias_def),
                            BuildBatchNormTestCase<MLFloat16>(input_fp16_def, scale_fp16_def, bias_fp16_def),
                            provider_options,
                            11,
@@ -246,7 +246,7 @@ static void RunBatchNormFP16Test(const TestInputDef<float>& input_def,
 }
 
 // BatchNor QDQ model, input with rank 2.
-TEST_F(QnnABIHTPBackendTests, BatchNormRank2) {
+TEST_F(QnnHTPBackendTests, BatchNormRank2) {
   constexpr int64_t num_channels = 2;
 
   RunBatchNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({4, num_channels}, false,
@@ -273,7 +273,7 @@ TEST_F(QnnABIHTPBackendTests, BatchNormRank2) {
 // qdq@QNN_EP val: -0.17176364362239838 (err: 2.4964993000030518, err/output_range: 51.298248291015625%)
 // qdq@CPU_EP val: 2.3474364280700684 (err: 0.022700786590576172, err/output_range: 0.46645742654800415%)
 #if defined(_WIN32)
-TEST_F(QnnABIHTPBackendTests, BatchNorm1D) {
+TEST_F(QnnHTPBackendTests, BatchNorm1D) {
   constexpr int64_t num_channels = 2;
 
   RunBatchNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, num_channels, 3}, false,
@@ -286,7 +286,7 @@ TEST_F(QnnABIHTPBackendTests, BatchNorm1D) {
 
 // Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.
 // Use an input of rank 4.
-TEST_F(QnnABIHTPBackendTests, BatchNorm2D_U8U8S32) {
+TEST_F(QnnHTPBackendTests, BatchNorm2D_U8U8S32) {
   constexpr int64_t num_channels = 2;
   std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
                                    -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
@@ -299,7 +299,7 @@ TEST_F(QnnABIHTPBackendTests, BatchNorm2D_U8U8S32) {
 
 // Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.
 // Use an input of rank 4.
-TEST_F(QnnABIHTPBackendTests, BatchNorm2D_U8S8S32) {
+TEST_F(QnnHTPBackendTests, BatchNorm2D_U8S8S32) {
   constexpr int64_t num_channels = 2;
   std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
                                    -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
@@ -312,7 +312,7 @@ TEST_F(QnnABIHTPBackendTests, BatchNorm2D_U8S8S32) {
 
 // Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.
 // Use an input of rank 4.
-TEST_F(QnnABIHTPBackendTests, BatchNorm2D_U8U16S32) {
+TEST_F(QnnHTPBackendTests, BatchNorm2D_U8U16S32) {
   constexpr int64_t num_channels = 2;
   std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
                                    -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
@@ -325,7 +325,7 @@ TEST_F(QnnABIHTPBackendTests, BatchNorm2D_U8U16S32) {
 
 // Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.
 // Use an input of rank 4.
-TEST_F(QnnABIHTPBackendTests, BatchNorm2D_U8S16S32) {
+TEST_F(QnnHTPBackendTests, BatchNorm2D_U8S16S32) {
   constexpr int64_t num_channels = 2;
   std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
                                    -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
@@ -338,7 +338,7 @@ TEST_F(QnnABIHTPBackendTests, BatchNorm2D_U8S16S32) {
 
 // Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.
 // Use an input of rank 4.
-TEST_F(QnnABIHTPBackendTests, BatchNorm2D_U16U8S32) {
+TEST_F(QnnHTPBackendTests, BatchNorm2D_U16U8S32) {
   constexpr int64_t num_channels = 2;
   std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
                                    -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
@@ -352,7 +352,7 @@ TEST_F(QnnABIHTPBackendTests, BatchNorm2D_U16U8S32) {
 // Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.
 // Use an input of rank 4.
 // Turn on the testcase when ORT QNN-EP supports unsigned symmetric dtypes
-TEST_F(QnnABIHTPBackendTests, DISABLED_BatchNorm2D_U16U16S32) {
+TEST_F(QnnHTPBackendTests, DISABLED_BatchNorm2D_U16U16S32) {
   constexpr int64_t num_channels = 2;
   std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
                                    -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
@@ -364,7 +364,7 @@ TEST_F(QnnABIHTPBackendTests, DISABLED_BatchNorm2D_U16U16S32) {
 }
 
 // Test FP16 BatchNormalization on the HTP backend.
-TEST_F(QnnABIHTPBackendTests, BatchNorm_FP16) {
+TEST_F(QnnHTPBackendTests, BatchNorm_FP16) {
   constexpr int64_t num_channels = 2;
   std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
                                    -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
@@ -377,7 +377,7 @@ TEST_F(QnnABIHTPBackendTests, BatchNorm_FP16) {
 
 // Test FP32 BatchNormalization on the HTP backend with the enable_htp_fp16_precision option enabled
 // to run it with fp16 precision.
-TEST_F(QnnABIHTPBackendTests, BatchNorm_FP32_as_FP16) {
+TEST_F(QnnHTPBackendTests, BatchNorm_FP32_as_FP16) {
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = "htp";
@@ -392,7 +392,7 @@ TEST_F(QnnABIHTPBackendTests, BatchNorm_FP32_as_FP16) {
   auto bias_def = TestInputDef<float>({num_channels}, true, {1.1f, 2.1f});
   auto model_fn = BuildBatchNormTestCase<float>(input_def, scale_def, bias_def);
 
-  RunQnnModelTestABI(model_fn,
+  RunQnnModelTest(model_fn,
                      provider_options,
                      13,  // opset
                      ExpectedEPNodeAssignment::All,
@@ -401,7 +401,7 @@ TEST_F(QnnABIHTPBackendTests, BatchNorm_FP32_as_FP16) {
 
 // Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.
 // Use an input of rank 5. QNN BatchNormalization doesn't support 5D on HTP
-TEST_F(QnnABIHTPBackendTests, BatchNorm3D) {
+TEST_F(QnnHTPBackendTests, BatchNorm3D) {
   constexpr int64_t num_channels = 2;
   constexpr int64_t num_elems = 1 * num_channels * 3 * 4 * 5;
   RunBatchNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, num_channels, 3, 4, 5}, false,

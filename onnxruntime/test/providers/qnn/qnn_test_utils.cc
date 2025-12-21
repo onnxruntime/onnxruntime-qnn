@@ -184,7 +184,7 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
   session_options.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, ep_options);
 }
 
-void RunQnnModelTestABI(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
+void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                         int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                         float fp32_abs_err, logging::Severity log_severity, bool verify_outputs,
                         std::function<void(const Graph&)>* ep_graph_checker) {
@@ -210,7 +210,7 @@ void RunQnnModelTestABI(const GetTestModelFn& build_test_case, ProviderOptions p
   // Serialize the model to a string.
   std::string model_data;
   model.ToProto().SerializeToString(&model_data);
-  TryEnableQNNSaverABI(provider_options);
+  TryEnableQNNSaver(provider_options);
 
   // Run with QNN-ABI.
   RegisteredEpDeviceUniquePtr registered_ep_device;
@@ -268,7 +268,7 @@ void InferenceModelCPU(const std::string& model_data,
   ASSERT_STATUS_OK(session_object.Run(run_options, feeds, output_names, &output_vals));
 }
 
-void InferenceModelABI(const std::string& model_data,
+void InferenceModel(const std::string& model_data,
                        const char* log_id,
                        const ProviderOptions& provider_options,
                        ExpectedEPNodeAssignment expected_ep_assignment,
@@ -310,7 +310,7 @@ void InferenceModelABI(const std::string& model_data,
   RunWithEPABI(&ort_session, ort_run_options, feeds, output_vals);
 }
 
-NodeArg* MakeTestQDQBiasInputABI(ModelTestBuilder& builder, const TestInputDef<float>& bias_def, float bias_scale,
+NodeArg* MakeTestQDQBiasInput(ModelTestBuilder& builder, const TestInputDef<float>& bias_def, float bias_scale,
                                  bool use_contrib_qdq) {
   NodeArg* bias_int32 = nullptr;
 
@@ -416,7 +416,7 @@ static BackendSupport GetHTPSupport(const onnxruntime::logging::Logger& logger) 
   return status.IsOK() ? BackendSupport::SUPPORTED : BackendSupport::UNSUPPORTED;
 }
 
-void QnnABIHTPBackendTests::SetUp() {
+void QnnHTPBackendTests::SetUp() {
   if (cached_htp_support_ == BackendSupport::SUPPORTED) {
     return;
   }
@@ -443,10 +443,10 @@ void QnnABIHTPBackendTests::SetUp() {
 // (which can be checked in verbose logging). This problem causes QnnHTPBackendTests.Inverse_2d/3d/4d on Linux failed
 // with accuracy issue 0.259040415 vs. 0.256103545. Although this precision mismatch may be expected as HTP fp16/fp32
 // behaviors could differ on different platforms, here adopts workaround to avoid modifying non-ABI parts. Concretely,
-// "soc_model=30", which is the default setting, is set to HTP backend again after QnnABIHTPBackendTests testsuite is
+// "soc_model=30", which is the default setting, is set to HTP backend again after QnnHTPBackendTests testsuite is
 // completed. Note that this is not an ABI-specific issue and exists in non-ABI UT as well but it is not observed
 // previously due to the execution order of testcases.
-void QnnABIHTPBackendTests::TearDownTestSuite() {
+void QnnHTPBackendTests::TearDownTestSuite() {
 #if !defined(__aarch64__) && !defined(_M_ARM64)
   if (cached_htp_support_ != BackendSupport::SUPPORTED) {
     return;
@@ -455,7 +455,7 @@ void QnnABIHTPBackendTests::TearDownTestSuite() {
   const auto& logger = DefaultLoggingManager().DefaultLogger();
 
   // Build simple Relu graph.
-  onnxruntime::Model model("TearDown QnnABIHTPBackendTests", false, logger);
+  onnxruntime::Model model("TearDown QnnHTPBackendTests", false, logger);
   Graph& graph = model.MainGraph();
   ModelTestBuilder helper(graph);
 
@@ -469,7 +469,7 @@ void QnnABIHTPBackendTests::TearDownTestSuite() {
   helper.SetGraphOutputs();
   auto status = model.MainGraph().Resolve();
   if (!status.IsOK()) {
-    LOGS(logger, WARNING) << "Failed to tear down QnnABIHTPBackendTests.";
+    LOGS(logger, WARNING) << "Failed to tear down QnnHTPBackendTests.";
     return;
   }
 
@@ -477,7 +477,7 @@ void QnnABIHTPBackendTests::TearDownTestSuite() {
   onnxruntime::GraphViewer graph_viewer(graph);
   std::unique_ptr<EpGraph> ep_graph = nullptr;
   if (!EpGraph::Create(graph_viewer, ep_graph).IsOK()) {
-    LOGS(logger, WARNING) << "Failed to tear down QnnABIHTPBackendTests.";
+    LOGS(logger, WARNING) << "Failed to tear down QnnHTPBackendTests.";
     return;
   }
   OrtEpGraphSupportInfo graph_support_info(*ep_graph);
@@ -492,7 +492,7 @@ void QnnABIHTPBackendTests::TearDownTestSuite() {
   OrtEp* qnn_ep = nullptr;
   if (qnn_ep_factory->CreateEp(qnn_ep_factory, nullptr, nullptr, 0, session_options, logger.ToExternal(), &qnn_ep)) {
     qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
-    LOGS(logger, WARNING) << "Failed to tear down QnnABIHTPBackendTests.";
+    LOGS(logger, WARNING) << "Failed to tear down QnnHTPBackendTests.";
     return;
   }
 
@@ -552,7 +552,7 @@ static BackendSupport GetGPUSupport(const onnxruntime::logging::Logger& logger) 
   return status.IsOK() ? BackendSupport::SUPPORTED : BackendSupport::UNSUPPORTED;
 }
 
-void QnnABIGPUBackendTests::SetUp() {
+void QnnGPUBackendTests::SetUp() {
   if (cached_gpu_support_ == BackendSupport::SUPPORTED) {
     return;
   }
@@ -575,7 +575,7 @@ void QnnABIGPUBackendTests::SetUp() {
 
 static BackendSupport GetIRSupport(const onnxruntime::logging::Logger& logger);
 
-BackendSupport QnnABIHTPBackendTests::IsIRBackendSupported() const {
+BackendSupport QnnHTPBackendTests::IsIRBackendSupported() const {
   const auto& logger = DefaultLoggingManager().DefaultLogger();
 
   if (cached_ir_support_ == BackendSupport::SUPPORT_UNKNOWN) {
@@ -642,7 +642,7 @@ static BackendSupport GetCPUSupport(const onnxruntime::logging::Logger& logger, 
   return status.IsOK() ? BackendSupport::SUPPORTED : BackendSupport::UNSUPPORTED;
 }
 
-void QnnABICPUBackendTests::SetUp() {
+void QnnCPUBackendTests::SetUp() {
   if (cached_cpu_support_ == BackendSupport::SUPPORTED) {
     return;
   }
@@ -669,7 +669,7 @@ static BackendSupport GetIRSupport(const onnxruntime::logging::Logger& logger) {
   return GetCPUSupport(logger, "ir");
 }
 
-void QnnABIIRBackendTests::SetUp() {
+void QnnIRBackendTests::SetUp() {
   if (cached_ir_support_ == BackendSupport::SUPPORTED) {
     return;
   }
@@ -692,20 +692,20 @@ void QnnABIIRBackendTests::SetUp() {
 
 #if defined(_WIN32)
 // TODO: Remove or set to SUPPORTED once HTP emulation is supported on win arm64.
-BackendSupport QnnABIHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORT_UNKNOWN;
+BackendSupport QnnHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORT_UNKNOWN;
 
 // TODO: Remove or set to SUPPORTED once CPU backend works on win arm64 (pipeline VM).
-BackendSupport QnnABICPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORT_UNKNOWN;
+BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORT_UNKNOWN;
 #else
-BackendSupport QnnABIHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORTED;
-BackendSupport QnnABICPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORTED;
+BackendSupport QnnHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORTED;
+BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORTED;
 #endif  // defined(_WIN32)
 
-BackendSupport QnnABIHTPBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
-BackendSupport QnnABIIRBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
-BackendSupport QnnABIGPUBackendTests::cached_gpu_support_ = BackendSupport::SUPPORT_UNKNOWN;
+BackendSupport QnnHTPBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
+BackendSupport QnnIRBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
+BackendSupport QnnGPUBackendTests::cached_gpu_support_ = BackendSupport::SUPPORT_UNKNOWN;
 
-bool ReduceOpHasAxesInputABI(const std::string& op_type, int opset_version) {
+bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version) {
   static const std::unordered_map<std::string, int> opset_with_axes_as_input = {
       {"ReduceMax", 18},
       {"ReduceMin", 18},
