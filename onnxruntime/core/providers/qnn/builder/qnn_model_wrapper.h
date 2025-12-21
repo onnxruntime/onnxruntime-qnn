@@ -325,9 +325,15 @@ class QnnModelWrapper {
                                         std::vector<QnnTensorWrapper>& wrappers_list);
 
   // BF16 conversion helper methods
+  bool IsBF16ConversionEnabled() const {
+    return model_settings_.htp_bf16_enable &&
+           (qnn_backend_type_ == QnnBackendType::HTP || qnn_backend_type_ == QnnBackendType::SERIALIZER);
+  }
+
   bool ProcessBF16InputConversion(const std::string& qnn_node_name,
                                   const std::vector<std::string>& input_names,
-                                  std::vector<std::string>& converted_input_names);
+                                  std::vector<std::string>& converted_input_names,
+                                  std::vector<QnnOpProperty>& cast_ops_to_add);
 
   bool ProcessBF16OutputConversion(const std::string& qnn_node_name,
                                    const std::vector<std::string>& output_names,
@@ -341,6 +347,10 @@ class QnnModelWrapper {
 
   void RestoreFP32AfterValidation(const std::vector<std::string>& input_names,
                                   const std::vector<std::string>& output_names);
+
+  bool CreateBF16CastTensor(const std::string& tensor_name,
+                            const std::vector<uint32_t>& shape,
+                            Qnn_TensorType_t tensor_type);
 
   const GraphViewer& graph_viewer_;
   const logging::Logger& logger_;
