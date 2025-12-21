@@ -352,6 +352,8 @@ class QnnModelWrapper {
                             const std::vector<uint32_t>& shape,
                             Qnn_TensorType_t tensor_type);
 
+  bool ProcessBF16Conversions(std::vector<QnnOpProperty>& final_ops);
+
   const GraphViewer& graph_viewer_;
   const logging::Logger& logger_;
   const QNN_INTERFACE_VER_TYPE& qnn_interface_;
