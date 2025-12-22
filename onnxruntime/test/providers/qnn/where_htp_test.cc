@@ -17,9 +17,9 @@ namespace test {
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 // Function that builds a float32 model with a Where operator.
-GetTestModelFn BuildWhereTestCaseABI(const TestInputDef<bool>& condition_def,
-                                     const TestInputDef<float>& x_def,
-                                     const TestInputDef<float>& y_def) {
+GetTestModelFn BuildWhereTestCase(const TestInputDef<bool>& condition_def,
+                                  const TestInputDef<float>& x_def,
+                                  const TestInputDef<float>& y_def) {
   return [condition_def, x_def, y_def](ModelTestBuilder& builder) {
     NodeArg* condition = MakeTestInput(builder, condition_def);
     NodeArg* x = MakeTestInput(builder, x_def);
@@ -78,7 +78,7 @@ static void RunWhereQDQTest(const TestInputDef<bool>& condition_def,
   provider_options["offload_graph_io_quantization"] = "0";
 
   // Runs model with DQ-> Where -> Q and compares the outputs of the CPU and QNN EPs.
-  TestQDQModelAccuracy(BuildWhereTestCaseABI(condition_def, x_def, y_def),
+  TestQDQModelAccuracy(BuildWhereTestCase(condition_def, x_def, y_def),
                        BuildQDQWhereTestCase<QuantType>(condition_def, x_def, y_def),
                        provider_options,
                        18,

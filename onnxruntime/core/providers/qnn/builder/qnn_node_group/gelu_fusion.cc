@@ -108,7 +108,7 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
   for (size_t i = 0; i < 2; ++i) {
     const auto& mul_input_name = mul_inputs[i].name;
 
-    // Find the node that produces this input by iterating through all nodes in QNN-ABI
+    // Find the node that produces this input by iterating through all nodes in QNN
     const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
 
     for (const auto& [node, node_unit] : node_to_node_unit) {

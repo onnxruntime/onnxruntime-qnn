@@ -725,7 +725,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   TryEnableQNNSaver(qnn_options);
 
-  // Run with QNN-ABI.
+  // Run with QNN.
   std::vector<OrtValue> qnn_qdq_outputs;
   if (!qnn_ctx_model_path.empty()) {
     onnx::ModelProto model_proto;
@@ -931,7 +931,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   TryEnableQNNSaver(qnn_options);
 
-  // Run with QNN-ABI.
+  // Run with QNN.
   std::vector<OrtValue> qnn_f16_outputs;
   if (!qnn_ctx_model_path.empty()) {
     onnx::ModelProto model_proto;

@@ -1080,7 +1080,7 @@ static bool EpSharedContextsHasAllGraphs(const OrtGraph* graph, const OrtApi& or
     OrtNodeAttrHelper node_helper(*node);
     std::string cache_source = qnn::utils::GetLowercaseString(node_helper.Get(qnn::SOURCE, ""));
 
-    if (op_type == qnn::EPCONTEXT_OP && (cache_source == "qnnexecutionprovider" || cache_source == "qnn" || cache_source == "qnnabitestprovider")) {
+    if (op_type == qnn::EPCONTEXT_OP && (cache_source == "qnnexecutionprovider" || cache_source == "qnn")) {
       const char* node_name = nullptr;
       if (ort_api.Node_GetName(node, &node_name) != nullptr) {
         return false;
@@ -1129,7 +1129,7 @@ static void GetMainEPCtxNodes(const OrtGraph* graph,
 
     if (is_main_context &&
         op_type == qnn::EPCONTEXT_OP &&
-        (cache_source == "qnnexecutionprovider" || cache_source == "qnn" || cache_source == "qnnabitestprovider")) {
+        (cache_source == "qnnexecutionprovider" || cache_source == "qnn")) {
       const char* node_name = nullptr;
       auto node_status = ort_api.Node_GetName(node, &node_name);
       if (node_status != nullptr) {
@@ -1176,7 +1176,7 @@ void QnnEp::PartitionCtxModel(const OrtGraph* graph, OrtEpGraphSupportInfo* grap
     OrtNodeAttrHelper node_helper(*node);
     std::string cache_source = qnn::utils::GetLowercaseString(node_helper.Get(qnn::SOURCE, ""));
 
-    if (op_type == qnn::EPCONTEXT_OP && (cache_source == "qnnexecutionprovider" || cache_source == "qnn" || cache_source == "qnnabitestprovider")) {
+    if (op_type == qnn::EPCONTEXT_OP && (cache_source == "qnnexecutionprovider" || cache_source == "qnn")) {
       const char* node_name = nullptr;
       auto partition_status = ort_api.Node_GetName(node, &node_name);
       if (partition_status != nullptr) {
