@@ -29,9 +29,9 @@ static void RunGemmTest(const std::vector<TestInputDef<DataType>>& input_defs,
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(BuildOpTestCase<float>("Gemm", input_defs, {}, attrs),
-                     provider_options,
-                     opset,
-                     expected_ep_assignment);
+                  provider_options,
+                  opset,
+                  expected_ep_assignment);
 }
 
 //
@@ -250,7 +250,7 @@ inline GetTestQDQModelFn<InputAQType> BuildQDQGemmTestCase(const std::vector<Tes
     // Process bias
     if (num_inputs == 3) {
       NodeArg* bias_input = MakeTestQDQBiasInput(builder, input_defs[2], input0_qparams.scale * input1_qparams.scale,
-                                                    use_contrib_qdq);
+                                                 use_contrib_qdq);
       op_inputs.push_back(bias_input);
     }
 
@@ -285,11 +285,11 @@ static void RunQDQGemmTestOnHTP(const std::vector<TestInputDef<float>>& input_de
   auto f32_model_builder = BuildOpTestCase<float>("Gemm", input_defs, {}, attrs);
   auto qdq_model_builder = BuildQDQGemmTestCase<InputAQType, InputBQType>(input_defs, attrs, use_contrib_qdq);
   TestQDQModelAccuracy<InputAQType>(f32_model_builder,
-                                       qdq_model_builder,
-                                       provider_options,
-                                       opset,
-                                       expected_ep_assignment,
-                                       tolerance);
+                                    qdq_model_builder,
+                                    provider_options,
+                                    opset,
+                                    expected_ep_assignment,
+                                    tolerance);
 }
 
 // Test 8-bit QDQ Gemm with dynamic inputs A and Bias. The B input is an initializer.

@@ -27,9 +27,9 @@ static void RunLayerNormCpuTest(const TestInputDef<float>& input_def,
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(BuildOpTestCase<float>("LayerNormalization", {input_def, scale_def}, {}, attrs),
-                     provider_options,
-                     17,
-                     expected_ep_assignment);
+                  provider_options,
+                  17,
+                  expected_ep_assignment);
 }
 
 TEST_F(QnnCPUBackendTests, LayerNorm) {
@@ -142,11 +142,11 @@ static void RunLayerNormQDQTest(const TestInputDef<float>& input_def,
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracy(BuildOpTestCase<float>("LayerNormalization", {input_def, scale_def}, {}, attrs),
-                          BuildQDQLayerNormTestCase<InputQType, ScaleQType>(input_def, scale_def, bias_def, attrs,
-                                                                            use_contrib_qdq_ops),
-                          provider_options,
-                          17,  // opset
-                          expected_ep_assignment);
+                       BuildQDQLayerNormTestCase<InputQType, ScaleQType>(input_def, scale_def, bias_def, attrs,
+                                                                         use_contrib_qdq_ops),
+                       provider_options,
+                       17,  // opset
+                       expected_ep_assignment);
 }
 
 // Test that QNN HTP only supports axis = -1 (i.e., last dimension).

@@ -126,9 +126,9 @@ static void RunCPUResizeOpTest(const TestInputDef<float>& input_def, const std::
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(GetResizeModelBuilder(input_def, sizes_data, mode, coordinate_transformation_mode, nearest_mode),
-                     provider_options,
-                     opset,
-                     expected_ep_assignment);
+                  provider_options,
+                  opset,
+                  expected_ep_assignment);
 }
 
 static void RunCPUResizeOpTestWithScales(const TestInputDef<float>& input_def, const std::vector<float>& scales_data,
@@ -141,9 +141,9 @@ static void RunCPUResizeOpTestWithScales(const TestInputDef<float>& input_def, c
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(GetResizeModelBuilderWithScales(input_def, scales_data, mode, coordinate_transformation_mode, nearest_mode),
-                     provider_options,
-                     opset,
-                     expected_ep_assignment);
+                  provider_options,
+                  opset,
+                  expected_ep_assignment);
 }
 
 template <typename QuantType>
@@ -159,12 +159,12 @@ static void RunQDQResizeOpTest(const TestInputDef<float>& input_def,
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracy(GetResizeModelBuilder(input_def, sizes_data, mode, coordinate_transformation_mode, nearest_mode),
-                          GetQDQResizeModelBuilder<QuantType>(input_def, sizes_data, mode, coordinate_transformation_mode,
-                                                              nearest_mode),
-                          provider_options,
-                          opset,
-                          expected_ep_assignment,
-                          tolerance);
+                       GetQDQResizeModelBuilder<QuantType>(input_def, sizes_data, mode, coordinate_transformation_mode,
+                                                           nearest_mode),
+                       provider_options,
+                       opset,
+                       expected_ep_assignment,
+                       tolerance);
 }
 
 //

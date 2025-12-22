@@ -60,9 +60,9 @@ static void RunPoolOpTest(const std::string& op_type,
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(BuildOpTestCase<float>(op_type, {input_def}, {}, attrs),
-                     provider_options,
-                     opset,
-                     expected_ep_assignment);
+                  provider_options,
+                  opset,
+                  expected_ep_assignment);
 }
 
 // Runs a QDQ MaxPool model on the QNN HTP backend. Checks the graph node assignment, and that inference
@@ -80,11 +80,11 @@ static void RunQDQPoolOpTest(const std::string& op_type,
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracy(BuildOpTestCase<float>(op_type, {input_def}, {}, attrs),
-                          BuildPoolQDQTestCase<QuantType>(op_type, input_def, attrs, use_contrib_qdq_ops),
-                          provider_options,
-                          opset,
-                          expected_ep_assignment,
-                          tolerance);
+                       BuildPoolQDQTestCase<QuantType>(op_type, input_def, attrs, use_contrib_qdq_ops),
+                       provider_options,
+                       opset,
+                       expected_ep_assignment,
+                       tolerance);
 }
 
 //
@@ -230,13 +230,13 @@ TEST_F(QnnHTPBackendTests, MaxPool1D_ReshapeNodesPresent) {
   };
 
   RunQnnModelTest(build_test_case,
-                     options,
-                     18,
-                     ExpectedEPNodeAssignment::All,
-                     1e-5,
-                     logging::Severity::kERROR,
-                     true,
-                     &check_num_nodes);
+                  options,
+                  18,
+                  ExpectedEPNodeAssignment::All,
+                  1e-5,
+                  logging::Severity::kERROR,
+                  true,
+                  &check_num_nodes);
 }
 
 // 1-D MaxPool HTP test for rank-3 without ceil

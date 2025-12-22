@@ -26,9 +26,9 @@ static void RunTileTestOnCPU(const TestInputDef<DataType>& input_def,
   provider_options["backend_type"] = "cpu";
 
   RunQnnModelTest(BuildOpTestCase<DataType, int64_t>("Tile", {input_def}, {repeats_def}, {}),
-                     provider_options,
-                     opset,
-                     expected_ep_assignment);
+                  provider_options,
+                  opset,
+                  expected_ep_assignment);
 }
 
 // Test that Tile with a dynamic repeats input is not supported by QNN EP.
@@ -95,10 +95,10 @@ static void RunQDQTileTestOnHTP(const TestInputDef<float>& input_def,
   auto f32_model_builder = BuildOpTestCase<float, int64_t>("Tile", {input_def}, {repeats_def}, {});
   auto qdq_model_builder = BuildQDQTileTestCase<QType>(input_def, repeats_def, use_contrib_qdq);
   TestQDQModelAccuracy(f32_model_builder,
-                          qdq_model_builder,
-                          provider_options,
-                          opset,
-                          expected_ep_assignment);
+                       qdq_model_builder,
+                       provider_options,
+                       opset,
+                       expected_ep_assignment);
 }
 
 // Test 8-bit QDQ Tile with rank 4 input.

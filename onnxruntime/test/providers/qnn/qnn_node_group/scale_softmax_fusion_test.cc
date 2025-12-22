@@ -69,10 +69,10 @@ TEST_F(QnnHTPBackendTests, DISABLED_ScaleSoftmaxFusionScalarInitializer) {
 
   auto input_def = TestInputDef<float>({1, 3, 5, 5}, false, -0.5f, 0.5f);
   RunQnnModelTest(BuildTestCaseScalar(input_def, 0.125f, /*use_constant=*/false, /*reverse_input_order=*/false),
-                     provider_options,
-                     /*opset_version=*/13,
-                     /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                     /*fp32_abs_err=*/1e-2f);
+                  provider_options,
+                  /*opset_version=*/13,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
 }
 
 TEST_F(QnnHTPBackendTests, DISABLED_ScaleSoftmaxFusionScalarConstant) {
@@ -80,41 +80,41 @@ TEST_F(QnnHTPBackendTests, DISABLED_ScaleSoftmaxFusionScalarConstant) {
 
   auto input_def = TestInputDef<float>({1, 3, 5, 5}, false, -0.5f, 0.5f);
   RunQnnModelTest(BuildTestCaseScalar(input_def, 0.375f, /*use_constant=*/true, /*reverse_input_order=*/false),
-                     provider_options,
-                     /*opset_version=*/14,
-                     /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                     /*fp32_abs_err=*/1e-2f);
+                  provider_options,
+                  /*opset_version=*/14,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
 }
 
 TEST_F(QnnHTPBackendTests, DISABLED_ScaleSoftmaxFusionScalarInitializerReversed) {
   ProviderOptions provider_options = GetProviderOptions();
   auto input_def = TestInputDef<float>({1, 3, 5, 5}, false, -0.5f, 0.5f);
   RunQnnModelTest(BuildTestCaseScalar(input_def, 0.375f, /*use_constant=*/false, /*reverse_input_order=*/true),
-                     provider_options,
-                     /*opset_version=*/15,
-                     /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                     /*fp32_abs_err=*/1e-2f);
+                  provider_options,
+                  /*opset_version=*/15,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
 }
 
 TEST_F(QnnHTPBackendTests, DISABLED_ScaleSoftmaxFusionScalarConstantReversed) {
   ProviderOptions provider_options = GetProviderOptions();
   auto input_def = TestInputDef<float>({1, 3, 5, 5}, false, -0.5f, 0.5f);
   RunQnnModelTest(BuildTestCaseScalar(input_def, 0.125f, /*use_constant=*/true, /*reverse_input _order=*/true),
-                     provider_options,
-                     /*opset_version=*/16,
-                     /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                     /*fp32_abs_err=*/1e-2f);
+                  provider_options,
+                  /*opset_version=*/16,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
 }
 
 TEST_F(QnnHTPBackendTests, DISABLED_ScaleSoftmaxFusionSoftmaxNegativeAxis) {
   ProviderOptions provider_options = GetProviderOptions();
   auto input_def = TestInputDef<float>({1, 3, 5, 5}, false, -0.5f, 0.5f);
   RunQnnModelTest(BuildTestCaseScalar(input_def, 0.125f,
-                                         /*use_constant=*/true, /*reverse_input_order=*/true, /*softmax_axis=*/-1),
-                     provider_options,
-                     /*opset_version=*/22,
-                     /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                     /*fp32_abs_err=*/1e-2f);
+                                      /*use_constant=*/true, /*reverse_input_order=*/true, /*softmax_axis=*/-1),
+                  provider_options,
+                  /*opset_version=*/22,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar4d) {
@@ -122,10 +122,10 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar4d) {
   auto input_def1 = TestInputDef<float>({1, 3, 5, 5}, false, -0.5f, 0.5f);
   auto input_def2 = TestInputDef<float>({1, 3, 5, 5}, false, -0.5f, 0.5f);
   RunQnnModelTest(BuildTestCaseNoScalar(input_def1, input_def2),
-                     provider_options,
-                     /*opset_version=*/13,
-                     /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                     /*fp32_abs_err=*/1e-2f);
+                  provider_options,
+                  /*opset_version=*/13,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar1d) {
@@ -133,10 +133,10 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar1d) {
   auto input_def1 = TestInputDef<float>({1, 3, 5, 5}, false, -0.5f, 0.5f);
   auto input_def2 = TestInputDef<float>({1}, false, -0.5f, 0.5f);
   RunQnnModelTest(BuildTestCaseNoScalar(input_def1, input_def2),
-                     provider_options,
-                     /*opset_version=*/13,
-                     /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                     /*fp32_abs_err=*/1e-2f);
+                  provider_options,
+                  /*opset_version=*/13,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

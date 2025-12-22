@@ -32,14 +32,14 @@ static void RunUpsampleTestOnCPU(const TestInputDef<DataType>& input_def,
     attrs.push_back(utils::MakeAttribute("scales", scales));
 
     RunQnnModelTest(BuildOpTestCase<DataType>("Upsample", {input_def}, {}, attrs),
-                       provider_options,
-                       opset,
-                       expected_ep_assignment);
+                    provider_options,
+                    opset,
+                    expected_ep_assignment);
   } else {
     RunQnnModelTest(BuildOpTestCase<DataType, float>("Upsample", {input_def}, {scales_def}, attrs),
-                       provider_options,
-                       opset,
-                       expected_ep_assignment);
+                    provider_options,
+                    opset,
+                    expected_ep_assignment);
   }
 }
 

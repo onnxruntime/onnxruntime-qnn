@@ -185,9 +185,9 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
 }
 
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
-                        int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
-                        float fp32_abs_err, logging::Severity log_severity, bool verify_outputs,
-                        std::function<void(const Graph&)>* ep_graph_checker) {
+                     int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
+                     float fp32_abs_err, logging::Severity log_severity, bool verify_outputs,
+                     std::function<void(const Graph&)>* ep_graph_checker) {
   EPVerificationParams verification_params;
   verification_params.ep_node_assignment = expected_ep_assignment;
   verification_params.fp32_abs_err = fp32_abs_err;
@@ -269,13 +269,13 @@ void InferenceModelCPU(const std::string& model_data,
 }
 
 void InferenceModel(const std::string& model_data,
-                       const char* log_id,
-                       const ProviderOptions& provider_options,
-                       ExpectedEPNodeAssignment expected_ep_assignment,
-                       const NameMLValMap& feeds,
-                       std::vector<OrtValue>& output_vals,
-                       const std::unordered_map<std::string, std::string>& session_option_pairs,
-                       std::function<void(const Graph&)>* graph_checker) {
+                    const char* log_id,
+                    const ProviderOptions& provider_options,
+                    ExpectedEPNodeAssignment expected_ep_assignment,
+                    const NameMLValMap& feeds,
+                    std::vector<OrtValue>& output_vals,
+                    const std::unordered_map<std::string, std::string>& session_option_pairs,
+                    std::function<void(const Graph&)>* graph_checker) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = onnxruntime::kQnnABIExecutionProvider;
   Ort::SessionOptions session_options;
@@ -311,7 +311,7 @@ void InferenceModel(const std::string& model_data,
 }
 
 NodeArg* MakeTestQDQBiasInput(ModelTestBuilder& builder, const TestInputDef<float>& bias_def, float bias_scale,
-                                 bool use_contrib_qdq) {
+                              bool use_contrib_qdq) {
   NodeArg* bias_int32 = nullptr;
 
   // Bias must be int32 to be detected as a QDQ node unit.

@@ -252,11 +252,11 @@ static void RunHtpQDQLSTMOpTest(const TestInputDef<float>& X_def,
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracy(BuildLSTMTestCase<float>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
-                          BuildQDQLSTMTestCase<QuantType>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
-                          provider_options,
-                          opset,
-                          expected_ep_assignment,
-                          tolerance);
+                       BuildQDQLSTMTestCase<QuantType>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
+                       provider_options,
+                       opset,
+                       expected_ep_assignment,
+                       tolerance);
 }
 
 static void RunHtpFp16LSTMOpTest(const TestInputDef<float>& X_def,
@@ -279,11 +279,11 @@ static void RunHtpFp16LSTMOpTest(const TestInputDef<float>& X_def,
   provider_options["backend_type"] = "htp";
 
   TestFp16ModelAccuracy(BuildLSTMTestCase<float>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
-                           BuildLSTMTestCase<MLFloat16>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
-                           provider_options,
-                           opset,
-                           expected_ep_assignment,
-                           tolerance);
+                        BuildLSTMTestCase<MLFloat16>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
+                        provider_options,
+                        opset,
+                        expected_ep_assignment,
+                        tolerance);
 }
 
 static void RunCpuFP32LSTMOpTest(const TestInputDef<float>& X_def,
@@ -306,10 +306,10 @@ static void RunCpuFP32LSTMOpTest(const TestInputDef<float>& X_def,
   provider_options["backend_type"] = "cpu";
 
   RunQnnModelTest(BuildLSTMTestCase<float>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
-                     provider_options,
-                     opset,
-                     expected_ep_assignment,
-                     tolerance);
+                  provider_options,
+                  opset,
+                  expected_ep_assignment,
+                  tolerance);
 }
 
 // QNN failed to finalize when P is provided

@@ -63,10 +63,10 @@ static void RunStftOpTest(const TestInputDef<SignalType>& signal_def,
 
   // Run the model test
   RunQnnModelTest(build_test_case,
-                     provider_options,
-                     opset_version,
-                     expected_ep_assignment,
-                     fp32_abs_err);
+                  provider_options,
+                  opset_version,
+                  expected_ep_assignment,
+                  fp32_abs_err);
 }
 
 TEST_F(QnnHTPBackendTests, StftOp_Float_WithWindowOnly) {

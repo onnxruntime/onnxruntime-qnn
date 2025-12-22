@@ -65,9 +65,9 @@ static void RunCastOpTest(const std::vector<int64_t>& shape, ONNX_NAMESPACE::Ten
   }
 
   RunQnnModelTest(BuildCastTestCase<InputType>(shape, dst_type),
-                     provider_options,
-                     13,  // opset
-                     expected_ep_assignment);
+                  provider_options,
+                  13,  // opset
+                  expected_ep_assignment);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

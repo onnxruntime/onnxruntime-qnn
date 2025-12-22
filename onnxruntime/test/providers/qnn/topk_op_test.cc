@@ -48,12 +48,12 @@ static void RunTopKTestOnCPU(const TestInputDef<DataType>& input_def,
   provider_options["backend_type"] = "cpu";
 
   RunQnnModelTest(BuildTopKTestCase<DataType>(input_def, k_def, attrs),
-                     provider_options,
-                     opset,
-                     expected_ep_assignment,
-                     /*fp32_abs_err*/ 1e-5f,
-                     /*log_severity*/ logging::Severity::kERROR,
-                     /*verify_outputs*/ verify_outputs);
+                  provider_options,
+                  opset,
+                  expected_ep_assignment,
+                  /*fp32_abs_err*/ 1e-5f,
+                  /*log_severity*/ logging::Severity::kERROR,
+                  /*verify_outputs*/ verify_outputs);
 }
 
 //
@@ -197,10 +197,10 @@ static void RunQDQTopKTestOnHTP(const TestInputDef<float>& input_def,
   auto f32_model_builder = BuildTopKTestCase<float>(input_def, k_def, attrs);
   auto qdq_model_builder = BuildQDQTopKTestCase<QType>(input_def, k_def, attrs, use_contrib_qdq);
   TestQDQModelAccuracy(f32_model_builder,
-                          qdq_model_builder,
-                          provider_options,
-                          opset,
-                          expected_ep_assignment);
+                       qdq_model_builder,
+                       provider_options,
+                       opset,
+                       expected_ep_assignment);
 }
 
 // Test 8-bit QDQ TopK on HTP backend: top 2 largest floats from last axis

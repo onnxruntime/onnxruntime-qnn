@@ -121,11 +121,11 @@ static void RunQnnHtpQdqEinsum(const TestInputDef<float>& in0,
   auto qdq_model_builder = BuildTestCaseQdq<InputAQType, InputBQType>(
       /*input_defs=*/{in0, in1}, /*attrs=*/attrs, /*use_contrib_qdq=*/false);
   TestQDQModelAccuracy<InputAQType>(/*f32_model_fn=*/f32_model_builder,
-                                       /*qdq_model_fn=*/qdq_model_builder,
-                                       /*qnn_options=*/provider_options,
-                                       /*opset_version=*/12,
-                                       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                                       /*tolerance=*/tolerance);
+                                    /*qdq_model_fn=*/qdq_model_builder,
+                                    /*qnn_options=*/provider_options,
+                                    /*opset_version=*/12,
+                                    /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                                    /*tolerance=*/tolerance);
 }
 
 }  // namespace

@@ -1114,10 +1114,10 @@ TEST_F(QnnHTPBackendTests, ProfilingTest) {
   auto input_defs = {TestInputDef<float>({1, 2, 2, 2}, false, -10.0f, 10.0f),
                      TestInputDef<float>({1, 2, 2, 2}, false, -10.0f, 10.0f)};
   RunQnnModelTest(BuildOpTestCase<float>("Add", input_defs, {}, {}, kOnnxDomain),
-                     provider_options,
-                     13,
-                     ExpectedEPNodeAssignment::All,
-                     0.008f);
+                  provider_options,
+                  13,
+                  ExpectedEPNodeAssignment::All,
+                  0.008f);
 
   VerifyFileExistsAndIsNonEmptyABI(provider_options["profiling_file_path"]);
   std::remove(provider_options["profiling_file_path"].c_str());
@@ -1141,10 +1141,10 @@ TEST_F(QnnHTPBackendTests, OptraceTest) {
   auto input_defs = {TestInputDef<float>({1, 2, 2, 2}, false, -10.0f, 10.0f),
                      TestInputDef<float>({1, 2, 2, 2}, false, -10.0f, 10.0f)};
   RunQnnModelTest(BuildOpTestCase<float>("Add", input_defs, {}, {}, kOnnxDomain),
-                     provider_options,
-                     13,
-                     ExpectedEPNodeAssignment::All,
-                     0.008f);
+                  provider_options,
+                  13,
+                  ExpectedEPNodeAssignment::All,
+                  0.008f);
 
   VerifyFileExistsAndIsNonEmptyABI(provider_options["profiling_file_path"]);
   std::remove(provider_options["profiling_file_path"].c_str());
@@ -1165,10 +1165,10 @@ TEST_F(QnnHTPBackendTests, CastAddQDQU8) {
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracy<uint8_t>(BuildCastAddTestCase<uint8_t>(),
-                                   BuildCastAddQDQTestCase<uint8_t, uint8_t>(),
-                                   provider_options,
-                                   21,
-                                   ExpectedEPNodeAssignment::All);
+                                BuildCastAddQDQTestCase<uint8_t, uint8_t>(),
+                                provider_options,
+                                21,
+                                ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnHTPBackendTests, CastAddQDQU16) {
@@ -1177,10 +1177,10 @@ TEST_F(QnnHTPBackendTests, CastAddQDQU16) {
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracy<uint16_t>(BuildCastAddTestCase<uint8_t>(),
-                                    BuildCastAddQDQTestCase<uint8_t, uint16_t>(),
-                                    provider_options,
-                                    21,
-                                    ExpectedEPNodeAssignment::All);
+                                 BuildCastAddQDQTestCase<uint8_t, uint16_t>(),
+                                 provider_options,
+                                 21,
+                                 ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnHTPBackendTests, CastAddQDQS8) {
@@ -1189,10 +1189,10 @@ TEST_F(QnnHTPBackendTests, CastAddQDQS8) {
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracy<int8_t>(BuildCastAddTestCase<uint8_t>(),
-                                  BuildCastAddQDQTestCase<uint8_t, int8_t>(),
-                                  provider_options,
-                                  21,
-                                  ExpectedEPNodeAssignment::All);
+                               BuildCastAddQDQTestCase<uint8_t, int8_t>(),
+                               provider_options,
+                               21,
+                               ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnHTPBackendTests, CastAddQDQS16) {
@@ -1201,11 +1201,11 @@ TEST_F(QnnHTPBackendTests, CastAddQDQS16) {
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracy<int16_t>(BuildCastAddTestCase<uint8_t>(),
-                                   BuildCastAddQDQTestCase<uint8_t, int16_t>(),
-                                   provider_options,
-                                   21,
-                                   // QNN has not yet supported S16 Quantize/Dequantize
-                                   ExpectedEPNodeAssignment::Some);
+                                BuildCastAddQDQTestCase<uint8_t, int16_t>(),
+                                provider_options,
+                                21,
+                                // QNN has not yet supported S16 Quantize/Dequantize
+                                ExpectedEPNodeAssignment::Some);
 }
 
 // Test float32 model with FP16 precision
@@ -1221,10 +1221,10 @@ TEST_F(QnnHTPBackendTests, Float32ModelWithFP16PrecisionTest) {
   auto input_defs = {TestInputDef<float>({1, 2, 2, 2}, false, -10.0f, 10.0f),
                      TestInputDef<float>({1, 2, 2, 2}, false, -10.0f, 10.0f)};
   RunQnnModelTest(BuildOpTestCase<float>("Add", input_defs, {}, {}, kOnnxDomain),
-                     provider_options,
-                     13,
-                     ExpectedEPNodeAssignment::All,
-                     0.008f);
+                  provider_options,
+                  13,
+                  ExpectedEPNodeAssignment::All,
+                  0.008f);
 }
 
 // Test that QNN EP only handles nodes with static shapes and rejects nodes with dynamic shape I/O.
@@ -1276,13 +1276,13 @@ TEST_F(QnnHTPBackendTests, EPRejectsDynamicShapesF32) {
                                                         // CPU EP will use fp32, so we can relax accuracy requirements.
 
   RunQnnModelTest(model_build_fn,
-                     provider_options,
-                     /*opset*/ 19,
-                     ExpectedEPNodeAssignment::Some,
-                     /*abs_err*/ 1e-4f,
-                     logging::Severity::kERROR,
-                     /*verify_output*/ true,
-                     &ep_graph_checker);
+                  provider_options,
+                  /*opset*/ 19,
+                  ExpectedEPNodeAssignment::Some,
+                  /*abs_err*/ 1e-4f,
+                  logging::Severity::kERROR,
+                  /*verify_output*/ true,
+                  &ep_graph_checker);
 }
 
 TEST_F(QnnHTPBackendTests, DumpJsonQNNGraph) {
@@ -1385,15 +1385,15 @@ TEST_F(QnnHTPBackendTests, EPOffloadsGraphIOQuantDequant) {
       auto f32_model_build_fn = BuildOpTestCase<float>(op_type, {input_def}, {}, {});
       auto qdq_model_build_fn = BuildQDQOpTestCase<uint8_t>(op_type, {input_def}, {}, {});
       TestQDQModelAccuracy<uint8_t>(f32_model_build_fn,
-                                       qdq_model_build_fn,
-                                       provider_options,
-                                       /*opset*/ 21,
-                                       expected_ep_assignment,
-                                       /*abs_err*/ QDQTolerance(),
-                                       logging::Severity::kERROR,
-                                       /*qnn_ctx_model_path*/ "",
-                                       /*session_option_pairs*/ {},
-                                       &graph_checker);
+                                    qdq_model_build_fn,
+                                    provider_options,
+                                    /*opset*/ 21,
+                                    expected_ep_assignment,
+                                    /*abs_err*/ QDQTolerance(),
+                                    logging::Severity::kERROR,
+                                    /*qnn_ctx_model_path*/ "",
+                                    /*session_option_pairs*/ {},
+                                    &graph_checker);
     }
   }
 }
@@ -1635,14 +1635,14 @@ TEST_F(QnnHTPBackendTests, TestMismatchedGraphInputAndTensorWrapperCount) {
                 utils::MakeAttribute("coordinate_transformation_mode", "asymmetric"),
                 utils::MakeAttribute("nearest_mode", "floor")};
   RunQnnModelTest(BuildOpTestCase<float>("Resize",
-                                            input_defs,
-                                            {},
-                                            attrs,
-                                            kOnnxDomain),
-                     provider_options,
-                     11,
-                     ExpectedEPNodeAssignment::All,
-                     0.008f);
+                                         input_defs,
+                                         {},
+                                         attrs,
+                                         kOnnxDomain),
+                  provider_options,
+                  11,
+                  ExpectedEPNodeAssignment::All,
+                  0.008f);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

@@ -478,13 +478,13 @@ void InferenceModelCPU(const std::string& model_data,
                        std::vector<OrtValue>& output_vals);
 
 void InferenceModel(const std::string& model_data,
-                       const char* log_id,
-                       const ProviderOptions& provider_options,
-                       ExpectedEPNodeAssignment expected_ep_assignment,
-                       const NameMLValMap& feeds,
-                       std::vector<OrtValue>& output_vals,
-                       const std::unordered_map<std::string, std::string>& session_option_pairs = {},
-                       std::function<void(const Graph&)>* graph_checker = nullptr);
+                    const char* log_id,
+                    const ProviderOptions& provider_options,
+                    ExpectedEPNodeAssignment expected_ep_assignment,
+                    const NameMLValMap& feeds,
+                    std::vector<OrtValue>& output_vals,
+                    const std::unordered_map<std::string, std::string>& session_option_pairs = {},
+                    std::function<void(const Graph&)>* graph_checker = nullptr);
 
 /**
  * If the ORT_UNIT_TEST_ENABLE_QNN_SAVER environment variable is enabled (set to 1), this function modifies
@@ -642,14 +642,14 @@ void VerifyQDQOutput(const std::vector<OrtValue>& cpu_qdq_outputs,
  */
 template <typename QuantType>
 inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
-                                    const GetTestQDQModelFn<QuantType>& qdq_model_fn,
-                                    ProviderOptions qnn_options, int opset_version,
-                                    ExpectedEPNodeAssignment expected_ep_assignment,
-                                    QDQTolerance tolerance = QDQTolerance(),
-                                    logging::Severity log_severity = logging::Severity::kERROR,
-                                    const std::string& qnn_ctx_model_path = "",
-                                    const std::unordered_map<std::string, std::string>& session_option_pairs = {},
-                                    std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr) {
+                                 const GetTestQDQModelFn<QuantType>& qdq_model_fn,
+                                 ProviderOptions qnn_options, int opset_version,
+                                 ExpectedEPNodeAssignment expected_ep_assignment,
+                                 QDQTolerance tolerance = QDQTolerance(),
+                                 logging::Severity log_severity = logging::Severity::kERROR,
+                                 const std::string& qnn_ctx_model_path = "",
+                                 const std::unordered_map<std::string, std::string>& session_option_pairs = {},
+                                 std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr) {
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
@@ -734,21 +734,21 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
     std::string qnn_ctx_model_data;
     model_proto.SerializeToString(&qnn_ctx_model_data);
     InferenceModel(qnn_ctx_model_data,
-                      "qnn_ctx_model_logger",
-                      qnn_options,
-                      expected_ep_assignment,
-                      qdq_helper.feeds_,
-                      qnn_qdq_outputs,
-                      session_option_pairs);
+                   "qnn_ctx_model_logger",
+                   qnn_options,
+                   expected_ep_assignment,
+                   qdq_helper.feeds_,
+                   qnn_qdq_outputs,
+                   session_option_pairs);
   } else {
     InferenceModel(qdq_model_data,
-                      "qdq_model_logger",
-                      qnn_options,
-                      expected_ep_assignment,
-                      qdq_helper.feeds_,
-                      qnn_qdq_outputs,
-                      session_option_pairs,
-                      qnn_ep_graph_checker);
+                   "qdq_model_logger",
+                   qnn_options,
+                   expected_ep_assignment,
+                   qdq_helper.feeds_,
+                   qnn_qdq_outputs,
+                   session_option_pairs,
+                   qnn_ep_graph_checker);
   }
 
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
@@ -863,14 +863,14 @@ inline void VerifyFp16Output(const std::vector<OrtValue>& cpu_f16_outputs,
  * \param log_severity The logger's severity setting.
  */
 inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
-                                     const GetTestModelFn& f16_model_fn,
-                                     ProviderOptions qnn_options,
-                                     int opset_version,
-                                     ExpectedEPNodeAssignment expected_ep_assignment,
-                                     float tolerance = 0.004,
-                                     logging::Severity log_severity = logging::Severity::kERROR,
-                                     const std::string& qnn_ctx_model_path = "",
-                                     const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
+                                  const GetTestModelFn& f16_model_fn,
+                                  ProviderOptions qnn_options,
+                                  int opset_version,
+                                  ExpectedEPNodeAssignment expected_ep_assignment,
+                                  float tolerance = 0.004,
+                                  logging::Severity log_severity = logging::Severity::kERROR,
+                                  const std::string& qnn_ctx_model_path = "",
+                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
@@ -940,20 +940,20 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     std::string qnn_ctx_model_data;
     model_proto.SerializeToString(&qnn_ctx_model_data);
     InferenceModel(qnn_ctx_model_data,
-                      "qnn_ctx_model_logger",
-                      qnn_options,
-                      expected_ep_assignment,
-                      f16_helper.feeds_,
-                      qnn_f16_outputs,
-                      session_option_pairs);
+                   "qnn_ctx_model_logger",
+                   qnn_options,
+                   expected_ep_assignment,
+                   f16_helper.feeds_,
+                   qnn_f16_outputs,
+                   session_option_pairs);
   } else {
     InferenceModel(f16_model_data,
-                      "fp16_model_logger",
-                      qnn_options,
-                      expected_ep_assignment,
-                      f16_helper.feeds_,
-                      qnn_f16_outputs,
-                      session_option_pairs);
+                   "fp16_model_logger",
+                   qnn_options,
+                   expected_ep_assignment,
+                   f16_helper.feeds_,
+                   qnn_f16_outputs,
+                   session_option_pairs);
   }
 
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
@@ -1031,7 +1031,7 @@ inline NodeArg* MakeTestInput(ModelTestBuilder& builder, const TestInputDef<bool
 //
 // i.e., initial bias => manual quantization (int32) => DQ => final float bias
 NodeArg* MakeTestQDQBiasInput(ModelTestBuilder& builder, const TestInputDef<float>& bias_def, float bias_scale,
-                                 bool use_contrib_qdq = false);
+                              bool use_contrib_qdq = false);
 
 /**
  * Returns a function that builds a model with a single operator with N inputs type InputType1 and M inputs
@@ -1234,11 +1234,11 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
  *                         EP assignment.
  */
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
-                        int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
-                        float fp32_abs_err = 1e-5f,
-                        logging::Severity log_severity = logging::Severity::kERROR,
-                        bool verify_outputs = true,
-                        std::function<void(const Graph&)>* ep_graph_checker = nullptr);
+                     int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
+                     float fp32_abs_err = 1e-5f,
+                     logging::Severity log_severity = logging::Severity::kERROR,
+                     bool verify_outputs = true,
+                     std::function<void(const Graph&)>* ep_graph_checker = nullptr);
 
 enum class BackendSupport {
   SUPPORT_UNKNOWN,

@@ -66,10 +66,10 @@ static void RunCPUGatherElemsOpTest(const TestInputDef<float>& input_def,
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(BuildOpTestCase<DataType, IndexType>("GatherElements", {input_def}, {indices_def}, attrs),
-                     provider_options,
-                     opset,
-                     expected_ep_assignment,
-                     fp32_abs_err);
+                  provider_options,
+                  opset,
+                  expected_ep_assignment,
+                  fp32_abs_err);
 }
 
 // Runs a QDQ GatherElements model on the QNN HTP backend. Checks the graph node assignment, and that inference
@@ -91,10 +91,10 @@ static void RunHTPQDQGatherElemsOpTest(const TestInputDef<float>& input_def,
                                                                              use_contrib_qdq);
 
   TestQDQModelAccuracy<QuantType>(f32_model_builder,
-                                     qdq_model_builder,
-                                     provider_options,
-                                     opset,
-                                     expected_ep_assignment);
+                                  qdq_model_builder,
+                                  provider_options,
+                                  opset,
+                                  expected_ep_assignment);
 }
 
 // Runs a non-quantized GatherElements model on the QNN HTP backend. Checks the graph node assignment,
@@ -112,10 +112,10 @@ static void RunHTPGatherElemsOpTest(const TestInputDef<DataType>& input_def,
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(BuildOpTestCase<DataType, IndexType>("GatherElements", {input_def}, {indices_def}, attrs),
-                     provider_options,
-                     opset,
-                     expected_ep_assignment,
-                     fp32_abs_err);
+                  provider_options,
+                  opset,
+                  expected_ep_assignment,
+                  fp32_abs_err);
 }
 
 //

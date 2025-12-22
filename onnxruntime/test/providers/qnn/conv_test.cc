@@ -94,10 +94,10 @@ static void RunConvOpTest(const std::string& conv_op_type, const TestInputDef<fl
   auto build_fn = BuildF32ConvTestCase(conv_op_type, input_def, weights_def, bias_def, strides, pads,
                                        dilations, group, auto_pad);
   RunQnnModelTest(build_fn,
-                     provider_options,
-                     opset,
-                     expected_ep_assignment,
-                     fp32_abs_err);
+                  provider_options,
+                  opset,
+                  expected_ep_assignment,
+                  fp32_abs_err);
 }
 
 // Creates a graph with a single Q/DQ Conv operator. Used for testing HTP backend.
@@ -313,15 +313,15 @@ static void RunHTPConvOpTest(const std::string& conv_op_type, const TestInputDef
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracy(BuildF32ConvTestCase(conv_op_type, input_def, weights_def, bias_def, strides, pads, dilations,
-                                               group, auto_pad, output_activation),
-                          BuildQDQConvTestCase<ActivationQType, WeightQType>(conv_op_type, input_def, weights_def,
-                                                                             bias_def, strides, pads, dilations,
-                                                                             group, auto_pad, use_contrib_qdq,
-                                                                             output_activation),
-                          provider_options,
-                          opset,
-                          expected_ep_assignment,
-                          tolerance);
+                                            group, auto_pad, output_activation),
+                       BuildQDQConvTestCase<ActivationQType, WeightQType>(conv_op_type, input_def, weights_def,
+                                                                          bias_def, strides, pads, dilations,
+                                                                          group, auto_pad, use_contrib_qdq,
+                                                                          output_activation),
+                       provider_options,
+                       opset,
+                       expected_ep_assignment,
+                       tolerance);
 }
 
 // Runs a QDQ Conv model (per-axis quantization on weight/bias) on the QNN HTP backend.
@@ -711,9 +711,9 @@ TEST_F(QnnHTPBackendTests, DISABLED_Test_QDQConvWithDynamicWeightsFromMul) {
   };
 
   RunQnnModelTest(BuildConvMulGraph,
-                     provider_options,
-                     13,
-                     ExpectedEPNodeAssignment::All);
+                  provider_options,
+                  13,
+                  ExpectedEPNodeAssignment::All);
 }
 
 // Check that QNN compiles DQ -> Conv -> Q as a single unit.

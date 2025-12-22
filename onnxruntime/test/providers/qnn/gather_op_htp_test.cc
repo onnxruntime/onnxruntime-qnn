@@ -98,10 +98,10 @@ static void RunQDQGatherOpTest(const TestInputDef<float>& input_def,
                                                                           use_contrib_qdq);
 
   TestQDQModelAccuracy<QuantType>(f32_model_builder,
-                                     qdq_model_builder,
-                                     provider_options,
-                                     opset,
-                                     expected_ep_assignment);
+                                  qdq_model_builder,
+                                  provider_options,
+                                  opset,
+                                  expected_ep_assignment);
 }
 
 // Test creates a DQ -> Gather -> Q -> DQ graph, and checks that all
@@ -203,10 +203,10 @@ static void RunOpTest(const std::string& op_type,
 
   // Runs model with a Q/DQ binary op and compares the outputs of the CPU and QNN EPs.
   RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>(op_type, {input_def_1}, {input_defs_2}, attrs, op_domain),
-                     provider_options,
-                     opset_version,
-                     expected_ep_assignment,
-                     fp32_abs_err);
+                  provider_options,
+                  opset_version,
+                  expected_ep_assignment,
+                  fp32_abs_err);
 }
 
 // Non-QDQ model, Gather with static input and dynamic int64 indices
@@ -248,10 +248,10 @@ static void RunQDQGatherNDOpTest(const TestInputDef<float>& input_def,
                                                                             use_contrib_qdq);
 
   TestQDQModelAccuracy<QuantType>(f32_model_builder,
-                                     qdq_model_builder,
-                                     provider_options,
-                                     opset,
-                                     expected_ep_assignment);
+                                  qdq_model_builder,
+                                  provider_options,
+                                  opset,
+                                  expected_ep_assignment);
 }
 
 // Non-QDQ model, GatherND with static input and dynamic int64 indices

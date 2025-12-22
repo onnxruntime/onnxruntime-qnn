@@ -115,12 +115,12 @@ TEST_F(QnnHTPBackendTests, LPBQGemmFusion) {
 #endif
   ProviderOptions provider_options = GetProviderOptions();
   RunQnnModelTest(BuildLPBQGemmTestCase(),
-                     provider_options,
-                     /*opset_version=*/21,
-                     /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some,
-                     /*fp32_abs_err=*/1e-2f,
-                     /*log_severity =*/logging::Severity::kERROR,
-                     /*verify_outputs=*/false);
+                  provider_options,
+                  /*opset_version=*/21,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some,
+                  /*fp32_abs_err=*/1e-2f,
+                  /*log_severity =*/logging::Severity::kERROR,
+                  /*verify_outputs=*/false);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64)

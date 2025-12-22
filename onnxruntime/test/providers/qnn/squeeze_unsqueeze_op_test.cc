@@ -26,9 +26,9 @@ static void RunSqueezeTestOnCPU(const std::string& op_type,  // Squeeze or Unsqu
   provider_options["backend_type"] = "cpu";
 
   RunQnnModelTest(BuildOpTestCase<DataType, int64_t>(op_type, {input_def}, {axes_def}, {}),
-                     provider_options,
-                     opset,
-                     expected_ep_assignment);
+                  provider_options,
+                  opset,
+                  expected_ep_assignment);
 }
 
 //
@@ -131,9 +131,9 @@ static void RunSqueezeTestOnHTP(const std::string& op_type,  // Squeeze or Unsqu
   provider_options["backend_type"] = "htp";
 
   RunQnnModelTest(BuildOpTestCase<DataType, int64_t>(op_type, {input_def}, {axes_def}, {}),
-                     provider_options,
-                     opset,
-                     expected_ep_assignment);
+                  provider_options,
+                  opset,
+                  expected_ep_assignment);
 }
 
 // Runs a QDQ (Un)Squeeze model on the QNN (HTP) EP and the ORT CPU EP. Checks the graph node assignment and
@@ -155,10 +155,10 @@ static void RunQDQSqueezeTestOnHTP(const std::string& op_type,
   auto qdq_model_builder = BuildQDQSqueezeTestCase<QType>(op_type, input_def, axes_def, use_contrib_qdq);
 
   TestQDQModelAccuracy(f32_model_builder,
-                          qdq_model_builder,
-                          provider_options,
-                          opset,
-                          expected_ep_assignment);
+                       qdq_model_builder,
+                       provider_options,
+                       opset,
+                       expected_ep_assignment);
 }
 
 // Test that QDQ Squeeze with a dynamic axes input is not supported by QNN EP.
@@ -207,9 +207,9 @@ TEST_F(QnnHTPBackendTests, Squeeze_Rank5_Rank2_f32) {
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(model_fn,
-                     provider_options,
-                     13,  // opset
-                     ExpectedEPNodeAssignment::All);
+                  provider_options,
+                  13,  // opset
+                  ExpectedEPNodeAssignment::All);
 }
 
 // Test 8-bit QDQ Squeeze of rank 4 -> rank 3 with a negative axes value.
@@ -260,9 +260,9 @@ TEST_F(QnnHTPBackendTests, Unsqueeze_Rank3_Rank5_f32) {
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(model_fn,
-                     provider_options,
-                     13,  // opset
-                     ExpectedEPNodeAssignment::All);
+                  provider_options,
+                  13,  // opset
+                  ExpectedEPNodeAssignment::All);
 }
 
 // Test 8-bit QDQ Unsqueeze of rank 3 -> rank 4 with a negative axes value.

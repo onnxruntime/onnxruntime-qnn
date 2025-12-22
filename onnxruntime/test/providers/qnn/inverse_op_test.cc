@@ -30,10 +30,10 @@ static void RunInverseTest(const std::vector<TestInputDef<DataType>>& input_defs
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(BuildOpTestCase<DataType>("Inverse", input_defs, {}, attrs, kMSDomain),  // Inverse Op exist in kMSDomain
-                     provider_options,
-                     opset,
-                     expected_ep_assignment,
-                     fp32_abs_err);
+                  provider_options,
+                  opset,
+                  expected_ep_assignment,
+                  fp32_abs_err);
 }
 
 //
@@ -118,11 +118,11 @@ static void RunQDQInverseOpTest(const TestInputDef<float>& input_defs,
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracy(BuildOpTestCase<float>("Inverse", {input_defs}, {}, attrs, kMSDomain),  // Inverse Op exist in kMSDomain
-                          BuildQDQInverseTestCase<QuantType>({input_defs}, attrs, true),
-                          provider_options,
-                          opset,
-                          expected_ep_assignment,
-                          tolerance);
+                       BuildQDQInverseTestCase<QuantType>({input_defs}, attrs, true),
+                       provider_options,
+                       opset,
+                       expected_ep_assignment,
+                       tolerance);
 }
 
 TEST_F(QnnHTPBackendTests, Inverse_2d) {

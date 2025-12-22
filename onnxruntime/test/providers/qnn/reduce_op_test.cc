@@ -91,15 +91,15 @@ static void RunReduceTest(const std::string& op_type,
   }
 
   RunQnnModelTest(BuildReduceOpTestCase<DataType>(op_type,
-                                                     input_def,  //{2, 2},  // input shape
-                                                     ReduceOpHasAxesInput(op_type, opset),
-                                                     axes,  //{0, 1},  // axes
-                                                     keepdims,
-                                                     false),  // noop_with_empty_axes
-                     provider_options,
-                     opset,
-                     expected_ep_assignment,
-                     fp32_abs_err);
+                                                  input_def,  //{2, 2},  // input shape
+                                                  ReduceOpHasAxesInput(op_type, opset),
+                                                  axes,  //{0, 1},  // axes
+                                                  keepdims,
+                                                  false),  // noop_with_empty_axes
+                  provider_options,
+                  opset,
+                  expected_ep_assignment,
+                  fp32_abs_err);
 }
 
 //
@@ -418,12 +418,12 @@ static void RunReduceOpQDQTest(const std::string& op_type,
   const bool axes_as_input = ReduceOpHasAxesInput(op_type, opset);  // Later opsets have "axes" as an input.
 
   TestQDQModelAccuracy(BuildReduceOpTestCase<float>(op_type, input_def, axes_as_input, axes, keepdims,
-                                                       noop_with_empty_axes),
-                          BuildQDQReduceOpTestCase<QuantType>(op_type, input_def, axes_as_input, axes, keepdims,
-                                                              noop_with_empty_axes),
-                          provider_options,
-                          opset,
-                          expected_ep_assignment);
+                                                    noop_with_empty_axes),
+                       BuildQDQReduceOpTestCase<QuantType>(op_type, input_def, axes_as_input, axes, keepdims,
+                                                           noop_with_empty_axes),
+                       provider_options,
+                       opset,
+                       expected_ep_assignment);
 }
 
 //

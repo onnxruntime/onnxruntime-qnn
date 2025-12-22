@@ -30,9 +30,9 @@ static void RunReshapeExpandTest(const std::string& op_type,
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(BuildOpTestCase<DataType, int64_t>(op_type, {input_def}, {shape_def}, attrs),
-                     provider_options,
-                     opset,
-                     expected_ep_assignment);
+                  provider_options,
+                  opset,
+                  expected_ep_assignment);
 }
 
 //
@@ -232,9 +232,9 @@ static void RunReshapeExpandTestOnHTP(const std::string& op_type,
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(BuildOpTestCase<DataType, int64_t>(op_type, {input_def}, {shape_def}, attrs),
-                     provider_options,
-                     opset,
-                     expected_ep_assignment);
+                  provider_options,
+                  opset,
+                  expected_ep_assignment);
 }
 
 // Runs a QDQ Reshape model on the QNN (HTP) EP and the ORT CPU EP. Checks the graph node assignment and that inference
@@ -255,10 +255,10 @@ static void RunQDQReshapeExpandTestOnHTP(const std::string& op_type,
   auto f32_model_builder = BuildOpTestCase<float, int64_t>(op_type, {input_def}, {shape_def}, attrs);
   auto qdq_model_builder = BuildQDQReshapeExpandTestCase<QType>(op_type, input_def, shape_def, attrs, use_contrib_qdq);
   TestQDQModelAccuracy(f32_model_builder,
-                          qdq_model_builder,
-                          provider_options,
-                          opset,
-                          expected_ep_assignment);
+                       qdq_model_builder,
+                       provider_options,
+                       opset,
+                       expected_ep_assignment);
 }
 
 // Test that QDQ Reshape with a dynamic shape input is not supported by QNN EP.

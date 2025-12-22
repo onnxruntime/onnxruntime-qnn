@@ -36,9 +36,9 @@ static void RunMatMulOpTest(const std::vector<int64_t>& shape_0,
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(BuildMatMulOpTestCase(
-                         TestInputDef<float>(shape_0, is_initializer_0, GetSequentialFloatData(shape_0, 0.01f, 0.02f)),
-                         TestInputDef<float>(shape_1, is_initializer_1, GetSequentialFloatData(shape_1, 0.02f, 0.02f))),
-                     provider_options, opset, expected_ep_assignment, f32_abs_err);
+                      TestInputDef<float>(shape_0, is_initializer_0, GetSequentialFloatData(shape_0, 0.01f, 0.02f)),
+                      TestInputDef<float>(shape_1, is_initializer_1, GetSequentialFloatData(shape_1, 0.02f, 0.02f))),
+                  provider_options, opset, expected_ep_assignment, f32_abs_err);
 }
 
 // Returns a function that creates a graph with a QDQ MatMul operator.
@@ -134,13 +134,13 @@ static void RunQDQMatMulOpTest(const std::vector<int64_t>& shape_0, const std::v
   TestInputDef<float> input0_def(
       shape_0, is_initializer_0,
       GetFloatDataInRange(-0.1f, 0.1f,
-                             static_cast<size_t>(std::accumulate(shape_0.begin(), shape_0.end(), static_cast<int64_t>(1),
-                                                                 std::multiplies<int64_t>()))));
+                          static_cast<size_t>(std::accumulate(shape_0.begin(), shape_0.end(), static_cast<int64_t>(1),
+                                                              std::multiplies<int64_t>()))));
   TestInputDef<float> input1_def(
       shape_1, is_initializer_1,
       GetFloatDataInRange(-0.1f, 0.1f,
-                             static_cast<size_t>(std::accumulate(shape_1.begin(), shape_1.end(), static_cast<int64_t>(1),
-                                                                 std::multiplies<int64_t>()))));
+                          static_cast<size_t>(std::accumulate(shape_1.begin(), shape_1.end(), static_cast<int64_t>(1),
+                                                              std::multiplies<int64_t>()))));
 
   TestQDQModelAccuracy(
       BuildMatMulOpTestCase(input0_def, input1_def),
@@ -167,18 +167,18 @@ static void RunQDQPerChannelMatMulOpTest(
   TestInputDef<float> input_def(
       shape_input, false,
       GetFloatDataInRange(-0.1f, 0.1f,
-                             static_cast<size_t>(std::accumulate(shape_input.begin(), shape_input.end(),
-                                                                 static_cast<int64_t>(1), std::multiplies<int64_t>()))));
+                          static_cast<size_t>(std::accumulate(shape_input.begin(), shape_input.end(),
+                                                              static_cast<int64_t>(1), std::multiplies<int64_t>()))));
   TestInputDef<float> weight_def(
       shape_weight, true,
       GetFloatDataInRange(-0.1f, 0.1f,
-                             static_cast<size_t>(std::accumulate(shape_weight.begin(), shape_weight.end(),
-                                                                 static_cast<int64_t>(1), std::multiplies<int64_t>()))));
+                          static_cast<size_t>(std::accumulate(shape_weight.begin(), shape_weight.end(),
+                                                              static_cast<int64_t>(1), std::multiplies<int64_t>()))));
 
   TestQDQModelAccuracy(BuildMatMulOpTestCase(input_def, weight_def),
-                          BuildQDQPerChannelMatMulTestCase<InputQType, WeightQType, OutputQType>(
-                              input_def, weight_def, weight_quant_axis, use_contrib_qdq),
-                          provider_options, opset, expected_ep_assignment, tolerance);
+                       BuildQDQPerChannelMatMulTestCase<InputQType, WeightQType, OutputQType>(
+                           input_def, weight_def, weight_quant_axis, use_contrib_qdq),
+                       provider_options, opset, expected_ep_assignment, tolerance);
 }
 
 //
@@ -310,14 +310,14 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_Regression_uint16_dynamic_inputs) {
     TestInputDef<float> input0_def(
         {1, 12, 512, 96}, false,
         GetFloatDataInRange(-5.087f, 4.992f,
-                               static_cast<size_t>(std::accumulate(shape_0.begin(), shape_0.end(), static_cast<int64_t>(1),
-                                                                   std::multiplies<int64_t>()))));
+                            static_cast<size_t>(std::accumulate(shape_0.begin(), shape_0.end(), static_cast<int64_t>(1),
+                                                                std::multiplies<int64_t>()))));
     std::vector<int64_t> shape_1 = {1, 12, 96, 512};
     TestInputDef<float> input1_def(
         shape_1, false,
         GetFloatDataInRange(-6.772f, 7.258f,
-                               static_cast<size_t>(std::accumulate(shape_1.begin(), shape_1.end(), static_cast<int64_t>(1),
-                                                                   std::multiplies<int64_t>()))));
+                            static_cast<size_t>(std::accumulate(shape_1.begin(), shape_1.end(), static_cast<int64_t>(1),
+                                                                std::multiplies<int64_t>()))));
 
     TestQDQModelAccuracy(
         BuildMatMulOpTestCase(input0_def, input1_def),
@@ -331,14 +331,14 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_Regression_uint16_dynamic_inputs) {
     TestInputDef<float> input0_def(
         {1, 12, 512, 96}, false,
         GetFloatDataInRange(-5.087f, 4.992f,
-                               static_cast<size_t>(std::accumulate(shape_0.begin(), shape_0.end(), static_cast<int64_t>(1),
-                                                                   std::multiplies<int64_t>()))));
+                            static_cast<size_t>(std::accumulate(shape_0.begin(), shape_0.end(), static_cast<int64_t>(1),
+                                                                std::multiplies<int64_t>()))));
     std::vector<int64_t> shape_1 = {96};
     TestInputDef<float> input1_def(
         shape_1, false,
         GetFloatDataInRange(-6.772f, 7.258f,
-                               static_cast<size_t>(std::accumulate(shape_1.begin(), shape_1.end(), static_cast<int64_t>(1),
-                                                                   std::multiplies<int64_t>()))));
+                            static_cast<size_t>(std::accumulate(shape_1.begin(), shape_1.end(), static_cast<int64_t>(1),
+                                                                std::multiplies<int64_t>()))));
 
     TestQDQModelAccuracy(
         BuildMatMulOpTestCase(input0_def, input1_def),
@@ -363,14 +363,14 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_Regression_uint16_static_weight) {
     TestInputDef<float> input0_def(
         {1, 12, 512, 96}, false,
         GetFloatDataInRange(-5.087f, 4.992f,
-                               static_cast<size_t>(std::accumulate(shape_0.begin(), shape_0.end(), static_cast<int64_t>(1),
-                                                                   std::multiplies<int64_t>()))));
+                            static_cast<size_t>(std::accumulate(shape_0.begin(), shape_0.end(), static_cast<int64_t>(1),
+                                                                std::multiplies<int64_t>()))));
     std::vector<int64_t> shape_1 = {1, 12, 96, 512};
     TestInputDef<float> input1_def(
         shape_1, true,
         GetFloatDataInRange(-6.772f, 7.258f,
-                               static_cast<size_t>(std::accumulate(shape_1.begin(), shape_1.end(), static_cast<int64_t>(1),
-                                                                   std::multiplies<int64_t>()))));
+                            static_cast<size_t>(std::accumulate(shape_1.begin(), shape_1.end(), static_cast<int64_t>(1),
+                                                                std::multiplies<int64_t>()))));
 
     TestQDQModelAccuracy(
         BuildMatMulOpTestCase(input0_def, input1_def),
@@ -384,14 +384,14 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_Regression_uint16_static_weight) {
     TestInputDef<float> input0_def(
         {1, 12, 512, 96}, false,
         GetFloatDataInRange(-5.087f, 4.992f,
-                               static_cast<size_t>(std::accumulate(shape_0.begin(), shape_0.end(), static_cast<int64_t>(1),
-                                                                   std::multiplies<int64_t>()))));
+                            static_cast<size_t>(std::accumulate(shape_0.begin(), shape_0.end(), static_cast<int64_t>(1),
+                                                                std::multiplies<int64_t>()))));
     std::vector<int64_t> shape_1 = {96};
     TestInputDef<float> input1_def(
         shape_1, true,
         GetFloatDataInRange(-6.772f, 7.258f,
-                               static_cast<size_t>(std::accumulate(shape_1.begin(), shape_1.end(), static_cast<int64_t>(1),
-                                                                   std::multiplies<int64_t>()))));
+                            static_cast<size_t>(std::accumulate(shape_1.begin(), shape_1.end(), static_cast<int64_t>(1),
+                                                                std::multiplies<int64_t>()))));
 
     TestQDQModelAccuracy(
         BuildMatMulOpTestCase(input0_def, input1_def),

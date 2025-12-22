@@ -27,10 +27,10 @@ static void RunLeakyReluOpQDQTest(const TestInputDef<float>& input_def,
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracy(BuildOpTestCase<float>("LeakyRelu", {input_def}, {}, attrs),
-                          BuildQDQOpTestCase<QuantType>("LeakyRelu", {input_def}, {}, attrs),
-                          provider_options,
-                          opset,
-                          expected_ep_assignment);
+                       BuildQDQOpTestCase<QuantType>("LeakyRelu", {input_def}, {}, attrs),
+                       provider_options,
+                       opset,
+                       expected_ep_assignment);
 }
 
 // Test creates a DQ -> Gather -> Q -> DQ graph, and checks that all
@@ -65,10 +65,10 @@ TEST_F(QnnHTPBackendTests, LeakyReluFP16OpSet16) {
   TestInputDef<MLFloat16> input_fp16_def = ConvertToFP16InputDef(input_def);
   auto attrs = {utils::MakeAttribute("alpha", 0.2f)};
   TestFp16ModelAccuracy(BuildOpTestCase<float>("LeakyRelu", {input_def}, {}, attrs),
-                           BuildOpTestCase<MLFloat16>("LeakyRelu", {input_fp16_def}, {}, attrs),
-                           provider_options,
-                           16,
-                           ExpectedEPNodeAssignment::All);
+                        BuildOpTestCase<MLFloat16>("LeakyRelu", {input_fp16_def}, {}, attrs),
+                        provider_options,
+                        16,
+                        ExpectedEPNodeAssignment::All);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

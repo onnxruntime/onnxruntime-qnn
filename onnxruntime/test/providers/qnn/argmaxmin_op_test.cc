@@ -47,9 +47,9 @@ static void RunArgMxxOpTest(const std::string& op_type, TestInputDef<float> inpu
   provider_options["backend_type"] = backend_name;
 
   RunQnnModelTest(BuildOpTestCase<float>(op_type, {input_def}, {}, attrs),
-                     provider_options,
-                     opset,
-                     expected_ep_assignment);
+                  provider_options,
+                  opset,
+                  expected_ep_assignment);
 }
 
 // Runs a QDQ ArgMax/ArgMin model on the QNN (HTP) EP and the ORT CPU EP. Checks the graph node assignment, and that inference
@@ -65,10 +65,10 @@ static void RunQDQArgMxxOpTest(const std::string& op_type, TestInputDef<float> i
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracy(BuildOpTestCase<float>(op_type, {input_def}, {}, attrs),   // baseline float32 model
-                          BuildQDQArgMxxTestCase<QType>(op_type, input_def, attrs),  // QDQ model
-                          provider_options,
-                          opset,
-                          expected_ep_assignment);
+                       BuildQDQArgMxxTestCase<QType>(op_type, input_def, attrs),  // QDQ model
+                       provider_options,
+                       opset,
+                       expected_ep_assignment);
 }
 
 //
