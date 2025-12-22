@@ -394,7 +394,6 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
                                     std::vector<std::string>&& output_names,
                                     std::vector<std::string>&& param_tensor_names,
                                     bool do_op_validation) {
-  // Validation path
   if (do_op_validation) {
     std::vector<Qnn_Tensor_t> input_tensors;
     std::vector<Qnn_Tensor_t> output_tensors;
@@ -427,9 +426,12 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
       return false;
     }
 
-    // Validate the node
-    QnnOpConfigWrapper op_config_wrapper(qnn_node_name, package_name, qnn_node_type,
-                                         std::move(input_tensors), std::move(output_tensors), std::move(params));
+    QnnOpConfigWrapper op_config_wrapper(qnn_node_name,
+                                         package_name,
+                                         qnn_node_type,
+                                         std::move(input_tensors),
+                                         std::move(output_tensors),
+                                         std::move(params));
 
     using namespace onnxruntime::qnn::utils;
     LOGS(logger_, VERBOSE) << op_config_wrapper;
@@ -443,17 +445,18 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
     }
 
     if (!rt) {
+      // TODO(adrianlizarraga): Return a Status with the error message so that aggregated logs show a more
+      // specific validation error (instead of "failed to add node").
       LOGS(logger_, WARNING) << error_msg;
     }
     return rt;
+  } else {
+    // Standard execution - just add the node to the op list
+    QnnOpProperty qnn_op(qnn_node_name, package_name, qnn_node_type,
+                         std::move(input_names), std::move(output_names), std::move(param_tensor_names));
+    qnn_op_property_list_.push_back(std::move(qnn_op));
+    return true;
   }
-
-  // Standard execution - just add the node to the op list
-  // BF16 conversion will be handled in ComposeQnnGraph when do_op_validation = false
-  QnnOpProperty qnn_op(qnn_node_name, package_name, qnn_node_type,
-                       std::move(input_names), std::move(output_names), std::move(param_tensor_names));
-  qnn_op_property_list_.push_back(std::move(qnn_op));
-  return true;
 }
 
 bool QnnModelWrapper::ProcessBF16Conversions(std::vector<QnnOpProperty>& final_ops) {
@@ -522,6 +525,7 @@ bool QnnModelWrapper::ProcessBF16Conversions(std::vector<QnnOpProperty>& final_o
 
 bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
   LOGS(logger_, VERBOSE) << "Compose Qnn Graph.";
+  // ORT_RETURN_IF(qnn_op_property_list_.empty(), "Empty Qnn op list, no graph to compose.");
   if (qnn_op_property_list_.empty()) {
     return false;
   }
@@ -542,7 +546,6 @@ bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
     std::vector<Qnn_Tensor_t> input_tensors;
     std::vector<Qnn_Tensor_t> output_tensors;
     std::vector<Qnn_Param_t> params;
-
     if (!CreateQnnInputOutputTensors(op_property.GetNodeName(), op_property.GetInputNames(), input_tensors)) {
       return false;
     }
