@@ -252,7 +252,7 @@ bool QnnModelWrapper::ProcessBF16InputConversion(const std::string& qnn_node_nam
     auto& tensor_wrapper = it->second;
     Qnn_DataType_t tensor_dtype = tensor_wrapper.GetTensorDataType();
     Qnn_TensorType_t tensor_type = tensor_wrapper.GetTensorType();
-    bool is_graph_input_or_init = IsGraphInput(input_name) || IsConstantInput(input_name) || IsGraphOutput(output_name);
+    bool is_graph_input_or_init = IsGraphInput(input_name) || IsConstantInput(input_name) || IsGraphOutput(input_name);
 
     if (is_graph_input_or_init && tensor_dtype == QNN_DATATYPE_FLOAT_32) {
       // Insert Cast node for FP32 graph inputs/initializers: FP32 -> BF16
