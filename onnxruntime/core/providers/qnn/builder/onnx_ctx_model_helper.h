@@ -23,7 +23,6 @@ static const std::string MAIN_CONTEXT = "main_context";
 static const std::string EMBED_MODE = "embed_mode";
 static const std::string EP_CACHE_CONTEXT = "ep_cache_context";
 static const std::string EP_SDK_VER = "ep_sdk_version";
-static const std::string EP_ZIP_CONTEXT = "ep_zip_context";
 static const std::string PARTITION_NAME = "partition_name";
 static const std::string SOURCE = "source";
 static const std::string MAX_SIZE = "max_size";
@@ -40,7 +39,12 @@ bool GraphHasZipContextNode(const onnxruntime::GraphViewer& graph_viewer);
 
 bool GraphHasDlcContextNode(const onnxruntime::GraphViewer& graph_viewer);
 
-bool IsFusedGraphHasCtxNode(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs);
+bool IsFusedGraphHasCtxNode(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs,
+                            const std::string& ep_context_type = EP_CONTEXT_TYPE_BIN);
+
+bool IsFusedGraphHasZipCtxNode(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs);
+
+bool IsFusedGraphHasDlcCtxNode(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs);
 
 Status GetMainContextNode(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs,
                           std::vector<int>& main_context_pos);

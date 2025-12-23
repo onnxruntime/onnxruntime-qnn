@@ -393,7 +393,7 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
       LOGS_DEFAULT(WARNING) << "Unable to determine backend path from provider options. Using default.";
     }
 
-    LOGS_DEFAULT(VERBOSE) << "Using backend path: " << backend_path;
+    LOGS_DEFAULT(INFO) << "Using backend path: " << backend_path;
   }
 
   std::unique_ptr<qnn::QnnSerializerConfig> qnn_serializer_config = ParseSerializerBackendOptions(provider_options_map);
@@ -924,26 +924,20 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
                                     const IKernelLookup& /*kernel_lookup*/,
                                     const GraphOptimizerRegistry& /* graph_optimizer_registry */,
                                     IResourceAccountant* /* resource_accountant */) const {
+  // Short-circuit GetCapability handling for Genie library, else continue with normal EP handling
+  const auto& logger = *GetLogger();
+  if (genie_backend_manager_) {
+    return GetGenieCapability(graph_viewer);
+  }
+
   std::vector<std::unique_ptr<ComputeCapability>> result;
 
   if (graph_viewer.IsSubgraph()) {
     return result;
   }
   const size_t num_nodes_in_graph = static_cast<size_t>(graph_viewer.NumberOfNodes());
-
-  const auto& logger = *GetLogger();
    
   bool is_qnn_ctx_model = qnn::GraphHasEpContextNode(graph_viewer);
-
-  // TODO - Should maybe verify somewhere that Genie models only have one "native" node?
-  if (genie_backend_manager_) {
-    auto rt = genie_backend_manager_->SetupBackend(logger);
-
-    if (Status::OK() != rt) {
-      LOGS(logger, ERROR) << "Genie SetupBackend failed " << rt.ErrorMessage();
-    }
-    return result;
-  }
 
   const auto gen_metadef_name = [&]() {
     uint64_t model_hash;
@@ -1115,6 +1109,53 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
   return result;
 }
 
+std::vector<std::unique_ptr<ComputeCapability>>
+QNNExecutionProvider::GetGenieCapability(const onnxruntime::GraphViewer& graph_viewer) const {
+  std::vector<std::unique_ptr<ComputeCapability>> result;
+
+  const auto& logger = *GetLogger();
+  
+  const size_t num_nodes_in_graph = static_cast<size_t>(graph_viewer.NumberOfNodes());
+  if (num_nodes_in_graph != 1) {
+    ORT_THROW("Only one node is allowed in Genie model, found: " + num_nodes_in_graph);
+  }
+
+  // TODO - Need to change this to DLC
+  bool is_genie_model = qnn::GraphHasZipContextNode(graph_viewer);
+  if (!is_genie_model) {
+    ORT_THROW("The Genie backend library requires a model-aware zip context node.");
+  }
+
+  // TODO - Some validation of non-Genie support options would be prudent
+  auto rt = genie_backend_manager_->SetupBackend(logger);
+  if (Status::OK() != rt) {
+    LOGS(logger, ERROR) << "SetupBackend failed for Genie backend library" << rt.ErrorMessage();
+  }
+  
+  // Identify the single node in the graph (which should be the only node)
+  const auto& node = *graph_viewer.Nodes().begin();
+
+  // Create a group for this node
+  std::vector<const Node*> supported_group{&node};
+
+  // Generate a metadef name
+  const auto gen_metadef_name = [&]() {
+    uint64_t model_hash;
+    int metadef_id = metadef_id_generator_->GenerateId(graph_viewer, model_hash);
+    return MakeString(QNN, context_node_name_prefix_, "_", model_hash, "_", metadef_id);
+  };
+
+  // Create a ComputeCapability object for this group
+  result.reserve(1);
+  auto capability = utils::MakeComputeCapability(graph_viewer, supported_group, gen_metadef_name, QNN,
+                                                /*drop_constant_initializers*/ false);
+
+  // Add it to the result vector
+  result.push_back(std::move(capability));
+
+  return result;
+}
+
 DataLayout QNNExecutionProvider::GetPreferredLayout() const {
   return DataLayout::NHWC;
 }
@@ -1263,12 +1304,19 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
                                      std::vector<NodeComputeInfo>& node_compute_funcs) {
   const auto& logger = *GetLogger();
   bool is_qnn_ctx_model = qnn::IsFusedGraphHasCtxNode(fused_nodes_and_graphs);
+  // TODO - May need to change this to DLC at some point in the future
+  bool is_genie_model = qnn::IsFusedGraphHasZipCtxNode(fused_nodes_and_graphs);
+
+  bool is_ctx_file_exist = false;
 
   onnxruntime::PathString context_model_path;
-  bool is_ctx_file_exist = false;
+  const onnxruntime::GraphViewer& graph_viewer_0(fused_nodes_and_graphs[0].filtered_graph);
   if (is_qnn_ctx_model || context_cache_enabled_) {
-    const onnxruntime::GraphViewer& graph_viewer_0(fused_nodes_and_graphs[0].filtered_graph);
     // Figure out the EP context model path from model path or session option
+    GetContextOnnxModelFilePath(context_cache_path_cfg_,
+                                graph_viewer_0.ModelPath().native(),
+                                context_model_path);
+  } else if (is_genie_model) {
     GetContextOnnxModelFilePath(context_cache_path_cfg_,
                                 graph_viewer_0.ModelPath().native(),
                                 context_model_path);
@@ -1354,6 +1402,9 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
     }
 
     return Status::OK();
+  } else if (is_genie_model) {
+
+    return Status::OK();
   }
 
   ORT_RETURN_IF_ERROR(CompileFromOrtGraph(fused_nodes_and_graphs, node_compute_funcs, logger));
@@ -1378,7 +1429,6 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
                                                   qnn_models_,
                                                   context_model_path,
                                                   qnn_context_embed_mode_,
-
                                                   max_spill_fill_buffer_size,
                                                   logger,
                                                   share_ep_contexts_,

@@ -22,12 +22,15 @@ bool GraphHasEpContextNode(const onnxruntime::GraphViewer& graph_viewer,
 
   // Default implementation assumes EP_CONTEXT_TYPE_BIN for backwards compatibility
   for (const auto& node : graph_viewer.Nodes()) {
+    
     if (EPCONTEXT_OP == node.OpType()) {
       NodeAttrHelper node_helper(node);
       std::string cache_source = qnn::utils::GetLowercaseString(node_helper.Get(SOURCE, ""));
       std::string ep_context_type_of_node = qnn::utils::GetLowercaseString(node_helper.Get(EP_CONTEXT_TYPE, EP_CONTEXT_TYPE_BIN));
 
-      if ((cache_source == "qnnexecutionprovider" || cache_source == "qnn") && ep_context_type == ep_context_type_of_node) {
+      // TODO - Should update this to only be DLC export or QAIRT, need to minimize potential future issues w/ backwards compatibility
+      if ((cache_source == "qnnexecutionprovider" || cache_source == "qnn" || cache_source == "qairtexport") 
+              && ep_context_type == ep_context_type_of_node) {
         return true;
       }
     }
@@ -43,15 +46,24 @@ bool GraphHasDlcContextNode(const onnxruntime::GraphViewer& graph_viewer) {
   return GraphHasEpContextNode(graph_viewer, EP_CONTEXT_TYPE_DLC);
 }
 
-bool IsFusedGraphHasCtxNode(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs) {
+bool IsFusedGraphHasCtxNode(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs,
+                            const std::string& ep_context_type) {
   for (const auto& fused_node_graph : fused_nodes_and_graphs) {
     const onnxruntime::GraphViewer& graph_viewer(fused_node_graph.filtered_graph);
-    bool has_qnn_ep_context_node = GraphHasEpContextNode(graph_viewer);
+    bool has_qnn_ep_context_node = GraphHasEpContextNode(graph_viewer, ep_context_type);
     if (has_qnn_ep_context_node) {
       return true;
     }
   }
   return false;
+}
+
+bool IsFusedGraphHasZipCtxNode(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs) {
+  return IsFusedGraphHasCtxNode(fused_nodes_and_graphs, EP_CONTEXT_TYPE_ZIP);
+}
+
+bool IsFusedGraphHasDlcCtxNode(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs) {
+  return IsFusedGraphHasCtxNode(fused_nodes_and_graphs, EP_CONTEXT_TYPE_DLC);
 }
 
 Status GetMainContextNode(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs,

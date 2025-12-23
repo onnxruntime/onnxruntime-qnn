@@ -83,6 +83,10 @@ class QNNExecutionProvider : public IExecutionProvider {
 
   bool IsHtpSharedMemoryAllocatorAvailable() const { return rpcmem_library_ != nullptr; }
 
+  // Called by public GetCapability and contains Genie-specific handling
+  std::vector<std::unique_ptr<ComputeCapability>>
+  GetGenieCapability(const onnxruntime::GraphViewer& graph_view) const;
+
  private:
   qnn::PerThreadHtpPowerConfigs_t GetPerThreadHtpPowerConfigs(const ConfigOptions& config_options);
 

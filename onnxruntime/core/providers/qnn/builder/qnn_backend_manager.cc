@@ -2010,7 +2010,11 @@ void* QnnBackendManager::LoadLib(const char* file_name, int flags, std::string& 
     real_flags |= RTLD_GLOBAL;
   }
 
-  return ::dlopen(file_name, real_flags);
+  void* handle = ::dlopen(file_name, real_flags);
+  if (!handle) {
+    error_msg = ::dlerror();
+  }
+  return handle;
 #endif
 }
 

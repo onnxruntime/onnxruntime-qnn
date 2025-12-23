@@ -38,22 +38,36 @@ GenieBackendManager::~GenieBackendManager() {
 Status GenieBackendManager::SetupBackend(const logging::Logger& logger) {
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
   if (backend_setup_completed_) {
-    LOGS(logger, VERBOSE) << "Backend setup already!";
+    LOGS(logger, INFO) << "Backend library setup already!";
     return Status::OK();
   }
 
   logger_ = &logger;
-  LOGS(logger, INFO) << "Setting up Genie backend";
   
   // Load the Genie backend library
   Status status = LoadBackend();
   if (!status.IsOK()) {
-    LOGS(logger, ERROR) << "Failed to load Genie backend: " << status.ErrorMessage();
+    LOGS(logger, ERROR) << "Failed to load Genie backend library: " << status.ErrorMessage();
     return status;
   }
 
-  LOGS(logger, VERBOSE) << "Genie SetupBackend succeed";
+  LOGS(logger, INFO) << "Genie SetupBackend succeeded";
   backend_setup_completed_ = true;
+  return Status::OK();
+}
+
+Status GenieBackendManager::LoadBackend() {
+
+  LOGS(*logger_, INFO) << "Loading Genie backend library from: " << backend_path_.c_str();
+  std::string error_msg;
+  backend_lib_handle_ = LoadLib(backend_path_.c_str(),
+                                static_cast<int>(DlOpenFlag::DL_NOW) | static_cast<int>(DlOpenFlag::DL_GLOBAL),
+                                error_msg);
+  ORT_RETURN_IF(nullptr == backend_lib_handle_, "Unable to load Genie backend, error: ", error_msg);
+
+  // TODO: Initialize Genie interface here
+  // This would involve getting the appropriate function pointers from the loaded library
+
   return Status::OK();
 }
 
@@ -149,22 +163,14 @@ void* GenieBackendManager::LoadLib(const char* file_name, int flags, std::string
     real_flags |= RTLD_GLOBAL;
   }
 
-  return ::dlopen(file_name, real_flags);
+  void* handle = ::dlopen(file_name, real_flags);
+  if (!handle) {
+    error_msg = ::dlerror();
+  }
+  return handle;
 #endif
 }
 
-Status GenieBackendManager::LoadBackend() {
-  std::string error_msg;
-  backend_lib_handle_ = LoadLib(backend_path_.c_str(),
-                                static_cast<int>(DlOpenFlag::DL_NOW) | static_cast<int>(DlOpenFlag::DL_GLOBAL),
-                                error_msg);
-  ORT_RETURN_IF(nullptr == backend_lib_handle_, "Unable to load Genie backend, error: ", error_msg);
-
-  // TODO: Initialize Genie interface here
-  // This would involve getting the appropriate function pointers from the loaded library
-
-  return Status::OK();
-}
 
 void GenieBackendManager::ReleaseResources() {
   if (backend_lib_handle_) {

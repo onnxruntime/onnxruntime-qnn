@@ -23,5 +23,9 @@ cd build/linux-x86_64/Release/dist/
 
 uv pip install $(ls .)
 
-cd ../../../../qcom/gen_ai
+cd ..
+
+export LD_LIBRARY_PATH=$PWD
+
+cd ../../../qcom/gen_ai
 
