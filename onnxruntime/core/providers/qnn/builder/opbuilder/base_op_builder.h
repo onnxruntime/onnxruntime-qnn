@@ -224,6 +224,7 @@ class BaseOpBuilder : public IOpBuilder {
         {"InstanceNormalization", QNN_OP_INSTANCE_NORM},
         {"BatchNormalization", QNN_OP_BATCHNORM},
         {"LayerNormalization", QNN_OP_LAYER_NORM},
+        {"GroupNormalization", QNN_OP_GROUP_NORM},
 
         {"LRN", QNN_OP_LRN},
 
@@ -271,7 +272,8 @@ class BaseOpBuilder : public IOpBuilder {
         {"GlobalAveragePool", {0, 1}},
         {"MaxPool", {0, 1}},
         {"BatchNormalization", {3, 1}},
-        {"LayerNormalization", {0, 1}}};
+        {"LayerNormalization", {0, 1}},
+        {"GroupNormalization", {0, 1}}};
 
     auto pos = input_output_count_qnn_required.find(onnx_op_type);
     if (pos == input_output_count_qnn_required.end()) {

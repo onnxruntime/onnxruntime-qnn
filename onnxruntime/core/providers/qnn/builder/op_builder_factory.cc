@@ -161,6 +161,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   }
 
   {
+    CreateGroupNormOpBuilder("GroupNormalization", *this);
+  }
+
+  {
     CreateLRNOpBuilder("LRN", *this);
   }
 

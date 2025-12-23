@@ -1891,6 +1891,36 @@ TEST_F(QnnHTPBackendTests, RandomUniformLikeAddTest) {
                              ExpectedEPNodeAssignment::All);
 }
 
+// Test GroupNormalization operator on HTP backend
+TEST_F(QnnHTPBackendTests, GroupNorm_Float) {
+  std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f,
+                                   9.0f, 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f, 16.0f,
+                                   17.0f, 18.0f, 19.0f, 20.0f, 21.0f, 22.0f, 23.0f, 24.0f};
+  std::vector<float> scale_data = {1.0f, 2.0f};
+  std::vector<float> bias_data = {0.1f, 0.2f};
+
+  auto build_test_case = [&](ModelTestBuilder& builder) {
+    auto* input = builder.MakeInput<float>({1, 2, 3, 4}, input_data);
+    auto* scale = builder.MakeInitializer<float>({2}, scale_data);
+    auto* bias = builder.MakeInitializer<float>({2}, bias_data);
+
+    // Create output with explicit shape (same as input shape)
+    auto* output = builder.MakeOutput<float>(std::vector<int64_t>{1, 2, 3, 4});
+    Node& group_norm_node = builder.AddNode("GroupNormalization", {input, scale, bias}, {output});
+    group_norm_node.AddAttribute("num_groups", static_cast<int64_t>(1));
+    group_norm_node.AddAttribute("epsilon", 1e-05f);
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+
+  RunQnnModelTest(build_test_case,
+                  provider_options,
+                  21,
+                  ExpectedEPNodeAssignment::All,
+                  0.001f);
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
