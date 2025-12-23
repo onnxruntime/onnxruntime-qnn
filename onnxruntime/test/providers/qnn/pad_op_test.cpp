@@ -40,6 +40,27 @@ static GetTestModelFn BuildPadTestCase(const TestInputDef<float>& data_def,
   };
 }
 
+// Returns a function that creates a graph with a single Pad operator using opset 2 (attributes).
+static GetTestModelFn BuildPadOpset2TestCase(const TestInputDef<float>& data_def,
+                                             const std::vector<int64_t>& pads,
+                                             float constant_value,
+                                             const std::string& mode) {
+  return [data_def, pads, constant_value, mode](ModelTestBuilder& builder) {
+    NodeArg* data = MakeTestInput(builder, data_def);
+    NodeArg* output = builder.MakeOutput();
+    Node& pad_node = builder.AddNode("Pad", {data}, {output});
+
+    // Add pads as attribute
+    pad_node.AddAttributeProto(utils::MakeAttribute("pads", pads));
+
+    // Add value (constant_value) as attribute
+    pad_node.AddAttributeProto(utils::MakeAttribute("value", constant_value));
+
+    // Add mode as attribute
+    pad_node.AddAttributeProto(utils::MakeAttribute("mode", mode));
+  };
+}
+
 // Returns a function that creates a graph with a QDQ Pad operator.
 template <typename QuantType>
 GetTestQDQModelFn<QuantType> BuildPadQDQTestCase(const TestInputDef<float>& data_def,
@@ -552,6 +573,109 @@ TEST_F(QnnHTPBackendTests, Pad5d) {
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+
+//
+// Opset 2 tests (pads and value as attributes):
+//
+
+// Test Pad opset 2 with constant mode
+TEST_F(QnnCPUBackendTests, PadOpset2_Constant) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+
+  RunQnnModelTest(BuildPadOpset2TestCase(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
+                                         {0, 2, 0, 0},  // pads attribute
+                                         0.0f,          // value attribute
+                                         "constant"),   // mode attribute
+                  provider_options,
+                  2,  // opset 2
+                  ExpectedEPNodeAssignment::All);
+}
+
+// Test Pad opset 2 with negative pads
+TEST_F(QnnCPUBackendTests, PadOpset2_NegativePads) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+
+  RunQnnModelTest(BuildPadOpset2TestCase(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
+                                         {0, -1, -1, 0},  // pads attribute
+                                         0.0f,            // value attribute
+                                         "constant"),     // mode attribute
+                  provider_options,
+                  2,  // opset 2
+                  ExpectedEPNodeAssignment::All);
+}
+
+// Test Pad opset 2 with mixed positive/negative pads
+TEST_F(QnnCPUBackendTests, PadOpset2_MixedPads) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+
+  RunQnnModelTest(BuildPadOpset2TestCase(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
+                                         {1, -1, -1, 1},  // pads attribute
+                                         0.0f,            // value attribute
+                                         "constant"),     // mode attribute
+                  provider_options,
+                  2,  // opset 2
+                  ExpectedEPNodeAssignment::All);
+}
+
+// Test Pad opset 2 with non-zero constant value
+TEST_F(QnnCPUBackendTests, PadOpset2_NonZeroValue) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+
+  RunQnnModelTest(BuildPadOpset2TestCase(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
+                                         {0, 2, 0, 0},  // pads attribute
+                                         5.0f,          // value attribute
+                                         "constant"),   // mode attribute
+                  provider_options,
+                  2,  // opset 2
+                  ExpectedEPNodeAssignment::All);
+}
+
+// Test Pad opset 2 with reflect mode
+TEST_F(QnnCPUBackendTests, PadOpset2_ReflectMode) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+
+  RunQnnModelTest(BuildPadOpset2TestCase(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
+                                         {0, 1, 0, 0},  // pads attribute
+                                         0.0f,          // value attribute (not used in reflect mode)
+                                         "reflect"),    // mode attribute
+                  provider_options,
+                  2,  // opset 2
+                  ExpectedEPNodeAssignment::All);
+}
+
+// Test Pad opset 2 with edge mode
+TEST_F(QnnCPUBackendTests, PadOpset2_EdgeMode) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+
+  RunQnnModelTest(BuildPadOpset2TestCase(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
+                                         {0, 2, 0, 0},  // pads attribute
+                                         0.0f,          // value attribute (not used in edge mode)
+                                         "edge"),       // mode attribute
+                  provider_options,
+                  2,  // opset 2
+                  ExpectedEPNodeAssignment::All);
+}
+
+// Test Pad opset 2 with 4D input
+TEST_F(QnnCPUBackendTests, PadOpset2_4D) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+
+  RunQnnModelTest(BuildPadOpset2TestCase(TestInputDef<float>({1, 2, 2, 2}, false,
+                                                             {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f}),
+                                         {0, 0, 0, 1, 0, 0, 0, 1},  // pads attribute
+                                         0.0f,                      // value attribute
+                                         "constant"),               // mode attribute
+                  provider_options,
+                  2,  // opset 2
+                  ExpectedEPNodeAssignment::All);
+}
 
 }  // namespace test
 }  // namespace onnxruntime
