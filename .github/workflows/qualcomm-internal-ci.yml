@@ -29,6 +29,7 @@ jobs:
       do_linux_aarch64: ${{ vars.DO_LINUX_AARCH64 == '' || vars.DO_LINUX_AARCH64 != '0' }}
       do_windows_arm64: ${{ vars.DO_WINDOWS_ARM64 == '' || vars.DO_WINDOWS_ARM64 != '0' }}
       do_windows_arm64ec: ${{ vars.DO_WINDOWS_ARM64EC == '' || vars.DO_WINDOWS_ARM64EC != '0' }}
+      do_windows_arm64x: ${{ vars.DO_WINDOWS_ARM64X == '' || vars.DO_WINDOWS_ARM64X != '0' }}
       do_windows_x86_64: ${{ vars.DO_WINDOWS_X86_64 == '' || vars.DO_WINDOWS_X86_64 != '0' }}
       do_android: ${{ vars.DO_ANDROID == '' || vars.DO_ANDROID != '0' }}
       do_lint: ${{ vars.DO_LINT == '' || vars.DO_LINT != '0' }}
