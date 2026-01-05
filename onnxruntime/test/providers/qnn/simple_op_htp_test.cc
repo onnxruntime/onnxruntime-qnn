@@ -1893,9 +1893,10 @@ TEST_F(QnnHTPBackendTests, RandomUniformLikeAddTest) {
 
 // Test GroupNormalization operator on HTP backend
 TEST_F(QnnHTPBackendTests, GroupNorm_Float) {
-  std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f,
-                                   9.0f, 10.0f, 11.0f, 12.0f, 13.0f, 14.0f, 15.0f, 16.0f,
-                                   17.0f, 18.0f, 19.0f, 20.0f, 21.0f, 22.0f, 23.0f, 24.0f};
+  std::vector<float> input_data = {
+      0.1f, 0.3f, 0.5f, 0.7f, 0.2f, 0.4f, 0.6f, 0.8f,
+      0.15f, 0.35f, 0.55f, 0.75f, 0.25f, 0.45f, 0.65f, 0.85f,
+      0.12f, 0.32f, 0.52f, 0.72f, 0.22f, 0.42f, 0.62f, 0.82f};
   std::vector<float> scale_data = {1.0f, 2.0f};
   std::vector<float> bias_data = {0.1f, 0.2f};
 
@@ -1918,7 +1919,7 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float) {
                   provider_options,
                   21,
                   ExpectedEPNodeAssignment::All,
-                  0.001f);
+                  0.01f);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

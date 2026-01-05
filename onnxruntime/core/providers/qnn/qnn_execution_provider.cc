@@ -1090,6 +1090,10 @@ std::optional<bool> QNNExecutionProvider::ShouldConvertDataLayoutForOp(std::stri
     return true;
   }
 
+  if (node_domain == kOnnxDomain && node_op_type == "GroupNormalization") {
+    return true;
+  }
+
   return std::nullopt;
 }
 
