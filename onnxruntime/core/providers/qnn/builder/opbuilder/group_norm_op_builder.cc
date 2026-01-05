@@ -99,13 +99,10 @@ Status GroupNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                          bool do_op_validation) const {
   ORT_UNUSED_PARAMETER(do_op_validation);
   const auto& inputs = node_unit.Inputs();
-  constexpr size_t X_IDX = 0;
-  constexpr size_t SCALE_IDX = 1;
-  constexpr size_t BIAS_IDX = 2;
 
-  ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[X_IDX], logger, input_names));   // Input 0
-  ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[SCALE_IDX], logger, input_names)); // Scale
-  ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[BIAS_IDX], logger, input_names));  // Bias
+  ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));   // Input 0
+  ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[1], logger, input_names)); // Scale
+  ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[2], logger, input_names));  // Bias
 
   return Status::OK();
 }

@@ -1091,6 +1091,7 @@ std::optional<bool> QNNExecutionProvider::ShouldConvertDataLayoutForOp(std::stri
   }
 
   if (node_domain == kOnnxDomain && node_op_type == "GroupNormalization") {
+    // GroupNormalization is translated to QNN's GroupNorm, which requires the NHWC layout for processing.
     return true;
   }
 
