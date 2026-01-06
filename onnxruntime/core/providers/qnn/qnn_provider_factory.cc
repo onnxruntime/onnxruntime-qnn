@@ -260,6 +260,8 @@ struct QnnEpFactory : OrtEpFactory {
                                             size_t max_ep_devices,
                                             size_t* p_num_ep_devices) noexcept {
     size_t& num_ep_devices = *p_num_ep_devices;
+    num_ep_devices = 0;
+
     auto* factory = static_cast<QnnEpFactory*>(this_ptr);
 
     for (size_t i = 0; i < num_devices && num_ep_devices < max_ep_devices; ++i) {
