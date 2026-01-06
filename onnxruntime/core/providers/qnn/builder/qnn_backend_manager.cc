@@ -159,7 +159,7 @@ Status ReadBinaryFromFile(const std::string& file_path, uint8_t* buffer, size_t 
 bool QnnBackendManager::IsTimerThreadRunning() {
   std::chrono::microseconds remainUs = std::chrono::microseconds::zero();
   unsigned long remaining_duration = 0;
-  if (timer_->TimerInUse() && timer_->RemainingDuration(remainUs)) {
+  if (timer_ && timer_->TimerInUse() && timer_->RemainingDuration(remainUs)) {
     remaining_duration = static_cast<unsigned long>(remainUs.count());
     return remaining_duration > 0 && remaining_duration < timer_resource_.sustained_timer_duration_;
   }
@@ -265,7 +265,7 @@ Status QnnBackendManager::SetState(GraphState state, uint32_t htp_power_config_c
     } else if (perfMode == qnn::HtpPerformanceMode::kHtpDefault) {
       return Status::OK();
     } else {
-      if (timer_->TimerInUse()){
+      if (timer_->TimerInUse()) {
         timer_->AbortTimer();
       }
       return SetPerformance(htp_power_config_client_id, perfMode);

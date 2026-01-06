@@ -517,7 +517,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   std::mutex state_mutex_;
   std::unique_ptr<Timer> timer_;
   struct TimerResource {
-    static const unsigned long sustained_timer_duration_ = 300000; // in microseconds
+    static const unsigned long sustained_timer_duration_ = 300000;  // in microseconds
     std::atomic<bool> caller_busy_ = false;
   };
   TimerResource timer_resource_;

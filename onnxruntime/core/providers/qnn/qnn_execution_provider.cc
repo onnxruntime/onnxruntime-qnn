@@ -1478,7 +1478,6 @@ Status QNNExecutionProvider::OnRunStart(const onnxruntime::RunOptions& run_optio
 
   const ConfigOptions& config_options = RunOptions__GetConfigOptions(run_options);
 
-
   uint32_t htp_power_config_id = 0;
   if (GetHtpPowerConfigId(htp_power_config_id)) {
     auto thread_id = std::this_thread::get_id();
