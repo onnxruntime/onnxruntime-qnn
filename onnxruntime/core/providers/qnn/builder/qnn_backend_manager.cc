@@ -265,6 +265,9 @@ Status QnnBackendManager::SetState(GraphState state, uint32_t htp_power_config_c
     } else if (perfMode == qnn::HtpPerformanceMode::kHtpDefault) {
       return Status::OK();
     } else {
+      if (timer_->TimerInUse()){
+        timer_->AbortTimer();
+      }
       return SetPerformance(htp_power_config_client_id, perfMode);
     }
   }
@@ -1712,6 +1715,7 @@ Status QnnBackendManager::SetPerThreadHtpPowerConfigs(const std::thread::id& thr
 
   auto htp_power_config_id = htp_power_configs.power_config_id;
   if (pre_run) {
+    // add in htp_power_configs the default power config id also so to run when we execute
     if (htp_power_configs.pre_run_perf_mode.has_value()) {
       ORT_RETURN_IF_ERROR(htp_power_config_manager_.AddHtpPerformanceMode(*htp_power_configs.pre_run_perf_mode,
                                                                           htp_power_config_id));

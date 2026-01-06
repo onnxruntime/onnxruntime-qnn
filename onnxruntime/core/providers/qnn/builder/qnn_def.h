@@ -76,6 +76,7 @@ typedef struct PerThreadHtpPowerConfigs {
   std::optional<HtpPerformanceMode> post_run_perf_mode;
   std::optional<uint32_t> rpc_control_latency;
   std::optional<uint32_t> rpc_polling_time;
+  std::optional<HtpPerformanceMode> default_perf_mode;
 
   uint32_t power_config_id = 0;
 } PerThreadHtpPowerConfigs_t;

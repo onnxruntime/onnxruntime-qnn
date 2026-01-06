@@ -129,6 +129,7 @@ enum class DcvsState_t {
   DCVS_NUM_STATES
 };
 
+// Graph states to tune the power/performance configurations
 enum class GraphState {
   INIT_START,
   INIT_DONE,
@@ -264,9 +265,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
   bool ProfilingEnabled() { return profiling_enabled_; }
 #endif
-  void createTimerThread(uint32_t htp_power_config_client_id);
-
-  void ReleaseTimerThread(uint32_t htp_power_config_client_id);
 
   Status SetState(GraphState state, uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode);
 
@@ -519,7 +517,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   std::mutex state_mutex_;
   std::unique_ptr<Timer> timer_;
   struct TimerResource {
-    static const unsigned long sustained_timer_duration_ = 300000;
+    static const unsigned long sustained_timer_duration_ = 300000; // in microseconds
     std::atomic<bool> caller_busy_ = false;
   };
   TimerResource timer_resource_;
