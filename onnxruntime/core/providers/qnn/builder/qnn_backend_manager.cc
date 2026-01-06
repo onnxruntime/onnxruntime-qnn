@@ -263,9 +263,12 @@ Status QnnBackendManager::SetState(GraphState state, uint32_t htp_power_config_c
       ORT_RETURN_IF(timer_ == nullptr, "timer is not started");
       return SetSustainedHighPerformance(htp_power_config_client_id, perfMode);
     } else if (perfMode == qnn::HtpPerformanceMode::kHtpDefault) {
+      if (timer_ && timer_->TimerInUse()) {
+        timer_->AbortTimer();
+      }
       return Status::OK();
     } else {
-      if (timer_->TimerInUse()) {
+      if (timer_ && timer_->TimerInUse()) {
         timer_->AbortTimer();
       }
       return SetPerformance(htp_power_config_client_id, perfMode);
