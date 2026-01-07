@@ -4,21 +4,17 @@
 
 import argparse
 import logging
-import numbers
-from collections import defaultdict
-from collections.abc import Generator, Iterable, Mapping, Sequence
+from collections.abc import Generator, Iterable, Sequence
 from pathlib import Path
 from typing import Literal, NamedTuple, cast, get_args
 
-import jsonc
+# import jsonc
 import numpy as np
 import onnx
+import yaml
+from metric_factory import build_metrics_map
 
 import onnxruntime
-
-DEFAULT_RTOL = 1e-3
-DEFAULT_ATOL = 1e-5
-
 
 BackendT = Literal["cpu", "gpu", "htp"]
 
@@ -26,10 +22,9 @@ BackendT = Literal["cpu", "gpu", "htp"]
 class ModelTestDef(NamedTuple):
     model_root: Path
     backend_type: BackendT
-    rtol: Mapping[str, float]
-    atol: Mapping[str, float]
     enable_context: bool
     enable_cpu_fallback: bool
+    metrics_config_path: Path = None
 
     def __repr__(self) -> str:
         return (
@@ -41,8 +36,6 @@ class ModelTestDef(NamedTuple):
 class ModelTestCase:
     def __init__(self, model_def: ModelTestDef) -> None:
         self.__model_root = model_def.model_root
-        self.__rtol = model_def.rtol
-        self.__atol = model_def.atol
 
         session_options = onnxruntime.SessionOptions()
 
@@ -64,6 +57,39 @@ class ModelTestCase:
             providers=["QNNExecutionProvider"],
             provider_options=[{"backend_type": model_def.backend_type}],
         )
+
+        # Parse metric config.
+        metrics_config = self.__parse_yaml_config(model_def.metrics_config_path)
+        # Build a mapping from output name -> Metric instance.
+        self.__metrics_map = build_metrics_map(self.output_names, metrics_config)
+
+    def __parse_yaml_config(self, config_path):
+        """
+        Load a YAML file into a Python dictionary with path validation.
+        """
+        if config_path:
+            yaml_path = config_path
+        else:
+            yaml_path = self.__model_root / f"{self.__model_root.name}.yaml"
+
+        # Check if the file exists and file type
+        if not yaml_path.exists() or not yaml_path.is_file():
+            logging.info(f"YAML file not found: {yaml_path}. Use default metric to evalute accuracy.")
+            # Return empty dict to use default accuracy metric.
+            return dict()
+
+        # Load YAML
+        try:
+            with yaml_path.open("r", encoding="utf-8") as f:
+                config = yaml.safe_load(f)
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML format in {yaml_path}: {e}") from e
+
+        # Validate structure
+        if not isinstance(config, dict):
+            raise ValueError(f"Expected a YAML mapping (dict) at top level, got: {type(config).__name__}")
+
+        return config
 
     def load_inputs(self) -> list[dict[str, np.ndarray]]:
         return self.__tensors_from_files(self.input_paths)
@@ -127,11 +153,16 @@ class ModelTestCase:
                 if name not in actual:
                     logging.debug(f"Actual outputs: { {n: t.shape for n, t in actual.items()} }")
                     raise ValueError(f"Output {name} not found in actual.")
-                atol = self.__atol[name]
-                rtol = self.__rtol[name]
-                logging.info(f"Comparing actual outputs for {name} to reference.")
-                np.testing.assert_allclose(actual[name], expected[ds_idx][name], atol=atol, rtol=rtol)
-                logging.info(f"{name} is close enough (rtol: {rtol}; atol: {atol})")
+
+                if name in self.__metrics_map:
+                    # Test with non-default metric
+                    metric = self.__metrics_map[name]
+                    logging.info(f"Comparing actual outputs for {name} to reference.")
+                    val, passed = metric.evaluate(actual[name], expected[ds_idx][name])
+                    if passed:
+                        logging.info(f"{name} is close enough ({metric.name}: {val})")
+                    else:
+                        raise AssertionError(f"Accuracy check failed for output {name}. ({metric.name}: {val})")
 
 
 class ModelTestSuite:
@@ -139,68 +170,18 @@ class ModelTestSuite:
         self,
         suite_root: Path,
         backend_type: BackendT,
-        rtol: float | None,
-        atol: float | None,
         enable_context: bool,
         enable_cpu_fallback: bool,
     ) -> None:
         self.__suite_root = suite_root
         self.__backend_type: BackendT = backend_type
-        config = self.__parse_config()
         self.__enable_context = enable_context
         self.__enable_cpu_fallback = enable_cpu_fallback
-        self.__default_rtol = defaultdict(
-            lambda: rtol if rtol else cast(float, config.get("rtol_default", DEFAULT_RTOL))
-        )
-        self.__default_atol = defaultdict(
-            lambda: atol if atol else cast(float, config.get("atol_default", DEFAULT_ATOL))
-        )
-        self.__rtol_overrides = cast(dict[str, Mapping[str, float]], config.get("rtol_overrides", {}))
-        self.__atol_overrides = cast(dict[str, Mapping[str, float]], config.get("atol_overrides", {}))
-
-    def __parse_config(self) -> dict[str, float | dict[str, float]]:
-        def parse_overrides(
-            overrides: dict[str, numbers.Real | dict[str, numbers.Real]],
-            default_tolerance: float,
-        ) -> dict[str, dict[str, float]]:
-            parsed = {}
-            for model, tolerance in overrides.items():
-                if isinstance(tolerance, numbers.Real):
-                    # Why we bind tolerance to t: https://docs.astral.sh/ruff/rules/function-uses-loop-variable/
-                    parsed[model] = defaultdict(lambda t=float(tolerance): t)
-                elif isinstance(tolerance, dict):
-                    default_tol = tolerance.get("*", default_tolerance)
-                    assert isinstance(default_tol, numbers.Real)
-                    d = defaultdict(lambda t=default_tol: float(t))
-                    d.update({k: v for k, v in tolerance.items() if k != "*"})
-                    parsed[model] = d
-                else:
-                    raise ValueError(f"{model} has unexpected value type.")
-            return parsed
-
-        # I don't love that this file sits in the directory above the test suite, but
-        # that's that the ORT tests do so we're sticking with it.
-        config_path = self.__suite_root.parent / "onnx_backend_test_series_overrides.jsonc"
-        if not config_path.exists():
-            return {}
-        config = jsonc.load(config_path.open("rt"))
-
-        if "atol_overrides" in config:
-            config["atol_overrides"] = parse_overrides(config["atol_overrides"], config["atol_default"])
-        if "rtol_overrides" in config:
-            config["rtol_overrides"] = parse_overrides(config["rtol_overrides"], config["rtol_default"])
-
-        return config
 
     @property
     def tests(self) -> Generator[ModelTestDef, None, None]:
         for test_root in self.__suite_root.iterdir():
-            model_name = test_root.name
-            rtol = self.__rtol_overrides.get(model_name, self.__default_rtol)
-            atol = self.__atol_overrides.get(model_name, self.__default_atol)
-            yield ModelTestDef(
-                test_root, self.__backend_type, rtol, atol, self.__enable_context, self.__enable_cpu_fallback
-            )
+            yield ModelTestDef(test_root, self.__backend_type, self.__enable_context, self.__enable_cpu_fallback)
 
     def run(self) -> None:
         for test in self.tests:
@@ -216,8 +197,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--backend", default="htp", choices=get_args(BackendT), help="QNN backend to use.")
-    parser.add_argument("--rtol", type=float, help="Relative tolerance")
-    parser.add_argument("--atol", type=float, help="Absolute tolerance")
+    parser.add_argument(
+        "--metrics-config",
+        type=Path,
+        default=None,
+        help="Path to YAML file specifying metrics for outputs. Default metric is assert_allclose.",
+    )
     parser.add_argument("--enable-context", action="store_true", help="[HTP only] Create a context cache.")
     parser.add_argument("--enable-cpu-fallback", action="store_true", help="Allow execution to fall back to CPU.")
 
@@ -230,24 +215,19 @@ if __name__ == "__main__":
     initialize_logging("model_test.py")
 
     if args.model:
-        rtol = args.rtol if args.rtol else DEFAULT_RTOL
-        atol = args.atol if args.atol else DEFAULT_ATOL
         ModelTestCase(
             ModelTestDef(
                 args.model,
                 args.backend,
-                rtol=defaultdict(lambda: rtol),
-                atol=defaultdict(lambda: atol),
                 enable_context=args.enable_context,
                 enable_cpu_fallback=args.enable_cpu_fallback,
+                metrics_config_path=args.metrics_config,
             )
         ).run()
     elif args.suite:
         ModelTestSuite(
             args.suite,
             args.backend,
-            rtol=args.rtol,
-            atol=args.atol,
             enable_context=args.enable_context,
             enable_cpu_fallback=args.enable_cpu_fallback,
         ).run()
