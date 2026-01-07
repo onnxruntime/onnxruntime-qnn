@@ -368,6 +368,28 @@ class QnnParamWrapper {
     SetQnnTensorClientBuf(qnn_param_.tensorParam, param_data_);
   }
 
+
+  QnnParamWrapper(NodeIndex node_index,
+                  const std::string& node_name,
+                  const std::string& name,
+                  std::vector<uint32_t>&& shape,
+                  std::vector<float>&& param_data) : name_(name), shape_(std::move(shape)) {
+    param_data_.resize(param_data.size() * sizeof(float));
+    std::memcpy(param_data_.data(), const_cast<void*>(static_cast<const void*>(param_data.data())), param_data_.size());
+    qnn_param_.paramType = QNN_PARAMTYPE_TENSOR;
+    qnn_param_.name = name_.c_str();
+    std::stringstream ss;
+    ss << node_name << "_" << node_index << "_" << name;
+    tensor_name_ = ss.str();
+    qnn_param_.tensorParam = QNN_TENSOR_INIT;
+    SetQnnTensorType(qnn_param_.tensorParam, QNN_TENSOR_TYPE_STATIC);
+    SetQnnTensorName(qnn_param_.tensorParam, tensor_name_.c_str());
+    SetQnnTensorDataType(qnn_param_.tensorParam, QNN_DATATYPE_FLOAT_32);
+    SetQnnTensorDim(qnn_param_.tensorParam, shape_);
+    SetQnnTensorMemType(qnn_param_.tensorParam, QNN_TENSORMEMTYPE_RAW);
+    SetQnnTensorClientBuf(qnn_param_.tensorParam, param_data_);
+  }
+
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(QnnParamWrapper);
   QnnParamWrapper(QnnParamWrapper&& other) noexcept {
     std::swap(name_, other.name_);
