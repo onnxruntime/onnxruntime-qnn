@@ -151,3 +151,11 @@ qairt:
   url: https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/{version}/v{version}.zip
   content_root: qairt/{version}
   bindir: bin
+ort_prebuilt_windows_x64:
+  version: 1.23.2
+  url: https://github.com/microsoft/onnxruntime/releases/download/v{version}/onnxruntime-win-x64-{version}.zip
+  content_root: onnxruntime-win-x64-{version}
+ort_prebuilt_windows_arm64:
+  version: 1.23.2
+  url: https://github.com/microsoft/onnxruntime/releases/download/v{version}/onnxruntime-win-arm64-{version}.zip
+  content_root: onnxruntime-win-arm64-{version}

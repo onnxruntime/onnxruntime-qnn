@@ -120,6 +120,14 @@ function Get-PythonBinDir() {
     }
 }
 
+function Get-OrtX64PrebuiltRoot() {
+    Get-PackageContentDir ort_prebuilt_windows_x64
+}
+
+function Get-OrtARM64PrebuiltRoot() {
+    Get-PackageContentDir ort_prebuilt_windows_arm64
+}
+
 function Get-QairtRoot() {
     Get-PackageContentDir qairt
 }
