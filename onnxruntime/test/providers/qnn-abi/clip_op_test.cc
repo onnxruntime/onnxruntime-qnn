@@ -203,6 +203,7 @@ TEST_F(QnnABIHTPBackendTests, Clip_U8_Rank5) {
 
 // Test FP16 Clip with min (FP16)
 TEST_F(QnnABIHTPBackendTests, Clip_FP16) {
+  QNN_SKIP_TEST_IF_HTP_FP16_UNSUPPORTED();
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
