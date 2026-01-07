@@ -4,9 +4,9 @@
 name: Qualcomm Internal PR Workflow
 on:
   push:
-    branches: [main, rel-*]
+    branches: [main, rel-*, dev/hungjuiw/aisw-158513-test-infra]
   pull_request:
-    branches: [main, rel-*]
+    branches: [main, rel-*, dev/hungjuiw/aisw-158513-test-infra]
   merge_group:
     types: [checks_requested]
 

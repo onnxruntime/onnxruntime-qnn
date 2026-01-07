@@ -462,7 +462,11 @@ if(TARGET ONNX::onnx_proto AND NOT TARGET onnx_proto)
   message(STATUS "Aliasing ONNX::onnx_proto to onnx_proto")
   add_library(onnx_proto ALIAS ONNX::onnx_proto)
 endif()
-
+if(onnxruntime_USE_VCPKG)
+  find_package(Eigen3 CONFIG REQUIRED)
+else()
+  include(external/eigen.cmake)
+endif()
 
 if(WIN32)
   if(onnxruntime_USE_VCPKG)
@@ -473,7 +477,9 @@ if(WIN32)
   endif()
 endif()
 
-set(onnxruntime_EXTERNAL_LIBRARIES ${WIL_TARGET} nlohmann_json::nlohmann_json Boost::mp11 safeint_interface ${GSL_TARGET} ${ABSEIL_LIBS})
+set(onnxruntime_EXTERNAL_LIBRARIES ${WIL_TARGET} nlohmann_json::nlohmann_json Boost::mp11
+                                onnx safeint_interface flatbuffers::flatbuffers
+                                ${GSL_TARGET} ${ABSEIL_LIBS} date::date Eigen3::Eigen)
 
 # The source code of onnx_proto is generated, we must build this lib first before starting to compile the other source code that uses ONNX protobuf types.
 # The other libs do not have the problem. All the sources are already there. We can compile them in any order.

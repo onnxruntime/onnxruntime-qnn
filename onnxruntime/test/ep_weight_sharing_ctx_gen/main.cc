@@ -129,7 +129,7 @@ int real_main(int argc, char* argv[]) {
     }
 
     for (auto model_path : test_config.model_file_paths) {
-      std::cout << "Model file path: " << ToUTF8String(model_path) << std::endl;
+      std::cout << "Model file path: " << qnnctxgen::ToUTF8String(model_path) << std::endl;
     }
 
     // Generate context cache model files with QNN context binary files
@@ -140,16 +140,16 @@ int real_main(int argc, char* argv[]) {
 #ifdef USE_QNN
         so.AppendExecutionProvider("QNN", provider_options);
 #else
-        ORT_THROW("QNN is not supported in this build\n");
+        throw std::string("QNN is not supported in this build\n");
 #endif
       } else if (!provider_name_.empty()) {
-        ORT_THROW("This execution provider is not included in this tool.\n");
+        throw std::string("This execution provider is not included in this tool.\n");
       }
 
       size_t total_file_count = test_config.model_file_paths.size();
       for (size_t i = 0; i < total_file_count; ++i) {
         auto model_path = test_config.model_file_paths[i];
-        std::cout << "Generating context cache model for: " << ToUTF8String(model_path) << std::endl;
+        std::cout << "Generating context cache model for: " << qnnctxgen::ToUTF8String(model_path) << std::endl;
         if (i == total_file_count - 1) {
           so.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
         }

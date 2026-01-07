@@ -18,6 +18,9 @@ ExternalProject_Add(
         COMMAND ${CMAKE_COMMAND} -E chdir ${SOURCE_DIR} git sparse-checkout init --cone
         COMMAND ${CMAKE_COMMAND} -E chdir ${SOURCE_DIR} git sparse-checkout set capi cmake include onnxruntime tools samples
         COMMAND ${CMAKE_COMMAND} -E chdir ${SOURCE_DIR} git checkout ${GIT_TAG}
+    PATCH_COMMAND
+        ${CMAKE_COMMAND} -E echo "Applying patch to ensure ORT_API_VERSION is 23"
+        COMMAND ${CMAKE_COMMAND} -E chdir ${SOURCE_DIR} git apply ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_api_version.patch
     CONFIGURE_COMMAND ""
     BUILD_COMMAND ""
     INSTALL_COMMAND ""
@@ -25,4 +28,25 @@ ExternalProject_Add(
 
 set(ONNXRUNTIME_APPLICATION_SOURCE_ROOT "${CMAKE_BINARY_DIR}/_deps/ort_repo-src/onnxruntime")
 set(ONNXRUNTIME_APPLICATION_INCLUDE_ROOT "${CMAKE_BINARY_DIR}/_deps/ort_repo-src/include/onnxruntime")
+###########################################################################
+
+###########################################################################
+# Import prebuilt ONNX Runtime libraries/binaries
+###########################################################################
+
+message(STATUS "onnxruntime_ORT_HOME: ${onnxruntime_ORT_HOME}")
+
+# Create imported target for ONNX Runtime
+add_library(onnxruntime SHARED IMPORTED GLOBAL)
+# Add dependency on the external projects to ensure they're downloaded first
+add_dependencies(onnxruntime ort_repo)
+
+# Hack since cmake check the existence of INTERFACE_INCLUDE_DIRECTORIES
+file(MAKE_DIRECTORY ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT})
+# Set the import library (.lib file for linking)
+set_target_properties(onnxruntime PROPERTIES
+    IMPORTED_LOCATION ${onnxruntime_ORT_HOME}/lib/onnxruntime.dll
+    IMPORTED_IMPLIB ${onnxruntime_ORT_HOME}/lib/onnxruntime.lib
+    INTERFACE_INCLUDE_DIRECTORIES ${onnxruntime_ORT_HOME}/include
+)
 ###########################################################################

@@ -49,12 +49,12 @@ struct EPVerificationParams {
 
 // Verify equality of two output tensors.
 void VerifyOutput(const std::string& output_name,
-                  const Tensor& expected_tensor,
-                  const Tensor& tensor,
+                  const Ort::Value& expected_value,
+                  const Ort::Value& actual_value,
                   float fp32_abs_err);
 
-// Return number of nodes in the Graph and any subgraphs that are assigned to the specified execution provider
-int CountAssignedNodes(const Graph& current_graph, const std::string& ep_type);
+// // Return number of nodes in the Graph and any subgraphs that are assigned to the specified execution provider
+// int CountAssignedNodes(const Graph& current_graph, const std::string& ep_type);
 
 // Verify the assignment of nodes to the EP specified by `provider_type`.
 void VerifyEPNodeAssignment(const Graph& graph, const std::string& provider_type,
@@ -71,19 +71,19 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
                                std::unique_ptr<IExecutionProvider> execution_provider,
                                const NameMLValMap& feeds,
                                const EPVerificationParams& params = EPVerificationParams(),
-                               const std::function<void(SessionOptions&)>& session_options_updater = {},
+                               const std::function<void(Ort::SessionOptions&)>& session_options_updater = {},
                                bool verify_outputs = true);
 
 void RunWithEPABI(OrtSessionWrapper* ort_session,
                   const Ort::RunOptions& ort_ro,
-                  const NameMLValMap& feeds,
+                  const std::unordered_map<std::string, OrtValue>& feeds,
                   std::vector<OrtValue>& output_vals);
 
 void RunAndVerifyOutputsWithEPABI(ModelPathOrBytes model_path_or_bytes,
                                   Ort::SessionOptions& ort_so,
                                   const std::string& provider_type,
                                   std::string_view log_id,
-                                  const NameMLValMap& feeds,
+                                  const std::unordered_map<std::string, OrtValue>& feeds,
                                   const EPVerificationParams& params = EPVerificationParams(),
                                   bool verify_outputs = true);
 

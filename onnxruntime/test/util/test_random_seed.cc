@@ -5,7 +5,7 @@
 
 #include <chrono>
 
-#include "core/platform/env_var_utils.h"
+#include "test/util/env_var_utils.h"
 
 namespace onnxruntime {
 namespace test {

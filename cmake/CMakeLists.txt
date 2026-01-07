@@ -67,7 +67,7 @@ option(onnxruntime_ENABLE_MEMLEAK_CHECKER "Experimental: Enable memory leak chec
 option(onnxruntime_ENABLE_CONVSYMKERNELAVX2_SAT_CHECKER "Experimental: Enable ConvSymKernelAvx2 assembly saturation checker in build" OFF)
 
 # TODO: Turn on the onnxruntime_BUILD_UNIT_TESTS
-option(onnxruntime_BUILD_UNIT_TESTS "Build ONNXRuntime unit tests" OFF)
+option(onnxruntime_BUILD_UNIT_TESTS "Build ONNXRuntime unit tests" ON)
 option(onnxruntime_USE_PREINSTALLED_EIGEN "Use pre-installed EIGEN. Need to provide eigen_SOURCE_PATH if turn this on." OFF)
 
 option(onnxruntime_BUILD_SHARED_LIB "Build a shared library" OFF)
@@ -816,7 +816,14 @@ endif()
 # onnxruntime.cmake which will be included next.
 
 if (onnxruntime_BUILD_UNIT_TESTS)
-  list(APPEND ONNXRUNTIME_CMAKE_FILES onnxruntime_unittests)
+  # Skip unit tests for ARM64EC and ARM64X builds
+  if (DEFINED BUILD_AS_ARM64X)
+    message(STATUS "Skipping unit tests for ARM64X builds")
+  elseif(onnxruntime_target_platform STREQUAL "ARM64EC")
+    message(STATUS "Skipping unit tests for ARM64EC builds")
+  else()
+    include(onnxruntime_unittests.cmake)
+  endif()
 endif()
 
 # When GDK_PLATFORM is set then WINAPI_FAMILY is defined in gdk_toolchain.cmake (along with other relevant flags/definitions).

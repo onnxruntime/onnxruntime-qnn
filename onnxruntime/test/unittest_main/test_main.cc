@@ -25,9 +25,9 @@
 #include "gtest/gtest.h"
 
 #include "core/common/common.h"
-#include "core/platform/env_var_utils.h"
 #include "core/session/onnxruntime_cxx_api.h"
 #include "core/util/thread_utils.h"
+#include "test/util/env_var_utils.h"
 
 #if !defined(ORT_MINIMAL_BUILD) && defined(ORT_UNIT_TEST_ENABLE_DYNAMIC_PLUGIN_EP_USAGE)
 #define TEST_MAIN_ENABLE_DYNAMIC_PLUGIN_EP_USAGE
@@ -62,7 +62,7 @@ extern "C" void ortenv_setup() {
     OrtThreadingOptions tpo;
 
     OrtLoggingLevel log_level = ORT_LOGGING_LEVEL_WARNING;
-    if (auto log_level_override = onnxruntime::ParseEnvironmentVariable<int>(env_var_names::kLogLevel);
+    if (auto log_level_override = ParseEnvironmentVariable<int>(env_var_names::kLogLevel);
         log_level_override.has_value()) {
       *log_level_override = std::clamp(*log_level_override,
                                        static_cast<int>(ORT_LOGGING_LEVEL_VERBOSE),
@@ -76,7 +76,7 @@ extern "C" void ortenv_setup() {
 #if defined(TEST_MAIN_ENABLE_DYNAMIC_PLUGIN_EP_USAGE)
     {
       namespace dynamic_plugin_ep_infra = onnxruntime::test::dynamic_plugin_ep_infra;
-      if (auto dynamic_plugin_ep_config_json = onnxruntime::ParseEnvironmentVariable<std::string>(
+      if (auto dynamic_plugin_ep_config_json = ParseEnvironmentVariable<std::string>(
               env_var_names::kDynamicPluginEpConfigJson);
           dynamic_plugin_ep_config_json.has_value()) {
         std::cout << "Initializing dynamic plugin EP infrastructure with configuration:\n"

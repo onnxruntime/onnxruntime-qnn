@@ -125,6 +125,11 @@
       foreach(QNN_LIB_FILE ${QNN_LIB_FILES})
         add_custom_command(
           TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different "${QNN_LIB_FILE}" $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>
+          COMMENT "Copying QNN library to Build Folder: ${QNN_LIB_FILE}"
+        )
+        add_custom_command(
+          TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
           COMMAND ${CMAKE_COMMAND} -E copy_if_different "${QNN_LIB_FILE}" $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/onnxruntime_qnn
           COMMENT "Copying QNN library: ${QNN_LIB_FILE}"
         )

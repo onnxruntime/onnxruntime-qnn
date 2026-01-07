@@ -6,6 +6,7 @@
 #include <string.h>
 #include <iostream>
 #include <sstream>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 
@@ -110,6 +111,23 @@ static bool ParseSessionConfigs(const std::string& configs_string,
   return true;
 }
 
+#ifdef _WIN32
+std::string ToUTF8String(std::wstring_view s) {
+  if (s.size() >= static_cast<size_t>(std::numeric_limits<int>::max()))
+    throw std::string("length overflow");
+
+  const int src_len = static_cast<int>(s.size() + 1);
+  const int len = WideCharToMultiByte(CP_UTF8, 0, s.data(), src_len, nullptr, 0, nullptr, nullptr);
+  assert(len > 0);
+  std::string ret(static_cast<size_t>(len) - 1, '\0');
+#pragma warning(disable : 4189)
+  const int r = WideCharToMultiByte(CP_UTF8, 0, s.data(), src_len, (char*)ret.data(), len, nullptr, nullptr);
+  assert(len == r);
+#pragma warning(default : 4189)
+  return ret;
+}
+#endif  // #ifdef _WIN32
+
 /*static*/ bool CommandLineParser::ParseArguments(TestConfig& test_config, int argc, ORTCHAR_T* argv[]) {
   int ch;
   while ((ch = getopt(argc, argv, ORT_TSTR("e:o:u:i:C:vh"))) != -1) {
@@ -146,7 +164,7 @@ static bool ParseSessionConfigs(const std::string& configs_string,
           }
           auto pos = token.find("|");
           if (pos == std::string::npos || pos == 0 || pos == token.length()) {
-            ORT_THROW("Use a '|' to separate the key and value for the run-time option you are trying to use.");
+            throw std::string("Use a '|' to separate the key and value for the run-time option you are trying to use.");
           }
 
           std::string key(token.substr(0, pos));
@@ -162,7 +180,7 @@ static bool ParseSessionConfigs(const std::string& configs_string,
               std::copy(supported_htp_graph_final_opt_modes.begin(), supported_htp_graph_final_opt_modes.end(),
                         std::ostream_iterator<std::string>(str_stream, ","));
               std::string str = str_stream.str();
-              ORT_THROW("Wrong value for htp_graph_finalization_optimization_mode. select from: " + str);
+              throw std::string("Wrong value for htp_graph_finalization_optimization_mode. select from: " + str);
             }
           } else if (key == "enable_htp_fp16_precision" || key == "offload_graph_io_quantization" ||
                      key == "enable_htp_spill_fill_buffer") {
@@ -172,10 +190,10 @@ static bool ParseSessionConfigs(const std::string& configs_string,
               std::copy(supported_options.begin(), supported_options.end(),
                         std::ostream_iterator<std::string>(str_stream, ","));
               std::string str = str_stream.str();
-              ORT_THROW("Wrong value for " + key + ". select from: " + str);
+              throw std::string("Wrong value for " + key + ". select from: " + str);
             }
           } else {
-            ORT_THROW(
+            throw std::string(
                 "Wrong key type entered. Choose from options: ['backend_type', 'backend_path', 'vtcm_mb', "
                 "'htp_performance_mode', 'htp_graph_finalization_optimization_mode', 'soc_model', 'htp_arch', "
                 "'enable_htp_fp16_precision', 'offload_graph_io_quantization', 'enable_htp_spill_fill_buffer']");
