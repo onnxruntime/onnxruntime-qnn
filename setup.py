@@ -7,6 +7,7 @@
 import datetime
 import logging
 import platform
+import re
 import shlex
 import subprocess
 import sys
@@ -88,7 +89,12 @@ elif parse_arg_remove_boolean(sys.argv, "--use_azure"):
 elif parse_arg_remove_boolean(sys.argv, "--use_qnn"):
     is_qnn = True
     package_name = "onnxruntime-qnn"
-    qnn_version = parse_arg_remove_string(sys.argv, "--qnn_version=")
+    # This version may include a trailing timestamp. We just want x.y.z.
+    full_qnn_version = parse_arg_remove_string(sys.argv, "--qnn_version=")
+    if full_qnn_version is not None:
+        qnn_version_match = re.match(r"^\d+\.\d+.\d+", full_qnn_version)
+        if qnn_version_match is not None:
+            qnn_version = qnn_version_match.group(0)
 elif parse_arg_remove_boolean(sys.argv, "--use_webgpu"):
     package_name = "onnxruntime-webgpu"
 
@@ -297,8 +303,12 @@ try:
             else:
                 pass
 
+            # qnn links libc++ rather than libstdc++ for its x86_64 dependencies which we currently do not
+            # support for many_linux. This is not the case for other platforms.
+            qnn_run_audit = environ.get("AUDITWHEEL_ARCH", "x86_64") != "x86_64"
+
             _bdist_wheel.run(self)
-            if is_manylinux and not disable_auditwheel_repair and not is_openvino:
+            if is_manylinux and not disable_auditwheel_repair and not is_openvino and (not is_qnn or qnn_run_audit):
                 assert self.dist_dir is not None
                 file = glob(path.join(self.dist_dir, "*linux*.whl"))[0]
                 logger.info("repairing %s for manylinux1", file)
