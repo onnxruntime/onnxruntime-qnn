@@ -1218,10 +1218,13 @@ Status QnnBackendManager::SetupBackend(const logging::Logger& logger,
                                        bool need_load_system_lib,
                                        bool share_ep_contexts,
                                        bool enable_vtcm_backup_buffer_sharing,
+                                       bool enable_rpc_polling,
                                        std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map) {
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
   if (backend_setup_completed_) {
     LOGS(logger, VERBOSE) << "Backend setup already!";
+
+    enable_rpc_polling_ = enable_rpc_polling;
 
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
     if (vtcm_backup_buffer_sharing_enabled_) {
@@ -1518,10 +1521,15 @@ Status QnnBackendManager::SetRpcPowerConfigs(uint32_t htp_power_config_client_id
   }
 
   // Note: v68 does not support rpc polling mode
-  if (rpc_polling_time != 0) {
+  if (enable_rpc_polling_) {
     auto& rpc_polling_time_cfg = rpc_power_configs.emplace_back();
     rpc_polling_time_cfg.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_RPC_POLLING_TIME;
-    rpc_polling_time_cfg.rpcPollingTimeConfig = rpc_polling_time;
+    rpc_polling_time_cfg.rpcPollingTimeConfig = 9999;
+  }
+  else {
+    auto& rpc_polling_time_cfg = rpc_power_configs.emplace_back();
+    rpc_polling_time_cfg.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_RPC_POLLING_TIME;
+    rpc_polling_time_cfg.rpcPollingTimeConfig = 0;
   }
 
   if (rpc_power_configs.size() > 0) {

@@ -410,6 +410,21 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
   }
   LOGS_DEFAULT(VERBOSE) << "Profiling file path: " << profiling_file_path;
 
+  static const std::string ENABLE_RPC_POLLING = "enable_rpc_polling";
+  auto enable_rpc_polling_pos = provider_options_map.find(enable_RPC_POLLING);
+  if (enable_rpc_polling_pos != provider_options_map.end()) {
+    default_rpc_polling_time_ = 0;
+    if ("1" == enable_rpc_polling_pos->second) {
+      enable_rpc_polling_ = true;
+      default_rpc_polling_time_ = 9999;
+    } else if ("0" != enable_rpc_polling_pos->second) {
+      LOGS_DEFAULT(WARNING) << "Invalid value entered for " << ENABLE_RPC_POLLING
+                            << ": " << enable_rpc_polling_pos->second
+                            << ", only 1 or 0 are allowed. Setting to 0.";
+    }
+
+    LOGS_DEFAULT(VERBOSE) << "User specified enable_rpc_polling: " << enable_rpc_polling_;
+
   static const std::string RPC_CONTROL_LANTENCY = "rpc_control_latency";
   auto latency_pos = provider_options_map.find(RPC_CONTROL_LANTENCY);
   if (latency_pos != provider_options_map.end()) {
@@ -951,6 +966,7 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
                                                context_cache_enabled_ && enable_spill_fill_buffer_,
                                                share_ep_contexts_,
                                                enable_vtcm_backup_buffer_sharing_,
+                                               enable_rpc_polling_,
                                                context_bin_map);
 
   context_bin_map.clear();
@@ -1483,7 +1499,7 @@ Status QNNExecutionProvider::OnRunStart(const onnxruntime::RunOptions& run_optio
   }
 
   uint32_t rpc_polling_time = 0;
-  if (qnn::HtpPerformanceMode::kHtpBurst != htp_performance_mode) {
+  if (enable_rpc_polling_ && qnn::HtpPerformanceMode::kHtpBurst != htp_performance_mode) {
     rpc_polling_time = 9999;
   }
 
