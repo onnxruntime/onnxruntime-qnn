@@ -59,41 +59,12 @@ Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified, con
   dummy_zp_proto.set_name(graph.GenerateNodeArgName(node.Name() + "_dummy_zp"));
   dummy_zp_proto.set_data_type(dq_node_zp_proto->data_type());
 
-  switch (dummy_zp_proto.data_type()) {
-    case ONNX_NAMESPACE::TensorProto_DataType_INT8: {
-      int8_t zp = 0;
-      int8_t dummy_data = 1;
-      dummy_zp_proto.set_raw_data(&zp, 1);
-      dummy_data_proto.set_raw_data(&dummy_data, 1);
-      break;
-    }
-    case ONNX_NAMESPACE::TensorProto_DataType_UINT8: {
-      uint8_t zp = 0;
-      uint8_t dummy_data = 1;
-      dummy_zp_proto.set_raw_data(&zp, 1);
-      dummy_data_proto.set_raw_data(&dummy_data, 1);
-      break;
-    }
-    case ONNX_NAMESPACE::TensorProto_DataType_INT16: {
-      int16_t zp = 0;
-      int16_t dummy_data = 1;
-      dummy_zp_proto.set_raw_data(&zp, 2);
-      dummy_data_proto.set_raw_data(&dummy_data, 2);
-      break;
-    }
-    case ONNX_NAMESPACE::TensorProto_DataType_UINT16: {
-      uint16_t zp = 0;
-      uint16_t dummy_data = 1;
-      dummy_zp_proto.set_raw_data(&zp, 2);
-      dummy_data_proto.set_raw_data(&dummy_data, 2);
-      break;
-    }
-    default:
-      LOGS(logger, WARNING) << "Currently support existing DQ's zero point with INT8, UINT8, INT16, UINT16";
-      return Status::OK();
-  }
+  // Dummy scale initializer.
+  ONNX_NAMESPACE::TensorProto dummy_scale_proto;
+  dummy_scale_proto.set_name(graph.GenerateNodeArgName(node.Name() + "_dummy_scale"));
+  dummy_scale_proto.set_data_type(dq_node_scale_proto->data_type());
 
-  // Set dummy scale to the original value
+  // Get original float input
   const ONNX_NAMESPACE::TensorProto* const_node_data_proto = nullptr;
   graph.GetInitializedTensor(where_inputs[const_idx]->Name(), const_node_data_proto);
   Initializer initializer(graph, *const_node_data_proto, graph.ModelPath());
@@ -102,19 +73,56 @@ Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified, con
     LOGS(logger, WARNING) << "Currently only support existing DQ's scale with same datatype as scalar";
     return Status::OK();
   }
-
-  // Dummy scale initializer.
-  ONNX_NAMESPACE::TensorProto dummy_scale_proto;
-  dummy_scale_proto.set_name(graph.GenerateNodeArgName(node.Name() + "_dummy_scale"));
-  dummy_scale_proto.set_data_type(dq_node_scale_proto->data_type());
+  float where_const_scalar = 0;
   switch (initializer.data_type()) {
     case ONNX_NAMESPACE::TensorProto_DataType_FLOAT: {
-      float* where_const_scalar = initializer.data<float>();
-      dummy_scale_proto.set_raw_data(where_const_scalar, sizeof(float));
+      where_const_scalar = *initializer.data<float>();
       break;
     }
     default:
-      LOGS(logger, WARNING) << "Currently support scalar with FLOAT";
+      LOGS(logger, WARNING) << "Unsupported dtype of constant input";
+      return Status::OK();
+  }
+
+  switch (dummy_zp_proto.data_type()) {
+    case ONNX_NAMESPACE::TensorProto_DataType_INT8: {
+      int8_t zp = 0;
+      int8_t dummy_data = (where_const_scalar > 0)? 127:((where_const_scalar == 0)? zp:-128);
+      float scale = (where_const_scalar == 0)? 1 : (float)where_const_scalar / (dummy_data - zp);
+      dummy_zp_proto.set_raw_data(&zp, 1);
+      dummy_data_proto.set_raw_data(&dummy_data, 1);
+      dummy_scale_proto.set_raw_data(&scale, sizeof(float));
+      break;
+    }
+    case ONNX_NAMESPACE::TensorProto_DataType_UINT8: {
+      uint8_t zp = 127;
+      uint8_t dummy_data = (where_const_scalar > 0)? 255:((where_const_scalar == 0)? zp:0);
+      float scale = (where_const_scalar == 0)? 1 : (float)where_const_scalar / (dummy_data - zp);
+      dummy_zp_proto.set_raw_data(&zp, 1);
+      dummy_data_proto.set_raw_data(&dummy_data, 1);
+      dummy_scale_proto.set_raw_data(&scale, sizeof(float));
+      break;
+    }
+    case ONNX_NAMESPACE::TensorProto_DataType_INT16: {
+      int16_t zp = 0;
+      int16_t dummy_data = (where_const_scalar > 0)? 32767:((where_const_scalar == 0)? zp:-32768);
+      float scale = (where_const_scalar == 0)? 1 : (float)where_const_scalar / (dummy_data - zp);
+      dummy_zp_proto.set_raw_data(&zp, 2);
+      dummy_data_proto.set_raw_data(&dummy_data, 2);
+      dummy_scale_proto.set_raw_data(&scale, sizeof(float));
+      break;
+    }
+    case ONNX_NAMESPACE::TensorProto_DataType_UINT16: {
+      uint16_t zp = 32767;
+      uint16_t dummy_data = (where_const_scalar > 0)? 65535:((where_const_scalar == 0)? zp:0);
+      float scale = (where_const_scalar == 0)? 1 : (float)where_const_scalar / (dummy_data - zp);
+      dummy_zp_proto.set_raw_data(&zp, 2);
+      dummy_data_proto.set_raw_data(&dummy_data, 2);
+      dummy_scale_proto.set_raw_data(&scale, sizeof(float));
+      break;
+    }
+    default:
+      LOGS(logger, WARNING) << "Currently support existing DQ's zero point with INT8, UINT8, INT16, UINT16";
       return Status::OK();
   }
 
