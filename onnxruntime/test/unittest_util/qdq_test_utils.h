@@ -24,26 +24,22 @@ using GetQDQTestCaseFn = std::function<void(ModelTestBuilder& builder)>;
 
 using BuildTestModelFn = std::function<void(ModelPublicBuilder& builder)>;
 
-// template <typename T>
-// typename std::enable_if<IsTypeQuantLinearCompatible<T>::value, NodeArg*>::type
-// AddQDQNodePair(ModelTestBuilder& builder, NodeArg* q_input, float scale, T zp = T(), bool use_ms_domain = false) {
-//   auto* q_output = builder.MakeIntermediate();
-//   auto* dq_output = builder.MakeIntermediate();
-//   builder.AddQuantizeLinearNode<T>(q_input, scale, zp, q_output, use_ms_domain);
-//   builder.AddDequantizeLinearNode<T>(q_output, scale, zp, dq_output, use_ms_domain);
-//   return dq_output;
-// }
+template <typename T>
+std::string
+AddQDQNodePair(ModelPublicBuilder& builder, std::string qdq_name, std::string inp_name, float scale, T zp = T(), bool use_ms_domain = false) {
+  builder.AddQuantizeLinearNode<T>(qdq_name+"_q", inp_name.c_str(), scale, zp, (qdq_name+"_q_out").c_str(), use_ms_domain);
+  builder.AddDequantizeLinearNode<T>(qdq_name+"_dq", (qdq_name+"_q_out").c_str(), scale, zp, (qdq_name+"_dq_out").c_str(), use_ms_domain);
+  return qdq_name+"_dq_out";
+}
 
-// template <typename T>
-// typename std::enable_if<IsTypeQuantLinearCompatible<T>::value, NodeArg*>::type
-// AddQDQNodePairWithOutputAsGraphOutput(ModelTestBuilder& builder, NodeArg* q_input, float scale, T zp = T(),
-//                                       bool use_ms_domain = false) {
-//   auto* q_output = builder.MakeIntermediate();
-//   auto* dq_output = builder.MakeOutput();
-//   builder.AddQuantizeLinearNode<T>(q_input, scale, zp, q_output, use_ms_domain);
-//   builder.AddDequantizeLinearNode<T>(q_output, scale, zp, dq_output, use_ms_domain);
-//   return dq_output;
-// }
+template <typename T>
+std::string
+AddQDQNodePairWithOutputAsGraphOutput(ModelPublicBuilder& builder, std::string qdq_name, std::string inp_name, float scale, T zp = T(),
+                                      bool use_ms_domain = false) {
+  builder.AddQuantizeLinearNode<T>(qdq_name+"_q", inp_name.c_str(), scale, zp, (qdq_name+"_q_out").c_str(), use_ms_domain);
+  builder.AddDequantizeLinearNode<T>(qdq_name+"_dq", (qdq_name+"_q_out").c_str(), scale, zp, (qdq_name+"_dq_out").c_str(), use_ms_domain);
+  return qdq_name+"_dq_out";
+}
 
 // template <typename T>
 // typename std::enable_if<IsTypeQuantLinearCompatible<T>::value, NodeArg*>::type

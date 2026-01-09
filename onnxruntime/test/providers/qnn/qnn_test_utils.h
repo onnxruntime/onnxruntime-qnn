@@ -121,6 +121,10 @@ template <typename QuantType>
 using GetTestQDQModelFn = std::function<void(ModelTestBuilder& builder,
                                              std::vector<QuantParams<QuantType>>& output_qparams)>;
 
+template <typename QuantType>
+using BuildTestQDQModelFn = std::function<void(ModelPublicBuilder& builder,
+                                               std::vector<QuantParams<QuantType>>& output_qparams)>;
+
 // Computes quantization parameters for an array of floating-point values.
 template <typename QType = uint8_t>
 inline QuantParams<QType> GetDataQuantParams(gsl::span<const float> data, bool symmetric = false) {
@@ -540,17 +544,30 @@ void VerifyQDQOutput(const std::vector<OrtValue>& cpu_qdq_outputs,
   const std::string base_output_name = "output_";
   for (size_t i = 0; i < num_outputs; i++) {
     std::string debug_output_name = base_output_name + std::to_string(i);
-    auto& cpu_qdq_tensor = cpu_qdq_outputs[i].Get<Tensor>();
-    auto& qnn_qdq_tensor = qnn_qdq_outputs[i].Get<Tensor>();
+    // Create Ort::Value wrappers for the OrtValues
+    Ort::Value cpu_f32_value{const_cast<OrtValue*>(&cpu_f32_outputs[i])};
+    Ort::Value cpu_qdq_value{const_cast<OrtValue*>(&cpu_qdq_outputs[i])};
+    Ort::Value qnn_qdq_value{const_cast<OrtValue*>(&qnn_qdq_outputs[i])};
 
-    ASSERT_EQ(cpu_qdq_tensor.GetElementType(), output_types[i]);
-    ASSERT_EQ(qnn_qdq_tensor.GetElementType(), output_types[i]);
+    // Get tensor info
+    auto cpu_f32_info = cpu_f32_value.GetTensorTypeAndShapeInfo();
+    auto cpu_qdq_info = cpu_qdq_value.GetTensorTypeAndShapeInfo();
+    auto qnn_qdq_info = qnn_qdq_value.GetTensorTypeAndShapeInfo();
+
+    ASSERT_EQ(cpu_qdq_info.GetElementType(), output_types[i]);
+    ASSERT_EQ(qnn_qdq_info.GetElementType(), output_types[i]);
 
     if (output_types[i] == ONNX_NAMESPACE::TensorProto_DataType_FLOAT) {
       const size_t num_vals = output_vals[i].size();
-      gsl::span<const float> cpu_f32_vals = output_vals[i];
-      gsl::span<const float> cpu_qdq_vals = cpu_qdq_tensor.DataAsSpan<float>();
-      gsl::span<const float> qnn_qdq_vals = qnn_qdq_tensor.DataAsSpan<float>();
+      // Get data pointers using public API
+      const float* cpu_f32_data = cpu_f32_value.GetTensorData<float>();
+      const float* cpu_qdq_data = cpu_qdq_value.GetTensorData<float>();
+      const float* qnn_qdq_data = qnn_qdq_value.GetTensorData<float>();
+      // Create spans over the data
+      gsl::span<const float> cpu_f32_vals(cpu_f32_data, cpu_f32_info.GetElementCount());
+      gsl::span<const float> cpu_qdq_vals(cpu_qdq_data, cpu_qdq_info.GetElementCount());
+      gsl::span<const float> qnn_qdq_vals(qnn_qdq_data, qnn_qdq_info.GetElementCount());
+
       constexpr QuantType qmin = std::numeric_limits<QuantType>::min();
       constexpr QuantType qmax = std::numeric_limits<QuantType>::max();
       const float output_range = output_qparams[i].scale * static_cast<float>(qmax - qmin);
@@ -615,8 +632,16 @@ void VerifyQDQOutput(const std::vector<OrtValue>& cpu_qdq_outputs,
                   << "Tolerance used = " << tolerance.value * 100.0f << "%" << std::endl;
       }
     } else {
-      VerifyOutput(debug_output_name, cpu_f32_outputs[i].Get<Tensor>(), qnn_qdq_tensor, 1e-4f);
+      VerifyOutput(
+        debug_output_name,
+        cpu_f32_value,
+        qnn_qdq_value,
+        1e-4f);
     }
+    // Release the values to avoid releasing the underlying OrtValues
+    cpu_f32_value.release();
+    cpu_qdq_value.release();
+    qnn_qdq_value.release();
   }
 }
 
@@ -642,8 +667,8 @@ void VerifyQDQOutput(const std::vector<OrtValue>& cpu_qdq_outputs,
  *                         EP assignment.
  */
 template <typename QuantType>
-inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
-                                 const GetTestQDQModelFn<QuantType>& qdq_model_fn,
+inline void TestQDQModelAccuracy(const BuildTestModelFn& f32_model_fn,
+                                 const BuildTestQDQModelFn<QuantType>& qdq_model_fn,
                                  ProviderOptions qnn_options, int opset_version,
                                  ExpectedEPNodeAssignment expected_ep_assignment,
                                  QDQTolerance tolerance = QDQTolerance(),
@@ -654,24 +679,19 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
-  auto& logging_manager = DefaultLoggingManager();
-
   // Uncomment to dump LOGGER() output to stdout.
   // logging_manager.RemoveSink(logging::SinkType::EtwSink);
 
-  logging_manager.SetDefaultLoggerSeverity(log_severity);
+  // logging_manager.SetDefaultLoggerSeverity(log_severity);
 
   // Create float model and serialize it to a string.
-  onnxruntime::Model f32_model("f32_model", false, ModelMetaData(), PathString(),
-                               IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                               logging_manager.DefaultLogger());
-  ModelTestBuilder f32_helper(f32_model.MainGraph());
+  ModelPublicBuilder f32_helper;
   std::string f32_model_data;
   f32_model_fn(f32_helper);
-  f32_helper.SetGraphOutputs();
+  // f32_helper.SetGraphOutputs();
 
-  ASSERT_STATUS_OK(f32_model.MainGraph().Resolve());
-  f32_model.ToProto().SerializeToString(&f32_model_data);
+  // ASSERT_STATUS_OK(f32_model.MainGraph().Resolve());
+  f32_helper.model_.SerializeToString(&f32_model_data);
 
   // Uncomment to save f32 model to disk for debugging.
   // ASSERT_STATUS_OK(onnxruntime::Model::Save(f32_model, ToPathString("cmp_accuracy.f32.onnx")));
@@ -693,11 +713,15 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   output_types.resize(num_outputs);
 
   for (size_t i = 0; i < num_outputs; i++) {
-    auto& tensor = cpu_f32_outputs[i].Get<Tensor>();
-    int32_t elem_type = tensor.GetElementType();
+    // Convert OrtValue to Ort::Value for public API usage
+    Ort::Value tensor = Ort::Value{const_cast<OrtValue*>(&cpu_f32_outputs[i])};
+    auto tensor_type_info = tensor.GetTensorTypeAndShapeInfo();
+    auto elem_type = tensor_type_info.GetElementType();
 
-    if (elem_type == ONNX_NAMESPACE::TensorProto_DataType_FLOAT) {
-      output_vals[i] = tensor.DataAsSpan<float>();
+    if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+      const float* tensor_data = tensor.GetTensorData<float>();
+      size_t tensor_size = tensor_type_info.GetElementCount();
+      output_vals[i] = gsl::span<const float>(tensor_data, tensor_size);
       output_qparams[i] = GetDataQuantParams<QuantType>(output_vals[i]);
     }
 
@@ -705,16 +729,13 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   }
 
   // Create QDQ model and serialize it to a string.
-  onnxruntime::Model qdq_model("qdq_model", false, ModelMetaData(), PathString(),
-                               IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                               logging_manager.DefaultLogger());
-  ModelTestBuilder qdq_helper(qdq_model.MainGraph());
+  ModelPublicBuilder qdq_helper;
   std::string qdq_model_data;
   qdq_model_fn(qdq_helper, output_qparams);
-  qdq_helper.SetGraphOutputs();
+  // qdq_helper.SetGraphOutputs();
 
-  ASSERT_STATUS_OK(qdq_model.MainGraph().Resolve());
-  qdq_model.ToProto().SerializeToString(&qdq_model_data);
+  // ASSERT_STATUS_OK(qdq_model.MainGraph().Resolve());
+  qdq_helper.model_.SerializeToString(&qdq_model_data);
 
   // Uncomment to save QDQ model to disk for debugging.
   // ASSERT_STATUS_OK(onnxruntime::Model::Save(qdq_model, ToPathString("cmp_accuracy.qdq.onnx")));
@@ -724,23 +745,24 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   InferenceModelCPU(qdq_model_data, "qdq_model_logger", ExpectedEPNodeAssignment::All,
                     qdq_helper.feeds_, cpu_qdq_outputs);
 
-  TryEnableQNNSaver(qnn_options);
+  // TryEnableQNNSaver(qnn_options);
 
   // Run with QNN.
   std::vector<OrtValue> qnn_qdq_outputs;
   if (!qnn_ctx_model_path.empty()) {
     onnx::ModelProto model_proto;
-    onnxruntime::Model qnn_ctx_model;
-    ASSERT_STATUS_OK(qnn_ctx_model.Load(ToPathString(qnn_ctx_model_path), model_proto));
-    std::string qnn_ctx_model_data;
-    model_proto.SerializeToString(&qnn_ctx_model_data);
-    InferenceModel(qnn_ctx_model_data,
-                   "qnn_ctx_model_logger",
-                   qnn_options,
-                   expected_ep_assignment,
-                   qdq_helper.feeds_,
-                   qnn_qdq_outputs,
-                   session_option_pairs);
+    // TODO: Handle the qnn_ctx_model with public API
+    // onnxruntime::Model qnn_ctx_model;
+    // ASSERT_STATUS_OK(qnn_ctx_model.Load(ToPathString(qnn_ctx_model_path), model_proto));
+    // std::string qnn_ctx_model_data;
+    // model_proto.SerializeToString(&qnn_ctx_model_data);
+    // InferenceModel(qnn_ctx_model_data,
+    //                "qnn_ctx_model_logger",
+    //                qnn_options,
+    //                expected_ep_assignment,
+    //                qdq_helper.feeds_,
+    //                qnn_qdq_outputs,
+    //                session_option_pairs);
   } else {
     InferenceModel(qdq_model_data,
                    "qdq_model_logger",
@@ -1033,8 +1055,8 @@ inline void MakeTestInput(ModelPublicBuilder& builder,
 // See quantization tool: onnx_quantizer.py::quantize_bias_static()
 //
 // i.e., initial bias => manual quantization (int32) => DQ => final float bias
-NodeArg* MakeTestQDQBiasInput(ModelTestBuilder& builder, const TestInputDef<float>& bias_def, float bias_scale,
-                              bool use_contrib_qdq = false);
+std::string MakeTestQDQBiasInput(ModelPublicBuilder& builder, const std::string& name, const TestInputDef<float>& bias_def, float bias_scale,
+                                 bool use_contrib_qdq = false);
 
 /**
  * Returns a function that builds a model with a single operator with N inputs type InputType1 and M inputs

@@ -121,44 +121,62 @@ static BuildTestModelFn BuildBatchNormTestCase(const TestInputDef<FLOAT_TYPE>& i
   };
 }
 
-// template <typename InputQType, typename ScaleQType>
-// GetTestQDQModelFn<InputQType> BuildQDQBatchNormTestCase(const TestInputDef<float>& input_def,
-//                                                         const TestInputDef<float>& scale_def,
-//                                                         const TestInputDef<float>& bias_def) {
-//   ORT_ENFORCE(input_def.IsRawData());  // Need raw data to compute mean and variance inputs.
+template <typename InputQType, typename ScaleQType>
+BuildTestQDQModelFn<InputQType> BuildQDQBatchNormTestCase(const TestInputDef<float>& input_def,
+                                                          const TestInputDef<float>& scale_def,
+                                                          const TestInputDef<float>& bias_def) {
+  assert(input_def.IsRawData());  // Need raw data to compute mean and variance inputs.
 
-//   return [input_def, scale_def, bias_def](ModelTestBuilder& builder,
-//                                           std::vector<QuantParams<InputQType>>& output_qparams) {
-//     const auto& input_shape = input_def.GetShape();
-//     const auto& input_data = input_def.GetRawData();
-//     const int64_t num_channels = input_shape[1];
-//     bool symmetric = sizeof(InputQType) == sizeof(uint16_t);
-//     NodeArg* input = MakeTestInput(builder, input_def);
-//     QuantParams<InputQType> input_qparams = GetTestInputQuantParams<InputQType>(input_def, symmetric);
-//     NodeArg* input_qdq = AddQDQNodePair<InputQType>(builder, input, input_qparams.scale, input_qparams.zero_point);
+  return [input_def, scale_def, bias_def](ModelPublicBuilder& builder,
+                                          std::vector<QuantParams<InputQType>>& output_qparams) {
+    const auto& input_shape = input_def.GetShape();
+    const auto& input_data = input_def.GetRawData();
+    const int64_t num_channels = input_shape[1];
+    bool symmetric = sizeof(InputQType) == sizeof(uint16_t);
+    MakeTestInput(builder, "X", input_def);
+    QuantParams<InputQType> input_qparams = GetTestInputQuantParams<InputQType>(input_def, symmetric);
+    std::string x_dq_name = AddQDQNodePair<InputQType>(builder, "qdq1", "X", input_qparams.scale, input_qparams.zero_point);
 
-//     NodeArg* scale = MakeTestInput(builder, scale_def);
-//     QuantParams<ScaleQType> scale_qparams = GetTestInputQuantParams<ScaleQType>(scale_def);
-//     NodeArg* scale_qdq = AddQDQNodePair<ScaleQType>(builder, scale, scale_qparams.scale, scale_qparams.zero_point);
+    MakeTestInput(builder, "scale",  scale_def);
+    QuantParams<ScaleQType> scale_qparams = GetTestInputQuantParams<ScaleQType>(scale_def);
+    std::string scale_dq_name = AddQDQNodePair<ScaleQType>(builder, "qdq2", "scale", scale_qparams.scale, scale_qparams.zero_point);
 
-//     NodeArg* bias_qdq;
-//     // bias (as int32) => DQ =>
-//     bias_qdq = MakeTestQDQBiasInput(builder, bias_def, input_qparams.scale * scale_qparams.scale, true);
+    // bias (as int32) => DQ =>
+    std::string bias_dq_name = MakeTestQDQBiasInput(builder, "bias", bias_def, input_qparams.scale * scale_qparams.scale, true);
 
-//     std::vector<float> mean_vals(num_channels);
-//     std::vector<float> var_vals(num_channels);
-//     ComputeChannelMeanAndVar(input_data, input_shape, mean_vals, var_vals);
+    std::vector<float> mean_vals(num_channels);
+    std::vector<float> var_vals(num_channels);
+    ComputeChannelMeanAndVar(input_data, input_shape, mean_vals, var_vals);
 
-//     NodeArg* mean = builder.MakeInitializer<float>({num_channels}, mean_vals);
-//     NodeArg* var = builder.MakeInitializer<float>({num_channels}, var_vals);
+    builder.MakeInitializer<float>("mean", {num_channels}, mean_vals);
+    builder.MakeInitializer<float>("var", {num_channels}, var_vals);
 
-//     auto* batchnorm_output = builder.MakeIntermediate();
-//     builder.AddNode("BatchNormalization", {input_qdq, scale_qdq, bias_qdq, mean, var},
-//                     {batchnorm_output});
+    // Create attributes
+    std::vector<ONNX_NAMESPACE::AttributeProto*> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("epsilon", 1e-5f));
+    attributes.push_back(builder.MakeScalarAttribute("momentum", 0.9f));
+    attributes.push_back(builder.MakeScalarAttribute("training_mode", 0LL));
+    builder.AddNode(
+      "bn",
+      "BatchNormalization",
+      {x_dq_name.c_str(), scale_dq_name.c_str(), bias_dq_name.c_str(), "mean", "var"},
+      {"Y"},
+      "",
+      attributes
+    );
 
-//     AddQDQNodePairWithOutputAsGraphOutput<InputQType>(builder, batchnorm_output, output_qparams[0].scale, output_qparams[0].zero_point);
-//   };
-// }
+    builder.opset->set_domain(""); // Standard ONNX domain
+    builder.opset->set_version(18); // Specify the opset version, e.g., 18
+    builder.model_.set_ir_version(11);
+    builder.model_.set_producer_name("batchnorm-qdq-test");
+
+    std::string out_name = AddQDQNodePairWithOutputAsGraphOutput<InputQType>(
+      builder, "qdq_out", "Y",
+      output_qparams[0].scale, output_qparams[0].zero_point);
+
+    builder.MakeOutput(out_name);
+  };
+}
 
 /**
  * Runs an BatchNormalization model on the QNN HTP backend. Checks the graph node assignment, and that inference
@@ -167,24 +185,24 @@ static BuildTestModelFn BuildBatchNormTestCase(const TestInputDef<FLOAT_TYPE>& i
  * \param input_shape The input's shape.
  * \param expected_ep_assignment How many nodes are expected to be assigned to QNN (All, Some, or None).
  */
-// template <typename InputQType, typename ScaleQType>
-// static void RunBatchNormQDQTestOnCPU(const TestInputDef<float>& input_def,
-//                                      const TestInputDef<float>& scale_def,
-//                                      const TestInputDef<float>& bias_def,
-//                                      ExpectedEPNodeAssignment expected_ep_assignment,
-//                                      QDQTolerance tolerance = QDQTolerance()) {
-//   ProviderOptions provider_options;
-//   provider_options["backend_type"] = "cpu";
-//   provider_options["offload_graph_io_quantization"] = "0";
+template <typename InputQType, typename ScaleQType>
+static void RunBatchNormQDQTestOnCPU(const TestInputDef<float>& input_def,
+                                     const TestInputDef<float>& scale_def,
+                                     const TestInputDef<float>& bias_def,
+                                     ExpectedEPNodeAssignment expected_ep_assignment,
+                                     QDQTolerance tolerance = QDQTolerance()) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
 
-//   // Runs model with DQ-> InstanceNorm -> Q and compares the outputs of the CPU and QNN EPs.
-//   TestQDQModelAccuracy(BuildBatchNormTestCase(input_def, scale_def, bias_def),
-//                        BuildQDQBatchNormTestCase<InputQType, ScaleQType>(input_def, scale_def, bias_def),
-//                        provider_options,
-//                        21,
-//                        expected_ep_assignment,
-//                        tolerance);
-// }
+  // Runs model with DQ-> InstanceNorm -> Q and compares the outputs of the CPU and QNN EPs.
+  TestQDQModelAccuracy(BuildBatchNormTestCase(input_def, scale_def, bias_def),
+                       BuildQDQBatchNormTestCase<InputQType, ScaleQType>(input_def, scale_def, bias_def),
+                       provider_options,
+                       21,
+                       expected_ep_assignment,
+                       tolerance);
+}
 
 TEST_F(QnnCPUBackendTests, BatchNorm2D_fp32) {
   constexpr int64_t num_channels = 2;
@@ -205,18 +223,18 @@ TEST_F(QnnCPUBackendTests, BatchNorm2D_fp32) {
       ExpectedEPNodeAssignment::All);
 }
 
-// TEST_F(QnnCPUBackendTests, BatchNorm2D_int8) {
-//   constexpr int64_t num_channels = 2;
-//   std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
-//                                    -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
+TEST_F(QnnCPUBackendTests, BatchNorm2D_int8) {
+  constexpr int64_t num_channels = 2;
+  std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
+                                   -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
 
-//   RunBatchNormQDQTestOnCPU<uint8_t, uint8_t>(
-//       TestInputDef<float>({2, num_channels, 2, 2}, false, input_data),  // Input data
-//       TestInputDef<float>({num_channels}, true, {1.0f, 2.0f}),          // Scale initializer
-//       TestInputDef<float>({num_channels}, true, {1.1f, 2.1f}),          // Bias initializer
-//       ExpectedEPNodeAssignment::All,
-//       QDQTolerance());
-// }
+  RunBatchNormQDQTestOnCPU<uint8_t, uint8_t>(
+      TestInputDef<float>({2, num_channels, 2, 2}, false, input_data),  // Input data
+      TestInputDef<float>({num_channels}, true, {1.0f, 2.0f}),          // Scale initializer
+      TestInputDef<float>({num_channels}, true, {1.1f, 2.1f}),          // Bias initializer
+      ExpectedEPNodeAssignment::All,
+      QDQTolerance());
+}
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 

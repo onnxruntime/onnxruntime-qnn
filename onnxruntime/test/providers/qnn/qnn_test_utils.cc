@@ -383,39 +383,44 @@ void InferenceModel(const std::string& model_data,
   RunWithEPABI(&ort_session, ort_run_options, feeds, output_vals);
 }
 
-// NodeArg* MakeTestQDQBiasInput(ModelTestBuilder& builder, const TestInputDef<float>& bias_def, float bias_scale,
-//                               bool use_contrib_qdq) {
-//   NodeArg* bias_int32 = nullptr;
+std::string MakeTestQDQBiasInput(ModelPublicBuilder& builder,
+                                 const std::string& name,
+                                 const TestInputDef<float>& bias_def,
+                                 float bias_scale,
+                                 bool use_contrib_qdq) {
+  // Bias must be int32 to be detected as a QDQ node unit.
+  // We must quantize the data.
+  if (bias_def.IsRandomData()) {
+    // Create random initializer def that is quantized to int32
+    const auto& rand_info = bias_def.GetRandomDataInfo();
+    TestInputDef<int32_t> bias_int32_def(bias_def.GetShape(), bias_def.IsInitializer(),
+                                         static_cast<int32_t>(rand_info.min / bias_scale),
+                                         static_cast<int32_t>(rand_info.max / bias_scale));
+    MakeTestInput(builder, name, bias_int32_def);
+  } else {
+    assert(bias_def.IsRawData());
+    // Create raw data initializer def that is quantized to int32
+    const auto& bias_f32_raw = bias_def.GetRawData();
+    const size_t num_elems = bias_f32_raw.size();
 
-//   // Bias must be int32 to be detected as a QDQ node unit.
-//   // We must quantize the data.
-//   if (bias_def.IsRandomData()) {
-//     // Create random initializer def that is quantized to int32
-//     const auto& rand_info = bias_def.GetRandomDataInfo();
-//     TestInputDef<int32_t> bias_int32_def(bias_def.GetShape(), bias_def.IsInitializer(),
-//                                          static_cast<int32_t>(rand_info.min / bias_scale),
-//                                          static_cast<int32_t>(rand_info.max / bias_scale));
-//     bias_int32 = MakeTestInput(builder, bias_int32_def);
-//   } else {
-//     assert(bias_def.IsRawData());
-//     // Create raw data initializer def that is quantized to int32
-//     const auto& bias_f32_raw = bias_def.GetRawData();
-//     const size_t num_elems = bias_f32_raw.size();
+    std::vector<int32_t> bias_int32_raw(num_elems);
+    for (size_t i = 0; i < num_elems; i++) {
+      bias_int32_raw[i] = static_cast<int32_t>(bias_f32_raw[i] / bias_scale);
+    }
 
-//     std::vector<int32_t> bias_int32_raw(num_elems);
-//     for (size_t i = 0; i < num_elems; i++) {
-//       bias_int32_raw[i] = static_cast<int32_t>(bias_f32_raw[i] / bias_scale);
-//     }
+    TestInputDef<int32_t> bias_int32_def(bias_def.GetShape(), bias_def.IsInitializer(), bias_int32_raw);
+    MakeTestInput(builder, name, bias_int32_def);
+  }
 
-//     TestInputDef<int32_t> bias_int32_def(bias_def.GetShape(), bias_def.IsInitializer(), bias_int32_raw);
-//     bias_int32 = MakeTestInput(builder, bias_int32_def);
-//   }
-
-//   auto* bias = builder.MakeIntermediate();
-//   builder.AddDequantizeLinearNode<int32_t>(bias_int32, bias_scale, 0, bias, use_contrib_qdq);
-
-//   return bias;
-// }
+  builder.AddDequantizeLinearNode<int32_t>(
+      name + "_dq",
+      name.c_str(),
+      bias_scale,
+      0,
+      (name + "_dq_out").c_str(),
+      use_contrib_qdq);
+  return name + "_dq_out";
+}
 
 // Testing helper function that calls QNN EP's GetCapability() function with a mock graph to check
 // if the HTP backend is available.
