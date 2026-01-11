@@ -83,7 +83,7 @@ Status ConcatOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
       ORT_RETURN_IF_ERROR(utils::GetQnnDataType(false, type_proto, qnn_data_type));
 
       QnnTensorWrapper input_tensorwrapper(input_name, QNN_TENSOR_TYPE_STATIC, qnn_data_type, QnnQuantParamsWrapper(),
-                                          std::move(input_shape), std::move(unpacked_tensor));
+                                           std::move(input_shape), std::move(unpacked_tensor));
       ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
       input_names.push_back(input_name);
     } else {
@@ -123,10 +123,10 @@ Status ConcatOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 }
 
 Status ConcatOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                   const NodeUnit& node_unit,
-                                                   std::vector<std::string>&& input_names,
-                                                   const logging::Logger& logger,
-                                                   bool do_op_validation) const {
+                                                    const NodeUnit& node_unit,
+                                                    std::vector<std::string>&& input_names,
+                                                    const logging::Logger& logger,
+                                                    bool do_op_validation) const {
   if (input_names.size() < 1) {
     return Status::OK();
   }
