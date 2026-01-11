@@ -115,7 +115,7 @@ Status ConcatOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   if (input_names.empty()) {
     LOGS(logger, WARNING) << "All inputs to Concat have 0 dimensions. Using the first input.";
     const auto& input = inputs[0];
-    const auto& input_name = input.node_arg.Name();
+    // Process the first input even though it has 0 dimensions
     ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, input, logger, input_names));
   }
 
