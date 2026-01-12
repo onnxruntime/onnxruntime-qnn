@@ -74,11 +74,11 @@ class RandomValueGenerator {
   // Random values generated are in the range [min, max).
   template <typename TFloat16>
   typename std::enable_if<
-      std::is_same_v<TFloat16, MLFloat16> || std::is_same_v<TFloat16, BFloat16>,
+      std::is_same_v<TFloat16, Ort::Float16_t> || std::is_same_v<TFloat16, Ort::BFloat16_t>,
       std::vector<TFloat16>>::type
-  Uniform(gsl::span<const int64_t> dims, float min, float max) {
+  Uniform(gsl::span<const int64_t> dims, TFloat16 min, TFloat16 max) {
     std::vector<TFloat16> val(SizeFromDims(dims));
-    std::uniform_real_distribution<float> distribution(min, max);
+    std::uniform_real_distribution<float> distribution(static_cast<float>(min), static_cast<float>(max));
     for (size_t i = 0; i < val.size(); ++i) {
       val[i] = TFloat16(static_cast<float>(distribution(generator_)));
     }
@@ -859,11 +859,11 @@ class ModelTestBuilder {
   //   return &graph_.GetOrCreateNodeArg(name, &type_proto);
   // }
 
-  template <typename T>
-  NodeArg* MakeInput(const std::vector<int64_t>& shape, T min, T max,
-                     AllocatorPtr allocator = nullptr) {
-    return MakeInput<T>(shape, rand_gen_.Uniform<T>(shape, min, max), allocator);
-  }
+  // template <typename T>
+  // NodeArg* MakeInput(const std::vector<int64_t>& shape, T min, T max,
+  //                    AllocatorPtr allocator = nullptr) {
+  //   return MakeInput<T>(shape, rand_gen_.Uniform<T>(shape, min, max), allocator);
+  // }
 
   // NodeArg* MakeInputBool(const std::vector<int64_t>& shape,
   //                        AllocatorPtr allocator = nullptr) {

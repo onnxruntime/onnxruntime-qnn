@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "onnxruntime_cxx_api.h"
 #if !defined(ORT_MINIMAL_BUILD)
 #include <cmath>
 #include <filesystem>
@@ -313,7 +314,7 @@ struct TestInputDef {
 };
 
 // Convert a float input definition to a float16 input definition.
-TestInputDef<MLFloat16> ConvertToFP16InputDef(const TestInputDef<float>& input_def);
+TestInputDef<Ort::Float16_t> ConvertToFP16InputDef(const TestInputDef<float>& input_def);
 
 template <typename QType>
 inline QuantParams<QType> GetTestInputQuantParams(const TestInputDef<float>& input_def, bool symmetric = false) {
@@ -803,17 +804,24 @@ inline void VerifyFp16Output(const std::vector<OrtValue>& cpu_f16_outputs,
   const std::string base_output_name = "output_";
   for (size_t i = 0; i < num_outputs; i++) {
     std::string debug_output_name = base_output_name + std::to_string(i);
-    auto& cpu_f16_tensor = cpu_f16_outputs[i].Get<Tensor>();
-    auto& qnn_f16_tensor = qnn_f16_outputs[i].Get<Tensor>();
+    // Create Ort::Value wrappers for the OrtValues
+    Ort::Value cpu_f16_value{const_cast<OrtValue*>(&cpu_f16_outputs[i])};
+    Ort::Value qnn_f16_value{const_cast<OrtValue*>(&qnn_f16_outputs[i])};
 
-    ASSERT_EQ(cpu_f16_tensor.GetElementType(), ONNX_NAMESPACE::TensorProto_DataType_FLOAT16);
-    ASSERT_EQ(qnn_f16_tensor.GetElementType(), ONNX_NAMESPACE::TensorProto_DataType_FLOAT16);
+    auto cpu_f16_info = cpu_f16_value.GetTensorTypeAndShapeInfo();
+    auto qnn_f16_info = qnn_f16_value.GetTensorTypeAndShapeInfo();
+
+    ASSERT_EQ(cpu_f16_info.GetElementType(), ONNX_NAMESPACE::TensorProto_DataType_FLOAT16);
+    ASSERT_EQ(qnn_f16_info.GetElementType(), ONNX_NAMESPACE::TensorProto_DataType_FLOAT16);
     ASSERT_EQ(output_types[i], ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
 
     const size_t num_vals = output_vals[i].size();
     gsl::span<const float> cpu_f32_vals = output_vals[i];
-    gsl::span<const MLFloat16> cpu_f16_vals = cpu_f16_tensor.DataAsSpan<MLFloat16>();
-    gsl::span<const MLFloat16> qnn_f16_vals = qnn_f16_tensor.DataAsSpan<MLFloat16>();
+    const MLFloat16* cpu_f16_data = cpu_f16_value.GetTensorData<MLFloat16>();
+    const MLFloat16* qnn_f16_data = qnn_f16_value.GetTensorData<MLFloat16>();
+    // Create spans over the data
+    gsl::span<const MLFloat16> cpu_f16_vals(cpu_f16_data, cpu_f16_info.GetElementCount());
+    gsl::span<const MLFloat16> qnn_f16_vals(qnn_f16_data, qnn_f16_info.GetElementCount());
 
     ASSERT_EQ(num_vals, cpu_f16_vals.size());
     ASSERT_EQ(num_vals, qnn_f16_vals.size());
@@ -885,8 +893,8 @@ inline void VerifyFp16Output(const std::vector<OrtValue>& cpu_f16_outputs,
  *                  on CPU EP. This tolerance is a percentage of the output range.
  * \param log_severity The logger's severity setting.
  */
-inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
-                                  const GetTestModelFn& f16_model_fn,
+inline void TestFp16ModelAccuracy(const BuildTestModelFn& f32_model_fn,
+                                  const BuildTestModelFn& f16_model_fn,
                                   ProviderOptions qnn_options,
                                   int opset_version,
                                   ExpectedEPNodeAssignment expected_ep_assignment,
@@ -897,19 +905,16 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
-  auto& logging_manager = DefaultLoggingManager();
-  logging_manager.SetDefaultLoggerSeverity(log_severity);
+  // auto& logging_manager = DefaultLoggingManager();
+  // logging_manager.SetDefaultLoggerSeverity(log_severity);
 
   // Create float model and serialize it to a string.
-  onnxruntime::Model f32_model("f32_model", false, ModelMetaData(), PathString(),
-                               IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                               logging_manager.DefaultLogger());
-  ModelTestBuilder f32_helper(f32_model.MainGraph());
+  ModelPublicBuilder f32_helper;
   std::string f32_model_data;
   f32_model_fn(f32_helper);
-  f32_helper.SetGraphOutputs();
-  ASSERT_STATUS_OK(f32_model.MainGraph().Resolve());
-  f32_model.ToProto().SerializeToString(&f32_model_data);
+  // f32_helper.SetGraphOutputs();
+  // ASSERT_STATUS_OK(f32_model.MainGraph().Resolve());
+  f32_helper.model_.SerializeToString(&f32_model_data);
 
   // Run f32 model on CPU EP and collect outputs.
   std::vector<OrtValue> cpu_f32_outputs;
@@ -926,49 +931,51 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   output_types.resize(num_outputs);
 
   for (size_t i = 0; i < num_outputs; i++) {
-    auto& tensor = cpu_f32_outputs[i].Get<Tensor>();
-    int32_t elem_type = tensor.GetElementType();
+    // Convert OrtValue to Ort::Value for public API usage
+    Ort::Value tensor = Ort::Value{const_cast<OrtValue*>(&cpu_f32_outputs[i])};
+    auto tensor_type_info = tensor.GetTensorTypeAndShapeInfo();
+    auto elem_type = tensor_type_info.GetElementType();
 
-    if (elem_type == ONNX_NAMESPACE::TensorProto_DataType_FLOAT) {
-      output_vals[i] = tensor.DataAsSpan<float>();
+    if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+      const float* tensor_data = tensor.GetTensorData<float>();
+      size_t tensor_size = tensor_type_info.GetElementCount();
+      output_vals[i] = gsl::span<const float>(tensor_data, tensor_size);
     }
 
     output_types[i] = elem_type;
   }
 
   // Create FP16 model and serialize it to a string.
-  onnxruntime::Model f16_model("fp16_model", false, ModelMetaData(), PathString(),
-                               IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                               logging_manager.DefaultLogger());
-  ModelTestBuilder f16_helper(f16_model.MainGraph());
+  ModelPublicBuilder f16_helper;
   std::string f16_model_data;
   f16_model_fn(f16_helper);
-  f16_helper.SetGraphOutputs();
-  ASSERT_STATUS_OK(f16_model.MainGraph().Resolve());
-  f16_model.ToProto().SerializeToString(&f16_model_data);
+  // f16_helper.SetGraphOutputs();
+  // ASSERT_STATUS_OK(f16_model.MainGraph().Resolve());
+  f16_helper.model_.SerializeToString(&f16_model_data);
 
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<OrtValue> cpu_f16_outputs;
   InferenceModelCPU(f16_model_data, "fp16_model_logger", ExpectedEPNodeAssignment::All,
                     f16_helper.feeds_, cpu_f16_outputs);
 
-  TryEnableQNNSaver(qnn_options);
+  // TryEnableQNNSaver(qnn_options);
 
   // Run with QNN.
   std::vector<OrtValue> qnn_f16_outputs;
   if (!qnn_ctx_model_path.empty()) {
     onnx::ModelProto model_proto;
-    onnxruntime::Model qnn_ctx_model;
-    ASSERT_STATUS_OK(qnn_ctx_model.Load(ToPathString(qnn_ctx_model_path), model_proto));
-    std::string qnn_ctx_model_data;
-    model_proto.SerializeToString(&qnn_ctx_model_data);
-    InferenceModel(qnn_ctx_model_data,
-                   "qnn_ctx_model_logger",
-                   qnn_options,
-                   expected_ep_assignment,
-                   f16_helper.feeds_,
-                   qnn_f16_outputs,
-                   session_option_pairs);
+    // TODO: Handle the qnn_ctx_model with public API
+    // onnxruntime::Model qnn_ctx_model;
+    // ASSERT_STATUS_OK(qnn_ctx_model.Load(ToPathString(qnn_ctx_model_path), model_proto));
+    // std::string qnn_ctx_model_data;
+    // model_proto.SerializeToString(&qnn_ctx_model_data);
+    // InferenceModel(qnn_ctx_model_data,
+    //                "qnn_ctx_model_logger",
+    //                qnn_options,
+    //                expected_ep_assignment,
+    //                f16_helper.feeds_,
+    //                qnn_f16_outputs,
+    //                session_option_pairs);
   } else {
     InferenceModel(f16_model_data,
                    "fp16_model_logger",

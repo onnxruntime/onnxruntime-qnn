@@ -74,19 +74,21 @@ std::vector<float> GetSequentialFloatData(const std::vector<int64_t>& shape, flo
   return data;
 }
 
-TestInputDef<MLFloat16> ConvertToFP16InputDef(const TestInputDef<float>& input_def) {
+TestInputDef<Ort::Float16_t> ConvertToFP16InputDef(const TestInputDef<float>& input_def) {
   if (input_def.IsRawData()) {
-    std::vector<MLFloat16> input_data_fp16;
+    std::vector<Ort::Float16_t> input_data_fp16;
     input_data_fp16.reserve(input_def.GetRawData().size());
     for (float f32_val : input_def.GetRawData()) {
-      input_data_fp16.push_back(MLFloat16(f32_val));
+      input_data_fp16.push_back(Ort::Float16_t(f32_val));
     }
 
-    return TestInputDef<MLFloat16>(input_def.GetShape(), input_def.IsInitializer(), input_data_fp16);
+    return TestInputDef<Ort::Float16_t>(input_def.GetShape(), input_def.IsInitializer(), input_data_fp16);
   } else {
     auto rand_data = input_def.GetRandomDataInfo();
-    return TestInputDef<MLFloat16>(input_def.GetShape(), input_def.IsInitializer(),
-                                   MLFloat16(rand_data.min), MLFloat16(rand_data.max));
+    return TestInputDef<Ort::Float16_t>(input_def.GetShape(),
+                               input_def.IsInitializer(),
+                                     Ort::Float16_t(rand_data.min),
+                                     Ort::Float16_t(rand_data.max));
   }
 }
 
