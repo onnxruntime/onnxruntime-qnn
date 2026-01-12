@@ -436,7 +436,7 @@ inline Status AddQnnScalar(QnnModelWrapper& qnn_model_wrapper,
   return Status::OK();
 }
 
-// Guard to ensure FP32 restoration after BF16 conversion for validation
+// RAII guard to ensure FP32 restoration after BF16 conversion for validation
 class BF16ConversionGuard {
  public:
   BF16ConversionGuard(QnnModelWrapper* wrapper,
@@ -448,7 +448,12 @@ class BF16ConversionGuard {
 
   ~BF16ConversionGuard() {
     if (wrapper_) {
-      wrapper_->RestoreFP32AfterValidation(input_names_, output_names_);
+      try {
+        wrapper_->RestoreFP32AfterValidation(input_names_, output_names_);
+      } catch (...) {
+        // Destructors must not throw exceptions
+        // Silently catch any exceptions during cleanup
+      }
     }
   }
 
@@ -456,10 +461,14 @@ class BF16ConversionGuard {
   BF16ConversionGuard(const BF16ConversionGuard&) = delete;
   BF16ConversionGuard& operator=(const BF16ConversionGuard&) = delete;
 
+  // Prevent moving to avoid double-cleanup issues
+  BF16ConversionGuard(BF16ConversionGuard&&) = delete;
+  BF16ConversionGuard& operator=(BF16ConversionGuard&&) = delete;
+
  private:
   QnnModelWrapper* wrapper_;
-  const std::vector<std::string>& input_names_;
-  const std::vector<std::string>& output_names_;
+  std::vector<std::string> input_names_;  // Store by value, not reference
+  std::vector<std::string> output_names_; // Store by value, not reference
 };
 
 }  // namespace qnn
