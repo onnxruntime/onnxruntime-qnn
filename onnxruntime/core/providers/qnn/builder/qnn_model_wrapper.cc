@@ -402,7 +402,9 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
     // Apply BF16 conversion for validation if enabled
     std::vector<std::string> validation_input_names;
     std::vector<std::string> validation_output_names;
-    bool needs_bf16_restore = false;
+
+    // Use RAII guard for BF16 conversion to ensure cleanup
+    std::unique_ptr<BF16ConversionGuard> bf16_guard;
 
     if (IsBF16ConversionEnabled()) {
       LOGS(logger_, VERBOSE) << "[BF16] Validation with BF16 conversion enabled";
@@ -410,7 +412,8 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
         LOGS(logger_, ERROR) << "[BF16] ApplyBF16ConversionForValidation failed for node: " << qnn_node_name;
         return false;
       }
-      needs_bf16_restore = true;
+      // Create the guard after successful conversion
+      bf16_guard = std::make_unique<BF16ConversionGuard>(this, input_names, output_names);
     } else {
       validation_input_names = input_names;
       validation_output_names = output_names;
@@ -420,9 +423,6 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
     if (!CreateQnnInputOutputTensors(qnn_node_name, validation_input_names, input_tensors, do_op_validation) ||
         !CreateQnnInputOutputTensors(qnn_node_name, validation_output_names, output_tensors, do_op_validation) ||
         !CreateQnnParamTensors(qnn_node_name, param_tensor_names, params, do_op_validation)) {
-      if (needs_bf16_restore) {
-        RestoreFP32AfterValidation(input_names, output_names);
-      }
       return false;
     }
 
@@ -438,11 +438,6 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
 
     std::string error_msg;
     bool rt = op_config_wrapper.QnnGraphOpValidation(qnn_interface_, backend_handle_, error_msg);
-
-    // Restore FP32 if BF16 conversion was applied
-    if (needs_bf16_restore) {
-      RestoreFP32AfterValidation(input_names, output_names);
-    }
 
     if (!rt) {
       // TODO(adrianlizarraga): Return a Status with the error message so that aggregated logs show a more
