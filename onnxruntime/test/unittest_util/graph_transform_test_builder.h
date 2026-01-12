@@ -268,12 +268,12 @@ class ModelPublicBuilder {
       type_proto->mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(dim);
     }
 
-    OrtValue* input_value;
+    Ort::Value input_value;
     CreateMLValue<T>(nullptr,
                      shape,
                      data,
-                     &input_value);
-    feeds_.emplace(name, *input_value);
+                     input_value);
+    feeds_.emplace(name, std::move(input_value));
 
     return inp;
   }
@@ -819,7 +819,7 @@ class ModelPublicBuilder {
   ONNX_NAMESPACE::ModelProto model_;
   ONNX_NAMESPACE::GraphProto* graph_ = model_.mutable_graph();
   ONNX_NAMESPACE::OperatorSetIdProto* opset = model_.add_opset_import();
-  std::unordered_map<std::string, OrtValue> feeds_;
+  std::unordered_map<std::string, Ort::Value> feeds_;
   // std::vector<std::string> output_names_;
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
 };

@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include "onnxruntime_c_api.h"
 #include "test/unittest_util/graph_transform_test_builder.h"
 #if !defined(ORT_MINIMAL_BUILD)
 
@@ -270,8 +271,8 @@ void RunQnnModelTest(const BuildTestModelFn& build_test_case, ProviderOptions pr
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
                        ExpectedEPNodeAssignment expected_ep_assignment,
-                       const NameMLValMap& feeds,
-                       std::vector<OrtValue>& output_vals) {
+                       const std::unordered_map<std::string, Ort::Value>& feeds,
+                       std::vector<Ort::Value>& output_vals) {
   Ort::SessionOptions session_options;
   session_options.SetLogId(log_id);
 
@@ -297,15 +298,13 @@ void InferenceModelCPU(const std::string& model_data,
   auto memory_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
   
   for (const auto& feed : feeds) {
-    Ort::Value value {const_cast<OrtValue*>(&feed.second)};
-
     // Get tensor information
-    auto tensor_info = value.GetTensorTypeAndShapeInfo();
+    auto tensor_info = feed.second.GetTensorTypeAndShapeInfo();
     auto shape = tensor_info.GetShape();
     
     ort_inputs.emplace_back(Ort::Value::CreateTensor<float>(
         memory_info,
-        const_cast<float*>(value.GetTensorData<float>()),
+        const_cast<float*>(feed.second.GetTensorData<float>()),
         tensor_info.GetElementCount(),
         shape.data(),
         shape.size()));
@@ -338,8 +337,7 @@ void InferenceModelCPU(const std::string& model_data,
   output_vals.clear();
   output_vals.reserve(ort_outputs.size());
   for (auto& ort_output : ort_outputs) {
-    OrtValue* raw_value = ort_output.release();
-    output_vals.emplace_back(std::move(*raw_value));
+    output_vals.emplace_back(std::move(ort_output));
   }
 }
 
@@ -347,8 +345,8 @@ void InferenceModel(const std::string& model_data,
                     const char* log_id,
                     const ProviderOptions& provider_options,
                     ExpectedEPNodeAssignment expected_ep_assignment,
-                    const NameMLValMap& feeds,
-                    std::vector<OrtValue>& output_vals,
+                    std::unordered_map<std::string, Ort::Value>& feeds,
+                    std::vector<Ort::Value>& output_vals,
                     const std::unordered_map<std::string, std::string>& session_option_pairs,
                     std::function<void(const Graph&)>* graph_checker) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
@@ -357,6 +355,7 @@ void InferenceModel(const std::string& model_data,
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
 
   session_options.SetLogId(log_id);
+  session_options.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
   for (auto key_value : session_option_pairs) {
     session_options.AddConfigEntry(key_value.first.c_str(), key_value.second.c_str());
   }
@@ -364,7 +363,7 @@ void InferenceModel(const std::string& model_data,
   Ort::RunOptions ort_run_options;
   ort_run_options.SetRunTag(log_id);
 
-  OrtSessionWrapper ort_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), session_options);
+  Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
 
   // Verify node assignment.
   // const auto& graph = ort_session.GetGraph();
@@ -382,7 +381,7 @@ void InferenceModel(const std::string& model_data,
   //   (*graph_checker)(graph);
   // }
 
-  RunWithEPABI(&ort_session, ort_run_options, feeds, output_vals);
+  RunWithEPABI(session, ort_run_options, feeds, output_vals);
 }
 
 std::string MakeTestQDQBiasInput(ModelPublicBuilder& builder,
@@ -494,10 +493,14 @@ static BackendSupport GetHTPSupport(const OrtLogger* logger) {
 
   OrtEpFactory* qnn_ep_factory = registered_ep_device->GetMutableFactory();
   OrtEp* qnn_ep = nullptr;
+  std::cout << "qnn_ep_factory->CreateEp" << std::endl;
   if (qnn_ep_factory->CreateEp(qnn_ep_factory, nullptr, nullptr, 0, session_options, logger, &qnn_ep)) {
+    std::cout << "Finish qnn_ep_factory->CreateEp" << std::endl;
     qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
     return BackendSupport::UNSUPPORTED;
   }
+
+  std::cout << "Check if HTP is available 4" << std::endl;
 
   // auto status = ToStatusAndRelease(qnn_ep->GetCapability(qnn_ep, ep_graph->ToExternal(), &graph_support_info));
   qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
@@ -513,18 +516,18 @@ void QnnHTPBackendTests::SetUp() {
 
   Ort::Logger logger = Ort::Logger();
 
-  // Determine if HTP backend is supported only if we done so haven't before.
-  if (cached_htp_support_ == BackendSupport::SUPPORT_UNKNOWN) {
-    cached_htp_support_ = GetHTPSupport(reinterpret_cast<OrtLogger*>(&logger));
-  }
+  // // Determine if HTP backend is supported only if we done so haven't before.
+  // if (cached_htp_support_ == BackendSupport::SUPPORT_UNKNOWN) {
+  //   cached_htp_support_ = GetHTPSupport(reinterpret_cast<OrtLogger*>(&logger));
+  // }
 
-  if (cached_htp_support_ == BackendSupport::UNSUPPORTED) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "QNN HTP backend is not available! Skipping test.");
-    GTEST_SKIP();
-  } else if (cached_htp_support_ == BackendSupport::SUPPORT_ERROR) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, "Failed to check if QNN HTP backend is available.");
-    FAIL();
-  }
+  // if (cached_htp_support_ == BackendSupport::UNSUPPORTED) {
+  //   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "QNN HTP backend is not available! Skipping test.");
+  //   GTEST_SKIP();
+  // } else if (cached_htp_support_ == BackendSupport::SUPPORT_ERROR) {
+  //   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, "Failed to check if QNN HTP backend is available.");
+  //   FAIL();
+  // }
 }
 
 // TODO

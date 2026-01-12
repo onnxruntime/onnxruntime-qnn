@@ -127,21 +127,13 @@ void VerifyOutput(const std::string& output_name,
 }
 
 static void VerifyOutputs(const std::vector<std::string>& output_names,
-                          const std::vector<OrtValue>& expected_fetches,
-                          const std::vector<OrtValue>& fetches,
+                          const std::vector<Ort::Value>& expected_fetches,
+                          const std::vector<Ort::Value>& fetches,
                           const EPVerificationParams& params) {
   ASSERT_EQ(expected_fetches.size(), fetches.size());
 
   for (size_t i = 0, end = expected_fetches.size(); i < end; ++i) {
-    // Convert OrtValue to Ort::Value for public API usage
-    Ort::Value expected_ort_value = Ort::Value{const_cast<OrtValue*>(&expected_fetches[i])};
-    Ort::Value actual_ort_value = Ort::Value{const_cast<OrtValue*>(&fetches[i])};
-
-    VerifyOutput(output_names[i], expected_ort_value, actual_ort_value, params.fp32_abs_err);
-
-    // Release the Ort::Value objects to avoid double deletion
-    expected_ort_value.release();
-    actual_ort_value.release();
+    VerifyOutput(output_names[i], expected_fetches[i], fetches[i], params.fp32_abs_err);
   }
 }
 
@@ -203,7 +195,7 @@ static gsl::span<const std::byte> GetModelBytes(ModelPathOrBytes model_path_or_b
 
 void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes, std::string_view log_id,
                                std::unique_ptr<IExecutionProvider> execution_provider,
-                               const std::unordered_map<std::string, OrtValue>& feeds,
+                               std::unordered_map<std::string, Ort::Value>& feeds,
                                const EPVerificationParams& params,
                                const std::function<void(Ort::SessionOptions&)>& session_options_updater,
                                bool verify_outputs) {
@@ -219,7 +211,7 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes, std::string
   //
   // get expected output from CPU EP
   //
-  OrtSessionWrapper session_object(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), ort_so);
+  Ort::Session session_object(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), ort_so);
 
   // fetch all outputs using public API
   std::vector<std::string> output_names;
@@ -235,8 +227,8 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes, std::string
   Ort::RunOptions ort_run_options;
   ort_run_options.SetRunTag(log_id.data());
 
-  std::vector<OrtValue> expected_fetches;
-  RunWithEPABI(&session_object, ort_run_options, feeds, expected_fetches);
+  std::vector<Ort::Value> expected_fetches;
+  RunWithEPABI(session_object, ort_run_options, feeds, expected_fetches);
 
   auto provider_type = execution_provider->Type();  // copy string so the std::move doesn't affect us
 
@@ -246,13 +238,13 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes, std::string
   RunAndVerifyOutputsWithEPABI(model_path_or_bytes, ort_so, provider_type, log_id, feeds, params, verify_outputs);
 }
 
-void RunWithEPABI(OrtSessionWrapper* ort_session,
+void RunWithEPABI(Ort::Session& ort_session,
                   const Ort::RunOptions& ort_ro,
-                  const std::unordered_map<std::string, OrtValue>& feeds,
-                  std::vector<OrtValue>& output_vals) {
+                  std::unordered_map<std::string, Ort::Value>& feeds,
+                  std::vector<Ort::Value>& output_vals) {
   // Fetch all input/output names using public API - store strings to ensure lifetime
-  std::vector<std::string> ort_input_names = ort_session->GetInputNames();
-  std::vector<std::string> ort_output_names = ort_session->GetOutputNames();
+  std::vector<std::string> ort_input_names = ort_session.GetInputNames();
+  std::vector<std::string> ort_output_names = ort_session.GetOutputNames();
   size_t input_count = ort_input_names.size();
   size_t output_count = ort_output_names.size();
   std::vector<const char*> ort_input_names_cstr(input_count);
@@ -262,24 +254,22 @@ void RunWithEPABI(OrtSessionWrapper* ort_session,
   std::transform(ort_output_names.begin(), ort_output_names.end(), ort_output_names_cstr.begin(),
                    [](const std::string& s) { return s.c_str(); });
 
-  std::vector<const OrtValue*> inputs;
-  inputs.reserve(input_count);
+  std::vector<Ort::Value> ort_inputs;
+  ort_inputs.reserve(input_count);
   for (size_t i = 0; i < input_count; ++i) {
-    inputs.push_back(&feeds.at(ort_input_names[i]));
+    ort_inputs.emplace_back(std::move(feeds.at(ort_input_names[i])));
   }
-  auto ort_inputs = reinterpret_cast<const Ort::Value*>(inputs.data());
   // Run.
-  std::vector<Ort::Value> ort_fetches = ort_session->Run(ort_ro,
-                                                         ort_input_names_cstr.data(),
-                                                         ort_inputs,
-                                                         input_count,
-                                                         ort_output_names_cstr.data(),
-                                                         ort_output_names_cstr.size());
+  std::vector<Ort::Value> ort_fetches = ort_session.Run(ort_ro,
+                                                        ort_input_names_cstr.data(),
+                                                        ort_inputs.data(),
+                                                        input_count,
+                                                        ort_output_names_cstr.data(),
+                                                        ort_output_names_cstr.size());
 
   // Fetch all outputs using public API
-  auto fetches_data = reinterpret_cast<OrtValue**>(ort_fetches.data());
   for (size_t output_idx = 0; output_idx < ort_output_names.size(); ++output_idx) {
-    output_vals.push_back(*fetches_data[output_idx]);
+    output_vals.push_back(std::move(ort_fetches[output_idx]));
   }
 }
 
@@ -287,7 +277,7 @@ void RunAndVerifyOutputsWithEPABI(ModelPathOrBytes model_path_or_bytes,
                                   Ort::SessionOptions& ort_so,
                                   const std::string& /* provider_type */,
                                   std::string_view log_id,
-                                  const std::unordered_map<std::string, OrtValue>& feeds,
+                                  std::unordered_map<std::string, Ort::Value>& feeds,
                                   const EPVerificationParams& params,
                                   bool verify_outputs) {
   std::vector<std::byte> model_data_buffer{};
@@ -297,7 +287,7 @@ void RunAndVerifyOutputsWithEPABI(ModelPathOrBytes model_path_or_bytes,
   // get expected output from CPU EP using public API
   //
   Ort::SessionOptions cpu_so;
-  OrtSessionWrapper cpu_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), cpu_so);
+  Ort::Session cpu_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), cpu_so);
 
   // fetch all outputs using public API
   std::vector<std::string> output_names;
@@ -313,11 +303,11 @@ void RunAndVerifyOutputsWithEPABI(ModelPathOrBytes model_path_or_bytes,
   Ort::RunOptions cpu_run_options;
   cpu_run_options.SetRunTag(log_id.data());
 
-  std::vector<OrtValue> expected_fetches;
-  RunWithEPABI(&cpu_session, cpu_run_options, feeds, expected_fetches);
+  std::vector<Ort::Value> expected_fetches;
+  RunWithEPABI(cpu_session, cpu_run_options, feeds, expected_fetches);
 
   // Run with EP and verify the result
-  OrtSessionWrapper ort_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), ort_so);
+  Ort::Session ort_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), ort_so);
 
   // Note: VerifyEPNodeAssignment and graph_verifier require internal graph access
   // These are commented out since we're migrating to public API
@@ -326,8 +316,8 @@ void RunAndVerifyOutputsWithEPABI(ModelPathOrBytes model_path_or_bytes,
   Ort::RunOptions ort_run_options;
   ort_run_options.SetRunTag(log_id.data());
 
-  std::vector<OrtValue> fetches;
-  RunWithEPABI(&ort_session, ort_run_options, feeds, fetches);
+  std::vector<Ort::Value> fetches;
+  RunWithEPABI(ort_session, ort_run_options, feeds, fetches);
 
   if (verify_outputs) {
     VerifyOutputs(output_names, expected_fetches, fetches, params);

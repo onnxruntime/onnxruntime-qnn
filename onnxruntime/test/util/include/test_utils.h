@@ -74,16 +74,16 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
                                const std::function<void(Ort::SessionOptions&)>& session_options_updater = {},
                                bool verify_outputs = true);
 
-void RunWithEPABI(OrtSessionWrapper* ort_session,
+void RunWithEPABI(Ort::Session& ort_session,
                   const Ort::RunOptions& ort_ro,
-                  const std::unordered_map<std::string, OrtValue>& feeds,
-                  std::vector<OrtValue>& output_vals);
+                  std::unordered_map<std::string, Ort::Value>& feeds,
+                  std::vector<Ort::Value>& output_vals);
 
 void RunAndVerifyOutputsWithEPABI(ModelPathOrBytes model_path_or_bytes,
                                   Ort::SessionOptions& ort_so,
                                   const std::string& provider_type,
                                   std::string_view log_id,
-                                  const std::unordered_map<std::string, OrtValue>& feeds,
+                                  std::unordered_map<std::string, Ort::Value>& feeds,
                                   const EPVerificationParams& params = EPVerificationParams(),
                                   bool verify_outputs = true);
 

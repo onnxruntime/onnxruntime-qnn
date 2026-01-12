@@ -41,7 +41,7 @@ template<>
 void CreateMLValue<bool>(const OrtMemoryInfo* memory_info,
   gsl::span<const int64_t> dims,
   const std::vector<bool>& value,
-  OrtValue** p_mlvalue) {
+  Ort::Value& p_mlvalue) {
   // Create memory info if not provided
   Ort::MemoryInfo mem_info_to_use = memory_info ?
     Ort::MemoryInfo(const_cast<OrtMemoryInfo*>(memory_info)) :
@@ -80,7 +80,7 @@ void CreateMLValue<bool>(const OrtMemoryInfo* memory_info,
       dims.size());
 
   // Transfer ownership to the provided OrtValue
-  *p_mlvalue = tensor.release();
+  p_mlvalue = std::move(tensor);
 }
 
 }  // namespace test
