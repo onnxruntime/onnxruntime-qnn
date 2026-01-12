@@ -491,7 +491,7 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
   }
 
   static const std::string QNN_SOC_MODEL = "soc_model";
-  uint32_t soc_model = QNN_SOC_MODEL_UNKNOWN;
+  uint32_t soc_model = QNN_SOC_MODEL_SM8850;
   auto soc_model_pos = provider_options_map.find(QNN_SOC_MODEL);
   if (soc_model_pos != provider_options_map.end()) {
     int value = std::stoi(soc_model_pos->second);
