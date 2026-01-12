@@ -5,18 +5,35 @@
 
 #include <cassert>
 #include <iostream>
+#include <optional>
 
 #include "core/framework/error_code_helper.h"
 #include "core/providers/qnn-abi/ort_api.h"
 #include "core/providers/qnn-abi/qnn_allocator.h"
+#include "core/session/abi_devices.h"
+
+// We allow `backend_type` (e.g., `htp`) or `backend_path` in relative path (e.g., `QnnHtp.dll`) for configurations,
+// and QnnBackendManager will later find the appropriate library and load it relative to the OnnxRuntime library.
+// But if QNN-EP is distributed separately from the OnnxRuntime library (e.g. EP ABI or WinML), the backend library may
+// well not be relative to the OnnxRuntime but to the EP library itself instead.
+// If the EP library is co-located with the OnnxRuntime library, then this is consistent with the existing behavior,
+// but an EP library that is shipped 'out-of-band' will use a backend relative to itself.
+static const std::unordered_map<OrtHardwareDeviceType, std::string> kDefaultBackends = {
+#if defined(_WIN32)
+    {OrtHardwareDeviceType_NPU, "QnnHtp.dll"},
+    {OrtHardwareDeviceType_GPU, "QnnGpu.dll"},
+#else
+    {OrtHardwareDeviceType_NPU, "libQnnHtp.so"},
+    {OrtHardwareDeviceType_GPU, "libQnnGpu.so"},
+#endif
+};
 
 namespace onnxruntime {
 
 // OrtEpApi infrastructure to be able to use the QNN EP as an OrtEpFactory for auto EP selection.
 QnnEpFactory::QnnEpFactory(const char* ep_name,
-                           ApiPtrs ort_api_in,
-                           std::unordered_map<OrtHardwareDeviceType, std::string> supported_backends)
-    : OrtEpFactory{}, ApiPtrs(ort_api_in), ep_name_{ep_name}, supported_backends_{supported_backends} {
+                           ApiPtrs ort_api_in)
+    : OrtEpFactory{}, ApiPtrs(ort_api_in), ep_name_{ep_name} {
   ort_version_supported = ORT_API_VERSION;  // set to the ORT version we were compiled with.
   GetName = GetNameImpl;
   GetVendor = GetVendorImpl;
@@ -70,9 +87,8 @@ const char* ORT_API_CALL QnnEpFactory::GetVersionImpl(const OrtEpFactory* this_p
 // Creates and returns OrtEpDevice instances for all OrtHardwareDevices that this factory supports.
 // An EP created with this factory is expected to be able to execute a model with *all* supported
 // hardware devices at once. A single instance of QNN EP is not currently setup to partition a model among
-// multiple different QNN backends at once (e.g, npu, cpu, gpu), so this factory instance is set to only
-// support one backend: npu. To support a different backend, like gpu, create a different factory instance
-// that only supports GPU.
+// multiple different QNN backends at once (e.g, npu, cpu, gpu), so currently this factory instance is set
+// to default to npu.
 OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this_ptr,
                                                               const OrtHardwareDevice* const* devices,
                                                               size_t num_devices,
@@ -80,34 +96,22 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
                                                               size_t max_ep_devices,
                                                               size_t* p_num_ep_devices) noexcept {
   size_t& num_ep_devices = *p_num_ep_devices;
+  num_ep_devices = 0;
+
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
 
   for (size_t idx = 0; idx < num_devices && num_ep_devices < max_ep_devices; ++idx) {
     const OrtHardwareDevice& device = *devices[idx];
     auto device_type = factory->ort_api.HardwareDevice_Type(&device);
     auto vendor_id = factory->ort_api.HardwareDevice_VendorId(&device);
-    auto supported_backend_it = factory->supported_backends_.find(device_type);
 
-    if (vendor_id == factory->vendor_id_ || device_type == OrtHardwareDeviceType_CPU) {
+    if ((kDefaultBackends.find(device_type) != kDefaultBackends.end() && vendor_id == factory->vendor_id_) || device_type == OrtHardwareDeviceType_CPU) {
       OrtEpDevice* ep_device = nullptr;
       OrtKeyValuePairs* ep_options = nullptr;
-
-      // This option is set for auto EP select usage where `backend_type` or `backend_path` may not be given.
-      // The key is deliberately prefixed with `ep_select_` to avoid conflict with existing `backend_path`.
-      // Note that since HTP backend can be run on CPU through emulation, we could not determine which backend library
-      // to be used. Such case is skipped to set this option and relied on user-provided one.
-      if (supported_backend_it != factory->supported_backends_.end() && device_type != OrtHardwareDeviceType_CPU) {
-        factory->ort_api.CreateKeyValuePairs(&ep_options);
-        factory->ort_api.AddKeyValuePair(ep_options, "ep_select_backend_path", supported_backend_it->second.c_str());
-      }
-
       OrtStatus* status = factory->ep_api.CreateEpDevice(factory, &device, nullptr, ep_options, &ep_device);
       ep_devices[num_ep_devices++] = ep_device;
       factory->ep_devices_.push_back(ep_device);
 
-      if (ep_options != nullptr) {
-        factory->ort_api.ReleaseKeyValuePairs(ep_options);
-      }
       RETURN_IF_NOT_NULL(status);
     }
   }
@@ -116,9 +120,9 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this
 }
 
 OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
-                                                   _In_reads_(num_devices) const OrtHardwareDevice* const* /*devices*/,
+                                                   _In_reads_(num_devices) const OrtHardwareDevice* const* devices,
                                                    _In_reads_(num_devices) const OrtKeyValuePairs* const* /*ep_metadata*/,
-                                                   _In_ size_t /*num_devices*/,  // Mark as unused
+                                                   _In_ size_t num_devices,
                                                    _In_ const OrtSessionOptions* session_options,
                                                    _In_ const OrtLogger* logger,
                                                    _Out_ OrtEp** ep) noexcept {
@@ -130,9 +134,10 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
                                                         OrtLoggingLevel::ORT_LOGGING_LEVEL_INFO,
                                                         "Creating QNN EP", ORT_FILE, __LINE__, __FUNCTION__));
 
+  std::optional<OrtSessionOptions*> autoep_session_options = std::nullopt;
   std::unique_ptr<QnnEp> qnn_ep;
   try {
-    qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *session_options, logger);
+    const auto provider_prefix = GetProviderOptionPrefix(factory->ep_name_);
 
     // Setting allocator info is delayed from GetSupportedDevices to here as QNN-EP relies on provider options to
     // determine whether to use HTP shared memory but they are not available until now. This workaround works since
@@ -141,7 +146,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
     std::string enable_htp_shared_memory_allocator_str;
     GetSessionConfigEntryOrDefault(factory->ort_api,
                                    *session_options,
-                                   GetProviderOptionPrefix(factory->ep_name_) + "enable_htp_shared_memory_allocator",
+                                   provider_prefix + "enable_htp_shared_memory_allocator",
                                    "0",
                                    enable_htp_shared_memory_allocator_str);
     if (enable_htp_shared_memory_allocator_str == "1") {
@@ -149,11 +154,102 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
         RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->host_accessible_memory_info_.get()));
       }
     }
+
+    const auto backend_type_key = provider_prefix + "backend_type";
+    const auto backend_path_key = provider_prefix + "backend_path";
+    int has_backend_type = 0;
+    int has_backend_path = 0;
+    RETURN_IF_NOT_NULL(factory->ort_api.HasSessionConfigEntry(session_options, backend_type_key.c_str(), &has_backend_type));
+    RETURN_IF_NOT_NULL(factory->ort_api.HasSessionConfigEntry(session_options, backend_path_key.c_str(), &has_backend_path));
+
+    if (!has_backend_type && !has_backend_path) {
+      // If neither "backend_path" nor "backend_type" has been given in the provider options, then determine the backend based
+      // on the provided devices. As QNN EP does not support partitioning across backends, if multiple devices are provided,
+      // default to HTP (if present) or else to the GPU.
+      const OrtHardwareDevice* device_to_use = nullptr;
+      if (num_devices == 0) {
+        return factory->ort_api.CreateStatus(ORT_FAIL, "No devices were provided to QNN EP.");
+      } else if (num_devices == 1) {
+        device_to_use = devices[0];
+      } else {
+        const auto is_npu = [](const OrtHardwareDevice* device) { return device->type == OrtHardwareDeviceType_NPU; };
+        const auto is_gpu = [](const OrtHardwareDevice* device) { return device->type == OrtHardwareDeviceType_GPU; };
+
+        auto device_it = std::find_if(devices, devices + num_devices, is_npu);
+        if (device_it != devices + num_devices) {
+          RETURN_IF_NOT_NULL(factory->ort_api.Logger_LogMessage(
+              logger,
+              OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
+              "QNN EP only supports one device. Only the NPU device will be used.",
+              ORT_FILE, __LINE__, __FUNCTION__));
+          device_to_use = *device_it;
+        } else {
+          device_it = std::find_if(devices, devices + num_devices, is_gpu);
+          if (device_it != devices + num_devices) {
+            RETURN_IF_NOT_NULL(factory->ort_api.Logger_LogMessage(
+                logger,
+                OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
+                "QNN EP only supports one device. An NPU device was not provided, so only the GPU device will be used.",
+                ORT_FILE, __LINE__, __FUNCTION__));
+            device_to_use = *device_it;
+          } else {
+            return factory->ort_api.CreateStatus(ORT_FAIL, "Multiple devices were provided to QNN EP, but neither an NPU nor a GPU was included.");
+          }
+        }
+      }
+      assert(device_to_use != nullptr);
+
+      auto default_backends_it = kDefaultBackends.find(device_to_use->type);
+      if (default_backends_it == kDefaultBackends.end()) {
+        return factory->ort_api.CreateStatus(ORT_FAIL, "Could not determine default backend path for device");
+      }
+
+      // Identify the path of the current dynamic library, and expect that the backend library is in the same directory.
+      auto current_path = onnxruntime::GetDynamicLibraryLocationByAddress(
+          reinterpret_cast<const void*>(&kDefaultBackends));
+
+      std::filesystem::path parent_path;
+      if (!current_path.empty()) {
+        parent_path = std::filesystem::path{std::move(current_path)}.parent_path();
+      }
+
+      // Add the "backend_path" key based on the autoep device selection above. As the
+      // `session_options` param is const, we must first clone it before adding the option.
+      autoep_session_options = nullptr;
+      RETURN_IF_NOT_NULL(factory->ort_api.CloneSessionOptions(session_options, &autoep_session_options.value()));
+      auto* status = factory->ort_api.AddSessionConfigEntry(autoep_session_options.value(),
+                                                            (provider_prefix + "backend_path").c_str(),
+                                                            (parent_path / default_backends_it->second).string().c_str());
+      if (status != nullptr) {
+        factory->ort_api.ReleaseSessionOptions(autoep_session_options.value());
+        return status;
+      }
+    }
+
+    // Use the amended session options with the autoep backend path if it exists
+    // (i.e. if a user provided backend was not already present).
+    const OrtSessionOptions* so = autoep_session_options.has_value()
+                                      ? autoep_session_options.value()
+                                      : session_options;
+
+    qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *so, logger);
   } catch (const std::runtime_error& e) {
+    if (autoep_session_options.has_value()) {
+      factory->ort_api.ReleaseSessionOptions(autoep_session_options.value());
+    }
     return factory->ort_api.CreateStatus(ORT_FAIL, e.what());
+  } catch (...) {
+    if (autoep_session_options.has_value()) {
+      factory->ort_api.ReleaseSessionOptions(autoep_session_options.value());
+    }
+    return factory->ort_api.CreateStatus(ORT_FAIL, "Unknown exception occurred while creating QNN EP.");
   }
 
   *ep = qnn_ep.release();
+  if (autoep_session_options.has_value()) {
+    factory->ort_api.ReleaseSessionOptions(autoep_session_options.value());
+  }
+
   return nullptr;
 }
 
@@ -205,33 +301,6 @@ OrtStatus* CreateEpFactories(const char* registration_name,
   // Manual init for the C++ API
   Ort::InitApi(ort_api);
 
-  // We allow `backend_type` (e.g., `htp`) or `backend_path` in relateive path (e.g., `QnnHtp.dll`) for configurations,
-  // and QnnBackendManager will later find the appropriate library and load it relative to the OnnxRuntime library.
-  // But if QNN-EP is distributed separately from the OnnxRuntime library (i.e., EP ABI), the backend library may well
-  // not be relative to the OnnxRuntime but to the EP library itself instead.
-  // If EP library is co-located with the OnnxRuntime library, then this is consistent with the existing behavior, but
-  // a EP library that is shipped 'out-of-band' will use a backend relative to itself.
-  std::unordered_map<OrtHardwareDeviceType, std::string> supported_backends = {
-#if defined(_WIN32)
-      {OrtHardwareDeviceType_NPU, "QnnHtp.dll"},
-      {OrtHardwareDeviceType_GPU, "QnnGpu.dll"},
-#else
-      {OrtHardwareDeviceType_NPU, "libQnnHtp.so"},
-      {OrtHardwareDeviceType_GPU, "libQnnGpu.so"},
-#endif
-  };
-
-  for (auto& [_, backend_path] : supported_backends) {
-    // Identify the path of the current dynamic library, and expect that backend_path is in the same directory.
-    std::basic_string<ORTCHAR_T> current_path = onnxruntime::GetDynamicLibraryLocationByAddress(
-        reinterpret_cast<const void*>(&CreateEpFactories));
-
-    if (!current_path.empty()) {
-      const std::filesystem::path parent_path = std::filesystem::path{std::move(current_path)}.parent_path();
-      backend_path = (parent_path / backend_path).string();
-    }
-  }
-
   if (max_factories < 1) {
     return ort_api->CreateStatus(ORT_INVALID_ARGUMENT,
                                  "Not enough space to return EP factory. Need at least one.");
@@ -258,8 +327,7 @@ OrtStatus* CreateEpFactories(const char* registration_name,
     factory = std::make_unique<onnxruntime::QnnEpFactory>(registration_name,
                                                           onnxruntime::ApiPtrs{*ort_api,
                                                                                *ep_api,
-                                                                               *model_editor_api},
-                                                          supported_backends);
+                                                                               *model_editor_api});
   } catch (const std::exception& e) {
     return ort_api->CreateStatus(ORT_FAIL, e.what());
   } catch (...) {
