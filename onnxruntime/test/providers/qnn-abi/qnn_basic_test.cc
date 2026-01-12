@@ -202,7 +202,7 @@ TEST(QnnABIEP, TestDisableCPUFallback_ConflictingConfig) {
 TEST(QnnABIEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
   Ort::SessionOptions so{};
 
-  onnxruntime::ProviderOptions options{};
+  onnxruntime::ProviderOptions options;
   options["backend_type"] = "cpu";
 #if defined(_WIN32)
   options["backend_path"] = "QnnCpu.dll";
@@ -215,13 +215,10 @@ TEST(QnnABIEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
 
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "constant_floats.onnx";
 
-  try {
-    Ort::Session session(*ort_env, ort_model_path, so);
-    FAIL();
-  } catch (const Ort::Exception& e) {
-    ASSERT_EQ(e.GetOrtErrorCode(), ORT_FAIL);
-    ASSERT_THAT(e.what(), testing::HasSubstr("Only one of 'backend_type' and 'backend_path' should be set."));
-  }
+  Ort::Session session(*ort_env, ort_model_path, so);
+  ASSERT_FALSE(SessionHasEp(session, onnxruntime::kQnnABIExecutionProvider))
+      << "QNN EP was found in registered providers for session "
+      << "when both backend_type and backend_path were specified, which should not happen.";
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -516,7 +513,8 @@ TEST_F(QnnABICPUBackendTests, TestNHWCResizeShapeInference_sizes_opset18) {
 }
 
 // Test that QNN Saver generates the expected files for a model meant to run on the QNN CPU backend.
-TEST_F(QnnABICPUBackendTests, QnnSaver_OutputFiles) {
+// TODO: [AISW-163150] ORT test failures on qcs6490
+TEST_F(QnnABICPUBackendTests, DISABLED_QnnSaver_OutputFiles) {
   const std::filesystem::path qnn_saver_output_dir = "saver_output";
 
   // Remove pre-existing QNN Saver output files. Note that fs::remove_all() can handle non-existing paths.

@@ -7,7 +7,16 @@ from pathlib import Path
 from typing import Literal
 
 from ..github import is_host_github_runner
-from ..task import BashScriptsWithVenvTask, CompositeTask, RemovePathsTask, RunExecutablesWithVenvTask
+from ..task import (
+    BashScriptsWithVenvTask,
+    CompositeTask,
+    ExtractArchiveTask,
+    PyTestTask,
+    RemovePathsTask,
+    RunExecutablesWithVenvTask,
+    RunInTempDirectoryTask,
+    UpdateJsonFileTask,
+)
 from ..typing import BuildConfigT, TargetArchLinuxT, TargetArchWindowsT, TargetPyVersionT
 from ..util import REPO_ROOT, git_head_sha
 from .docker import DOCKER_REPO_ROOT, MANYLINUX_2_34_AARCH64_TAG, DockerBuildAndTestTask
@@ -125,12 +134,82 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
         super().__init__(group_name, [cmd], env=ort_build_env_vars())
 
 
+class AdbTestsTask(RunInTempDirectoryTask):
+    def __init__(
+        self,
+        group_name: str | None,
+        venv: Path | None,
+        platform: Literal["android", "linux"],
+        target_arch: Literal["aarch64", "aarch64_manylinux_2_34", "aarch64_oe_gcc11_2"],
+    ) -> None:
+        self.__venv = venv
+        self.__platform = platform
+        self.__target_arch = target_arch
+        super().__init__(group_name, self.make_test_task, "AdbTests-")
+
+    # This is a pretty slow way to do this, but it's easy to implement
+    # and essentially free to maintain. If you find yourself using this
+    # often enough that your life would be better if we didn't roundtrip
+    # through a zip file, please open a Jira and we'll invest more here.
+    def make_test_task(self, tmpdir: Path) -> CompositeTask:
+        # Local import to avoid circular dependency
+        from ..tools import get_onnx_models_root  # noqa: PLC0415
+
+        test_archive_ext = "zip" if self.__platform == "android" else "tar.bz2"
+
+        if "ORT_TEST_CONFIG_PATH" in os.environ:
+            test_config_src = Path(os.environ["ORT_TEST_CONFIG_PATH"])
+        else:
+            test_config_src = (
+                REPO_ROOT
+                / "qcom"
+                / "scripts"
+                / "linux"
+                / "appium"
+                / "configs"
+                / f"{self.__platform}-{self.__target_arch}.jsonc"
+            )
+
+        env = dict(os.environ)
+        env["ORT_TEST_CONFIG_PATH"] = str(tmpdir / "test_config.jsonc")
+
+        return CompositeTask(
+            group_name=None,
+            tasks=[
+                UpdateJsonFileTask(
+                    "Creating test config file",
+                    self.__venv,
+                    test_config_src,
+                    tmpdir / "test_config.jsonc",
+                    {
+                        "qdc_host_path": str(tmpdir),
+                        "host_onnx_model_test_path": str(get_onnx_models_root(self.__venv)),
+                    },
+                ),
+                ExtractArchiveTask(
+                    "Extracting ONNX Runtime test package",
+                    REPO_ROOT
+                    / "build"
+                    / f"onnxruntime-tests-{self.__platform}-{self.__target_arch}.{test_archive_ext}",
+                    tmpdir,
+                ),
+                PyTestTask(
+                    "Testing ONNX Runtime with a local device",
+                    self.__venv,
+                    ["tests"],
+                    env=env,
+                    cwd=REPO_ROOT / "qcom" / "scripts" / "linux" / "appium",
+                ),
+            ],
+        )
+
+
 class QdcTestsTask(RunExecutablesWithVenvTask):
     def __init__(
         self,
         group_name: str | None,
         venv: Path | None,
-        platforms: Collection[Literal["android", "windows"]],
+        platforms: Collection[Literal["android", "qualcomm_linux", "windows"]],
         extra_args: Iterable[str] | None = None,
     ) -> None:
         if "QDC_API_TOKEN" not in os.environ:

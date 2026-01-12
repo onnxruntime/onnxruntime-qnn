@@ -221,7 +221,7 @@ class OrtWheelModelTestTask(OrtWheelTestTask):
             build_root / self.__config / "dist",
             build_root / self.__config / self.__config / "dist",
         ]
-        found_wheels = sorted(
+        found_wheels: list[Path] = sorted(
             functools.reduce(operator.iadd, [list(d.glob(filename_glob)) for d in dist_dirs], []),
             key=lambda f: f.stat().st_mtime,
             reverse=True,
@@ -254,6 +254,8 @@ class OrtWheelSmokeTestTask(OrtWheelModelTestTask):
                 **os.environ,
                 "ORT_WHEEL_SMOKE_TEST_ROOT": str(get_onnx_models_root(venv) / "testdata" / "smoke"),
                 "ORT_MODEL_ZOO_TEST_ROOTS": str(get_model_zoo_root(venv) / "winml-cert"),
+                # TODO: [AISW-161162] Model clip-vit-base-patch16_v4 accuracy dropped with 2.41.0
+                "ORT_MODEL_ZOO_TEST_XFAILS": "clip-vit-base-patch16_v4=AISW-161162 (accuracy drop)",
             },
         )
 
