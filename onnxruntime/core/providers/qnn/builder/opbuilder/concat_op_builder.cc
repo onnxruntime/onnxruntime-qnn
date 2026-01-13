@@ -69,12 +69,9 @@ Status ConcatOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
     }
   }
 
-  // If all inputs have 0 dimensions, we need at least one input for the Concat op
+  // If all inputs have 0 dimensions, return an error as Concat requires at least one non-zero dimension input
   if (input_names.empty()) {
-    LOGS(logger, WARNING) << "All inputs to Concat have 0 dimensions. Using the first input.";
-    const auto& input = inputs[0];
-    // Process the first input even though it has 0 dimensions
-    ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, input, logger, input_names));
+    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Concat operation requires at least one input without a 0 dimension");
   }
 
   return Status::OK();
