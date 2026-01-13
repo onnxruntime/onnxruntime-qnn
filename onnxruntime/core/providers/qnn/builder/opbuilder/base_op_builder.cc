@@ -27,6 +27,23 @@ bool DoesConcatInputShapeContainZero(QnnModelWrapper& qnn_model_wrapper,
     return false;
   }
 
+  const std::string& input_name = node_io_def.node_arg.Name();
+
+  // Handling constant inputs (initializers)
+  if (qnn_model_wrapper.IsConstantInput(input_name)) {
+    const auto* input_tensor = qnn_model_wrapper.GetConstantTensor(input_name);
+    if (input_tensor != nullptr) {
+      const auto& shape = input_tensor->dims();
+      for (const auto& dim : shape) {
+        if (dim == 0) {
+          LOGS(logger, WARNING) << "Constant tensor has 0 dim, ignoring this input: " << input_name;
+          return true;
+        }
+      }
+    }
+  }
+
+  // Handling non-constant inputs
   std::vector<uint32_t> input_shape;
   if (!qnn_model_wrapper.GetOnnxShape(node_io_def.node_arg, input_shape)) {
     return false;
