@@ -467,8 +467,8 @@ class BF16ConversionGuard {
 
  private:
   QnnModelWrapper* wrapper_;
-  std::vector<std::string> input_names_;  // Store by value, not reference
-  std::vector<std::string> output_names_; // Store by value, not reference
+  std::vector<std::string> input_names_;   // Store by value, not reference
+  std::vector<std::string> output_names_;  // Store by value, not reference
 };
 
 }  // namespace qnn
