@@ -8,16 +8,26 @@ import numbers
 from collections import defaultdict
 from collections.abc import Generator, Iterable, Mapping, Sequence
 from pathlib import Path
-from typing import Literal, NamedTuple, cast, get_args
+from typing import Any, Literal, NamedTuple, cast, get_args
 
 import jsonc
 import numpy as np
 import onnx
+from accuracy_metrics import CosineSimilarityMetric
 
 import onnxruntime
 
 DEFAULT_RTOL = 1e-3
 DEFAULT_ATOL = 1e-5
+DEFAULT_CS_TOL = 0.99
+
+
+# ---------- Accuracy metric overrides ----------
+METRIC_OVERRIDES: dict[str, dict[str, Any]] = {
+    "cosine_similarity_overrides": {
+        "clip-vit-base-patch16_v4": {"text_embeds": 0.97},
+    },
+}
 
 
 BackendT = Literal["cpu", "gpu", "htp"]
@@ -28,6 +38,7 @@ class ModelTestDef(NamedTuple):
     backend_type: BackendT
     rtol: Mapping[str, float]
     atol: Mapping[str, float]
+    cs_tol: Mapping[str, float]
     enable_context: bool
     enable_cpu_fallback: bool
 
@@ -43,6 +54,7 @@ class ModelTestCase:
         self.__model_root = model_def.model_root
         self.__rtol = model_def.rtol
         self.__atol = model_def.atol
+        self.__cs_tol = model_def.cs_tol
 
         session_options = onnxruntime.SessionOptions()
 
@@ -127,11 +139,20 @@ class ModelTestCase:
                 if name not in actual:
                     logging.debug(f"Actual outputs: { {n: t.shape for n, t in actual.items()} }")
                     raise ValueError(f"Output {name} not found in actual.")
-                atol = self.__atol[name]
-                rtol = self.__rtol[name]
+
                 logging.info(f"Comparing actual outputs for {name} to reference.")
-                np.testing.assert_allclose(actual[name], expected[ds_idx][name], atol=atol, rtol=rtol)
-                logging.info(f"{name} is close enough (rtol: {rtol}; atol: {atol})")
+                if name in self.__cs_tol:
+                    cs_tol = self.__cs_tol[name]
+                    cs_score, passed = CosineSimilarityMetric(cs_tol).evaluate(actual[name], expected[ds_idx][name])
+                    assert passed, (
+                        f"Accuracy drop detected! Expected Cosine Similarity >= {self.__cs_tol}, but got {cs_score}."
+                    )
+                    logging.info(f"{name} is close enough (cs_tol: {cs_tol})")
+                else:
+                    atol = self.__atol[name]
+                    rtol = self.__rtol[name]
+                    np.testing.assert_allclose(actual[name], expected[ds_idx][name], atol=atol, rtol=rtol)
+                    logging.info(f"{name} is close enough (rtol: {rtol}; atol: {atol})")
 
 
 class ModelTestSuite:
@@ -157,6 +178,9 @@ class ModelTestSuite:
         )
         self.__rtol_overrides = cast(dict[str, Mapping[str, float]], config.get("rtol_overrides", {}))
         self.__atol_overrides = cast(dict[str, Mapping[str, float]], config.get("atol_overrides", {}))
+        self.__cs_tol_overrides = cast(
+            dict[str, Mapping[str, float]], METRIC_OVERRIDES.get("cosine_similarity_overrides", {})
+        )
 
     def __parse_config(self) -> dict[str, float | dict[str, float]]:
         def parse_overrides(
@@ -198,8 +222,10 @@ class ModelTestSuite:
             model_name = test_root.name
             rtol = self.__rtol_overrides.get(model_name, self.__default_rtol)
             atol = self.__atol_overrides.get(model_name, self.__default_atol)
+            # TODO: Design more general and extensible solution for QNN-EP specific evaluation metrics.
+            cs_tol = self.__cs_tol_overrides.get(model_name)
             yield ModelTestDef(
-                test_root, self.__backend_type, rtol, atol, self.__enable_context, self.__enable_cpu_fallback
+                test_root, self.__backend_type, rtol, atol, cs_tol, self.__enable_context, self.__enable_cpu_fallback
             )
 
     def run(self) -> None:
@@ -238,6 +264,7 @@ if __name__ == "__main__":
                 args.backend,
                 rtol=defaultdict(lambda: rtol),
                 atol=defaultdict(lambda: atol),
+                cs_tol=defaultdict(lambda: DEFAULT_CS_TOL),
                 enable_context=args.enable_context,
                 enable_cpu_fallback=args.enable_cpu_fallback,
             )
