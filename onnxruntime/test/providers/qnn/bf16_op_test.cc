@@ -54,7 +54,7 @@ static void RunBF16ModelTest(const GetTestModelFn& build_test_case,
                              float fp32_abs_err = 1e-2f) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
-  provider_options["enable_htp_bf16"] = "1";  // Enable BF16 mode
+  provider_options["htp_bf16_enable"] = "1";  // Enable BF16 mode
   provider_options["soc_id"] = "88";          // Target SOC ID for BF16 support
   provider_options["offload_graph_io_quantization"] = "0";
 
