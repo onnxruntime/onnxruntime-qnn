@@ -33,80 +33,39 @@ Status ConcatOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                       const logging::Logger& logger,
                                       std::vector<std::string>& input_names,
                                       bool /*do_op_validation*/) const {
-
   const auto& inputs = node_unit.Inputs();
-  std::vector<std::string> input_names_with_null_tensor;
 
   for (const auto& input : inputs) {
     const auto& input_name = input.node_arg.Name();
+    bool has_zero_dim = false;
 
-    // Check if the input tensor already exists in the model
-    if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_name)) {
-      LOGS(logger, VERBOSE) << "Tensor already added, skip it: " << input_name;
-
-      // Check if the tensor has a 0 dimension
-      std::vector<uint32_t> shape;
-      ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input.node_arg, shape), "Cannot get shape");
-
-      if (std::find(shape.begin(), shape.end(), 0) != shape.end()) {
-        // Found a 0 dimension, add to list of tensors to exclude
-        LOGS(logger, VERBOSE) << "Input tensor " << input_name << " has a 0 dimension, excluding from Concat";
-        input_names_with_null_tensor.push_back(input_name);
-      } else {
-        input_names.push_back(input_name);
-      }
-      continue;
-    }
-
-    // Process constant inputs
+    // Check if the tensor has a 0 dimension
     if (qnn_model_wrapper.IsConstantInput(input_name)) {
-      const auto& input_tensor = qnn_model_wrapper.GetConstantTensor(input_name);
-      std::vector<uint8_t> unpacked_tensor;
-      ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(*input_tensor, unpacked_tensor));
-
-      // Check if the tensor has a 0 dimension
-      const auto& shape = input_tensor->dims();
-      if (std::find(shape.begin(), shape.end(), 0) != shape.end()) {
-        // Found a 0 dimension, add to list of tensors to exclude
-        LOGS(logger, VERBOSE) << "Constant input tensor " << input_name << " has a 0 dimension, excluding from Concat";
-        input_names_with_null_tensor.push_back(input_name);
-        continue;
+      // Process constant inputs (initializers)
+      const auto* input_tensor = qnn_model_wrapper.GetConstantTensor(input_name);
+      if (input_tensor != nullptr) {
+        const auto& shape = input_tensor->dims();
+        if (std::find(shape.begin(), shape.end(), 0) != shape.end()) {
+          // Found a 0 dimension, skip this input
+          LOGS(logger, VERBOSE) << "Constant input tensor " << input_name << " has a 0 dimension, excluding from Concat";
+          has_zero_dim = true;
+        }
       }
-
-      // Add the constant tensor to the model
-      std::vector<uint32_t> input_shape;
-      ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input.node_arg, input_shape), "Cannot get shape");
-
-      Qnn_DataType_t qnn_data_type = QNN_DATATYPE_UNDEFINED;
-      const auto* type_proto = input.node_arg.TypeAsProto();
-      ORT_RETURN_IF_ERROR(utils::GetQnnDataType(false, type_proto, qnn_data_type));
-
-      QnnTensorWrapper input_tensorwrapper(input_name, QNN_TENSOR_TYPE_STATIC, qnn_data_type, QnnQuantParamsWrapper(),
-                                           std::move(input_shape), std::move(unpacked_tensor));
-      ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
-      input_names.push_back(input_name);
     } else {
       // Process non-constant inputs
       std::vector<uint32_t> shape;
       ORT_RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input.node_arg, shape), "Cannot get shape");
 
       if (std::find(shape.begin(), shape.end(), 0) != shape.end()) {
-        // Found a 0 dimension, add to list of tensors to exclude
+        // Found a 0 dimension, skip this input
         LOGS(logger, VERBOSE) << "Input tensor " << input_name << " has a 0 dimension, excluding from Concat";
-        input_names_with_null_tensor.push_back(input_name);
-        continue;
+        has_zero_dim = true;
       }
-
-      // Process the input normally
-      ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, input, logger, input_names));
     }
-  }
 
-  // Remove inputs with null tensors from the input_names list
-  for (const auto& null_tensor_name : input_names_with_null_tensor) {
-    auto it = std::find(input_names.begin(), input_names.end(), null_tensor_name);
-    if (it != input_names.end()) {
-      input_names.erase(it);
+    // Process the input if it doesn't have a 0 dimension
+    if (!has_zero_dim) {
+      ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, input, logger, input_names));
     }
   }
 

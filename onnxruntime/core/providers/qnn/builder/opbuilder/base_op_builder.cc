@@ -13,51 +13,6 @@ bool IsOptionalNodeUnitIODef(const NodeUnitIODef& node_io_def) {
   const NodeArg& arg = node_io_def.node_arg;
   return !arg.Exists() || arg.Name().empty();
 }
-
-// Function to check whether we should skip processing null input which has 0 dim in shape.
-// Such null inputs often exist in models saved from PyTorch, especially for Concat.
-bool DoesConcatInputShapeContainZero(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
-                                     const NodeUnitIODef& node_io_def,
-                                     const logging::Logger& logger) {
-  // Although the 0 dim issue should be handled for all op types, restricting in Concat for now since current cases
-  // only happen on one of Concat inputs. One may rename the function and relax the checking here to extend for other
-  // ops.
-  if (node_unit.OpType() != "Concat") {
-    return false;
-  }
-
-  const std::string& input_name = node_io_def.node_arg.Name();
-
-  // Handling constant inputs (initializers)
-  if (qnn_model_wrapper.IsConstantInput(input_name)) {
-    const auto* input_tensor = qnn_model_wrapper.GetConstantTensor(input_name);
-    if (input_tensor != nullptr) {
-      const auto& shape = input_tensor->dims();
-      for (const auto& dim : shape) {
-        if (dim == 0) {
-          LOGS(logger, WARNING) << "Constant tensor has 0 dim, ignoring this input: " << input_name;
-          return true;
-        }
-      }
-    }
-  }
-
-  // Handling non-constant inputs
-  std::vector<uint32_t> input_shape;
-  if (!qnn_model_wrapper.GetOnnxShape(node_io_def.node_arg, input_shape)) {
-    return false;
-  }
-
-  for (const uint32_t& dim : input_shape) {
-    if (dim == 0) {
-      LOGS(logger, WARNING) << "Tensor has 0 dim, ignore this input: " << node_io_def.node_arg.Name();
-      return true;
-    }
-  }
-
-  return false;
-}
 }  // namespace
 
 std::string BaseOpBuilder::GetOpBuilderType() const {
@@ -171,9 +126,7 @@ Status BaseOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   const auto& inputs = node_unit.Inputs();
   const auto input_count = GetInputCountQnnRequired(node_unit);
   for (size_t input_i = 0; input_i < input_count; ++input_i) {
-    if (!DoesConcatInputShapeContainZero(qnn_model_wrapper, node_unit, inputs[input_i], logger)) {
-      ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[input_i], logger, input_names));
-    }
+    ORT_RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[input_i], logger, input_names));
   }
 
   return Status::OK();
