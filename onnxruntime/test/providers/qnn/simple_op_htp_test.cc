@@ -268,7 +268,7 @@ static void RunFP16OpTest(const std::string& op_type,
                         tolerance);
 }
 
-// Test QDQ Concat with empty input
+// Test Concat with empty input
 TEST_F(QnnHTPBackendTests, Concat_EmptyInput) {
   RunOpTest("Concat",
             {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
