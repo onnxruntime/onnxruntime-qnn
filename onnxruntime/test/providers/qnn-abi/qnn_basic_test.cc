@@ -1662,7 +1662,7 @@ TEST_F(QnnABICPUBackendTests, TestSimulatedQnnEp) {
 
   // Register simulated EP factory.
   RegisteredEpDeviceUniquePtr registered_ep_device_sim;
-  const std::string& registration_name_sim = "QnnAbiTestProviderSimulation";
+  const std::string& registration_name_sim = onnxruntime::kQnnABIExecutionProvider + "Simulation";
   Ort::SessionOptions session_options_sim;
   RegisterQnnEpLibrary(registered_ep_device_sim, session_options_sim, registration_name_sim, provider_options,
                        /*simulated*/ true);

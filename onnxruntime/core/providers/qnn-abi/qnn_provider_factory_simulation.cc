@@ -157,7 +157,7 @@ OrtStatus* CreateEpFactories(const char* registration_name,
   // Factory could use registration_name or define its own EP name.
   std::unique_ptr<onnxruntime::QnnEpFactorySimulation> factory;
   if (registration_name == nullptr) {
-    registration_name = "QnnAbiTestProvider";
+    registration_name = onnxruntime::kQnnABIExecutionProvider;
   }
   try {
     factory = std::make_unique<onnxruntime::QnnEpFactorySimulation>(registration_name,
