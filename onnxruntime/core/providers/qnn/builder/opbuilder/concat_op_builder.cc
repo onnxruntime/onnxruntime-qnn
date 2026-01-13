@@ -32,8 +32,7 @@ Status ConcatOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                       const NodeUnit& node_unit,
                                       const logging::Logger& logger,
                                       std::vector<std::string>& input_names,
-                                      bool do_op_validation) const {
-  ORT_UNUSED_PARAMETER(do_op_validation);
+                                      bool /*do_op_validation*/) const {
 
   const auto& inputs = node_unit.Inputs();
   std::vector<std::string> input_names_with_null_tensor;
