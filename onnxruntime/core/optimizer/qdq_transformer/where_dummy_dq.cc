@@ -89,36 +89,36 @@ Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified, con
       int8_t dummy_zp = 0;
       int8_t dummy_xq = (dummy_xf > 0) ? 127 : ((dummy_xf == 0) ? dummy_zp : -128);
       float dummy_scale = (dummy_xf == 0) ? 1 : (float)dummy_xf / (dummy_xq - dummy_zp);
-      dummy_zp_proto.set_raw_data(&dummy_zp, 1);
-      dummy_xq_proto.set_raw_data(&dummy_xq, 1);
-      dummy_scale_proto.set_raw_data(&dummy_scale, sizeof(float));
+      dummy_zp_proto.add_int32_data(dummy_zp);
+      dummy_xq_proto.add_int32_data(dummy_xq);
+      dummy_scale_proto.add_float_data(dummy_scale);
       break;
     }
     case ONNX_NAMESPACE::TensorProto_DataType_UINT8: {
       uint8_t dummy_zp = 127;
       uint8_t dummy_xq = (dummy_xf > 0) ? 255 : ((dummy_xf == 0) ? dummy_zp : 0);
       float dummy_scale = (dummy_xf == 0) ? 1 : (float)dummy_xf / (dummy_xq - dummy_zp);
-      dummy_zp_proto.set_raw_data(&dummy_zp, 1);
-      dummy_xq_proto.set_raw_data(&dummy_xq, 1);
-      dummy_scale_proto.set_raw_data(&dummy_scale, sizeof(float));
+      dummy_zp_proto.add_int32_data(dummy_zp);
+      dummy_xq_proto.add_int32_data(dummy_xq);
+      dummy_scale_proto.add_float_data(dummy_scale);
       break;
     }
     case ONNX_NAMESPACE::TensorProto_DataType_INT16: {
       int16_t dummy_zp = 0;
       int16_t dummy_xq = (dummy_xf > 0) ? 32767 : ((dummy_xf == 0) ? dummy_zp : -32768);
       float dummy_scale = (dummy_xf == 0) ? 1 : (float)dummy_xf / (dummy_xq - dummy_zp);
-      dummy_zp_proto.set_raw_data(&dummy_zp, 2);
-      dummy_xq_proto.set_raw_data(&dummy_xq, 2);
-      dummy_scale_proto.set_raw_data(&dummy_scale, sizeof(float));
+      dummy_zp_proto.add_int32_data(dummy_zp);
+      dummy_xq_proto.add_int32_data(dummy_xq);
+      dummy_scale_proto.add_float_data(dummy_scale);
       break;
     }
     case ONNX_NAMESPACE::TensorProto_DataType_UINT16: {
       uint16_t dummy_zp = 32767;
       uint16_t dummy_xq = (dummy_xf > 0) ? 65535 : ((dummy_xf == 0) ? dummy_zp : 0);
       float dummy_scale = (dummy_xf == 0) ? 1 : (float)dummy_xf / (dummy_xq - dummy_zp);
-      dummy_zp_proto.set_raw_data(&dummy_zp, 2);
-      dummy_xq_proto.set_raw_data(&dummy_xq, 2);
-      dummy_scale_proto.set_raw_data(&dummy_scale, sizeof(float));
+      dummy_zp_proto.add_int32_data(dummy_zp);
+      dummy_xq_proto.add_int32_data(dummy_xq);
+      dummy_scale_proto.add_float_data(dummy_scale);
       break;
     }
     default:
