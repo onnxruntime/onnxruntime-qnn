@@ -481,7 +481,7 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
                        ExpectedEPNodeAssignment expected_ep_assignment,
-                       const std::unordered_map<std::string, Ort::Value>& feeds,
+                       std::unordered_map<std::string, Ort::Value>& feeds,
                        std::vector<Ort::Value>& output_vals);
 
 void InferenceModel(const std::string& model_data,
@@ -942,6 +942,11 @@ inline void TestFp16ModelAccuracy(const BuildTestModelFn& f32_model_fn,
   // f16_helper.SetGraphOutputs();
   // ASSERT_STATUS_OK(f16_model.MainGraph().Resolve());
   f16_helper.model_.SerializeToString(&f16_model_data);
+
+  {
+    std::ofstream ofs("cmp_accuracy.f16.onnx", std::ios::binary);
+    ofs.write(f16_model_data.data(), static_cast<std::streamsize>(f16_model_data.size()));
+  }
 
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_f16_outputs;

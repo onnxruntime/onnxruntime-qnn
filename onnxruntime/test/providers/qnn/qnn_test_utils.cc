@@ -271,7 +271,7 @@ void RunQnnModelTest(const BuildTestModelFn& build_test_case, ProviderOptions pr
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
                        ExpectedEPNodeAssignment expected_ep_assignment,
-                       const std::unordered_map<std::string, Ort::Value>& feeds,
+                       std::unordered_map<std::string, Ort::Value>& feeds,
                        std::vector<Ort::Value>& output_vals) {
   Ort::SessionOptions session_options;
   session_options.SetLogId(log_id);
@@ -293,45 +293,31 @@ void InferenceModelCPU(const std::string& model_data,
   // }
 
   // Prepare inputs using public API
-  std::vector<Ort::Value> ort_inputs;
-  std::vector<const char*> input_names;
-  auto memory_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
-  
-  for (const auto& feed : feeds) {
-    // Get tensor information
-    auto tensor_info = feed.second.GetTensorTypeAndShapeInfo();
-    auto shape = tensor_info.GetShape();
-    
-    ort_inputs.emplace_back(Ort::Value::CreateTensor<float>(
-        memory_info,
-        const_cast<float*>(feed.second.GetTensorData<float>()),
-        tensor_info.GetElementCount(),
-        shape.data(),
-        shape.size()));
-    input_names.push_back(feed.first.c_str());
-  }
+  std::vector<std::string> ort_input_names = session.GetInputNames();
+  std::vector<std::string> ort_output_names = session.GetOutputNames();
+  size_t input_count = ort_input_names.size();
+  size_t output_count = ort_output_names.size();
+  std::vector<const char*> ort_input_names_cstr(input_count);
+  std::vector<const char*> ort_output_names_cstr(output_count);
+  std::transform(ort_input_names.begin(), ort_input_names.end(), ort_input_names_cstr.begin(),
+                   [](const std::string& s) { return s.c_str(); });
+  std::transform(ort_output_names.begin(), ort_output_names.end(), ort_output_names_cstr.begin(),
+                   [](const std::string& s) { return s.c_str(); });
 
-  // Get output names from session metadata
-  Ort::AllocatorWithDefaultOptions allocator;
-  size_t num_output_nodes = session.GetOutputCount();
-  std::vector<std::string> output_name_strings;
-  std::vector<const char*> output_names;
-  output_name_strings.reserve(num_output_nodes);
-  output_names.reserve(num_output_nodes);
-  
-  for (size_t i = 0; i < num_output_nodes; i++) {
-    output_name_strings.push_back(session.GetOutputNameAllocated(i, allocator).get());
-    output_names.push_back(output_name_strings.back().c_str());
+  std::vector<Ort::Value> ort_inputs;
+  ort_inputs.reserve(input_count);
+  for (size_t i = 0; i < input_count; ++i) {
+    ort_inputs.emplace_back(std::move(feeds.at(ort_input_names[i])));
   }
 
   // Run inference
   std::vector<Ort::Value> ort_outputs = session.Run(
       Ort::RunOptions{nullptr},
-      input_names.data(),
+      ort_input_names_cstr.data(),
       ort_inputs.data(),
       ort_inputs.size(),
-      output_names.data(),
-      output_names.size());
+      ort_output_names_cstr.data(),
+      ort_output_names_cstr.size());
 
   // Convert Ort::Value outputs to OrtValue
   output_vals.clear();

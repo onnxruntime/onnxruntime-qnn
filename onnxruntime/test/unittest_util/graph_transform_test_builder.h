@@ -17,6 +17,7 @@
 #include "core/graph/onnx_protobuf.h"
 #include "core/framework/tensorprotoutils.h"
 #include "onnxruntime_c_api.h"
+#include "onnxruntime_cxx_api.h"
 #include "test/unittest_util/framework_test_utils.h"
 #include "test/util/include/test_random_seed.h"
 #include "test/util/include/inference_session_wrapper.h"
@@ -261,7 +262,7 @@ class ModelPublicBuilder {
     inp->set_name(name);
     ONNX_NAMESPACE::TypeProto* type_proto = inp->mutable_type();
 
-    type_proto->mutable_tensor_type()->set_elem_type(utils::ToTensorProtoElementType<T>());
+    type_proto->mutable_tensor_type()->set_elem_type(ToTensorProtoElementType<T>());
     // Set shape even if no dims (for scalar)
     type_proto->mutable_tensor_type()->mutable_shape();
     for (auto& dim : shape) {
@@ -362,7 +363,7 @@ class ModelPublicBuilder {
     ONNX_NAMESPACE::ValueInfoProto* out = graph_->add_output();
     out->set_name(name);
     ONNX_NAMESPACE::TypeProto* type_proto = out->mutable_type();
-    type_proto->mutable_tensor_type()->set_elem_type(utils::ToTensorProtoElementType<T>());
+    type_proto->mutable_tensor_type()->set_elem_type(ToTensorProtoElementType<T>());
 
     if (shape != std::nullopt) {
       ONNX_NAMESPACE::TensorShapeProto* shape_proto = type_proto->mutable_tensor_type()->mutable_shape();
@@ -385,7 +386,7 @@ class ModelPublicBuilder {
   // template <typename T>
   // NodeArg* MakeIntermediate(const std::optional<std::vector<int64_t>>& shape) {
   //   ONNX_NAMESPACE::TypeProto type_proto;
-  //   type_proto.mutable_tensor_type()->set_elem_type(utils::ToTensorProtoElementType<T>());
+  //   type_proto.mutable_tensor_type()->set_elem_type(ToTensorProtoElementType<T>());
   //   if (shape != std::nullopt) {
   //     type_proto.mutable_tensor_type()->mutable_shape();
   //     for (auto& d : *shape) {
@@ -416,7 +417,7 @@ class ModelPublicBuilder {
     const std::vector<int64_t>& shape,
     const std::vector<T>& data) {
     gsl::span<const std::byte> raw_data = ReinterpretAsSpan<const std::byte, const T>(data);
-    return MakeInitializer(name, shape, utils::ToTensorProtoElementType<T>(), raw_data);
+    return MakeInitializer(name, shape, ToTensorProtoElementType<T>(), raw_data);
   }
 
   // Special handle for std::vector<bool>.
@@ -424,7 +425,7 @@ class ModelPublicBuilder {
     const std::vector<int64_t>& shape, const std::vector<bool>& data) {
     ONNX_NAMESPACE::TensorProto* tensor_proto = graph_->add_initializer();
     tensor_proto->set_name(name);
-    tensor_proto->set_data_type(utils::ToTensorProtoElementType<bool>());
+    tensor_proto->set_data_type(ToTensorProtoElementType<bool>());
     std::unique_ptr<bool[]> data_buffer = std::make_unique<bool[]>(data.size());
     for (size_t i = 0; i < data.size(); ++i) data_buffer[i] = data[i];
     utils::SetRawDataInTensorProto(
@@ -822,6 +823,69 @@ class ModelPublicBuilder {
   std::unordered_map<std::string, Ort::Value> feeds_;
   // std::vector<std::string> output_names_;
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+
+private:
+  /** Gets the TensorProto_DataType corresponding to the template type `T`. */
+  template <typename T>
+  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType() {
+    return ONNX_NAMESPACE::TensorProto_DataType_UNDEFINED;
+  }
+  template <>
+  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<float>() {
+    return ONNX_NAMESPACE::TensorProto_DataType_FLOAT;
+  }
+  template <>
+  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<uint8_t>() {
+    return ONNX_NAMESPACE::TensorProto_DataType_UINT8;
+  }
+  template <>
+  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<int8_t>() {
+    return ONNX_NAMESPACE::TensorProto_DataType_INT8;
+  }
+  template <>
+  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<uint16_t>() {
+    return ONNX_NAMESPACE::TensorProto_DataType_UINT16;
+  }
+  template <>
+  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<int16_t>() {
+    return ONNX_NAMESPACE::TensorProto_DataType_INT16;
+  }
+  template <>
+  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<int32_t>() {
+    return ONNX_NAMESPACE::TensorProto_DataType_INT32;
+  }
+  template <>
+  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<int64_t>() {
+    return ONNX_NAMESPACE::TensorProto_DataType_INT64;
+  }
+  template <>
+  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<std::string>() {
+    return ONNX_NAMESPACE::TensorProto_DataType_STRING;
+  }
+  template <>
+  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<bool>() {
+    return ONNX_NAMESPACE::TensorProto_DataType_BOOL;
+  }
+  template <>
+  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<Ort::Float16_t>() {
+    return ONNX_NAMESPACE::TensorProto_DataType_FLOAT16;
+  }
+  template <>
+  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<double>() {
+    return ONNX_NAMESPACE::TensorProto_DataType_DOUBLE;
+  }
+  template <>
+  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<uint32_t>() {
+    return ONNX_NAMESPACE::TensorProto_DataType_UINT32;
+  }
+  template <>
+  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<uint64_t>() {
+    return ONNX_NAMESPACE::TensorProto_DataType_UINT64;
+  }
+  template <>
+  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<Ort::BFloat16_t>() {
+    return ONNX_NAMESPACE::TensorProto_DataType_BFLOAT16;
+  }
 };
 
 class ModelTestBuilder {

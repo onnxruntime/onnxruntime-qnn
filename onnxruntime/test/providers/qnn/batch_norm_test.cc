@@ -175,7 +175,7 @@ BuildTestQDQModelFn<InputQType> BuildQDQBatchNormTestCase(const TestInputDef<flo
     );
 
     builder.opset->set_domain(""); // Standard ONNX domain
-    builder.opset->set_version(18); // Specify the opset version, e.g., 18
+    builder.opset->set_version(21); // Specify the opset version, e.g., 18
     builder.model_.set_ir_version(11);
     builder.model_.set_producer_name("batchnorm-qdq-test");
 
