@@ -307,24 +307,25 @@ void InferenceModelCPU(const std::string& model_data,
   std::vector<Ort::Value> ort_inputs;
   ort_inputs.reserve(input_count);
   for (size_t i = 0; i < input_count; ++i) {
-    ort_inputs.emplace_back(std::move(feeds.at(ort_input_names[i])));
+    auto memory_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
+    ort_inputs.emplace_back(Ort::Value::CreateTensor(
+      memory_info,
+      (void*)feeds.at(ort_input_names[i]).GetTensorRawData(),
+      feeds.at(ort_input_names[i]).GetTensorSizeInBytes(),
+      feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetShape().data(),
+      feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetShape().size(),
+      feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetElementType())
+    );
   }
 
   // Run inference
-  std::vector<Ort::Value> ort_outputs = session.Run(
-      Ort::RunOptions{nullptr},
-      ort_input_names_cstr.data(),
-      ort_inputs.data(),
-      ort_inputs.size(),
-      ort_output_names_cstr.data(),
-      ort_output_names_cstr.size());
-
-  // Convert Ort::Value outputs to OrtValue
-  output_vals.clear();
-  output_vals.reserve(ort_outputs.size());
-  for (auto& ort_output : ort_outputs) {
-    output_vals.emplace_back(std::move(ort_output));
-  }
+  output_vals = session.Run(
+    Ort::RunOptions{nullptr},
+    ort_input_names_cstr.data(),
+    ort_inputs.data(),
+    ort_inputs.size(),
+    ort_output_names_cstr.data(),
+    ort_output_names_cstr.size());
 }
 
 void InferenceModel(const std::string& model_data,

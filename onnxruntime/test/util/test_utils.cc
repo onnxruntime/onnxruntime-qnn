@@ -257,20 +257,24 @@ void RunWithEPABI(Ort::Session& ort_session,
   std::vector<Ort::Value> ort_inputs;
   ort_inputs.reserve(input_count);
   for (size_t i = 0; i < input_count; ++i) {
-    ort_inputs.emplace_back(std::move(feeds.at(ort_input_names[i])));
+    auto memory_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
+    ort_inputs.emplace_back(Ort::Value::CreateTensor(
+      memory_info,
+      (void*)feeds.at(ort_input_names[i]).GetTensorRawData(),
+      feeds.at(ort_input_names[i]).GetTensorSizeInBytes(),
+      feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetShape().data(),
+      feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetShape().size(),
+      feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetElementType())
+    );
   }
   // Run.
-  std::vector<Ort::Value> ort_fetches = ort_session.Run(ort_ro,
-                                                        ort_input_names_cstr.data(),
-                                                        ort_inputs.data(),
-                                                        input_count,
-                                                        ort_output_names_cstr.data(),
-                                                        ort_output_names_cstr.size());
+  output_vals = ort_session.Run(ort_ro,
+                                ort_input_names_cstr.data(),
+                                ort_inputs.data(),
+                                input_count,
+                                ort_output_names_cstr.data(),
+                                ort_output_names_cstr.size());
 
-  // Fetch all outputs using public API
-  for (size_t output_idx = 0; output_idx < ort_output_names.size(); ++output_idx) {
-    output_vals.push_back(std::move(ort_fetches[output_idx]));
-  }
 }
 
 void RunAndVerifyOutputsWithEPABI(ModelPathOrBytes model_path_or_bytes,
