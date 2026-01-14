@@ -732,14 +732,13 @@ TEST(MatMulNBits, BFloat16_Int4_NoZeroPoint) {
 
 #endif  // defined(USE_CUDA) || defined(USE_DML)
 
-
 #if defined(USE_QNN) && defined(_M_ARM64)
 
 namespace {
 // QNN-EP Test Function
 // This has too many parameters of the same type that must be specified in the correct order.
 // Consider using the overload with a TestOptions parameter.
-void RunQnnEpTest(int64_t M, int64_t N, int64_t K,  bool has_zeropoint = true, float abs_error = 0.f) {
+void RunQnnEpTest(int64_t M, int64_t N, int64_t K, bool has_zeropoint = true, float abs_error = 0.f) {
   TestOptions opts{};
   opts.M = M;
   opts.N = N;
