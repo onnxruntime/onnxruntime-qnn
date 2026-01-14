@@ -278,6 +278,22 @@ bool QnnModelWrapper::ProcessBF16InputConversion(const std::string& qnn_node_nam
       // Convert intermediate FP32 tensors to BF16 directly
       SetQnnTensorDataType(tensor_wrapper.GetQnnTensor(), QNN_DATATYPE_BFLOAT_16);
       converted_input_names.push_back(input_name);
+    } else if (tensor_type == QNN_TENSOR_TYPE_STATIC && !IsConstantInput(input_name) && tensor_dtype == QNN_DATATYPE_FLOAT_32) {
+      // Initializers that are created in QNN and are not present in ONNX
+      std::string cast_output_name = input_name + "_bf16_intermediate";
+      if (!IsQnnTensorWrapperExist(cast_output_name)) {
+        std::vector<uint32_t> shape = tensor_wrapper.GetTensorDims();
+        if (!CreateBF16CastTensor(cast_output_name, shape, QNN_TENSOR_TYPE_NATIVE)) {
+          return false;
+        }
+        LOGS(logger_, VERBOSE) << "BF16: Adding Cast op for static tensor " << input_name << " -> " << cast_output_name;
+        QnnOpProperty cast_op(cast_output_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CAST,
+                              std::vector<std::string>{input_name},
+                              std::vector<std::string>{cast_output_name},
+                              std::vector<std::string>{});
+        cast_ops_to_add.push_back(std::move(cast_op));
+      }
+      converted_input_names.push_back(cast_output_name);
     } else {
       converted_input_names.push_back(input_name);
     }
