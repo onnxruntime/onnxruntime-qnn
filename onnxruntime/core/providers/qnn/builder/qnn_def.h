@@ -292,7 +292,7 @@ class QnnTensorWrapper {
 
   const std::string& GetName() const { return tensor_name_; }
 
-  // Overrides the tensor name in QNN graph/DLC without changing the ORT lookup name.
+  // Overrides the tensor name in QNN graph without changing the ORT lookup name.
   void SetQnnTensorNameOverride(const std::string& name_override) {
     tensor_name_override_ = name_override;
     SetQnnTensorName(qnn_tensor_, tensor_name_override_.c_str());

@@ -52,7 +52,7 @@ class QnnModelWrapper {
                   const std::unordered_map<std::string, size_t>& output_index_map,
                   QnnBackendType qnn_backend_type,
                   const ModelSettings& model_settings,
-                  std::unordered_map<std::string, std::string> tensor_name_overrides = {})
+                  std::unordered_map<std::string, std::string> graph_io_name_map = {})
       : graph_viewer_(graph_viewer),
         logger_(logger),
         qnn_interface_(qnn_interface),
@@ -60,8 +60,13 @@ class QnnModelWrapper {
         input_index_map_(input_index_map),
         output_index_map_(output_index_map),
         qnn_backend_type_(qnn_backend_type),
-        model_settings_(model_settings),
-        tensor_name_overrides_(std::move(tensor_name_overrides)) {
+        model_settings_(model_settings) {
+    // graph_io_name_map: internal name -> ONNX name (for QNN tensor name override)
+    // Build reverse map for lookups: ONNX name -> internal name
+    for (const auto& [internal, onnx] : graph_io_name_map) {
+      internal_to_onnx_io_names_[internal] = onnx;
+      onnx_to_internal_io_names_[onnx] = internal;
+    }
   }
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
@@ -111,15 +116,15 @@ class QnnModelWrapper {
 
   Qnn_ContextHandle_t GetQnnGraphContext() const { return graph_context_; }
 
-  // Move input tensor wrappers to GraphInfo, QnnModelWrapper end of live
+  // Move input tensor wrappers to GraphInfo in correct ONNX order, QnnModelWrapper end of live
   std::vector<QnnTensorWrapper>&& GetGraphInputTensorWrappers() {
-    GetGraphInputOutputTensorWrapper(model_input_names_, model_input_tensor_wrappers_);
+    GetGraphInputOutputTensorWrapper(true /*is_input*/, model_input_tensor_wrappers_);
     return std::move(model_input_tensor_wrappers_);
   }
 
-  // Move output tensor wrappers to GraphInfo, QnnModelWrapper end of live
+  // Move output tensor wrappers to GraphInfo in correct ONNX order, QnnModelWrapper end of live
   std::vector<QnnTensorWrapper>&& GetGraphOutputTensorWrappers() {
-    GetGraphInputOutputTensorWrapper(model_output_names_, model_output_tensor_wrappers_);
+    GetGraphInputOutputTensorWrapper(false /*is_input*/, model_output_tensor_wrappers_);
     return std::move(model_output_tensor_wrappers_);
   }
 
@@ -331,7 +336,15 @@ class QnnModelWrapper {
     return pos->second;
   }
 
-  void GetGraphInputOutputTensorWrapper(const std::vector<std::string>& names,
+  // Get internal tensor name from ONNX name. With offload_graph_io_quantization,
+  // internal names (e.g., "q_output") differ from ONNX names (e.g., "input").
+  std::string GetInternalName(const std::string& onnx_name) const {
+    auto it = onnx_to_internal_io_names_.find(onnx_name);
+    return it != onnx_to_internal_io_names_.end() ? it->second : onnx_name;
+  }
+
+  bool CreateGraphInputOutputTensors();
+  void GetGraphInputOutputTensorWrapper(bool is_input,
                                         std::vector<QnnTensorWrapper>& wrappers_list);
 
   // BF16 conversion helper methods
@@ -373,8 +386,6 @@ class QnnModelWrapper {
   // QNN context that holds the QNN graph referenced by `graph_`
   Qnn_ContextHandle_t graph_context_ = nullptr;
 
-  std::vector<std::string> model_input_names_;
-  std::vector<std::string> model_output_names_;
   std::vector<QnnTensorWrapper> model_input_tensor_wrappers_;
   std::vector<QnnTensorWrapper> model_output_tensor_wrappers_;
   // All QnnTensorWrapper for the graph
@@ -390,7 +401,10 @@ class QnnModelWrapper {
   QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;
   ModelSettings model_settings_ = {};
   utils::QnnJSONGraph json_qnn_graph_;
-  std::unordered_map<std::string, std::string> tensor_name_overrides_;
+  // Quantized graph I/O name mappings for offload_graph_io_quantization=1 mode.
+  // Maps between internal name (e.g., "image_q") and ONNX name (e.g., "image").
+  std::unordered_map<std::string, std::string> internal_to_onnx_io_names_;
+  std::unordered_map<std::string, std::string> onnx_to_internal_io_names_;
 };  // QnnModelWrapper
 
 template <typename T>

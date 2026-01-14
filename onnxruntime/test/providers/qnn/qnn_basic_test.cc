@@ -1760,15 +1760,18 @@ TEST_F(QnnHTPBackendTests, QuantizedGraphInOutNamesPreserved) {
   Ort::Session session(*ort_env, model_data.data(), model_data.size(), so);
 
   ASSERT_TRUE(std::filesystem::exists(dlc_output_dir)) << "DLC output directory was not created";
+  std::cout << "DLC output dir exists: " << std::filesystem::absolute(dlc_output_dir) << std::endl;
 
   std::filesystem::path dlc_path;
   for (const auto& entry : std::filesystem::directory_iterator(dlc_output_dir)) {
+    std::cout << "Found file: " << entry.path() << std::endl;
     if (entry.path().extension() == ".dlc") {
       dlc_path = entry.path();
       break;
     }
   }
   ASSERT_FALSE(dlc_path.empty()) << "No DLC file found in output directory";
+  std::cout << "DLC path: " << dlc_path << std::endl;
 
   std::ifstream dlc_file(dlc_path, std::ios::binary);
   ASSERT_TRUE(dlc_file.is_open()) << "Failed to open DLC file: " << dlc_path;
@@ -1787,6 +1790,201 @@ TEST_F(QnnHTPBackendTests, QuantizedGraphInOutNamesPreserved) {
       << "Intermediate name 'sigmoid_q_out' should not appear in DLC";
 
   std::filesystem::remove_all(dlc_output_dir);
+}
+
+// Test that graph I/O order matches ONNX model order when offload_graph_io_quantization=1.
+// Creates a graph where ONNX input order [bb, aa, cc] differs from op processing order [aa, cc, bb].
+TEST_F(QnnHTPBackendTests, DlcGraphIoOrderMatchesOnnx) {
+  const auto& logger = DefaultLoggingManager().DefaultLogger();
+  if (IsIRBackendSupported() == BackendSupport::UNSUPPORTED) {
+    GTEST_SKIP() << "QNN IR backend not available";
+  } else if (IsIRBackendSupported() == BackendSupport::SUPPORT_ERROR) {
+    FAIL() << "Failed to check IR backend";
+  }
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+  onnxruntime::Model model("DlcGraphIoOrderMatchesOnnx", false, ModelMetaData(), PathString(),
+                           IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
+                           logger);
+  Graph& graph = model.MainGraph();
+
+  // input_aa: [1, 3, 4, 4]
+  ONNX_NAMESPACE::TypeProto type_aa;
+  type_aa.mutable_tensor_type()->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  type_aa.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(1);
+  type_aa.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(3);
+  type_aa.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(4);
+  type_aa.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(4);
+  auto& input_aa = graph.GetOrCreateNodeArg("input_aa", &type_aa);
+
+  // input_cc: [1, 7, 4, 4]
+  ONNX_NAMESPACE::TypeProto type_cc;
+  type_cc.mutable_tensor_type()->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  type_cc.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(1);
+  type_cc.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(7);
+  type_cc.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(4);
+  type_cc.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(4);
+  auto& input_cc = graph.GetOrCreateNodeArg("input_cc", &type_cc);
+
+  // input_bb: [1, 5, 4, 4]
+  ONNX_NAMESPACE::TypeProto type_bb;
+  type_bb.mutable_tensor_type()->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  type_bb.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(1);
+  type_bb.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(5);
+  type_bb.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(4);
+  type_bb.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(4);
+  auto& input_bb = graph.GetOrCreateNodeArg("input_bb", &type_bb);
+
+  ONNX_NAMESPACE::TensorProto scale_tensor;
+  scale_tensor.set_name("scale");
+  scale_tensor.set_data_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  scale_tensor.add_float_data(0.00392156862f);  // 1/255
+  graph.AddInitializedTensor(scale_tensor);
+
+  ONNX_NAMESPACE::TensorProto zp_tensor;
+  zp_tensor.set_name("zp");
+  zp_tensor.set_data_type(ONNX_NAMESPACE::TensorProto_DataType_UINT8);
+  zp_tensor.add_int32_data(0);
+  graph.AddInitializedTensor(zp_tensor);
+
+  auto& scale_arg = graph.GetOrCreateNodeArg("scale", nullptr);
+  auto& zp_arg = graph.GetOrCreateNodeArg("zp", nullptr);
+
+  ONNX_NAMESPACE::TypeProto quant_type_aa;
+  quant_type_aa.mutable_tensor_type()->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_UINT8);
+  quant_type_aa.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(1);
+  quant_type_aa.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(3);
+  quant_type_aa.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(4);
+  quant_type_aa.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(4);
+
+  ONNX_NAMESPACE::TypeProto quant_type_cc;
+  quant_type_cc.mutable_tensor_type()->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_UINT8);
+  quant_type_cc.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(1);
+  quant_type_cc.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(7);
+  quant_type_cc.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(4);
+  quant_type_cc.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(4);
+
+  ONNX_NAMESPACE::TypeProto quant_type_bb;
+  quant_type_bb.mutable_tensor_type()->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_UINT8);
+  quant_type_bb.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(1);
+  quant_type_bb.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(5);
+  quant_type_bb.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(4);
+  quant_type_bb.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(4);
+
+  // Add Q/DQ nodes in order: aa, cc, bb (differs from ONNX declared order: bb, aa, cc)
+  auto& q_aa_out = graph.GetOrCreateNodeArg("q_aa_out", &quant_type_aa);
+  graph.AddNode("q_aa", "QuantizeLinear", "", {&input_aa, &scale_arg, &zp_arg}, {&q_aa_out});
+  auto& dq_aa_out = graph.GetOrCreateNodeArg("dq_aa_out", &type_aa);
+  graph.AddNode("dq_aa", "DequantizeLinear", "", {&q_aa_out, &scale_arg, &zp_arg}, {&dq_aa_out});
+
+  auto& q_cc_out = graph.GetOrCreateNodeArg("q_cc_out", &quant_type_cc);
+  graph.AddNode("q_cc", "QuantizeLinear", "", {&input_cc, &scale_arg, &zp_arg}, {&q_cc_out});
+  auto& dq_cc_out = graph.GetOrCreateNodeArg("dq_cc_out", &type_cc);
+  graph.AddNode("dq_cc", "DequantizeLinear", "", {&q_cc_out, &scale_arg, &zp_arg}, {&dq_cc_out});
+
+  auto& q_bb_out = graph.GetOrCreateNodeArg("q_bb_out", &quant_type_bb);
+  graph.AddNode("q_bb", "QuantizeLinear", "", {&input_bb, &scale_arg, &zp_arg}, {&q_bb_out});
+  auto& dq_bb_out = graph.GetOrCreateNodeArg("dq_bb_out", &type_bb);
+  graph.AddNode("dq_bb", "DequantizeLinear", "", {&q_bb_out, &scale_arg, &zp_arg}, {&dq_bb_out});
+
+  auto& relu_aa_out = graph.GetOrCreateNodeArg("relu_aa_out", &type_aa);
+  graph.AddNode("relu_aa", "Relu", "", {&dq_aa_out}, {&relu_aa_out});
+
+  auto& relu_cc_out = graph.GetOrCreateNodeArg("relu_cc_out", &type_cc);
+  graph.AddNode("relu_cc", "Relu", "", {&dq_cc_out}, {&relu_cc_out});
+
+  auto& relu_bb_out = graph.GetOrCreateNodeArg("relu_bb_out", &type_bb);
+  graph.AddNode("relu_bb", "Relu", "", {&dq_bb_out}, {&relu_bb_out});
+  auto& q_out_aa = graph.GetOrCreateNodeArg("q_out_aa", &quant_type_aa);
+  graph.AddNode("q_relu_aa", "QuantizeLinear", "", {&relu_aa_out, &scale_arg, &zp_arg}, {&q_out_aa});
+  auto& output_aa = graph.GetOrCreateNodeArg("output_aa", &type_aa);
+  graph.AddNode("dq_out_aa", "DequantizeLinear", "", {&q_out_aa, &scale_arg, &zp_arg}, {&output_aa});
+
+  auto& q_out_cc = graph.GetOrCreateNodeArg("q_out_cc", &quant_type_cc);
+  graph.AddNode("q_relu_cc", "QuantizeLinear", "", {&relu_cc_out, &scale_arg, &zp_arg}, {&q_out_cc});
+  auto& output_cc = graph.GetOrCreateNodeArg("output_cc", &type_cc);
+  graph.AddNode("dq_out_cc", "DequantizeLinear", "", {&q_out_cc, &scale_arg, &zp_arg}, {&output_cc});
+
+  auto& q_out_bb = graph.GetOrCreateNodeArg("q_out_bb", &quant_type_bb);
+  graph.AddNode("q_relu_bb", "QuantizeLinear", "", {&relu_bb_out, &scale_arg, &zp_arg}, {&q_out_bb});
+  auto& output_bb = graph.GetOrCreateNodeArg("output_bb", &type_bb);
+  graph.AddNode("dq_out_bb", "DequantizeLinear", "", {&q_out_bb, &scale_arg, &zp_arg}, {&output_bb});
+
+  graph.SetInputs({&input_bb, &input_aa, &input_cc});
+  graph.SetOutputs({&output_bb, &output_aa, &output_cc});
+
+  auto status = graph.Resolve();
+  ASSERT_TRUE(status.IsOK()) << "Graph resolve failed: " << status.ErrorMessage();
+
+  std::string model_data;
+  model.ToProto().SerializeToString(&model_data);
+
+  Ort::SessionOptions so;
+  so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
+
+  onnxruntime::ProviderOptions options;
+  options["offload_graph_io_quantization"] = "1";
+
+#if defined(_WIN32)
+  options["backend_path"] = "QnnHtp.dll";
+  options["qnn_ir_backend_path"] = "QnnIr.dll";
+#else
+  options["backend_path"] = "libQnnHtp.so";
+  options["qnn_ir_backend_path"] = "libQnnIr.so";
+#endif
+
+  const std::filesystem::path dlc_output_dir = "dlc_io_order_test";
+  std::filesystem::remove_all(dlc_output_dir);
+
+  options["dump_qnn_ir_dlc"] = "1";
+  options["dump_qnn_ir_dlc_dir"] = dlc_output_dir.string();
+
+  so.AppendExecutionProvider("QNN", options);
+  Ort::Session session(*ort_env, model_data.data(), model_data.size(), so);
+
+  ASSERT_TRUE(std::filesystem::exists(dlc_output_dir)) << "DLC output directory was not created";
+
+  std::filesystem::path dlc_path;
+  for (const auto& entry : std::filesystem::directory_iterator(dlc_output_dir)) {
+    if (entry.path().extension() == ".dlc") {
+      dlc_path = entry.path();
+      break;
+    }
+  }
+  ASSERT_FALSE(dlc_path.empty()) << "No DLC file found in output directory";
+
+  Ort::AllocatorWithDefaultOptions allocator;
+  size_t num_inputs = session.GetInputCount();
+  ASSERT_EQ(num_inputs, 3u) << "Expected 3 inputs in session";
+
+  std::vector<std::string> session_inputs;
+  for (size_t i = 0; i < num_inputs; ++i) {
+    auto name = session.GetInputNameAllocated(i, allocator);
+    session_inputs.push_back(name.get());
+  }
+
+  size_t num_outputs = session.GetOutputCount();
+  ASSERT_EQ(num_outputs, 3u) << "Expected 3 outputs in session";
+
+  std::vector<std::string> session_outputs;
+  for (size_t i = 0; i < num_outputs; ++i) {
+    auto name = session.GetOutputNameAllocated(i, allocator);
+    session_outputs.push_back(name.get());
+  }
+
+  std::cout << "Inputs: ";
+  for (const auto& name : session_inputs) std::cout << name << " ";
+  std::cout << "\nOutputs: ";
+  for (const auto& name : session_outputs) std::cout << name << " ";
+  std::cout << std::endl;
+
+  // Verify I/O order matches ONNX declared order: [bb, aa, cc]
+  EXPECT_EQ(session_inputs[0], "input_bb");
+  EXPECT_EQ(session_inputs[1], "input_aa");
+  EXPECT_EQ(session_inputs[2], "input_cc");
+  EXPECT_EQ(session_outputs[0], "output_bb");
+  EXPECT_EQ(session_outputs[1], "output_aa");
+  EXPECT_EQ(session_outputs[2], "output_cc");
 }
 
 #endif  // !defined(ORT_MINIMAL_BUILD)

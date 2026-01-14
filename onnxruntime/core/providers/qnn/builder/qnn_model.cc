@@ -7,7 +7,7 @@
 #include <fstream>
 #include <gsl/gsl>
 #include <thread>
-#include <unordered_set>
+#include <unordered_map>
 #include "QnnOpDef.h"
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -21,68 +21,40 @@
 namespace onnxruntime {
 namespace qnn {
 
-// When offload_graph_io_quantization=1, Q/DQ nodes at graph boundaries are filtered out,
-// causing fused node I/O names to differ from original ONNX graph I/O names.
-// This builds a map to restore original names in DLC output for user convenience.
-static std::unordered_map<std::string, std::string> BuildQuantizedIoNameMap(
+// Build map from internal tensor names to original ONNX graph I/O names
+// With offload_graph_io_quantization=1, boundary QDQ nodes are excluded
+// from the fused subgraph, returns: {internal_name -> onnx_name}
+static std::unordered_map<std::string, std::string> BuildGraphIoNameMap(
     const GraphViewer& graph_viewer,
     const onnxruntime::Node& fused_node,
     const logging::Logger& logger) {
   std::unordered_map<std::string, std::string> name_map;
   const Graph& main_graph = graph_viewer.GetGraph();
 
-  std::unordered_set<std::string> main_graph_input_names;
-  for (const auto* input : main_graph.GetInputs()) {
-    if (input && !input->Name().empty()) {
-      main_graph_input_names.insert(input->Name());
-    }
-  }
-
-  std::unordered_set<std::string> main_graph_output_names;
-  for (const auto* output : main_graph.GetOutputs()) {
-    if (output && !output->Name().empty()) {
-      main_graph_output_names.insert(output->Name());
-    }
-  }
-
-  // Map fused inputs back through Q nodes to original graph inputs
   for (const auto* input_def : fused_node.InputDefs()) {
-    if (!input_def || input_def->Name().empty()) {
-      continue;
-    }
+    if (!input_def) continue;
     const std::string& fused_input_name = input_def->Name();
     const Node* producer = main_graph.GetProducerNode(fused_input_name);
-    if (!producer || producer->OpType() != "QuantizeLinear") {
-      continue;
-    }
-    const auto& q_inputs = producer->InputDefs();
-    if (!q_inputs.empty() && q_inputs[0] && !q_inputs[0]->Name().empty()) {
-      const std::string& q_input_name = q_inputs[0]->Name();
-      if (main_graph_input_names.count(q_input_name) > 0) {
-        name_map[fused_input_name] = q_input_name;
+    if (producer && producer->OpType() == "QuantizeLinear") {
+      const auto& q_inputs = producer->InputDefs();
+      if (!q_inputs.empty() && q_inputs[0]) {
+        name_map[fused_input_name] = q_inputs[0]->Name();
         LOGS(logger, VERBOSE) << "Mapping fused input '" << fused_input_name
-                              << "' to graph input '" << q_input_name << "'";
+                              << "' to graph input '" << q_inputs[0]->Name() << "'";
       }
     }
   }
 
-  // Map fused outputs forward through DQ nodes to original graph outputs
   for (const auto* output_def : fused_node.OutputDefs()) {
-    if (!output_def || output_def->Name().empty()) {
-      continue;
-    }
+    if (!output_def) continue;
     const std::string& fused_output_name = output_def->Name();
     for (const Node* consumer : main_graph.GetConsumerNodes(fused_output_name)) {
-      if (!consumer || consumer->OpType() != "DequantizeLinear") {
-        continue;
-      }
-      const auto& dq_outputs = consumer->OutputDefs();
-      if (!dq_outputs.empty() && dq_outputs[0] && !dq_outputs[0]->Name().empty()) {
-        const std::string& dq_output_name = dq_outputs[0]->Name();
-        if (main_graph_output_names.count(dq_output_name) > 0) {
-          name_map[fused_output_name] = dq_output_name;
+      if (consumer && consumer->OpType() == "DequantizeLinear") {
+        const auto& dq_outputs = consumer->OutputDefs();
+        if (!dq_outputs.empty() && dq_outputs[0]) {
+          name_map[fused_output_name] = dq_outputs[0]->Name();
           LOGS(logger, VERBOSE) << "Mapping fused output '" << fused_output_name
-                                << "' to graph output '" << dq_output_name << "'";
+                                << "' to graph output '" << dq_outputs[0]->Name() << "'";
           break;
         }
       }
@@ -179,6 +151,12 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
   // This name must be same with the EPContext node name
   const auto& graph_name = fused_node.Name();
   ORT_RETURN_IF_ERROR(SetGraphInputOutputInfo(graph_viewer, fused_node, logger));
+  // Only build graph I/O name map when offload_graph_io_quantization is enabled
+  std::unordered_map<std::string, std::string> graph_io_name_map;
+  if (model_settings.offload_graph_io_quantization) {
+    graph_io_name_map = BuildGraphIoNameMap(graph_viewer, fused_node, logger);
+  }
+
   QnnModelWrapper qnn_model_wrapper = QnnModelWrapper(graph_viewer, logger,
                                                       qnn_backend_manager_->GetQnnInterface(),
                                                       qnn_backend_manager_->GetQnnBackendHandle(),
@@ -186,7 +164,7 @@ Status QnnModel::ComposeGraph(const GraphViewer& graph_viewer,
                                                       model_output_index_map_,
                                                       qnn_backend_manager_->GetQnnBackendType(),
                                                       model_settings,
-                                                      BuildQuantizedIoNameMap(graph_viewer, fused_node, logger));
+                                                      std::move(graph_io_name_map));
   bool rt = true;
 
   qnn::profile::ProfilingInfo profiling_info;

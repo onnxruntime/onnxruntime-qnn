@@ -109,8 +109,8 @@ bool QnnModelWrapper::AddTensorWrapper(QnnTensorWrapper&& tensor_wrapper) {
 
   // Apply name override for graph I/O tensors if one exists.
   if (qnn_tensor_type == QNN_TENSOR_TYPE_APP_WRITE || qnn_tensor_type == QNN_TENSOR_TYPE_APP_READ) {
-    auto it = tensor_name_overrides_.find(tensor_name);
-    if (it != tensor_name_overrides_.end()) {
+    auto it = internal_to_onnx_io_names_.find(tensor_name);
+    if (it != internal_to_onnx_io_names_.end()) {
       tensor_wrapper.SetQnnTensorNameOverride(it->second);
       LOGS(logger_, VERBOSE) << "Overriding QNN tensor name from '" << tensor_name
                              << "' to '" << it->second << "'";
@@ -119,14 +119,6 @@ bool QnnModelWrapper::AddTensorWrapper(QnnTensorWrapper&& tensor_wrapper) {
 
   // save created tensors for later lookup to populate graph node construction
   model_tensors_map_.emplace(tensor_name, std::move(tensor_wrapper));
-
-  // save network input/outputs tensors to use for setting the Qnn graph's
-  // input and output tensors for populating GraphInfo for caller
-  if (qnn_tensor_type == QNN_TENSOR_TYPE_APP_WRITE) {
-    model_input_names_.push_back(tensor_name);
-  } else if (qnn_tensor_type == QNN_TENSOR_TYPE_APP_READ) {
-    model_output_names_.push_back(tensor_name);
-  }
 
   return true;
 }
@@ -547,8 +539,15 @@ bool QnnModelWrapper::ProcessBF16Conversions(std::vector<QnnOpProperty>& final_o
 
 bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
   LOGS(logger_, VERBOSE) << "Compose Qnn Graph.";
-  // ORT_RETURN_IF(qnn_op_property_list_.empty(), "Empty Qnn op list, no graph to compose.");
   if (qnn_op_property_list_.empty()) {
+    return false;
+  }
+
+  // Pre-create graph I/O tensors in ONNX-declared order before processing ops.
+  // QNN SDK determines graph I/O order by tensor creation order. Without this,
+  // tensors are created when first referenced during op processing, which may
+  // differ from ONNX-declared order.
+  if (!CreateGraphInputOutputTensors()) {
     return false;
   }
 
@@ -873,22 +872,44 @@ Status QnnModelWrapper::AddTransposeNode(NodeIndex node_index,
   return Status::OK();
 }
 
-void QnnModelWrapper::GetGraphInputOutputTensorWrapper(const std::vector<std::string>& tensor_name_list,
-                                                       std::vector<QnnTensorWrapper>& wrappers_list) {
-  for (const auto& tensor_name : tensor_name_list) {
-    auto it = model_tensors_map_.find(tensor_name);
-    if (it == model_tensors_map_.end()) {
-      LOGS(logger_, ERROR) << "Model input or output name not exist: " << tensor_name
-                           << ". Could cause execution error.";
-      break;
-    }
-    // It's safe to move QnnTensorWrapper out of model_tensors_map_
-    // since this call happens when QnnModelWrapper end of live
-    wrappers_list.push_back(std::move(it->second));
-    model_tensors_map_.erase(tensor_name);
+bool QnnModelWrapper::CreateGraphInputOutputTensors() {
+  // Pre-create graph I/O tensors in ONNX-declared order before op processing.
+  // QNN SDK determines graph I/O order by tensor creation order.
+  const Graph& main_graph = graph_viewer_.GetGraph();
+
+  for (const auto* arg : main_graph.GetInputs()) {
+    if (!arg) continue;
+    auto it = model_tensors_map_.find(GetInternalName(arg->Name()));
+    if (it == model_tensors_map_.end() || it->second.GetTensorType() != QNN_TENSOR_TYPE_APP_WRITE) continue;
+    std::string err;
+    if (!it->second.CreateQnnGraphTensor(qnn_interface_, graph_, "input", tensor_created_map_, err)) return false;
   }
 
-  return;
+  for (const auto* arg : main_graph.GetOutputs()) {
+    if (!arg) continue;
+    auto it = model_tensors_map_.find(GetInternalName(arg->Name()));
+    if (it == model_tensors_map_.end() || it->second.GetTensorType() != QNN_TENSOR_TYPE_APP_READ) continue;
+    std::string err;
+    if (!it->second.CreateQnnGraphTensor(qnn_interface_, graph_, "output", tensor_created_map_, err)) return false;
+  }
+
+  return true;
+}
+
+void QnnModelWrapper::GetGraphInputOutputTensorWrapper(bool is_input,
+                                                       std::vector<QnnTensorWrapper>& wrappers_list) {
+  // Collect graph I/O tensors in ONNX-declared order.
+  const Graph& main_graph = graph_viewer_.GetGraph();
+  const auto& node_args = is_input ? main_graph.GetInputs() : main_graph.GetOutputs();
+  const Qnn_TensorType_t expected_type = is_input ? QNN_TENSOR_TYPE_APP_WRITE : QNN_TENSOR_TYPE_APP_READ;
+
+  for (const auto* node_arg : node_args) {
+    if (!node_arg) continue;
+    auto it = model_tensors_map_.find(GetInternalName(node_arg->Name()));
+    if (it == model_tensors_map_.end() || it->second.GetTensorType() != expected_type) continue;
+    wrappers_list.push_back(std::move(it->second));
+    model_tensors_map_.erase(it);
+  }
 }
 
 Status QnnModelWrapper::UnpackInitializerData(const ONNX_NAMESPACE::TensorProto& initializer,
