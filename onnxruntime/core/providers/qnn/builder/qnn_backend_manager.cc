@@ -166,18 +166,18 @@ bool QnnBackendManager::IsTimerThreadRunning() {
   return false;
 }
 
-Status QnnBackendManager::SetSustainedHighPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
+Status QnnBackendManager::SetSustainedPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode) {
   std::lock_guard<std::mutex> lk(perf_mutex_);
   Status status = Status::OK();
 
-  std::chrono::microseconds sustainedDurationMs(timer_resource_.sustained_timer_duration_);
+  std::chrono::microseconds sustainedDurationUs(timer_resource_.sustained_timer_duration_);
 
   switch (graph_state_) {
     case GraphState::RUN_DONE:
       if (IsTimerThreadRunning()) {
         timer_->AbortTimer();
       }
-      ORT_RETURN_IF_NOT(timer_->Launch(sustainedDurationMs), "Not able to launch timer thread.");
+      ORT_RETURN_IF_NOT(timer_->Launch(sustainedDurationUs), "Not able to launch timer thread.");
       graph_state_ = GraphState::NONE;
       timer_resource_.caller_busy_ = false;
       break;
@@ -261,7 +261,7 @@ Status QnnBackendManager::SetState(GraphState state, uint32_t htp_power_config_c
     graph_state_ = state;
     if (perfMode == qnn::HtpPerformanceMode::kHtpSustainedHighPerformance || perfMode == qnn::HtpPerformanceMode::kHtpBurst) {
       ORT_RETURN_IF(timer_ == nullptr, "timer is not started");
-      return SetSustainedHighPerformance(htp_power_config_client_id, perfMode);
+      return SetSustainedPerformance(htp_power_config_client_id, perfMode);
     } else if (perfMode == qnn::HtpPerformanceMode::kHtpDefault) {
       if (timer_ && timer_->TimerInUse()) {
         timer_->AbortTimer();
