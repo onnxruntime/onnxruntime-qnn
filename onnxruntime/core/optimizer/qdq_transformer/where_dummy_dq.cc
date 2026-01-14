@@ -49,10 +49,10 @@ Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified, con
   graph.GetInitializedTensor(dq_node->InputDefs()[2]->Name(), dq_node_zp_proto);
 
   // Dummy data initializer.
-  ONNX_NAMESPACE::TensorProto dummy_data_proto;
-  dummy_data_proto.set_name(graph.GenerateNodeArgName(node.Name() + "_dummy_data"));
+  ONNX_NAMESPACE::TensorProto dummy_xq_proto;
+  dummy_xq_proto.set_name(graph.GenerateNodeArgName(node.Name() + "_dummy_xq"));
   // Set data type to dq node's zp dtype
-  dummy_data_proto.set_data_type(dq_node_zp_proto->data_type());
+  dummy_xq_proto.set_data_type(dq_node_zp_proto->data_type());
 
   // Dummy zero point initializer.
   ONNX_NAMESPACE::TensorProto dummy_zp_proto;
@@ -73,10 +73,10 @@ Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified, con
     LOGS(logger, WARNING) << "Currently only support existing DQ's scale with same datatype as scalar";
     return Status::OK();
   }
-  float where_const_scalar = 0;
+  float dummy_xf = 0;
   switch (initializer.data_type()) {
     case ONNX_NAMESPACE::TensorProto_DataType_FLOAT: {
-      where_const_scalar = *initializer.data<float>();
+      dummy_xf = *initializer.data<float>();
       break;
     }
     default:
@@ -86,39 +86,39 @@ Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified, con
 
   switch (dummy_zp_proto.data_type()) {
     case ONNX_NAMESPACE::TensorProto_DataType_INT8: {
-      int8_t zp = 0;
-      int8_t dummy_data = (where_const_scalar > 0) ? 127 : ((where_const_scalar == 0) ? zp : -128);
-      float scale = (where_const_scalar == 0) ? 1 : (float)where_const_scalar / (dummy_data - zp);
-      dummy_zp_proto.set_raw_data(&zp, 1);
-      dummy_data_proto.set_raw_data(&dummy_data, 1);
-      dummy_scale_proto.set_raw_data(&scale, sizeof(float));
+      int8_t dummy_zp = 0;
+      int8_t dummy_xq = (dummy_xf > 0) ? 127 : ((dummy_xf == 0) ? dummy_zp : -128);
+      float dummy_scale = (dummy_xf == 0) ? 1 : (float)dummy_xf / (dummy_xq - dummy_zp);
+      dummy_zp_proto.set_raw_data(&dummy_zp, 1);
+      dummy_xq_proto.set_raw_data(&dummy_xq, 1);
+      dummy_scale_proto.set_raw_data(&dummy_scale, sizeof(float));
       break;
     }
     case ONNX_NAMESPACE::TensorProto_DataType_UINT8: {
-      uint8_t zp = 127;
-      uint8_t dummy_data = (where_const_scalar > 0) ? 255 : ((where_const_scalar == 0) ? zp : 0);
-      float scale = (where_const_scalar == 0) ? 1 : (float)where_const_scalar / (dummy_data - zp);
-      dummy_zp_proto.set_raw_data(&zp, 1);
-      dummy_data_proto.set_raw_data(&dummy_data, 1);
-      dummy_scale_proto.set_raw_data(&scale, sizeof(float));
+      uint8_t dummy_zp = 127;
+      uint8_t dummy_xq = (dummy_xf > 0) ? 255 : ((dummy_xf == 0) ? dummy_zp : 0);
+      float dummy_scale = (dummy_xf == 0) ? 1 : (float)dummy_xf / (dummy_xq - dummy_zp);
+      dummy_zp_proto.set_raw_data(&dummy_zp, 1);
+      dummy_xq_proto.set_raw_data(&dummy_xq, 1);
+      dummy_scale_proto.set_raw_data(&dummy_scale, sizeof(float));
       break;
     }
     case ONNX_NAMESPACE::TensorProto_DataType_INT16: {
-      int16_t zp = 0;
-      int16_t dummy_data = (where_const_scalar > 0) ? 32767 : ((where_const_scalar == 0) ? zp : -32768);
-      float scale = (where_const_scalar == 0) ? 1 : (float)where_const_scalar / (dummy_data - zp);
-      dummy_zp_proto.set_raw_data(&zp, 2);
-      dummy_data_proto.set_raw_data(&dummy_data, 2);
-      dummy_scale_proto.set_raw_data(&scale, sizeof(float));
+      int16_t dummy_zp = 0;
+      int16_t dummy_xq = (dummy_xf > 0) ? 32767 : ((dummy_xf == 0) ? dummy_zp : -32768);
+      float dummy_scale = (dummy_xf == 0) ? 1 : (float)dummy_xf / (dummy_xq - dummy_zp);
+      dummy_zp_proto.set_raw_data(&dummy_zp, 2);
+      dummy_xq_proto.set_raw_data(&dummy_xq, 2);
+      dummy_scale_proto.set_raw_data(&dummy_scale, sizeof(float));
       break;
     }
     case ONNX_NAMESPACE::TensorProto_DataType_UINT16: {
-      uint16_t zp = 32767;
-      uint16_t dummy_data = (where_const_scalar > 0) ? 65535 : ((where_const_scalar == 0) ? zp : 0);
-      float scale = (where_const_scalar == 0) ? 1 : (float)where_const_scalar / (dummy_data - zp);
-      dummy_zp_proto.set_raw_data(&zp, 2);
-      dummy_data_proto.set_raw_data(&dummy_data, 2);
-      dummy_scale_proto.set_raw_data(&scale, sizeof(float));
+      uint16_t dummy_zp = 32767;
+      uint16_t dummy_xq = (dummy_xf > 0) ? 65535 : ((dummy_xf == 0) ? dummy_zp : 0);
+      float dummy_scale = (dummy_xf == 0) ? 1 : (float)dummy_xf / (dummy_xq - dummy_zp);
+      dummy_zp_proto.set_raw_data(&dummy_zp, 2);
+      dummy_xq_proto.set_raw_data(&dummy_xq, 2);
+      dummy_scale_proto.set_raw_data(&dummy_scale, sizeof(float));
       break;
     }
     default:
@@ -127,7 +127,7 @@ Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified, con
   }
 
   // Start editing the graph
-  NodeArg& dummy_data_arg = graph_utils::AddInitializerWithOrtValue(graph, dummy_data_proto);
+  NodeArg& dummy_xq_arg = graph_utils::AddInitializerWithOrtValue(graph, dummy_xq_proto);
   NodeArg& dummy_scale_arg = graph_utils::AddInitializerWithOrtValue(graph, dummy_scale_proto);
   NodeArg& dummy_zp_arg = graph_utils::AddInitializerWithOrtValue(graph, dummy_zp_proto);
 
@@ -140,7 +140,7 @@ Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified, con
           graph.GenerateNodeArgName(node.Name() + "_dummy_dq"),
           QDQ::DQOpName,
           "DeQuantizeLinear from WhereDummyDq GraphTransformer",
-          {&dummy_data_arg, &dummy_scale_arg, &dummy_zp_arg},
+          {&dummy_xq_arg, &dummy_scale_arg, &dummy_zp_arg},
           {&dummy_dq_arg},
           nullptr,
           dq_node->Domain());
