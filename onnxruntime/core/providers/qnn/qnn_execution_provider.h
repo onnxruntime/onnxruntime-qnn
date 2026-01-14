@@ -39,6 +39,8 @@ class QNNExecutionProvider : public IExecutionProvider {
   Status Compile(const std::vector<FusedNodeAndGraph>& fused_nodes_and_graphs,
                  std::vector<NodeComputeInfo>& node_compute_funcs) override;
 
+  Status ExecuteGenieModel(onnxruntime::PathString context_model_path);
+
   const void* GetExecutionHandle() const noexcept override {
     return nullptr;
   }

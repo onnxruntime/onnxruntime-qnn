@@ -43,7 +43,7 @@ Status GenieBackendManager::SetupBackend(const logging::Logger& logger) {
   }
 
   logger_ = &logger;
-  
+
   // Load the Genie backend library
   Status status = LoadBackend();
   if (!status.IsOK()) {
