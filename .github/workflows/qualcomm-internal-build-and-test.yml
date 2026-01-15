@@ -83,7 +83,7 @@ jobs:
       upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' }}
       target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
       test_runner_arch: arm64
-      run_tests: ${{ vars.RUN_TESTS == '' || vars.RUN_TESTS != '0' }}
+      run_tests: true
 
   build-and-test-windows-arm64ec:
     if: ${{ inputs.do_windows_arm64ec }}
@@ -120,7 +120,7 @@ jobs:
       target_arch: x86_64
       target_py_vsn: ${{ inputs.target_py_vsn }}
       test_wheel: ${{ vars.TEST_WHEEL == '' || vars.TEST_WHEEL != '0' }}
-      run_tests: ${{ vars.RUN_TESTS == '' || vars.RUN_TESTS != '0' }}
+      run_tests: true
 
   lint:
     if: ${{ inputs.do_lint }}

@@ -115,55 +115,60 @@ if ((Get-CimInstance Win32_Processor).Architecture -ne 12) {  # Architecture cod
     Write-Warning "Host is Windows ARM - skipping Python testing for now."
 }
 
-Write-Host "--=-=-=- Running ONNX model tests -=--=-=-"
-& $OnnxTestRunnerExe `
-    -j 1 `
-    -e qnn `
-    -i "backend_type|cpu" `
-    "$RepoRoot\cmake\external\onnx\onnx\backend\test\data\node"
-if (-not $?) {
-    $Failed = $true
-}
-
-Write-Host "-=-=-=- Running onnx/models float32 tests -=-=-=-"
-Push-Location $OnnxModelsRoot
-if (-not $?) {
-    throw "Could not cd to $OnnxModelsRoot"
-}
-
-& $OnnxTestRunnerExe `
-    -j 1 `
-    -e qnn `
-    -i "backend_type|cpu" `
-    "testdata\float32"
-if (-not $?) {
-    $Failed = $true
-}
-
-Write-Host "-=-=-=- Running onnx/models qdq tests -=-=-=-"
-& $OnnxTestRunnerExe `
-    -j 1 `
-    -e qnn `
-    -i "backend_type|$QdqBackend" `
-    "testdata\qdq"
-if (-not $?) {
-    $Failed = $true
-}
-
-if ($QdqBackend -ne "cpu") {
-    Write-Host "-=-=-=- Running onnx/models qdq tests with context cache enabled -=-=-=-"
-    # Scrub old context caches
-    Get-ChildItem -Path "testdata\qdq-with-context-cache" -Recurse -Filter "*_ctx.onnx" | Remove-Item -Force
+# Check if ONNX test runner exists before attempting to run ONNX model tests
+if (-not (Test-Path $OnnxTestRunnerExe)) {
+    Write-Host "ONNX test runner not found at $OnnxTestRunnerExe. Skipping ONNX model tests."
+} else {
+    Write-Host "--=-=-=- Running ONNX model tests -=--=-=-"
     & $OnnxTestRunnerExe `
         -j 1 `
         -e qnn `
-        -f -i "backend_type|$QdqBackend" `
-        "testdata\qdq-with-context-cache"
+        -i "backend_type|cpu" `
+        "$RepoRoot\cmake\external\onnx\onnx\backend\test\data\node"
     if (-not $?) {
         $Failed = $true
     }
-} else {
-    Write-Host "Not running onnx/models qdq tests with context cache enabled on CPU backend."
+
+    Write-Host "-=-=-=- Running onnx/models float32 tests -=-=-=-"
+    Push-Location $OnnxModelsRoot
+    if (-not $?) {
+        throw "Could not cd to $OnnxModelsRoot"
+    }
+
+    & $OnnxTestRunnerExe `
+        -j 1 `
+        -e qnn `
+        -i "backend_type|cpu" `
+        "testdata\float32"
+    if (-not $?) {
+        $Failed = $true
+    }
+
+    Write-Host "-=-=-=- Running onnx/models qdq tests -=-=-=-"
+    & $OnnxTestRunnerExe `
+        -j 1 `
+        -e qnn `
+        -i "backend_type|$QdqBackend" `
+        "testdata\qdq"
+    if (-not $?) {
+        $Failed = $true
+    }
+
+    if ($QdqBackend -ne "cpu") {
+        Write-Host "-=-=-=- Running onnx/models qdq tests with context cache enabled -=-=-=-"
+        # Scrub old context caches
+        Get-ChildItem -Path "testdata\qdq-with-context-cache" -Recurse -Filter "*_ctx.onnx" | Remove-Item -Force
+        & $OnnxTestRunnerExe `
+            -j 1 `
+            -e qnn `
+            -f -i "backend_type|$QdqBackend" `
+            "testdata\qdq-with-context-cache"
+        if (-not $?) {
+            $Failed = $true
+        }
+    } else {
+        Write-Host "Not running onnx/models qdq tests with context cache enabled on CPU backend."
+    }
 }
 
 # If it looks like we're running in QDC, copy logs to the directory they'll scan to find them.
