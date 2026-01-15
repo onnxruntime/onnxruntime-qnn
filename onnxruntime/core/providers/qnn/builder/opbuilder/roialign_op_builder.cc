@@ -126,29 +126,53 @@ Status RoiAlignOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
   // 
   TensorInfo output_info = {};
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
+  const std::string& roialign_output_name = utils::GetUniqueName(node_unit, "roialign_output");
+
+  // 
   const std::string& org_output_name = node_unit.Outputs()[0].node_arg.Name();
   const bool& is_graph_output = qnn_model_wrapper.IsGraphOutput(org_output_name);
   std::vector<uint32_t> output_shape = output_info.shape;
   output_shape[1] = output_info.shape[2];
   output_shape[2] = output_info.shape[3];
   output_shape[3] = output_info.shape[1];
-  Qnn_TensorType_t op_output_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
-  QnnTensorWrapper roialign_output(org_output_name,
-                                op_output_tensor_type,
+  // Qnn_TensorType_t op_output_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+  QnnTensorWrapper roialign_output(roialign_output_name,
+                                // op_output_tensor_type,
+                                QNN_TENSOR_TYPE_NATIVE,
                                 input_info.qnn_data_type,
                                 QnnQuantParamsWrapper(),
                                 std::vector<uint32_t>(output_shape));
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(roialign_output)), "Failed to add tensor.");
   
+
   const std::string& roialign_name = utils::GetUniqueName(node_unit, "_roialign");
   ORT_RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(roialign_name,
                                                     QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                     QNN_OP_ROI_ALIGN,
                                                     std::move(roi_align_input_names),
-                                                    {org_output_name},
+                                                    {roialign_output_name},
                                                     std::move(param_tensor_names),
                                                     do_op_validation),
                     "Failed to add Roi align node.");
+
+  // Transpose back feature: [N H W C] to [N C H W]
+  // const std::string& transposed_roialign_name = utils::GetUniqueName(node_unit, "_transposed_roialign_output");
+  std::vector<uint32_t> transpose_roialign_perm{0, 3, 1, 2};
+  std::vector<uint32_t> transpose_roialign_output_shape = output_shape;
+  transpose_roialign_output_shape[1] = output_shape[3];
+  transpose_roialign_output_shape[2] = output_shape[1];
+  transpose_roialign_output_shape[3] = output_shape[2];
+  ORT_RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(),
+                                                          roialign_output_name,
+                                                          org_output_name,
+                                                          output_info.shape,
+                                                          transpose_roialign_perm,
+                                                          transpose_roialign_output_shape,
+                                                          output_info.qnn_data_type,
+                                                          output_info.quant_param,
+                                                          do_op_validation,
+                                                          false,
+                                                          true));
 
   return Status::OK();
 }

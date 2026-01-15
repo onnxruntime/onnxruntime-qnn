@@ -117,6 +117,7 @@ TEST_F(QnnHTPBackendTests, DumpDlcTest) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
   provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["soc_model"] = "75";
   TryEnableQNNSaver(provider_options);
   EPVerificationParams verification_params;
   verification_params.ep_node_assignment = ExpectedEPNodeAssignment::All;
