@@ -183,6 +183,7 @@ def generate_build_tree(
     cmake_path,
     source_dir,
     build_dir,
+    ort_home,
     qnn_home,
     path_to_protoc_exe,
     configs,
@@ -353,6 +354,9 @@ def generate_build_tree(
 
     if qnn_home and os.path.exists(qnn_home):
         cmake_args += ["-Donnxruntime_QNN_HOME=" + qnn_home]
+
+    if ort_home and os.path.exists(ort_home):
+        cmake_args += ["-Donnxruntime_ORT_HOME=" + ort_home]
 
     if args.use_full_protobuf or args.gen_doc or args.enable_generic_interface:
         cmake_args += ["-Donnxruntime_USE_FULL_PROTOBUF=ON", "-DProtobuf_USE_STATIC_LIBS=ON"]
@@ -715,6 +719,7 @@ def main():
     qnn_home = ""
     if args.use_qnn:
         qnn_home = args.qnn_home
+    ort_home = args.ort_home
 
     if args.update or args.build:
         for config in configs:
@@ -790,6 +795,7 @@ def main():
             cmake_path,
             source_dir,
             build_dir,
+            ort_home,
             qnn_home,
             path_to_protoc_exe,
             configs,

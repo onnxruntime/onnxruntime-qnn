@@ -51,6 +51,7 @@ from ep_build.util import (
 )
 
 DOCKER_CCACHE_ROOT_ENV_VAR = "ORT_BUILD_DOCKER_CCACHE_ROOT"
+ORT_PREBUILT_ROOT_ENV_VAR = "ORT_PREBUILT_ROOT"
 QAIRT_SDK_ROOT_ENV_VAR = "QAIRT_SDK_ROOT"
 QNN_SDK_ROOT_ENV_VAR = "QNN_SDK_ROOT"
 SNPE_ROOT_ENV_VAR = "SNPE_ROOT"
@@ -81,6 +82,9 @@ Environment variables
 
   ORT_NIGHTLY_BUILD
     If set to 1, instruct the ORT build to use a more verbose version string.
+
+  ORT_PREBUILT_ROOT
+    If specified, this will be used for the path of ORT prebuilt.
 
   QAIRT_SDK_ROOT
   QNN_SDK_ROOT
@@ -125,6 +129,11 @@ Environment variables
         help="Print the task library in DOT format and exit. Combine with --task to highlight what would run.",
     )
     parser.add_argument(
+        "--ort-prebuilt",
+        type=Path,
+        help=f"Path to ORT Prebuilt.",
+    )
+    parser.add_argument(
         "--qairt-sdk",
         type=Path,
         help=f"Path to QAIRT SDK. Overrides default version and {QAIRT_SDK_ROOT_ENV_VAR}, {QNN_SDK_ROOT_ENV_VAR}, and {SNPE_ROOT_ENV_VAR} environment variables.",
@@ -161,6 +170,7 @@ class TaskLibrary:
         venv_path: Path,
         config: BuildConfigT,
         target_py_version: TargetPyVersionT | None,
+        ort_prebuilt_root: Path | None,
         qairt_sdk_root: Path | None,
         docker_ccache_root: Path | None,
     ) -> None:
@@ -169,6 +179,7 @@ class TaskLibrary:
         self.__config: BuildConfigT = config
         # pylance somehow cannot correctly deduce the type of self.__target_py_version
         self.__target_py_version: TargetPyVersionT | None = target_py_version
+        self.__ort_prebuilt_root = ort_prebuilt_root
         self.__qairt_sdk_root = qairt_sdk_root
         self.__docker_ccache_root = docker_ccache_root
 
@@ -276,6 +287,7 @@ class TaskLibrary:
                     "arm64",
                     self.__config,
                     self.__target_py_version,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "archive",
                 )
@@ -293,6 +305,7 @@ class TaskLibrary:
                     "arm64ec",
                     self.__config,
                     self.__target_py_version,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "archive",
                 )
@@ -310,6 +323,7 @@ class TaskLibrary:
                     "arm64ec",
                     self.__config,
                     self.__target_py_version,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "archive",
                     build_as_x=True,
@@ -328,6 +342,7 @@ class TaskLibrary:
                     "x86_64",
                     self.__config,
                     self.__target_py_version,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "archive",
                 )
@@ -439,6 +454,7 @@ class TaskLibrary:
                     "arm64",
                     self.__config,
                     self.__target_py_version,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
                 )
@@ -456,6 +472,7 @@ class TaskLibrary:
                     "arm64ec",
                     self.__config,
                     self.__target_py_version,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
                 )
@@ -476,6 +493,7 @@ class TaskLibrary:
                             "arm64",
                             self.__config,
                             None,  # Never build the arm64 slice against Python
+                            self.__ort_prebuilt_root,
                             self.__qairt_sdk_root,
                             "build",
                             build_as_x=True,
@@ -486,6 +504,7 @@ class TaskLibrary:
                             "arm64ec",
                             self.__config,
                             self.__target_py_version,
+                            self.__ort_prebuilt_root,
                             self.__qairt_sdk_root,
                             "build",
                             build_as_x=True,
@@ -518,6 +537,7 @@ class TaskLibrary:
                     "x86_64",
                     self.__config,
                     self.__target_py_version,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
                 )
@@ -583,6 +603,7 @@ class TaskLibrary:
                     "x86_64",
                     "Debug",
                     self.__target_py_version,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "generate_sln",
                 )
@@ -738,6 +759,7 @@ class TaskLibrary:
                     "arm64",
                     self.__config,
                     self.__target_py_version,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
                 )
@@ -787,6 +809,7 @@ class TaskLibrary:
                     "arm64ec",
                     self.__config,
                     self.__target_py_version,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
                 )
@@ -868,6 +891,7 @@ class TaskLibrary:
                     "x86_64",
                     self.__config,
                     self.__target_py_version,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
                 )
@@ -889,6 +913,20 @@ def get_docker_ccache_root(root_from_args: Path | None) -> Path | None:
 
     return ccache_root
 
+def get_ort_prebuilt_root(root_from_args: Path | None) -> Path | None:
+    ort_prebuilt: Path | None = None
+    if root_from_args is not None:
+        ort_prebuilt = root_from_args
+    elif ORT_PREBUILT_ROOT_ENV_VAR in os.environ:
+        ort_prebuilt = Path(os.environ[ORT_PREBUILT_ROOT_ENV_VAR])
+    else:
+        # Let the build fetch QAIRT
+        return None
+
+    if not ort_prebuilt.exists():
+        raise FileNotFoundError(f"ORT Prebuilt root {ort_prebuilt} does not exist.")
+
+    return ort_prebuilt
 
 def get_qairt_sdk_root(root_from_args: Path | None) -> Path | None:
     qairt_sdk: Path | None = None
@@ -916,6 +954,7 @@ def plan_from_dependencies(
     venv_path: Path,
     config: BuildConfigT,
     target_py_version: TargetPyVersionT | None,
+    ort_prebuilt_root: Path | None,
     qairt_sdk_root: Path | None,
     docker_ccache_root: Path | None,
 ) -> Plan:
@@ -924,7 +963,7 @@ def plan_from_dependencies(
     dependencies in a valid order. This is the default planner.
     """
     task_library = TaskLibrary(
-        python_executable, venv_path, config, target_py_version, qairt_sdk_root, docker_ccache_root
+        python_executable, venv_path, config, target_py_version, ort_prebuilt_root, qairt_sdk_root, docker_ccache_root
     )
     plan = Plan()
 
@@ -973,6 +1012,7 @@ def plan_from_task_list(
     venv_path: Path,
     config: BuildConfigT,
     target_py_version: TargetPyVersionT | None,
+    ort_prebuilt_root: Path | None,
     qairt_sdk_root: Path | None,
     docker_ccache_root: Path | None,
 ) -> Plan:
@@ -981,7 +1021,7 @@ def plan_from_task_list(
     Used by --only.
     """
     task_library = TaskLibrary(
-        python_executable, venv_path, config, target_py_version, qairt_sdk_root, docker_ccache_root
+        python_executable, venv_path, config, target_py_version, ort_prebuilt_root, qairt_sdk_root, docker_ccache_root
     )
     plan = Plan()
     for task_name in tasks:
@@ -1000,6 +1040,7 @@ def build_and_test():
     initialize_logging()
 
     args = parse_arguments()
+    ort_prebuilt_root = get_ort_prebuilt_root(args.ort_prebuilt)
     qairt_sdk_root = get_qairt_sdk_root(args.qairt_sdk)
     docker_ccache_root = get_docker_ccache_root(args.docker_ccache_root)
 
@@ -1013,6 +1054,7 @@ def build_and_test():
             args.venv_path,
             args.config,
             args.target_py_version,
+            ort_prebuilt_root,
             qairt_sdk_root,
             docker_ccache_root,
         )

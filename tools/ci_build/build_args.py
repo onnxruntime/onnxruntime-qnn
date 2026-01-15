@@ -375,6 +375,7 @@ def add_execution_provider_args(parser: argparse.ArgumentParser) -> None:
         help="Enable QNN EP. Optionally specify 'shared_lib' (default) or 'static_lib'.",
     )
     qnn_group.add_argument("--qnn_home", help="Path to QNN SDK directory.")
+    qnn_group.add_argument("--ort_home", help="Path to ORT Prebuilt directory.")
 
 
 def add_other_feature_args(parser: argparse.ArgumentParser) -> None:
