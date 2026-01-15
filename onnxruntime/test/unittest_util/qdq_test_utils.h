@@ -22,11 +22,9 @@ namespace test {
 
 using GetQDQTestCaseFn = std::function<void(ModelTestBuilder& builder)>;
 
-using BuildTestModelFn = std::function<void(ModelPublicBuilder& builder)>;
-
 template <typename T>
 std::string
-AddQDQNodePair(ModelPublicBuilder& builder, std::string qdq_name, std::string inp_name, float scale, T zp = T(), bool use_ms_domain = false) {
+AddQDQNodePair(ModelTestBuilder& builder, std::string qdq_name, std::string inp_name, float scale, T zp = T(), bool use_ms_domain = false) {
   builder.AddQuantizeLinearNode<T>(qdq_name+"_q", inp_name.c_str(), scale, zp, (qdq_name+"_q_out").c_str(), use_ms_domain);
   builder.AddDequantizeLinearNode<T>(qdq_name+"_dq", (qdq_name+"_q_out").c_str(), scale, zp, (qdq_name+"_dq_out").c_str(), use_ms_domain);
   return qdq_name+"_dq_out";
@@ -34,7 +32,7 @@ AddQDQNodePair(ModelPublicBuilder& builder, std::string qdq_name, std::string in
 
 template <typename T>
 std::string
-AddQDQNodePairWithOutputAsGraphOutput(ModelPublicBuilder& builder, std::string qdq_name, std::string inp_name, float scale, T zp = T(),
+AddQDQNodePairWithOutputAsGraphOutput(ModelTestBuilder& builder, std::string qdq_name, std::string inp_name, float scale, T zp = T(),
                                       bool use_ms_domain = false) {
   builder.AddQuantizeLinearNode<T>(qdq_name+"_q", inp_name.c_str(), scale, zp, (qdq_name+"_q_out").c_str(), use_ms_domain);
   builder.AddDequantizeLinearNode<T>(qdq_name+"_dq", (qdq_name+"_q_out").c_str(), scale, zp, (qdq_name+"_dq_out").c_str(), use_ms_domain);
@@ -668,7 +666,7 @@ AddQDQNodePairWithOutputAsGraphOutput(ModelPublicBuilder& builder, std::string q
 //   };
 // }
 
-BuildTestModelFn BuildQDQReshapeTestCase(const std::vector<int64_t>& input_shape,
+GetQDQTestCaseFn BuildQDQReshapeTestCase(const std::vector<int64_t>& input_shape,
                                          const std::vector<int64_t>& reshape_shape);
 
 // GetQDQTestCaseFn BuildQDQConcatTestCase(const std::vector<std::vector<int64_t>>& input_shapes,

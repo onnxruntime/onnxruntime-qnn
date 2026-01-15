@@ -86,10 +86,8 @@ TestInputDef<Ort::Float16_t> ConvertToFP16InputDef(const TestInputDef<float>& in
     return TestInputDef<Ort::Float16_t>(input_def.GetShape(), input_def.IsInitializer(), input_data_fp16);
   } else {
     auto rand_data = input_def.GetRandomDataInfo();
-    return TestInputDef<Ort::Float16_t>(input_def.GetShape(),
-                               input_def.IsInitializer(),
-                                     Ort::Float16_t(rand_data.min),
-                                     Ort::Float16_t(rand_data.max));
+    return TestInputDef<Ort::Float16_t>(input_def.GetShape(), input_def.IsInitializer(),
+                                        Ort::Float16_t(rand_data.min), Ort::Float16_t(rand_data.max));
   }
 }
 
@@ -223,7 +221,7 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
   session_options.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, ep_options);
 }
 
-void RunQnnModelTest(const BuildTestModelFn& build_test_case, ProviderOptions provider_options,
+void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                      float fp32_abs_err, OrtLoggingLevel log_severity, bool verify_outputs,
                      std::function<void(const Graph&)>* ep_graph_checker) {
@@ -241,7 +239,7 @@ void RunQnnModelTest(const BuildTestModelFn& build_test_case, ProviderOptions pr
   //                          IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
   //                          logging_manager.DefaultLogger());
   // Graph& graph = model.MainGraph();
-  ModelPublicBuilder helper;
+  ModelTestBuilder helper;
   build_test_case(helper);
   // helper.SetGraphOutputs();
   // ASSERT_STATUS_OK(model.MainGraph().Resolve());
@@ -342,7 +340,10 @@ void InferenceModel(const std::string& model_data,
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
 
   session_options.SetLogId(log_id);
-  session_options.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+
+  // Uncomment to dump verbose output to stdout.
+  // session_options.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+
   for (auto key_value : session_option_pairs) {
     session_options.AddConfigEntry(key_value.first.c_str(), key_value.second.c_str());
   }
@@ -371,7 +372,7 @@ void InferenceModel(const std::string& model_data,
   RunWithEPABI(session, ort_run_options, feeds, output_vals);
 }
 
-std::string MakeTestQDQBiasInput(ModelPublicBuilder& builder,
+std::string MakeTestQDQBiasInput(ModelTestBuilder& builder,
                                  const std::string& name,
                                  const TestInputDef<float>& bias_def,
                                  float bias_scale,
@@ -414,11 +415,10 @@ std::string MakeTestQDQBiasInput(ModelPublicBuilder& builder,
 // if the HTP backend is available.
 // TODO: Remove once HTP can be emulated on Windows ARM64.
 static BackendSupport GetHTPSupport(const OrtLogger* logger) {
-  std::cout << "Check if HTP is available" << std::endl;
-  ModelPublicBuilder helper;
+  ModelTestBuilder helper;
 
   // Build simple QDQ graph: DQ -> InstanceNormalization -> Q
-  BuildTestModelFn build_test_case = [](ModelPublicBuilder& builder) {
+  GetQDQTestCaseFn build_test_case = [](ModelTestBuilder& builder) {
     const uint8_t quant_zero_point = 0;
     const float quant_scale = 1.0f;
 
@@ -480,14 +480,10 @@ static BackendSupport GetHTPSupport(const OrtLogger* logger) {
 
   OrtEpFactory* qnn_ep_factory = registered_ep_device->GetMutableFactory();
   OrtEp* qnn_ep = nullptr;
-  std::cout << "qnn_ep_factory->CreateEp" << std::endl;
   if (qnn_ep_factory->CreateEp(qnn_ep_factory, nullptr, nullptr, 0, session_options, logger, &qnn_ep)) {
-    std::cout << "Finish qnn_ep_factory->CreateEp" << std::endl;
     qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
     return BackendSupport::UNSUPPORTED;
   }
-
-  std::cout << "Check if HTP is available 4" << std::endl;
 
   // auto status = ToStatusAndRelease(qnn_ep->GetCapability(qnn_ep, ep_graph->ToExternal(), &graph_support_info));
   qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
@@ -503,18 +499,18 @@ void QnnHTPBackendTests::SetUp() {
 
   Ort::Logger logger = Ort::Logger();
 
-  // // Determine if HTP backend is supported only if we done so haven't before.
+  // Determine if HTP backend is supported only if we done so haven't before.
   // if (cached_htp_support_ == BackendSupport::SUPPORT_UNKNOWN) {
   //   cached_htp_support_ = GetHTPSupport(reinterpret_cast<OrtLogger*>(&logger));
   // }
 
-  // if (cached_htp_support_ == BackendSupport::UNSUPPORTED) {
-  //   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "QNN HTP backend is not available! Skipping test.");
-  //   GTEST_SKIP();
-  // } else if (cached_htp_support_ == BackendSupport::SUPPORT_ERROR) {
-  //   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, "Failed to check if QNN HTP backend is available.");
-  //   FAIL();
-  // }
+  if (cached_htp_support_ == BackendSupport::UNSUPPORTED) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "QNN HTP backend is not available! Skipping test.");
+    GTEST_SKIP();
+  } else if (cached_htp_support_ == BackendSupport::SUPPORT_ERROR) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, "Failed to check if QNN HTP backend is available.");
+    FAIL();
+  }
 }
 
 // TODO
@@ -535,7 +531,7 @@ void QnnHTPBackendTests::TearDownTestSuite() {
   Ort::Logger logger = Ort::Logger();
 
   // Build simple Relu graph.
-  ModelPublicBuilder helper;
+  ModelTestBuilder helper;
 
   auto build_test_case = BuildOpTestCase<float, float>(
       "Relu",
@@ -584,7 +580,7 @@ void QnnHTPBackendTests::TearDownTestSuite() {
 // then calls QNN EP's GetCapability() function
 // to check if the GPU backend is available.
 static BackendSupport GetGPUSupport(const OrtLogger* logger) {
-  ModelPublicBuilder helper;
+  ModelTestBuilder helper;
 
   // Build simple QDQ graph: DQ -> InstanceNormalization -> Q
   auto build_test_case = BuildOpTestCase<float, float>(
@@ -665,10 +661,10 @@ BackendSupport QnnHTPBackendTests::IsIRBackendSupported() const {
 // if the QNN CPU backend is available.
 // TODO: Remove once the QNN CPU backend works on Windows ARM64 pipeline VM.
 static BackendSupport GetCPUSupport(const OrtLogger* logger, const std::string& backend_type = "cpu") {
-  ModelPublicBuilder helper;
+  ModelTestBuilder helper;
 
-  auto get_test_model_func = [](const std::vector<int64_t>& input_shape) -> BuildTestModelFn {
-    return [input_shape](ModelPublicBuilder& builder) {
+  auto get_test_model_func = [](const std::vector<int64_t>& input_shape) -> GetTestModelFn {
+    return [input_shape](ModelTestBuilder& builder) {
       const int64_t num_channels = input_shape[1];
 
       builder.MakeInitializer<float>("scale", {num_channels}, 0.0f, 1.0f);
@@ -684,7 +680,7 @@ static BackendSupport GetCPUSupport(const OrtLogger* logger, const std::string& 
   };
 
   // Build simple graph with a InstanceNormalization op.
-  BuildTestModelFn build_test_case = get_test_model_func({1, 2, 3, 3});
+  GetQDQTestCaseFn build_test_case = get_test_model_func({1, 2, 3, 3});
   build_test_case(helper);
   // helper.SetGraphOutputs();
   // auto status = model.MainGraph().Resolve();

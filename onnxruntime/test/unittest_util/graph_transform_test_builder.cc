@@ -56,7 +56,7 @@ static InlinedVector<std::byte> GetZeroPointBytes(int64_t zero_point, ONNX_NAMES
   }
 }
 
-const ONNX_NAMESPACE::TensorProto* ModelPublicBuilder::MakeInitializer(std::string name,
+const ONNX_NAMESPACE::TensorProto* ModelTestBuilder::MakeInitializer(std::string name,
                                          gsl::span<const int64_t> shape,
                                          ONNX_NAMESPACE::TensorProto_DataType elem_type,
                                          gsl::span<const std::byte> raw_data) {
@@ -75,7 +75,7 @@ const ONNX_NAMESPACE::TensorProto* ModelPublicBuilder::MakeInitializer(std::stri
   return tensor_proto;
 }
 
-const ONNX_NAMESPACE::NodeProto* ModelPublicBuilder::AddQuantizeLinearNode(const std::string& node_name,
+const ONNX_NAMESPACE::NodeProto* ModelTestBuilder::AddQuantizeLinearNode(const std::string& node_name,
                                                                           const char* input_name,
                                                                           float input_scale,
                                                                           int64_t input_zero_point,
@@ -96,7 +96,7 @@ const ONNX_NAMESPACE::NodeProto* ModelPublicBuilder::AddQuantizeLinearNode(const
   return AddNode(node_name, "QuantizeLinear", input_names, {output_name}, domain);
 }
 
-const ONNX_NAMESPACE::NodeProto* ModelPublicBuilder::AddDequantizeLinearNode(const std::string& node_name,
+const ONNX_NAMESPACE::NodeProto* ModelTestBuilder::AddDequantizeLinearNode(const std::string& node_name,
                                                                             const char* input_name,
                                                                             float input_scale,
                                                                             int64_t input_zero_point,
@@ -116,41 +116,6 @@ const ONNX_NAMESPACE::NodeProto* ModelPublicBuilder::AddDequantizeLinearNode(con
   std::string domain = use_ms_domain ? kMSDomain : "";
   return AddNode(node_name, "DequantizeLinear", input_names, {output_name}, domain);
 }
-
-// NodeArg* ModelTestBuilder::MakeInitializer(gsl::span<const int64_t> shape,
-//                                            ONNX_NAMESPACE::TensorProto_DataType elem_type,
-//                                            gsl::span<const std::byte> raw_data) {
-//   std::string name = graph_.GenerateNodeArgName("constant");
-//   ONNX_NAMESPACE::TensorProto tensor_proto;
-//   tensor_proto.set_name(name);
-//   tensor_proto.set_data_type(elem_type);
-//   utils::SetRawDataInTensorProto(tensor_proto, raw_data.data(), raw_data.size());
-
-//   for (auto& dim : shape) {
-//     tensor_proto.add_dims(dim);
-//   }
-
-//   graph_.AddInitializedTensor(tensor_proto);
-
-//   return &graph_.GetOrCreateNodeArg(name, nullptr);
-// }
-
-// Node& ModelTestBuilder::AddQuantizeLinearNode(NodeArg* input_arg,
-//                                               float input_scale,
-//                                               int64_t input_zero_point,
-//                                               ONNX_NAMESPACE::TensorProto_DataType zero_point_type,
-//                                               NodeArg* output_arg,
-//                                               bool use_ms_domain) {
-//   std::vector<NodeArg*> input_args;
-//   input_args.push_back(input_arg);
-//   input_args.push_back(MakeScalarInitializer<float>(input_scale));
-
-//   InlinedVector<std::byte> zp_bytes = GetZeroPointBytes(input_zero_point, zero_point_type);
-//   input_args.push_back(MakeInitializer({}, zero_point_type, zp_bytes));
-
-//   std::string domain = use_ms_domain ? kMSDomain : "";
-//   return AddNode("QuantizeLinear", input_args, {output_arg}, domain);
-// }
 
 // void TransformerTester(const std::function<void(ModelTestBuilder& helper)>& build_test_case,
 //                        const std::function<void(InferenceSessionWrapper& session)>& check_transformed_graph,

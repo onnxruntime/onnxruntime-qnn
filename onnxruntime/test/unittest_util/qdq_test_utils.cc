@@ -11,9 +11,9 @@
 namespace onnxruntime {
 namespace test {
 
-BuildTestModelFn BuildQDQReshapeTestCase(const std::vector<int64_t>& input_shape,
+GetQDQTestCaseFn BuildQDQReshapeTestCase(const std::vector<int64_t>& input_shape,
                                          const std::vector<int64_t>& reshape_shape) {
-  return [input_shape, reshape_shape](ModelPublicBuilder& builder) {
+  return [input_shape, reshape_shape](ModelTestBuilder& builder) {
     builder.MakeInput<uint8_t>("X", input_shape,
       std::numeric_limits<uint8_t>::min(), std::numeric_limits<uint8_t>::max());
     builder.MakeOutput("Y");
@@ -34,14 +34,14 @@ BuildTestModelFn BuildQDQReshapeTestCase(const std::vector<int64_t>& input_shape
   };
 }
 
-// BuildTestModelFn BuildQDQConcatTestCase(const std::vector<std::vector<int64_t>>& input_shapes,
+// GetQDQTestCaseFn BuildQDQConcatTestCase(const std::vector<std::vector<int64_t>>& input_shapes,
 //                                         int64_t axis,
 //                                         bool has_input_float,
 //                                         bool has_input_int8,
 //                                         bool has_output_int8,
 //                                         bool use_contrib_qdq) {
 //   return [input_shapes, axis, has_input_float, has_input_int8,
-//           has_output_int8, use_contrib_qdq](ModelPublicBuilder& builder) {
+//           has_output_int8, use_contrib_qdq](ModelTestBuilder& builder) {
 //     auto input_count = input_shapes.size();
 //     std::vector<NodeArg*> input_args;
 //     std::vector<NodeArg*> q_input_args;
@@ -74,8 +74,8 @@ BuildTestModelFn BuildQDQReshapeTestCase(const std::vector<int64_t>& input_shape
 //   };
 // }
 
-// BuildTestModelFn BuildQDQConcatTestCaseUnsupportedInputScaleZp() {
-//   return [](ModelPublicBuilder& builder) {
+// GetQDQTestCaseFn BuildQDQConcatTestCaseUnsupportedInputScaleZp() {
+//   return [](ModelTestBuilder& builder) {
 //     const std::vector<std::vector<int64_t>> input_shapes = {
 //         {1, 6, 36},
 //         {1, 6, 8},
@@ -105,8 +105,8 @@ BuildTestModelFn BuildQDQReshapeTestCase(const std::vector<int64_t>& input_shape
 //   };
 // }
 
-// BuildTestModelFn BuildQDQMatMulTestCase(const std::vector<int64_t>& input1_shape, const std::vector<int64_t>& input2_shape) {
-//   return [input1_shape, input2_shape](ModelPublicBuilder& builder) {
+// GetQDQTestCaseFn BuildQDQMatMulTestCase(const std::vector<int64_t>& input1_shape, const std::vector<int64_t>& input2_shape) {
+//   return [input1_shape, input2_shape](ModelTestBuilder& builder) {
 //     auto* input_arg = builder.MakeInput<float>(input1_shape, -1.f, 1.f);
 //     auto* output_arg = builder.MakeOutput();
 
@@ -184,8 +184,8 @@ std::vector<std::string> GetNodeOpTypesInTopologicalOrder(const Graph& graph, bo
 //     ORT_THROW("Invalid inputs for call to BuildDoubleQDQTestCaseWithDuplicateLastDQs()");
 //   }
 
-//   return [=](ModelPublicBuilder& builder) {
-//     // TODO(adrianlizarraga): Clean up ModelPublicBuilder functions (like MakeInput) to work with gsl::span inputs.
+//   return [=](ModelTestBuilder& builder) {
+//     // TODO(adrianlizarraga): Clean up ModelTestBuilder functions (like MakeInput) to work with gsl::span inputs.
 //     // For now, we have to copy data into a std::vector if we want this outer function to take in span inputs.
 //     std::vector<int64_t> input_shape_copy(input_shape.begin(), input_shape.end());
 //     std::vector<float> input_data_copy(input_data.begin(), input_data.end());

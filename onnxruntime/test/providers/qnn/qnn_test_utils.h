@@ -30,8 +30,6 @@ namespace test {
 // Signature for function that builds a float32 model.
 using GetTestModelFn = std::function<void(ModelTestBuilder& builder)>;
 
-using BuildTestModelFn = std::function<void(ModelPublicBuilder& builder)>;
-
 int64_t SizeHelper(std::vector<int64_t> shape, size_t start, size_t end);
 size_t SizeToDimension(std::vector<int64_t> shape, size_t dimension);
 size_t SizeFromDimension(std::vector<int64_t> shape, size_t dimension);
@@ -122,10 +120,6 @@ inline QuantParams<DstQType> ConvertQuantParams(QuantParams<SrcQType> src_qparam
 template <typename QuantType>
 using GetTestQDQModelFn = std::function<void(ModelTestBuilder& builder,
                                              std::vector<QuantParams<QuantType>>& output_qparams)>;
-
-template <typename QuantType>
-using BuildTestQDQModelFn = std::function<void(ModelPublicBuilder& builder,
-                                               std::vector<QuantParams<QuantType>>& output_qparams)>;
 
 // Computes quantization parameters for an array of floating-point values.
 template <typename QType = uint8_t>
@@ -414,7 +408,7 @@ static void QuantizeValues(gsl::span<const FloatType> input, gsl::span<QuantType
   template <>                                                                                                \
   inline void QuantizeValues<float, INT4x2_TYPE>(gsl::span<const float> input,                               \
                                                  gsl::span<INT4x2_TYPE> output,                              \
-                                                 const std::vector<int64_t>& shape,                                   \
+                                                 const std::vector<int64_t>& shape,                          \
                                                  gsl::span<const float> scales,                              \
                                                  gsl::span<const INT4x2_TYPE> zero_points,                   \
                                                  std::optional<int64_t> axis) {                              \
@@ -660,8 +654,8 @@ void VerifyQDQOutput(const std::vector<Ort::Value>& cpu_qdq_outputs,
  *                         EP assignment.
  */
 template <typename QuantType>
-inline void TestQDQModelAccuracy(const BuildTestModelFn& f32_model_fn,
-                                 const BuildTestQDQModelFn<QuantType>& qdq_model_fn,
+inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
+                                 const GetTestQDQModelFn<QuantType>& qdq_model_fn,
                                  ProviderOptions qnn_options, int opset_version,
                                  ExpectedEPNodeAssignment expected_ep_assignment,
                                  QDQTolerance tolerance = QDQTolerance(),
@@ -672,13 +666,8 @@ inline void TestQDQModelAccuracy(const BuildTestModelFn& f32_model_fn,
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
-  // Uncomment to dump LOGGER() output to stdout.
-  // logging_manager.RemoveSink(logging::SinkType::EtwSink);
-
-  // logging_manager.SetDefaultLoggerSeverity(log_severity);
-
   // Create float model and serialize it to a string.
-  ModelPublicBuilder f32_helper;
+  ModelTestBuilder f32_helper;
   std::string f32_model_data;
   f32_model_fn(f32_helper);
   // f32_helper.SetGraphOutputs();
@@ -686,11 +675,11 @@ inline void TestQDQModelAccuracy(const BuildTestModelFn& f32_model_fn,
   // ASSERT_STATUS_OK(f32_model.MainGraph().Resolve());
   f32_helper.model_.SerializeToString(&f32_model_data);
 
-  // Optional: dump the generated float32/QDQ ModelProto to disk for debugging.
-  {
-    std::ofstream ofs("cmp_accuracy.f32.onnx", std::ios::binary);
-    ofs.write(f32_model_data.data(), static_cast<std::streamsize>(f32_model_data.size()));
-  }
+  // Uncomment to save f32 model to disk for debugging.
+  // {
+  //   std::ofstream ofs("cmp_accuracy.f32.onnx", std::ios::binary);
+  //   ofs.write(f32_model_data.data(), static_cast<std::streamsize>(f32_model_data.size()));
+  // }
 
   // Run f32 model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_f32_outputs;
@@ -723,7 +712,7 @@ inline void TestQDQModelAccuracy(const BuildTestModelFn& f32_model_fn,
   }
 
   // Create QDQ model and serialize it to a string.
-  ModelPublicBuilder qdq_helper;
+  ModelTestBuilder qdq_helper;
   std::string qdq_model_data;
   qdq_model_fn(qdq_helper, output_qparams);
   // qdq_helper.SetGraphOutputs();
@@ -731,10 +720,11 @@ inline void TestQDQModelAccuracy(const BuildTestModelFn& f32_model_fn,
   // ASSERT_STATUS_OK(qdq_model.MainGraph().Resolve());
   qdq_helper.model_.SerializeToString(&qdq_model_data);
 
-  {
-    std::ofstream ofs("cmp_accuracy.qdq.onnx", std::ios::binary);
-    ofs.write(qdq_model_data.data(), static_cast<std::streamsize>(qdq_model_data.size()));
-  }
+  // Uncomment to save QDQ model to disk for debugging.
+  // {
+  //   std::ofstream ofs("cmp_accuracy.qdq.onnx", std::ios::binary);
+  //   ofs.write(qdq_model_data.data(), static_cast<std::streamsize>(qdq_model_data.size()));
+  // }
 
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_qdq_outputs;
@@ -885,8 +875,8 @@ inline void VerifyFp16Output(const std::vector<Ort::Value>& cpu_f16_outputs,
  *                  on CPU EP. This tolerance is a percentage of the output range.
  * \param log_severity The logger's severity setting.
  */
-inline void TestFp16ModelAccuracy(const BuildTestModelFn& f32_model_fn,
-                                  const BuildTestModelFn& f16_model_fn,
+inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
+                                  const GetTestModelFn& f16_model_fn,
                                   ProviderOptions qnn_options,
                                   int opset_version,
                                   ExpectedEPNodeAssignment expected_ep_assignment,
@@ -897,11 +887,8 @@ inline void TestFp16ModelAccuracy(const BuildTestModelFn& f32_model_fn,
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
-  // auto& logging_manager = DefaultLoggingManager();
-  // logging_manager.SetDefaultLoggerSeverity(log_severity);
-
   // Create float model and serialize it to a string.
-  ModelPublicBuilder f32_helper;
+  ModelTestBuilder f32_helper;
   std::string f32_model_data;
   f32_model_fn(f32_helper);
   // f32_helper.SetGraphOutputs();
@@ -936,7 +923,7 @@ inline void TestFp16ModelAccuracy(const BuildTestModelFn& f32_model_fn,
   }
 
   // Create FP16 model and serialize it to a string.
-  ModelPublicBuilder f16_helper;
+  ModelTestBuilder f16_helper;
   std::string f16_model_data;
   f16_model_fn(f16_helper);
   // f16_helper.SetGraphOutputs();
@@ -996,7 +983,7 @@ inline void TestFp16ModelAccuracy(const BuildTestModelFn& f32_model_fn,
  * \return A pointer to the new input.
  */
 template <typename T>
-inline void MakeTestInput(ModelPublicBuilder& builder,
+inline void MakeTestInput(ModelTestBuilder& builder,
   std::string name,
   const TestInputDef<T>& input_def,
   AllocatorPtr allocator = nullptr) {
@@ -1025,7 +1012,7 @@ inline void MakeTestInput(ModelPublicBuilder& builder,
 }
 
 template <>
-inline void MakeTestInput(ModelPublicBuilder& builder,
+inline void MakeTestInput(ModelTestBuilder& builder,
   std::string name,
   const TestInputDef<bool>& input_def,
   AllocatorPtr allocator) {
@@ -1057,7 +1044,7 @@ inline void MakeTestInput(ModelPublicBuilder& builder,
 // See quantization tool: onnx_quantizer.py::quantize_bias_static()
 //
 // i.e., initial bias => manual quantization (int32) => DQ => final float bias
-std::string MakeTestQDQBiasInput(ModelPublicBuilder& builder, const std::string& name, const TestInputDef<float>& bias_def, float bias_scale,
+std::string MakeTestQDQBiasInput(ModelTestBuilder& builder, const std::string& name, const TestInputDef<float>& bias_def, float bias_scale,
                                  bool use_contrib_qdq = false);
 
 /**
@@ -1103,14 +1090,14 @@ std::string MakeTestQDQBiasInput(ModelPublicBuilder& builder, const std::string&
 // }
 
 template <typename InputType1, typename InputType2 = int64_t>
-inline BuildTestModelFn BuildOpTestCase(const std::string& op_type,
+inline GetTestModelFn BuildOpTestCase(const std::string& op_type,
                                       const std::vector<TestInputDef<InputType1>>& input_defs_1,
                                       const std::vector<TestInputDef<InputType2>>& input_defs_2,
                                       const std::vector<TestInputDef<InputType1>>& input_defs_3,
                                       const std::vector<ONNX_NAMESPACE::AttributeProto*>& attrs = {},
                                       const std::string& op_domain = kOnnxDomain,
                                       AllocatorPtr input_allocator = nullptr) {
-  return [op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain, input_allocator](ModelPublicBuilder& builder) {
+  return [op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain, input_allocator](ModelTestBuilder& builder) {
     std::vector<const char*> op_input_names;
     op_input_names.reserve(input_defs_1.size() + input_defs_2.size() + input_defs_3.size());
 
@@ -1260,7 +1247,7 @@ inline BuildTestModelFn BuildOpTestCase(const std::string& op_type,
  * \param ep_graph_checker Function called on the Graph generated for the EP's session. Used to check node
  *                         EP assignment.
  */
-void RunQnnModelTest(const BuildTestModelFn& build_test_case, ProviderOptions provider_options,
+void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                      float fp32_abs_err = 1e-5f,
                      OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
