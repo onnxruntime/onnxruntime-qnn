@@ -1294,7 +1294,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
   const std::string context_binary_file = "./testdata/qnn_context_cache_non_embed.onnx";
-  const std::string qnn_ctx_bin = "./testdata/qnn_context_cache_non_embed_qnn.bin";
+  std::string qnn_ctx_bin = "./testdata/qnn_context_cache_non_embed_qnn.bin";
 
   std::unordered_map<std::string, std::string> session_option_pairs;
   session_option_pairs.emplace(kOrtSessionOptionEpContextEnable, "1");
@@ -1337,6 +1337,9 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
                        logging::Severity::kERROR,
                        context_binary_file,
                        session_option_pairs2);
+
+  const std::string context_binary_file = "./testdata/qnn_context_cache_non_embed.onnx";
+  const std::string qnn_ctx_bin = "./testdata/qnn_context_cache_non_embed_qnn.bin";
 
   // load the model from file
   std::vector<char> buffer;
@@ -1647,6 +1650,9 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphName
   // Check the Qnn context cache binary file is generated
   EXPECT_TRUE(std::filesystem::exists(context_bin));
 
+  const std::string context_model_file = "./qnn_context_cache_non_embed.onnx";
+  const std::string context_bin = "qnn_context_cache_non_embed_qnn.bin";
+
   const std::unordered_map<std::string, int> domain_to_version = {{"", 11}, {kMSDomain, 1}};
   auto& logging_manager = DefaultLoggingManager();
   onnxruntime::Model model("QNN_ctx_model", false, ModelMetaData(), PathString(),
@@ -1659,7 +1665,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphName
   auto* graph_output = helper.MakeOutput<float>(shape);
   Node& ep_context_node = helper.AddNode("EPContext", {graph_input}, {graph_output}, kMSDomain);
   ep_context_node.AddAttribute("embed_mode", static_cast<int64_t>(0));
-  ep_context_node.AddAttribute("ep_cache_context", context_bin.string());
+  ep_context_node.AddAttribute("ep_cache_context", context_bin);
   ep_context_node.AddAttribute("partition_name", "QNNExecutionProvider_QNN_1110111000111000111_1_0");
   ep_context_node.AddAttribute("source", "QNNExecutionProvider");
   helper.SetGraphOutputs();
@@ -1682,7 +1688,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphName
 
   // Clean up
   ASSERT_EQ(std::remove(context_model_file.c_str()), 0);
-  ASSERT_EQ(std::remove(context_bin.string().c_str()), 0);
+  ASSERT_EQ(std::remove(context_bin.c_str()), 0);
 }
 
 // Model has 2 EPContext nodes, both with main_context=1 and embedded context binary
