@@ -18,8 +18,15 @@ bool WhereDummyDq::SatisfyCondition(const Graph& graph, const Node& node) const 
     return false;
   }
   const auto& where_inputs = node.InputDefs();
+  const auto& where_outputs = node.OutputDefs();
   const Node* parent_node_1 = graph.GetProducerNode(where_inputs[1]->Name());
   const Node* parent_node_2 = graph.GetProducerNode(where_inputs[2]->Name());
+  std::vector<const Node*> child_nodes = graph.GetConsumerNodes(where_outputs[0]->Name());
+  // If WhereOp is not followed by a single QuantizeLinear,
+  // we skip WhereDummyDq since inserting additional DQ can't form node unit
+  if (child_nodes.size() != 1 || child_nodes[0]->OpType() != QDQ::QOpName) {
+    return false;
+  }
 
   bool is_p1_dq = (parent_node_1 && parent_node_1->OpType() == QDQ::DQOpName);
   bool is_p2_dq = (parent_node_2 && parent_node_2->OpType() == QDQ::DQOpName);
@@ -36,12 +43,20 @@ bool WhereDummyDq::SatisfyCondition(const Graph& graph, const Node& node) const 
 
 Status WhereDummyDq::InsertDummyDQ(Node& node, Graph& graph, bool& modified, const logging::Logger& logger) const {
   const auto& where_inputs = node.InputDefs();
+  const auto& where_outputs = node.OutputDefs();
   const Node* parent_node_1 = graph.GetProducerNode(where_inputs[1]->Name());
   const Node* parent_node_2 = graph.GetProducerNode(where_inputs[2]->Name());
+  const Node* child_node = graph.GetConsumerNodes(where_outputs[0]->Name())[0];
 
-  // With SatisfyCondition, we must have one DQ and one initializer
+  // With SatisfyCondition, we must have one DQ and one initializer as input and one Q as output
   const Node* dq_node = parent_node_1 ? parent_node_1 : parent_node_2;
   int const_idx = parent_node_1 ? 2 : 1;
+
+  const int32_t dt_input = dq_node->InputDefs()[0]->TypeAsProto()->tensor_type().elem_type();
+  const int32_t dt_output = child_node->OutputDefs()[0]->TypeAsProto()->tensor_type().elem_type();
+  if (dt_input != dt_output) {
+    return Status::OK();
+  }
 
   const ONNX_NAMESPACE::TensorProto* dq_node_scale_proto = nullptr;
   graph.GetInitializedTensor(dq_node->InputDefs()[1]->Name(), dq_node_scale_proto);
