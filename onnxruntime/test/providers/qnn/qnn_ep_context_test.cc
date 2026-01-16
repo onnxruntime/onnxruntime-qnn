@@ -77,29 +77,27 @@ void CleanUpCtxFile(std::string context_file_path) {
   ASSERT_EQ(std::remove(context_file_path.c_str()), 0);
 }
 
-// Create a model with GridSample + Add (quantized)
+// Create a model with FusedGemm + Add (quantized)
 // input1 -> Add -> Q -> DQ ----
 //                              |
-//        input2 -> Q -> DQ -> GridSample -> Q -> DQ -> output
+//        input2 -> Q -> DQ -> FusedGemm -> Q -> DQ -> output
 static GetTestModelFn BuildGraphWithQAndNonQ(bool single_ep_node = true) {
   return [single_ep_node](ModelTestBuilder& builder) {
-    // Creat non-quantized GridSample node1
-    // GridSample requires: X shape (N, C, H, W) and Grid shape (N, H_out, W_out, 2)
-    std::vector<float> x_data(1 * 3 * 4 * 4, 1.0f);     // N=1, C=3, H=4, W=4
-    std::vector<float> grid_data(1 * 4 * 4 * 2, 0.5f);  // N=1, H_out=4, W_out=4, 2
-    NodeArg* input1 = MakeTestInput(builder, TestInputDef<float>({1, 3, 4, 4}, false, x_data));
-    NodeArg* add1_ini_input2 = MakeTestInput(builder, TestInputDef<float>({1, 4, 4, 2}, true, grid_data));
+    // Create non-quantized FusedGemm node1
+    std::vector<float> gemm_data(12, 1.0f);
+    NodeArg* input1 = MakeTestInput(builder, TestInputDef<float>({3, 4}, false, gemm_data));
+    NodeArg* add1_ini_input2 = MakeTestInput(builder, TestInputDef<float>({4, 4}, true, gemm_data));
 
     auto* add1_output = builder.MakeIntermediate();
-    builder.AddNode("GridSample", {input1, add1_ini_input2}, {add1_output}, kMSDomain);
+    builder.AddNode("FusedGemm", {input1, add1_ini_input2}, {add1_output}, kMSDomain);
 
     // Create quantized Add node2
-    std::vector<float> add_data(1 * 3 * 4 * 4, 1.0f);
+    std::vector<float> add_data(12, 1.0f);
     gsl::span<float> data_range = gsl::make_span(add_data);
     QuantParams<uint8_t> q_parameter = GetDataQuantParams<uint8_t>(data_range);
     auto* add2_input1_qdq = AddQDQNodePair<uint8_t>(builder, add1_output, q_parameter.scale, q_parameter.zero_point);
 
-    NodeArg* add2_input2 = MakeTestInput(builder, TestInputDef<float>({1, 3, 4, 4}, true, add_data));
+    NodeArg* add2_input2 = MakeTestInput(builder, TestInputDef<float>({3, 4}, true, add_data));
     auto* add2_input2_qdq = AddQDQNodePair<uint8_t>(builder, add2_input2, q_parameter.scale, q_parameter.zero_point);
 
     auto* add2_output = builder.MakeIntermediate();
@@ -111,15 +109,15 @@ static GetTestModelFn BuildGraphWithQAndNonQ(bool single_ep_node = true) {
       AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, add2_output, q_parameter.scale, q_parameter.zero_point);
     } else {
       auto* add3_input1_qdq = AddQDQNodePair<uint8_t>(builder, add2_output, q_parameter.scale, q_parameter.zero_point);
-      NodeArg* add3_ini_input2 = MakeTestInput(builder, TestInputDef<float>({1, 4, 4, 2}, true, grid_data));
+      NodeArg* add3_ini_input2 = MakeTestInput(builder, TestInputDef<float>({4, 4}, true, gemm_data));
 
       auto* add3_output = builder.MakeIntermediate();
-      builder.AddNode("GridSample", {add3_input1_qdq, add3_ini_input2}, {add3_output}, kMSDomain);
+      builder.AddNode("FusedGemm", {add3_input1_qdq, add3_ini_input2}, {add3_output}, kMSDomain);
 
       // Create quantized Add node4
       auto* add4_input1_qdq = AddQDQNodePair<uint8_t>(builder, add3_output, q_parameter.scale, q_parameter.zero_point);
 
-      NodeArg* add4_input2 = MakeTestInput(builder, TestInputDef<float>({1, 3, 4, 4}, true, add_data));
+      NodeArg* add4_input2 = MakeTestInput(builder, TestInputDef<float>({3, 4}, true, add_data));
       auto* add4_input2_qdq = AddQDQNodePair<uint8_t>(builder, add4_input2, q_parameter.scale, q_parameter.zero_point);
 
       auto* add4_output = builder.MakeIntermediate();
@@ -755,15 +753,15 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_OriginalCompileApproach_IgnoreCompil
   }
 }
 
-// Test that models with 1 non-quantized GridSample node and 1 quantized Add node can still generate the context binary
-// The generated Onnx model has 1 GridSample node and 1 EPContext node
+// Test that models with 1 non-quantized FusedGemm node and 1 quantized Add node can still generate the context binary
+// The generated Onnx model has 1 FusedGemm node and 1 EPContext node
 TEST_F(QnnHTPBackendTests, QnnContextBinaryMultiPartitionSupport1) {
   bool single_ep_node = true;
   QnnContextBinaryMultiPartitionTestBody(single_ep_node);
 }
 
-// Test that models with 2 non-quantized GridSample nodes and 2 quantized Add nodes can still generate the context binary
-// The generated Onnx model has 2 GridSample nodes and 1 EPContext nodes
+// Test that models with 2 non-quantized FusedGemm nodes and 2 quantized Add nodes can still generate the context binary
+// The generated Onnx model has 2 FusedGemm nodes and 2 EPContext nodes
 TEST_F(QnnHTPBackendTests, QnnContextBinaryMultiPartitionSupport2) {
   bool single_ep_node = false;
   QnnContextBinaryMultiPartitionTestBody(single_ep_node);
@@ -839,21 +837,21 @@ void EpCtxCpuNodeWithExternalIniFileTestBody(bool expect_external_ini_file, bool
   CleanUpCtxFile(ep_context_model_file);
 }
 
-// Set the session option "ep.context_model_external_initializers_file_name" so GridSample (which fallback on CPU)
+// Set the session option "ep.context_model_external_initializers_file_name" so FusedGemm (which fallback on CPU)
 // will dump initializer data to external file
 TEST_F(QnnHTPBackendTests, QnnContextBinaryCpuNodeWithExternalWeights) {
   EpCtxCpuNodeWithExternalIniFileTestBody(true);
 }
 
 // Without setting the session option "ep.context_model_external_initializers_file_name"
-// so GridSample (which fallback on CPU) will NOT dump initializer data to external file
+// so FusedGemm (which fallback on CPU) will NOT dump initializer data to external file
 TEST_F(QnnHTPBackendTests, QnnContextBinaryCpuNodeWithoutExternalWeights) {
   EpCtxCpuNodeWithExternalIniFileTestBody(false);
 }
 
 // Load model from memory
 // Without setting the session option "ep.context_model_external_initializers_file_name"
-// so GridSample (which fallback on CPU) will NOT dump initializer data to external file
+// so FusedGemm (which fallback on CPU) will NOT dump initializer data to external file
 TEST_F(QnnHTPBackendTests, QnnContextBinaryCpuNodeWithoutExternalWeightsModelFromMemory) {
   EpCtxCpuNodeWithExternalIniFileTestBody(false, true);
 }
