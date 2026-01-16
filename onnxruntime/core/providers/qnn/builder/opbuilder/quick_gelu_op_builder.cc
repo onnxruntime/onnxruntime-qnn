@@ -29,16 +29,13 @@ Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                                        bool do_op_validation) const {
   LOGS(logger, VERBOSE) << "Processing QuickGelu operator: " << node_unit.Name();
 
-  // Get the input and output tensor name
   const std::string& input_name = input_names[0];
   const auto& outputs = node_unit.Outputs();
   const std::string& output_name = outputs[0].node_arg.Name();
 
-  // Get the alpha attribute value (default is 1.0f)
   NodeAttrHelper node_helper(node_unit);
   float alpha = node_helper.Get("alpha", 1.0f);
 
-  // Get input tensor info
   TensorInfo input_info = {};
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
 
@@ -55,21 +52,17 @@ Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     const std::string alpha_mul_output_name = utils::GetUniqueName(node_unit.Name() + "_alpha_mul");
     sigmoid_input_name = alpha_mul_output_name;
 
-    // Create alpha tensor for multiplication
     // The alpha tensor data type should match the input data type for element-wise multiply
     std::string alpha_tensor_name = utils::GetUniqueName(node_unit.Name() + "_alpha");
     std::vector<uint32_t> alpha_shape{1};
     Qnn_DataType_t alpha_qnn_data_type = input_info.qnn_data_type;
     std::vector<uint8_t> alpha_data;
 
-    // Convert alpha to the appropriate data type
     if (alpha_qnn_data_type == QNN_DATATYPE_FLOAT_16) {
-      // Convert float32 alpha to float16
       alpha_data.resize(sizeof(MLFloat16));
       MLFloat16 alpha_fp16(alpha);
       memcpy(alpha_data.data(), &alpha_fp16.val, sizeof(MLFloat16));
     } else {
-      // Keep as float32
       alpha_data.resize(sizeof(float));
       memcpy(alpha_data.data(), &alpha, sizeof(float));
     }
@@ -82,7 +75,6 @@ Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                           std::move(alpha_data));
     ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(alpha_tensor_wrapper)), "Failed to add alpha tensor.");
 
-    // Create intermediate tensor for alpha_mul_output: result of alpha * x
     QnnTensorWrapper alpha_mul_output_tensor_wrapper(alpha_mul_output_name,
                                                      QNN_TENSOR_TYPE_NATIVE,
                                                      input_info.qnn_data_type,
@@ -102,7 +94,6 @@ Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                       "Failed to create alpha_mul node.");
   }
 
-  // Create intermediate tensor for sigmoid_output
   QnnTensorWrapper sigmoid_output_tensor_wrapper(sigmoid_output_name,
                                                  QNN_TENSOR_TYPE_NATIVE,
                                                  input_info.qnn_data_type,
@@ -111,7 +102,6 @@ Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sigmoid_output_tensor_wrapper)),
                     "Failed to add sigmoid_output tensor.");
 
-  // Create final output tensor
   Qnn_TensorType_t tensor_type = qnn_model_wrapper.IsGraphOutput(output_name) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
   QnnTensorWrapper output_tensor_wrapper(output_name,
                                          tensor_type,
