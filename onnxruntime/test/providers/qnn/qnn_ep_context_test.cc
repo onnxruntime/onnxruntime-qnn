@@ -84,12 +84,14 @@ void CleanUpCtxFile(std::string context_file_path) {
 static GetTestModelFn BuildGraphWithQAndNonQ(bool single_ep_node = true) {
   return [single_ep_node](ModelTestBuilder& builder) {
     // Create non-quantized FusedGemm node1
-    std::vector<float> gemm_data(12, 1.0f);
-    NodeArg* input1 = MakeTestInput(builder, TestInputDef<float>({3, 4}, false, gemm_data));
-    NodeArg* add1_ini_input2 = MakeTestInput(builder, TestInputDef<float>({4, 4}, true, gemm_data));
+    std::vector<float> gemm_input_data(12, 1.0f);
+    std::vector<float> gemm_weight_data(16, 1.0f);  // 4x4 = 16 elements
+    NodeArg* input1 = MakeTestInput(builder, TestInputDef<float>({3, 4}, false, gemm_input_data));
+    NodeArg* add1_ini_input2 = MakeTestInput(builder, TestInputDef<float>({4, 4}, true, gemm_weight_data));
 
     auto* add1_output = builder.MakeIntermediate();
-    builder.AddNode("FusedGemm", {input1, add1_ini_input2}, {add1_output}, kMSDomain);
+    Node& fused_gemm_node1 = builder.AddNode("FusedGemm", {input1, add1_ini_input2}, {add1_output}, kMSDomain);
+    fused_gemm_node1.AddAttribute("activation", "Relu");
 
     // Create quantized Add node2
     std::vector<float> add_data(12, 1.0f);
@@ -109,10 +111,11 @@ static GetTestModelFn BuildGraphWithQAndNonQ(bool single_ep_node = true) {
       AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, add2_output, q_parameter.scale, q_parameter.zero_point);
     } else {
       auto* add3_input1_qdq = AddQDQNodePair<uint8_t>(builder, add2_output, q_parameter.scale, q_parameter.zero_point);
-      NodeArg* add3_ini_input2 = MakeTestInput(builder, TestInputDef<float>({4, 4}, true, gemm_data));
+      NodeArg* add3_ini_input2 = MakeTestInput(builder, TestInputDef<float>({4, 4}, true, gemm_weight_data));
 
       auto* add3_output = builder.MakeIntermediate();
-      builder.AddNode("FusedGemm", {add3_input1_qdq, add3_ini_input2}, {add3_output}, kMSDomain);
+      Node& fused_gemm_node2 = builder.AddNode("FusedGemm", {add3_input1_qdq, add3_ini_input2}, {add3_output}, kMSDomain);
+      fused_gemm_node2.AddAttribute("activation", "Relu");
 
       // Create quantized Add node4
       auto* add4_input1_qdq = AddQDQNodePair<uint8_t>(builder, add3_output, q_parameter.scale, q_parameter.zero_point);
