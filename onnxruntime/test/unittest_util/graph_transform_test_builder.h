@@ -819,7 +819,6 @@ class ModelTestBuilder {
 
   ONNX_NAMESPACE::ModelProto model_;
   ONNX_NAMESPACE::GraphProto* graph_ = model_.mutable_graph();
-  ONNX_NAMESPACE::OperatorSetIdProto* opset = model_.add_opset_import();
   std::unordered_map<std::string, Ort::Value> feeds_;
   // std::vector<std::string> output_names_;
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};

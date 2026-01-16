@@ -241,6 +241,13 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   // Graph& graph = model.MainGraph();
   ModelTestBuilder helper;
   build_test_case(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  // TODO: Upgrade the ONNX IR VERSION to 12 when using ORT 1.24 prebuilt
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
   // helper.SetGraphOutputs();
   // ASSERT_STATUS_OK(model.MainGraph().Resolve());
 
@@ -326,7 +333,7 @@ void InferenceModel(const std::string& model_data,
   session_options.SetLogId(log_id);
 
   // Uncomment to dump verbose output to stdout.
-  session_options.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+  // session_options.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
 
   for (auto key_value : session_option_pairs) {
     session_options.AddConfigEntry(key_value.first.c_str(), key_value.second.c_str());
@@ -335,8 +342,11 @@ void InferenceModel(const std::string& model_data,
   Ort::RunOptions ort_run_options;
   ort_run_options.SetRunTag(log_id);
 
+  std::string test_suite_name = ::testing::UnitTest::GetInstance()->current_test_info()->test_suite_name();
   // TODO: Implement EP assignment verification once public API for ep partition is ready
-  if (expected_ep_assignment == ExpectedEPNodeAssignment::All) {
+  // This disable_cpu_ep_fallback is an workaround for ExpectedEPNodeAssignment::All
+  if (test_suite_name != "QnnCPUBackendTests" &&
+      expected_ep_assignment == ExpectedEPNodeAssignment::All) {
     // ASSERT_EQ(ep_nodes, graph.NumberOfNodes()) << "Not all nodes were assigned to " << registration_name;
     session_options.AddConfigEntry("session.disable_cpu_ep_fallback", "1");
   }

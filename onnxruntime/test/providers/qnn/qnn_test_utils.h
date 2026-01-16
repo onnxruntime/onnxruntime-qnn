@@ -671,6 +671,12 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   std::string f32_model_data;
   f32_model_fn(f32_helper);
   // f32_helper.SetGraphOutputs();
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{f32_helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  f32_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
 
   // ASSERT_STATUS_OK(f32_model.MainGraph().Resolve());
   f32_helper.model_.SerializeToString(&f32_model_data);
@@ -716,6 +722,13 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   std::string qdq_model_data;
   qdq_model_fn(qdq_helper, output_qparams);
   // qdq_helper.SetGraphOutputs();
+
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{qdq_helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  qdq_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
 
   // ASSERT_STATUS_OK(qdq_model.MainGraph().Resolve());
   qdq_helper.model_.SerializeToString(&qdq_model_data);
@@ -893,6 +906,12 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   f32_model_fn(f32_helper);
   // f32_helper.SetGraphOutputs();
   // ASSERT_STATUS_OK(f32_model.MainGraph().Resolve());
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{f32_helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  f32_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
   f32_helper.model_.SerializeToString(&f32_model_data);
 
   // Run f32 model on CPU EP and collect outputs.
@@ -928,6 +947,12 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   f16_model_fn(f16_helper);
   // f16_helper.SetGraphOutputs();
   // ASSERT_STATUS_OK(f16_model.MainGraph().Resolve());
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{f16_helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  f16_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
   f16_helper.model_.SerializeToString(&f16_model_data);
 
   {
