@@ -241,11 +241,11 @@ TEST_F(QnnHTPBackendTests, FusedMatMul_Float16_CustomAlpha) {
   RunFusedMatMulTest<MLFloat16>(
       ConvertToFP16InputDef(TestInputDef<float>({2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6))),  // input A
       ConvertToFP16InputDef(TestInputDef<float>({3, 2}, false, GetFloatDataInRange(-1.0f, 1.0f, 6))),  // input B
-      false,                                                                        // transA
-      false,                                                                        // transB
-      false,                                                                        // transBatchA
-      false,                                                                        // transBatchB
-      0.5f,                                                                         // alpha
+      false,                                                                                           // transA
+      false,                                                                                           // transB
+      false,                                                                                           // transBatchA
+      false,                                                                                           // transBatchB
+      0.5f,                                                                                            // alpha
       ExpectedEPNodeAssignment::All,
       "htp");
 }
@@ -255,11 +255,11 @@ TEST_F(QnnHTPBackendTests, FusedMatMul_Float16_TransposeA_CustomAlpha) {
   RunFusedMatMulTest<MLFloat16>(
       ConvertToFP16InputDef(TestInputDef<float>({3, 2}, false, GetFloatDataInRange(-1.0f, 1.0f, 6))),   // input A
       ConvertToFP16InputDef(TestInputDef<float>({3, 4}, false, GetFloatDataInRange(-1.0f, 1.0f, 12))),  // input B
-      true,                                                                          // transA
-      false,                                                                         // transB
-      false,                                                                         // transBatchA
-      false,                                                                         // transBatchB
-      1.702f,                                                                        // alpha
+      true,                                                                                             // transA
+      false,                                                                                            // transB
+      false,                                                                                            // transBatchA
+      false,                                                                                            // transBatchB
+      1.702f,                                                                                           // alpha
       ExpectedEPNodeAssignment::All,
       "htp");
 }
