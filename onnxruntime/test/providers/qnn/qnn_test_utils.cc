@@ -245,8 +245,6 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   // ASSERT_STATUS_OK(model.MainGraph().Resolve());
 
   // Serialize the model to a string.
-  // std::string model_data;
-  // model.ToProto().SerializeToString(&model_data);
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
   // TryEnableQNNSaver(provider_options);
@@ -275,20 +273,6 @@ void InferenceModelCPU(const std::string& model_data,
   session_options.SetLogId(log_id);
 
   Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
-
-  // TODO: Evaluate whether we can acquire graph from the public Ort::Session
-  // const auto& graph = inference_session->GetGraph();
-
-  std::string provider_type = kCpuExecutionProvider;
-  // auto ep_nodes = CountAssignedNodes(graph, provider_type);
-  // if (expected_ep_assignment == ExpectedEPNodeAssignment::All) {
-  //   // Verify the entire graph is assigned to the EP
-  //   ASSERT_EQ(ep_nodes, graph.NumberOfNodes()) << "Not all nodes were assigned to " << provider_type;
-  // } else if (expected_ep_assignment == ExpectedEPNodeAssignment::None) {
-  //   ASSERT_EQ(ep_nodes, 0) << "No nodes are supposed to be assigned to " << provider_type;
-  // } else {
-  //   ASSERT_GT(ep_nodes, 0) << "No nodes were assigned to " << provider_type;
-  // }
 
   // Prepare inputs using public API
   std::vector<std::string> ort_input_names = session.GetInputNames();
@@ -342,7 +326,7 @@ void InferenceModel(const std::string& model_data,
   session_options.SetLogId(log_id);
 
   // Uncomment to dump verbose output to stdout.
-  // session_options.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+  session_options.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
 
   for (auto key_value : session_option_pairs) {
     session_options.AddConfigEntry(key_value.first.c_str(), key_value.second.c_str());
@@ -351,20 +335,15 @@ void InferenceModel(const std::string& model_data,
   Ort::RunOptions ort_run_options;
   ort_run_options.SetRunTag(log_id);
 
+  // TODO: Implement EP assignment verification once public API for ep partition is ready
+  if (expected_ep_assignment == ExpectedEPNodeAssignment::All) {
+    // ASSERT_EQ(ep_nodes, graph.NumberOfNodes()) << "Not all nodes were assigned to " << registration_name;
+    session_options.AddConfigEntry("session.disable_cpu_ep_fallback", "1");
+  }
   Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
 
-  // Verify node assignment.
+  // TODO: Implement graph_checker once public API for ep partition is ready
   // const auto& graph = ort_session.GetGraph();
-
-  // auto ep_nodes = CountAssignedNodes(graph, registration_name);
-  // if (expected_ep_assignment == ExpectedEPNodeAssignment::All) {
-  //   ASSERT_EQ(ep_nodes, graph.NumberOfNodes()) << "Not all nodes were assigned to " << registration_name;
-  // } else if (expected_ep_assignment == ExpectedEPNodeAssignment::None) {
-  //   ASSERT_EQ(ep_nodes, 0) << "No nodes are supposed to be assigned to " << registration_name;
-  // } else {
-  //   ASSERT_GT(ep_nodes, 0) << "No nodes were assigned to " << registration_name;
-  // }
-
   // if (graph_checker) {
   //   (*graph_checker)(graph);
   // }
