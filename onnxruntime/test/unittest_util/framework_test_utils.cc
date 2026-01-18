@@ -47,40 +47,33 @@ void CreateMLValue<bool>(const OrtMemoryInfo* memory_info,
     Ort::MemoryInfo(const_cast<OrtMemoryInfo*>(memory_info)) :
     Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault);
 
-  // Calculate total tensor size
+  // Allocate tensor with ORT-owned buffer (Arena allocator).
+  Ort::AllocatorWithDefaultOptions allocator;
+  p_mlvalue = Ort::Value::CreateTensor<bool>(
+    allocator,
+    dims.data(),
+    dims.size());
+
+  bool* dst = p_mlvalue.GetTensorMutableData<bool>();
+
   size_t tensor_size = 1;
   for (auto dim : dims) {
     tensor_size *= static_cast<size_t>(dim);
   }
 
-  // Convert std::vector<bool> to std::unique_ptr<bool[]> since vector<bool> doesn't have .data()
-  std::unique_ptr<bool[]> bool_data;
-  size_t data_size = 0;
-
   if (!value.empty()) {
-    data_size = value.size();
-    bool_data = std::make_unique<bool[]>(data_size);
-    for (size_t i = 0; i < data_size; ++i) {
-      bool_data[i] = value[i];
+    const size_t n = std::min(value.size(), tensor_size);
+    for (size_t i = 0; i < n; ++i) {
+      dst[i] = value[i];
+    }
+    for (size_t i = n; i < tensor_size; ++i) {
+      dst[i] = false;
     }
   } else {
-    data_size = tensor_size;
-    bool_data = std::make_unique<bool[]>(data_size);
-    for (size_t i = 0; i < data_size; ++i) {
-      bool_data[i] = false;
+    for (size_t i = 0; i < tensor_size; ++i) {
+      dst[i] = false;
     }
   }
-
-  // Create tensor with bool values
-  Ort::Value tensor = Ort::Value::CreateTensor<bool>(
-      mem_info_to_use,
-      bool_data.get(),
-      data_size,
-      dims.data(),
-      dims.size());
-
-  // Transfer ownership to the provided OrtValue
-  p_mlvalue = std::move(tensor);
 }
 
 }  // namespace test

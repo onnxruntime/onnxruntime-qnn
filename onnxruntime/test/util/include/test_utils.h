@@ -139,5 +139,26 @@ OrtValue CreateInputOrtValueOnCPU(gsl::span<const int64_t> dims, gsl::span<const
   return ort_value;
 }
 
+// keep these signatures in sync with DECLARE_MAKE_ATTRIBUTE_FNS below
+/** Creates an AttributeProto with the specified name and value. */
+ONNX_NAMESPACE::AttributeProto MakeAttribute(std::string attr_name, int64_t value);
+/** Creates an AttributeProto with the specified name and values. */
+ONNX_NAMESPACE::AttributeProto MakeAttribute(std::string attr_name, gsl::span<const int64_t> values);
+
+#define DECLARE_MAKE_ATTRIBUTE_FNS(type)                                           \
+  ONNX_NAMESPACE::AttributeProto MakeAttribute(std::string attr_name, type value); \
+  ONNX_NAMESPACE::AttributeProto MakeAttribute(std::string attr_name, gsl::span<const type> values)
+
+DECLARE_MAKE_ATTRIBUTE_FNS(float);
+DECLARE_MAKE_ATTRIBUTE_FNS(std::string);
+DECLARE_MAKE_ATTRIBUTE_FNS(ONNX_NAMESPACE::TensorProto);
+#if !defined(DISABLE_SPARSE_TENSORS)
+DECLARE_MAKE_ATTRIBUTE_FNS(ONNX_NAMESPACE::SparseTensorProto);
+#endif
+DECLARE_MAKE_ATTRIBUTE_FNS(ONNX_NAMESPACE::TypeProto);
+DECLARE_MAKE_ATTRIBUTE_FNS(ONNX_NAMESPACE::GraphProto);
+
+#undef DECLARE_MAKE_ATTRIBUTE_FNS
+
 }  // namespace test
 }  // namespace onnxruntime

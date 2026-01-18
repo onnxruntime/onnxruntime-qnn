@@ -371,6 +371,51 @@ void CheckShapeEquality(const ONNX_NAMESPACE::TensorShapeProto* shape1,
   }
 }
 
+static void SetNameAndType(std::string attr_name, ONNX_NAMESPACE::AttributeProto_AttributeType attr_type, ONNX_NAMESPACE::AttributeProto& a) {
+  a.set_name(std::move(attr_name));
+  a.set_type(attr_type);
+}
+
+#define MAKE_BASIC_ATTR_IMPL(type, enumType, field)                 \
+  ONNX_NAMESPACE::AttributeProto MakeAttribute(std::string attr_name, type value) { \
+    ONNX_NAMESPACE::AttributeProto a;                                               \
+    a.set_##field(std::move(value));                                \
+    SetNameAndType(std::move(attr_name), enumType, a);              \
+    return a;                                                       \
+  }
+
+#define MAKE_ATTR_IMPL(type, enumType, field)                       \
+  ONNX_NAMESPACE::AttributeProto MakeAttribute(std::string attr_name, type value) { \
+    ONNX_NAMESPACE::AttributeProto a;                                               \
+    *(a.mutable_##field()) = std::move(value);                      \
+    SetNameAndType(std::move(attr_name), enumType, a);              \
+    return a;                                                       \
+  }
+
+#define MAKE_LIST_ATTR_IMPL(type, enumType, field)                                    \
+  ONNX_NAMESPACE::AttributeProto MakeAttribute(std::string attr_name, gsl::span<const type> values) { \
+    ONNX_NAMESPACE::AttributeProto a;                                                                 \
+    auto* mutable_field = a.mutable_##field();                                        \
+    for (const auto& val : values) {                                                  \
+      *(mutable_field->Add()) = val;                                                  \
+    }                                                                                 \
+    SetNameAndType(std::move(attr_name), enumType, a);                                \
+    return a;                                                                         \
+  }
+
+MAKE_BASIC_ATTR_IMPL(int64_t, ONNX_NAMESPACE::AttributeProto_AttributeType::AttributeProto_AttributeType_INT, i)
+MAKE_LIST_ATTR_IMPL(int64_t, ONNX_NAMESPACE::AttributeProto_AttributeType::AttributeProto_AttributeType_INTS, ints)
+
+MAKE_BASIC_ATTR_IMPL(float, ONNX_NAMESPACE::AttributeProto_AttributeType::AttributeProto_AttributeType_FLOAT, f)
+MAKE_LIST_ATTR_IMPL(float, ONNX_NAMESPACE::AttributeProto_AttributeType::AttributeProto_AttributeType_FLOATS, floats)
+
+MAKE_ATTR_IMPL(std::string, ONNX_NAMESPACE::AttributeProto_AttributeType::AttributeProto_AttributeType_STRING, s)
+MAKE_LIST_ATTR_IMPL(std::string, ONNX_NAMESPACE::AttributeProto_AttributeType::AttributeProto_AttributeType_STRINGS, strings)
+
+#undef MAKE_BASIC_ATTR_IMPL
+#undef MAKE_ATTR_IMPL
+#undef MAKE_LIST_ATTR_IMPL
+
 // #if !defined(DISABLE_SPARSE_TENSORS)
 // void SparseIndicesChecker(const ONNX_NAMESPACE::TensorProto& indices_proto, gsl::span<const int64_t> expected_indicies) {
 //   using namespace ONNX_NAMESPACE;

@@ -56,41 +56,29 @@ void CreateMLValue(const OrtMemoryInfo* memory_info,
   gsl::span<const int64_t> dims,
   const std::vector<T>& value,
   Ort::Value& p_mlvalue) {
-  // Create memory info if not provided
+  // Allocate CPU tensor memory owned by Ort::Value.
   Ort::MemoryInfo mem_info_to_use = memory_info ?
     Ort::MemoryInfo(const_cast<OrtMemoryInfo*>(memory_info)) :
     Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault);
 
-  if (!value.empty()) {
-    // Create tensor with provided values using the correct CreateTensor overload
-    Ort::Value tensor = Ort::Value::CreateTensor<T>(
-        mem_info_to_use,
-        const_cast<T*>(value.data()),
-        value.size(),
-        dims.data(),
-        dims.size());
+  // Allocate tensor with ORT-owned buffer (Arena allocator).
+  Ort::AllocatorWithDefaultOptions allocator;
+  p_mlvalue = Ort::Value::CreateTensor<T>(
+    allocator,
+    dims.data(),
+    dims.size());
 
-    // Transfer ownership to the provided OrtValue
-    p_mlvalue = std::move(tensor);
+  // Copy data (or zero-fill if empty vector provided).
+  T* dst = p_mlvalue.GetTensorMutableData<T>();
+  if (!value.empty()) {
+    memcpy(dst, value.data(), value.size() * sizeof(T));
   } else {
-    // Calculate total tensor size
+    // total element count from dims
     size_t tensor_size = 1;
     for (auto dim : dims) {
       tensor_size *= static_cast<size_t>(dim);
     }
-
-    // Create empty tensor
-    std::vector<T> zeros(tensor_size, T{});
-
-    Ort::Value tensor = Ort::Value::CreateTensor<T>(
-        mem_info_to_use,
-        zeros.data(),
-        zeros.size(),
-        dims.data(),
-        dims.size());
-
-    // Transfer ownership to the provided OrtValue
-    p_mlvalue = std::move(tensor);
+    memset(dst, 0, tensor_size * sizeof(T));
   }
 }
 

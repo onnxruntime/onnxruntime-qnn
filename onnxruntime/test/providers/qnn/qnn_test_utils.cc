@@ -113,7 +113,7 @@ int64_t SizeHelper(std::vector<int64_t> shape, size_t start, size_t end) {
 }
 
 size_t SizeToDimension(std::vector<int64_t> shape, size_t dimension) {
-  assert(dimension <= shape_.size() && "Invalid dimension of for SizeToDimension");
+  assert(dimension <= shape.size() && "Invalid dimension of for SizeToDimension");
 
   int64_t size = SizeHelper(shape, 0, dimension);
   return size;
@@ -429,7 +429,7 @@ static BackendSupport GetHTPSupport(const OrtLogger* logger) {
       "dq3", input_u8->name().c_str(), quant_scale, quant_zero_point, "dq3_out");
 
     // Add dq_input_output -> InstanceNormalization ->
-    std::vector<ONNX_NAMESPACE::AttributeProto*> attributes;
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
     attributes.push_back(builder.MakeScalarAttribute("epsilon", 1e-5f));
     builder.AddNode("in",
       "InstanceNormalization",
@@ -523,6 +523,7 @@ void QnnHTPBackendTests::TearDownTestSuite() {
   ModelTestBuilder helper;
 
   auto build_test_case = BuildOpTestCase<float, float>(
+      "simple_relu",
       "Relu",
       {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f)},
       {},
@@ -573,6 +574,7 @@ static BackendSupport GetGPUSupport(const OrtLogger* logger) {
 
   // Build simple QDQ graph: DQ -> InstanceNormalization -> Q
   auto build_test_case = BuildOpTestCase<float, float>(
+      "simple_relu",
       "Relu",
       {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f)},
       {},
@@ -621,9 +623,9 @@ void QnnGPUBackendTests::SetUp() {
   Ort::Logger logger = Ort::Logger();
 
   // Determine if GPU backend is supported only if we haven't done so before.
-  if (cached_gpu_support_ == BackendSupport::SUPPORT_UNKNOWN) {
-    cached_gpu_support_ = GetGPUSupport(reinterpret_cast<OrtLogger*>(&logger));  // BackendSupport::SUPPORTED;
-  }
+  // if (cached_gpu_support_ == BackendSupport::SUPPORT_UNKNOWN) {
+  //   cached_gpu_support_ = GetGPUSupport(reinterpret_cast<OrtLogger*>(&logger));  // BackendSupport::SUPPORTED;
+  // }
 
   if (cached_gpu_support_ == BackendSupport::UNSUPPORTED) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "QNN GPU backend is not available! Skipping test.");

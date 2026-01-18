@@ -76,42 +76,42 @@ const ONNX_NAMESPACE::TensorProto* ModelTestBuilder::MakeInitializer(std::string
 }
 
 const ONNX_NAMESPACE::NodeProto* ModelTestBuilder::AddQuantizeLinearNode(const std::string& node_name,
-                                                                          const char* input_name,
-                                                                          float input_scale,
-                                                                          int64_t input_zero_point,
-                                                                          ONNX_NAMESPACE::TensorProto_DataType zero_point_type,
-                                                                          const char* output_name,
-                                                                          bool use_ms_domain) {
-  std::vector<const char*> input_names;
+                                                                         const std::string input_name,
+                                                                         float input_scale,
+                                                                         int64_t input_zero_point,
+                                                                         ONNX_NAMESPACE::TensorProto_DataType zero_point_type,
+                                                                         const std::string output_name,
+                                                                         bool use_ms_domain) {
+  std::vector<std::string> input_names;
   input_names.push_back(input_name);
   
   auto scale = MakeScalarInitializer<float>(node_name + "_inp_scale", input_scale);
-  input_names.push_back(scale->name().c_str());
+  input_names.push_back(scale->name());
 
   InlinedVector<std::byte> zp_bytes = GetZeroPointBytes(input_zero_point, zero_point_type);
   auto zp = MakeInitializer(node_name + "_inp_zp", {}, zero_point_type, zp_bytes);
-  input_names.push_back(zp->name().c_str());
+  input_names.push_back(zp->name());
 
   std::string domain = use_ms_domain ? kMSDomain : "";
   return AddNode(node_name, "QuantizeLinear", input_names, {output_name}, domain);
 }
 
 const ONNX_NAMESPACE::NodeProto* ModelTestBuilder::AddDequantizeLinearNode(const std::string& node_name,
-                                                                            const char* input_name,
-                                                                            float input_scale,
-                                                                            int64_t input_zero_point,
-                                                                            ONNX_NAMESPACE::TensorProto_DataType zero_point_type,
-                                                                            const char* output_name,
-                                                                            bool use_ms_domain) {
-  std::vector<const char*> input_names;
+                                                                           const std::string input_name,
+                                                                           float input_scale,
+                                                                           int64_t input_zero_point,
+                                                                           ONNX_NAMESPACE::TensorProto_DataType zero_point_type,
+                                                                           const std::string output_name,
+                                                                           bool use_ms_domain) {
+  std::vector<std::string> input_names;
   input_names.push_back(input_name);
   
   auto scale = MakeScalarInitializer<float>(node_name + "_inp_scale", input_scale);
-  input_names.push_back(scale->name().c_str());
+  input_names.push_back(scale->name());
 
   InlinedVector<std::byte> zp_bytes = GetZeroPointBytes(input_zero_point, zero_point_type);
   auto zp = MakeInitializer(node_name + "_inp_zp", {}, zero_point_type, zp_bytes);
-  input_names.push_back(zp->name().c_str());
+  input_names.push_back(zp->name());
 
   std::string domain = use_ms_domain ? kMSDomain : "";
   return AddNode(node_name, "DequantizeLinear", input_names, {output_name}, domain);

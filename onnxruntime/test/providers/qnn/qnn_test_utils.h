@@ -1084,69 +1084,80 @@ std::string MakeTestQDQBiasInput(ModelTestBuilder& builder, const std::string& n
  * \param input_allocator Optional allocator to use to allocate input ORT values.
  * \returns A model building function.
  */
-// template <typename InputType1, typename InputType2 = int64_t>
-// inline GetTestModelFn BuildOpTestCase(const std::string& op_type,
-//                                       const std::vector<TestInputDef<InputType1>>& input_defs_1,
-//                                       const std::vector<TestInputDef<InputType2>>& input_defs_2,
-//                                       const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-//                                       const std::string& op_domain = kOnnxDomain,
-//                                       AllocatorPtr input_allocator = nullptr) {
-//   return [op_type, input_defs_1, input_defs_2, attrs, op_domain, input_allocator](ModelTestBuilder& builder) {
-//     std::vector<NodeArg*> op_inputs;
-//     op_inputs.reserve(input_defs_1.size() + input_defs_2.size());
-
-//     for (const auto& input_def : input_defs_1) {
-//       NodeArg* input = MakeTestInput<InputType1>(builder, input_def, input_allocator);
-//       op_inputs.push_back(input);
-//     }
-
-//     for (const auto& input_def : input_defs_2) {
-//       NodeArg* input = MakeTestInput<InputType2>(builder, input_def, input_allocator);
-//       op_inputs.push_back(input);
-//     }
-
-//     auto* output = builder.MakeOutput();
-//     Node& onnx_node = builder.AddNode(op_type, op_inputs, {output}, op_domain);
-
-//     for (const auto& attr : attrs) {
-//       onnx_node.AddAttributeProto(attr);
-//     }
-//   };
-// }
-
 template <typename InputType1, typename InputType2 = int64_t>
-inline GetTestModelFn BuildOpTestCase(const std::string& op_type,
+inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
+                                      const std::string& op_type,
                                       const std::vector<TestInputDef<InputType1>>& input_defs_1,
                                       const std::vector<TestInputDef<InputType2>>& input_defs_2,
-                                      const std::vector<TestInputDef<InputType1>>& input_defs_3,
-                                      const std::vector<ONNX_NAMESPACE::AttributeProto*>& attrs = {},
+                                      const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                       const std::string& op_domain = kOnnxDomain,
                                       AllocatorPtr input_allocator = nullptr) {
-  return [op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain, input_allocator](ModelTestBuilder& builder) {
-    std::vector<const char*> op_input_names;
-    op_input_names.reserve(input_defs_1.size() + input_defs_2.size() + input_defs_3.size());
+  return [node_name, op_type, input_defs_1, input_defs_2, attrs, op_domain, input_allocator](ModelTestBuilder& builder) {
+    std::vector<std::string> op_input_names;
+    op_input_names.reserve(input_defs_1.size() + input_defs_2.size());
 
     for (int i=0; i<input_defs_1.size();i++) {
-      std::string tmp_name = "input_defs_1_"+std::to_string(i);
+      const std::string tmp_name = "input_defs_1_" + std::to_string(i);
       MakeTestInput<InputType1>(builder, tmp_name, input_defs_1[i], input_allocator);
-      op_input_names.push_back(tmp_name.c_str());
+      op_input_names.push_back(tmp_name);
     }
 
     for (int i=0; i<input_defs_2.size();i++) {
-      std::string tmp_name = "input_defs_2_"+std::to_string(i);
+      const std::string tmp_name = "input_defs_2_" + std::to_string(i);
       MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i], input_allocator);
-      op_input_names.push_back(tmp_name.c_str());
-    }
-
-    for (int i=0; i<input_defs_3.size();i++) {
-      std::string tmp_name = "input_defs_3_"+std::to_string(i);
-      MakeTestInput<InputType1>(builder, tmp_name, input_defs_3[i], input_allocator);
-      op_input_names.push_back(tmp_name.c_str());
+      op_input_names.push_back(tmp_name);
     }
 
     builder.MakeOutput("Y");
-    builder.AddNode("op_name", op_type,
-      op_input_names, {"Y"}, op_domain, attrs);
+    builder.AddNode(
+      node_name,
+      op_type,
+      op_input_names,
+      {"Y"},
+      op_domain,
+      attrs);
+  };
+}
+
+template <typename InputType1, typename InputType2 = int64_t>
+inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
+                                      const std::string& op_type,
+                                      const std::vector<TestInputDef<InputType1>>& input_defs_1,
+                                      const std::vector<TestInputDef<InputType2>>& input_defs_2,
+                                      const std::vector<TestInputDef<InputType1>>& input_defs_3,
+                                      const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                                      const std::string& op_domain = kOnnxDomain,
+                                      AllocatorPtr input_allocator = nullptr) {
+  return [node_name, op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain, input_allocator](ModelTestBuilder& builder) {
+    std::vector<std::string> op_input_names;
+    op_input_names.reserve(input_defs_1.size() + input_defs_2.size() + input_defs_3.size());
+
+    for (int i=0; i<input_defs_1.size();i++) {
+      const std::string tmp_name = "input_defs_1_" + std::to_string(i);
+      MakeTestInput<InputType1>(builder, tmp_name, input_defs_1[i], input_allocator);
+      op_input_names.push_back(tmp_name);
+    }
+
+    for (int i=0; i<input_defs_2.size();i++) {
+      const std::string tmp_name = "input_defs_2_" + std::to_string(i);
+      MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i], input_allocator);
+      op_input_names.push_back(tmp_name);
+    }
+
+    for (int i=0; i<input_defs_3.size();i++) {
+      const std::string tmp_name = "input_defs_3_" + std::to_string(i);
+      MakeTestInput<InputType1>(builder, tmp_name, input_defs_3[i], input_allocator);
+      op_input_names.push_back(tmp_name);
+    }
+
+    builder.MakeOutput("Y");
+    builder.AddNode(
+      node_name,
+      op_type,
+      op_input_names,
+      {"Y"},
+      op_domain,
+      attrs);
   };
 }
 
@@ -1162,102 +1173,114 @@ inline GetTestModelFn BuildOpTestCase(const std::string& op_type,
  * \param input_allocator Optional allocator to use to allocate input ORT values.
  * \returns A model building function.
  */
-// template <typename QuantType, typename OtherInputType = int64_t>
-// inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
-//     const std::string& op_type,
-//     const std::vector<TestInputDef<float>>& quant_input_defs,
-//     const std::vector<TestInputDef<OtherInputType>>& non_quant_input_defs,
-//     const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-//     const std::string& op_domain = kOnnxDomain,
-//     bool use_contrib_qdq = false,
-//     AllocatorPtr input_allocator = nullptr) {
-//   return [op_type, quant_input_defs, non_quant_input_defs, attrs, op_domain,
-//           use_contrib_qdq, input_allocator](
-//              ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
-//     std::vector<NodeArg*> op_inputs;
-//     op_inputs.reserve(quant_input_defs.size() + non_quant_input_defs.size());
+template <typename QuantType, typename OtherInputType = int64_t>
+inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
+    const std::string& node_name,
+    const std::string& op_type,
+    const std::vector<TestInputDef<float>>& quant_input_defs,
+    const std::vector<TestInputDef<OtherInputType>>& non_quant_input_defs,
+    const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+    const std::string& op_domain = kOnnxDomain,
+    bool use_contrib_qdq = false,
+    AllocatorPtr input_allocator = nullptr) {
+  return [node_name, op_type, quant_input_defs, non_quant_input_defs, attrs, op_domain,
+          use_contrib_qdq, input_allocator](
+             ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
+    std::vector<std::string> op_input_names;
+    op_input_names.reserve(quant_input_defs.size() + non_quant_input_defs.size());
 
-//     // Create QDQ inputs
-//     for (const auto& input_def : quant_input_defs) {
-//       NodeArg* input = MakeTestInput<float>(builder, input_def, input_allocator);
-//       QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-//       NodeArg* input_after_qdq = AddQDQNodePair<QuantType>(builder, input, input_qparams.scale,
-//                                                            input_qparams.zero_point, use_contrib_qdq);
-//       op_inputs.push_back(input_after_qdq);
-//     }
+    // Create QDQ inputs
+    for (size_t i=0; i<quant_input_defs.size();i++) {
+      const std::string tmp_name = "quant_input_defs_" + std::to_string(i);
+      MakeTestInput<float>(builder, tmp_name, quant_input_defs[i], input_allocator);
+      QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(quant_input_defs[i]);
 
-//     // Create non-QDQ inputs
-//     for (const auto& input_def : non_quant_input_defs) {
-//       NodeArg* input = MakeTestInput<OtherInputType>(builder, input_def, input_allocator);
-//       op_inputs.push_back(input);
-//     }
+      op_input_names.push_back(
+          AddQDQNodePair<QuantType>(builder, "qdq_in" + std::to_string(i), tmp_name, input_qparams.scale,
+                                    input_qparams.zero_point, use_contrib_qdq));
+    }
 
-//     // Op -> op_output
-//     auto* op_output = builder.MakeIntermediate();
-//     Node& onnx_node = builder.AddNode(op_type, op_inputs, {op_output}, op_domain);
+    // Create non-QDQ inputs
+    for (size_t i=0; i<non_quant_input_defs.size();i++) {
+      const std::string tmp_name = "non_quant_input_defs_" + std::to_string(i);
+      MakeTestInput<OtherInputType>(builder, tmp_name, non_quant_input_defs[i], input_allocator);
+      op_input_names.push_back(tmp_name);
+    }
 
-//     for (const auto& attr : attrs) {
-//       onnx_node.AddAttributeProto(attr);
-//     }
+    builder.AddNode(node_name, op_type,
+      op_input_names,
+      {"Y"},
+      op_domain,
+      attrs);
 
-//     // op_output -> Q -> DQ -> output
-//     AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, op_output, output_qparams[0].scale,
-//                                                      output_qparams[0].zero_point, use_contrib_qdq);
-//   };
-// }
-// template <typename QuantType, typename OtherInputType = int64_t>
-// inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
-//     const std::string& op_type,
-//     const std::vector<TestInputDef<float>>& quant_input_defs,
-//     const std::vector<TestInputDef<OtherInputType>>& non_quant_input_defs,
-//     const std::vector<TestInputDef<float>>& quant_input_defs_2,
-//     const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-//     const std::string& op_domain = kOnnxDomain,
-//     bool use_contrib_qdq = false,
-//     AllocatorPtr input_allocator = nullptr) {
-//   return [op_type, quant_input_defs, non_quant_input_defs, quant_input_defs_2, attrs, op_domain,
-//           use_contrib_qdq, input_allocator](
-//              ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
-//     std::vector<NodeArg*> op_inputs;
-//     op_inputs.reserve(quant_input_defs.size() + non_quant_input_defs.size() + quant_input_defs_2.size());
+    // op_output -> Q -> DQ -> output
+    std::string out = AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq_out", "Y", output_qparams[0].scale,
+                                                     output_qparams[0].zero_point, use_contrib_qdq);
+    builder.MakeOutput(out);
+  };
+}
+template <typename QuantType, typename OtherInputType = int64_t>
+inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
+    const std::string& node_name,
+    const std::string& op_type,
+    const std::vector<TestInputDef<float>>& quant_input_defs,
+    const std::vector<TestInputDef<OtherInputType>>& non_quant_input_defs,
+    const std::vector<TestInputDef<float>>& quant_input_defs_2,
+    const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+    const std::string& op_domain = kOnnxDomain,
+    bool use_contrib_qdq = false,
+    AllocatorPtr input_allocator = nullptr) {
+  return [node_name, op_type, quant_input_defs, non_quant_input_defs, quant_input_defs_2, attrs, op_domain,
+          use_contrib_qdq, input_allocator](
+             ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
+    std::vector<std::string> op_input_names;
 
-//     // Create QDQ inputs
-//     for (const auto& input_def : quant_input_defs) {
-//       NodeArg* input = MakeTestInput<float>(builder, input_def, input_allocator);
-//       QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-//       NodeArg* input_after_qdq = AddQDQNodePair<QuantType>(builder, input, input_qparams.scale,
-//                                                            input_qparams.zero_point, use_contrib_qdq);
-//       op_inputs.push_back(input_after_qdq);
-//     }
+    op_input_names.reserve(quant_input_defs.size() + non_quant_input_defs.size() + quant_input_defs_2.size());
 
-//     // Create non-QDQ inputs
-//     for (const auto& input_def : non_quant_input_defs) {
-//       NodeArg* input = MakeTestInput<OtherInputType>(builder, input_def, input_allocator);
-//       op_inputs.push_back(input);
-//     }
+    // Create QDQ inputs
+    for (size_t i=0; i<quant_input_defs.size();i++) {
+      const std::string tmp_name = "quant_input_defs_" + std::to_string(i);
+      MakeTestInput<float>(builder, tmp_name, quant_input_defs[i], input_allocator);
+      QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(quant_input_defs[i]);
 
-//     // Create QDQ inputs
-//     for (const auto& input_def : quant_input_defs_2) {
-//       NodeArg* input = MakeTestInput<float>(builder, input_def, input_allocator);
-//       QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-//       NodeArg* input_after_qdq = AddQDQNodePair<QuantType>(builder, input, input_qparams.scale,
-//                                                            input_qparams.zero_point, use_contrib_qdq);
-//       op_inputs.push_back(input_after_qdq);
-//     }
+      op_input_names.push_back(
+          AddQDQNodePair<QuantType>(builder, "qdq_in" + std::to_string(i), tmp_name, input_qparams.scale,
+                                    input_qparams.zero_point, use_contrib_qdq));
+    }
 
-//     // Op -> op_output
-//     auto* op_output = builder.MakeIntermediate();
-//     Node& onnx_node = builder.AddNode(op_type, op_inputs, {op_output}, op_domain);
+    // Create non-QDQ inputs
+    for (size_t i=0; i<non_quant_input_defs.size();i++) {
+      const std::string tmp_name = "non_quant_input_defs_" + std::to_string(i);
+      MakeTestInput<OtherInputType>(builder, tmp_name, non_quant_input_defs[i], input_allocator);
+      op_input_names.push_back(tmp_name);
+    }
 
-//     for (const auto& attr : attrs) {
-//       onnx_node.AddAttributeProto(attr);
-//     }
+    // Create QDQ inputs
+    for (size_t i=0; i<quant_input_defs_2.size();i++) {
+      const std::string tmp_name = "quant_input_defs_2_" + std::to_string(i);
+      MakeTestInput<float>(builder, tmp_name, quant_input_defs_2[i], input_allocator);
+      QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(quant_input_defs_2[i]);
 
-//     // op_output -> Q -> DQ -> output
-//     AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, op_output, output_qparams[0].scale,
-//                                                      output_qparams[0].zero_point, use_contrib_qdq);
-//   };
-// }
+      op_input_names.push_back(
+          AddQDQNodePair<QuantType>(builder, "qdq2_in" + std::to_string(i), tmp_name, input_qparams.scale,
+                                    input_qparams.zero_point, use_contrib_qdq));
+    }
+
+    // Op -> op_output
+    builder.AddNode(
+      node_name,
+      op_type,
+      op_input_names,
+      {"Y"},
+      op_domain,
+      attrs);
+
+    // op_output -> Q -> DQ -> output
+    std::string out = AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq_out", "Y", output_qparams[0].scale,
+                                                     output_qparams[0].zero_point, use_contrib_qdq);
+    builder.MakeOutput(out);
+  };
+}
 /**
  * Runs a test model on the QNN EP. Checks the graph node assignment, and that inference
  * outputs for QNN and CPU match.
