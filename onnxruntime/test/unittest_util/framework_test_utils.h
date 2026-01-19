@@ -29,9 +29,6 @@ namespace onnxruntime {
 class Graph;
 
 namespace test {
-// Doesn't work with ExecutionProviders class and KernelRegistryManager
-IExecutionProvider* TestCPUExecutionProvider();
-
 template <typename T>
 inline void CopyVectorToTensor(gsl::span<const T> value, Tensor& tensor) {
   gsl::copy(value, tensor.MutableDataAsSpan<T>());
