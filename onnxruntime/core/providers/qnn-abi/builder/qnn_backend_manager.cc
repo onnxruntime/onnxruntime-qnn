@@ -6,7 +6,9 @@
 
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <gsl/gsl>
+#include <memory>
 #include <string>
 
 #include "CPU/QnnCpuCommon.h"
@@ -32,6 +34,11 @@
 
 // Flag to determine if Backend should do node validation for each opNode added
 #define DO_GRAPH_NODE_VALIDATIONS 1
+
+// Ensure that we have a recent enough version of QNN
+static_assert(QNN_API_VERSION_MAJOR > 2 ||
+                  (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 29),
+              "Minimum required QAIRT SDK version is 2.39.0");
 
 namespace onnxruntime {
 namespace qnn {
@@ -297,7 +304,7 @@ Ort::Status QnnBackendManager::LoadBackend() {
   // QNN requires ADSP_LIBRARY_PATH to be set in order to find skel libs on Linux
   static std::once_flag set_adsp_path_once;
 
-  std::call_once(set_adsp_path_once, []() {
+  std::call_once(set_adsp_path_once, [&backend_path = backend_path_]() {
     constexpr std::string_view kAdspLibraryPathEnvVar{"ADSP_LIBRARY_PATH"};
     const char* existingPath = getenv(kAdspLibraryPathEnvVar.data());
     if (existingPath != nullptr) {
@@ -309,7 +316,10 @@ Ort::Status QnnBackendManager::LoadBackend() {
       return;
     }
 
-    std::filesystem::path qnnLibPath(OrtGetRuntimePath());
+    std::filesystem::path _backend_path(backend_path);
+    std::filesystem::path qnnLibPath = _backend_path.is_absolute()
+                                           ? _backend_path.parent_path()
+                                           : std::filesystem::path(OrtGetRuntimePath());
     ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
                 ORT_LOGGING_LEVEL_WARNING,
                 ("Setting " + std::string(kAdspLibraryPathEnvVar) + " = " + qnnLibPath.string()).c_str());
@@ -326,15 +336,15 @@ Ort::Status QnnBackendManager::LoadBackend() {
                                                                                           QNN_API_VERSION_PATCH},
                                                                                          &backend_interface_provider)));
   qnn_interface_ = backend_interface_provider->QNN_INTERFACE_VER_NAME;
-  auto backend_id = backend_interface_provider->backendId;
-  SetQnnBackendType(backend_id);
+  backend_id_ = backend_interface_provider->backendId;
+  SetQnnBackendType(backend_id_);
 
   Qnn_Version_t backend_interface_version = GetQnnInterfaceApiVersion(backend_interface_provider);
   std::ostringstream oss;
   oss << "Found valid interface, version: " << backend_interface_version.major
       << "." << backend_interface_version.minor << "." << backend_interface_version.patch
       << " backend provider name: " << backend_interface_provider->providerName
-      << " backend id: " << backend_id;
+      << " backend id: " << backend_id_;
   ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, oss.str().c_str());
 
   return Ort::Status();
@@ -377,8 +387,8 @@ Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
                                                                                          &backend_interface_provider)));
 
   // Set the "intended" backend type so that QNN builders still make the expected QNN API calls.
-  auto backend_id = backend_interface_provider->backendId;
-  SetQnnBackendType(backend_id);
+  backend_id_ = backend_interface_provider->backendId;
+  SetQnnBackendType(backend_id_);
 
   // Load the serializer backend and set it as the activate backend.
   QnnInterface_t* serializer_interface_provider{nullptr};
@@ -403,7 +413,7 @@ Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
 
   std::ostringstream oss2;
   oss2 << "Intended backend provider name: " << backend_interface_provider->providerName
-       << " backend id: " << backend_id
+       << " backend id: " << backend_id_
        << " interface version: " << backend_interface_version.major
        << "." << backend_interface_version.minor << "." << backend_interface_version.patch;
   ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, oss2.str().c_str());
@@ -1481,6 +1491,7 @@ Ort::Status QnnBackendManager::SetHtpPowerConfig(uint32_t htp_power_config_clien
   // choose performance mode
   switch (htp_performance_mode) {
     case HtpPerformanceMode::kHtpBurst:
+    case HtpPerformanceMode::kHtpSustainedHighPerformance:
       dcvs_v3.setSleepLatency = 1;  // true
       dcvs_v3.sleepLatency = kSleepMinLatency;
       dcvs_v3.dcvsEnable = kDcvsDisable;
@@ -1493,7 +1504,6 @@ Ort::Status QnnBackendManager::SetHtpPowerConfig(uint32_t htp_power_config_clien
       dcvs_v3.coreVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
       dcvs_v3.coreVoltageCornerMax = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
       break;
-    case HtpPerformanceMode::kHtpSustainedHighPerformance:
     case HtpPerformanceMode::kHtpHighPerformance:
       dcvs_v3.setSleepLatency = 1;  // true
       dcvs_v3.sleepLatency = kSleepLowLatency;
@@ -1645,6 +1655,61 @@ Ort::Status QnnBackendManager::SetRpcPowerConfigs(uint32_t htp_power_config_clie
   return Ort::Status();
 }
 
+Ort::Status QnnBackendManager::SetPerThreadHtpPowerConfigs(const std::thread::id& thread_id, bool pre_run) {
+  PerThreadHtpPowerConfigs_t htp_power_configs;
+  if (!GetPerThreadHtpPowerConfigMapping(thread_id, htp_power_configs)) {
+    return Ort::Status();
+  }
+
+  auto htp_power_config_id = htp_power_configs.power_config_id;
+  if (pre_run) {
+    if (htp_power_configs.pre_run_perf_mode.has_value()) {
+      RETURN_IF_ERROR(SetHtpPowerConfig(htp_power_config_id, *htp_power_configs.pre_run_perf_mode));
+    }
+
+    if (htp_power_configs.rpc_configs.has_value()) {
+      RETURN_IF_ERROR(SetRpcPowerConfigs(htp_power_config_id,
+                                         htp_power_configs.rpc_configs->rpc_control_latency,
+                                         htp_power_configs.rpc_configs->rpc_polling_time));
+    }
+  } else if (htp_power_configs.post_run_perf_mode.has_value()) {
+    RETURN_IF_ERROR(SetHtpPowerConfig(htp_power_config_id, *htp_power_configs.post_run_perf_mode));
+  }
+
+  return Ort::Status();
+}
+
+Ort::Status QnnBackendManager::AddPerThreadHtpPowerConfigMapping(const std::thread::id& thread_id,
+                                                                 const PerThreadHtpPowerConfigs_t& htp_power_configs) {
+  std::lock_guard<std::mutex> lock(per_thread_power_configs_mutex_);
+
+  auto res = per_thread_power_configs_.find(thread_id);
+  RETURN_IF(res != per_thread_power_configs_.end(),
+            "Trying to set HtpPowerConfigs for the given thread id but it already exists!");
+
+  per_thread_power_configs_.emplace(thread_id, std::move(htp_power_configs));
+
+  return Ort::Status();
+}
+
+bool QnnBackendManager::GetPerThreadHtpPowerConfigMapping(const std::thread::id& thread_id,
+                                                          PerThreadHtpPowerConfigs_t& htp_power_configs) {
+  std::lock_guard<std::mutex> lock(per_thread_power_configs_mutex_);
+
+  auto it = per_thread_power_configs_.find(thread_id);
+  if (it == per_thread_power_configs_.end()) {
+    return false;
+  }
+
+  htp_power_configs = it->second;
+  return true;
+}
+
+void QnnBackendManager::RemovePerThreadHtpPowerConfigMapping(const std::thread::id& thread_id) {
+  std::lock_guard<std::mutex> lock(per_thread_power_configs_mutex_);
+  per_thread_power_configs_.erase(thread_id);
+}
+
 Ort::Status QnnBackendManager::DestroyHTPPowerConfigID(uint32_t htp_power_config_id) {
   QnnDevice_Infrastructure_t qnn_device_infra = nullptr;
   auto status = qnn_interface_.deviceGetInfrastructure(&qnn_device_infra);
@@ -1675,6 +1740,11 @@ Ort::Status QnnBackendManager::TerminateQnnLog() {
 }
 
 void QnnBackendManager::ReleaseResources() {
+  if (!backend_setup_completed_) {
+    // Avoid releasing non-setup or already released backend.
+    return;
+  }
+
   auto result = ReleaseContext();
   if (!result.IsOK()) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseContext: " + result.GetErrorMessage()).c_str());
@@ -2212,6 +2282,59 @@ Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t
     RETURN_IF_ERROR(HtpSharedMemoryAllocator::AddAllocationCleanUp(shared_memory_address,
                                                                    std::move(unregister_mem_handle)));
   }
+
+  return Ort::Status();
+}
+
+Ort::Status QnnBackendManager::GetPlatformInfo() {
+  if (!IsNpuBackend(GetQnnBackendType())) {
+    // Add support other backends.
+    return MAKE_EP_FAIL("Only support getting platform info for HTP backend.");
+  }
+
+  if (htp_arch_internal_ == QNN_HTP_DEVICE_ARCH_NONE && htp_arch_ != QNN_HTP_DEVICE_ARCH_NONE) {
+    htp_arch_internal_ = htp_arch_;
+  }
+  if (htp_arch_internal_ != QNN_HTP_DEVICE_ARCH_NONE) {
+    return Ort::Status();
+  }
+
+  RETURN_IF(qnn_interface_.deviceGetPlatformInfo == nullptr || qnn_interface_.deviceFreePlatformInfo == nullptr,
+            "Failed to get valid QnnDevice function pointers.");
+
+  Qnn_ErrorHandle_t result;
+
+  const QnnDevice_PlatformInfo_t* platform_info_raw_ptr = nullptr;
+  result = qnn_interface_.deviceGetPlatformInfo(log_handle_, &platform_info_raw_ptr);
+  RETURN_IF(result != QNN_SUCCESS || platform_info_raw_ptr == nullptr, "Failed to get platform info.");
+
+  std::unique_ptr<const QnnDevice_PlatformInfo_t, std::function<void(const QnnDevice_PlatformInfo_t*)>>
+  platform_info_ptr(
+      platform_info_raw_ptr,
+      [&qnn_interface = qnn_interface_, &log_handle = log_handle_](const QnnDevice_PlatformInfo_t* platform_info) {
+        qnn_interface.deviceFreePlatformInfo(log_handle, platform_info);
+      });
+
+  if (platform_info_ptr->version == QNN_DEVICE_PLATFORM_INFO_VERSION_1) {
+    const QnnDevice_PlatformInfoV1_t& plt_info = platform_info_ptr->v1;
+
+    for (uint32_t idx = 0; idx < plt_info.numHwDevices; ++idx) {
+      const QnnDevice_HardwareDeviceInfo_t& hw_info = plt_info.hwDevices[idx];
+      if (hw_info.version != QNN_DEVICE_HARDWARE_DEVICE_INFO_VERSION_1) {
+        continue;
+      }
+
+      const auto* htp_ext = reinterpret_cast<const QnnHtpDevice_DeviceInfoExtension_t*>(hw_info.v1.deviceInfoExtension);
+      if (htp_ext && htp_ext->devType == QNN_HTP_DEVICE_TYPE_ON_CHIP) {
+        htp_arch_internal_ = htp_ext->onChipDevice.arch;
+        break;
+      }
+    }
+  } else {
+    return MAKE_FAIL("Unrecognized platform info version.");
+  }
+
+  RETURN_IF(htp_arch_internal_ == QNN_HTP_DEVICE_ARCH_NONE, "Failed to get HTP arch.");
 
   return Ort::Status();
 }

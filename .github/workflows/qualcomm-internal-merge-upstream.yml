@@ -42,14 +42,17 @@ jobs:
       - name: Merge upstream into origin
         run: |
           git checkout -b $PR_BRANCH origin/$ORIGIN_BRANCH
-          # Don't auto-commit the merge to allow for binary file removal and conflict resolution
-          if ! git merge upstream/$UPSTREAM_BRANCH --no-commit; then
+          # Don't auto-commit the merge to allow for conflict resolution
+          if ! git merge -X theirs upstream/$UPSTREAM_BRANCH --no-commit; then
             echo "Merge conflicts detected. Will be resolved in the next step."
           fi
       - name: Resolve conflicts automatically and commit
         run: |
           # Resolve main repository conflicts
-          git checkout --theirs .
+          CONFLICTING_REMOVALS=$(git diff --name-only --diff-filter=U)
+          if [ -n "$CONFLICTING_REMOVALS" ]; then
+            git rm $CONFLICTING_REMOVALS
+          fi
 
           # Handle submodule conflicts and updates
           git submodule sync --recursive

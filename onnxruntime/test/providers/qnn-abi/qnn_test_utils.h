@@ -6,9 +6,11 @@
 #if !defined(ORT_MINIMAL_BUILD)
 #include <cmath>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
+
 #include "core/framework/provider_options.h"
 #include "core/framework/tensor_shape.h"
 #include "core/common/float16.h"
@@ -21,6 +23,13 @@
 #include "test/util/include/default_providers.h"
 
 #include "gtest/gtest.h"
+
+// QNN SDK headers for platform attribute queries.
+#include "HTP/QnnHtpDevice.h"
+#include "QnnDevice.h"
+#include "QnnInterface.h"
+#include "QnnLog.h"
+#include "QnnTypes.h"
 
 namespace onnxruntime {
 namespace test {
@@ -518,6 +527,77 @@ struct QDQTolerance {
   float value;
 };
 
+class QNNABITestEnvironment {
+ public:
+  // Delete copy constructor and assignment operator
+  QNNABITestEnvironment(const QNNABITestEnvironment&) = delete;
+  QNNABITestEnvironment& operator=(const QNNABITestEnvironment&) = delete;
+
+  // Static method to get the singleton instance
+  static QNNABITestEnvironment& GetInstance() {
+    static QNNABITestEnvironment instance;
+    return instance;
+  }
+
+  bool dump_onnx() const { return dump_onnx_; }
+  bool dump_json() const { return dump_json_; }
+  bool dump_dlc() const { return dump_dlc_; }
+  bool verbose() const { return verbose_; }
+
+  std::filesystem::path CreateTestcaseDirs() {
+    std::string test_suite_name = ::testing::UnitTest::GetInstance()->current_test_info()->test_suite_name();
+    std::string test_name = ::testing::UnitTest::GetInstance()->current_test_info()->name();
+    std::filesystem::path output_dir = std::filesystem::current_path() / (test_suite_name + "_" + test_name);
+    std::filesystem::create_directories(output_dir);
+
+    return output_dir;
+  }
+
+ private:
+  // Private constructor for singleton
+  QNNABITestEnvironment() {
+    ParseEnvironmentVars();
+  }
+
+  // Helper function to check if an environment variable is set
+  bool IsEnvVarSet(const char* name) {
+    const char* value = std::getenv(name);
+    if (value == nullptr) {
+      return false;
+    }
+
+    // Consider the variable set if it's not empty and not "0"
+    return *value != '\0' && *value != '0';
+  }
+
+  void ParseEnvironmentVars() {
+    if (IsEnvVarSet("QNN_DUMP_ONNX")) {
+      std::cout << "[QNN only] ONNX model dumping enabled via environment variable." << std::endl;
+      dump_onnx_ = true;
+    }
+
+    if (IsEnvVarSet("QNN_DUMP_JSON")) {
+      std::cout << "[QNN only] Json QNN Graph dumping enabled via environment variable." << std::endl;
+      dump_json_ = true;
+    }
+
+    if (IsEnvVarSet("QNN_DUMP_DLC")) {
+      std::cout << "[QNN only] DLC dumping enabled via environment variable." << std::endl;
+      dump_dlc_ = true;
+    }
+
+    if (IsEnvVarSet("QNN_VERBOSE")) {
+      std::cout << "Verbose enabled via environment variable." << std::endl;
+      verbose_ = true;
+    }
+  }
+
+  bool dump_onnx_ = false;
+  bool dump_json_ = false;
+  bool dump_dlc_ = false;
+  bool verbose_ = false;
+};
+
 template <typename QuantType>
 void VerifyQDQOutput(const std::vector<OrtValue>& cpu_qdq_outputs,
                      const std::vector<OrtValue>& qnn_qdq_outputs,
@@ -650,15 +730,23 @@ inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn,
                                     const std::string& qnn_ctx_model_path = "",
                                     const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                                     std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr) {
+  std::filesystem::path output_dir;
+  if (QNNABITestEnvironment::GetInstance().dump_onnx() ||
+      QNNABITestEnvironment::GetInstance().dump_dlc() ||
+      QNNABITestEnvironment::GetInstance().dump_json()) {
+    output_dir = QNNABITestEnvironment::GetInstance().CreateTestcaseDirs();
+  }
+
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
   auto& logging_manager = DefaultLoggingManager();
 
-  // Uncomment to dump LOGGER() output to stdout.
-  // logging_manager.RemoveSink(logging::SinkType::EtwSink);
-
   logging_manager.SetDefaultLoggerSeverity(log_severity);
+  if (QNNABITestEnvironment::GetInstance().verbose()) {
+    logging_manager.RemoveSink(logging::SinkType::EtwSink);
+    logging_manager.SetDefaultLoggerSeverity(logging::Severity::kVERBOSE);
+  }
 
   // Create float model and serialize it to a string.
   onnxruntime::Model f32_model("f32_model", false, ModelMetaData(), PathString(),
@@ -672,8 +760,11 @@ inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn,
   ASSERT_STATUS_OK(f32_model.MainGraph().Resolve());
   f32_model.ToProto().SerializeToString(&f32_model_data);
 
-  // Uncomment to save f32 model to disk for debugging.
-  // ASSERT_STATUS_OK(onnxruntime::Model::Save(f32_model, ToPathString("cmp_accuracy.f32.onnx")));
+  if (QNNABITestEnvironment::GetInstance().dump_onnx()) {
+    auto dump_path = output_dir / ToPathString("dumped_f32_model.onnx");
+    LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx float32 model at: " << dump_path;
+    ASSERT_STATUS_OK(onnxruntime::Model::Save(f32_model, dump_path));
+  }
 
   // Run f32 model on CPU EP and collect outputs.
   std::vector<OrtValue> cpu_f32_outputs;
@@ -715,8 +806,11 @@ inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn,
   ASSERT_STATUS_OK(qdq_model.MainGraph().Resolve());
   qdq_model.ToProto().SerializeToString(&qdq_model_data);
 
-  // Uncomment to save QDQ model to disk for debugging.
-  // ASSERT_STATUS_OK(onnxruntime::Model::Save(qdq_model, ToPathString("cmp_accuracy.qdq.onnx")));
+  if (QNNABITestEnvironment::GetInstance().dump_onnx()) {
+    auto dump_path = output_dir / ToPathString("dumped_qdq_model.onnx");
+    LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx QDQ model at: " << dump_path;
+    ASSERT_STATUS_OK(onnxruntime::Model::Save(qdq_model, dump_path));
+  }
 
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<OrtValue> cpu_qdq_outputs;
@@ -724,6 +818,20 @@ inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn,
                     qdq_helper.feeds_, cpu_qdq_outputs);
 
   TryEnableQNNSaverABI(qnn_options);
+
+  if (QNNABITestEnvironment::GetInstance().dump_dlc()) {
+    qnn_options["dump_qnn_ir_dlc"] = "1";
+    qnn_options["dump_qnn_ir_dlc_dir"] = output_dir.string();
+#if defined(_WIN32)
+    qnn_options["qnn_ir_backend_path"] = "QnnIr.dll";
+#else
+    qnn_options["qnn_ir_backend_path"] = "libQnnIr.so";
+#endif  // defined(_WIN32)
+  }
+  if (QNNABITestEnvironment::GetInstance().dump_json()) {
+    qnn_options["dump_json_qnn_graph"] = "1";
+    qnn_options["json_qnn_graph_dir"] = output_dir.string();
+  }
 
   // Run with QNN-ABI.
   std::vector<OrtValue> qnn_abi_qdq_outputs;
@@ -871,11 +979,22 @@ inline void TestFp16ModelAccuracyABI(const GetTestModelFn& f32_model_fn,
                                      logging::Severity log_severity = logging::Severity::kERROR,
                                      const std::string& qnn_ctx_model_path = "",
                                      const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
+  std::filesystem::path output_dir;
+  if (QNNABITestEnvironment::GetInstance().dump_onnx() ||
+      QNNABITestEnvironment::GetInstance().dump_dlc() ||
+      QNNABITestEnvironment::GetInstance().dump_json()) {
+    output_dir = QNNABITestEnvironment::GetInstance().CreateTestcaseDirs();
+  }
+
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
   auto& logging_manager = DefaultLoggingManager();
   logging_manager.SetDefaultLoggerSeverity(log_severity);
+  if (QNNABITestEnvironment::GetInstance().verbose()) {
+    logging_manager.RemoveSink(logging::SinkType::EtwSink);
+    logging_manager.SetDefaultLoggerSeverity(logging::Severity::kVERBOSE);
+  }
 
   // Create float model and serialize it to a string.
   onnxruntime::Model f32_model("f32_model", false, ModelMetaData(), PathString(),
@@ -887,6 +1006,12 @@ inline void TestFp16ModelAccuracyABI(const GetTestModelFn& f32_model_fn,
   f32_helper.SetGraphOutputs();
   ASSERT_STATUS_OK(f32_model.MainGraph().Resolve());
   f32_model.ToProto().SerializeToString(&f32_model_data);
+
+  if (QNNABITestEnvironment::GetInstance().dump_onnx()) {
+    auto dump_path = output_dir / ToPathString("dumped_f32_model.onnx");
+    LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx float32 model at: " << dump_path;
+    ASSERT_STATUS_OK(onnxruntime::Model::Save(f32_model, dump_path));
+  }
 
   // Run f32 model on CPU EP and collect outputs.
   std::vector<OrtValue> cpu_f32_outputs;
@@ -924,12 +1049,32 @@ inline void TestFp16ModelAccuracyABI(const GetTestModelFn& f32_model_fn,
   ASSERT_STATUS_OK(f16_model.MainGraph().Resolve());
   f16_model.ToProto().SerializeToString(&f16_model_data);
 
+  if (QNNABITestEnvironment::GetInstance().dump_onnx()) {
+    auto dump_path = output_dir / ToPathString("dumped_f16_model.onnx");
+    LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx float16 model at: " << dump_path;
+    ASSERT_STATUS_OK(onnxruntime::Model::Save(f16_model, dump_path));
+  }
+
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<OrtValue> cpu_f16_outputs;
   InferenceModelCPU(f16_model_data, "fp16_model_logger", ExpectedEPNodeAssignment::All,
                     f16_helper.feeds_, cpu_f16_outputs);
 
   TryEnableQNNSaverABI(qnn_options);
+
+  if (QNNABITestEnvironment::GetInstance().dump_dlc()) {
+    qnn_options["dump_qnn_ir_dlc"] = "1";
+    qnn_options["dump_qnn_ir_dlc_dir"] = output_dir.string();
+#if defined(_WIN32)
+    qnn_options["qnn_ir_backend_path"] = "QnnIr.dll";
+#else
+    qnn_options["qnn_ir_backend_path"] = "libQnnIr.so";
+#endif  // defined(_WIN32)
+  }
+  if (QNNABITestEnvironment::GetInstance().dump_json()) {
+    qnn_options["dump_json_qnn_graph"] = "1";
+    qnn_options["json_qnn_graph_dir"] = output_dir.string();
+  }
 
   // Run with QNN-ABI.
   std::vector<OrtValue> qnn_abi_f16_outputs;
@@ -1254,13 +1399,64 @@ class QnnABIHTPBackendTests : public ::testing::Test {
  public:
   static void TearDownTestSuite();
 
+  // Platform capability attributes queried from QNN.
+  struct QnnPlatformAttributes {
+    QnnHtpDevice_Arch_t htp_arch{QNN_HTP_DEVICE_ARCH_NONE};
+    bool dlbc_supported{false};
+    uint32_t vtcm_size_mb{0};
+    uint32_t soc_model{QNN_SOC_MODEL_UNKNOWN};
+    std::string sdk_version;
+  };
+
  protected:
   void SetUp() override;
 
   // Some tests need the Ir backend, which is not always available.
   [[nodiscard]] BackendSupport IsIRBackendSupported() const;
 
-  static BackendSupport cached_htp_support_;  // Set by the first test using this fixture.
+ public:
+  // Returns true if platform attributes are available.
+  static bool HasPlatformAttributes() {
+    return cached_platform_attrs_.has_value();
+  }
+
+  // Cached platform attributes for HTP backend to avoid repeated queries.
+  static const QnnPlatformAttributes& GetPlatformAttributes() {
+    if (!cached_platform_attrs_.has_value()) {
+      ORT_THROW("QNN platform attributes are not available.");
+    }
+    return *cached_platform_attrs_;
+  }
+
+  // Returns true if the test should be skipped because HTP architecture is less than or equal to the provided arch.
+  // Example: if (QnnABIHTPBackendTests::ShouldSkipIfHTPArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) { GTEST_SKIP() << "..."; }
+  static bool ShouldSkipIfHtpArchIsLessThanOrEqualTo(QnnHtpDevice_Arch_t arch) {
+    return HasPlatformAttributes() && GetPlatformAttributes().htp_arch <= arch;
+  }
+
+  // Query QNN platform attributes by directly calling QNN APIs
+  Status QueryQnnPlatformAttributesDirectly(QnnPlatformAttributes& out, const onnxruntime::logging::Logger& logger);
+
+  // Returns true if the test should be skipped because HTP FP16 is not supported on this platform.
+  static bool ShouldSkipIfHtpFp16Unsupported() {
+#if defined(_WIN32)  // On Windows ARM64, FP16 is not supported if the HTP architecture is v68.
+    return ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68);
+#else
+    return false;
+#endif
+  }
+
+  // Returns true if the test should be skipped because AutoEP is not supported on this platform.
+  static bool ShouldSkipIfAutoEpNpuUnsupported() {
+#if defined(_WIN32)  // V68 device (Makena) on win-arm64 doesn't support NPU device discovery with dxcore.dll.
+    return ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68);
+#else
+    return false;
+#endif
+  }
+
+  static std::optional<QnnABIHTPBackendTests::QnnPlatformAttributes> cached_platform_attrs_;  // Set by the first test using this fixture.
+  static BackendSupport cached_htp_support_;                                                  // Set by the first test using this fixture.
   static BackendSupport cached_ir_support_;
 };
 
@@ -1302,6 +1498,27 @@ class QnnABIIRBackendTests : public ::testing::Test {
  * \return True if "axes" is an input, or false if "axes" is an attribute.
  */
 bool ReduceOpHasAxesInputABI(const std::string& op_type, int opset_version);
+
+#define QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS()                                         \
+  do {                                                                               \
+    if (!QnnABIHTPBackendTests::HasPlatformAttributes()) {                           \
+      GTEST_SKIP() << "Test requires platform attributes, which are not available."; \
+    }                                                                                \
+  } while (0)
+
+#define QNN_SKIP_TEST_IF_HTP_FP16_UNSUPPORTED()                                  \
+  do {                                                                           \
+    if (QnnABIHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {               \
+      GTEST_SKIP() << "Test requires HTP FP16 support, which is not available."; \
+    }                                                                            \
+  } while (0)
+
+#define QNN_SKIP_TEST_IF_AUTOEP_NPU_UNSUPPORTED()                                                            \
+  do {                                                                                                       \
+    if (QnnABIHTPBackendTests::ShouldSkipIfAutoEpNpuUnsupported()) {                                         \
+      GTEST_SKIP() << "This platform lacks dxcore.dll NPU discovery capability required by auto-EP feature"; \
+    }                                                                                                        \
+  } while (0)
 
 }  // namespace test
 }  // namespace onnxruntime

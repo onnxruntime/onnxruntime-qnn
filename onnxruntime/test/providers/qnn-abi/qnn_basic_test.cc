@@ -513,7 +513,8 @@ TEST_F(QnnABICPUBackendTests, TestNHWCResizeShapeInference_sizes_opset18) {
 }
 
 // Test that QNN Saver generates the expected files for a model meant to run on the QNN CPU backend.
-TEST_F(QnnABICPUBackendTests, QnnSaver_OutputFiles) {
+// TODO: [AISW-163150] ORT test failures on qcs6490
+TEST_F(QnnABICPUBackendTests, DISABLED_QnnSaver_OutputFiles) {
   const std::filesystem::path qnn_saver_output_dir = "saver_output";
 
   // Remove pre-existing QNN Saver output files. Note that fs::remove_all() can handle non-existing paths.
@@ -1208,6 +1209,7 @@ TEST_F(QnnABIHTPBackendTests, CastAddQDQS16) {
 
 // Test float32 model with FP16 precision
 TEST_F(QnnABIHTPBackendTests, Float32ModelWithFP16PrecisionTest) {
+  QNN_SKIP_TEST_IF_HTP_FP16_UNSUPPORTED();
   ProviderOptions provider_options;
 #if defined(_WIN32)
   provider_options["backend_path"] = "QnnHtp.dll";
@@ -1396,7 +1398,8 @@ TEST_F(QnnABIHTPBackendTests, EPOffloadsGraphIOQuantDequant) {
   }
 }
 
-#if !BUILD_QNN_EP_STATIC_LIB
+// TODO: Test will be re-enabled for Linux once QNN API issue is resolved
+#if !BUILD_QNN_EP_STATIC_LIB && !defined(__linux__)
 // Tests that loading and unloading of an EP library in the same process does not cause a segfault.
 TEST_F(QnnABIHTPBackendTests, LoadingAndUnloadingOfQnnLibrary_FixSegFault) {
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
@@ -1422,12 +1425,15 @@ TEST_F(QnnABIHTPBackendTests, LoadingAndUnloadingOfQnnLibrary_FixSegFault) {
     EXPECT_NO_THROW(Ort::Session session(*ort_env, ort_model_path, so));
   }
 }
-#endif  // !BUILD_QNN_EP_STATIC_LIB
+#endif  // !BUILD_QNN_EP_STATIC_LIB && !defined(__linux__)
 
 #if defined(WIN32) && !BUILD_QNN_EP_STATIC_LIB
 // Tests autoEP feature to automatically select an EP that supports the NPU.
 // Currently only works on Windows.
 TEST_F(QnnABIHTPBackendTests, AutoEp_PreferNpu) {
+  // V68 device (Makena) on win-arm64 doesn't support NPU device discovery with dxcore.dll,
+  // which is required by auto-EP.Expand commentComment on line R1471ResolvedCode has comments. Press enter to view.
+  QNN_SKIP_TEST_IF_AUTOEP_NPU_UNSUPPORTED();
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnABIExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn_abi.dll")));
 
@@ -1447,6 +1453,82 @@ TEST_F(QnnABIGPUBackendTests, AutoEp_PreferGpu) {
 
   Ort::SessionOptions so;
   so.SetEpSelectionPolicy(OrtExecutionProviderDevicePolicy_PREFER_GPU);
+
+  const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx";
+  Ort::Session session(*ort_env, ort_model_path, so);
+  EXPECT_TRUE(SessionHasEp(session, kQnnABIExecutionProvider));
+
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnABIExecutionProvider));
+}
+
+TEST_F(QnnABIHTPBackendTests, AutoEp_AllDevices) {
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnABIExecutionProvider,
+                                                                     ORT_TSTR("onnxruntime_providers_qnn_abi.dll")));
+
+  Ort::SessionOptions so;
+  auto devices = ort_env->GetEpDevices();
+  std::vector<Ort::ConstEpDevice> selected_devices;
+
+  std::copy_if(devices.begin(),
+               devices.end(),
+               std::back_inserter(selected_devices),
+               [](Ort::ConstEpDevice& d) { return std::string_view(d.EpName()) == kQnnABIExecutionProvider; });
+
+  ASSERT_TRUE(selected_devices.size() > 0) << "No QNN devices were found.";
+
+  so.AppendExecutionProvider_V2(*ort_env, selected_devices, {});
+
+  const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
+  Ort::Session session(*ort_env, ort_model_path, so);
+  EXPECT_TRUE(SessionHasEp(session, kQnnABIExecutionProvider));
+
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnABIExecutionProvider));
+}
+
+TEST_F(QnnABIHTPBackendTests, AutoEp_NpuOnly) {
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnABIExecutionProvider,
+                                                                     ORT_TSTR("onnxruntime_providers_qnn_abi.dll")));
+
+  Ort::SessionOptions so;
+  auto devices = ort_env->GetEpDevices();
+  std::vector<Ort::ConstEpDevice> selected_devices;
+
+  std::copy_if(devices.begin(),
+               devices.end(),
+               std::back_inserter(selected_devices),
+               [](Ort::ConstEpDevice& d) {
+                 return std::string_view(d.EpName()) == kQnnABIExecutionProvider && d.Device().Type() == OrtHardwareDeviceType_NPU;
+               });
+
+  ASSERT_TRUE(selected_devices.size() > 0) << "No QNN NPU device was found.";
+
+  so.AppendExecutionProvider_V2(*ort_env, selected_devices, {});
+
+  const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
+  Ort::Session session(*ort_env, ort_model_path, so);
+  EXPECT_TRUE(SessionHasEp(session, kQnnABIExecutionProvider));
+
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnABIExecutionProvider));
+}
+
+TEST_F(QnnABIGPUBackendTests, AutoEp_GpuOnly) {
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnABIExecutionProvider,
+                                                                     ORT_TSTR("onnxruntime_providers_qnn_abi.dll")));
+
+  Ort::SessionOptions so;
+  auto devices = ort_env->GetEpDevices();
+  std::vector<Ort::ConstEpDevice> selected_devices;
+
+  std::copy_if(devices.begin(),
+               devices.end(),
+               std::back_inserter(selected_devices),
+               [](Ort::ConstEpDevice& d) {
+                 return std::string_view(d.EpName()) == kQnnABIExecutionProvider && d.Device().Type() == OrtHardwareDeviceType_GPU;
+               });
+
+  ASSERT_TRUE(selected_devices.size() > 0) << "No QNN GPU device was found.";
+
+  so.AppendExecutionProvider_V2(*ort_env, selected_devices, {});
 
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx";
   Ort::Session session(*ort_env, ort_model_path, so);

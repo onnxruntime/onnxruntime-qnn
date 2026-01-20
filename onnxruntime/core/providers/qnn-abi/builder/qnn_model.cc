@@ -6,6 +6,7 @@
 #include <iostream>
 #include <fstream>
 #include <gsl/gsl>
+#include <thread>
 
 #include "QnnOpDef.h"
 
@@ -255,14 +256,16 @@ Ort::Status QnnModel::SetupQnnInputOutput(const Ort::Logger& logger) {
   auto result = SetupTensors(qnn_input_infos_, graph_info_->InputTensors());
 
   if (!result.IsOK()) {
-    const std::string message = "Failed to setup QNN input tensors for graph: " + graph_info_->Name();
+    const std::string message = "Failed to setup QNN input tensors for graph: " + graph_info_->Name() + ". " +
+                                result.GetErrorMessage();
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, message.c_str());
     return MAKE_EP_FAIL(message.c_str());
   }
 
   result = SetupTensors(qnn_output_infos_, graph_info_->OutputTensors(), false);
   if (!result.IsOK()) {
-    const std::string message = "Failed to setup QNN output tensors for graph: " + graph_info_->Name();
+    const std::string message = "Failed to setup QNN output tensors for graph: " + graph_info_->Name() + ". " +
+                                result.GetErrorMessage();
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, message.c_str());
     return MAKE_EP_FAIL(message.c_str());
   }
@@ -431,8 +434,11 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
       profiling_info.start_time = qnn::utils::GetTimeStampInUs();
     }
 #endif
-
     auto profile_backend_handle = qnn_backend_manager_->GetQnnProfileHandle();
+
+    auto thread_id = std::this_thread::get_id();
+    RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, true));
+
     execute_status = qnn_interface.graphExecute(graph_info_->Graph(),
                                                 qnn_inputs.data(),
                                                 static_cast<uint32_t>(qnn_inputs.size()),
@@ -448,6 +454,8 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
       profiling_info.graph_name = graph_info_->Name();
     }
 #endif
+
+    RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, false));
 
     // NOTE: This function returns immediately when profiling is disabled.
     // Extracting profiling data can be expensive, but it is typically only enabled for debugging purposes
