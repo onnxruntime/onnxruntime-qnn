@@ -32,7 +32,7 @@ function Enter-MsvcEnv() {
         default { throw "Unknown target arch $TargetArch." }
     }
 
-    & "$env:ProgramW6432\Microsoft Visual Studio\2022\Professional\Common7\Tools\Launch-VsDevShell.ps1" `
+    & "$env:ProgramW6432\Microsoft Visual Studio\2022\Community\Common7\Tools\Launch-VsDevShell.ps1" `
         -Arch $MsvcArch `
         -SkipAutomaticLocation
 

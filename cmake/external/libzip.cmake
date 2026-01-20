@@ -41,8 +41,8 @@ set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 set(ZLIB_USE_STATIC_LIBS ON CACHE BOOL "" FORCE)
 FetchContent_Declare(
  zlib
-#  URL https://zlib.net/zlib-1.3.1.tar.gz
- URL file://C:/Users/samrdutt/Downloads/zlib-1.3.1.tar.gz
+ URL https://zlib.net/zlib-1.3.1.tar.gz
+ # URL file://C:/Users/samrdutt/Downloads/zlib-1.3.1.tar.gz
 )
 FetchContent_MakeAvailable(zlib)
 # ------------------------------------------------------------

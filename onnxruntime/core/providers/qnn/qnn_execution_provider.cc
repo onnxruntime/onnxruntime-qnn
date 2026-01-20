@@ -1376,7 +1376,7 @@ Status QNNExecutionProvider::ExecuteGenieModel(onnxruntime::PathString context_m
   const fs::path parent    = model_path.parent_path();
   const std::wstring stem  = model_path.stem().wstring(); // wide stem without extension
 
-  const fs::path zip_path      = parent / (stem + L"_og.zip");
+  const fs::path zip_path      = parent / (stem + L".zip");
   const fs::path unzip_dir     = parent / (stem + L"_unzipped");
   const fs::path genie_cfg_path= unzip_dir / L"genie_config.json";
 
@@ -1389,8 +1389,8 @@ Status QNNExecutionProvider::ExecuteGenieModel(onnxruntime::PathString context_m
   std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: Genie zip Path: " << zip_dir_path << std::endl;
   std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: Proper Updated 2" << std::endl;
 
-  // auto unzipped = UnzipFile(zip_dir_path, unzip_dir_path);
-  // std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: Unzipping Status: " << unzipped << std::endl;
+  auto unzipped = UnzipFile(zip_dir_path, unzip_dir_path);
+  std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: Unzipping Status: " << unzipped << std::endl;
 
   // Type declarations
   typedef void* GenieDialogConfig;
