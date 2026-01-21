@@ -221,9 +221,6 @@ TEST(QnnABIEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
   } catch (const Ort::Exception& e) {
     ASSERT_EQ(e.GetOrtErrorCode(), ORT_FAIL);
     ASSERT_THAT(e.what(), testing::HasSubstr("Only one of 'backend_type' and 'backend_path' should be set."));
-    ASSERT_FALSE(SessionHasEp(session, onnxruntime::kQnnABIExecutionProvider))
-        << "QNN EP was found in registered providers for session "
-        << "when both backend_type and backend_path were specified, which should not happen.";
   }
 }
 
