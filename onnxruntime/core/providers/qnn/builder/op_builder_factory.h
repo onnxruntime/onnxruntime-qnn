@@ -93,6 +93,8 @@ void CreateLayerNormOpBuilder(const std::string& op_type, OpBuilderRegistrations
 
 void CreateGroupNormOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
+void CreateRMSNormOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+
 void CreateLRNOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
 void CreateTransposeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
@@ -126,6 +128,11 @@ void CreateThresholdedReluOpBuilder(const std::string& op_type, OpBuilderRegistr
 void CreateSTFTOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
 void CreateInverseOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateFusedMatMulOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateQuickGeluOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+
+void CreateMatMulNBitsOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateConcatOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
 }  // namespace qnn
 }  // namespace onnxruntime
