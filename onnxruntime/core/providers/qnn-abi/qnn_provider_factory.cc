@@ -308,7 +308,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
   auto vendor_id = factory->ort_api.HardwareDevice_VendorId(hw);
 
   // QNN EP supports general CPU devices and NPU/GPU devices with Qualcomm vendor ID
-  if ((kDefaultBackends.find(device_type) != kDefaultBackends.end() && vendor_id != factory->vendor_id_) && device_type != OrtHardwareDeviceType_CPU){
+  if ((kDefaultBackends.find(device_type) != kDefaultBackends.end() && vendor_id != factory->vendor_id_) && device_type != OrtHardwareDeviceType_CPU) {
     uint32_t reasons = OrtDeviceEpIncompatibility_DEVICE_INCOMPATIBLE;
     return factory->ep_api.DeviceEpIncompatibilityDetails_SetDetails(
         details,
@@ -338,8 +338,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
   try {
     temp_qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *temp_session_options, logger);
     RETURN_IF_NOT_NULL(temp_qnn_ep->GetHardwareDeviceIncompatibilityDetails(hw, details));
-  }
-  catch (...) {
+  } catch (...) {
     uint32_t reasons = OrtDeviceEpIncompatibility_UNKNOWN;
     return factory->ep_api.DeviceEpIncompatibilityDetails_SetDetails(
         details,
@@ -358,7 +357,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
       reasons,
       QNN_SUCCESS,
       "Device is compatible with QNN EP");
-  }
+}
 }  // namespace onnxruntime
 
 extern "C" {
