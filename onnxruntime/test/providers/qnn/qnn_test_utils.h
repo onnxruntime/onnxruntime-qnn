@@ -751,18 +751,17 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   std::vector<Ort::Value> qnn_qdq_outputs;
   if (!qnn_ctx_model_path.empty()) {
     onnx::ModelProto model_proto;
-    // TODO: Handle the qnn_ctx_model with public API
-    // onnxruntime::Model qnn_ctx_model;
-    // ASSERT_STATUS_OK(qnn_ctx_model.Load(ToPathString(qnn_ctx_model_path), model_proto));
-    // std::string qnn_ctx_model_data;
-    // model_proto.SerializeToString(&qnn_ctx_model_data);
-    // InferenceModel(qnn_ctx_model_data,
-    //                "qnn_ctx_model_logger",
-    //                qnn_options,
-    //                expected_ep_assignment,
-    //                qdq_helper.feeds_,
-    //                qnn_qdq_outputs,
-    //                session_option_pairs);
+    std::ifstream ifs(qnn_ctx_model_path, std::ios::in | std::ios::binary);
+    model_proto.ParseFromIstream(&ifs);
+    std::string qnn_ctx_model_data;
+    model_proto.SerializeToString(&qnn_ctx_model_data);
+    InferenceModel(qnn_ctx_model_data,
+                   "qnn_ctx_model_logger",
+                   qnn_options,
+                   expected_ep_assignment,
+                   qdq_helper.feeds_,
+                   qnn_qdq_outputs,
+                   session_option_pairs);
   } else {
     InferenceModel(qdq_model_data,
                    "qdq_model_logger",
