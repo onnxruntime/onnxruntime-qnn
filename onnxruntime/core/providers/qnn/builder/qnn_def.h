@@ -71,6 +71,13 @@ enum class HtpPerformanceMode : uint8_t {
   kHtpExtremePowerSaver,
 };
 
+enum class DcvsState_t {
+  DCVS_DEFAULT = 0,
+  DCVS_DISABLE = 1,
+  DCVS_ENABLE = 2,
+  DCVS_NUM_STATES
+};
+
 typedef struct PerThreadHtpPowerConfigs {
   std::optional<HtpPerformanceMode> pre_run_perf_mode;
   std::optional<HtpPerformanceMode> post_run_perf_mode;

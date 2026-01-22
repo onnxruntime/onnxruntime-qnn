@@ -32,6 +32,7 @@
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/timer.h"
+#include <HTP/QnnHtpPerfInfrastructure.h>
 
 namespace onnxruntime {
 namespace qnn {
@@ -122,13 +123,6 @@ struct QnnBackendManagerConfig {
   bool skip_qnn_version_check;
 };
 
-enum class DcvsState_t {
-  DCVS_DEFAULT = 0,
-  DCVS_DISABLE = 1,
-  DCVS_ENABLE = 2,
-  DCVS_NUM_STATES
-};
-
 // Graph states to tune the power/performance configurations
 enum class GraphState {
   INIT_START,
@@ -186,11 +180,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Status InitializePowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
 
   Status DeInitializePowerCfgId(uint32_t htp_power_config_id);
-
-  Status SetHtpPowerConfigs(uint32_t htp_power_config_client_id,
-                            HtpPerformanceMode htp_performance_mode,
-                            uint32_t rpc_polling_time,
-                            uint32_t rpc_control_latency);
 
   Status SetPerThreadHtpPowerConfigs(const std::thread::id& thread_id, bool pre_run);
 
@@ -266,7 +255,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool ProfilingEnabled() { return profiling_enabled_; }
 #endif
 
-  Status SetState(GraphState state, uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode);
+  Status SetState(GraphState state, uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
 
  private:
   Status LoadBackend();
@@ -314,15 +303,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   bool IsTimerThreadRunning();
 
-  Status SetRelaxedPerfPowerConfig(uint32_t htp_power_config_client_id, DcvsState_t dcvsState);
+  Status SetSustainedPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
 
-  Status SetReleasedPerfPowerConfig(uint32_t htp_power_config_client_id, DcvsState_t dcvsState);
-
-  Status SetExtremeLowPerfPowerConfig(uint32_t htp_power_config_client_id);
-
-  Status SetSustainedPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode);
-
-  Status SetPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode);
+  Status SetPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
 
   static void TimerCallback(void* user_data);
 
@@ -333,6 +316,13 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   void CreateTimerThread(uint32_t htp_power_config_client_id);
 
   void ReleaseTimerThread(uint32_t htp_power_config_client_id);
+
+  Status SetHtpPowerConfigs(uint32_t htp_power_config_client_id,
+                            HtpPerformanceMode htp_performance_mode,
+                            uint32_t rpc_polling_time,
+                            uint32_t rpc_control_latency);
+
+  Status SetHtpPowerCustomConfigs(uint32_t htp_power_config_client_id, QnnHtpPerfInfrastructure_PowerConfig_t power_config, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
 
   template <class T>
   inline T ResolveSymbol(void* lib_handle, const char* sym, const logging::Logger& logger) {
