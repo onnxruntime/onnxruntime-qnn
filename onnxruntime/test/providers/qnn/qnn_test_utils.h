@@ -369,8 +369,8 @@ static void QuantizeValues(gsl::span<const FloatType> input, gsl::span<QuantType
                            std::optional<int64_t> axis) {
   const size_t input_rank = shape.size();
   const size_t num_elems = static_cast<size_t>(SizeHelper(shape, 0, input_rank));
-  ORT_ENFORCE(input.size() == num_elems);
-  ORT_ENFORCE(output.size() == num_elems);
+  assert(input.size() == num_elems);
+  assert(output.size() == num_elems);
 
   size_t block_count = 1;
   size_t broadcast_dim = 1;
@@ -383,8 +383,8 @@ static void QuantizeValues(gsl::span<const FloatType> input, gsl::span<QuantType
     block_size = SizeFromDimension(shape, axis_no_neg + 1);
   }
 
-  ORT_ENFORCE(scales.size() == broadcast_dim);
-  ORT_ENFORCE(zero_points.empty() || zero_points.size() == broadcast_dim);
+  assert(scales.size() == broadcast_dim);
+  assert(zero_points.empty() || zero_points.size() == broadcast_dim);
 
   size_t i = 0;
 
@@ -415,8 +415,8 @@ static void QuantizeValues(gsl::span<const FloatType> input, gsl::span<QuantType
     using UnpackedType = typename INT4x2_TYPE::UnpackedType;                                                 \
     const size_t input_rank = shape.size();                                                                  \
     const size_t num_int4_elems = static_cast<size_t>(SizeHelper(shape, 0, input_rank));                     \
-    ORT_ENFORCE(input.size() == num_int4_elems);                                                             \
-    ORT_ENFORCE(output.size() == INT4x2_TYPE::CalcNumInt4Pairs(num_int4_elems));                             \
+    assert(input.size() == num_int4_elems);                                                             \
+    assert(output.size() == INT4x2_TYPE::CalcNumInt4Pairs(num_int4_elems));                             \
                                                                                                              \
     size_t block_count = 1;                                                                                  \
     size_t broadcast_dim = 1;                                                                                \
@@ -429,8 +429,8 @@ static void QuantizeValues(gsl::span<const FloatType> input, gsl::span<QuantType
       block_size = SizeFromDimension(shape, axis_no_neg + 1);                                                \
     }                                                                                                        \
                                                                                                              \
-    ORT_ENFORCE(scales.size() == broadcast_dim);                                                             \
-    ORT_ENFORCE(zero_points.empty() || zero_points.size() == INT4x2_TYPE::CalcNumInt4Pairs(broadcast_dim));  \
+    assert(scales.size() == broadcast_dim);                                                             \
+    assert(zero_points.empty() || zero_points.size() == INT4x2_TYPE::CalcNumInt4Pairs(broadcast_dim));  \
                                                                                                              \
     size_t i = 0;                                                                                            \
                                                                                                              \
