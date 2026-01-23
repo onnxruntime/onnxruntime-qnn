@@ -15,7 +15,6 @@
 namespace onnxruntime {
 namespace test {
 
-
 // Runs a non-QDQ model with indices inputs (int64) on HTP and compares output to CPU EP.
 template <typename InputType1, typename InputType2 = int64_t>
 static void RunOpTest(const std::string& op_type,
@@ -43,7 +42,6 @@ static void RunOpTest(const std::string& op_type,
                   expected_ep_assignment,
                   fp32_abs_err);
 }
-
 
 template <typename InputQType = uint8_t, typename InputType2 = int64_t>
 static void RunQDQOpTest(const std::string& op_type,
@@ -134,7 +132,6 @@ TEST_F(QnnCPUBackendTests, ScatterElements_Float_Reduction_Add) {
                                  ExpectedEPNodeAssignment::All);
 }
 
-
 //
 // HTP tests:
 //
@@ -156,8 +153,7 @@ TEST_F(QnnHTPBackendTests, ScatterElements_Float_Reduction_None) {
                             },
                             {},
                             17,
-                            ExpectedEPNodeAssignment::All
-                            );
+                            ExpectedEPNodeAssignment::All);
 }
 
 // Test ScatterElements with default attributes on HTP
@@ -248,7 +244,7 @@ TEST_F(QnnHTPBackendTests, ScatterElements_int8_reduction_mul) {
                                  ExpectedEPNodeAssignment::All);
 }
 
-// Data and updates in int 32 are not valid for HTP. 
+// Data and updates in int 32 are not valid for HTP.
 // Test int 64 Data and updates are correctly casted to float 32. And casting logic keeps indices in int 32.
 TEST_F(QnnHTPBackendTests, TestScatterElelment_Int64) {
   ProviderOptions provider_options;
@@ -276,7 +272,7 @@ TEST_F(QnnHTPBackendTests, TestScatterElelment_Int64) {
                   1e-5f);
 }
 
-// Data and updates in int 32 are not valid for HTP. 
+// Data and updates in int 32 are not valid for HTP.
 // Test int 64 Data and updates are correctly casted to float 32. And casting logic keeps indices in int 32.
 TEST_F(QnnHTPBackendTests, TestScatterElelment_Int32) {
   ProviderOptions provider_options;
@@ -303,7 +299,6 @@ TEST_F(QnnHTPBackendTests, TestScatterElelment_Int32) {
                   ExpectedEPNodeAssignment::All,
                   1e-5f);
 }
-
 
 }  // namespace test
 }  // namespace onnxruntime
