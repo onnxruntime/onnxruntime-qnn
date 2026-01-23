@@ -390,14 +390,23 @@ static void QuantizeValues(gsl::span<const FloatType> input, gsl::span<QuantType
 
   for (size_t n = 0; n < block_count; n++) {
     for (size_t bd = 0; bd < broadcast_dim; bd++) {
-      QuantType zp = zero_points.empty() ? static_cast<QuantType>(0) : zero_points[bd];
-      if constexpr (std::is_same_v<QuantType, int32_t>) {
-        for (size_t e = 0; e < block_size; e++) {
-          output[i + e] = static_cast<QuantType>(input[i + e] / scales[bd]) + zp;
-        }
-      } else {
-        ParQuantizeLinearStd(&input[i], &output[i], block_size, scales[bd], zp, nullptr);
+      const QuantType zp = zero_points.empty() ? static_cast<QuantType>(0) : zero_points[bd];
+      const FloatType scale = scales[bd];
+
+      // Avoid ParQuantizeLinearStd (internal API). Use a simple reference quantization implementation:
+      //   q = round(x / scale) + zp, clamped to [min(QType), max(QType)].
+      //
+      // NOTE: This is used only for generating test data/initializers.
+      const float qmin = static_cast<float>(std::numeric_limits<QuantType>::min());
+      const float qmax = static_cast<float>(std::numeric_limits<QuantType>::max());
+
+      for (size_t e = 0; e < block_size; e++) {
+        const float x = static_cast<float>(input[i + e]);
+        const float q_unclamped = RoundHalfToEven(x / static_cast<float>(scale)) + static_cast<float>(zp);
+        const float q_clamped = std::min(qmax, std::max(qmin, q_unclamped));
+        output[i + e] = static_cast<QuantType>(q_clamped);
       }
+
       i += block_size;
     }
   }
@@ -663,6 +672,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                                  const std::string& qnn_ctx_model_path = "",
                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                                  std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr) {
+  ORT_UNUSED_PARAMETER(log_severity);
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
@@ -896,6 +906,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                                   logging::Severity log_severity = logging::Severity::kERROR,
                                   const std::string& qnn_ctx_model_path = "",
                                   const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
+  ORT_UNUSED_PARAMETER(log_severity);
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
