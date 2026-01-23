@@ -885,6 +885,14 @@ private:
   constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<Ort::BFloat16_t>() {
     return ONNX_NAMESPACE::TensorProto_DataType_BFLOAT16;
   }
+  template <>
+  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<UInt4x2>() {
+    return ONNX_NAMESPACE::TensorProto_DataType_UINT4;
+  }
+  template <>
+  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<Int4x2>() {
+    return ONNX_NAMESPACE::TensorProto_DataType_INT4;
+  }
 };
 
 void TransformerTester(const std::function<void(ModelTestBuilder& helper)>& build_test_case,

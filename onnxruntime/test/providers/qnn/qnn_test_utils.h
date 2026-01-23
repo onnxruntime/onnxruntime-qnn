@@ -413,50 +413,108 @@ static void QuantizeValues(gsl::span<const FloatType> input, gsl::span<QuantType
 }
 
 // Define functions to quantize input data to 4-bits. Quantization can be done per-tensor or per-channel.
-#define DEF_QUANTIZE_VALUES_INT4_FUNC(INT4x2_TYPE, QUANT_FUNC)                                               \
-  template <>                                                                                                \
-  inline void QuantizeValues<float, INT4x2_TYPE>(gsl::span<const float> input,                               \
-                                                 gsl::span<INT4x2_TYPE> output,                              \
-                                                 const std::vector<int64_t>& shape,                          \
-                                                 gsl::span<const float> scales,                              \
-                                                 gsl::span<const INT4x2_TYPE> zero_points,                   \
-                                                 std::optional<int64_t> axis) {                              \
-    using UnpackedType = typename INT4x2_TYPE::UnpackedType;                                                 \
-    const size_t input_rank = shape.size();                                                                  \
-    const size_t num_int4_elems = static_cast<size_t>(SizeHelper(shape, 0, input_rank));                     \
-    assert(input.size() == num_int4_elems);                                                             \
-    assert(output.size() == INT4x2_TYPE::CalcNumInt4Pairs(num_int4_elems));                             \
-                                                                                                             \
-    size_t block_count = 1;                                                                                  \
-    size_t broadcast_dim = 1;                                                                                \
-    size_t block_size = num_int4_elems;                                                                      \
-                                                                                                             \
-    if (axis.has_value()) {                                                                                  \
-      size_t axis_no_neg = *axis < 0 ? static_cast<size_t>(*axis) + input_rank : static_cast<size_t>(*axis); \
-      block_count = SizeToDimension(shape, axis_no_neg);                                                     \
-      broadcast_dim = shape[axis_no_neg];                                                                    \
-      block_size = SizeFromDimension(shape, axis_no_neg + 1);                                                \
-    }                                                                                                        \
-                                                                                                             \
-    assert(scales.size() == broadcast_dim);                                                             \
-    assert(zero_points.empty() || zero_points.size() == INT4x2_TYPE::CalcNumInt4Pairs(broadcast_dim));  \
-                                                                                                             \
-    size_t i = 0;                                                                                            \
-                                                                                                             \
-    for (size_t n = 0; n < block_count; n++) {                                                               \
-      for (size_t bd = 0; bd < broadcast_dim; bd++) {                                                        \
-        size_t bd_i = bd >> 1;  /* bd / 2 */                                                                 \
-        size_t bd_j = bd & 0x1; /* bd % 2 */                                                                 \
-        UnpackedType zp = !zero_points.empty() ? zero_points[bd_i].GetElem(bd_j) : 0;                        \
-        QUANT_FUNC(&input[i], output.data(), i, i + block_size, scales[bd], INT4x2_TYPE(zp, 0), nullptr);    \
-        i += block_size;                                                                                     \
-      }                                                                                                      \
-    }                                                                                                        \
-    assert(i == (block_count * broadcast_dim * block_size));                                                 \
+// Avoid using ParQuantizeLinearStdS4/ParQuantizeLinearStdU4 (internal APIs). Use a simple reference
+// quantization implementation that packs 2 int4/uint4 values per byte.
+//
+// For each element: q = round(x / scale) + zp, clamped to [min_val, max_val].
+// Values are then packed into Int4x2/UInt4x2 (2 elements per byte).
+template <>
+inline void QuantizeValues<float, Int4x2>(gsl::span<const float> input,
+                                         gsl::span<Int4x2> output,
+                                         const std::vector<int64_t>& shape,
+                                         gsl::span<const float> scales,
+                                         gsl::span<const Int4x2> zero_points,
+                                         std::optional<int64_t> axis) {
+  const size_t input_rank = shape.size();
+  const size_t num_int4_elems = static_cast<size_t>(SizeHelper(shape, 0, input_rank));
+  assert(input.size() == num_int4_elems);
+  assert(output.size() == Int4x2::CalcNumInt4Pairs(num_int4_elems));
+
+  size_t block_count = 1;
+  size_t broadcast_dim = 1;
+  size_t block_size = num_int4_elems;
+
+  if (axis.has_value()) {
+    size_t axis_no_neg = *axis < 0 ? static_cast<size_t>(*axis) + input_rank : static_cast<size_t>(*axis);
+    block_count = SizeToDimension(shape, axis_no_neg);
+    broadcast_dim = shape[axis_no_neg];
+    block_size = SizeFromDimension(shape, axis_no_neg + 1);
   }
 
-DEF_QUANTIZE_VALUES_INT4_FUNC(Int4x2, ParQuantizeLinearStdS4)
-DEF_QUANTIZE_VALUES_INT4_FUNC(UInt4x2, ParQuantizeLinearStdU4)
+  assert(scales.size() == broadcast_dim);
+  assert(zero_points.empty() || zero_points.size() == Int4x2::CalcNumInt4Pairs(broadcast_dim));
+
+  std::fill(output.begin(), output.end(), Int4x2{});
+
+  size_t i = 0;
+  for (size_t n = 0; n < block_count; n++) {
+    for (size_t bd = 0; bd < broadcast_dim; bd++) {
+      const auto [zp_pair_idx, zp_elem_idx] = Int4x2::GetTensorElemIndices(bd);
+      const int8_t zp = !zero_points.empty() ? zero_points[zp_pair_idx].GetElem(zp_elem_idx) : static_cast<int8_t>(0);
+      const float scale = scales[bd];
+
+      for (size_t e = 0; e < block_size; e++, i++) {
+        const float q_unclamped = RoundHalfToEven(input[i] / scale) + static_cast<float>(zp);
+        const float q_clamped = std::min(static_cast<float>(Int4x2::max_val),
+                                         std::max(static_cast<float>(Int4x2::min_val), q_unclamped));
+        const int8_t q = static_cast<int8_t>(q_clamped);
+
+        const auto [out_pair_idx, out_elem_idx] = Int4x2::GetTensorElemIndices(i);
+        output[out_pair_idx].SetElem(out_elem_idx, q);
+      }
+    }
+  }
+  assert(i == (block_count * broadcast_dim * block_size));
+}
+
+template <>
+inline void QuantizeValues<float, UInt4x2>(gsl::span<const float> input,
+                                          gsl::span<UInt4x2> output,
+                                          const std::vector<int64_t>& shape,
+                                          gsl::span<const float> scales,
+                                          gsl::span<const UInt4x2> zero_points,
+                                          std::optional<int64_t> axis) {
+  const size_t input_rank = shape.size();
+  const size_t num_uint4_elems = static_cast<size_t>(SizeHelper(shape, 0, input_rank));
+  assert(input.size() == num_uint4_elems);
+  assert(output.size() == UInt4x2::CalcNumInt4Pairs(num_uint4_elems));
+
+  size_t block_count = 1;
+  size_t broadcast_dim = 1;
+  size_t block_size = num_uint4_elems;
+
+  if (axis.has_value()) {
+    size_t axis_no_neg = *axis < 0 ? static_cast<size_t>(*axis) + input_rank : static_cast<size_t>(*axis);
+    block_count = SizeToDimension(shape, axis_no_neg);
+    broadcast_dim = shape[axis_no_neg];
+    block_size = SizeFromDimension(shape, axis_no_neg + 1);
+  }
+
+  assert(scales.size() == broadcast_dim);
+  assert(zero_points.empty() || zero_points.size() == UInt4x2::CalcNumInt4Pairs(broadcast_dim));
+
+  std::fill(output.begin(), output.end(), UInt4x2{});
+
+  size_t i = 0;
+  for (size_t n = 0; n < block_count; n++) {
+    for (size_t bd = 0; bd < broadcast_dim; bd++) {
+      const auto [zp_pair_idx, zp_elem_idx] = UInt4x2::GetTensorElemIndices(bd);
+      const uint8_t zp = !zero_points.empty() ? zero_points[zp_pair_idx].GetElem(zp_elem_idx) : static_cast<uint8_t>(0);
+      const float scale = scales[bd];
+
+      for (size_t e = 0; e < block_size; e++, i++) {
+        const float q_unclamped = RoundHalfToEven(input[i] / scale) + static_cast<float>(zp);
+        const float q_clamped = std::min(static_cast<float>(UInt4x2::max_val),
+                                         std::max(static_cast<float>(UInt4x2::min_val), q_unclamped));
+        const uint8_t q = static_cast<uint8_t>(q_clamped);
+
+        const auto [out_pair_idx, out_elem_idx] = UInt4x2::GetTensorElemIndices(i);
+        output[out_pair_idx].SetElem(out_elem_idx, q);
+      }
+    }
+  }
+  assert(i == (block_count * broadcast_dim * block_size));
+}
 
 // Refer to test_autoep_utils.h for leveraging unique pointer to unregister plugin EP.
 using RegisteredEpDeviceUniquePtr = std::unique_ptr<const OrtEpDevice, std::function<void(const OrtEpDevice*)>>;
