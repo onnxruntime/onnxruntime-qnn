@@ -1461,21 +1461,23 @@ bool QNNExecutionProvider::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerCon
     configs_set = true;
   }
 
+  if (qnn::HtpPerformanceMode::kHtpDefault != dynamic_htp_performance_mode_) {
+    // reset perf mode, rpc control latency and rpc polling time to dynamic perf mode values
+    per_thread_htp_power_configs.default_perf_mode = dynamic_htp_performance_mode_;
+    configs_set = true;
+  } else if (qnn::HtpPerformanceMode::kHtpDefault != default_htp_performance_mode_) {
+    per_thread_htp_power_configs.default_perf_mode = default_htp_performance_mode_;
+    configs_set = true;
+  }
+
   if (qnn::HtpPerformanceMode::kHtpDefault != pre_run_htp_performance_mode) {
     per_thread_htp_power_configs.pre_run_perf_mode = pre_run_htp_performance_mode;
     // rpc polling time will only be updated with perf mode changes
-    configs_set = true;
-  } else if (qnn::HtpPerformanceMode::kHtpDefault != default_htp_performance_mode_) {
-    // reset perf mode, rpc control latency and rpc polling time to default values
-    per_thread_htp_power_configs.default_perf_mode = default_htp_performance_mode_;
     configs_set = true;
   }
 
   if (qnn::HtpPerformanceMode::kHtpDefault != post_run_htp_performance_mode) {
     per_thread_htp_power_configs.post_run_perf_mode = post_run_htp_performance_mode;
-    configs_set = true;
-  } else if (qnn::HtpPerformanceMode::kHtpDefault != default_htp_performance_mode_) {
-    per_thread_htp_power_configs.default_perf_mode = default_htp_performance_mode_;
     configs_set = true;
   }
 
@@ -1588,7 +1590,7 @@ Status QNNExecutionProvider::SetEpDynamicOptions(gsl::span<const char* const> ke
       ParseHtpPerformanceMode(value, htp_performance_mode);
 
       if (htp_performance_mode != qnn::HtpPerformanceMode::kHtpDefault) {
-        default_htp_performance_mode_ = htp_performance_mode;
+        dynamic_htp_performance_mode_ = htp_performance_mode;
         if (htp_performance_mode == qnn::HtpPerformanceMode::kHtpBurst) {
           default_rpc_polling_time_ = 9999;
         }
