@@ -205,7 +205,7 @@ Status QnnBackendManager::SetSustainedPerformance(uint32_t htp_power_config_clie
       timer_resource_.caller_busy_ = true;
       break;
     case GraphState::INIT_DONE: {
-      QnnHtpPerfInfrastructure_PowerConfig_t init_done_htp_performance_cfg = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIG_INIT;
+      QnnHtpPerfInfrastructure_PowerConfig_t init_done_htp_performance_cfg{};
       status = htp_power_config_manager_.SetRelaxedPerfPowerConfig(init_done_htp_performance_cfg, htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
       status = SetHtpPowerCustomConfigs(htp_power_config_client_id, init_done_htp_performance_cfg, rpc_polling_time, rpc_control_latency);
       graph_state_ = GraphState::NONE;
@@ -223,7 +223,7 @@ Status QnnBackendManager::SetSustainedPerformance(uint32_t htp_power_config_clie
       break;
     case GraphState::TIMEOUT: {
       if (!timer_resource_.caller_busy_) {
-        QnnHtpPerfInfrastructure_PowerConfig_t timeout_htp_performance_cfg = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIG_INIT;
+        QnnHtpPerfInfrastructure_PowerConfig_t timeout_htp_performance_cfg{};
         status = htp_power_config_manager_.SetRelaxedPerfPowerConfig(timeout_htp_performance_cfg, htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
         status = SetHtpPowerCustomConfigs(htp_power_config_client_id, timeout_htp_performance_cfg, rpc_polling_time, rpc_control_latency);
         graph_state_ = GraphState::NONE;
@@ -247,13 +247,13 @@ Status QnnBackendManager::SetPerformance(uint32_t htp_power_config_client_id, qn
         case qnn::HtpPerformanceMode::kHtpLowBalanced:
         case qnn::HtpPerformanceMode::kHtpBalanced:
         case qnn::HtpPerformanceMode::kHtpHighPerformance: {
-          QnnHtpPerfInfrastructure_PowerConfig_t relaxed_htp_performance_cfg = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIG_INIT;
+          QnnHtpPerfInfrastructure_PowerConfig_t relaxed_htp_performance_cfg{};
           status = htp_power_config_manager_.SetRelaxedPerfPowerConfig(relaxed_htp_performance_cfg, htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
           status = SetHtpPowerCustomConfigs(htp_power_config_client_id, relaxed_htp_performance_cfg, rpc_polling_time, rpc_control_latency);
           break;
         }
         case qnn::HtpPerformanceMode::kHtpExtremePowerSaver: {
-          QnnHtpPerfInfrastructure_PowerConfig_t extreme_power_saver_htp_performance_cfg = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIG_INIT;
+          QnnHtpPerfInfrastructure_PowerConfig_t extreme_power_saver_htp_performance_cfg{};
           status = htp_power_config_manager_.SetExtremeLowPerfPowerConfig(extreme_power_saver_htp_performance_cfg, htp_power_config_client_id);
           status = SetHtpPowerCustomConfigs(htp_power_config_client_id, extreme_power_saver_htp_performance_cfg, rpc_polling_time, rpc_control_latency);
           break;
@@ -261,7 +261,7 @@ Status QnnBackendManager::SetPerformance(uint32_t htp_power_config_client_id, qn
         case qnn::HtpPerformanceMode::kHtpLowPowerSaver:
         case qnn::HtpPerformanceMode::kHtpHighPowerSaver:
         case qnn::HtpPerformanceMode::kHtpPowerSaver: {
-          QnnHtpPerfInfrastructure_PowerConfig_t released_htp_performance_cfg = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIG_INIT;
+          QnnHtpPerfInfrastructure_PowerConfig_t released_htp_performance_cfg{};
           status = htp_power_config_manager_.SetReleasedPerfPowerConfig(released_htp_performance_cfg, htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
           status = SetHtpPowerCustomConfigs(htp_power_config_client_id, released_htp_performance_cfg, rpc_polling_time, rpc_control_latency);
           break;
@@ -351,7 +351,7 @@ void QnnBackendManager::ReleaseTimerThread(uint32_t htp_power_config_client_id) 
   timer_callback_arg_.reset();
   timer_.reset();
   Status status = Status::OK();
-  QnnHtpPerfInfrastructure_PowerConfig_t htp_performance_cfg = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIG_INIT;
+  QnnHtpPerfInfrastructure_PowerConfig_t htp_performance_cfg{};
   status = htp_power_config_manager_.SetReleasedPerfPowerConfig(htp_performance_cfg, htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
   status = SetHtpPowerCustomConfigs(htp_power_config_client_id, htp_performance_cfg, 0, 0);
   if (status != Status::OK()) {

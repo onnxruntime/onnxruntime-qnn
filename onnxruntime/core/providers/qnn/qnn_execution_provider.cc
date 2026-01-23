@@ -1467,7 +1467,7 @@ bool QNNExecutionProvider::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerCon
     configs_set = true;
   } else if (qnn::HtpPerformanceMode::kHtpDefault != default_htp_performance_mode_) {
     // reset perf mode, rpc control latency and rpc polling time to default values
-    per_thread_htp_power_configs.pre_run_perf_mode = default_htp_performance_mode_;
+    per_thread_htp_power_configs.default_perf_mode = default_htp_performance_mode_;
     configs_set = true;
   }
 
@@ -1475,7 +1475,7 @@ bool QNNExecutionProvider::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerCon
     per_thread_htp_power_configs.post_run_perf_mode = post_run_htp_performance_mode;
     configs_set = true;
   } else if (qnn::HtpPerformanceMode::kHtpDefault != default_htp_performance_mode_) {
-    per_thread_htp_power_configs.post_run_perf_mode = default_htp_performance_mode_;
+    per_thread_htp_power_configs.default_perf_mode = default_htp_performance_mode_;
     configs_set = true;
   }
 
