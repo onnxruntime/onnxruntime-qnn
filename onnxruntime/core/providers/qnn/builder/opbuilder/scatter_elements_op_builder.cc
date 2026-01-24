@@ -45,9 +45,14 @@ Status ScatterElementsOpBuilder::ProcessInput(QnnModelWrapper& qnn_model_wrapper
   const auto& input_name = input.node_arg.Name();
 
   if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_name)) {
-    LOGS(logger, VERBOSE) << "Tensor already added, skip it: " << input_name;
-    input_names.push_back(input_name);
-    return Status::OK();
+    const auto& qnn_tensor = qnn_model_wrapper.GetQnnTensorWrapper(input_name);
+    Qnn_DataType_t tensor_type = qnn_tensor.GetTensorDataType();
+    // Input tensor exist and supported.
+    if (tensor_type != QNN_DATATYPE_INT_64 && (tensor_type != QNN_DATATYPE_INT_32 || allow_int_32)) {
+      LOGS(logger, VERBOSE) << "Tensor already added, skip it: " << input_name;
+      input_names.push_back(input_name);
+      return Status::OK();
+    }
   }
 
   const std::string& tensor_name = input.node_arg.Name();
@@ -63,13 +68,14 @@ Status ScatterElementsOpBuilder::ProcessInput(QnnModelWrapper& qnn_model_wrapper
   Qnn_DataType_t data_type = tensor_info.qnn_data_type;
 
   // QNN doesn't support int64_t. Data and updates in ScatterElements doesn't support int32_t.
-  // Casting initalizers to int32_t if allow_int32, otherwise casts to float32.
-  Qnn_DataType_t casted_data_type = allow_int_32 ? QNN_DATATYPE_INT_32 : QNN_DATATYPE_FLOAT_32;
 
+  // Casting initializers to int32_t if allow_int32, otherwise casts to float32.
+  Qnn_DataType_t casted_data_type = allow_int_32 ? QNN_DATATYPE_INT_32 : QNN_DATATYPE_FLOAT_32;
+  bool initializer_OOB = false;  // flag for initalizer has out of boundary after convertion.
   if (unpacked_tensor.size() && (data_type == QNN_DATATYPE_INT_64 || (data_type == QNN_DATATYPE_INT_32 && !allow_int_32))) {
     const size_t num_elems = (data_type == QNN_DATATYPE_INT_64) ? unpacked_tensor.size() / sizeof(int64_t) : unpacked_tensor.size() / sizeof(int32_t);
     std::vector<uint8_t> cast_data;
-    cast_data.resize(num_elems * sizeof(int32_t));
+    cast_data.resize(num_elems * (allow_int_32 ? sizeof(int32_t) : sizeof(float)));
 
     // Cast int 64 to float 32/int 32
     if (data_type == QNN_DATATYPE_INT_64) {
@@ -78,11 +84,26 @@ Status ScatterElementsOpBuilder::ProcessInput(QnnModelWrapper& qnn_model_wrapper
       if (allow_int_32) {
         gsl::span<int32_t> new_values(reinterpret_cast<int32_t*>(cast_data.data()), num_elems);
         for (size_t i = 0; i < num_elems; i++) {
+          int64_t v_ = origin_values[i];
+          if (!initializer_OOB &&
+              (v_ < static_cast<int64_t>(std::numeric_limits<int32_t>::min()) ||
+               v_ > static_cast<int64_t>(std::numeric_limits<int32_t>::max()))) {
+            initializer_OOB = true;
+          }
+
           new_values[i] = static_cast<int32_t>(origin_values[i]);
+          ;
         }
       } else {
         gsl::span<float> new_values(reinterpret_cast<float*>(cast_data.data()), num_elems);
         for (size_t i = 0; i < num_elems; i++) {
+          int64_t v_ = origin_values[i];
+          if (!initializer_OOB &&
+              (v_ < static_cast<int64_t>(std::numeric_limits<float>::min()) ||
+               v_ > static_cast<int64_t>(std::numeric_limits<float>::max()))) {
+            initializer_OOB = true;
+          }
+
           new_values[i] = static_cast<float>(origin_values[i]);
         }
       }
@@ -97,6 +118,7 @@ Status ScatterElementsOpBuilder::ProcessInput(QnnModelWrapper& qnn_model_wrapper
       }
     }
 
+    // Only when there is an unsupported initializer dtype, data_type is updated to casted_data_type.
     data_type = casted_data_type;
     unpacked_tensor = std::move(cast_data);
   }
@@ -113,7 +135,8 @@ Status ScatterElementsOpBuilder::ProcessInput(QnnModelWrapper& qnn_model_wrapper
 
   ORT_RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tensor_wrapper)), "Failed to add tensor.");
 
-  // Cast to int 32 or float when not a initializer.
+  // Cast to int 32 or float when not an initializer.
+  // Here checks if the tensor created is supported, so using data_type on L141 is correct.
   if (!tensor_info.is_initializer && (data_type == QNN_DATATYPE_INT_64 || (data_type == QNN_DATATYPE_INT_32 && !allow_int_32))) {
     std::string cast_32_name = utils::GetUniqueName(tensor_name, allow_int_32 ? "_Cast_int_32" : "_Cast_fp_32");
     std::string cast_32_output_name = utils::GetUniqueName(tensor_name, allow_int_32 ? "_Cast_int_32" : "_Cast_fp_32");
@@ -163,9 +186,9 @@ Status ScatterElementsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrappe
 }
 
 // Process Reduction attribute of ScatterElements op
-Status ProcessReductionAttributeTemp(QnnModelWrapper& qnn_model_wrapper,
-                                     const NodeUnit& node_unit,
-                                     std::vector<std::string>& param_tensor_names) {
+Status ProcessReductionAttribute(QnnModelWrapper& qnn_model_wrapper,
+                                 const NodeUnit& node_unit,
+                                 std::vector<std::string>& param_tensor_names) {
   NodeAttrHelper node_helper(node_unit);
   std::string reduction = node_helper.Get("reduction", "none");
   Qnn_Scalar_t reduction_qnn_scalar = QNN_SCALAR_INIT;
@@ -203,7 +226,7 @@ Status ScatterElementsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
   qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
 
   // Process reduction attribute
-  ORT_RETURN_IF_ERROR(ProcessReductionAttributeTemp(qnn_model_wrapper, node_unit, param_tensor_names));
+  ORT_RETURN_IF_ERROR(ProcessReductionAttribute(qnn_model_wrapper, node_unit, param_tensor_names));
 
   // Create ScatterElements -> fp32 -> Optional(Cast -> int32) -> Optional(Cast -> int 64)
   // Check if we need to add a cast node for int64
@@ -213,7 +236,7 @@ Status ScatterElementsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
   ORT_RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], output_info));
   // Qnn_DataType_t supported_qnn_data_type = GetSupportedOutputDataType(0, output_info.qnn_data_type);
   bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
-  // Cast to int64 when model ouptut and output is onnx tensor is int64
+  // Cast to int64 when model output is int64
   bool need_int64_cast = false;
   if (is_graph_output) {
     if (output_info.qnn_data_type == QNN_DATATYPE_INT_64 || output_info.qnn_data_type == QNN_DATATYPE_UINT_64) {
@@ -227,7 +250,6 @@ Status ScatterElementsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
   }
 
   const std::string scatter_elements_output_name = (!need_int64_cast && !need_int32_cast) ? output_name : utils::GetUniqueName(output_name, "_cast");
-  std::vector<uint32_t> cast_output_shape = output_info.shape;
   QnnTensorWrapper scatter_elements_output(scatter_elements_output_name,
                                            (is_graph_output && !need_int64_cast && !need_int32_cast) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE,
                                            (need_int64_cast || need_int32_cast) ? QNN_DATATYPE_FLOAT_32 : output_info.qnn_data_type,

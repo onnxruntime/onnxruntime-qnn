@@ -223,7 +223,7 @@ TEST_F(QnnHTPBackendTests, ScatterElements_Int8_Reduction_Max) {
 }
 
 // Test ScatterElements with reduction Mul on HTP
-TEST_F(QnnHTPBackendTests, ScatterElements_int8_reduction_mul) {
+TEST_F(QnnHTPBackendTests, ScatterElements_int8_Reduction_Mul) {
   std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
   std::vector<int64_t> indices = {1};
   std::vector<float> updates = {10.0f};
@@ -246,7 +246,7 @@ TEST_F(QnnHTPBackendTests, ScatterElements_int8_reduction_mul) {
 
 // Data and updates in int 32 are not valid for HTP.
 // Test int 64 Data and updates are correctly casted to float 32. And casting logic keeps indices in int 32.
-TEST_F(QnnHTPBackendTests, TestScatterElelment_Int64) {
+TEST_F(QnnHTPBackendTests, TestScatterElement_Int64) {
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = "htp";
@@ -274,7 +274,7 @@ TEST_F(QnnHTPBackendTests, TestScatterElelment_Int64) {
 
 // Data and updates in int 32 are not valid for HTP.
 // Test int 64 Data and updates are correctly casted to float 32. And casting logic keeps indices in int 32.
-TEST_F(QnnHTPBackendTests, TestScatterElelment_Int32) {
+TEST_F(QnnHTPBackendTests, TestScatterElement_Int32) {
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = "htp";
