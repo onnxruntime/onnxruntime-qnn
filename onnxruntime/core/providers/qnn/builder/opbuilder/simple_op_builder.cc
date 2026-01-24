@@ -288,33 +288,6 @@ Status ProcessScatterNDReductionAttribute(QnnModelWrapper& qnn_model_wrapper,
   return Status::OK();
 }
 
-// Process Reduction attribute of ScatterElements op
-// Status ProcessReductionAttribute(QnnModelWrapper& qnn_model_wrapper,
-//                                  const NodeUnit& node_unit,
-//                                  std::vector<std::string>& param_tensor_names) {
-//   NodeAttrHelper node_helper(node_unit);
-//   std::string reduction = node_helper.Get("reduction", "none");
-//   Qnn_Scalar_t reduction_qnn_scalar = QNN_SCALAR_INIT;
-//   reduction_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
-//   if ("none" == reduction) {
-//     reduction_qnn_scalar.uint32Value = QNN_OP_SCATTER_ELEMENTS_REDUCTION_NONE;
-//   } else if ("add" == reduction) {
-//     reduction_qnn_scalar.uint32Value = QNN_OP_SCATTER_ELEMENTS_REDUCTION_ADD;
-//   } else if ("mul" == reduction) {
-//     reduction_qnn_scalar.uint32Value = QNN_OP_SCATTER_ELEMENTS_REDUCTION_MUL;
-//   } else if ("max" == reduction) {
-//     reduction_qnn_scalar.uint32Value = QNN_OP_SCATTER_ELEMENTS_REDUCTION_MAX;
-//   } else {
-//     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "ScatterElements support only reduction:{none, add, mul, max}.");
-//   }
-//   QnnParamWrapper reduction_param(node_unit.Index(), node_unit.Name(), QNN_OP_SCATTER_ELEMENTS_PARAM_REDUCTION,
-//                                   reduction_qnn_scalar);
-//   param_tensor_names.push_back(reduction_param.GetParamTensorName());
-//   qnn_model_wrapper.AddParamWrapper(std::move(reduction_param));
-
-//   return Status::OK();
-// }
-
 Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                     const NodeUnit& node_unit,
                                                     std::vector<std::string>&& input_names,
