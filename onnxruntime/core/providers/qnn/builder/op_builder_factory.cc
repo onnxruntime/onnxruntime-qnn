@@ -161,10 +161,6 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   }
 
   {
-    CreateGroupNormOpBuilder("GroupNormalization", *this);
-  }
-
-  {
     CreateRMSNormOpBuilder("RMSNormalization", *this);
   }
 

@@ -4,22 +4,19 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <string>
-#include <filesystem>
-#include <variant>
 #include "core/graph/graph.h"
 #include "core/graph/node_attr_utils.h"
-#include "core/session/onnxruntime_session_options_config_keys.h"
 
-#include "test/providers/qnn/qnn_test_utils.h"
-#include "test/unittest_util/qdq_test_utils.h"
+#include "test/providers/qnn-abi/qnn_test_utils.h"
 
 #include "gtest/gtest.h"
 
 namespace onnxruntime {
 namespace test {
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 // Test GroupNormalization operator on HTP backend with default parameters
-TEST_F(QnnHTPBackendTests, GroupNorm_Float_Default) {
+TEST_F(QnnABIHTPBackendTests, GroupNorm_Float_Default) {
   std::vector<float> input_data = {
       0.1f, 0.3f, 0.5f, 0.7f, 0.2f, 0.4f, 0.6f, 0.8f,
       0.15f, 0.35f, 0.55f, 0.75f, 0.25f, 0.45f, 0.65f, 0.85f,
@@ -42,15 +39,15 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_Default) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
-  RunQnnModelTest(build_test_case,
-                  provider_options,
-                  21,
-                  ExpectedEPNodeAssignment::All,
-                  0.01f);
+  RunQnnModelTestABI(build_test_case,
+                     provider_options,
+                     21,
+                     ExpectedEPNodeAssignment::All,
+                     0.01f);
 }
 
 // Test GroupNormalization operator on CPU backend
-TEST_F(QnnCPUBackendTests, GroupNorm_Float_CPU) {
+TEST_F(QnnABICPUBackendTests, GroupNorm_Float_CPU) {
   std::vector<float> input_data = {
       0.1f, 0.3f, 0.5f, 0.7f, 0.2f, 0.4f, 0.6f, 0.8f,
       0.15f, 0.35f, 0.55f, 0.75f, 0.25f, 0.45f, 0.65f, 0.85f,
@@ -74,15 +71,15 @@ TEST_F(QnnCPUBackendTests, GroupNorm_Float_CPU) {
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(build_test_case,
-                  provider_options,
-                  21,
-                  ExpectedEPNodeAssignment::All,
-                  0.01f);
+  RunQnnModelTestABI(build_test_case,
+                     provider_options,
+                     21,
+                     ExpectedEPNodeAssignment::All,
+                     0.01f);
 }
 
 // Test GroupNormalization operator with multiple groups
-TEST_F(QnnHTPBackendTests, GroupNorm_Float_MultipleGroups) {
+TEST_F(QnnABIHTPBackendTests, GroupNorm_Float_MultipleGroups) {
   // Input with 4 channels, to be divided into 2 groups
   std::vector<float> input_data = {
       0.1f, 0.3f, 0.5f, 0.7f, 0.2f, 0.4f, 0.6f, 0.8f,
@@ -109,15 +106,15 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_MultipleGroups) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
-  RunQnnModelTest(build_test_case,
-                  provider_options,
-                  21,
-                  ExpectedEPNodeAssignment::All,
-                  0.01f);
+  RunQnnModelTestABI(build_test_case,
+                     provider_options,
+                     21,
+                     ExpectedEPNodeAssignment::All,
+                     0.01f);
 }
 
 // Test GroupNormalization operator with different epsilon value
-TEST_F(QnnHTPBackendTests, GroupNorm_Float_LargeEpsilon) {
+TEST_F(QnnABIHTPBackendTests, GroupNorm_Float_LargeEpsilon) {
   std::vector<float> input_data = {
       0.1f, 0.3f, 0.5f, 0.7f, 0.2f, 0.4f, 0.6f, 0.8f,
       0.15f, 0.35f, 0.55f, 0.75f, 0.25f, 0.45f, 0.65f, 0.85f,
@@ -140,15 +137,15 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_LargeEpsilon) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
-  RunQnnModelTest(build_test_case,
-                  provider_options,
-                  21,
-                  ExpectedEPNodeAssignment::All,
-                  0.01f);
+  RunQnnModelTestABI(build_test_case,
+                     provider_options,
+                     21,
+                     ExpectedEPNodeAssignment::All,
+                     0.01f);
 }
 
 // Test GroupNormalization operator with 3D input
-TEST_F(QnnHTPBackendTests, GroupNorm_Float_3D) {
+TEST_F(QnnABIHTPBackendTests, GroupNorm_Float_3D) {
   std::vector<float> input_data = {
       0.1f, 0.3f, 0.5f, 0.7f,
       0.2f, 0.4f, 0.6f, 0.8f,
@@ -172,13 +169,14 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_3D) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
-  RunQnnModelTest(build_test_case,
-                  provider_options,
-                  21,
-                  ExpectedEPNodeAssignment::All,
-                  0.01f);
+  RunQnnModelTestABI(build_test_case,
+                     provider_options,
+                     21,
+                     ExpectedEPNodeAssignment::All,
+                     0.01f);
 }
 
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 }  // namespace test
 }  // namespace onnxruntime
 

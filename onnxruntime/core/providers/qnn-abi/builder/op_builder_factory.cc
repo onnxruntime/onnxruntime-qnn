@@ -223,6 +223,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   {
     CreateInverseOpBuilder("Inverse", *this);
   }
+
+  {
+    CreateGroupNormOpBuilder("GroupNormalization", *this);
+  }
 }
 
 const IOpBuilder* GetOpBuilder(const std::string& onnx_op_type) {

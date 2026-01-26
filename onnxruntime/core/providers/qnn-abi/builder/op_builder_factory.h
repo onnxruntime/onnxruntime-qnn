@@ -131,5 +131,7 @@ void CreateSTFTOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_
 
 void CreateInverseOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
+void CreateGroupNormOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+
 }  // namespace qnn
 }  // namespace onnxruntime
