@@ -67,25 +67,17 @@ using ModelPathOrBytes = std::variant<std::basic_string_view<ORTCHAR_T>,
 // is enabled.
 // session_options_updater can be used to update the SessionOptions the inference session is created with.
 void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
+                               Ort::SessionOptions& ort_so,
+                               const std::string& provider_type,
                                std::string_view log_id,
-                               std::unique_ptr<IExecutionProvider> execution_provider,
-                               const NameMLValMap& feeds,
+                               std::unordered_map<std::string, Ort::Value>& feeds,
                                const EPVerificationParams& params = EPVerificationParams(),
-                               const std::function<void(Ort::SessionOptions&)>& session_options_updater = {},
                                bool verify_outputs = true);
 
-void RunWithEPABI(Ort::Session& ort_session,
-                  const Ort::RunOptions& ort_ro,
-                  std::unordered_map<std::string, Ort::Value>& feeds,
-                  std::vector<Ort::Value>& output_vals);
-
-void RunAndVerifyOutputsWithEPABI(ModelPathOrBytes model_path_or_bytes,
-                                  Ort::SessionOptions& ort_so,
-                                  const std::string& provider_type,
-                                  std::string_view log_id,
-                                  std::unordered_map<std::string, Ort::Value>& feeds,
-                                  const EPVerificationParams& params = EPVerificationParams(),
-                                  bool verify_outputs = true);
+void RunWithEP(Ort::Session& ort_session,
+               const Ort::RunOptions& ort_ro,
+               std::unordered_map<std::string, Ort::Value>& feeds,
+               std::vector<Ort::Value>& output_vals);
 
 // Tests model loading only.
 // This can be used to test EPs in builds where only loading (and not running) of a model is supported.

@@ -165,66 +165,6 @@ file(GLOB onnxruntime_test_utils_src CONFIGURE_DEPENDS
   "${TEST_SRC_DIR}/util/*.cc"
 )
 
-# file(GLOB onnxruntime_test_common_src CONFIGURE_DEPENDS
-#   "${TEST_SRC_DIR}/common/*.cc"
-#   "${TEST_SRC_DIR}/common/*.h"
-#   "${TEST_SRC_DIR}/common/logging/*.cc"
-#   "${TEST_SRC_DIR}/common/logging/*.h"
-# )
-
-# file(GLOB onnxruntime_test_quantization_src CONFIGURE_DEPENDS
-#   "${TEST_SRC_DIR}/quantization/*.cc"
-#   "${TEST_SRC_DIR}/quantization/*.h"
-# )
-
-# file(GLOB onnxruntime_test_flatbuffers_src CONFIGURE_DEPENDS
-#   "${TEST_SRC_DIR}/flatbuffers/*.cc"
-#   "${TEST_SRC_DIR}/flatbuffers/*.h"
-# )
-
-# file(GLOB onnxruntime_test_lora_src CONFIGURE_DEPENDS
-#   "${TEST_SRC_DIR}/lora/*.cc"
-#   "${TEST_SRC_DIR}/lora/*.h"
-# )
-
-# file(GLOB onnxruntime_test_ir_src CONFIGURE_DEPENDS
-#     "${TEST_SRC_DIR}/ir/*.cc"
-#     "${TEST_SRC_DIR}/ir/*.h"
-# )
-
-# file(GLOB onnxruntime_test_optimizer_src CONFIGURE_DEPENDS
-#     "${TEST_SRC_DIR}/optimizer/*.cc"
-#     "${TEST_SRC_DIR}/optimizer/*.h"
-# )
-
-# set(onnxruntime_test_framework_src_patterns
-#     "${TEST_SRC_DIR}/framework/*.cc"
-#     "${TEST_SRC_DIR}/framework/*.h"
-#     "${TEST_SRC_DIR}/platform/*.cc"
-# )
-
-# if((NOT onnxruntime_MINIMAL_BUILD OR onnxruntime_EXTENDED_MINIMAL_BUILD)
-#    AND NOT onnxruntime_REDUCED_OPS_BUILD)
-#   list(APPEND onnxruntime_test_optimizer_src
-#        "${TEST_SRC_DIR}/optimizer/runtime_optimization/graph_runtime_optimization_test.cc")
-# endif()
-
-# if(WIN32)
-#   list(APPEND onnxruntime_test_framework_src_patterns
-#     "${TEST_SRC_DIR}/platform/windows/*.cc"
-#     "${TEST_SRC_DIR}/platform/windows/logging/*.cc" )
-# endif()
-
-# set(onnxruntime_test_providers_src_patterns
-# "${TEST_SRC_DIR}/providers/*.h"
-# "${TEST_SRC_DIR}/providers/*.cc"
-# "${TEST_SRC_DIR}/opaque_api/test_opaque_api.cc"
-# "${TEST_SRC_DIR}/contrib_ops/*.h"
-# "${TEST_SRC_DIR}/contrib_ops/*.cc"
-# "${TEST_SRC_DIR}/contrib_ops/math/*.h"
-# "${TEST_SRC_DIR}/contrib_ops/math/*.cc"
-# )
-
 list(LENGTH onnxruntime_test_providers_src_patterns onnxruntime_test_providers_src_patterns_length)
 if(onnxruntime_test_providers_src_patterns_length GREATER 0)
   file(GLOB onnxruntime_test_providers_src CONFIGURE_DEPENDS ${onnxruntime_test_providers_src_patterns})
@@ -255,34 +195,6 @@ set(onnxruntime_test_common_libs
 )
 
 set (onnxruntime_test_providers_dependencies ${onnxruntime_EXTERNAL_DEPENDENCIES})
-
-
-# set(ONNXRUNTIME_TEST_LIBS
-#     onnxruntime_session
-#     ${ONNXRUNTIME_INTEROP_TEST_LIBS}
-#     ${onnxruntime_libs}
-#     ${ONNXRUNTIME_TEST_STATIC_PROVIDER_LIBS}
-#     onnxruntime_optimizer
-#     onnxruntime_providers
-#     onnxruntime_util
-#     onnxruntime_lora
-#     onnxruntime_framework
-#     onnxruntime_util
-#     onnxruntime_graph
-#     ${ONNXRUNTIME_MLAS_LIBS}
-#     onnxruntime_common
-#     onnxruntime_flatbuffers
-# )
-
-# set(onnxruntime_test_providers_libs
-#     onnxruntime_test_utils
-#     ${ONNXRUNTIME_TEST_LIBS}
-#   )
-
-# QNN EP tests require CPU EP op implementations for accuracy evaluation, so disable on minimal
-# or reduced op builds.
-
-#TODO: Turn on the test\providers\qnn\optimizer\transpose_optimizer_test.cc
 set(onnxruntime_test_framework_src_patterns)
 if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_REDUCED_OPS_BUILD)
   if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
@@ -492,5 +404,3 @@ endif()
     target_compile_definitions(compare_two_sessions PRIVATE "_CONSOLE" "_UNICODE" "UNICODE")
     target_link_libraries(compare_two_sessions PRIVATE ${GETOPT_LIB_WIDE} tdh Advapi32)
   endif()
-
-# include(onnxruntime_fuzz_test.cmake)

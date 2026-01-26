@@ -256,13 +256,13 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
 
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
 
-  RunAndVerifyOutputsWithEPABI(AsByteSpan(model_data.data(), model_data.size()),
-                               session_options,
-                               registration_name,
-                               "QNN_EP_TestLogID",
-                               helper.feeds_,
-                               verification_params,
-                               verify_outputs);
+  RunAndVerifyOutputsWithEP(AsByteSpan(model_data.data(), model_data.size()),
+                            session_options,
+                            registration_name,
+                            "QNN_EP_TestLogID",
+                            helper.feeds_,
+                            verification_params,
+                            verify_outputs);
 }
 
 void InferenceModelCPU(const std::string& model_data,
@@ -351,7 +351,7 @@ void InferenceModel(const std::string& model_data,
   //   (*graph_checker)(graph);
   // }
 
-  RunWithEPABI(session, ort_run_options, feeds, output_vals);
+  RunWithEP(session, ort_run_options, feeds, output_vals);
 }
 
 std::string MakeTestQDQBiasInput(ModelTestBuilder& builder,
@@ -527,7 +527,6 @@ static BackendSupport GetCPUSupport() {
 }
 
 void QnnCPUBackendTests::SetUp() {
-  return;
   if (cached_cpu_support_ == BackendSupport::SUPPORTED) {
     return;
   }

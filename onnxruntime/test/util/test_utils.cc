@@ -195,55 +195,10 @@ static gsl::span<const std::byte> GetModelBytes(ModelPathOrBytes model_path_or_b
   return gsl::span<const std::byte>(byte_buffer_out);
 }
 
-void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes, std::string_view log_id,
-                               std::unique_ptr<IExecutionProvider> execution_provider,
-                               std::unordered_map<std::string, Ort::Value>& feeds,
-                               const EPVerificationParams& params,
-                               const std::function<void(Ort::SessionOptions&)>& session_options_updater,
-                               bool verify_outputs) {
-  std::vector<std::byte> model_data_buffer{};
-  const auto model_data = GetModelBytes(model_path_or_bytes, model_data_buffer);
-
-  // Use public API directly
-  Ort::SessionOptions ort_so;
-  if (session_options_updater) {
-    session_options_updater(ort_so);
-  }
-
-  //
-  // get expected output from CPU EP
-  //
-  Ort::Session session_object(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), ort_so);
-
-  // fetch all outputs using public API
-  std::vector<std::string> output_names;
-  size_t output_count = session_object.GetOutputCount();
-  output_names.reserve(output_count);
-
-  Ort::AllocatorWithDefaultOptions allocator;
-  for (size_t i = 0; i < output_count; ++i) {
-    auto output_name = session_object.GetOutputNameAllocated(i, allocator);
-    output_names.push_back(output_name.release());
-  }
-
-  Ort::RunOptions ort_run_options;
-  ort_run_options.SetRunTag(log_id.data());
-
-  std::vector<Ort::Value> expected_fetches;
-  RunWithEPABI(session_object, ort_run_options, feeds, expected_fetches);
-
-  auto provider_type = execution_provider->Type();  // copy string so the std::move doesn't affect us
-
-  //
-  // get output with EP enabled
-  //
-  RunAndVerifyOutputsWithEPABI(model_path_or_bytes, ort_so, provider_type, log_id, feeds, params, verify_outputs);
-}
-
-void RunWithEPABI(Ort::Session& ort_session,
-                  const Ort::RunOptions& ort_ro,
-                  std::unordered_map<std::string, Ort::Value>& feeds,
-                  std::vector<Ort::Value>& output_vals) {
+void RunWithEP(Ort::Session& ort_session,
+               const Ort::RunOptions& ort_ro,
+               std::unordered_map<std::string, Ort::Value>& feeds,
+               std::vector<Ort::Value>& output_vals) {
   // Fetch all input/output names using public API - store strings to ensure lifetime
   std::vector<std::string> ort_input_names = ort_session.GetInputNames();
   std::vector<std::string> ort_output_names = ort_session.GetOutputNames();
@@ -277,13 +232,13 @@ void RunWithEPABI(Ort::Session& ort_session,
                                 ort_output_names_cstr.size());
 }
 
-void RunAndVerifyOutputsWithEPABI(ModelPathOrBytes model_path_or_bytes,
-                                  Ort::SessionOptions& ort_so,
-                                  const std::string& /* provider_type */,
-                                  std::string_view log_id,
-                                  std::unordered_map<std::string, Ort::Value>& feeds,
-                                  const EPVerificationParams& params,
-                                  bool verify_outputs) {
+void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
+                               Ort::SessionOptions& ort_so,
+                               const std::string& /* provider_type */,
+                               std::string_view log_id,
+                               std::unordered_map<std::string, Ort::Value>& feeds,
+                               const EPVerificationParams& params,
+                               bool verify_outputs) {
   std::vector<std::byte> model_data_buffer{};
   const auto model_data = GetModelBytes(model_path_or_bytes, model_data_buffer);
 
@@ -308,12 +263,12 @@ void RunAndVerifyOutputsWithEPABI(ModelPathOrBytes model_path_or_bytes,
   cpu_run_options.SetRunTag(log_id.data());
 
   std::vector<Ort::Value> expected_fetches;
-  RunWithEPABI(cpu_session, cpu_run_options, feeds, expected_fetches);
+  RunWithEP(cpu_session, cpu_run_options, feeds, expected_fetches);
 
   // Run with EP and verify the result
   Ort::Session ort_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), ort_so);
 
-  // Note: VerifyEPNodeAssignment and graph_verifier require internal graph access
+  // TODO: VerifyEPNodeAssignment and graph_verifier require internal graph access
   // These are commented out since we're migrating to public API
   // ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(ort_session.GetGraph(), provider_type, params.ep_node_assignment));
 
@@ -321,13 +276,13 @@ void RunAndVerifyOutputsWithEPABI(ModelPathOrBytes model_path_or_bytes,
   ort_run_options.SetRunTag(log_id.data());
 
   std::vector<Ort::Value> fetches;
-  RunWithEPABI(ort_session, ort_run_options, feeds, fetches);
+  RunWithEP(ort_session, ort_run_options, feeds, fetches);
 
   if (verify_outputs) {
     VerifyOutputs(output_names, expected_fetches, fetches, params);
   }
 
-  // Note: graph_verifier requires internal graph access, commented out for public API migration
+  // TODO: graph_verifier requires internal graph access, commented out for public API migration
   // if (params.graph_verifier) {
   //   (*params.graph_verifier)(ort_session.GetGraph());
   // }
@@ -415,69 +370,6 @@ MAKE_LIST_ATTR_IMPL(std::string, ONNX_NAMESPACE::AttributeProto_AttributeType::A
 #undef MAKE_BASIC_ATTR_IMPL
 #undef MAKE_ATTR_IMPL
 #undef MAKE_LIST_ATTR_IMPL
-
-// #if !defined(DISABLE_SPARSE_TENSORS)
-// void SparseIndicesChecker(const ONNX_NAMESPACE::TensorProto& indices_proto, gsl::span<const int64_t> expected_indicies) {
-//   using namespace ONNX_NAMESPACE;
-//   std::filesystem::path model_path;
-//   std::vector<uint8_t> unpack_buffer;
-//   gsl::span<const int64_t> ind_span;
-//   std::vector<int64_t> converted_indices;
-//   TensorShape ind_shape(indices_proto.dims().data(), indices_proto.dims().size());
-//   const auto elements = narrow<size_t>(ind_shape.Size());
-//   const bool has_raw_data = indices_proto.has_raw_data();
-//   switch (indices_proto.data_type()) {
-//     case ONNX_NAMESPACE::TensorProto_DataType_INT64: {
-//       if (has_raw_data) {
-//         const auto& rd = indices_proto.raw_data();
-//         ASSERT_EQ(rd.size(), elements * sizeof(int64_t));
-//         ASSERT_STATUS_OK(utils::UnpackInitializerData(indices_proto, model_path, unpack_buffer));
-//         ind_span = ReinterpretAsSpan<const int64_t>(gsl::make_span(unpack_buffer));
-//       } else {
-//         ind_span = gsl::make_span(indices_proto.int64_data().data(), indices_proto.int64_data_size());
-//       }
-//       break;
-//     }
-//     case ONNX_NAMESPACE::TensorProto_DataType_INT32: {
-//       if (has_raw_data) {
-//         const auto& rd = indices_proto.raw_data();
-//         ASSERT_EQ(rd.size(), elements * sizeof(int32_t));
-//         ASSERT_STATUS_OK(utils::UnpackInitializerData(indices_proto, model_path, unpack_buffer));
-//         auto int32_span = ReinterpretAsSpan<const int32_t>(gsl::make_span(unpack_buffer));
-//         converted_indices.insert(converted_indices.cend(), int32_span.begin(), int32_span.end());
-//       } else {
-//         converted_indices.insert(converted_indices.cend(), indices_proto.int32_data().cbegin(), indices_proto.int32_data().cend());
-//       }
-//       ind_span = gsl::make_span(converted_indices);
-//       break;
-//     }
-//     case ONNX_NAMESPACE::TensorProto_DataType_INT16: {
-//       ASSERT_TRUE(has_raw_data);
-//       const auto& rd = indices_proto.raw_data();
-//       ASSERT_EQ(rd.size(), elements * sizeof(int16_t));
-//       ASSERT_STATUS_OK(utils::UnpackInitializerData(indices_proto, model_path, unpack_buffer));
-//       auto int16_span = ReinterpretAsSpan<const int16_t>(gsl::make_span(unpack_buffer));
-//       converted_indices.insert(converted_indices.cend(), int16_span.begin(), int16_span.end());
-//       ind_span = gsl::make_span(converted_indices);
-//       break;
-//     }
-//     case ONNX_NAMESPACE::TensorProto_DataType_INT8: {
-//       ASSERT_TRUE(has_raw_data);
-//       const auto& rd = indices_proto.raw_data();
-//       ASSERT_EQ(rd.size(), elements);
-//       ASSERT_STATUS_OK(utils::UnpackInitializerData(indices_proto, model_path, unpack_buffer));
-//       auto int8_span = ReinterpretAsSpan<const int8_t>(gsl::make_span(unpack_buffer));
-//       converted_indices.insert(converted_indices.cend(), int8_span.begin(), int8_span.end());
-//       ind_span = gsl::make_span(converted_indices);
-//       break;
-//     }
-//     default:
-//       ASSERT_TRUE(false);
-//   }
-//   ASSERT_TRUE(SpanEq(ind_span, expected_indicies));
-// }
-
-// #endif  // DISABLE_SPARSE_TENSORS
 
 }  // namespace test
 }  // namespace onnxruntime
