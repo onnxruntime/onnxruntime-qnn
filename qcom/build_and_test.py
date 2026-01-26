@@ -131,7 +131,7 @@ Environment variables
     parser.add_argument(
         "--ort-prebuilt",
         type=Path,
-        help=f"Path to ORT Prebuilt.",
+        help="Path to ORT Prebuilt.",
     )
     parser.add_argument(
         "--qairt-sdk",
@@ -913,6 +913,7 @@ def get_docker_ccache_root(root_from_args: Path | None) -> Path | None:
 
     return ccache_root
 
+
 def get_ort_prebuilt_root(root_from_args: Path | None) -> Path | None:
     ort_prebuilt: Path | None = None
     if root_from_args is not None:
@@ -927,6 +928,7 @@ def get_ort_prebuilt_root(root_from_args: Path | None) -> Path | None:
         raise FileNotFoundError(f"ORT Prebuilt root {ort_prebuilt} does not exist.")
 
     return ort_prebuilt
+
 
 def get_qairt_sdk_root(root_from_args: Path | None) -> Path | None:
     qairt_sdk: Path | None = None

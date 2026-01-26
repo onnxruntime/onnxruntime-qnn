@@ -55,6 +55,7 @@ wheel_name_suffix = parse_arg_remove_string(sys.argv, "--wheel_name_suffix=")
 
 cuda_version = None
 cuda_major_version = None
+rocm_version = None
 is_migraphx = False
 is_openvino = False
 is_qnn = False

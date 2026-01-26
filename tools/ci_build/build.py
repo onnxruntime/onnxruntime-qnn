@@ -5,10 +5,10 @@
 
 import os
 import platform
-import sys
 import re
 import shlex
 import shutil
+import sys
 from pathlib import Path
 
 SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -24,11 +24,11 @@ from util import (  # noqa: E402
     is_linux,
     is_macOS,
     is_windows,
-    parse_qnn_version_from_sdk_yaml,
     run,
 )
 
 log = get_logger("build")
+
 
 class BaseError(Exception):
     """Base class for errors originating from build.py."""
@@ -39,6 +39,7 @@ class BuildError(BaseError):
 
     def __init__(self, *messages):
         super().__init__("\n".join(messages))
+
 
 def is_reduced_ops_build(args):
     return args.include_ops_by_config is not None
@@ -53,6 +54,7 @@ def resolve_executable_path(command_or_path):
         return os.path.abspath(executable_path)
     else:
         return None
+
 
 def run_subprocess(
     args,
@@ -100,6 +102,7 @@ def update_submodules(source_dir):
 def get_config_build_dir(build_dir, config):
     # build directory per configuration
     return os.path.join(build_dir, config)
+
 
 def use_dev_mode(args):
     if args.compile_no_warning_as_error:
@@ -219,11 +222,7 @@ def generate_build_tree(
         "-Donnxruntime_EXTENDED_MINIMAL_BUILD="
         + ("ON" if args.minimal_build and "extended" in args.minimal_build else "OFF"),
         "-Donnxruntime_MINIMAL_BUILD_CUSTOM_OPS="
-        + (
-            "ON"
-            if (args.minimal_build is not None and ("custom_ops" in args.minimal_build))
-            else "OFF"
-        ),
+        + ("ON" if (args.minimal_build is not None and ("custom_ops" in args.minimal_build)) else "OFF"),
         "-Donnxruntime_REDUCED_OPS_BUILD=" + ("ON" if is_reduced_ops_build(args) else "OFF"),
         "-Donnxruntime_CLIENT_PACKAGE_BUILD=" + ("ON" if args.client_package_build else "OFF"),
         "-Donnxruntime_BUILD_BENCHMARKS=" + ("ON" if args.build_micro_benchmarks else "OFF"),
@@ -248,8 +247,6 @@ def generate_build_tree(
             "-DRISCV_QEMU_PATH:PATH=" + args.riscv_qemu_path,
             "-DCMAKE_TOOLCHAIN_FILE=" + os.path.join(source_dir, "cmake", "riscv64.toolchain.cmake"),
         ]
-    emscripten_cmake_toolchain_file = None
-    emsdk_dir = None
 
     if args.use_vcpkg:
         # Setup CMake flags for vcpkg
@@ -624,6 +621,7 @@ def generate_build_tree(
             env=env,
         )
 
+
 def clean_targets(cmake_path, build_dir, configs):
     for config in configs:
         log.info("Cleaning targets for %s configuration", config)
@@ -711,7 +709,7 @@ def main():
     # cmake_path and ctest_path can be None. For example, if a person only wants to run the tests, he/she doesn't need
     # to have cmake/ctest.
     cmake_path = resolve_executable_path(args.cmake_path)
-    ctest_path = resolve_executable_path(args.ctest_path)
+    # ctest_path = resolve_executable_path(args.ctest_path)
     build_dir = args.build_dir
     script_dir = os.path.realpath(os.path.dirname(__file__))
     source_dir = os.path.normpath(os.path.join(script_dir, "..", ".."))

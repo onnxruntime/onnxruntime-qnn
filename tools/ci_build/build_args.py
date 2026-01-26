@@ -2,7 +2,6 @@
 # Licensed under the MIT License.import argparse
 import argparse
 import os
-import platform
 import shlex
 import sys
 import warnings

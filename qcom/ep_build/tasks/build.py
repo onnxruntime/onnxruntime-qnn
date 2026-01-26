@@ -115,7 +115,7 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
         if venv is not None:
             cmd.extend(["-PyVEnv", str(venv).replace(" ", "` ")])
         if ort_prebuilt_root is not None:
-            cmd.extend(["-OrtPrebuiltRoot", str(ort_prebuilt_root).replace(" ", "` ")])    
+            cmd.extend(["-OrtPrebuiltRoot", str(ort_prebuilt_root).replace(" ", "` ")])
         if qairt_sdk_root is not None:
             cmd.extend(["-QairtSdkRoot", str(qairt_sdk_root).replace(" ", "` ")])
 
