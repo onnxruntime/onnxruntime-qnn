@@ -246,18 +246,11 @@ class ModelTestBuilder {
     return;
   }
 
-  // const std::unordered_map<std::string, int>& DomainToVersionMap() const noexcept {
-  //   return graph_.DomainToVersionMap();
-  // }
-
   template <typename T>
   const ONNX_NAMESPACE::ValueInfoProto* MakeInput(const std::string name,
     const std::vector<int64_t>& shape,
     const std::vector<T>& data,
     AllocatorPtr = nullptr) {
-    // if (!allocator) {
-    //   allocator = TestCPUExecutionProvider()->CreatePreferredAllocators()[0];
-    // }
     ONNX_NAMESPACE::ValueInfoProto* inp = graph_->add_input();
     inp->set_name(name);
     ONNX_NAMESPACE::TypeProto* type_proto = inp->mutable_type();
@@ -296,61 +289,6 @@ class ModelTestBuilder {
     return MakeInput<bool>(name, shape, data, allocator);
   }
 
-  // template <typename T>
-  // NodeArg* MakeInput(const std::optional<std::vector<int64_t>>& shape,
-  //                    std::optional<std::string> input_name = std::nullopt) {
-  //   ONNX_NAMESPACE::TypeProto type_proto;
-  //   type_proto.mutable_tensor_type()->set_elem_type(utils::ToTensorProtoElementType<T>());
-  //   if (shape != std::nullopt) {
-  //     type_proto.mutable_tensor_type()->mutable_shape();
-  //     for (auto& d : *shape) {
-  //       auto dim = type_proto.mutable_tensor_type()->mutable_shape()->add_dim();
-  //       if (d != -1) {
-  //         dim->set_dim_value(d);
-  //       }
-  //     }
-  //   }
-
-  //   if (input_name == std::nullopt) {
-  //     std::string name = graph_.GenerateNodeArgName("input");
-  //     return &graph_.GetOrCreateNodeArg(name, &type_proto);
-  //   } else {
-  //     ORT_ENFORCE(graph_.GetNodeArg(*input_name) == nullptr, "Input name already exists: ", *input_name);
-  //     return &graph_.GetOrCreateNodeArg(*input_name, &type_proto);
-  //   }
-  // }
-
-  // // Make optional tensor
-  // NodeArg* MakeOptionalTensor() {
-  //   ONNX_NAMESPACE::TypeProto type_proto;
-  //   type_proto.mutable_tensor_type()->set_elem_type(utils::ToTensorProtoElementType<float>());
-  //   std::string name;
-  //   return &graph_.GetOrCreateNodeArg(name, &type_proto);
-  // }
-
-  // template <typename T>
-  // NodeArg* MakeSymbolicInput(const std::vector<std::variant<int64_t, std::string>>& shape) {
-  //   ONNX_NAMESPACE::TypeProto type_proto;
-  //   type_proto.mutable_tensor_type()->set_elem_type(utils::ToTensorProtoElementType<T>());
-  //   type_proto.mutable_tensor_type()->mutable_shape();
-  //   for (auto& d : shape) {
-  //     auto dim = type_proto.mutable_tensor_type()->mutable_shape()->add_dim();
-  //     std::visit([&dim](auto&& arg) -> void {
-  //       using V = std::decay_t<decltype(arg)>;
-  //       if constexpr (std::is_same_v<V, int64_t>) {
-  //         ORT_ENFORCE(arg >= 0, "Negative dimension is not allowed in symbolic shape");
-  //         dim->set_dim_value(arg);
-  //       } else {
-  //         dim->set_dim_param(arg);
-  //       }
-  //     },
-  //                d);
-  //   }
-
-  //   std::string name = graph_.GenerateNodeArgName("symbolic_input");
-  //   return &graph_.GetOrCreateNodeArg(name, &type_proto);
-  // }
-
   const ONNX_NAMESPACE::ValueInfoProto* MakeOutput(const std::string name) {
     ONNX_NAMESPACE::ValueInfoProto* out = graph_->add_output();
     out->set_name(name);
@@ -377,28 +315,6 @@ class ModelTestBuilder {
 
     return out;
   }
-
-  // NodeArg* MakeIntermediate() {
-  //   std::string name = graph_.GenerateNodeArgName("node");
-  //   return &graph_.GetOrCreateNodeArg(name, nullptr);
-  // }
-
-  // template <typename T>
-  // NodeArg* MakeIntermediate(const std::optional<std::vector<int64_t>>& shape) {
-  //   ONNX_NAMESPACE::TypeProto type_proto;
-  //   type_proto.mutable_tensor_type()->set_elem_type(ToTensorProtoElementType<T>());
-  //   if (shape != std::nullopt) {
-  //     type_proto.mutable_tensor_type()->mutable_shape();
-  //     for (auto& d : *shape) {
-  //       auto dim = type_proto.mutable_tensor_type()->mutable_shape()->add_dim();
-  //       if (d != -1) {
-  //         dim->set_dim_value(d);
-  //       }
-  //     }
-  //   }
-  //   std::string name = graph_.GenerateNodeArgName("node");
-  //   return &graph_.GetOrCreateNodeArg(name, &type_proto);
-  // }
 
   /// <summary>
   /// Makes an initializer from the provided shape, element type, and raw data bytes.
@@ -464,11 +380,6 @@ class ModelTestBuilder {
   const ONNX_NAMESPACE::TensorProto* Make1DInitializer(std::string name, const std::vector<T>& data) {
     return MakeInitializer(name, {static_cast<int64_t>(data.size())}, data);
   }
-
-  // NodeArg* MakeEmptyInput() {
-  //   NodeArg* empty = &graph_.GetOrCreateNodeArg("", nullptr);
-  //   return empty;
-  // }
 
   const ONNX_NAMESPACE::NodeProto* AddNode(const std::string& node_name,
                const std::string& op_type,
@@ -540,16 +451,6 @@ class ModelTestBuilder {
     }
     return attr;
   }
-
-  // Node& AddConvNode(NodeArg* input_arg,
-  //                   NodeArg* weights_arg,
-  //                   NodeArg* output_arg) {
-  //   std::vector<NodeArg*> input_args;
-  //   input_args.push_back(input_arg);
-  //   input_args.push_back(weights_arg);
-
-  //   return AddNode("Conv", input_args, {output_arg});
-  // }
 
   template <typename ZpType, typename ScaleType = float>
   typename std::enable_if<IsTypeQuantLinearCompatible<ZpType>::value, const ONNX_NAMESPACE::NodeProto*>::type
@@ -731,96 +632,9 @@ class ModelTestBuilder {
                                                           const std::string output_name,
                                                           bool use_ms_domain = false);
 
-  // template <typename TWeight>
-  // Node& AddQLinearConvNode(NodeArg* input_arg,
-  //                          float input_scale,
-  //                          uint8_t input_zero_point,
-  //                          NodeArg* weight_arg,
-  //                          float weights_scale,
-  //                          TWeight weights_zero_point,
-  //                          NodeArg* output_arg,
-  //                          float output_scale,
-  //                          uint8_t output_zero_point) {
-  //   std::vector<NodeArg*> input_args{input_arg};
-  //   input_args.push_back(MakeScalarInitializer<float>(input_scale));
-  //   input_args.push_back(MakeScalarInitializer<uint8_t>(input_zero_point));
-  //   input_args.push_back(weight_arg);
-  //   input_args.push_back(MakeScalarInitializer<float>(weights_scale));
-  //   input_args.push_back(MakeScalarInitializer<TWeight>(weights_zero_point));
-  //   input_args.push_back(MakeScalarInitializer<float>(output_scale));
-  //   input_args.push_back(MakeScalarInitializer<TWeight>(output_zero_point));
-
-  //   return AddNode("QLinearConv", input_args, {output_arg});
-  // }
-
-  // Node& AddQLinearBinaryNode(const std::string& op_type,
-  //                            NodeArg* input1_arg,
-  //                            float input1_scale,
-  //                            uint8_t input1_zero_point,
-  //                            NodeArg* input2_arg,
-  //                            float input2_scale,
-  //                            uint8_t input2_zero_point,
-  //                            NodeArg* output_arg,
-  //                            float output_scale,
-  //                            uint8_t output_zero_point) {
-  //   std::vector<NodeArg*> input_args;
-  //   input_args.push_back(input1_arg);
-  //   input_args.push_back(MakeScalarInitializer<float>(input1_scale));
-  //   input_args.push_back(MakeScalarInitializer<uint8_t>(input1_zero_point));
-  //   input_args.push_back(input2_arg);
-  //   input_args.push_back(MakeScalarInitializer<float>(input2_scale));
-  //   input_args.push_back(MakeScalarInitializer<uint8_t>(input2_zero_point));
-  //   input_args.push_back(MakeScalarInitializer<float>(output_scale));
-  //   input_args.push_back(MakeScalarInitializer<uint8_t>(output_zero_point));
-
-  //   return AddNode(op_type, input_args, {output_arg}, kMSDomain);
-  // }
-
-  // Node& AddQLinearConcatLike(const std::string& op_type,
-  //                            NodeArg* output_arg,
-  //                            float output_scale,
-  //                            uint8_t output_zero_point,
-  //                            std::vector<std::tuple<NodeArg*, float, uint8_t>> quantized_inputs) {
-  //   std::vector<NodeArg*> input_args;
-  //   input_args.push_back(MakeScalarInitializer<float>(output_scale));
-  //   input_args.push_back(MakeScalarInitializer<uint8_t>(output_zero_point));
-  //   for (size_t input_index = 0; input_index < quantized_inputs.size(); ++input_index) {
-  //     input_args.push_back(std::get<0>(quantized_inputs[input_index]));
-  //     input_args.push_back(MakeScalarInitializer<float>(std::get<1>(quantized_inputs[input_index])));
-  //     input_args.push_back(MakeScalarInitializer<uint8_t>(std::get<2>(quantized_inputs[input_index])));
-  //   }
-  //   return AddNode(op_type, input_args, {output_arg}, kMSDomain);
-  // }
-
-  // Node& AddQLinearActivationNode(const std::string& op_type,
-  //                                NodeArg* input_arg,
-  //                                float input_scale,
-  //                                uint8_t input_zero_point,
-  //                                NodeArg* output_arg,
-  //                                float output_scale,
-  //                                uint8_t output_zero_point) {
-  //   std::vector<NodeArg*> input_args;
-  //   input_args.push_back(input_arg);
-  //   input_args.push_back(MakeScalarInitializer<float>(input_scale));
-  //   input_args.push_back(MakeScalarInitializer<uint8_t>(input_zero_point));
-  //   input_args.push_back(MakeScalarInitializer<float>(output_scale));
-  //   input_args.push_back(MakeScalarInitializer<uint8_t>(output_zero_point));
-
-  //   return AddNode(op_type, input_args, {output_arg}, kMSDomain);
-  // }
-
-  // void SetGraphOutputs() {
-  //   std::vector<const NodeArg*> outputs;
-  //   for (auto& output_name : output_names_) {
-  //     outputs.push_back(graph_.GetNodeArg(output_name));
-  //   }
-  //   graph_.SetOutputs(outputs);
-  // }
-
   ONNX_NAMESPACE::ModelProto model_;
   ONNX_NAMESPACE::GraphProto* graph_ = model_.mutable_graph();
   std::unordered_map<std::string, Ort::Value> feeds_;
-  // std::vector<std::string> output_names_;
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
 
 private:

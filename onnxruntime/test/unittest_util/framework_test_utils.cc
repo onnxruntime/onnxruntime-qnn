@@ -7,28 +7,7 @@
 
 namespace onnxruntime {
 namespace test {
-// static void CountOpsInGraphImpl(const Graph& graph, bool recurse_into_subgraphs, OpCountMap& ops) {
-//   for (auto& node : graph.Nodes()) {
-//     std::string key = node.Domain() + (node.Domain().empty() ? "" : ".") + node.OpType();
-
-//     ++ops[key];
-
-//     if (recurse_into_subgraphs && node.ContainsSubgraph()) {
-//       for (auto& subgraph : node.GetSubgraphs()) {
-//         CountOpsInGraphImpl(*subgraph, recurse_into_subgraphs, ops);
-//       }
-//     }
-//   }
-// }
-
-// Returns a map with the number of occurrences of each operator in the graph.
-// Helper function to check that the graph transformations have been successfully applied.
-// OpCountMap CountOpsInGraph(const Graph& graph, bool recurse_into_subgraphs) {
-//   OpCountMap ops;
-//   CountOpsInGraphImpl(graph, recurse_into_subgraphs, ops);
-
-//   return ops;
-// }
+// TODO: Implement the CountOps functions once public API support get ep graph partitioning info
 
 // Specialization for std::vector<bool> which doesn't have .data() method
 template<>

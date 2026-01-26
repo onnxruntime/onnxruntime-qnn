@@ -1039,18 +1039,17 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   std::vector<Ort::Value> qnn_f16_outputs;
   if (!qnn_ctx_model_path.empty()) {
     onnx::ModelProto model_proto;
-    // TODO: Handle the qnn_ctx_model with public API
-    // onnxruntime::Model qnn_ctx_model;
-    // ASSERT_STATUS_OK(qnn_ctx_model.Load(ToPathString(qnn_ctx_model_path), model_proto));
-    // std::string qnn_ctx_model_data;
-    // model_proto.SerializeToString(&qnn_ctx_model_data);
-    // InferenceModel(qnn_ctx_model_data,
-    //                "qnn_ctx_model_logger",
-    //                qnn_options,
-    //                expected_ep_assignment,
-    //                f16_helper.feeds_,
-    //                qnn_f16_outputs,
-    //                session_option_pairs);
+    std::ifstream ifs(qnn_ctx_model_path, std::ios::in | std::ios::binary);
+    model_proto.ParseFromIstream(&ifs);
+    std::string qnn_ctx_model_data;
+    model_proto.SerializeToString(&qnn_ctx_model_data);
+    InferenceModel(qnn_ctx_model_data,
+                   "qnn_ctx_model_logger",
+                   qnn_options,
+                   expected_ep_assignment,
+                   f16_helper.feeds_,
+                   qnn_f16_outputs,
+                   session_option_pairs);
   } else {
     InferenceModel(f16_model_data,
                    "fp16_model_logger",

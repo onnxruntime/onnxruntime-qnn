@@ -232,13 +232,6 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
-  // auto& logging_manager = DefaultLoggingManager();
-  // logging_manager.SetDefaultLoggerSeverity(log_severity);
-
-  // onnxruntime::Model model("QNN_EP_TestModel", false, ModelMetaData(), PathString(),
-  //                          IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-  //                          logging_manager.DefaultLogger());
-  // Graph& graph = model.MainGraph();
   ModelTestBuilder helper;
   build_test_case(helper);
   for (const auto& [domain, version] : domain_to_version) {
@@ -248,8 +241,6 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   }
   // TODO: Upgrade the ONNX IR VERSION to 12 when using ORT 1.24 prebuilt
   helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
-  // helper.SetGraphOutputs();
-  // ASSERT_STATUS_OK(model.MainGraph().Resolve());
 
   // Serialize the model to a string.
   std::string model_data;
@@ -260,6 +251,9 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = "QNNExecutionProvider";
   Ort::SessionOptions session_options;
+
+  session_options.SetLogSeverityLevel(log_severity);
+
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
 
   RunAndVerifyOutputsWithEPABI(AsByteSpan(model_data.data(), model_data.size()),
@@ -400,84 +394,8 @@ std::string MakeTestQDQBiasInput(ModelTestBuilder& builder,
   return name + "_dq_out";
 }
 
-// Testing helper function that calls QNN EP's GetCapability() function with a mock graph to check
-// if the HTP backend is available.
-// TODO: Remove once HTP can be emulated on Windows ARM64.
-static BackendSupport GetHTPSupport(const OrtLogger* logger) {
-  ModelTestBuilder helper;
-
-  // Build simple QDQ graph: DQ -> InstanceNormalization -> Q
-  GetQDQTestCaseFn build_test_case = [](ModelTestBuilder& builder) {
-    const uint8_t quant_zero_point = 0;
-    const float quant_scale = 1.0f;
-
-    auto* scale = builder.MakeInitializer<uint8_t>(
-      "scale", {2}, std::vector<uint8_t>{1, 2});
-    builder.AddDequantizeLinearNode<uint8_t>(
-      "dq1", scale->name().c_str(), quant_scale, quant_zero_point, "dq1_out");
-
-    // Add bias (initializer) -> DQ ->
-    auto* bias = builder.MakeInitializer<int32_t>(
-      "bias", {2}, std::vector<int32_t>{1, 1});
-    builder.AddDequantizeLinearNode<int32_t>(
-      "dq2", bias->name().c_str(), 1.0f, 0, "dq2_out");
-
-    // Add input_u8 -> DQ ->
-    auto* input_u8 = builder.MakeInput<uint8_t>(
-      "X", {1, 2, 3}, std::vector<uint8_t>{1, 2, 3, 4, 5, 6});
-    builder.AddDequantizeLinearNode<uint8_t>(
-      "dq3", input_u8->name().c_str(), quant_scale, quant_zero_point, "dq3_out");
-
-    // Add dq_input_output -> InstanceNormalization ->
-    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
-    attributes.push_back(builder.MakeScalarAttribute("epsilon", 1e-5f));
-    builder.AddNode("in",
-      "InstanceNormalization",
-      {"dq1_out", "dq2_out", "dq3_out"},
-      {"in_out"},
-      "",
-      attributes);
-
-    // Add instance_norm_output -> Q -> output_u8
-    builder.AddQuantizeLinearNode<uint8_t>(
-      "q1", "in_out", quant_scale, quant_zero_point, "Y");
-    builder.MakeOutput("Y");
-  };
-
-  build_test_case(helper);
-  // helper.SetGraphOutputs();
-  // auto status = model.MainGraph().Resolve();
-
-  // if (!status.IsOK()) {
-  //   return BackendSupport::SUPPORT_ERROR;
-  // }
-
-  // Create QNN EP and call GetCapability().
-  // TODO: Use public API to acquire OrtEpGraphSupportInfo
-  // onnxruntime::GraphViewer graph_viewer(graph);
-  // std::unique_ptr<EpGraph> ep_graph = nullptr;
-  // if (!EpGraph::Create(graph_viewer, ep_graph).IsOK()) {
-  //   return BackendSupport::UNSUPPORTED;
-  // }
-  // OrtEpGraphSupportInfo graph_support_info(*ep_graph);
-
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string& registration_name = "QNNExecutionProvider";
-  Ort::SessionOptions session_options;
-  ProviderOptions provider_options = {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}};
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
-
-  OrtEpFactory* qnn_ep_factory = registered_ep_device->GetMutableFactory();
-  OrtEp* qnn_ep = nullptr;
-  if (qnn_ep_factory->CreateEp(qnn_ep_factory, nullptr, nullptr, 0, session_options, logger, &qnn_ep)) {
-    qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
-    return BackendSupport::UNSUPPORTED;
-  }
-
-  // auto status = ToStatusAndRelease(qnn_ep->GetCapability(qnn_ep, ep_graph->ToExternal(), &graph_support_info));
-  qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
-
-  // return status.IsOK() ? BackendSupport::SUPPORTED : BackendSupport::UNSUPPORTED;
+// TODO: Consider using public DeviceCompatibility API for this function
+static BackendSupport GetHTPSupport() {
   return BackendSupport::SUPPORTED;
 }
 
@@ -489,9 +407,9 @@ void QnnHTPBackendTests::SetUp() {
   Ort::Logger logger = Ort::Logger();
 
   // Determine if HTP backend is supported only if we done so haven't before.
-  // if (cached_htp_support_ == BackendSupport::SUPPORT_UNKNOWN) {
-  //   cached_htp_support_ = GetHTPSupport(reinterpret_cast<OrtLogger*>(&logger));
-  // }
+  if (cached_htp_support_ == BackendSupport::SUPPORT_UNKNOWN) {
+    cached_htp_support_ = GetHTPSupport();
+  }
 
   if (cached_htp_support_ == BackendSupport::UNSUPPORTED) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "QNN HTP backend is not available! Skipping test.");
@@ -569,49 +487,7 @@ void QnnHTPBackendTests::TearDownTestSuite() {
 // Creates a one node graph with relu op,
 // then calls QNN EP's GetCapability() function
 // to check if the GPU backend is available.
-static BackendSupport GetGPUSupport(const OrtLogger* logger) {
-  ModelTestBuilder helper;
-
-  // Build simple QDQ graph: DQ -> InstanceNormalization -> Q
-  auto build_test_case = BuildOpTestCase<float, float>(
-      "simple_relu",
-      "Relu",
-      {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f)},
-      {},
-      {});
-
-  build_test_case(helper);
-  // helper.SetGraphOutputs();
-  // auto status = model.MainGraph().Resolve();
-
-  // if (!status.IsOK()) {
-  //   return BackendSupport::SUPPORT_ERROR;
-  // }
-
-  // Create QNN EP and call GetCapability().
-  // onnxruntime::GraphViewer graph_viewer(graph);
-  // std::unique_ptr<EpGraph> ep_graph = nullptr;
-  // if (!EpGraph::Create(graph_viewer, ep_graph).IsOK()) {
-  //   return BackendSupport::UNSUPPORTED;
-  // }
-  // OrtEpGraphSupportInfo graph_support_info(*ep_graph);
-
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string& registration_name = "QNNExecutionProvider";
-  Ort::SessionOptions session_options;
-  ProviderOptions provider_options = {{"backend_type", "gpu"}, {"offload_graph_io_quantization", "0"}};
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
-
-  OrtEpFactory* qnn_ep_factory = registered_ep_device->GetMutableFactory();
-  OrtEp* qnn_ep = nullptr;
-  if (qnn_ep_factory->CreateEp(qnn_ep_factory, nullptr, nullptr, 0, session_options, logger, &qnn_ep)) {
-    qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
-    return BackendSupport::UNSUPPORTED;
-  }
-
-  // status = ToStatusAndRelease(qnn_ep->GetCapability(qnn_ep, ep_graph->ToExternal(), &graph_support_info));
-  qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
-
+static BackendSupport GetGPUSupport() {
   return BackendSupport::SUPPORTED;
 }
 
@@ -623,9 +499,9 @@ void QnnGPUBackendTests::SetUp() {
   Ort::Logger logger = Ort::Logger();
 
   // Determine if GPU backend is supported only if we haven't done so before.
-  // if (cached_gpu_support_ == BackendSupport::SUPPORT_UNKNOWN) {
-  //   cached_gpu_support_ = GetGPUSupport(reinterpret_cast<OrtLogger*>(&logger));  // BackendSupport::SUPPORTED;
-  // }
+  if (cached_gpu_support_ == BackendSupport::SUPPORT_UNKNOWN) {
+    cached_gpu_support_ = GetGPUSupport();
+  }
 
   if (cached_gpu_support_ == BackendSupport::UNSUPPORTED) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "QNN GPU backend is not available! Skipping test.");
@@ -636,74 +512,18 @@ void QnnGPUBackendTests::SetUp() {
   }
 }
 
-static BackendSupport GetIRSupport(const OrtLogger* logger);
+static BackendSupport GetIRSupport();
 
 BackendSupport QnnHTPBackendTests::IsIRBackendSupported() const {
-  Ort::Logger logger = Ort::Logger();
-
   if (cached_ir_support_ == BackendSupport::SUPPORT_UNKNOWN) {
-    cached_ir_support_ = test::GetIRSupport(reinterpret_cast<OrtLogger*>(&logger));
+    cached_ir_support_ = test::GetIRSupport();
   }
 
   return cached_ir_support_;
 }
 
-// Testing helper function that calls QNN EP's GetCapability() function with a mock graph to check
-// if the QNN CPU backend is available.
-// TODO: Remove once the QNN CPU backend works on Windows ARM64 pipeline VM.
-static BackendSupport GetCPUSupport(const OrtLogger* logger, const std::string& backend_type = "cpu") {
-  ModelTestBuilder helper;
-
-  auto get_test_model_func = [](const std::vector<int64_t>& input_shape) -> GetTestModelFn {
-    return [input_shape](ModelTestBuilder& builder) {
-      const int64_t num_channels = input_shape[1];
-
-      builder.MakeInitializer<float>("scale", {num_channels}, 0.0f, 1.0f);
-      builder.MakeInitializer<float>("bias", {num_channels}, 0.0f, 4.0f);
-      builder.MakeInput<float>("X", input_shape, 0.0f, 10.0f);
-      builder.MakeOutput("Y");
-      builder.AddNode(
-        "in",
-        "InstanceNormalization",
-        {"X", "scale", "bias"},
-        {"Y"});
-    };
-  };
-
-  // Build simple graph with a InstanceNormalization op.
-  GetQDQTestCaseFn build_test_case = get_test_model_func({1, 2, 3, 3});
-  build_test_case(helper);
-  // helper.SetGraphOutputs();
-  // auto status = model.MainGraph().Resolve();
-
-  // if (!status.IsOK()) {
-  //   return BackendSupport::SUPPORT_ERROR;
-  // }
-
-  // Create QNN EP and call GetCapability().
-  // onnxruntime::GraphViewer graph_viewer(graph);
-  // std::unique_ptr<EpGraph> ep_graph = nullptr;
-  // if (!EpGraph::Create(graph_viewer, ep_graph).IsOK()) {
-  //   return BackendSupport::UNSUPPORTED;
-  // }
-  // OrtEpGraphSupportInfo graph_support_info(*ep_graph);
-
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string& registration_name = "QNNExecutionProvider";
-  Ort::SessionOptions session_options;
-  ProviderOptions provider_options = {{"backend_type", backend_type}, {"offload_graph_io_quantization", "0"}};
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
-
-  OrtEpFactory* qnn_ep_factory = registered_ep_device->GetMutableFactory();
-  OrtEp* qnn_ep = nullptr;
-  if (qnn_ep_factory->CreateEp(qnn_ep_factory, nullptr, nullptr, 0, session_options, logger, &qnn_ep)) {
-    qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
-    return BackendSupport::UNSUPPORTED;
-  }
-
-  // status = ToStatusAndRelease(qnn_ep->GetCapability(qnn_ep, ep_graph->ToExternal(), &graph_support_info));
-  qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
-
+// TODO: Consider using public DeviceCompatibility API for this function
+static BackendSupport GetCPUSupport() {
   return BackendSupport::SUPPORTED;
 }
 
@@ -717,7 +537,7 @@ void QnnCPUBackendTests::SetUp() {
 
   // Determine if CPU backend is supported only if we done so haven't before.
   if (cached_cpu_support_ == BackendSupport::SUPPORT_UNKNOWN) {
-    cached_cpu_support_ = GetCPUSupport(reinterpret_cast<OrtLogger*>(&logger));
+    cached_cpu_support_ = GetCPUSupport();
   }
 
   if (cached_cpu_support_ == BackendSupport::UNSUPPORTED) {
@@ -729,10 +549,10 @@ void QnnCPUBackendTests::SetUp() {
   }
 }
 
-static BackendSupport GetIRSupport(const OrtLogger* logger) {
+static BackendSupport GetIRSupport() {
   // QnnIr should be able to serialize any model supported by the QNN reference spec.
   // Use a model that works on QnnCpu to verify QnnIr availability.
-  return GetCPUSupport(logger, "ir");
+  return GetCPUSupport();
 }
 
 void QnnIRBackendTests::SetUp() {
@@ -744,7 +564,7 @@ void QnnIRBackendTests::SetUp() {
 
   // Determine if IR backend is supported only if we done so haven't before.
   if (cached_ir_support_ == BackendSupport::SUPPORT_UNKNOWN) {
-    cached_ir_support_ = GetIRSupport(reinterpret_cast<OrtLogger*>(&logger));
+    cached_ir_support_ = GetIRSupport();
   }
 
   if (cached_ir_support_ == BackendSupport::UNSUPPORTED) {

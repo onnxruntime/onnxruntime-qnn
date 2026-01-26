@@ -137,6 +137,8 @@ static void VerifyOutputs(const std::vector<std::string>& output_names,
   }
 }
 
+// TODO: Implement the CountAssignedNodes and VerifyEPNodeAssignment once public API support get ep graph partitioning info
+
 // int CountAssignedNodes(const Graph& current_graph, const std::string& ep_type) {
 //   int count = 0;
 
