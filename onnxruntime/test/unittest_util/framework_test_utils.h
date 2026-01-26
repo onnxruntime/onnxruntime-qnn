@@ -50,20 +50,18 @@ inline void CopyVectorToTensor<bool>(const std::vector<bool>& value, Tensor& ten
 
 template <class T>
 void CreateMLValue(const OrtMemoryInfo* memory_info,
-  gsl::span<const int64_t> dims,
-  const std::vector<T>& value,
-  Ort::Value& p_mlvalue) {
+                   gsl::span<const int64_t> dims,
+                   const std::vector<T>& value,
+                   Ort::Value& p_mlvalue) {
   // Allocate CPU tensor memory owned by Ort::Value.
-  Ort::MemoryInfo mem_info_to_use = memory_info ?
-    Ort::MemoryInfo(const_cast<OrtMemoryInfo*>(memory_info)) :
-    Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault);
+  Ort::MemoryInfo mem_info_to_use = memory_info ? Ort::MemoryInfo(const_cast<OrtMemoryInfo*>(memory_info)) : Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault);
 
   // Allocate tensor with ORT-owned buffer (Arena allocator).
   Ort::AllocatorWithDefaultOptions allocator;
   p_mlvalue = Ort::Value::CreateTensor<T>(
-    allocator,
-    dims.data(),
-    dims.size());
+      allocator,
+      dims.data(),
+      dims.size());
 
   // Copy data (or zero-fill if empty vector provided).
   T* dst = p_mlvalue.GetTensorMutableData<T>();
@@ -80,11 +78,11 @@ void CreateMLValue(const OrtMemoryInfo* memory_info,
 }
 
 // Specialization declaration for std::vector<bool> which doesn't have .data() method
-template<>
+template <>
 void CreateMLValue<bool>(const OrtMemoryInfo* memory_info,
-  gsl::span<const int64_t> dims,
-  const std::vector<bool>& value,
-  Ort::Value& p_mlvalue);
+                         gsl::span<const int64_t> dims,
+                         const std::vector<bool>& value,
+                         Ort::Value& p_mlvalue);
 
 template <typename T>
 void AllocateMLValue(AllocatorPtr alloc, gsl::span<const int64_t> dims, OrtValue* p_mlvalue) {

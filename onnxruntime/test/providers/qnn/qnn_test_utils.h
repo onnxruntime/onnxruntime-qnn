@@ -420,11 +420,11 @@ static void QuantizeValues(gsl::span<const FloatType> input, gsl::span<QuantType
 // Values are then packed into Int4x2/UInt4x2 (2 elements per byte).
 template <>
 inline void QuantizeValues<float, Int4x2>(gsl::span<const float> input,
-                                         gsl::span<Int4x2> output,
-                                         const std::vector<int64_t>& shape,
-                                         gsl::span<const float> scales,
-                                         gsl::span<const Int4x2> zero_points,
-                                         std::optional<int64_t> axis) {
+                                          gsl::span<Int4x2> output,
+                                          const std::vector<int64_t>& shape,
+                                          gsl::span<const float> scales,
+                                          gsl::span<const Int4x2> zero_points,
+                                          std::optional<int64_t> axis) {
   const size_t input_rank = shape.size();
   const size_t num_int4_elems = static_cast<size_t>(SizeHelper(shape, 0, input_rank));
   assert(input.size() == num_int4_elems);
@@ -469,11 +469,11 @@ inline void QuantizeValues<float, Int4x2>(gsl::span<const float> input,
 
 template <>
 inline void QuantizeValues<float, UInt4x2>(gsl::span<const float> input,
-                                          gsl::span<UInt4x2> output,
-                                          const std::vector<int64_t>& shape,
-                                          gsl::span<const float> scales,
-                                          gsl::span<const UInt4x2> zero_points,
-                                          std::optional<int64_t> axis) {
+                                           gsl::span<UInt4x2> output,
+                                           const std::vector<int64_t>& shape,
+                                           gsl::span<const float> scales,
+                                           gsl::span<const UInt4x2> zero_points,
+                                           std::optional<int64_t> axis) {
   const size_t input_rank = shape.size();
   const size_t num_uint4_elems = static_cast<size_t>(SizeHelper(shape, 0, input_rank));
   assert(input.size() == num_uint4_elems);
@@ -691,10 +691,10 @@ void VerifyQDQOutput(const std::vector<Ort::Value>& cpu_qdq_outputs,
       }
     } else {
       VerifyOutput(
-        debug_output_name,
-        cpu_f32_outputs[i],
-        qnn_qdq_outputs[i],
-        1e-4f);
+          debug_output_name,
+          cpu_f32_outputs[i],
+          qnn_qdq_outputs[i],
+          1e-4f);
     }
   }
 }
@@ -1076,9 +1076,9 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
  */
 template <typename T>
 inline void MakeTestInput(ModelTestBuilder& builder,
-  std::string name,
-  const TestInputDef<T>& input_def,
-  AllocatorPtr allocator = nullptr) {
+                          std::string name,
+                          const TestInputDef<T>& input_def,
+                          AllocatorPtr allocator = nullptr) {
   const auto& shape = input_def.GetShape();
   const bool is_initializer = input_def.IsInitializer();
 
@@ -1105,9 +1105,9 @@ inline void MakeTestInput(ModelTestBuilder& builder,
 
 template <>
 inline void MakeTestInput(ModelTestBuilder& builder,
-  std::string name,
-  const TestInputDef<bool>& input_def,
-  AllocatorPtr allocator) {
+                          std::string name,
+                          const TestInputDef<bool>& input_def,
+                          AllocatorPtr allocator) {
   const auto& shape = input_def.GetShape();
   const bool is_initializer = input_def.IsInitializer();
 
@@ -1163,13 +1163,13 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
     std::vector<std::string> op_input_names;
     op_input_names.reserve(input_defs_1.size() + input_defs_2.size());
 
-    for (int i=0; i<input_defs_1.size();i++) {
+    for (int i = 0; i < input_defs_1.size(); i++) {
       const std::string tmp_name = "input_defs_1_" + std::to_string(i);
       MakeTestInput<InputType1>(builder, tmp_name, input_defs_1[i], input_allocator);
       op_input_names.push_back(tmp_name);
     }
 
-    for (int i=0; i<input_defs_2.size();i++) {
+    for (int i = 0; i < input_defs_2.size(); i++) {
       const std::string tmp_name = "input_defs_2_" + std::to_string(i);
       MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i], input_allocator);
       op_input_names.push_back(tmp_name);
@@ -1177,12 +1177,12 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
 
     builder.MakeOutput("Y");
     builder.AddNode(
-      node_name,
-      op_type,
-      op_input_names,
-      {"Y"},
-      op_domain,
-      attrs);
+        node_name,
+        op_type,
+        op_input_names,
+        {"Y"},
+        op_domain,
+        attrs);
   };
 }
 
@@ -1199,19 +1199,19 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
     std::vector<std::string> op_input_names;
     op_input_names.reserve(input_defs_1.size() + input_defs_2.size() + input_defs_3.size());
 
-    for (int i=0; i<input_defs_1.size();i++) {
+    for (int i = 0; i < input_defs_1.size(); i++) {
       const std::string tmp_name = "input_defs_1_" + std::to_string(i);
       MakeTestInput<InputType1>(builder, tmp_name, input_defs_1[i], input_allocator);
       op_input_names.push_back(tmp_name);
     }
 
-    for (int i=0; i<input_defs_2.size();i++) {
+    for (int i = 0; i < input_defs_2.size(); i++) {
       const std::string tmp_name = "input_defs_2_" + std::to_string(i);
       MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i], input_allocator);
       op_input_names.push_back(tmp_name);
     }
 
-    for (int i=0; i<input_defs_3.size();i++) {
+    for (int i = 0; i < input_defs_3.size(); i++) {
       const std::string tmp_name = "input_defs_3_" + std::to_string(i);
       MakeTestInput<InputType1>(builder, tmp_name, input_defs_3[i], input_allocator);
       op_input_names.push_back(tmp_name);
@@ -1219,12 +1219,12 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
 
     builder.MakeOutput("Y");
     builder.AddNode(
-      node_name,
-      op_type,
-      op_input_names,
-      {"Y"},
-      op_domain,
-      attrs);
+        node_name,
+        op_type,
+        op_input_names,
+        {"Y"},
+        op_domain,
+        attrs);
   };
 }
 
@@ -1257,7 +1257,7 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     op_input_names.reserve(quant_input_defs.size() + non_quant_input_defs.size());
 
     // Create QDQ inputs
-    for (size_t i=0; i<quant_input_defs.size();i++) {
+    for (size_t i = 0; i < quant_input_defs.size(); i++) {
       const std::string tmp_name = "quant_input_defs_" + std::to_string(i);
       MakeTestInput<float>(builder, tmp_name, quant_input_defs[i], input_allocator);
       QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(quant_input_defs[i]);
@@ -1268,21 +1268,21 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     }
 
     // Create non-QDQ inputs
-    for (size_t i=0; i<non_quant_input_defs.size();i++) {
+    for (size_t i = 0; i < non_quant_input_defs.size(); i++) {
       const std::string tmp_name = "non_quant_input_defs_" + std::to_string(i);
       MakeTestInput<OtherInputType>(builder, tmp_name, non_quant_input_defs[i], input_allocator);
       op_input_names.push_back(tmp_name);
     }
 
     builder.AddNode(node_name, op_type,
-      op_input_names,
-      {"Y"},
-      op_domain,
-      attrs);
+                    op_input_names,
+                    {"Y"},
+                    op_domain,
+                    attrs);
 
     // op_output -> Q -> DQ -> output
     std::string out = AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq_out", "Y", output_qparams[0].scale,
-                                                     output_qparams[0].zero_point, use_contrib_qdq);
+                                                                       output_qparams[0].zero_point, use_contrib_qdq);
     builder.MakeOutput(out);
   };
 }
@@ -1305,7 +1305,7 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     op_input_names.reserve(quant_input_defs.size() + non_quant_input_defs.size() + quant_input_defs_2.size());
 
     // Create QDQ inputs
-    for (size_t i=0; i<quant_input_defs.size();i++) {
+    for (size_t i = 0; i < quant_input_defs.size(); i++) {
       const std::string tmp_name = "quant_input_defs_" + std::to_string(i);
       MakeTestInput<float>(builder, tmp_name, quant_input_defs[i], input_allocator);
       QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(quant_input_defs[i]);
@@ -1316,14 +1316,14 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     }
 
     // Create non-QDQ inputs
-    for (size_t i=0; i<non_quant_input_defs.size();i++) {
+    for (size_t i = 0; i < non_quant_input_defs.size(); i++) {
       const std::string tmp_name = "non_quant_input_defs_" + std::to_string(i);
       MakeTestInput<OtherInputType>(builder, tmp_name, non_quant_input_defs[i], input_allocator);
       op_input_names.push_back(tmp_name);
     }
 
     // Create QDQ inputs
-    for (size_t i=0; i<quant_input_defs_2.size();i++) {
+    for (size_t i = 0; i < quant_input_defs_2.size(); i++) {
       const std::string tmp_name = "quant_input_defs_2_" + std::to_string(i);
       MakeTestInput<float>(builder, tmp_name, quant_input_defs_2[i], input_allocator);
       QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(quant_input_defs_2[i]);
@@ -1335,16 +1335,16 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
 
     // Op -> op_output
     builder.AddNode(
-      node_name,
-      op_type,
-      op_input_names,
-      {"Y"},
-      op_domain,
-      attrs);
+        node_name,
+        op_type,
+        op_input_names,
+        {"Y"},
+        op_domain,
+        attrs);
 
     // op_output -> Q -> DQ -> output
     std::string out = AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq_out", "Y", output_qparams[0].scale,
-                                                     output_qparams[0].zero_point, use_contrib_qdq);
+                                                                       output_qparams[0].zero_point, use_contrib_qdq);
     builder.MakeOutput(out);
   };
 }

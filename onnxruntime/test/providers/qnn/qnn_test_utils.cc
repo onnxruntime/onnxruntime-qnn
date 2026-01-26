@@ -283,32 +283,31 @@ void InferenceModelCPU(const std::string& model_data,
   std::vector<const char*> ort_input_names_cstr(input_count);
   std::vector<const char*> ort_output_names_cstr(output_count);
   std::transform(ort_input_names.begin(), ort_input_names.end(), ort_input_names_cstr.begin(),
-                   [](const std::string& s) { return s.c_str(); });
+                 [](const std::string& s) { return s.c_str(); });
   std::transform(ort_output_names.begin(), ort_output_names.end(), ort_output_names_cstr.begin(),
-                   [](const std::string& s) { return s.c_str(); });
+                 [](const std::string& s) { return s.c_str(); });
 
   std::vector<Ort::Value> ort_inputs;
   ort_inputs.reserve(input_count);
   for (size_t i = 0; i < input_count; ++i) {
     auto memory_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
     ort_inputs.emplace_back(Ort::Value::CreateTensor(
-      memory_info,
-      (void*)feeds.at(ort_input_names[i]).GetTensorRawData(),
-      feeds.at(ort_input_names[i]).GetTensorSizeInBytes(),
-      feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetShape().data(),
-      feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetShape().size(),
-      feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetElementType())
-    );
+        memory_info,
+        (void*)feeds.at(ort_input_names[i]).GetTensorRawData(),
+        feeds.at(ort_input_names[i]).GetTensorSizeInBytes(),
+        feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetShape().data(),
+        feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetShape().size(),
+        feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetElementType()));
   }
 
   // Run inference
   output_vals = session.Run(
-    Ort::RunOptions{nullptr},
-    ort_input_names_cstr.data(),
-    ort_inputs.data(),
-    ort_inputs.size(),
-    ort_output_names_cstr.data(),
-    ort_output_names_cstr.size());
+      Ort::RunOptions{nullptr},
+      ort_input_names_cstr.data(),
+      ort_inputs.data(),
+      ort_inputs.size(),
+      ort_output_names_cstr.data(),
+      ort_output_names_cstr.size());
 }
 
 void InferenceModel(const std::string& model_data,

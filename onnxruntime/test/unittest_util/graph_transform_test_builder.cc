@@ -57,16 +57,16 @@ static InlinedVector<std::byte> GetZeroPointBytes(int64_t zero_point, ONNX_NAMES
 }
 
 const ONNX_NAMESPACE::TensorProto* ModelTestBuilder::MakeInitializer(std::string name,
-                                         gsl::span<const int64_t> shape,
-                                         ONNX_NAMESPACE::TensorProto_DataType elem_type,
-                                         gsl::span<const std::byte> raw_data) {
+                                                                     gsl::span<const int64_t> shape,
+                                                                     ONNX_NAMESPACE::TensorProto_DataType elem_type,
+                                                                     gsl::span<const std::byte> raw_data) {
   ONNX_NAMESPACE::TensorProto* tensor_proto = graph_->add_initializer();
   tensor_proto->set_name(name);
   tensor_proto->set_data_type(elem_type);
   utils::SetRawDataInTensorProto(
-    *tensor_proto,
-    raw_data.data(),
-    raw_data.size());
+      *tensor_proto,
+      raw_data.data(),
+      raw_data.size());
 
   for (auto& dim : shape) {
     tensor_proto->add_dims(dim);
@@ -84,7 +84,7 @@ const ONNX_NAMESPACE::NodeProto* ModelTestBuilder::AddQuantizeLinearNode(const s
                                                                          bool use_ms_domain) {
   std::vector<std::string> input_names;
   input_names.push_back(input_name);
-  
+
   auto scale = MakeScalarInitializer<float>(node_name + "_inp_scale", input_scale);
   input_names.push_back(scale->name());
 
@@ -105,7 +105,7 @@ const ONNX_NAMESPACE::NodeProto* ModelTestBuilder::AddDequantizeLinearNode(const
                                                                            bool use_ms_domain) {
   std::vector<std::string> input_names;
   input_names.push_back(input_name);
-  
+
   auto scale = MakeScalarInitializer<float>(node_name + "_inp_scale", input_scale);
   input_names.push_back(scale->name());
 

@@ -252,22 +252,21 @@ void RunWithEPABI(Ort::Session& ort_session,
   std::vector<const char*> ort_input_names_cstr(input_count);
   std::vector<const char*> ort_output_names_cstr(output_count);
   std::transform(ort_input_names.begin(), ort_input_names.end(), ort_input_names_cstr.begin(),
-                   [](const std::string& s) { return s.c_str(); });
+                 [](const std::string& s) { return s.c_str(); });
   std::transform(ort_output_names.begin(), ort_output_names.end(), ort_output_names_cstr.begin(),
-                   [](const std::string& s) { return s.c_str(); });
+                 [](const std::string& s) { return s.c_str(); });
 
   std::vector<Ort::Value> ort_inputs;
   ort_inputs.reserve(input_count);
   for (size_t i = 0; i < input_count; ++i) {
     auto memory_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
     ort_inputs.emplace_back(Ort::Value::CreateTensor(
-      memory_info,
-      (void*)feeds.at(ort_input_names[i]).GetTensorRawData(),
-      feeds.at(ort_input_names[i]).GetTensorSizeInBytes(),
-      feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetShape().data(),
-      feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetShape().size(),
-      feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetElementType())
-    );
+        memory_info,
+        (void*)feeds.at(ort_input_names[i]).GetTensorRawData(),
+        feeds.at(ort_input_names[i]).GetTensorSizeInBytes(),
+        feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetShape().data(),
+        feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetShape().size(),
+        feeds.at(ort_input_names[i]).GetTypeInfo().GetTensorTypeAndShapeInfo().GetElementType()));
   }
   // Run.
   output_vals = ort_session.Run(ort_ro,
@@ -276,7 +275,6 @@ void RunWithEPABI(Ort::Session& ort_session,
                                 input_count,
                                 ort_output_names_cstr.data(),
                                 ort_output_names_cstr.size());
-
 }
 
 void RunAndVerifyOutputsWithEPABI(ModelPathOrBytes model_path_or_bytes,
@@ -342,11 +340,11 @@ void TestModelLoad(ModelPathOrBytes model_path_or_bytes,
   const auto model_data = GetModelBytes(model_path_or_bytes, model_data_buffer);
 
   Ort::SessionOptions ort_so;
-  
+
   // Note: EP registration and graph verification require internal APIs
   // These are not available in the public API, so we just test model loading
   OrtSessionWrapper session_object(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), ort_so);
-  
+
   // Note: check_graph callback requires internal graph access, commented out for public API migration
   // if (check_graph) {
   //   check_graph(session_object.GetGraph());
@@ -378,31 +376,31 @@ static void SetNameAndType(std::string attr_name, ONNX_NAMESPACE::AttributeProto
   a.set_type(attr_type);
 }
 
-#define MAKE_BASIC_ATTR_IMPL(type, enumType, field)                 \
+#define MAKE_BASIC_ATTR_IMPL(type, enumType, field)                                 \
   ONNX_NAMESPACE::AttributeProto MakeAttribute(std::string attr_name, type value) { \
     ONNX_NAMESPACE::AttributeProto a;                                               \
-    a.set_##field(std::move(value));                                \
-    SetNameAndType(std::move(attr_name), enumType, a);              \
-    return a;                                                       \
+    a.set_##field(std::move(value));                                                \
+    SetNameAndType(std::move(attr_name), enumType, a);                              \
+    return a;                                                                       \
   }
 
-#define MAKE_ATTR_IMPL(type, enumType, field)                       \
+#define MAKE_ATTR_IMPL(type, enumType, field)                                       \
   ONNX_NAMESPACE::AttributeProto MakeAttribute(std::string attr_name, type value) { \
     ONNX_NAMESPACE::AttributeProto a;                                               \
-    *(a.mutable_##field()) = std::move(value);                      \
-    SetNameAndType(std::move(attr_name), enumType, a);              \
-    return a;                                                       \
+    *(a.mutable_##field()) = std::move(value);                                      \
+    SetNameAndType(std::move(attr_name), enumType, a);                              \
+    return a;                                                                       \
   }
 
-#define MAKE_LIST_ATTR_IMPL(type, enumType, field)                                    \
+#define MAKE_LIST_ATTR_IMPL(type, enumType, field)                                                    \
   ONNX_NAMESPACE::AttributeProto MakeAttribute(std::string attr_name, gsl::span<const type> values) { \
     ONNX_NAMESPACE::AttributeProto a;                                                                 \
-    auto* mutable_field = a.mutable_##field();                                        \
-    for (const auto& val : values) {                                                  \
-      *(mutable_field->Add()) = val;                                                  \
-    }                                                                                 \
-    SetNameAndType(std::move(attr_name), enumType, a);                                \
-    return a;                                                                         \
+    auto* mutable_field = a.mutable_##field();                                                        \
+    for (const auto& val : values) {                                                                  \
+      *(mutable_field->Add()) = val;                                                                  \
+    }                                                                                                 \
+    SetNameAndType(std::move(attr_name), enumType, a);                                                \
+    return a;                                                                                         \
   }
 
 MAKE_BASIC_ATTR_IMPL(int64_t, ONNX_NAMESPACE::AttributeProto_AttributeType::AttributeProto_AttributeType_INT, i)

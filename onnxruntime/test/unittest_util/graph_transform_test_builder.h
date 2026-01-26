@@ -189,22 +189,22 @@ class RandomValueGenerator {
   // while this instance is in scope, output some context information on test failure like the random seed value
   const ::testing::ScopedTrace output_trace_;
   inline size_t SizeFromDims(gsl::span<const int64_t> dims, gsl::span<const int64_t> strides = {}) {
-  int64_t size = 1;
-  if (strides.empty()) {
-    size = std::accumulate(dims.begin(), dims.end(), static_cast<int64_t>(1), std::multiplies<int64_t>{});
-  } else {
-    assert(dims.size() == strides.size());
-    for (size_t dim = 0; dim < dims.size(); ++dim) {
-      if (dims[dim] == 0) {
-        size = 0;
-        break;
+    int64_t size = 1;
+    if (strides.empty()) {
+      size = std::accumulate(dims.begin(), dims.end(), static_cast<int64_t>(1), std::multiplies<int64_t>{});
+    } else {
+      assert(dims.size() == strides.size());
+      for (size_t dim = 0; dim < dims.size(); ++dim) {
+        if (dims[dim] == 0) {
+          size = 0;
+          break;
+        }
+        size += strides[dim] * (dims[dim] - 1);
       }
-      size += strides[dim] * (dims[dim] - 1);
     }
-  }
 
-  return narrow<size_t>(size);
-}
+    return narrow<size_t>(size);
+  }
 };
 
 template <typename T>
@@ -248,9 +248,9 @@ class ModelTestBuilder {
 
   template <typename T>
   const ONNX_NAMESPACE::ValueInfoProto* MakeInput(const std::string name,
-    const std::vector<int64_t>& shape,
-    const std::vector<T>& data,
-    AllocatorPtr = nullptr) {
+                                                  const std::vector<int64_t>& shape,
+                                                  const std::vector<T>& data,
+                                                  AllocatorPtr = nullptr) {
     ONNX_NAMESPACE::ValueInfoProto* inp = graph_->add_input();
     inp->set_name(name);
     ONNX_NAMESPACE::TypeProto* type_proto = inp->mutable_type();
@@ -274,13 +274,13 @@ class ModelTestBuilder {
 
   template <typename T>
   const ONNX_NAMESPACE::ValueInfoProto* MakeInput(const std::string name,
-      const std::vector<int64_t>& shape, T min, T max,
-      AllocatorPtr allocator = nullptr) {
+                                                  const std::vector<int64_t>& shape, T min, T max,
+                                                  AllocatorPtr allocator = nullptr) {
     return MakeInput<T>(name, shape, rand_gen_.Uniform<T>(shape, min, max), allocator);
   }
 
   const ONNX_NAMESPACE::ValueInfoProto* MakeInputBool(const std::string name,
-      const std::vector<int64_t>& shape, AllocatorPtr allocator = nullptr) {
+                                                      const std::vector<int64_t>& shape, AllocatorPtr allocator = nullptr) {
     std::vector<uint8_t> data_uint8 = rand_gen_.Uniform<uint8_t>(shape, 0, 1);
     std::vector<bool> data;
     for (uint8_t x : data_uint8) {
@@ -297,7 +297,7 @@ class ModelTestBuilder {
 
   template <typename T>
   const ONNX_NAMESPACE::ValueInfoProto* MakeOutput(const std::string name,
-    const std::optional<std::vector<int64_t>>& shape) {
+                                                   const std::optional<std::vector<int64_t>>& shape) {
     ONNX_NAMESPACE::ValueInfoProto* out = graph_->add_output();
     out->set_name(name);
     ONNX_NAMESPACE::TypeProto* type_proto = out->mutable_type();
@@ -324,30 +324,30 @@ class ModelTestBuilder {
   /// <param name="raw_data">Raw data bytes</param>
   /// <returns>ValueInfo pointer for the initializer</returns>
   const ONNX_NAMESPACE::TensorProto* MakeInitializer(std::string name,
-    gsl::span<const int64_t> shape,
-    ONNX_NAMESPACE::TensorProto_DataType elem_type,
-    gsl::span<const std::byte> raw_data);
+                                                     gsl::span<const int64_t> shape,
+                                                     ONNX_NAMESPACE::TensorProto_DataType elem_type,
+                                                     gsl::span<const std::byte> raw_data);
 
   template <typename T>
   const ONNX_NAMESPACE::TensorProto* MakeInitializer(std::string name,
-    const std::vector<int64_t>& shape,
-    const std::vector<T>& data) {
+                                                     const std::vector<int64_t>& shape,
+                                                     const std::vector<T>& data) {
     gsl::span<const std::byte> raw_data = ReinterpretAsSpan<const std::byte, const T>(data);
     return MakeInitializer(name, shape, ToTensorProtoElementType<T>(), raw_data);
   }
 
   // Special handle for std::vector<bool>.
   const ONNX_NAMESPACE::TensorProto* MakeInitializerBool(std::string name,
-    const std::vector<int64_t>& shape, const std::vector<bool>& data) {
+                                                         const std::vector<int64_t>& shape, const std::vector<bool>& data) {
     ONNX_NAMESPACE::TensorProto* tensor_proto = graph_->add_initializer();
     tensor_proto->set_name(name);
     tensor_proto->set_data_type(ToTensorProtoElementType<bool>());
     std::unique_ptr<bool[]> data_buffer = std::make_unique<bool[]>(data.size());
     for (size_t i = 0; i < data.size(); ++i) data_buffer[i] = data[i];
     utils::SetRawDataInTensorProto(
-      *tensor_proto,
-      data_buffer.get(),
-      data.size());
+        *tensor_proto,
+        data_buffer.get(),
+        data.size());
 
     for (auto& dim : shape) {
       tensor_proto->add_dims(dim);
@@ -367,7 +367,7 @@ class ModelTestBuilder {
 
   template <typename T>
   const ONNX_NAMESPACE::TensorProto* MakeInitializer(std::string name,
-    const std::vector<int64_t>& shape, T min, T max) {
+                                                     const std::vector<int64_t>& shape, T min, T max) {
     return MakeInitializer<T>(name, shape, rand_gen_.Uniform<T>(shape, min, max));
   }
 
@@ -382,11 +382,11 @@ class ModelTestBuilder {
   }
 
   const ONNX_NAMESPACE::NodeProto* AddNode(const std::string& node_name,
-               const std::string& op_type,
-               const std::vector<std::string>& input_names,
-               const std::vector<std::string>& output_names,
-               const std::string& domain = "",
-               std::vector<ONNX_NAMESPACE::AttributeProto> node_attributes = {}) {
+                                           const std::string& op_type,
+                                           const std::vector<std::string>& input_names,
+                                           const std::vector<std::string>& output_names,
+                                           const std::string& domain = "",
+                                           std::vector<ONNX_NAMESPACE::AttributeProto> node_attributes = {}) {
     ONNX_NAMESPACE::NodeProto* node = graph_->add_node();
     node->set_op_type(op_type);
     node->set_name(node_name);
@@ -462,8 +462,8 @@ class ModelTestBuilder {
                         bool use_ms_domain = false) {
     std::vector<std::string> input_names;
     input_names.push_back(input_name);
-    auto scale = MakeScalarInitializer<ScaleType>(node_name+"_inp_scale", input_scale);
-    auto zp = MakeScalarInitializer<ZpType>(node_name+"_inp_zp", input_zero_point);
+    auto scale = MakeScalarInitializer<ScaleType>(node_name + "_inp_scale", input_scale);
+    auto zp = MakeScalarInitializer<ZpType>(node_name + "_inp_zp", input_zero_point);
     input_names.push_back(scale->name());
     input_names.push_back(zp->name());
 
@@ -484,8 +484,8 @@ class ModelTestBuilder {
     input_names.push_back(input_name);
 
     std::vector<int64_t> qparams_shape = {static_cast<int64_t>(input_scales.size())};
-    auto scales = MakeInitializer<float>(node_name+"_inp_scale", qparams_shape, input_scales);
-    auto zps = MakeInitializer<T>(node_name+"_inp_zp", qparams_shape, input_zero_points);
+    auto scales = MakeInitializer<float>(node_name + "_inp_scale", qparams_shape, input_scales);
+    auto zps = MakeInitializer<T>(node_name + "_inp_zp", qparams_shape, input_zero_points);
     input_names.push_back(scales->name());
     input_names.push_back(zps->name());
 
@@ -494,13 +494,13 @@ class ModelTestBuilder {
   }
 
   const ONNX_NAMESPACE::NodeProto* AddQuantizeLinearNode(const std::string& node_name,
-                              const std::string input_name,
-                              float input_scale,
-                              const std::string output_name,
-                              bool use_ms_domain = false) {
+                                                         const std::string input_name,
+                                                         float input_scale,
+                                                         const std::string output_name,
+                                                         bool use_ms_domain = false) {
     std::vector<std::string> input_names;
     auto scale = MakeScalarInitializer<float>(
-      node_name+"_inp_scale", input_scale);
+        node_name + "_inp_scale", input_scale);
     input_names.push_back(input_name);
     input_names.push_back(scale->name());
 
@@ -509,13 +509,13 @@ class ModelTestBuilder {
   }
 
   const ONNX_NAMESPACE::NodeProto* AddQuantizeLinearNode(const std::string& node_name,
-                              const std::string input_name,
-                              const std::vector<float>& input_scales,
-                              const std::string output_name,
-                              std::vector<ONNX_NAMESPACE::AttributeProto> attributes = {},
-                              bool use_ms_domain = false) {
+                                                         const std::string input_name,
+                                                         const std::vector<float>& input_scales,
+                                                         const std::string output_name,
+                                                         std::vector<ONNX_NAMESPACE::AttributeProto> attributes = {},
+                                                         bool use_ms_domain = false) {
     std::vector<std::string> input_names;
-    auto scale = Make1DInitializer<float>(node_name+"_inp_scale", input_scales);
+    auto scale = Make1DInitializer<float>(node_name + "_inp_scale", input_scales);
     input_names.push_back(input_name);
     input_names.push_back(scale->name());
 
@@ -552,8 +552,8 @@ class ModelTestBuilder {
                           bool use_ms_domain = false) {
     std::vector<std::string> input_names;
     input_names.push_back(input_name);
-    auto scale = MakeScalarInitializer<ScaleType>(node_name+"_inp_scale", input_scale);
-    auto zp = MakeScalarInitializer<ZpType>(node_name+"_inp_zp", input_zero_point);
+    auto scale = MakeScalarInitializer<ScaleType>(node_name + "_inp_scale", input_scale);
+    auto zp = MakeScalarInitializer<ZpType>(node_name + "_inp_zp", input_zero_point);
     input_names.push_back(scale->name());
     input_names.push_back(zp->name());
 
@@ -574,8 +574,8 @@ class ModelTestBuilder {
     input_names.push_back(input_name);
 
     std::vector<int64_t> qparams_shape = {static_cast<int64_t>(input_scales.size())};
-    auto scales = MakeInitializer<float>(node_name+"_inp_scale", qparams_shape, input_scales);
-    auto zps = MakeInitializer<T>(node_name+"_inp_zp", qparams_shape, input_zero_points);
+    auto scales = MakeInitializer<float>(node_name + "_inp_scale", qparams_shape, input_scales);
+    auto zps = MakeInitializer<T>(node_name + "_inp_zp", qparams_shape, input_zero_points);
     input_names.push_back(scales->name());
     input_names.push_back(zps->name());
 
@@ -590,7 +590,7 @@ class ModelTestBuilder {
                                                            bool use_ms_domain = false) {
     std::vector<std::string> input_names;
     auto scale = MakeScalarInitializer<float>(
-      node_name+"_inp_scale", input_scale);
+        node_name + "_inp_scale", input_scale);
     input_names.push_back(input_name);
     input_names.push_back(scale->name());
 
@@ -599,14 +599,14 @@ class ModelTestBuilder {
   }
 
   const ONNX_NAMESPACE::NodeProto* AddDequantizeLinearNode(const std::string& node_name,
-                                const std::string input_name,
-                                const std::vector<float>& input_scales,
-                                const std::string output_name,
-                                std::vector<ONNX_NAMESPACE::AttributeProto> attributes = {},
-                                bool use_ms_domain = false) {
+                                                           const std::string input_name,
+                                                           const std::vector<float>& input_scales,
+                                                           const std::string output_name,
+                                                           std::vector<ONNX_NAMESPACE::AttributeProto> attributes = {},
+                                                           bool use_ms_domain = false) {
     std::vector<std::string> input_names;
     input_names.push_back(input_name);
-    auto scale = Make1DInitializer<float>(node_name+"_inp_scale", input_scales);
+    auto scale = Make1DInitializer<float>(node_name + "_inp_scale", input_scales);
     input_names.push_back(scale->name());
 
     std::string domain = use_ms_domain ? kMSDomain : "";
@@ -625,19 +625,19 @@ class ModelTestBuilder {
   /// <param name="use_ms_domain">True to use the 'com.microsoft' domain</param>
   /// <returns>Reference to the new DQ node</returns>
   const ONNX_NAMESPACE::NodeProto* AddDequantizeLinearNode(const std::string& node_name,
-                                                          const std::string input_name,
-                                                          float input_scale,
-                                                          int64_t input_zero_point,
-                                                          ONNX_NAMESPACE::TensorProto_DataType zero_point_type,
-                                                          const std::string output_name,
-                                                          bool use_ms_domain = false);
+                                                           const std::string input_name,
+                                                           float input_scale,
+                                                           int64_t input_zero_point,
+                                                           ONNX_NAMESPACE::TensorProto_DataType zero_point_type,
+                                                           const std::string output_name,
+                                                           bool use_ms_domain = false);
 
   ONNX_NAMESPACE::ModelProto model_;
   ONNX_NAMESPACE::GraphProto* graph_ = model_.mutable_graph();
   std::unordered_map<std::string, Ort::Value> feeds_;
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
 
-private:
+ private:
   /** Gets the TensorProto_DataType corresponding to the template type `T`. */
   template <typename T>
   constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType() {

@@ -25,18 +25,18 @@ using GetQDQTestCaseFn = std::function<void(ModelTestBuilder& builder)>;
 template <typename T>
 std::string
 AddQDQNodePair(ModelTestBuilder& builder, std::string qdq_name, std::string inp_name, float scale, T zp = T(), bool use_ms_domain = false) {
-  builder.AddQuantizeLinearNode<T>(qdq_name+"_q", inp_name.c_str(), scale, zp, (qdq_name+"_q_out").c_str(), use_ms_domain);
-  builder.AddDequantizeLinearNode<T>(qdq_name+"_dq", (qdq_name+"_q_out").c_str(), scale, zp, (qdq_name+"_dq_out").c_str(), use_ms_domain);
-  return qdq_name+"_dq_out";
+  builder.AddQuantizeLinearNode<T>(qdq_name + "_q", inp_name.c_str(), scale, zp, (qdq_name + "_q_out").c_str(), use_ms_domain);
+  builder.AddDequantizeLinearNode<T>(qdq_name + "_dq", (qdq_name + "_q_out").c_str(), scale, zp, (qdq_name + "_dq_out").c_str(), use_ms_domain);
+  return qdq_name + "_dq_out";
 }
 
 template <typename T>
 std::string
 AddQDQNodePairWithOutputAsGraphOutput(ModelTestBuilder& builder, std::string qdq_name, std::string inp_name, float scale, T zp = T(),
                                       bool use_ms_domain = false) {
-  builder.AddQuantizeLinearNode<T>(qdq_name+"_q", inp_name.c_str(), scale, zp, (qdq_name+"_q_out").c_str(), use_ms_domain);
-  builder.AddDequantizeLinearNode<T>(qdq_name+"_dq", (qdq_name+"_q_out").c_str(), scale, zp, (qdq_name+"_dq_out").c_str(), use_ms_domain);
-  return qdq_name+"_dq_out";
+  builder.AddQuantizeLinearNode<T>(qdq_name + "_q", inp_name.c_str(), scale, zp, (qdq_name + "_q_out").c_str(), use_ms_domain);
+  builder.AddDequantizeLinearNode<T>(qdq_name + "_dq", (qdq_name + "_q_out").c_str(), scale, zp, (qdq_name + "_dq_out").c_str(), use_ms_domain);
+  return qdq_name + "_dq_out";
 }
 
 // template <typename T>

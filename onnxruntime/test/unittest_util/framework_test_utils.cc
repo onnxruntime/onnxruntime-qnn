@@ -10,22 +10,20 @@ namespace test {
 // TODO: Implement the CountOps functions once public API support get ep graph partitioning info
 
 // Specialization for std::vector<bool> which doesn't have .data() method
-template<>
+template <>
 void CreateMLValue<bool>(const OrtMemoryInfo* memory_info,
-  gsl::span<const int64_t> dims,
-  const std::vector<bool>& value,
-  Ort::Value& p_mlvalue) {
+                         gsl::span<const int64_t> dims,
+                         const std::vector<bool>& value,
+                         Ort::Value& p_mlvalue) {
   // Create memory info if not provided
-  Ort::MemoryInfo mem_info_to_use = memory_info ?
-    Ort::MemoryInfo(const_cast<OrtMemoryInfo*>(memory_info)) :
-    Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault);
+  Ort::MemoryInfo mem_info_to_use = memory_info ? Ort::MemoryInfo(const_cast<OrtMemoryInfo*>(memory_info)) : Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeDefault);
 
   // Allocate tensor with ORT-owned buffer (Arena allocator).
   Ort::AllocatorWithDefaultOptions allocator;
   p_mlvalue = Ort::Value::CreateTensor<bool>(
-    allocator,
-    dims.data(),
-    dims.size());
+      allocator,
+      dims.data(),
+      dims.size());
 
   bool* dst = p_mlvalue.GetTensorMutableData<bool>();
 
