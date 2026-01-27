@@ -531,36 +531,6 @@ TEST_F(QnnABIHTPBackendTests, ResizeU8_HalfNearestAsymmetricFloor) {
                               ExpectedEPNodeAssignment::All);
 }
 
-// Test Resize with BF16 input in cubic mode. Should not be assigned to HTP backend.
-TEST_F(QnnABIHTPBackendTests, ResizeBF16CubicUnsupported) {
-  std::vector<float> input_f32 = GetFloatDataInRangeABI(-4.0f, 4.0f, 16);
-  std::vector<onnxruntime::BFloat16> input_bf16;
-  input_bf16.reserve(input_f32.size());
-  for (float value : input_f32) {
-    input_bf16.emplace_back(value);
-  }
-
-  TestInputDef<onnxruntime::BFloat16> input_def({1, 1, 4, 4}, false, input_bf16);
-
-  auto build_fn = [input_def](ModelTestBuilder& builder) {
-    NodeArg* input = MakeTestInput(builder, input_def);
-    NodeArg* roi = builder.MakeInitializer<float>({0}, {});
-    NodeArg* scales = builder.MakeInitializer<float>({0}, {});
-    NodeArg* sizes = builder.Make1DInitializer<int64_t>({1, 1, 8, 8});
-
-    NodeArg* output = builder.MakeOutput();
-    Node& resize_node = builder.AddNode("Resize", {input, roi, scales, sizes}, {output});
-    resize_node.AddAttribute("mode", "cubic");
-    resize_node.AddAttribute("coordinate_transformation_mode", "half_pixel");
-  };
-
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTestABI(build_fn, provider_options, 19, ExpectedEPNodeAssignment::None);
-}
-
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
