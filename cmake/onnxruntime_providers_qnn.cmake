@@ -12,9 +12,6 @@
        "${ONNXRUNTIME_ROOT}/core/providers/qnn/*.h"
        "${ONNXRUNTIME_ROOT}/core/providers/qnn/*.cc"
   )
-  # TODO: Re-enable these Op later
-  list(REMOVE_ITEM onnxruntime_providers_qnn_ep_srcs
-       "${ONNXRUNTIME_ROOT}/core/providers/qnn/builder/opbuilder/fused_matmul_op_builder.cc")
 
   # Exclude the simulation EP factory files from the build
   list(REMOVE_ITEM onnxruntime_providers_qnn_ep_srcs

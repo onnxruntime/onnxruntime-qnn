@@ -139,5 +139,7 @@ void CreateMatMulNBitsOpBuilder(const std::string& op_type, OpBuilderRegistratio
 
 void CreateQuickGeluOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
+void CreateFusedMatMulOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+
 }  // namespace qnn
 }  // namespace onnxruntime
