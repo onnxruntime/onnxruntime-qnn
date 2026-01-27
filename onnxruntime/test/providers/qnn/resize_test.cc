@@ -91,7 +91,7 @@ static GetTestQDQModelFn<QuantType> GetQDQResizeModelBuilder(const TestInputDef<
                                                              std::optional<float> cubic_coeff_a = std::nullopt) {
   return [input_def, sizes_data, mode,
           coordinate_transformation_mode, nearest_mode, cubic_coeff_a](ModelTestBuilder& builder,
-                                                        std::vector<QuantParams<QuantType>>& output_qparams) {
+                                                                       std::vector<QuantParams<QuantType>>& output_qparams) {
     // input -> Q -> DQ ->
     NodeArg* input = MakeTestInput(builder, input_def);
     QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);

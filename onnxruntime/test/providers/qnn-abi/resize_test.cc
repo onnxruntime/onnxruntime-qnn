@@ -173,9 +173,9 @@ static void RunQDQResizeOpTest(const TestInputDef<float>& input_def,
                                ExpectedEPNodeAssignment expected_ep_assignment,
                                int opset = 19,
                                QDQTolerance tolerance = QDQTolerance(),
-             const std::unordered_map<std::string, std::string>& session_option_pairs = {},
-             std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
-             std::optional<float> cubic_coeff_a = std::nullopt) {
+                               const std::unordered_map<std::string, std::string>& session_option_pairs = {},
+                               std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
+                               std::optional<float> cubic_coeff_a = std::nullopt) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -186,11 +186,11 @@ static void RunQDQResizeOpTest(const TestInputDef<float>& input_def,
                           provider_options,
                           opset,
                           expected_ep_assignment,
-           tolerance,
-           logging::Severity::kERROR,
-           "",
-           session_option_pairs,
-           graph_optimization_level);
+                          tolerance,
+                          logging::Severity::kERROR,
+                          "",
+                          session_option_pairs,
+                          graph_optimization_level);
 }
 
 //

@@ -734,8 +734,8 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
     // Run QDQ model on CPU EP and collect outputs.
     std::vector<OrtValue> cpu_qdq_outputs;
     InferenceModel(qdq_model_data, "qdq_model_logger", {}, ExpectedEPNodeAssignment::All,
-             qdq_helper.feeds_, cpu_qdq_outputs, false,
-                 std::unordered_map<std::string, std::string>{}, graph_optimization_level);
+                   qdq_helper.feeds_, cpu_qdq_outputs, false,
+                   std::unordered_map<std::string, std::string>{}, graph_optimization_level);
     ASSERT_EQ(cpu_qdq_outputs.size(), num_outputs);
     ASSERT_EQ(qnn_qdq_outputs.size(), num_outputs);
 
@@ -959,14 +959,14 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     model_proto.SerializeToString(&qnn_ctx_model_data);
     // Run QNN context cache model on QNN EP and collect outputs.
     InferenceModel(qnn_ctx_model_data, "qnn_ctx_model_logger", qnn_options,
-             expected_ep_assignment, f16_helper.feeds_, qnn_f16_outputs, is_qnn_ep,
-             session_option_pairs, graph_optimization_level);
+                   expected_ep_assignment, f16_helper.feeds_, qnn_f16_outputs, is_qnn_ep,
+                   session_option_pairs, graph_optimization_level);
   } else {
     // Run QDQ model on QNN EP and collect outputs.
     // Only need to apply the extra session options to this QDQ model inference on QNN EP
     InferenceModel(f16_model_data, "fp16_model_logger", qnn_options, expected_ep_assignment,
-             f16_helper.feeds_, qnn_f16_outputs, is_qnn_ep, session_option_pairs,
-             graph_optimization_level);
+                   f16_helper.feeds_, qnn_f16_outputs, is_qnn_ep, session_option_pairs,
+                   graph_optimization_level);
   }
 
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
@@ -974,7 +974,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     std::vector<OrtValue> cpu_f16_outputs;
     InferenceModel(f16_model_data, "fp16_model_logger", {}, ExpectedEPNodeAssignment::All,
                    f16_helper.feeds_, cpu_f16_outputs, false,
-                 std::unordered_map<std::string, std::string>{}, graph_optimization_level);
+                   std::unordered_map<std::string, std::string>{}, graph_optimization_level);
     ASSERT_EQ(cpu_f16_outputs.size(), num_outputs);
     ASSERT_EQ(qnn_f16_outputs.size(), num_outputs);
 

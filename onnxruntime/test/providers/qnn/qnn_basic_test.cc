@@ -1699,7 +1699,7 @@ TEST_F(QnnHTPBackendTests, TestTempModel) {
   AllocatorPtr allocator = TestCPUExecutionProvider()->CreatePreferredAllocators()[0];
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
 
-  const std::vector<int64_t> input_shape{1,3,4,4};
+  const std::vector<int64_t> input_shape{1, 3, 4, 4};
   auto data = rand_gen_.Uniform<float>(input_shape, -0.5f, 0.5f);
   OrtValue input_value;
   CreateMLValue<float>(allocator, input_shape, std::move(data), &input_value);

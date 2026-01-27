@@ -391,11 +391,11 @@ Status ResizeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_w
     if (qnn_interp_mode.uint32Value == QNN_OP_RESIZE_INTERPOLATION_MODE_CUBIC) {
       const float cubic_coeff = GetOnnxAttr(node_helper, onnx_cubic_coeff_a_attr);
       ORT_RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper,
-                                          node_unit.Index(),
-                                          node_unit.Name(),
-                                          cubic_coeff,
-                                          QNN_OP_RESIZE_PARAM_CUBIC_COEFF,
-                                          param_tensor_names));
+                                              node_unit.Index(),
+                                              node_unit.Name(),
+                                              cubic_coeff,
+                                              QNN_OP_RESIZE_PARAM_CUBIC_COEFF,
+                                              param_tensor_names));
     }
   }
 
