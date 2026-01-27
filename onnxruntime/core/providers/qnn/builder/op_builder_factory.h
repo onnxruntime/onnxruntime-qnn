@@ -137,5 +137,7 @@ void CreateConcatOpBuilder(const std::string& op_type, OpBuilderRegistrations& o
 
 void CreateMatMulNBitsOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
+void CreateQuickGeluOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+
 }  // namespace qnn
 }  // namespace onnxruntime
