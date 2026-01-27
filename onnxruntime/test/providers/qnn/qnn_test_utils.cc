@@ -266,10 +266,16 @@ void InferenceModel(const std::string& model_data, const char* log_id,
                     std::vector<OrtValue>& output_vals,
                     bool is_qnn_ep,
                     const std::unordered_map<std::string, std::string>& session_option_pairs,
+                    std::optional<GraphOptimizationLevel> graph_optimization_level,
                     std::function<void(const Graph&)>* graph_checker) {
   SessionOptions so;
   so.session_logid = log_id;
-  for (auto key_value : session_option_pairs) {
+
+  if (graph_optimization_level.has_value()) {
+    so.graph_optimization_level = static_cast<TransformerLevel>(*graph_optimization_level);
+  }
+
+  for (const auto& key_value : session_option_pairs) {
     ASSERT_STATUS_OK(so.config_options.AddConfigEntry(key_value.first.c_str(), key_value.second.c_str()));
   }
   RunOptions run_options;

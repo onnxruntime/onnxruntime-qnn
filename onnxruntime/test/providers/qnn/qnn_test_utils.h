@@ -14,6 +14,7 @@
 #include "core/framework/tensor_shape.h"
 #include "core/common/float16.h"
 #include "core/util/qmath.h"
+#include "core/optimizer/graph_transformer_level.h"
 
 #include "test/util/include/default_providers.h"
 #include "test/unittest_util/qdq_test_utils.h"
@@ -466,6 +467,7 @@ DEF_QUANTIZE_VALUES_INT4_FUNC(UInt4x2, ParQuantizeLinearStdU4)
  * \param output_vals Initialized to the inference results.
  * \param is_qnn_ep Ture: QNN EP is used. False: CPU EP is used (default).
  * \param session_option_pairs extra session options.
+ * \param graph_optimization_level optional graph optimization level override.
  * \param graph_checker Function called on the Graph.
  */
 void InferenceModel(const std::string& model_data, const char* log_id,
@@ -474,6 +476,7 @@ void InferenceModel(const std::string& model_data, const char* log_id,
                     std::vector<OrtValue>& output_vals,
                     bool is_qnn_ep = false,
                     const std::unordered_map<std::string, std::string>& session_option_pairs = {},
+                    std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
                     std::function<void(const Graph&)>* graph_checker = nullptr);
 
 /**
@@ -599,6 +602,7 @@ class QNNTestEnvironment {
  * \param log_severity The logger's severity setting.
  * \param ep_graph_checker Function called on the Graph generated for the QNN EP's session. Used to check node
  *                         EP assignment.
+ * \param graph_optimization_level optional graph optimization level override applied to QNN inference only.
  */
 template <typename QuantType>
 inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTestQDQModelFn<QuantType>& qdq_model_fn,
@@ -608,6 +612,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
                                  logging::Severity log_severity = logging::Severity::kERROR,
                                  const std::string& qnn_ctx_model_path = "",
                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
+                                 std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
                                  std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr) {
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
@@ -646,7 +651,8 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
   // Run f32 model on CPU EP and collect outputs.
   std::vector<OrtValue> cpu_f32_outputs;
   InferenceModel(f32_model_data, "f32_model_logger", {}, ExpectedEPNodeAssignment::All,
-                 f32_helper.feeds_, cpu_f32_outputs);
+                 f32_helper.feeds_, cpu_f32_outputs, false,
+                 std::unordered_map<std::string, std::string>{}, graph_optimization_level);
   ASSERT_FALSE(cpu_f32_outputs.empty());
 
   const size_t num_outputs = cpu_f32_outputs.size();
@@ -714,19 +720,22 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn, const GetTe
     model_proto.SerializeToString(&qnn_ctx_model_data);
     // Run QNN context cache model on QNN EP and collect outputs.
     InferenceModel(qnn_ctx_model_data, "qnn_ctx_model_logger", qnn_options,
-                   expected_ep_assignment, qdq_helper.feeds_, qnn_qdq_outputs, is_qnn_ep, session_option_pairs);
+                   expected_ep_assignment, qdq_helper.feeds_, qnn_qdq_outputs, is_qnn_ep,
+                   session_option_pairs, graph_optimization_level);
   } else {
     // Run QDQ model on QNN EP and collect outputs.
     // Only need to apply the extra session options to this QDQ model inference on QNN EP
     InferenceModel(qdq_model_data, "qdq_model_logger", qnn_options, expected_ep_assignment,
-                   qdq_helper.feeds_, qnn_qdq_outputs, is_qnn_ep, session_option_pairs, qnn_ep_graph_checker);
+                   qdq_helper.feeds_, qnn_qdq_outputs, is_qnn_ep, session_option_pairs,
+                   graph_optimization_level, qnn_ep_graph_checker);
   }
 
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
     // Run QDQ model on CPU EP and collect outputs.
     std::vector<OrtValue> cpu_qdq_outputs;
     InferenceModel(qdq_model_data, "qdq_model_logger", {}, ExpectedEPNodeAssignment::All,
-                   qdq_helper.feeds_, cpu_qdq_outputs);
+             qdq_helper.feeds_, cpu_qdq_outputs, false,
+                 std::unordered_map<std::string, std::string>{}, graph_optimization_level);
     ASSERT_EQ(cpu_qdq_outputs.size(), num_outputs);
     ASSERT_EQ(qnn_qdq_outputs.size(), num_outputs);
 
@@ -847,7 +856,8 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                                   float tolerance = 0.004,
                                   logging::Severity log_severity = logging::Severity::kERROR,
                                   const std::string& qnn_ctx_model_path = "",
-                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
+                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
+                                  std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt) {
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
       QNNTestEnvironment::GetInstance().dump_dlc() ||
@@ -884,7 +894,8 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   // Run f32 model on CPU EP and collect outputs.
   std::vector<OrtValue> cpu_f32_outputs;
   InferenceModel(f32_model_data, "f32_model_logger", {}, ExpectedEPNodeAssignment::All,
-                 f32_helper.feeds_, cpu_f32_outputs);
+                 f32_helper.feeds_, cpu_f32_outputs, false,
+                 std::unordered_map<std::string, std::string>{}, graph_optimization_level);
   ASSERT_FALSE(cpu_f32_outputs.empty());
 
   const size_t num_outputs = cpu_f32_outputs.size();
@@ -948,19 +959,22 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     model_proto.SerializeToString(&qnn_ctx_model_data);
     // Run QNN context cache model on QNN EP and collect outputs.
     InferenceModel(qnn_ctx_model_data, "qnn_ctx_model_logger", qnn_options,
-                   expected_ep_assignment, f16_helper.feeds_, qnn_f16_outputs, is_qnn_ep, session_option_pairs);
+             expected_ep_assignment, f16_helper.feeds_, qnn_f16_outputs, is_qnn_ep,
+             session_option_pairs, graph_optimization_level);
   } else {
     // Run QDQ model on QNN EP and collect outputs.
     // Only need to apply the extra session options to this QDQ model inference on QNN EP
     InferenceModel(f16_model_data, "fp16_model_logger", qnn_options, expected_ep_assignment,
-                   f16_helper.feeds_, qnn_f16_outputs, is_qnn_ep, session_option_pairs);
+             f16_helper.feeds_, qnn_f16_outputs, is_qnn_ep, session_option_pairs,
+             graph_optimization_level);
   }
 
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
     // Run QDQ model on CPU EP and collect outputs.
     std::vector<OrtValue> cpu_f16_outputs;
     InferenceModel(f16_model_data, "fp16_model_logger", {}, ExpectedEPNodeAssignment::All,
-                   f16_helper.feeds_, cpu_f16_outputs);
+                   f16_helper.feeds_, cpu_f16_outputs, false,
+                 std::unordered_map<std::string, std::string>{}, graph_optimization_level);
     ASSERT_EQ(cpu_f16_outputs.size(), num_outputs);
     ASSERT_EQ(qnn_f16_outputs.size(), num_outputs);
 
@@ -1006,7 +1020,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
         const float f16_vals_err = std::fabs(qnn_relative_err - cpu_relative_err);
 
         // True if f16@QNN_EP is at least as accurate as f16@CPU_EP when compared to expected f32@CPU_EP value.
-        const bool is_as_accurate_as_cpu_ep = qnn_relative_err <= qnn_relative_err;
+        const bool is_as_accurate_as_cpu_ep = qnn_relative_err <= cpu_relative_err;
 
         // True if the normalized difference between f16@QNN_EP and f16@CPU_EP is within tolerance.
         const bool f16_vals_diff_within_tolerance = f16_vals_err <= tolerance;

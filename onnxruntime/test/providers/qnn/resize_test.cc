@@ -3,6 +3,7 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -10,6 +11,7 @@
 #include "test/unittest_util/qdq_test_utils.h"
 
 #include "core/graph/onnx_protobuf.h"
+#include "core/common/float16.h"
 
 #include "gtest/gtest.h"
 
@@ -31,8 +33,9 @@ static GetTestModelFn GetResizeModelBuilder(const TestInputDef<float>& input_def
                                             const std::vector<int64_t>& sizes_data,
                                             const std::string& mode = "nearest",
                                             const std::string& coordinate_transformation_mode = "half_pixel",
-                                            const std::string& nearest_mode = "round_prefer_floor") {
-  return [input_def, sizes_data, mode, coordinate_transformation_mode, nearest_mode](ModelTestBuilder& builder) {
+                                            const std::string& nearest_mode = "round_prefer_floor",
+                                            std::optional<float> cubic_coeff_a = std::nullopt) {
+  return [input_def, sizes_data, mode, coordinate_transformation_mode, nearest_mode, cubic_coeff_a](ModelTestBuilder& builder) {
     NodeArg* input = MakeTestInput(builder, input_def);
     NodeArg* roi = builder.MakeInitializer<float>({0}, {});
     NodeArg* scales = builder.MakeInitializer<float>({0}, {});
@@ -46,6 +49,10 @@ static GetTestModelFn GetResizeModelBuilder(const TestInputDef<float>& input_def
     if (mode == "nearest") {
       resize_node.AddAttribute("nearest_mode", nearest_mode);
     }
+
+    if (mode == "cubic" && cubic_coeff_a.has_value()) {
+      resize_node.AddAttribute("cubic_coeff_a", *cubic_coeff_a);
+    }
   };
 }
 
@@ -53,8 +60,9 @@ static GetTestModelFn GetResizeModelBuilderWithScales(const TestInputDef<float>&
                                                       const std::vector<float>& scales_data,
                                                       const std::string& mode = "nearest",
                                                       const std::string& coordinate_transformation_mode = "half_pixel",
-                                                      const std::string& nearest_mode = "round_prefer_floor") {
-  return [input_def, scales_data, mode, coordinate_transformation_mode, nearest_mode](ModelTestBuilder& builder) {
+                                                      const std::string& nearest_mode = "round_prefer_floor",
+                                                      std::optional<float> cubic_coeff_a = std::nullopt) {
+  return [input_def, scales_data, mode, coordinate_transformation_mode, nearest_mode, cubic_coeff_a](ModelTestBuilder& builder) {
     NodeArg* input = MakeTestInput(builder, input_def);
     NodeArg* roi = builder.MakeInitializer<float>({0}, {});
     NodeArg* scales = builder.Make1DInitializer<float>(scales_data);
@@ -67,6 +75,10 @@ static GetTestModelFn GetResizeModelBuilderWithScales(const TestInputDef<float>&
     if (mode == "nearest") {
       resize_node.AddAttribute("nearest_mode", nearest_mode);
     }
+
+    if (mode == "cubic" && cubic_coeff_a.has_value()) {
+      resize_node.AddAttribute("cubic_coeff_a", *cubic_coeff_a);
+    }
   };
 }
 
@@ -75,9 +87,10 @@ static GetTestQDQModelFn<QuantType> GetQDQResizeModelBuilder(const TestInputDef<
                                                              const std::vector<int64_t>& sizes_data,
                                                              const std::string& mode = "nearest",
                                                              const std::string& coordinate_transformation_mode = "half_pixel",
-                                                             const std::string& nearest_mode = "round_prefer_floor") {
+                                                             const std::string& nearest_mode = "round_prefer_floor",
+                                                             std::optional<float> cubic_coeff_a = std::nullopt) {
   return [input_def, sizes_data, mode,
-          coordinate_transformation_mode, nearest_mode](ModelTestBuilder& builder,
+          coordinate_transformation_mode, nearest_mode, cubic_coeff_a](ModelTestBuilder& builder,
                                                         std::vector<QuantParams<QuantType>>& output_qparams) {
     // input -> Q -> DQ ->
     NodeArg* input = MakeTestInput(builder, input_def);
@@ -95,6 +108,10 @@ static GetTestQDQModelFn<QuantType> GetQDQResizeModelBuilder(const TestInputDef<
 
     if (mode == "nearest") {
       resize_node.AddAttribute("nearest_mode", nearest_mode);
+    }
+
+    if (mode == "cubic" && cubic_coeff_a.has_value()) {
+      resize_node.AddAttribute("cubic_coeff_a", *cubic_coeff_a);
     }
 
     // Resize requires the output quantization parameters to match the input.
@@ -120,12 +137,13 @@ static void RunCPUResizeOpTest(const TestInputDef<float>& input_def, const std::
                                const std::string& mode, const std::string& coordinate_transformation_mode,
                                const std::string& nearest_mode,
                                ExpectedEPNodeAssignment expected_ep_assignment,
-                               int opset = 19) {
+                               int opset = 19,
+                               std::optional<float> cubic_coeff_a = std::nullopt) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(GetResizeModelBuilder(input_def, sizes_data, mode, coordinate_transformation_mode, nearest_mode),
+  RunQnnModelTest(GetResizeModelBuilder(input_def, sizes_data, mode, coordinate_transformation_mode, nearest_mode, cubic_coeff_a),
                   provider_options,
                   opset,
                   expected_ep_assignment);
@@ -135,12 +153,13 @@ static void RunCPUResizeOpTestWithScales(const TestInputDef<float>& input_def, c
                                          const std::string& mode, const std::string& coordinate_transformation_mode,
                                          const std::string& nearest_mode,
                                          ExpectedEPNodeAssignment expected_ep_assignment,
-                                         int opset = 19) {
+                                         int opset = 19,
+                                         std::optional<float> cubic_coeff_a = std::nullopt) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(GetResizeModelBuilderWithScales(input_def, scales_data, mode, coordinate_transformation_mode, nearest_mode),
+  RunQnnModelTest(GetResizeModelBuilderWithScales(input_def, scales_data, mode, coordinate_transformation_mode, nearest_mode, cubic_coeff_a),
                   provider_options,
                   opset,
                   expected_ep_assignment);
@@ -149,22 +168,30 @@ static void RunCPUResizeOpTestWithScales(const TestInputDef<float>& input_def, c
 template <typename QuantType>
 static void RunQDQResizeOpTest(const TestInputDef<float>& input_def,
                                const std::vector<int64_t>& sizes_data,
-                               const std::string& mode, const std::string& coordinate_transformation_mode,
+                               const std::string& mode,
+                               const std::string& coordinate_transformation_mode,
                                const std::string& nearest_mode,
                                ExpectedEPNodeAssignment expected_ep_assignment,
                                int opset = 19,
-                               QDQTolerance tolerance = QDQTolerance()) {
+                               QDQTolerance tolerance = QDQTolerance(),
+                               const std::unordered_map<std::string, std::string>& session_option_pairs = {},
+                               std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
+                               std::optional<float> cubic_coeff_a = std::nullopt) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  TestQDQModelAccuracy(GetResizeModelBuilder(input_def, sizes_data, mode, coordinate_transformation_mode, nearest_mode),
+  TestQDQModelAccuracy(GetResizeModelBuilder(input_def, sizes_data, mode, coordinate_transformation_mode, nearest_mode, cubic_coeff_a),
                        GetQDQResizeModelBuilder<QuantType>(input_def, sizes_data, mode, coordinate_transformation_mode,
-                                                           nearest_mode),
+                                                           nearest_mode, cubic_coeff_a),
                        provider_options,
                        opset,
                        expected_ep_assignment,
-                       tolerance);
+                       tolerance,
+                       logging::Severity::kERROR,
+                       "",
+                       session_option_pairs,
+                       graph_optimization_level);
 }
 
 //
@@ -287,6 +314,23 @@ TEST_F(QnnCPUBackendTests, Resize2xLinearAlignCorners_scales) {
                                ExpectedEPNodeAssignment::All);
 }
 
+TEST_F(QnnCPUBackendTests, Resize2xCubicHalfPixel) {
+  std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 60);
+  RunCPUResizeOpTest(TestInputDef<float>({1, 3, 4, 5}, false, input_data),
+                     {1, 3, 8, 10}, "cubic", "half_pixel", "",
+                     ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnCPUBackendTests, Resize2xCubicHalfPixel_CustomCoeff) {
+  std::vector<float> input_data = GetFloatDataInRange(-2.0f, 4.0f, 60);
+  const float cubic_coeff_a = -0.5f;
+  RunCPUResizeOpTest(TestInputDef<float>({1, 3, 4, 5}, false, input_data),
+                     {1, 3, 8, 10}, "cubic", "half_pixel", "",
+                     ExpectedEPNodeAssignment::All,
+                     19,
+                     cubic_coeff_a);
+}
+
 // Test Resize downsample with mode: "linear", coordinate_transformation_mode: "align_corners"
 TEST_F(QnnCPUBackendTests, Resize_DownSample_Linear_AlignCorners_scales) {
   std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
@@ -351,6 +395,34 @@ TEST_F(QnnHTPBackendTests, ResizeU8_2xLinearHalfPixel) {
                               {1, 3, 8, 8}, "linear", "half_pixel", "",
                               ExpectedEPNodeAssignment::All,
                               19);
+}
+
+// Test 2x QDQ Resize mode: "cubic", coordinate_transformation_mode: "half_pixel"
+// Maps to QNN's Resize operator with cubic interpolation.
+// GraphOptimizationLevel is to avoid DQ->Resize->Q folding to native op which is not there for `cubic` mode.
+TEST_F(QnnHTPBackendTests, ResizeU8_2xCubicHalfPixel) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
+                              {1, 3, 8, 8}, "cubic", "half_pixel", "",
+                              ExpectedEPNodeAssignment::All,
+                              19,
+                              QDQTolerance(),
+                              {},
+                              GraphOptimizationLevel::ORT_DISABLE_ALL);
+}
+
+// Test 2x QDQ Resize mode: "cubic" with a custom cubic coefficient.
+TEST_F(QnnHTPBackendTests, ResizeU8_2xCubicHalfPixel_CustomCoeff) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  const float cubic_coeff_a = -0.6f;
+  RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
+                              {1, 3, 8, 8}, "cubic", "half_pixel", "",
+                              ExpectedEPNodeAssignment::All,
+                              19,
+                              QDQTolerance(),
+                              {},
+                              GraphOptimizationLevel::ORT_DISABLE_ALL,
+                              cubic_coeff_a);
 }
 
 // Test 2x QDQ Resize mode: "linear", coordinate_transformation_mode: "align_corners"
