@@ -109,6 +109,10 @@ Status ScatterElementsOpBuilder::ProcessInput(QnnModelWrapper& qnn_model_wrapper
       }
     }
 
+    if (initializer_OOB) {
+      LOGS(logger, VERBOSE) << "Initializer value out of boundary: " << input_name;
+    }
+
     // Cast int 32 to float
     if (data_type == QNN_DATATYPE_INT_32 && !allow_int_32) {
       gsl::span<int32_t> origin_values{reinterpret_cast<int32_t*>(unpacked_tensor.data()), num_elems};
