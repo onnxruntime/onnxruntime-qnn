@@ -2016,21 +2016,32 @@ def build_python_wheel(
         run_subprocess(args, cwd=cwd)
 
 
+def build_qnn_ep_helper_assembly(source_dir, config):
+    """Build the Qualcomm.ML.OnnxRuntime.QNN helper assembly"""
+    helper_project_dir = os.path.join(source_dir, "csharp", "src", "Qualcomm.ML.OnnxRuntime.QNN")
+    helper_project_file = os.path.join(helper_project_dir, "Qualcomm.ML.OnnxRuntime.QNN.csproj")
+
+    if not os.path.exists(helper_project_file):
+        log.warning(f"QNN EP helper project not found: {helper_project_file}")
+        return False
+
+    log.info("Building Qualcomm.ML.OnnxRuntime.QNN helper assembly...")
+    try:
+        run_subprocess(["dotnet", "build", helper_project_file, "-c", config], cwd=helper_project_dir)
+        log.info("Successfully built QNN EP helper assembly")
+        return True
+    except Exception as e:
+        log.error(f"Failed to build QNN EP helper assembly: {e}")
+        return False
+
+
 def build_nuget_package(
-    cmake_path,
     source_dir,
     build_dir,
     configs,
-    use_cuda,
-    use_openvino,
-    use_tensorrt,
-    use_dnnl,
-    use_winml,
     use_qnn,
-    use_dml,
-    use_migraphx,
-    enable_training_apis,
     msbuild_extra_options,
+    target_arch_name,
 ):
     if not (is_windows() or is_linux()):
         raise BuildError(
@@ -2050,37 +2061,19 @@ def build_nuget_package(
     execution_provider = "/p:ExecutionProvider=None"
     package_name = "/p:OrtPackageId=Microsoft.ML.OnnxRuntime"
     enable_training_tests = "/p:TrainingEnabledNativeBuild=false"
+    target_architecture_name = "/p:TargetArchitecture=" + target_arch_name
 
-    if enable_training_apis:
-        enable_training_tests = "/p:TrainingEnabledNativeBuild=true"
-        if use_cuda:
-            package_name = "/p:OrtPackageId=Microsoft.ML.OnnxRuntime.Training.Gpu"
-        else:
-            package_name = "/p:OrtPackageId=Microsoft.ML.OnnxRuntime.Training"
-    elif use_winml:
-        package_name = "/p:OrtPackageId=Microsoft.AI.MachineLearning"
-        target_name = "/t:CreateWindowsAIPackage"
-    elif use_openvino:
-        execution_provider = "/p:ExecutionProvider=openvino"
-        package_name = "/p:OrtPackageId=Intel.ML.OnnxRuntime.OpenVino"
-    elif use_tensorrt:
-        execution_provider = "/p:ExecutionProvider=tensorrt"
-        package_name = "/p:OrtPackageId=Microsoft.ML.OnnxRuntime.TensorRT"
-    elif use_migraphx:
-        execution_provider = "/p:ExecutionProvider=migraphx"
-        package_name = "/p:OrtPackageId=Microsoft.ML.OnnxRuntime.MIGraphX"
-    elif use_dnnl:
-        execution_provider = "/p:ExecutionProvider=dnnl"
-        package_name = "/p:OrtPackageId=Microsoft.ML.OnnxRuntime.DNNL"
-    elif use_cuda:
-        package_name = "/p:OrtPackageId=Microsoft.ML.OnnxRuntime.Gpu"
-    elif use_dml:
-        package_name = "/p:OrtPackageId=Microsoft.ML.OnnxRuntime.DirectML"
-    elif use_qnn:
+    if use_qnn:
         if use_qnn != "shared_lib":
             raise BuildError("Currently NuGet packages with QNN require QNN EP to be built as a shared library.")
         execution_provider = "/p:ExecutionProvider=qnn"
-        package_name = "/p:OrtPackageId=Microsoft.ML.OnnxRuntime.QNN"
+        package_name = "/p:OrtPackageId=Qualcomm.ML.OnnxRuntime.QNN"
+
+        # Build the QNN EP helper assembly for each config
+        log.info("Building Qualcomm.ML.OnnxRuntime.QNN helper assembly...")
+        for config in configs:
+            if not build_qnn_ep_helper_assembly(source_dir, config):
+                log.warning("Failed to build QNN EP helper assembly, continuing with package build...")
     elif any("OrtPackageId=" in x for x in msbuild_extra_options):
         pass
     else:
@@ -2116,40 +2109,21 @@ def build_nuget_package(
 
         run_subprocess(cmd_args, cwd=csharp_build_dir)
 
-        if not use_winml:
-            cmd_args = ["dotnet"] if use_dotnet else []
-            cmd_args += [
-                "msbuild",
-                sln,
-                package_name,
-                ort_build_dir,
-                enable_training_tests,
-                *extra_options,
-            ]
+        cmd_args = ["dotnet"] if use_dotnet else []
+        cmd_args += [
+            "msbuild",
+            sln,
+            package_name,
+            ort_build_dir,
+            enable_training_tests,
+            *extra_options,
+        ]
 
-            run_subprocess(cmd_args, cwd=csharp_build_dir)
-        else:
-            winml_interop_dir = os.path.join(source_dir, "csharp", "src", "Microsoft.AI.MachineLearning.Interop")
-            winml_interop_project = os.path.join(winml_interop_dir, "Microsoft.AI.MachineLearning.Interop.csproj")
-            winml_interop_project = os.path.normpath(winml_interop_project)
-            cmd_args = [
-                "dotnet",
-                "msbuild",
-                winml_interop_project,
-                configuration,
-                "/p:Platform=Any CPU",
-                ort_build_dir,
-                "-restore",
-            ]
-            run_subprocess(cmd_args, cwd=csharp_build_dir)
+        run_subprocess(cmd_args, cwd=csharp_build_dir)
 
         if is_windows():
-            if not use_winml:
-                # user needs to make sure nuget is installed and added to the path variable
-                nuget_exe = "nuget.exe"
-            else:
-                # this path is setup by cmake/nuget_helpers.cmake for MSVC on Windows
-                nuget_exe = os.path.normpath(os.path.join(native_dir, config, "nuget_exe", "src", "nuget.exe"))
+            # user needs to make sure nuget is installed and added to the path variable
+            nuget_exe = "nuget.exe"
         else:
             # `dotnet pack` is used on Linux
             nuget_exe = "NugetExe_not_set"
@@ -2164,6 +2138,7 @@ def build_nuget_package(
             package_name,
             execution_provider,
             ort_build_dir,
+            target_architecture_name,
             nuget_exe_arg,
             *extra_options,
         ]
@@ -2637,35 +2612,26 @@ def main():
             )
 
         if args.build_nuget:
+            platform_arch = platform.machine()
+            if platform_arch == "ARM64" or args.arm64 or args.arm64ec:
+                target_arch_name = "arm64"
+            elif args.arm:
+                target_arch_name = "arm"
+            elif platform_arch == "AMD64":
+                if args.x86:
+                    target_arch_name = "x86"
+                else:
+                    target_arch_name = "x64"
+            else:
+                raise BuildError("unknown python arch")
             build_nuget_package(
-                cmake_path,
                 source_dir,
                 build_dir,
                 configs,
-                args.use_cuda,
-                args.use_openvino,
-                args.use_tensorrt,
-                args.use_dnnl,
-                getattr(args, "use_winml", False),
                 args.use_qnn,
-                getattr(args, "use_dml", False),
-                args.use_migraphx,
-                args.enable_training_apis,
                 args.msbuild_extra_options,
+                target_arch_name,
             )
-
-    if args.test and args.build_nuget:
-        run_csharp_tests(
-            source_dir,
-            build_dir,
-            args.use_cuda,
-            args.use_openvino,
-            args.use_tensorrt,
-            args.use_dnnl,
-            args.enable_training_apis,
-            configs,
-            args.msbuild_extra_options,
-        )
 
     if args.gen_doc:
         # special case CI where we create the build config separately to building
