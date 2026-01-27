@@ -188,6 +188,10 @@ class QnnEp : public OrtEp, public ApiPtrs {
   qnn::QnnCompatibilityInfo compatibility_info_;
   // Format: <BackendId>:<SDK>:<BackendApi>:<ContextBlob>:<HtpArch>:<IsHtpUsrDrv>.
   std::string compatibility_info_string_ = "";
+
+  // Tensor name -> alias name. Populated during GetCapability, used in Compile.
+  // Maps quantized tensor names to original ONNX I/O names when offload_graph_io_quantization is enabled.
+  mutable std::unordered_map<std::string, std::string> tensor_name_aliases_;
 };
 
 }  // namespace onnxruntime

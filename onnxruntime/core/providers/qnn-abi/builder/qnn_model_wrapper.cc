@@ -57,6 +57,22 @@ bool QnnModelWrapper::QnnParamExists(const std::string& param_tensor_name) const
   return model_params_map_.find(param_tensor_name) != model_params_map_.end();
 }
 
+void QnnModelWrapper::SetTensorNameAlias(const std::string& name,
+                                         const std::string& alias) const {
+  if (tensor_name_aliases_ != nullptr && !name.empty() && !alias.empty() &&
+      tensor_name_aliases_->find(name) == tensor_name_aliases_->end()) {
+    tensor_name_aliases_->emplace(name, alias);
+  }
+}
+
+const std::string* QnnModelWrapper::GetTensorNameAlias(const std::string& name) const {
+  if (tensor_name_aliases_ == nullptr) {
+    return nullptr;
+  }
+  auto it = tensor_name_aliases_->find(name);
+  return it != tensor_name_aliases_->end() ? &it->second : nullptr;
+}
+
 Ort::Status QnnModelWrapper::MakeTensorWrapper(const OrtNodeUnitIODef& tensor, QnnTensorWrapper& tensor_wrapper) const {
   const std::string& tensor_name = tensor.name;
 
@@ -165,6 +181,11 @@ bool QnnModelWrapper::CreateQnnInputOutputTensors(const std::string& qnn_node_na
     // During graph partitioning, we only need to do op validation, it's not required to create Qnn graph tensor
     // We only need to create the Qnn graph tensor during Compile to create Qnn graph
     if (!do_op_validation) {
+      if (const std::string* alias = model_settings_.offload_graph_io_quantization
+                                         ? GetTensorNameAlias(tensor_name)
+                                         : nullptr) {
+        it->second.ApplyTensorNameAlias(*alias);
+      }
       std::string error_string;
       auto rt = it->second.CreateQnnGraphTensor(qnn_interface_, graph_, qnn_node_name, tensor_created_map_, error_string);
       if (!rt) {
@@ -877,6 +898,12 @@ void QnnModelWrapper::GetGraphInputOutputTensorWrapper(const std::vector<std::st
     if (it == model_tensors_map_.end()) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Model input or output name not exist: " + tensor_name + ". Could cause execution error.").c_str());
       break;
+    }
+
+    if (const std::string* alias = model_settings_.offload_graph_io_quantization
+                                       ? GetTensorNameAlias(tensor_name)
+                                       : nullptr) {
+      it->second.ApplyTensorNameAlias(*alias);
     }
     // It's safe to move QnnTensorWrapper out of model_tensors_map_
     // since this call happens when QnnModelWrapper end of live

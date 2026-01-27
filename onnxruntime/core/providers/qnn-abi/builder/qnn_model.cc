@@ -120,6 +120,7 @@ Ort::Status QnnModel::ComposeGraph(const OrtGraph& ort_graph,
                                    const OrtNode& fused_node,
                                    const qnn::ModelSettings& model_settings,
                                    const Ort::Logger& logger,
+                                   std::unordered_map<std::string, std::string>* tensor_name_aliases,
                                    const QnnGraph_Config_t** graph_configs,
                                    const std::string& json_qnn_graph_path) {
   ORT_CXX_LOG(logger,
@@ -143,7 +144,8 @@ Ort::Status QnnModel::ComposeGraph(const OrtGraph& ort_graph,
                                                       model_input_index_map_,
                                                       model_output_index_map_,
                                                       qnn_backend_manager_->GetQnnBackendType(),
-                                                      model_settings);
+                                                      model_settings,
+                                                      tensor_name_aliases);
 
   qnn::profile::ProfilingInfo profiling_info;
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
@@ -379,7 +381,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
   qnn_outputs.reserve(qnn_output_infos_.size());
 
   for (auto& qnn_output_info : qnn_output_infos_) {
-    const std::string& model_output_name = qnn_output_info.tensor_wrapper->GetName();
+    const std::string& model_output_name = qnn_output_info.tensor_wrapper->GetNameInternal();
     ORT_CXX_LOG(logger,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("model_output = " + model_output_name +
@@ -501,7 +503,9 @@ Ort::Status QnnModel::SetupTensors(std::vector<QnnTensorInfo>& qnn_tensor_infos,
 
     const size_t length = utils::GetQnnTensorDataSizeInBytes(tensor_wrapper.GetTensorDims(),
                                                              tensor_wrapper.GetTensorDataType());
-    const auto& tensor_name = tensor_wrapper.GetName();
+    // Use GetNameInternal() for index lookup because model_input/output_index_map_ is keyed by
+    // the fused node's I/O name (e.g., "image_q"), not the overridden QNN name (e.g., "image")
+    const auto& tensor_name = tensor_wrapper.GetNameInternal();
     auto qnn_index = is_input ? GetGraphInputIndex(tensor_name) : GetOutputIndex(tensor_name);
     auto ort_index = is_input ? GetOrtInputIndex(tensor_name) : qnn_index;
 
