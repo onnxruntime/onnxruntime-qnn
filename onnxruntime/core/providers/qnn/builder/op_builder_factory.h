@@ -135,5 +135,7 @@ void CreateInverseOpBuilder(const std::string& op_type, OpBuilderRegistrations& 
 
 void CreateConcatOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
+void CreateMatMulNBitsOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+
 }  // namespace qnn
 }  // namespace onnxruntime

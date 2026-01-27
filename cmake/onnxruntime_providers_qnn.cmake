@@ -15,7 +15,6 @@
   # TODO: Re-enable these Op later
   list(REMOVE_ITEM onnxruntime_providers_qnn_ep_srcs
        "${ONNXRUNTIME_ROOT}/core/providers/qnn/builder/opbuilder/quick_gelu_op_builder.cc"
-       "${ONNXRUNTIME_ROOT}/core/providers/qnn/builder/opbuilder/matmulnbits_op_builder.cc"
        "${ONNXRUNTIME_ROOT}/core/providers/qnn/builder/opbuilder/fused_matmul_op_builder.cc")
 
   # Exclude the simulation EP factory files from the build
