@@ -394,6 +394,51 @@ TEST_F(QnnABIHTPBackendTests, ResizeU8_2xCubicHalfPixel_CustomCoeff) {
                               cubic_coeff_a);
 }
 
+TEST_F(QnnABIHTPBackendTests, ResizeU8_2xCubicHalfPixelFloor_scales) {
+  std::vector<float> input_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 48);
+  const TestInputDef<float> input_def({1, 3, 4, 4}, false, input_data);
+  const std::vector<float> scales_data{1.0f, 1.0f, 2.0f, 2.0f};
+
+  auto float_builder = GetResizeModelBuilderWithScales(input_def, scales_data, "cubic", "half_pixel", "floor");
+
+  GetTestQDQModelFn<uint8_t> qdq_builder =
+      [input_def, scales_data](ModelTestBuilder& builder,
+                               std::vector<QuantParams<uint8_t>>& output_qparams) {
+        NodeArg* input = MakeTestInput(builder, input_def);
+        QuantParams<uint8_t> input_qparams = GetTestInputQuantParams<uint8_t>(input_def);
+        NodeArg* input_qdq = AddQDQNodePair<uint8_t>(builder, input, input_qparams.scale, input_qparams.zero_point);
+
+        NodeArg* roi = builder.MakeInitializer<float>({0}, {});
+        NodeArg* scales = builder.Make1DInitializer<float>(scales_data);
+
+        NodeArg* resize_output = builder.MakeIntermediate();
+        Node& resize_node = builder.AddNode("Resize", {input_qdq, roi, scales}, {resize_output});
+        resize_node.AddAttribute("mode", "cubic");
+        resize_node.AddAttribute("coordinate_transformation_mode", "half_pixel");
+        resize_node.AddAttribute("nearest_mode", "floor");
+
+        output_qparams[0] = input_qparams;
+        AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, resize_output,
+                                                       output_qparams[0].scale,
+                                                       output_qparams[0].zero_point);
+      };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestQDQModelAccuracyABI(float_builder,
+                          qdq_builder,
+                          provider_options,
+                          19,
+                          ExpectedEPNodeAssignment::All,
+                          QDQTolerance(),
+                          logging::Severity::kERROR,
+                          "",
+                          {},
+                          GraphOptimizationLevel::ORT_DISABLE_ALL);
+}
+
 // Test QDQ Resize downsample with mode: "linear", coordinate_transformation_mode: "half_pixel"
 // Maps to QNN's ResizeBilinear operator.
 TEST_F(QnnABIHTPBackendTests, Resize_DownSample_Linear_HalfPixel) {
