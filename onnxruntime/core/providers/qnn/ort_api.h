@@ -207,6 +207,16 @@ struct DeferOrtRelease {
   std::function<void(T*)> release_func_ = nullptr;
 };
 
+template <typename T>
+struct FuncDeleter {
+  using DeleteFunc = void (*)(T*);
+  DeleteFunc delete_func_;
+
+  void operator()(T* ptr) const noexcept {
+    if (ptr) delete_func_(ptr);
+  }
+};
+
 namespace QDQ {
 
 // Define NodeGroup structure similar to the one in shared/utils.h
