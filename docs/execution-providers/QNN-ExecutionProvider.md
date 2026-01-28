@@ -140,7 +140,7 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |`"extended_udma"`|Description|
 |---|---|
 |'0'|Default. Disabled.|
-|'1'|Enable far memory mapping during execution on QNN EP on supported target.|
+|'1'|Enable far memory mapping during execution on QNN EP on HTP Architecture 81.|
 
 
 ## Supported ONNX operators
