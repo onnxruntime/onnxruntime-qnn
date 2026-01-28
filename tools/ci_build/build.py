@@ -24,6 +24,7 @@ from util import (  # noqa: E402
     is_linux,
     is_macOS,
     is_windows,
+    parse_qnn_version_from_sdk_yaml,
     run,
 )
 
@@ -676,6 +677,35 @@ def build_targets(args, cmake_path, build_dir, configs, num_parallel_jobs, targe
         run_subprocess(cmd_args, env=env)
 
 
+def build_python_wheel(
+    source_dir,
+    build_dir,
+    configs,
+    qnn_home,
+    wheel_name_suffix,
+    nightly_build=False,
+    use_ninja=False,
+):
+    for config in configs:
+        cwd = get_config_build_dir(build_dir, config)
+        if is_windows() and not use_ninja:
+            cwd = os.path.join(cwd, config)
+
+        args = [sys.executable, os.path.join(source_dir, "setup.py"), "bdist_wheel"]
+
+        # Any combination of the following arguments can be applied
+        if nightly_build:
+            args.append("--nightly_build")
+        if wheel_name_suffix:
+            args.append(f"--wheel_name_suffix={wheel_name_suffix}")
+
+        qnn_version = parse_qnn_version_from_sdk_yaml(qnn_home)
+        if qnn_version:
+            args.append(f"--qnn_version={qnn_version}")
+
+        run_subprocess(args, cwd=cwd)
+
+
 def main():
     log.debug("Command line arguments:\n  {}".format(" ".join(shlex.quote(arg) for arg in sys.argv[1:])))  # noqa: G001
 
@@ -817,6 +847,25 @@ def main():
     #         setup_test_data(source_onnx_model_dir, "models", build_dir, configs)
 
     #     run_onnxruntime_tests(args, source_dir, ctest_path, build_dir, configs)
+
+    # Build packages after running the tests.
+    # NOTE: if you have a test that rely on a file which only get copied/generated during packaging step, it could
+    # fail unexpectedly. Similar, if your packaging step forgot to copy a file into the package, we don't know it
+    # either.
+    if args.build:
+        # TODO: find asan DLL and copy it to onnxruntime/capi folder when args.enable_address_sanitizer is True and
+        #  the target OS is Windows
+        if args.build_wheel:
+            nightly_build = bool(os.getenv("NIGHTLY_BUILD") == "1")
+            build_python_wheel(
+                source_dir,
+                build_dir,
+                configs,
+                args.qnn_home,
+                args.wheel_name_suffix,
+                nightly_build=nightly_build,
+                use_ninja=(args.cmake_generator == "Ninja"),
+            )
 
     #     if args.build_nuget:
     #         build_nuget_package(
