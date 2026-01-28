@@ -10,7 +10,9 @@
 #include "core/framework/error_code_helper.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_allocator.h"
+#include "core/providers/qnn/soc_utils.h"
 #include "core/session/abi_devices.h"
+#include "core/session/onnxruntime_ep_device_ep_metadata_keys.h"
 
 // We allow `backend_type` (e.g., `htp`) or `backend_path` in relative path (e.g., `QnnHtp.dll`) for configurations,
 // and QnnBackendManager will later find the appropriate library and load it relative to the OnnxRuntime library.
@@ -86,34 +88,80 @@ const char* ORT_API_CALL QnnEpFactory::GetVersionImpl(const OrtEpFactory* this_p
 }
 
 // Creates and returns OrtEpDevice instances for all OrtHardwareDevices that this factory supports.
-// An EP created with this factory is expected to be able to execute a model with *all* supported
-// hardware devices at once. A single instance of QNN EP is not currently setup to partition a model among
-// multiple different QNN backends at once (e.g, npu, cpu, gpu), so currently this factory instance is set
-// to default to npu.
 OrtStatus* ORT_API_CALL QnnEpFactory::GetSupportedDevicesImpl(OrtEpFactory* this_ptr,
                                                               const OrtHardwareDevice* const* devices,
                                                               size_t num_devices,
                                                               OrtEpDevice** ep_devices,
                                                               size_t max_ep_devices,
                                                               size_t* p_num_ep_devices) noexcept {
+  auto* factory = static_cast<QnnEpFactory*>(this_ptr);
+
   size_t& num_ep_devices = *p_num_ep_devices;
   num_ep_devices = 0;
 
-  auto* factory = static_cast<QnnEpFactory*>(this_ptr);
+  auto create_ep_device = [&factory, &ep_devices, &num_ep_devices](const OrtHardwareDevice* device) {
+    OrtEpDevice* ep_device = nullptr;
+    OrtStatus* status = factory->ep_api.CreateEpDevice(factory, device, nullptr, nullptr, &ep_device);
+    ep_devices[num_ep_devices++] = ep_device;
+    factory->ep_devices_.push_back(ep_device);
+
+    return status;
+  };
+
+  auto create_hw_device = [&factory](const OrtHardwareDeviceType device_type,
+                                     OrtHardwareDevice*& device,
+                                     const bool is_virtual = true) {
+    OrtKeyValuePairs* hw_metadata = nullptr;
+    if (is_virtual) {
+      factory->ort_api.CreateKeyValuePairs(&hw_metadata);
+      factory->ort_api.AddKeyValuePair(hw_metadata, kOrtHardwareDevice_MetadataKey_IsVirtual, "1");
+    }
+
+    OrtStatus* status = factory->ep_api.CreateHardwareDevice(device_type,
+                                                             factory->vendor_id_,
+                                                             0,
+                                                             factory->vendor_.c_str(),
+                                                             hw_metadata,
+                                                             &device);
+
+    if (hw_metadata) {
+      factory->ort_api.ReleaseKeyValuePairs(hw_metadata);
+    }
+
+    return status;
+  };
+
+  bool has_npu_hw_device = false;
 
   for (size_t idx = 0; idx < num_devices && num_ep_devices < max_ep_devices; ++idx) {
-    const OrtHardwareDevice& device = *devices[idx];
-    auto device_type = factory->ort_api.HardwareDevice_Type(&device);
-    auto vendor_id = factory->ort_api.HardwareDevice_VendorId(&device);
+    const OrtHardwareDevice* device = devices[idx];
+    auto device_type = factory->ort_api.HardwareDevice_Type(device);
+    auto vendor_id = factory->ort_api.HardwareDevice_VendorId(device);
 
-    if ((kDefaultBackends.find(device_type) != kDefaultBackends.end() && vendor_id == factory->vendor_id_) || device_type == OrtHardwareDeviceType_CPU) {
-      OrtEpDevice* ep_device = nullptr;
-      OrtKeyValuePairs* ep_options = nullptr;
-      OrtStatus* status = factory->ep_api.CreateEpDevice(factory, &device, nullptr, ep_options, &ep_device);
-      ep_devices[num_ep_devices++] = ep_device;
-      factory->ep_devices_.push_back(ep_device);
+    if ((kDefaultBackends.find(device_type) != kDefaultBackends.end() && vendor_id == factory->vendor_id_) ||
+        device_type == OrtHardwareDeviceType_CPU) {
+      RETURN_IF_NOT_NULL(create_ep_device(device));
 
-      RETURN_IF_NOT_NULL(status);
+      if (device_type == OrtHardwareDeviceType_NPU) {
+        has_npu_hw_device = true;
+      }
+    }
+  }
+
+  if (!has_npu_hw_device && num_ep_devices < max_ep_devices) {
+    if (qnn::soc::GetSocId() != 0) {
+      // If ORT Core does not detect NPU hardware but we recognize the device as WoS (through qnn::soc::GetSocId),
+      // exploit virtual hardware device to create an NPU hardware device for user to select from.
+      // Such case happens for older WoS devices (e.g., Makena) that ORT Core's device discovery logic could not detect
+      // NPU through DXCore.
+      OrtHardwareDevice* virtual_npu_hw_device = nullptr;
+      RETURN_IF_NOT_NULL(create_hw_device(OrtHardwareDeviceType_NPU, virtual_npu_hw_device, false));
+      RETURN_IF_NOT_NULL(create_ep_device(virtual_npu_hw_device));
+
+      factory->virtual_npu_hw_device_ = HardwareDeviceUniquePtr(virtual_npu_hw_device,
+                                                                factory->ep_api.ReleaseHardwareDevice);
+    } else {
+      // Enable originally expected usage of virtual hardware device for cross-platform compilation if necessary.
     }
   }
 

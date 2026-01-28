@@ -1441,15 +1441,6 @@ class QnnHTPBackendTests : public ::testing::Test {
   // Query QNN platform attributes by directly calling QNN APIs
   static Status QueryQnnPlatformAttributesDirectly(QnnPlatformAttributes& out, const onnxruntime::logging::Logger& logger);
 
-  // Returns true if the test should be skipped because AutoEP is not supported on this platform.
-  static bool ShouldSkipIfAutoEpNpuUnsupported() {
-#if defined(_WIN32)  // V68 device (Makena) on win-arm64 doesn't support NPU device discovery with dxcore.dll.
-    return ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68);
-#else
-    return false;
-#endif
-  }
-
   static std::optional<QnnHTPBackendTests::QnnPlatformAttributes> cached_platform_attrs_;  // Set by the first test using this fixture.
   static BackendSupport cached_htp_support_;                                               // Set by the first test using this fixture.
   static BackendSupport cached_ir_support_;
@@ -1499,13 +1490,6 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
     if (!QnnHTPBackendTests::HasPlatformAttributes()) {                              \
       GTEST_SKIP() << "Test requires platform attributes, which are not available."; \
     }                                                                                \
-  } while (0)
-
-#define QNN_SKIP_TEST_IF_AUTOEP_NPU_UNSUPPORTED()                                                            \
-  do {                                                                                                       \
-    if (QnnHTPBackendTests::ShouldSkipIfAutoEpNpuUnsupported()) {                                            \
-      GTEST_SKIP() << "This platform lacks dxcore.dll NPU discovery capability required by auto-EP feature"; \
-    }                                                                                                        \
   } while (0)
 
 }  // namespace test
