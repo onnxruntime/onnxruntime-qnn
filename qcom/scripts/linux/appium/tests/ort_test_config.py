@@ -24,11 +24,14 @@ class OrtTestConfig:
 
     device_url: str = "adb://"
 
-    # this is where our zip file is extracted on the QDC host.
+    # This is where our zip file is extracted on the QDC host.
     qdc_host_path: str = DEFAULT_HOST_ROOT
 
-    # directory containing model test suites from ONNX.
+    # Directory containing model test suites from ONNX.
     host_onnx_model_test_path = f"{qdc_host_path}/model_tests/onnx_models"
+
+    # Directory containing qcom/scripts
+    host_qcom_scripts_path = f"{qdc_host_path}/qcom/scripts"
 
     # If true, remove previously uploaded builds during setup.
     clean_build: bool = True
@@ -38,6 +41,9 @@ class OrtTestConfig:
 
     # A list of test executables run by ctest to skip.
     _skip_ctests: list[str] | None = None
+
+    # A list of model test suites to skip.
+    _skip_model_tests: list[str] | None = None
 
     @property
     def build_root_relpath(self) -> str:
@@ -107,6 +113,19 @@ class OrtTestConfig:
             self._skip_ctests = []
 
     @property
+    def skip_model_tests(self) -> list[str]:
+        return [] if self._skip_model_tests is None else self._skip_model_tests
+
+    @skip_model_tests.setter
+    def skip_model_tests(self, value: Iterable[str] | str | None) -> None:
+        if isinstance(value, str):
+            value = value.split(",") if len(value) > 0 else []
+        if isinstance(value, Iterable):
+            self._skip_model_tests = list(value)
+        else:
+            self._skip_model_tests = []
+
+    @property
     def test_results_device_glob(self) -> str:
         """Glob matching test result files on the device."""
         return f"{self.device_results_root}/onnxruntime_*.results.*"
@@ -115,6 +134,18 @@ class OrtTestConfig:
     def test_results_device_log(self) -> str:
         """Path to the on-device test log; this should match the glob in test_results_device_glob."""
         return f"{self.device_results_root}/onnxruntime_test.results.txt"
+
+    @property
+    def model_test_results_filename_glob(self) -> str:
+        """Glob matching model test log filenames (not full paths)."""
+        return "onnxruntime_model_test_*.results.txt"
+
+    def model_test_device_log(self, suite: str) -> str:
+        """
+        Path to the a model tests's on-device log; should match the glob in test_results_device_glob and
+        model_test_results_filename_glob.
+        """
+        return f"{self.device_results_root}/onnxruntime_model_test_{suite}.results.txt"
 
 
 def default_test_config() -> OrtTestConfig:
@@ -142,8 +173,10 @@ def _parse_test_config_obj(config_obj: dict) -> OrtTestConfig:
         "device_home",
         "device_url",
         "host_onnx_model_test_path",
+        "host_qcom_scripts_path",
         "qdc_host_path",
         "skip_ctests",
+        "skip_model_tests",
     ]
 
     build_target = config_obj["build_target"]
