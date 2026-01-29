@@ -120,7 +120,6 @@ common_args=(--cmake_generator "${cmake_generator}" \
              --parallel \
              --build_dir "${build_dir}" \
              --wheel_name_suffix qcom-internal \
-             --no_kleidiai \
 )
 
 if [ -n "${qnn_arch_abi}" ]; then
@@ -183,9 +182,6 @@ case "${target_platform}" in
           # We need $toolchain_root from the toolchain.cmake, but the toolchain.cmake is sometimes
           # evaluated without the project's CMakeCache.txt entries. Pass it through the environment :-/
           export ORT_BUILD_LINUX_TOOLCHAIN_ROOT="${toolchain_root}"
-
-          # Disable SVE for the time being - https://github.com/microsoft/onnxruntime/issues/26131
-          platform_args+=(--no_sve)
 
           platform_args+=(--cmake_extra_defines
                           CMAKE_TOOLCHAIN_FILE:FILEPATH="${toolchain_cmake}"
