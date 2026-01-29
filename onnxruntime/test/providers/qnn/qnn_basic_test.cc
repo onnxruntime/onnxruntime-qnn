@@ -2,7 +2,6 @@
 // Licensed under the MIT License.
 
 #include <filesystem>
-#include <optional>
 #include <string>
 #include <thread>
 
@@ -1385,7 +1384,6 @@ TEST_F(QnnHTPBackendTests, EPOffloadsGraphIOQuantDequant) {
                                     logging::Severity::kERROR,
                                     /*qnn_ctx_model_path*/ "",
                                     /*session_option_pairs*/ {},
-                                    std::nullopt,
                                     &graph_checker);
     }
   }
