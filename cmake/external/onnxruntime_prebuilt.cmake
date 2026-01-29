@@ -118,7 +118,8 @@ endif()
 # Generic install command that copies required files from ORT_PREBUILT_SOURCE to ORT_PREBUILT_DEST
 # Handles both Windows (.dll) and Linux (.so) platforms, and allows missing files
 set(ORT_INSTALL_COMMAND
-    ${CMAKE_COMMAND} -E echo "Copying files from ${ORT_PREBUILT_SOURCE} to ${ORT_PREBUILT_DEST}"
+    ${CMAKE_COMMAND} -E make_directory "${ORT_PREBUILT_DEST}"
+    COMMAND ${CMAKE_COMMAND} -E echo "Copying files from ${ORT_PREBUILT_SOURCE} to ${ORT_PREBUILT_DEST}"
 )
 
 # Platform-specific library copying
@@ -192,9 +193,9 @@ set(ONNXRUNTIME_APPLICATION_SOURCE_ROOT "${ORT_SOURCE_DIR}/onnxruntime")
 set(ONNXRUNTIME_APPLICATION_INCLUDE_ROOT "${ORT_SOURCE_DIR}/include/onnxruntime")
 
 # Create imported target for ONNX Runtime
-add_library(onnxruntime_prebuilt SHARED IMPORTED GLOBAL)
+add_library(onnxruntime SHARED IMPORTED GLOBAL)
 # Add dependency on the external projects to ensure they're downloaded first
-add_dependencies(onnxruntime_prebuilt ort_core_target)
+add_dependencies(onnxruntime ort_core_target)
 
 # Hack since cmake check the existence of INTERFACE_INCLUDE_DIRECTORIES
 file(MAKE_DIRECTORY ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT})
@@ -202,13 +203,13 @@ file(MAKE_DIRECTORY ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT})
 # Platform-specific library configuration
 if(WIN32)
     # Windows: Use .dll for IMPORTED_LOCATION and .lib for IMPORTED_IMPLIB
-    set_target_properties(onnxruntime_prebuilt PROPERTIES
+    set_target_properties(onnxruntime PROPERTIES
         IMPORTED_LOCATION ${ORT_PREBUILT_DEST}/onnxruntime.dll
         IMPORTED_IMPLIB ${ORT_PREBUILT_DEST}/onnxruntime.lib
     )
 else()
     # Linux: Use .so for IMPORTED_LOCATION
-    set_target_properties(onnxruntime_prebuilt PROPERTIES
+    set_target_properties(onnxruntime PROPERTIES
         IMPORTED_LOCATION ${ORT_PREBUILT_DEST}/libonnxruntime.so
     )
 endif()
