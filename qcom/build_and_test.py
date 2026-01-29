@@ -840,7 +840,7 @@ class TaskLibrary:
                             REPO_ROOT / "build" / "onnxruntime-tests-linux-aarch64_oe_gcc11_2.zip",
                         ),
                         QdcTestsTask(
-                            "Testing ONNX Runtime for Android in QDC",
+                            "Testing ONNX Runtime for Qualcomm Linux in QDC",
                             self.__venv_path,
                             ["qualcomm_linux"],
                             extra_args=[

@@ -26,6 +26,10 @@
     // Default: "/qdc/appium"
     // "qdc_host_path": "/qdc/appium",
 
+    // Location of the "qcom/scripts" directory on the host.
+    // Default: "/qdc/appium/qcom/scripts"
+    // "host_qcom_scripts_path": "/qdc/appium/qcom/scripts",
+
     // Host directory containing model tests.
     // Sometimes it makes sense to set this in order to avoid re-uploading model tests.
     // Default: "/qdc/appium/model_tests/onnx_models"

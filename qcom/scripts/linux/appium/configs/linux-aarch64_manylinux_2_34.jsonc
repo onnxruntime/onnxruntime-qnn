@@ -19,12 +19,16 @@
     //  * ssh://user@host[:port]/[?key=val[&key=val...]]
     //    * Example: ssh://root@192.168.0.115:22/?StrictHostKeychecking=no&UserKnownHostsFile=/dev/null
     // Default: adb://
-    "device_url": "ssh://user@your_device_host"
+    "device_url": "ssh://user@your_device_host",
 
     // Where the test archive is extracted on the host device.
     // In local tests, this should be left unset so that the test harness can specify a temporary directory.
     // Default: "/qdc/appium"
     // "qdc_host_path": "/qdc/appium",
+
+    // Location of the "qcom/scripts" directory on the host.
+    // Default: "/qdc/appium/qcom/scripts"
+    "host_qcom_scripts_path": "/home/USER/src/onnxruntime/qcom/scripts"
 
     // Host directory containing model tests.
     // Sometimes it makes sense to set this in order to avoid re-uploading model tests.

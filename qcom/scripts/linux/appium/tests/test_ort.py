@@ -97,6 +97,24 @@ class TestOrt(TestBase):
 
         self.__assert_passes(self.__get_test_cmd(test_cmd, test_def.working_dir))
 
+    @pytest.mark.parametrize("test_def", MODEL_TEST_DEFINITIONS, ids=MODEL_TEST_IDS)
+    def test_onnx_models_legacy_runner(self, test_def: ModelTestDef) -> None:
+        runner_exe = Path(CONFIG.device_build_root) / "onnx_test_runner"
+        extra_log = Path(CONFIG.model_test_device_log(test_def.name))
+
+        # fmt: off
+        test_cmd = [
+            str(runner_exe),
+            "-j", "1",
+            "-e", "qnn",
+            "-i", f"'backend_type|{test_def.backend}'",
+            *test_def.extra_args,
+            str(test_def.model_root),
+        ]
+        # fmt: on
+
+        self.__assert_passes(self.__get_test_cmd(test_cmd, test_def.working_dir, extra_log))
+
     def __assert_passes(self, test_cmd: str) -> None:
         self.device.shell([test_cmd])
         with tempfile.TemporaryDirectory(prefix="TestRc-") as tmpdir:
@@ -110,17 +128,21 @@ class TestOrt(TestBase):
         self,
         test_cmd: list[str],
         working_dir: Path | None = None,
+        extra_log: Path | None = None,
     ) -> str:
         if working_dir is None:
             working_dir = Path(CONFIG.device_build_root)
         test_str = " ".join(test_cmd)
-        return (
+        cmd = (
             f"cd {working_dir} && "
             f"echo -=-=-=-=-=-=-=-=-=-=- >> {CONFIG.test_results_device_log} && "
             f"echo Running test: {test_str} >> {CONFIG.test_results_device_log} && "
             f"(env ADSP_LIBRARY_PATH={CONFIG.device_adsp_library_path} LD_LIBRARY_PATH={CONFIG.device_ld_library_path} "
             f"{test_str}; echo $? > {self.__rc_device_path}) 2>&1 | tee -a {CONFIG.test_results_device_log}"
         )
+        if extra_log is not None:
+            cmd += f" | tee {extra_log}"
+        return cmd
 
     @property
     def __rc_device_path(self) -> Path:
