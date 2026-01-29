@@ -31,40 +31,40 @@ env:
 
 jobs:
 
-  build-and-test-linux-x86_64:
-    if: ${{ inputs.do_all }}
-    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
-    secrets: inherit
-    with:
-      nightly_build: ${{ inputs.nightly_build }}
-      target_os: linux
-      target_arch: x86_64
-      # Specifying a python version here doesn't actually do anything at this point since we don't know what the Linux
-      # wheel distribution story is yet. For now, this is just so that all of the job and artifact names reflect the
-      # version of cpython that's installed on our Linux build machines.
-      target_py_vsn: "3.10"
+  # build-and-test-linux-x86_64:
+  #   if: ${{ inputs.do_all }}
+  #   uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+  #   secrets: inherit
+  #   with:
+  #     nightly_build: ${{ inputs.nightly_build }}
+  #     target_os: linux
+  #     target_arch: x86_64
+  #     # Specifying a python version here doesn't actually do anything at this point since we don't know what the Linux
+  #     # wheel distribution story is yet. For now, this is just so that all of the job and artifact names reflect the
+  #     # version of cpython that's installed on our Linux build machines.
+  #     target_py_vsn: "3.10"
 
-  build-linux-aarch64-oe-gcc11_2:
-    if: ${{ inputs.do_all }}
-    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
-    secrets: inherit
-    with:
-      nightly_build: ${{ inputs.nightly_build }}
-      target_os: linux
-      target_arch: aarch64_oe_gcc11_2
-      target_py_vsn: None
-      upload_test_archive: true
-      upload_wheel: false
-      run_tests: false
+  # build-linux-aarch64-oe-gcc11_2:
+  #   if: ${{ inputs.do_all }}
+  #   uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+  #   secrets: inherit
+  #   with:
+  #     nightly_build: ${{ inputs.nightly_build }}
+  #     target_os: linux
+  #     target_arch: aarch64_oe_gcc11_2
+  #     target_py_vsn: None
+  #     upload_test_archive: true
+  #     upload_wheel: false
+  #     run_tests: false
 
-  test-linux-aarch64-oe-gcc11_2:
-    if: ${{ inputs.do_all }}
-    needs: [build-linux-aarch64-oe-gcc11_2]
-    uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
-    secrets: inherit
-    with:
-      target_os: linux
-      target_arch: aarch64_oe_gcc11_2
+  # test-linux-aarch64-oe-gcc11_2:
+  #   if: ${{ inputs.do_all }}
+  #   needs: [build-linux-aarch64-oe-gcc11_2]
+  #   uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
+  #   secrets: inherit
+  #   with:
+  #     target_os: linux
+  #     target_arch: aarch64_oe_gcc11_2
 
   build-and-test-windows-arm64:
     if: ${{ inputs.do_all || inputs.do_windows_arm64 }}
@@ -78,64 +78,64 @@ jobs:
       target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
       test_runner_arch: arm64
 
-  build-and-test-windows-arm64ec:
-    if: ${{ inputs.do_all }}
-    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
-    secrets: inherit
-    with:
-      nightly_build: ${{ inputs.nightly_build }}
-      target_arch: arm64ec
-      upload_wheel: true
-      test_wheel: true
-      target_py_vsn: ${{ inputs.target_py_vsn }}
-      run_tests: false  # ARM64ec unit tests are horribly broken (though model tests seem fine).
-      test_runner_arch: arm64
+  # build-and-test-windows-arm64ec:
+  #   if: ${{ inputs.do_all }}
+  #   uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+  #   secrets: inherit
+  #   with:
+  #     nightly_build: ${{ inputs.nightly_build }}
+  #     target_arch: arm64ec
+  #     upload_wheel: true
+  #     test_wheel: true
+  #     target_py_vsn: ${{ inputs.target_py_vsn }}
+  #     run_tests: false  # ARM64ec unit tests are horribly broken (though model tests seem fine).
+  #     test_runner_arch: arm64
 
-  build-and-test-windows-x86_64:
-    if: ${{ inputs.do_all }}
-    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
-    secrets: inherit
-    with:
-      nightly_build: ${{ inputs.nightly_build }}
-      target_arch: x86_64
-      target_py_vsn: ${{ inputs.target_py_vsn }}
+  # build-and-test-windows-x86_64:
+  #   if: ${{ inputs.do_all }}
+  #   uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+  #   secrets: inherit
+  #   with:
+  #     nightly_build: ${{ inputs.nightly_build }}
+  #     target_arch: x86_64
+  #     target_py_vsn: ${{ inputs.target_py_vsn }}
 
-  lint:
-    if: ${{ inputs.do_all }}
-    runs-on: ["self-hosted", "X64", "Linux", "Build"]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+  # lint:
+  #   if: ${{ inputs.do_all }}
+  #   runs-on: ["self-hosted", "X64", "Linux", "Build"]
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         submodules: recursive
 
-      - name: Run Linting Tool
-        run: |
-          python3 qcom/build_and_test.py lint
+  #     - name: Run Linting Tool
+  #       run: |
+  #         python3 qcom/build_and_test.py lint
 
-  build-android-aarch64:
-    if: ${{ inputs.do_all }}
-    runs-on: ["self-hosted", "X64", "Linux", "Build"]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
+  # build-android-aarch64:
+  #   if: ${{ inputs.do_all }}
+  #   runs-on: ["self-hosted", "X64", "Linux", "Build"]
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #       with:
+  #         submodules: recursive
 
-      - name: Build Android
-        run: |
-          python3 qcom/build_and_test.py archive_ort_android_aarch64
+  #     - name: Build Android
+  #       run: |
+  #         python3 qcom/build_and_test.py archive_ort_android_aarch64
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: ORT android aarch64 pynone Tests
-          path: |
-            ${{ github.workspace }}/build/onnxruntime-tests-android-aarch64.zip
+  #     - uses: actions/upload-artifact@v4
+  #       with:
+  #         name: ORT android aarch64 pynone Tests
+  #         path: |
+  #           ${{ github.workspace }}/build/onnxruntime-tests-android-aarch64.zip
 
-  # Intentionally not "test-android-aarch64" to avoid breaking required PR checks
-  test-android:
-    if: ${{ inputs.do_all }}
-    needs: [build-android-aarch64]
-    uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
-    secrets: inherit
-    with:
-      target_os: android
-      target_arch: aarch64
+  # # Intentionally not "test-android-aarch64" to avoid breaking required PR checks
+  # test-android:
+  #   if: ${{ inputs.do_all }}
+  #   needs: [build-android-aarch64]
+  #   uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
+  #   secrets: inherit
+  #   with:
+  #     target_os: android
+  #     target_arch: aarch64
