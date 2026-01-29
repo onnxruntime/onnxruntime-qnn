@@ -6,8 +6,9 @@
 #include <cassert>
 #include <string>
 
-#include "test/providers/qnn/qnn_test_utils.h"
+#include "test/providers/qnn-abi/qnn_test_utils.h"
 #include "core/graph/node_attr_utils.h"
+#include "core/session/onnxruntime_session_options_config_keys.h"
 
 #include "core/graph/onnx_protobuf.h"
 #include "gtest/gtest.h"
@@ -36,11 +37,11 @@ static void RunOpTest(const std::string& op_type,
   }
 
   // Runs model with a Q/DQ binary op and compares the outputs of the CPU and QNN EPs.
-  RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
-                  provider_options,
-                  opset_version,
-                  expected_ep_assignment,
-                  fp32_abs_err);
+  RunQnnModelTestABI(BuildOpTestCase<InputType1, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
+                     provider_options,
+                     opset_version,
+                     expected_ep_assignment,
+                     fp32_abs_err);
 }
 
 template <typename InputQType = uint8_t, typename InputType2 = int64_t>
@@ -58,13 +59,13 @@ static void RunQDQOpTest(const std::string& op_type,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  TestQDQModelAccuracy(BuildOpTestCase<float, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
-                       BuildQDQOpTestCase<InputQType, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs,
-                                                                  op_domain, use_contrib_qdq),
-                       provider_options,
-                       opset_version,
-                       expected_ep_assignment,
-                       tolerance);
+  TestQDQModelAccuracyABI(BuildOpTestCase<float, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
+                          BuildQDQOpTestCase<InputQType, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs,
+                                                                     op_domain, use_contrib_qdq),
+                          provider_options,
+                          opset_version,
+                          expected_ep_assignment,
+                          tolerance);
 }
 
 template <typename InputType1, typename InputType2 = int64_t>
@@ -80,10 +81,10 @@ static void RunOpTestOnCPU(const std::string& op_type,
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
-                  provider_options,
-                  opset_version,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildOpTestCase<InputType1, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
+                     provider_options,
+                     opset_version,
+                     expected_ep_assignment);
 }
 
 //
@@ -91,7 +92,7 @@ static void RunOpTestOnCPU(const std::string& op_type,
 //
 
 // Test ScatterElements with default attributes on CPU
-TEST_F(QnnCPUBackendTests, ScatterElements_Float_Reduction_None) {
+TEST_F(QnnABICPUBackendTests, ScatterElements_Float_Reduction_None) {
   std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
   std::vector<int64_t> indices = {1};
   std::vector<float> updates = {10.0f};
@@ -111,7 +112,7 @@ TEST_F(QnnCPUBackendTests, ScatterElements_Float_Reduction_None) {
 }
 
 // Test ScatterElements with reduction Add on CPU
-TEST_F(QnnCPUBackendTests, ScatterElements_Float_Reduction_Add) {
+TEST_F(QnnABICPUBackendTests, ScatterElements_Float_Reduction_Add) {
   std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
   std::vector<int64_t> indices = {1};
   std::vector<float> updates = {10.0f};
@@ -137,7 +138,7 @@ TEST_F(QnnCPUBackendTests, ScatterElements_Float_Reduction_Add) {
 //
 
 // Test ScatterElements with default attributes on HTP
-TEST_F(QnnHTPBackendTests, ScatterElements_Float_Reduction_None) {
+TEST_F(QnnABIHTPBackendTests, ScatterElements_Float_Reduction_None) {
   std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
   std::vector<int64_t> indices = {1};
   std::vector<float> updates = {10.0f};
@@ -158,7 +159,7 @@ TEST_F(QnnHTPBackendTests, ScatterElements_Float_Reduction_None) {
 
 // Test ScatterElements with default attributes on HTP
 // Disable this due to an accuracy issue with selected data range
-TEST_F(QnnHTPBackendTests, DISABLED_ScatterElements_Int8_Reduction_None) {
+TEST_F(QnnABIHTPBackendTests, DISABLED_ScatterElements_Int8_Reduction_None) {
   std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
   std::vector<int64_t> indices = {1};
   std::vector<float> updates = {10.0f};
@@ -179,7 +180,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_ScatterElements_Int8_Reduction_None) {
 
 // Test ScatterElements with reduction ADD on HTP
 // Disable this due to an accuracy issue with selected data range
-TEST_F(QnnHTPBackendTests, DISABLED_ScatterElements_Int8_Reduction_Add) {
+TEST_F(QnnABIHTPBackendTests, DISABLED_ScatterElements_Int8_Reduction_Add) {
   std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
   std::vector<int64_t> indices = {1};
   std::vector<float> updates = {10.0f};
@@ -201,7 +202,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_ScatterElements_Int8_Reduction_Add) {
 }
 
 // Test ScatterElements with reduction Max on HTP
-TEST_F(QnnHTPBackendTests, ScatterElements_Int8_Reduction_Max) {
+TEST_F(QnnABIHTPBackendTests, ScatterElements_Int8_Reduction_Max) {
   std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
   std::vector<int64_t> indices = {1};
   std::vector<float> updates = {10.0f};
@@ -223,7 +224,7 @@ TEST_F(QnnHTPBackendTests, ScatterElements_Int8_Reduction_Max) {
 }
 
 // Test ScatterElements with reduction Mul on HTP
-TEST_F(QnnHTPBackendTests, ScatterElements_int8_Reduction_Mul) {
+TEST_F(QnnABIHTPBackendTests, ScatterElements_int8_Reduction_Mul) {
   std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
   std::vector<int64_t> indices = {1};
   std::vector<float> updates = {10.0f};
@@ -246,7 +247,7 @@ TEST_F(QnnHTPBackendTests, ScatterElements_int8_Reduction_Mul) {
 
 // Data and updates in int 32 are not valid for HTP.
 // Test int 64 Data and updates are correctly casted to float 32. And casting logic keeps indices in int 32.
-TEST_F(QnnHTPBackendTests, TestScatterElement_Int64) {
+TEST_F(QnnABIHTPBackendTests, TestScatterElement_Int64) {
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = "htp";
@@ -261,20 +262,20 @@ TEST_F(QnnHTPBackendTests, TestScatterElement_Int64) {
 
   const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs = {utils::MakeAttribute("axis", static_cast<int64_t>(1))};
 
-  RunQnnModelTest(BuildOpTestCase<int64_t>(
-                      "ScatterElements",
-                      std::move(input_defs),
-                      {},
-                      std::move(attrs)),
-                  provider_options,
-                  13,
-                  ExpectedEPNodeAssignment::All,
-                  1e-5f);
+  RunQnnModelTestABI(BuildOpTestCase<int64_t>(
+                         "ScatterElements",
+                         std::move(input_defs),
+                         {},
+                         std::move(attrs)),
+                     provider_options,
+                     13,
+                     ExpectedEPNodeAssignment::All,
+                     1e-5f);
 }
 
 // Data and updates in int 32 are not valid for HTP.
 // Test int 64 Data and updates are correctly casted to float 32. And casting logic keeps indices in int 32.
-TEST_F(QnnHTPBackendTests, TestScatterElement_Int32) {
+TEST_F(QnnABIHTPBackendTests, TestScatterElement_Int32) {
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = "htp";
@@ -289,15 +290,15 @@ TEST_F(QnnHTPBackendTests, TestScatterElement_Int32) {
 
   const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs = {utils::MakeAttribute("axis", static_cast<int64_t>(1))};
 
-  RunQnnModelTest(BuildOpTestCase<int32_t>(
-                      "ScatterElements",
-                      std::move(input_defs),
-                      {},
-                      std::move(attrs)),
-                  provider_options,
-                  13,
-                  ExpectedEPNodeAssignment::All,
-                  1e-5f);
+  RunQnnModelTestABI(BuildOpTestCase<int32_t>(
+                         "ScatterElements",
+                         std::move(input_defs),
+                         {},
+                         std::move(attrs)),
+                     provider_options,
+                     13,
+                     ExpectedEPNodeAssignment::All,
+                     1e-5f);
 }
 
 }  // namespace test
