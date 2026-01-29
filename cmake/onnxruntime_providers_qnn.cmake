@@ -3,10 +3,6 @@
 
   add_compile_definitions(USE_QNN=1)
 
-
-  remove_definitions(-DBUILD_QNN_EP_STATIC_LIB)
-  add_compile_definitions(BUILD_QNN_EP_STATIC_LIB=0)
-
   file(GLOB_RECURSE
        onnxruntime_providers_qnn_ep_srcs CONFIGURE_DEPENDS
        "${ONNXRUNTIME_ROOT}/core/providers/qnn/*.h"
@@ -39,9 +35,11 @@
   endif()
   message(STATUS "QNN SDK version ${QNN_SDK_VERSION}")
 
+  # TODO: Can we remove this line?
   set(onnxruntime_providers_qnn_srcs ${onnxruntime_providers_qnn_ep_srcs})
 
-  source_group(TREE ${ONNXRUNTIME_ROOT}/core FILES ${onnxruntime_providers_qnn_srcs})
+  # TODO: Investigate the source_group
+  # source_group(TREE ${ONNXRUNTIME_ROOT}/core FILES ${onnxruntime_providers_qnn_srcs})
 
   set(onnxruntime_providers_qnn_all_srcs ${onnxruntime_providers_qnn_srcs})
   if(WIN32)
@@ -50,16 +48,19 @@
   endif()
 
   onnxruntime_add_shared_library_module(onnxruntime_providers_qnn ${onnxruntime_providers_qnn_all_srcs})
-  onnxruntime_add_include_to_target(onnxruntime_providers_qnn ${GSL_TARGET}
-                                                                  safeint_interface
-                                                                  nlohmann_json::nlohmann_json)
-  target_link_libraries(onnxruntime_providers_qnn PRIVATE ${ABSEIL_LIBS} ${CMAKE_DL_LIBS})
+  onnxruntime_add_include_to_target(onnxruntime_providers_qnn ${GSL_TARGET} safeint_interface nlohmann_json::nlohmann_json)
 
-  add_dependencies(onnxruntime_providers_qnn ${onnxruntime_EXTERNAL_DEPENDENCIES})
-  target_include_directories(onnxruntime_providers_qnn PRIVATE ${ONNXRUNTIME_ROOT}
-                                                                   ${CMAKE_CURRENT_BINARY_DIR}
-                                                                   ${onnxruntime_QNN_HOME}/include/QNN
-                                                                   ${onnxruntime_QNN_HOME}/include)
+  # TODO: Investigate whether we need ${CMAKE_DL_LIBS} in the target_link_libraries
+  target_link_libraries(onnxruntime_providers_qnn PRIVATE ${ABSEIL_LIBS})
+
+  add_dependencies(onnxruntime_providers_qnn ort_repo)
+
+  message(STATUS ONNXRUNTIME_APPLICATION_SOURCE_ROOT ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT})
+  target_include_directories(onnxruntime_providers_qnn PRIVATE ${CMAKE_CURRENT_BINARY_DIR}
+                                                                  ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT}
+                                                                  ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}
+                                                                  ${onnxruntime_QNN_HOME}/include/QNN
+                                                                  ${onnxruntime_QNN_HOME}/include)
 
   # Set preprocessor definitions used in onnxruntime_providers_qnn.rc
   if(WIN32)
@@ -89,7 +90,7 @@
 
   # Set compile options
   if(MSVC)
-    target_compile_options(onnxruntime_providers_qnn PUBLIC /wd4099 /wd4005)
+    target_compile_options(onnxruntime_providers_qnn PUBLIC /wd4099 /wd4005 /wd4702)
   else()
     # ignore the warning unknown-pragmas on "pragma region"
     target_compile_options(onnxruntime_providers_qnn PRIVATE "-Wno-unknown-pragmas")
@@ -112,6 +113,11 @@
       TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/onnxruntime_qnn
       COMMENT "Creating QNN library destination directory"
+    )
+
+    add_custom_command(
+      TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy ${REPO_ROOT}/VERSION_NUMBER $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>
     )
 
     # Copy QNN library files with better error handling
@@ -154,6 +160,19 @@
         COMMAND ${CMAKE_COMMAND} -E copy "${onnxruntime_QNN_HOME}/LICENSE.pdf" $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/Qualcomm_LICENSE.pdf
     )
   endif()
+
+  add_custom_command(
+    TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy ${onnxruntime_ORT_HOME}/lib/onnxruntime.dll $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>
+    COMMENT "Copying onnxruntime.dll to Build Folder for test runner"
+  )
+
+  add_custom_command(
+    TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy ${onnxruntime_ORT_HOME}/lib/onnxruntime_providers_shared.dll $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>
+    COMMENT "Copying onnxruntime_providers_shared.dll to Build Folder for test runner"
+  )
+
   if (EXISTS "${onnxruntime_QNN_HOME}/Qualcomm AI Hub Proprietary License.pdf")
     add_custom_command(
       TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
