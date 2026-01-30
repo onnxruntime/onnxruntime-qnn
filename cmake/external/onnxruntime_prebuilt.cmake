@@ -18,6 +18,7 @@ ExternalProject_Add(
         COMMAND ${CMAKE_COMMAND} -E chdir ${SOURCE_DIR} git sparse-checkout init --cone
         COMMAND ${CMAKE_COMMAND} -E chdir ${SOURCE_DIR} git sparse-checkout set capi cmake include onnxruntime tools samples
         COMMAND ${CMAKE_COMMAND} -E chdir ${SOURCE_DIR} git checkout ${GIT_TAG}
+    # TODO: Once MS release 1.24, remove the PATCH_COMMAND
     PATCH_COMMAND
         ${CMAKE_COMMAND} -E echo "Applying patch to ensure ORT_API_VERSION is 23"
         COMMAND ${CMAKE_COMMAND} -E chdir ${SOURCE_DIR} git apply ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_api_version.patch

@@ -738,7 +738,6 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   ModelTestBuilder f32_helper;
   std::string f32_model_data;
   f32_model_fn(f32_helper);
-  // f32_helper.SetGraphOutputs();
   for (const auto& [domain, version] : domain_to_version) {
     const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{f32_helper.model_.add_opset_import()};
     opset_id_proto->set_domain(domain);
@@ -746,7 +745,6 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   }
   f32_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
 
-  // ASSERT_STATUS_OK(f32_model.MainGraph().Resolve());
   f32_helper.model_.SerializeToString(&f32_model_data);
 
   // Uncomment to save f32 model to disk for debugging.
@@ -789,7 +787,6 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   ModelTestBuilder qdq_helper;
   std::string qdq_model_data;
   qdq_model_fn(qdq_helper, output_qparams);
-  // qdq_helper.SetGraphOutputs();
 
   for (const auto& [domain, version] : domain_to_version) {
     const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{qdq_helper.model_.add_opset_import()};
@@ -798,7 +795,6 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   }
   qdq_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
 
-  // ASSERT_STATUS_OK(qdq_model.MainGraph().Resolve());
   qdq_helper.model_.SerializeToString(&qdq_model_data);
 
   // Uncomment to save QDQ model to disk for debugging.
@@ -812,7 +808,6 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   InferenceModelCPU(qdq_model_data, "qdq_model_logger", ExpectedEPNodeAssignment::All,
                     qdq_helper.feeds_, cpu_qdq_outputs);
 
-  // TryEnableQNNSaver(qnn_options);
   qnn_options["dump_json_qnn_graph"] = "1";
 
   // Run with QNN.
@@ -972,8 +967,6 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   ModelTestBuilder f32_helper;
   std::string f32_model_data;
   f32_model_fn(f32_helper);
-  // f32_helper.SetGraphOutputs();
-  // ASSERT_STATUS_OK(f32_model.MainGraph().Resolve());
   for (const auto& [domain, version] : domain_to_version) {
     const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{f32_helper.model_.add_opset_import()};
     opset_id_proto->set_domain(domain);
@@ -1013,8 +1006,6 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   ModelTestBuilder f16_helper;
   std::string f16_model_data;
   f16_model_fn(f16_helper);
-  // f16_helper.SetGraphOutputs();
-  // ASSERT_STATUS_OK(f16_model.MainGraph().Resolve());
   for (const auto& [domain, version] : domain_to_version) {
     const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{f16_helper.model_.add_opset_import()};
     opset_id_proto->set_domain(domain);
@@ -1032,8 +1023,6 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   std::vector<Ort::Value> cpu_f16_outputs;
   InferenceModelCPU(f16_model_data, "fp16_model_logger", ExpectedEPNodeAssignment::All,
                     f16_helper.feeds_, cpu_f16_outputs);
-
-  // TryEnableQNNSaver(qnn_options);
 
   // Run with QNN.
   std::vector<Ort::Value> qnn_f16_outputs;

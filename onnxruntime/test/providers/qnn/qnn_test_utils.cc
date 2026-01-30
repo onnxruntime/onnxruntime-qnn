@@ -245,7 +245,6 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   // Serialize the model to a string.
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
-  // TryEnableQNNSaver(provider_options);
 
   // Run with QNN.
   RegisteredEpDeviceUniquePtr registered_ep_device;
@@ -433,52 +432,8 @@ void QnnHTPBackendTests::TearDownTestSuite() {
   if (cached_htp_support_ != BackendSupport::SUPPORTED) {
     return;
   }
-
-  Ort::Logger logger = Ort::Logger();
-
-  // Build simple Relu graph.
-  ModelTestBuilder helper;
-
-  auto build_test_case = BuildOpTestCase<float, float>(
-      "simple_relu",
-      "Relu",
-      {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f)},
-      {},
-      {});
-
-  build_test_case(helper);
-  // helper.SetGraphOutputs();
-  // auto status = model.MainGraph().Resolve();
-  // if (!status.IsOK()) {
-  //   LOGS(logger, WARNING) << "Failed to tear down QnnHTPBackendTests.";
-  //   return;
-  // }
-
-  // Create QNN EP and call GetCapability().
-  // onnxruntime::GraphViewer graph_viewer(graph);
-  // std::unique_ptr<EpGraph> ep_graph = nullptr;
-  // if (!EpGraph::Create(graph_viewer, ep_graph).IsOK()) {
-  //   LOGS(logger, WARNING) << "Failed to tear down QnnHTPBackendTests.";
-  //   return;
-  // }
-  // OrtEpGraphSupportInfo graph_support_info(*ep_graph);
-
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string& registration_name = "QNNExecutionProvider";
-  Ort::SessionOptions session_options;
-  ProviderOptions provider_options = {{"backend_type", "htp"}, {"soc_model", "30"}};
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
-
-  OrtEpFactory* qnn_ep_factory = registered_ep_device->GetMutableFactory();
-  OrtEp* qnn_ep = nullptr;
-  if (qnn_ep_factory->CreateEp(qnn_ep_factory, nullptr, nullptr, 0, session_options, reinterpret_cast<OrtLogger*>(&logger), &qnn_ep)) {
-    qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Failed to tear down QnnHTPBackendTests.");
-    return;
-  }
-
-  // status = ToStatusAndRelease(qnn_ep->GetCapability(qnn_ep, ep_graph->ToExternal(), &graph_support_info));
-  qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
+  // TODO: Consider using public DeviceCompatibility API for this function
+  return;
 #endif  // !defined(__aarch64__) && !defined(_M_ARM64)
 }
 
