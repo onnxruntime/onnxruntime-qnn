@@ -1270,9 +1270,8 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
                     attrs);
 
     // op_output -> Q -> DQ -> output
-    std::string out = AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq_out", "Y", output_qparams[0].scale,
-                                                                       output_qparams[0].zero_point, use_contrib_qdq);
-    builder.MakeOutput(out);
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq_out", "Y", output_qparams[0].scale,
+                                                     output_qparams[0].zero_point, use_contrib_qdq);
   };
 }
 template <typename QuantType, typename OtherInputType = int64_t>
@@ -1332,9 +1331,8 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
         attrs);
 
     // op_output -> Q -> DQ -> output
-    std::string out = AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq_out", "Y", output_qparams[0].scale,
-                                                                       output_qparams[0].zero_point, use_contrib_qdq);
-    builder.MakeOutput(out);
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq_out", "Y", output_qparams[0].scale,
+                                                     output_qparams[0].zero_point, use_contrib_qdq);
   };
 }
 /**

@@ -36,6 +36,7 @@ AddQDQNodePairWithOutputAsGraphOutput(ModelTestBuilder& builder, std::string qdq
                                       bool use_ms_domain = false) {
   builder.AddQuantizeLinearNode<T>(qdq_name + "_q", inp_name.c_str(), scale, zp, (qdq_name + "_q_out").c_str(), use_ms_domain);
   builder.AddDequantizeLinearNode<T>(qdq_name + "_dq", (qdq_name + "_q_out").c_str(), scale, zp, (qdq_name + "_dq_out").c_str(), use_ms_domain);
+  builder.MakeOutput((qdq_name + "_dq_out").c_str());
   return qdq_name + "_dq_out";
 }
 
