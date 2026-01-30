@@ -368,7 +368,11 @@ TEST_F(QnnABIHTPBackendTests, Resize_DownSample_Linear_AlignCorners) {
 
 // Test 2x QDQ Resize mode: "cubic", coordinate_transformation_mode: "half_pixel"
 // Maps to QNN's Resize operator with cubic interpolation.
-// GraphOptimizationLevel is to avoid DQ->Resize->Q folding to native op which is not there for `cubic` mode.
+
+// GraphOptimizationLevel::ORT_DISABLE_ALL is set in Cubic unit-tests to avoid ORT bug due to the DQ->Resize->Q folding:
+// https://github.com/microsoft/onnxruntime/blob/main/onnxruntime/core/optimizer/qdq_transformer/selectors_actions/qdq_selector_action_transformer.cc#L81C61-L81C67,
+// which would redirect execution to the hardcoded float-only ResizeBiCubic CPU implementation instead of quantized:
+// https://github.com/microsoft/onnxruntime/blob/d5aa986f58910b80589fd4b3332a9ba7eeb86692/onnxruntime/core/providers/cpu/tensor/upsample.cc#L1363 and break this QDQ test.
 TEST_F(QnnABIHTPBackendTests, ResizeU8_2xCubicHalfPixel) {
   std::vector<float> input_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 48);
   RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
