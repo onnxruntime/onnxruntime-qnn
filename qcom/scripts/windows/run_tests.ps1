@@ -65,7 +65,7 @@ $Failed = $false
 
 Push-Location $RootDir
 Write-Host "--=-=-=- Running unit tests -=--=-=-"
-# & $CTestExe --build-config $Config --verbose --timeout $TimeoutSec
+& $CTestExe --build-config $Config --verbose --timeout $TimeoutSec
 
 if (-not $?) {
     Write-Host "Unit tests failed. Will exit with error after running model tests."
@@ -96,7 +96,7 @@ if ((Get-CimInstance Win32_Processor).Architecture -ne 12) {  # Architecture cod
                 }
 
                 Write-Host "Running $PythonFile..."
-                # & python $PythonFile
+                & python $PythonFile
                 if (-not $?) {
                     Write-Error "Python test $PythonFile failed."
                     $Failed = $true
@@ -112,7 +112,7 @@ if ((Get-CimInstance Win32_Processor).Architecture -ne 12) {  # Architecture cod
 
     if (Test-Path "quantization" -PathType Container) {
         Write-Host "Running quantization tests..."
-        # & python -m unittest discover -s quantization
+        & python -m unittest discover -s quantization
     } else {
         Write-Warning "Failed to find directory 'quantization' - may be OK on platforms which do not support Python."
     }
