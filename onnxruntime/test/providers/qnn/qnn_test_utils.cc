@@ -102,7 +102,7 @@ class SafeIntExceptionHandler : public std::exception {
   }
 };
 
-int64_t SizeHelper(std::vector<int64_t> shape, size_t start, size_t end) {
+size_t SizeHelper(std::vector<int64_t> shape, size_t start, size_t end) {
   // Must return 1 for an empty sequence
   SafeInt<int64_t, SafeIntExceptionHandler> size = 1;  // this is used to calculate the size, which is used for memory allocations, so validate no overflow
   for (size_t i = start; i < end; i++) {
@@ -125,6 +125,10 @@ size_t SizeFromDimension(std::vector<int64_t> shape, size_t dimension) {
 
   int64_t size = SizeHelper(shape, dimension, num_dims);
   return size;
+}
+
+size_t SizeOfShape(std::vector<int64_t> shape) {
+  return SizeHelper(shape, 0, shape.size());
 }
 
 void TryEnableQNNSaver(ProviderOptions& qnn_options) {
@@ -253,8 +257,8 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
 
   session_options.SetLogSeverityLevel(log_severity);
 
+  TryEnableQNNSaver(provider_options);
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
-
   RunAndVerifyOutputsWithEP(AsByteSpan(model_data.data(), model_data.size()),
                             session_options,
                             registration_name,

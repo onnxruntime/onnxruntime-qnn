@@ -260,7 +260,6 @@ target_link_libraries(onnxruntime_unittest_utils PUBLIC
                       onnx
                       GTest::gtest
                       GTest::gmock
-                      # onnxruntime_test_utils
                       ${ONNXRUNTIME_TEST_LIBS}
                       ${onnxruntime_EXTERNAL_LIBRARIES}
                       )

@@ -250,7 +250,7 @@ class ModelTestBuilder {
   const ONNX_NAMESPACE::ValueInfoProto* MakeInput(const std::string name,
                                                   const std::vector<int64_t>& shape,
                                                   const std::vector<T>& data,
-                                                  AllocatorPtr = nullptr) {
+                                                  AllocatorPtr /* allocator */ = nullptr) {
     ONNX_NAMESPACE::ValueInfoProto* inp = graph_->add_input();
     inp->set_name(name);
     ONNX_NAMESPACE::TypeProto* type_proto = inp->mutable_type();

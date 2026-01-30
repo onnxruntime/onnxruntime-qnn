@@ -30,9 +30,10 @@ namespace test {
 // Signature for function that builds a float32 model.
 using GetTestModelFn = std::function<void(ModelTestBuilder& builder)>;
 
-int64_t SizeHelper(std::vector<int64_t> shape, size_t start, size_t end);
+size_t SizeHelper(std::vector<int64_t> shape, size_t start, size_t end);
 size_t SizeToDimension(std::vector<int64_t> shape, size_t dimension);
 size_t SizeFromDimension(std::vector<int64_t> shape, size_t dimension);
+size_t SizeOfShape(std::vector<int64_t> shape);
 
 // Class that stores quantization params (scale, zero point).
 // Has a static function that computes quantization parameters from a floating-point range.
@@ -368,7 +369,7 @@ static void QuantizeValues(gsl::span<const FloatType> input, gsl::span<QuantType
                            gsl::span<const FloatType> scales, gsl::span<const QuantType> zero_points,
                            std::optional<int64_t> axis) {
   const size_t input_rank = shape.size();
-  const size_t num_elems = static_cast<size_t>(SizeHelper(shape, 0, input_rank));
+  const size_t num_elems = SizeOfShape(shape);
   assert(input.size() == num_elems);
   assert(output.size() == num_elems);
 
@@ -426,7 +427,7 @@ inline void QuantizeValues<float, Int4x2>(gsl::span<const float> input,
                                           gsl::span<const Int4x2> zero_points,
                                           std::optional<int64_t> axis) {
   const size_t input_rank = shape.size();
-  const size_t num_int4_elems = static_cast<size_t>(SizeHelper(shape, 0, input_rank));
+  const size_t num_int4_elems = SizeOfShape(shape);
   assert(input.size() == num_int4_elems);
   assert(output.size() == Int4x2::CalcNumInt4Pairs(num_int4_elems));
 
@@ -475,7 +476,7 @@ inline void QuantizeValues<float, UInt4x2>(gsl::span<const float> input,
                                            gsl::span<const UInt4x2> zero_points,
                                            std::optional<int64_t> axis) {
   const size_t input_rank = shape.size();
-  const size_t num_uint4_elems = static_cast<size_t>(SizeHelper(shape, 0, input_rank));
+  const size_t num_uint4_elems = SizeOfShape(shape);
   assert(input.size() == num_uint4_elems);
   assert(output.size() == UInt4x2::CalcNumInt4Pairs(num_uint4_elems));
 
@@ -808,8 +809,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   InferenceModelCPU(qdq_model_data, "qdq_model_logger", ExpectedEPNodeAssignment::All,
                     qdq_helper.feeds_, cpu_qdq_outputs);
 
-  qnn_options["dump_json_qnn_graph"] = "1";
-
+  TryEnableQNNSaver(qnn_options);
   // Run with QNN.
   std::vector<Ort::Value> qnn_qdq_outputs;
   if (!qnn_ctx_model_path.empty()) {
@@ -1023,6 +1023,8 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   std::vector<Ort::Value> cpu_f16_outputs;
   InferenceModelCPU(f16_model_data, "fp16_model_logger", ExpectedEPNodeAssignment::All,
                     f16_helper.feeds_, cpu_f16_outputs);
+
+  TryEnableQNNSaver(qnn_options);
 
   // Run with QNN.
   std::vector<Ort::Value> qnn_f16_outputs;
