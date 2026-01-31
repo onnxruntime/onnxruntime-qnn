@@ -65,8 +65,6 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
     CreateSimpleOpBuilder("GridSample", *this);
 
     CreateSimpleOpBuilder("LpNormalization", *this);
-
-    CreateSimpleOpBuilder("ScatterElements", *this);
   }
 
   {
@@ -226,6 +224,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
 
   {
     CreateInverseOpBuilder("Inverse", *this);
+  }
+
+  {
+    CreateScatterElementsOpBuilder("ScatterElements", *this);
   }
 }
 
