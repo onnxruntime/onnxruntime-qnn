@@ -261,7 +261,7 @@ TEST_F(QnnHTPBackendTests, Reshape_AllowZeroAttr_WithZeros_Unsupported) {
   RunReshapeExpandTestOnHTP<float>("Reshape",
                                    TestInputDef<float>({2, 0, 3}, false, {}),
                                    TestInputDef<int64_t>({2}, true, {6, 0}),
-                                   {utils::MakeAttribute("allowzero", static_cast<int64_t>(1))},
+                                   {test::MakeAttribute("allowzero", static_cast<int64_t>(1))},
                                    ExpectedEPNodeAssignment::None,
                                    19);
 }

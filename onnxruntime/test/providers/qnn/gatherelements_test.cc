@@ -190,7 +190,7 @@ TEST_F(QnnHTPBackendTests, GatherElems_DataBool_IndicesInt32) {
   RunHTPGatherElemsOpTest<bool, int32_t>(
       TestInputDef<bool>({2, 3}, false, {true, false, true, false, true, false}),
       TestInputDef<int32_t>({2, 3}, false, {1, 2, 0, 2, 0, 0}),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
       ExpectedEPNodeAssignment::All);
 }
 

@@ -210,9 +210,8 @@ TEST_F(QnnHTPBackendTests, Clip_U8_QuantizedMin) {
     const uint8_t min_zp = 128;
 
     uint8_t quantized_min = static_cast<uint8_t>(std::round(min_value / min_scale) + min_zp);
-    NodeArg* min_quantized = builder.MakeInitializer<uint8_t>({}, {quantized_min});
-    NodeArg* min_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<uint8_t>(min_quantized, min_scale, min_zp, min_dq);
+    builder.MakeInitializer<uint8_t>("min_quantized", {}, {quantized_min});
+    builder.AddDequantizeLinearNode<uint8_t>("min_dq", "min_quantized", min_scale, min_zp, "min_dq_out");
 
     const float data_scale = 0.001f;
     const uint8_t data_zp = 128;
@@ -222,16 +221,15 @@ TEST_F(QnnHTPBackendTests, Clip_U8_QuantizedMin) {
       input_data[i] = static_cast<uint8_t>(28 + i);
     }
 
-    NodeArg* data_quantized = builder.MakeInput<uint8_t>({200}, input_data);
-    NodeArg* data_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<uint8_t>(data_quantized, data_scale, data_zp, data_dq);
+    builder.MakeInput<uint8_t>("data_quantized", {200}, input_data);
+    builder.AddDequantizeLinearNode<uint8_t>("data_dq", "data_quantized", data_scale, data_zp, "data_dq_out");
 
     // Clip with only min input (no max)
-    NodeArg* clip_output = builder.MakeIntermediate();
-    builder.AddNode("Clip", {data_dq, min_dq}, {clip_output});
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    builder.AddNode("clip", "Clip", {"data_dq_out", "min_dq_out"}, {"clip_output"}, "", attributes);
 
-    NodeArg* output = builder.MakeOutput();
-    builder.AddQuantizeLinearNode<uint8_t>(clip_output, data_scale, data_zp, output);
+    builder.AddQuantizeLinearNode<uint8_t>("q", "clip_output", data_scale, data_zp, "Y");
+    builder.MakeOutput("Y");
   };
 
   ProviderOptions provider_options;
@@ -253,9 +251,8 @@ TEST_F(QnnHTPBackendTests, Clip_U16_QuantizedMax) {
     const uint16_t max_zp = 32768;
 
     uint16_t quantized_max = static_cast<uint16_t>(std::round(max_value / max_scale) + max_zp);
-    NodeArg* max_quantized = builder.MakeInitializer<uint16_t>({}, {quantized_max});
-    NodeArg* max_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<uint16_t>(max_quantized, max_scale, max_zp, max_dq);
+    builder.MakeInitializer<uint16_t>("max_quantized", {}, {quantized_max});
+    builder.AddDequantizeLinearNode<uint16_t>("max_dq", "max_quantized", max_scale, max_zp, "max_dq_out");
 
     const float data_scale = 0.001f;
     const uint16_t data_zp = 32768;
@@ -264,16 +261,15 @@ TEST_F(QnnHTPBackendTests, Clip_U16_QuantizedMax) {
       input_data[i] = static_cast<uint16_t>(32768 - 100 + i);
     }
 
-    NodeArg* data_quantized = builder.MakeInput<uint16_t>({200}, input_data);
-    NodeArg* data_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<uint16_t>(data_quantized, data_scale, data_zp, data_dq);
+    builder.MakeInput<uint16_t>("data_quantized", {200}, input_data);
+    builder.AddDequantizeLinearNode<uint16_t>("data_dq", "data_quantized", data_scale, data_zp, "data_dq_out");
 
     // Clip with only max input (no min) - provide empty input for min
-    NodeArg* clip_output = builder.MakeIntermediate();
-    builder.AddNode("Clip", {data_dq, builder.MakeEmptyInput(), max_dq}, {clip_output});
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    builder.AddNode("clip", "Clip", {"data_dq_out", "", "max_dq_out"}, {"clip_output"}, "", attributes);
 
-    NodeArg* output = builder.MakeOutput();
-    builder.AddQuantizeLinearNode<uint16_t>(clip_output, data_scale, data_zp, output);
+    builder.AddQuantizeLinearNode<uint16_t>("q", "clip_output", data_scale, data_zp, "Y");
+    builder.MakeOutput("Y");
   };
 
   ProviderOptions provider_options;
@@ -295,18 +291,16 @@ TEST_F(QnnHTPBackendTests, Clip_U8_QuantizedMinMax) {
     const uint8_t min_zp = 128;
 
     uint8_t quantized_min = static_cast<uint8_t>(std::round(min_value / min_scale) + min_zp);
-    NodeArg* min_quantized = builder.MakeInitializer<uint8_t>({}, {quantized_min});
-    NodeArg* min_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<uint8_t>(min_quantized, min_scale, min_zp, min_dq);
+    builder.MakeInitializer<uint8_t>("min_quantized", {}, {quantized_min});
+    builder.AddDequantizeLinearNode<uint8_t>("min_dq", "min_quantized", min_scale, min_zp, "min_dq_out");
 
     const float max_value = 0.05f;
     const float max_scale = 0.001f;
     const uint8_t max_zp = 128;
 
     uint8_t quantized_max = static_cast<uint8_t>(std::round(max_value / max_scale) + max_zp);
-    NodeArg* max_quantized = builder.MakeInitializer<uint8_t>({}, {quantized_max});
-    NodeArg* max_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<uint8_t>(max_quantized, max_scale, max_zp, max_dq);
+    builder.MakeInitializer<uint8_t>("max_quantized", {}, {quantized_max});
+    builder.AddDequantizeLinearNode<uint8_t>("max_dq", "max_quantized", max_scale, max_zp, "max_dq_out");
 
     const float data_scale = 0.001f;
     const uint8_t data_zp = 128;
@@ -315,16 +309,15 @@ TEST_F(QnnHTPBackendTests, Clip_U8_QuantizedMinMax) {
       input_data[i] = static_cast<uint8_t>(28 + i);
     }
 
-    NodeArg* data_quantized = builder.MakeInput<uint8_t>({200}, input_data);
-    NodeArg* data_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<uint8_t>(data_quantized, data_scale, data_zp, data_dq);
+    builder.MakeInput<uint8_t>("data_quantized", {200}, input_data);
+    builder.AddDequantizeLinearNode<uint8_t>("data_dq", "data_quantized", data_scale, data_zp, "data_dq_out");
 
     // Clip with both min and max inputs
-    NodeArg* clip_output = builder.MakeIntermediate();
-    builder.AddNode("Clip", {data_dq, min_dq, max_dq}, {clip_output});
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    builder.AddNode("clip", "Clip", {"data_dq_out", "min_dq_out", "max_dq_out"}, {"clip_output"}, "", attributes);
 
-    NodeArg* output = builder.MakeOutput();
-    builder.AddQuantizeLinearNode<uint8_t>(clip_output, data_scale, data_zp, output);
+    builder.AddQuantizeLinearNode<uint8_t>("q", "clip_output", data_scale, data_zp, "Y");
+    builder.MakeOutput("Y");
   };
 
   ProviderOptions provider_options;

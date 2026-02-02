@@ -354,7 +354,7 @@ TEST_F(QnnHTPBackendTests, GatherOp_BoolInputOutput) {
   RunOpTest<bool, int32_t>("Gather",
                            TestInputDef<bool>({3, 2}, false, {true, false, true, false, false, true}),
                            TestInputDef<int32_t>({2, 2}, true, {0, 1, 1, 2}),
-                           {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
+                           {test::MakeAttribute("axis", static_cast<int64_t>(0))},
                            13,
                            ExpectedEPNodeAssignment::All);
 }

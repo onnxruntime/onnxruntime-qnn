@@ -839,7 +839,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   f32_helper.model_.SerializeToString(&f32_model_data);
 
   if (QNNTestEnvironment::GetInstance().dump_onnx()) {
-    auto dump_path = output_dir / ToPathString("dumped_f32_model.onnx");
+    auto dump_path = output_dir / "dumped_f32_model.onnx";
     std::ofstream ofs(dump_path, std::ios::binary);
     ofs.write(f32_model_data.data(), static_cast<std::streamsize>(f32_model_data.size()));
   }
@@ -889,7 +889,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   qdq_helper.model_.SerializeToString(&qdq_model_data);
 
   if (QNNTestEnvironment::GetInstance().dump_onnx()) {
-    auto dump_path = output_dir / ToPathString("dumped_qdq_model.onnx");
+    auto dump_path = output_dir / "dumped_qdq_model.onnx";
     std::ofstream ofs(dump_path, std::ios::binary);
     ofs.write(qdq_model_data.data(), static_cast<std::streamsize>(qdq_model_data.size()));
   }
@@ -1089,7 +1089,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   f32_helper.model_.SerializeToString(&f32_model_data);
 
   if (QNNTestEnvironment::GetInstance().dump_onnx()) {
-    auto dump_path = output_dir / ToPathString("dumped_f32_model.onnx");
+    auto dump_path = output_dir / "dumped_f32_model.onnx";
     std::ofstream ofs(dump_path, std::ios::binary);
     ofs.write(f32_model_data.data(), static_cast<std::streamsize>(f32_model_data.size()));
   }
@@ -1134,7 +1134,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   f16_helper.model_.SerializeToString(&f16_model_data);
 
   if (QNNTestEnvironment::GetInstance().dump_onnx()) {
-    auto dump_path = output_dir / ToPathString("dumped_f16_model.onnx");
+    auto dump_path = output_dir / "dumped_f16_model.onnx";
     std::ofstream ofs(dump_path, std::ios::binary);
     ofs.write(f16_model_data.data(), static_cast<std::streamsize>(f16_model_data.size()));
   }
@@ -1530,7 +1530,7 @@ class QnnHTPBackendTests : public ::testing::Test {
   // Cached platform attributes for HTP backend to avoid repeated queries.
   static const QnnPlatformAttributes& GetPlatformAttributes() {
     if (!cached_platform_attrs_.has_value()) {
-      ORT_THROW("QNN platform attributes are not available.");
+      throw std::string("QNN platform attributes are not available.");
     }
     return *cached_platform_attrs_;
   }

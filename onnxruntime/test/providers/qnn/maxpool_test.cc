@@ -104,13 +104,13 @@ TEST_F(QnnCPUBackendTests, MaxPool_Global) {
 TEST_F(QnnCPUBackendTests, MaxPool_Rank3) {
   RunPoolOpTest("MaxPool",
                 TestInputDef<float>({1, 16, 120}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
-                {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
-                 utils::MakeAttribute("strides", std::vector<int64_t>{1}),
-                 utils::MakeAttribute("pads", std::vector<int64_t>{1, 1}),
-                 utils::MakeAttribute("dilations", std::vector<int64_t>{1}),
-                 utils::MakeAttribute("ceil_mode", static_cast<int64_t>(0)),
-                 utils::MakeAttribute("storage_order", static_cast<int64_t>(0)),
-                 utils::MakeAttribute("auto_pad", "NOTSET")},
+                {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
+                 test::MakeAttribute("strides", std::vector<int64_t>{1}),
+                 test::MakeAttribute("pads", std::vector<int64_t>{1, 1}),
+                 test::MakeAttribute("dilations", std::vector<int64_t>{1}),
+                 test::MakeAttribute("ceil_mode", static_cast<int64_t>(0)),
+                 test::MakeAttribute("storage_order", static_cast<int64_t>(0)),
+                 test::MakeAttribute("auto_pad", "NOTSET")},
                 ExpectedEPNodeAssignment::All);
 }
 
@@ -257,14 +257,14 @@ TEST_F(QnnHTPBackendTests, MaxPool_Rank3_stride1_HTP_u8) {
       "MaxPool",
       TestInputDef<float>({1, 3, 3}, false, -10.0f, 10.0f),
       // A single 1-D kernel of length 3
-      {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
-       utils::MakeAttribute("strides", std::vector<int64_t>{1}),
+      {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
+       test::MakeAttribute("strides", std::vector<int64_t>{1}),
        // 1-D pad: only two values
-       utils::MakeAttribute("pads", std::vector<int64_t>{1, 1}),
-       utils::MakeAttribute("dilations", std::vector<int64_t>{1}),
-       utils::MakeAttribute("ceil_mode", static_cast<int64_t>(0)),
-       utils::MakeAttribute("storage_order", static_cast<int64_t>(0)),
-       utils::MakeAttribute("auto_pad", "NOTSET")},
+       test::MakeAttribute("pads", std::vector<int64_t>{1, 1}),
+       test::MakeAttribute("dilations", std::vector<int64_t>{1}),
+       test::MakeAttribute("ceil_mode", static_cast<int64_t>(0)),
+       test::MakeAttribute("storage_order", static_cast<int64_t>(0)),
+       test::MakeAttribute("auto_pad", "NOTSET")},
       ExpectedEPNodeAssignment::All);
 }
 

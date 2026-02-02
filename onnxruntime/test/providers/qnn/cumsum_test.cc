@@ -66,8 +66,8 @@ TEST_F(QnnHTPBackendTests, CumSum_float_int64_e0_r0_axis_1) {
   RunCumSumOpTest<float, int64_t>("CumSum",
                                   TestInputDef<float>({3, 2}, false, {1.3f, 7.2f, 0.4f, 3.4f, 5.7f, 0.8f}),
                                   TestInputDef<int64_t>({}, true, {1}),
-                                  {utils::MakeAttribute("exclusive", static_cast<int64_t>(0)),
-                                   utils::MakeAttribute("reverse", static_cast<int64_t>(0))},
+                                  {test::MakeAttribute("exclusive", static_cast<int64_t>(0)),
+                                   test::MakeAttribute("reverse", static_cast<int64_t>(0))},
                                   17,
                                   ExpectedEPNodeAssignment::All);
 }

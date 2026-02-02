@@ -197,18 +197,16 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPattern1TestCase(const TestInputDef<flo
                     {"add_out"},
                     kOnnxDomain);
 
-<<<<<<< HEAD
-    // Final DQ -> Mul (with 0.5) -> Q
-    NodeArg* mul_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<QuantType>(mul_q, input_qparams.scale, input_qparams.zero_point, mul_dq);
-    NodeArg* half_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<QuantType>(half_q, half_qparams.scale, half_qparams.zero_point, half_dq);
-    NodeArg* mul_final_output = builder.MakeIntermediate();
-    builder.AddNode("Mul", {mul_dq, half_dq}, {mul_final_output});
-=======
     // add_out -> Q -> DQ -> add_out_qdq
     const std::string add_out_qdq =
         AddQDQNodePair<QuantType>(builder, "qdq_add_out", "add_out", input_qparams.scale, input_qparams.zero_point);
+
+    builder.AddNode("Mul_half",
+                    "Mul",
+                    {input_qdq, half_qdq},
+                    {"mul_half_out"},
+                    kOnnxDomain);
+
     const std::string mul_half_out_qdq =
         AddQDQNodePair<QuantType>(builder, "qdq_mul_half_out", "mul_half_out",
                                   input_qparams.scale, input_qparams.zero_point);
