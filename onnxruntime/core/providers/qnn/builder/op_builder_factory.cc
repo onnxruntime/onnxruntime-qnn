@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn-abi/builder/op_builder_factory.h"
+#include "core/providers/qnn/builder/op_builder_factory.h"
 
 #include <string>
 #include <unordered_map>

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn-abi/builder/qnn_model.h"
+#include "core/providers/qnn/builder/qnn_model.h"
 
 #include <iostream>
 #include <fstream>
@@ -10,14 +10,14 @@
 
 #include "QnnOpDef.h"
 
-#include "core/providers/qnn-abi/builder/op_builder_factory.h"
-#include "core/providers/qnn-abi/builder/qnn_node_group/qnn_node_group.h"
-#include "core/providers/qnn-abi/builder/qnn_profile_serializer.h"
-#include "core/providers/qnn-abi/builder/qnn_utils.h"
-#include "core/providers/qnn-abi/ort_api.h"
-#include "core/providers/qnn-abi/qnn_allocator.h"
-#include "core/providers/qnn-abi/qnn_ep_utils.h"
-#include "core/providers/qnn-abi/shared_context.h"
+#include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
+#include "core/providers/qnn/builder/qnn_profile_serializer.h"
+#include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/qnn_allocator.h"
+#include "core/providers/qnn/qnn_ep_utils.h"
+#include "core/providers/qnn/shared_context.h"
 
 namespace onnxruntime {
 namespace qnn {

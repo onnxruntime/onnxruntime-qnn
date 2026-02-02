@@ -2,7 +2,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn-abi/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/builder/qnn_backend_manager.h"
 
 #include <filesystem>
 #include <fstream>
@@ -24,13 +24,13 @@
 #include "Saver/QnnSaver.h"
 #include "Saver/QnnSaverCommon.h"
 
-#include "core/providers/qnn-abi/builder/qnn_configs_helper.h"
-#include "core/providers/qnn-abi/builder/qnn_model.h"
-#include "core/providers/qnn-abi/builder/qnn_utils.h"
-#include "core/providers/qnn-abi/ort_api.h"
-#include "core/providers/qnn-abi/qnn_allocator.h"
-#include "core/providers/qnn-abi/qnn_telemetry.h"
-#include "core/providers/qnn-abi/shared_context.h"
+#include "core/providers/qnn/builder/qnn_configs_helper.h"
+#include "core/providers/qnn/builder/qnn_model.h"
+#include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/qnn_allocator.h"
+#include "core/providers/qnn/qnn_telemetry.h"
+#include "core/providers/qnn/shared_context.h"
 
 // Flag to determine if Backend should do node validation for each opNode added
 #define DO_GRAPH_NODE_VALIDATIONS 1

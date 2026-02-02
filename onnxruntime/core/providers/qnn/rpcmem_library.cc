@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License
 
-#include "core/providers/qnn-abi/rpcmem_library.h"
+#include "core/providers/qnn/rpcmem_library.h"
 
 #if defined(_WIN32)
 #include <filesystem>
@@ -11,7 +11,7 @@
 #include <winsvc.h>
 #endif  // defined(_WIN32)
 
-#include "core/providers/qnn-abi/ort_api.h"
+#include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime::qnn {
 

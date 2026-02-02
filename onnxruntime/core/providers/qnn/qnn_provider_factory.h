@@ -4,8 +4,8 @@
 #pragma once
 
 #include "core/framework/error_code_helper.h"
-#include "core/providers/qnn-abi/ort_api.h"
-#include "core/providers/qnn-abi/qnn_execution_provider.h"
+#include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/qnn_execution_provider.h"
 
 namespace onnxruntime {
 

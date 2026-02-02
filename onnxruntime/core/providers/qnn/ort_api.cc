@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn-abi/ort_api.h"
+#include "core/providers/qnn/ort_api.h"
 
 #include <fcntl.h>
 

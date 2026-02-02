@@ -1,15 +1,15 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License
 
-#include "core/providers/qnn-abi/qnn_provider_factory.h"
+#include "core/providers/qnn/qnn_provider_factory.h"
 
 #include <cassert>
 #include <iostream>
 #include <optional>
 
 #include "core/framework/error_code_helper.h"
-#include "core/providers/qnn-abi/ort_api.h"
-#include "core/providers/qnn-abi/qnn_allocator.h"
+#include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/qnn_allocator.h"
 #include "core/session/abi_devices.h"
 
 // We allow `backend_type` (e.g., `htp`) or `backend_path` in relative path (e.g., `QnnHtp.dll`) for configurations,

@@ -6,7 +6,7 @@
 #include "core/graph/graph.h"
 #include "core/graph/node_attr_utils.h"
 
-#include "test/providers/qnn-abi/qnn_test_utils.h"
+#include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
 #include "gtest/gtest.h"
 
@@ -64,13 +64,13 @@ ProviderOptions GetProviderOptions() {
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
-TEST_F(QnnABIHTPBackendTests, ChannelShuffleFusion) {
+TEST_F(QnnHTPBackendTests, ChannelShuffleFusion) {
   ProviderOptions provider_options = GetProviderOptions();
-  RunQnnModelTestABI(BuildTestCase(),
-                     provider_options,
-                     /*opset_version=*/10,
-                     /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                     /*fp32_abs_err=*/1e-2f);
+  RunQnnModelTest(BuildTestCase(),
+                  provider_options,
+                  /*opset_version=*/10,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

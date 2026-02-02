@@ -6,8 +6,8 @@
 #include <memory>
 #include <mutex>
 
-#include "core/providers/qnn-abi/ort_api.h"
-#include "core/providers/qnn-abi/rpcmem_library.h"
+#include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/rpcmem_library.h"
 
 namespace onnxruntime::qnn {
 

@@ -26,13 +26,13 @@
 #include "QnnTypes.h"
 #include "System/QnnSystemInterface.h"
 
-#include "core/providers/qnn-abi/builder/op_builder_factory.h"
-#include "core/providers/qnn-abi/builder/qnn_context_mem_handle_manager.h"
-#include "core/providers/qnn-abi/builder/qnn_def.h"
-#include "core/providers/qnn-abi/builder/qnn_htp_power_config_manager.h"
-#include "core/providers/qnn-abi/builder/qnn_node_group/qnn_node_group.h"
-#include "core/providers/qnn-abi/builder/qnn_profile_serializer.h"
-#include "core/providers/qnn-abi/ort_api.h"
+#include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn/builder/qnn_context_mem_handle_manager.h"
+#include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/builder/qnn_htp_power_config_manager.h"
+#include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
+#include "core/providers/qnn/builder/qnn_profile_serializer.h"
+#include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {

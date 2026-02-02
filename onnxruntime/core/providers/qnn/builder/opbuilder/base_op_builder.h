@@ -5,11 +5,11 @@
 
 #include "QnnOpDef.h"
 
-#include "core/providers/qnn-abi/builder/op_builder.h"
-#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn-abi/builder/qnn_quant_params_wrapper.h"
-#include "core/providers/qnn-abi/builder/qnn_utils.h"
-#include "core/providers/qnn-abi/ort_api.h"
+#include "core/providers/qnn/builder/op_builder.h"
+#include "core/providers/qnn/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
+#include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License
 
-#include "core/providers/qnn-abi/qnn_ep_utils.h"
+#include "core/providers/qnn/qnn_ep_utils.h"
 
 #include <iostream>
 #include <string>

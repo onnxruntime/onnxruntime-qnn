@@ -12,7 +12,7 @@
 
 #include "core/graph/node_attr_utils.h"
 #include "core/graph/onnx_protobuf.h"
-#include "test/providers/qnn-abi/qnn_test_utils.h"
+#include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
 
 namespace onnxruntime {
@@ -59,10 +59,10 @@ static void RunPoolOpTest(const std::string& op_type,
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTestABI(BuildOpTestCase<float>(op_type, {input_def}, {}, attrs),
-                     provider_options,
-                     opset,
-                     expected_ep_assignment);
+  RunQnnModelTest(BuildOpTestCase<float>(op_type, {input_def}, {}, attrs),
+                  provider_options,
+                  opset,
+                  expected_ep_assignment);
 }
 
 // Runs a QDQ MaxPool model on the QNN HTP backend. Checks the graph node assignment, and that inference
@@ -79,12 +79,12 @@ static void RunQDQPoolOpTest(const std::string& op_type,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  TestQDQModelAccuracyABI(BuildOpTestCase<float>(op_type, {input_def}, {}, attrs),
-                          BuildPoolQDQTestCase<QuantType>(op_type, input_def, attrs, use_contrib_qdq_ops),
-                          provider_options,
-                          opset,
-                          expected_ep_assignment,
-                          tolerance);
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type, {input_def}, {}, attrs),
+                       BuildPoolQDQTestCase<QuantType>(op_type, input_def, attrs, use_contrib_qdq_ops),
+                       provider_options,
+                       opset,
+                       expected_ep_assignment,
+                       tolerance);
 }
 
 //
@@ -92,7 +92,7 @@ static void RunQDQPoolOpTest(const std::string& op_type,
 //
 
 // MaxPool with kernel size equal to the spatial dimension of input tensor.
-TEST_F(QnnABICPUBackendTests, MaxPool_Global) {
+TEST_F(QnnCPUBackendTests, MaxPool_Global) {
   RunPoolOpTest("MaxPool",
                 TestInputDef<float>({1, 2, 3, 3}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                 {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
@@ -105,7 +105,7 @@ TEST_F(QnnABICPUBackendTests, MaxPool_Global) {
                 ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnABICPUBackendTests, MaxPool_Large_Input) {
+TEST_F(QnnCPUBackendTests, MaxPool_Large_Input) {
   RunPoolOpTest("MaxPool",
                 TestInputDef<float>({1, 125, 8, 56}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                 {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
@@ -119,7 +119,7 @@ TEST_F(QnnABICPUBackendTests, MaxPool_Large_Input) {
 }
 
 // Fails on QNN v2.17, QNN.graphAddNode() failed for node `MaxPool` of type `PoolMax2d` with error code 6000
-TEST_F(QnnABICPUBackendTests, DISABLED_MaxPool_Ceil) {
+TEST_F(QnnCPUBackendTests, DISABLED_MaxPool_Ceil) {
   RunPoolOpTest("MaxPool",
                 TestInputDef<float>({1, 2, 3, 3}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                 {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
@@ -133,7 +133,7 @@ TEST_F(QnnABICPUBackendTests, DISABLED_MaxPool_Ceil) {
 }
 
 // Fails on QNN v2.17, QNN.graphAddNode() failed for node `MaxPool` of type `PoolMax2d` with error code 6000
-TEST_F(QnnABICPUBackendTests, DISABLED_MaxPool_Large_Input2_Ceil) {
+TEST_F(QnnCPUBackendTests, DISABLED_MaxPool_Large_Input2_Ceil) {
   RunPoolOpTest("MaxPool",
                 TestInputDef<float>({1, 128, 16, 113}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                 {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
@@ -146,7 +146,7 @@ TEST_F(QnnABICPUBackendTests, DISABLED_MaxPool_Large_Input2_Ceil) {
                 ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnABICPUBackendTests, MaxPool_3D) {
+TEST_F(QnnCPUBackendTests, MaxPool_3D) {
   RunPoolOpTest("MaxPool",
                 TestInputDef<float>({1, 2, 3, 3, 3}, false, -10.0f, 10.0f),
                 {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3, 3}),
@@ -159,14 +159,14 @@ TEST_F(QnnABICPUBackendTests, MaxPool_3D) {
 }
 
 // GlobalMaxPool test
-TEST_F(QnnABICPUBackendTests, GlobalMaxPoolTest) {
+TEST_F(QnnCPUBackendTests, GlobalMaxPoolTest) {
   RunPoolOpTest("GlobalMaxPool",
                 TestInputDef<float>({1, 2, 3, 3}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                 {},
                 ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnABICPUBackendTests, GlobalMaxPool_3D) {
+TEST_F(QnnCPUBackendTests, GlobalMaxPool_3D) {
   RunPoolOpTest("GlobalMaxPool",
                 TestInputDef<float>({1, 2, 3, 3, 3}, false, -10.0f, 10.0f),
                 {},
@@ -178,7 +178,7 @@ TEST_F(QnnABICPUBackendTests, GlobalMaxPool_3D) {
 // HTP tests:
 //
 // QDQ MaxPool with kernel size equal to the spatial dimension of input tensor.
-TEST_F(QnnABIHTPBackendTests, MaxPool_Global_HTP_u8) {
+TEST_F(QnnHTPBackendTests, MaxPool_Global_HTP_u8) {
   RunQDQPoolOpTest<uint8_t>("MaxPool",
                             TestInputDef<float>({1, 2, 3, 3}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                             {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
@@ -191,7 +191,7 @@ TEST_F(QnnABIHTPBackendTests, MaxPool_Global_HTP_u8) {
                             ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnABIHTPBackendTests, MaxPool_Large_Input_HTP_u8) {
+TEST_F(QnnHTPBackendTests, MaxPool_Large_Input_HTP_u8) {
   RunQDQPoolOpTest<uint8_t>("MaxPool",
                             TestInputDef<float>({1, 125, 8, 56}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                             {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
@@ -206,10 +206,10 @@ TEST_F(QnnABIHTPBackendTests, MaxPool_Large_Input_HTP_u8) {
                             false);  // use_contrib_qdq_ops
 }
 
-TEST_F(QnnABIHTPBackendTests, MaxPool1D_ReshapeNodesPresent) {
+TEST_F(QnnHTPBackendTests, MaxPool1D_ReshapeNodesPresent) {
   auto build_test_case = [](ModelTestBuilder& builder) {
     NodeArg* input = builder.MakeInput<float>(std::vector<int64_t>{1, 3, 3},
-                                              GetFloatDataInRangeABI(-10.0f, 10.0f, 9));
+                                              GetFloatDataInRange(-10.0f, 10.0f, 9));
     NodeArg* output = builder.MakeOutput();
     auto& maxpool_node = builder.AddNode("MaxPool", {input}, {output});
     maxpool_node.AddAttribute("kernel_shape", std::vector<int64_t>{3});
@@ -229,18 +229,18 @@ TEST_F(QnnABIHTPBackendTests, MaxPool1D_ReshapeNodesPresent) {
     EXPECT_EQ(number_of_nodes, 1) << "Expected 1 QNN fused node for MaxPool rank-3 input.";
   };
 
-  RunQnnModelTestABI(build_test_case,
-                     options,
-                     18,
-                     ExpectedEPNodeAssignment::All,
-                     1e-5,
-                     logging::Severity::kERROR,
-                     true,
-                     &check_num_nodes);
+  RunQnnModelTest(build_test_case,
+                  options,
+                  18,
+                  ExpectedEPNodeAssignment::All,
+                  1e-5,
+                  logging::Severity::kERROR,
+                  true,
+                  &check_num_nodes);
 }
 
 // 1-D MaxPool HTP test for rank-3 without ceil
-TEST_F(QnnABIHTPBackendTests, MaxPool_Rank3_HTP_u8) {
+TEST_F(QnnHTPBackendTests, MaxPool_Rank3_HTP_u8) {
   RunQDQPoolOpTest<uint8_t>(
       "MaxPool",
       TestInputDef<float>({1, 3, 3}, false, -10.0f, 10.0f),
@@ -257,7 +257,7 @@ TEST_F(QnnABIHTPBackendTests, MaxPool_Rank3_HTP_u8) {
 }
 
 // 1-D MaxPool HTP test for rank-3 with ceil_mode=1
-TEST_F(QnnABIHTPBackendTests, MaxPool_Rank3_Ceil_HTP_u8) {
+TEST_F(QnnHTPBackendTests, MaxPool_Rank3_Ceil_HTP_u8) {
   RunQDQPoolOpTest<uint8_t>(
       "MaxPool",
       TestInputDef<float>({1, 3, 3}, false, -10.0f, 10.0f),
@@ -272,7 +272,7 @@ TEST_F(QnnABIHTPBackendTests, MaxPool_Rank3_Ceil_HTP_u8) {
 }
 
 // 1-D MaxPool HTP test for rank-3 with ceil_mode=1 and auto_pad='VALID'
-TEST_F(QnnABIHTPBackendTests, MaxPool_Rank3_Ceil_HTP_u8_auto_pad_VALID) {
+TEST_F(QnnHTPBackendTests, MaxPool_Rank3_Ceil_HTP_u8_auto_pad_VALID) {
   RunQDQPoolOpTest<uint8_t>(
       "MaxPool",
       TestInputDef<float>({1, 3, 3}, false, -10.0f, 10.0f),
@@ -287,7 +287,7 @@ TEST_F(QnnABIHTPBackendTests, MaxPool_Rank3_Ceil_HTP_u8_auto_pad_VALID) {
 }
 
 // 1-D MaxPool HTP test for rank-3 with ceil_mode=1 and auto_pad='SAME_UPPER'
-TEST_F(QnnABIHTPBackendTests, MaxPool_Rank3_Ceil_HTP_u8_auto_pad_SAME_UPPER) {
+TEST_F(QnnHTPBackendTests, MaxPool_Rank3_Ceil_HTP_u8_auto_pad_SAME_UPPER) {
   RunQDQPoolOpTest<uint8_t>(
       "MaxPool",
       TestInputDef<float>({1, 3, 3}, false, -10.0f, 10.0f),
@@ -302,7 +302,7 @@ TEST_F(QnnABIHTPBackendTests, MaxPool_Rank3_Ceil_HTP_u8_auto_pad_SAME_UPPER) {
 }
 
 // 1-D MaxPool HTP test for rank-3 with ceil_mode=1 and auto_pad='SAME_LOWER'
-TEST_F(QnnABIHTPBackendTests, MaxPool_Rank3_Ceil_HTP_u8_auto_pad_SAME_LOWER) {
+TEST_F(QnnHTPBackendTests, MaxPool_Rank3_Ceil_HTP_u8_auto_pad_SAME_LOWER) {
   RunQDQPoolOpTest<uint8_t>(
       "MaxPool",
       TestInputDef<float>({1, 3, 3}, false, -10.0f, 10.0f),
@@ -316,7 +316,7 @@ TEST_F(QnnABIHTPBackendTests, MaxPool_Rank3_Ceil_HTP_u8_auto_pad_SAME_LOWER) {
       ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnABIHTPBackendTests, MaxPool_Ceil_HTP_u8) {
+TEST_F(QnnHTPBackendTests, MaxPool_Ceil_HTP_u8) {
   RunQDQPoolOpTest<uint8_t>("MaxPool",
                             TestInputDef<float>({1, 2, 3, 3}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                             {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
@@ -334,7 +334,7 @@ TEST_F(QnnABIHTPBackendTests, MaxPool_Ceil_HTP_u8) {
 // Expected val: 5.6846914291381836
 // QNN QDQ val: -5.3333334922790527 (err 11.018024444580078)
 // CPU QDQ val: 5.6470589637756348 (err 0.037632465362548828)
-TEST_F(QnnABIHTPBackendTests, DISABLED_MaxPool_Large_Input2_Ceil_HTP_u8) {
+TEST_F(QnnHTPBackendTests, DISABLED_MaxPool_Large_Input2_Ceil_HTP_u8) {
   RunQDQPoolOpTest<uint8_t>("MaxPool",
                             TestInputDef<float>({1, 128, 16, 113}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                             {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
@@ -347,7 +347,7 @@ TEST_F(QnnABIHTPBackendTests, DISABLED_MaxPool_Large_Input2_Ceil_HTP_u8) {
                             ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnABIHTPBackendTests, MaxPool_Large_Input3_AutoPadValid_HTP_u8) {
+TEST_F(QnnHTPBackendTests, MaxPool_Large_Input3_AutoPadValid_HTP_u8) {
   RunQDQPoolOpTest<uint8_t>("MaxPool",
                             TestInputDef<float>({1, 160, 14, 20}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                             {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
@@ -362,7 +362,7 @@ TEST_F(QnnABIHTPBackendTests, MaxPool_Large_Input3_AutoPadValid_HTP_u8) {
 
 // QNN v2.13: Certain large input sizes cause the QNN graph to fail to finalize with error 1002 (QNN_COMMON_ERROR_MEM_ALLOC).
 // Fixed in QNN v2.14.1.
-TEST_F(QnnABIHTPBackendTests, MaxPool_LargeInput_1Pads_u8) {
+TEST_F(QnnHTPBackendTests, MaxPool_LargeInput_1Pads_u8) {
   RunQDQPoolOpTest<uint8_t>("MaxPool",
                             TestInputDef<float>({1, 64, 384, 576}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                             {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
@@ -380,7 +380,7 @@ TEST_F(QnnABIHTPBackendTests, MaxPool_LargeInput_1Pads_u8) {
 }
 
 // Test uint16 QDQ MaxPool with large inputs.
-TEST_F(QnnABIHTPBackendTests, MaxPool_LargeInput_1Pads_u16) {
+TEST_F(QnnHTPBackendTests, MaxPool_LargeInput_1Pads_u16) {
   RunQDQPoolOpTest<uint16_t>("MaxPool",
                              TestInputDef<float>({1, 64, 384, 576}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                              {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
@@ -396,7 +396,7 @@ TEST_F(QnnABIHTPBackendTests, MaxPool_LargeInput_1Pads_u16) {
 }
 
 // Test uint8 QDQ MaxPool with auto_pad SAME_LOWER.
-TEST_F(QnnABIHTPBackendTests, MaxPool_AutoPad_SAME_LOWER_u8) {
+TEST_F(QnnHTPBackendTests, MaxPool_AutoPad_SAME_LOWER_u8) {
   RunQDQPoolOpTest<uint8_t>("MaxPool",
                             TestInputDef<float>({1, 3, 16, 24}, false, -10.0f, 10.0f),
                             {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
@@ -408,7 +408,7 @@ TEST_F(QnnABIHTPBackendTests, MaxPool_AutoPad_SAME_LOWER_u8) {
 }
 
 // Test uint8 QDQ MaxPool with auto_pad SAME_UPPER.
-TEST_F(QnnABIHTPBackendTests, MaxPool_AutoPad_SAME_UPPER_u8) {
+TEST_F(QnnHTPBackendTests, MaxPool_AutoPad_SAME_UPPER_u8) {
   RunQDQPoolOpTest<uint8_t>("MaxPool",
                             TestInputDef<float>({1, 3, 16, 24}, false, -10.0f, 10.0f),
                             {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
@@ -420,16 +420,16 @@ TEST_F(QnnABIHTPBackendTests, MaxPool_AutoPad_SAME_UPPER_u8) {
 }
 
 // QDQ GlobalMaxPool test
-TEST_F(QnnABIHTPBackendTests, GlobalMaxPool_u8) {
-  std::vector<float> input_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 18);
+TEST_F(QnnHTPBackendTests, GlobalMaxPool_u8) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 18);
   RunQDQPoolOpTest<uint8_t>("GlobalMaxPool",
                             TestInputDef<float>({1, 2, 3, 3}, false, input_data),  // Dynamic input with range [-10, 10]
                             {},
                             ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnABIHTPBackendTests, GlobalMaxPool_u16) {
-  std::vector<float> input_data = GetFloatDataInRangeABI(-10.0f, 10.0f, 18);
+TEST_F(QnnHTPBackendTests, GlobalMaxPool_u16) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 18);
   RunQDQPoolOpTest<uint16_t>("GlobalMaxPool",
                              TestInputDef<float>({1, 2, 3, 3}, false, input_data),  // Dynamic input with range [-10, 10]
                              {},
@@ -438,14 +438,14 @@ TEST_F(QnnABIHTPBackendTests, GlobalMaxPool_u16) {
                              true);  // Use 'com.microsoft' domain Q/DQ ops
 }
 
-TEST_F(QnnABIHTPBackendTests, GlobalMaxPool_Large_Input_u8) {
+TEST_F(QnnHTPBackendTests, GlobalMaxPool_Large_Input_u8) {
   RunQDQPoolOpTest<uint8_t>("GlobalMaxPool",
                             TestInputDef<float>({1, 128, 16, 113}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                             {},
                             ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnABIHTPBackendTests, GlobalMaxPool_LargeInput2_u8) {
+TEST_F(QnnHTPBackendTests, GlobalMaxPool_LargeInput2_u8) {
   RunQDQPoolOpTest<uint8_t>("GlobalMaxPool",
                             TestInputDef<float>({1, 64, 384, 576}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                             {},

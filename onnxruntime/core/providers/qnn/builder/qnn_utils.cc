@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn-abi/builder/qnn_utils.h"
+#include "core/providers/qnn/builder/qnn_utils.h"
 
 #include <algorithm>
 #include <functional>
@@ -14,9 +14,9 @@
 
 #include "nlohmann/json.hpp"
 
-#include "core/providers/qnn-abi/ort_api.h"
-#include "core/providers/qnn-abi/builder/qnn_def.h"
-#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/builder/qnn_model_wrapper.h"
 
 namespace onnxruntime {
 namespace qnn {

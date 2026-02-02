@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License
 
-#include "core/providers/qnn-abi/qnn_execution_provider.h"
+#include "core/providers/qnn/qnn_execution_provider.h"
 
 #include <algorithm>
 #include <cctype>
@@ -20,16 +20,16 @@
 
 #include "HTP/QnnHtpGraph.h"
 
-#include "core/providers/qnn-abi/ort_api.h"
-#include "core/providers/qnn-abi/qnn_provider_factory.h"
-#include "core/providers/qnn-abi/shared_context.h"
-#include "core/providers/qnn-abi/qnn_allocator.h"
-#include "core/providers/qnn-abi/builder/qnn_backend_manager.h"
-#include "core/providers/qnn-abi/builder/qnn_cache_compatibility_manager.h"
-#include "core/providers/qnn-abi/builder/qnn_configs_helper.h"
-#include "core/providers/qnn-abi/builder/qnn_model.h"
-#include "core/providers/qnn-abi/builder/qnn_node_group/qnn_node_group.h"
-#include "core/providers/qnn-abi/qnn_ep_utils.h"
+#include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/qnn_provider_factory.h"
+#include "core/providers/qnn/shared_context.h"
+#include "core/providers/qnn/qnn_allocator.h"
+#include "core/providers/qnn/builder/qnn_backend_manager.h"
+#include "core/providers/qnn/builder/qnn_cache_compatibility_manager.h"
+#include "core/providers/qnn/builder/qnn_configs_helper.h"
+#include "core/providers/qnn/builder/qnn_model.h"
+#include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
+#include "core/providers/qnn/qnn_ep_utils.h"
 
 // Forward declarations for NodeUnit-related classes
 namespace onnxruntime {
@@ -1100,7 +1100,7 @@ static bool EpSharedContextsHasAllGraphs(const OrtGraph* graph, const OrtApi& or
     OrtNodeAttrHelper node_helper(*node);
     std::string cache_source = qnn::utils::GetLowercaseString(node_helper.Get(qnn::SOURCE, ""));
 
-    if (op_type == qnn::EPCONTEXT_OP && (cache_source == "qnnexecutionprovider" || cache_source == "qnn" || cache_source == "qnnabitestprovider")) {
+    if (op_type == qnn::EPCONTEXT_OP && (cache_source == "qnnexecutionprovider" || cache_source == "qnn")) {
       const char* node_name = nullptr;
       if (ort_api.Node_GetName(node, &node_name) != nullptr) {
         return false;
@@ -1149,7 +1149,7 @@ static void GetMainEPCtxNodes(const OrtGraph* graph,
 
     if (is_main_context &&
         op_type == qnn::EPCONTEXT_OP &&
-        (cache_source == "qnnexecutionprovider" || cache_source == "qnn" || cache_source == "qnnabitestprovider")) {
+        (cache_source == "qnnexecutionprovider" || cache_source == "qnn")) {
       const char* node_name = nullptr;
       auto node_status = ort_api.Node_GetName(node, &node_name);
       if (node_status != nullptr) {
@@ -1196,7 +1196,7 @@ void QnnEp::PartitionCtxModel(const OrtGraph* graph, OrtEpGraphSupportInfo* grap
     OrtNodeAttrHelper node_helper(*node);
     std::string cache_source = qnn::utils::GetLowercaseString(node_helper.Get(qnn::SOURCE, ""));
 
-    if (op_type == qnn::EPCONTEXT_OP && (cache_source == "qnnexecutionprovider" || cache_source == "qnn" || cache_source == "qnnabitestprovider")) {
+    if (op_type == qnn::EPCONTEXT_OP && (cache_source == "qnnexecutionprovider" || cache_source == "qnn")) {
       const char* node_name = nullptr;
       auto partition_status = ort_api.Node_GetName(node, &node_name);
       if (partition_status != nullptr) {

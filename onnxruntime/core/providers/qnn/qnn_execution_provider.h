@@ -12,17 +12,17 @@
 
 #include "HTP/QnnHtpGraph.h"
 
-#include "core/providers/qnn-abi/ort_api.h"
-#include "core/providers/qnn-abi/builder/qnn_cache_compatibility_manager.h"
-#include "core/providers/qnn-abi/builder/qnn_configs_helper.h"
-#include "core/providers/qnn-abi/builder/qnn_def.h"
-#include "core/providers/qnn-abi/builder/onnx_ctx_model_helper.h"
-#include "core/providers/qnn-abi/builder/qnn_def.h"
-#include "core/providers/qnn-abi/builder/qnn_model.h"
-#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn-abi/builder/onnx_ctx_model_helper.h"
-#include "core/providers/qnn-abi/qnn_telemetry.h"
-#include "core/providers/qnn-abi/rpcmem_library.h"
+#include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/builder/qnn_cache_compatibility_manager.h"
+#include "core/providers/qnn/builder/qnn_configs_helper.h"
+#include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
+#include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/builder/qnn_model.h"
+#include "core/providers/qnn/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
+#include "core/providers/qnn/qnn_telemetry.h"
+#include "core/providers/qnn/rpcmem_library.h"
 
 namespace onnxruntime {
 class QnnEpFactory;

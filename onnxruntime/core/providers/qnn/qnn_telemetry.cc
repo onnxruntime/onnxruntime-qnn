@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn-abi/qnn_telemetry.h"
+#include "core/providers/qnn/qnn_telemetry.h"
 
 #ifdef _WIN32
 #if !BUILD_QNN_EP_STATIC_LIB
@@ -55,7 +55,7 @@ TRACELOGGING_DEFINE_PROVIDER(telemetry_provider_handle, "Microsoft.ML.ONNXRuntim
 #endif
 #endif  // !BUILD_QNN_EP_STATIC_LIB
 
-#include "core/providers/qnn-abi/ort_api.h"
+#include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {
