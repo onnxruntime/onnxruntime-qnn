@@ -3,9 +3,11 @@
 
 #pragma once
 
+#include "onnxruntime_cxx_api.h"
 #if !defined(ORT_MINIMAL_BUILD)
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 #include <string>
 #include <type_traits>
@@ -38,6 +40,11 @@ namespace test {
 
 // Signature for function that builds a float32 model.
 using GetTestModelFn = std::function<void(ModelTestBuilder& builder)>;
+
+size_t SizeHelper(std::vector<int64_t> shape, size_t start, size_t end);
+size_t SizeToDimension(std::vector<int64_t> shape, size_t dimension);
+size_t SizeFromDimension(std::vector<int64_t> shape, size_t dimension);
+size_t SizeOfShape(std::vector<int64_t> shape);
 
 // Class that stores quantization params (scale, zero point).
 // Has a static function that computes quantization parameters from a floating-point range.
@@ -219,10 +226,6 @@ struct TestInputDef {
     return shape_;
   }
 
-  const TensorShape GetTensorShape() const {
-    return TensorShape(shape_);
-  }
-
   bool IsInitializer() const {
     return is_initializer_;
   }
@@ -290,9 +293,8 @@ struct TestInputDef {
     const std::vector<T>& raw_data = std::get<RawData>(data_info_).data;
     std::pair<T, T> init_range(std::numeric_limits<T>::max(), std::numeric_limits<T>::lowest());
     std::vector<std::pair<T, T>> per_axis_ranges(num_ranges, init_range);
-    TensorShape shape(shape_);
-    size_t num_blocks = shape.SizeToDimension(axis);
-    size_t block_size = shape.SizeFromDimension(axis + 1);
+    size_t num_blocks = SizeToDimension(shape_, axis);
+    size_t block_size = SizeFromDimension(shape_, axis + 1);
 
     size_t i = 0;
     for (size_t n = 0; n < num_blocks; n++) {
@@ -319,7 +321,7 @@ struct TestInputDef {
 };
 
 // Convert a float input definition to a float16 input definition.
-TestInputDef<MLFloat16> ConvertToFP16InputDef(const TestInputDef<float>& input_def);
+TestInputDef<Ort::Float16_t> ConvertToFP16InputDef(const TestInputDef<float>& input_def);
 
 template <typename QType>
 inline QuantParams<QType> GetTestInputQuantParams(const TestInputDef<float>& input_def, bool symmetric = false) {
@@ -374,13 +376,13 @@ DEF_GET_INPUT_QPARAMS_PER_CHAN_INT4_FUNC(Int4x2)
 DEF_GET_INPUT_QPARAMS_PER_CHAN_INT4_FUNC(UInt4x2)
 
 template <typename FloatType, typename QuantType>
-static void QuantizeValues(gsl::span<const FloatType> input, gsl::span<QuantType> output, const TensorShape& shape,
+static void QuantizeValues(gsl::span<const FloatType> input, gsl::span<QuantType> output, const std::vector<int64_t>& shape,
                            gsl::span<const FloatType> scales, gsl::span<const QuantType> zero_points,
                            std::optional<int64_t> axis) {
-  const size_t input_rank = shape.NumDimensions();
-  const size_t num_elems = static_cast<size_t>(shape.Size());
-  ORT_ENFORCE(input.size() == num_elems);
-  ORT_ENFORCE(output.size() == num_elems);
+  const size_t input_rank = shape.size();
+  const size_t num_elems = SizeOfShape(shape);
+  assert(input.size() == num_elems);
+  assert(output.size() == num_elems);
 
   size_t block_count = 1;
   size_t broadcast_dim = 1;
@@ -388,76 +390,143 @@ static void QuantizeValues(gsl::span<const FloatType> input, gsl::span<QuantType
 
   if (axis.has_value()) {
     size_t axis_no_neg = *axis < 0 ? static_cast<size_t>(*axis) + input_rank : static_cast<size_t>(*axis);
-    block_count = shape.SizeToDimension(axis_no_neg);
+    block_count = SizeToDimension(shape, axis_no_neg);
     broadcast_dim = shape[axis_no_neg];
-    block_size = shape.SizeFromDimension(axis_no_neg + 1);
+    block_size = SizeFromDimension(shape, axis_no_neg + 1);
   }
 
-  ORT_ENFORCE(scales.size() == broadcast_dim);
-  ORT_ENFORCE(zero_points.empty() || zero_points.size() == broadcast_dim);
+  assert(scales.size() == broadcast_dim);
+  assert(zero_points.empty() || zero_points.size() == broadcast_dim);
 
   size_t i = 0;
 
   for (size_t n = 0; n < block_count; n++) {
     for (size_t bd = 0; bd < broadcast_dim; bd++) {
-      QuantType zp = zero_points.empty() ? static_cast<QuantType>(0) : zero_points[bd];
-      if constexpr (std::is_same_v<QuantType, int32_t>) {
-        for (size_t e = 0; e < block_size; e++) {
-          output[i + e] = static_cast<QuantType>(input[i + e] / scales[bd]) + zp;
-        }
-      } else {
-        ParQuantizeLinearStd(&input[i], &output[i], block_size, scales[bd], zp, nullptr);
+      const QuantType zp = zero_points.empty() ? static_cast<QuantType>(0) : zero_points[bd];
+      const FloatType scale = scales[bd];
+
+      // Avoid ParQuantizeLinearStd (internal API). Use a simple reference quantization implementation:
+      //   q = round(x / scale) + zp, clamped to [min(QType), max(QType)].
+      //
+      // NOTE: This is used only for generating test data/initializers.
+      const float qmin = static_cast<float>(std::numeric_limits<QuantType>::min());
+      const float qmax = static_cast<float>(std::numeric_limits<QuantType>::max());
+
+      for (size_t e = 0; e < block_size; e++) {
+        const float x = static_cast<float>(input[i + e]);
+        const float q_unclamped = RoundHalfToEven(x / static_cast<float>(scale)) + static_cast<float>(zp);
+        const float q_clamped = std::min(qmax, std::max(qmin, q_unclamped));
+        output[i + e] = static_cast<QuantType>(q_clamped);
       }
+
       i += block_size;
     }
   }
 }
 
 // Define functions to quantize input data to 4-bits. Quantization can be done per-tensor or per-channel.
-#define DEF_QUANTIZE_VALUES_INT4_FUNC(INT4x2_TYPE, QUANT_FUNC)                                               \
-  template <>                                                                                                \
-  inline void QuantizeValues<float, INT4x2_TYPE>(gsl::span<const float> input,                               \
-                                                 gsl::span<INT4x2_TYPE> output,                              \
-                                                 const TensorShape& shape,                                   \
-                                                 gsl::span<const float> scales,                              \
-                                                 gsl::span<const INT4x2_TYPE> zero_points,                   \
-                                                 std::optional<int64_t> axis) {                              \
-    using UnpackedType = typename INT4x2_TYPE::UnpackedType;                                                 \
-    const size_t input_rank = shape.NumDimensions();                                                         \
-    const size_t num_int4_elems = static_cast<size_t>(shape.Size());                                         \
-    ORT_ENFORCE(input.size() == num_int4_elems);                                                             \
-    ORT_ENFORCE(output.size() == INT4x2_TYPE::CalcNumInt4Pairs(num_int4_elems));                             \
-                                                                                                             \
-    size_t block_count = 1;                                                                                  \
-    size_t broadcast_dim = 1;                                                                                \
-    size_t block_size = num_int4_elems;                                                                      \
-                                                                                                             \
-    if (axis.has_value()) {                                                                                  \
-      size_t axis_no_neg = *axis < 0 ? static_cast<size_t>(*axis) + input_rank : static_cast<size_t>(*axis); \
-      block_count = shape.SizeToDimension(axis_no_neg);                                                      \
-      broadcast_dim = shape[axis_no_neg];                                                                    \
-      block_size = shape.SizeFromDimension(axis_no_neg + 1);                                                 \
-    }                                                                                                        \
-                                                                                                             \
-    ORT_ENFORCE(scales.size() == broadcast_dim);                                                             \
-    ORT_ENFORCE(zero_points.empty() || zero_points.size() == INT4x2_TYPE::CalcNumInt4Pairs(broadcast_dim));  \
-                                                                                                             \
-    size_t i = 0;                                                                                            \
-                                                                                                             \
-    for (size_t n = 0; n < block_count; n++) {                                                               \
-      for (size_t bd = 0; bd < broadcast_dim; bd++) {                                                        \
-        size_t bd_i = bd >> 1;  /* bd / 2 */                                                                 \
-        size_t bd_j = bd & 0x1; /* bd % 2 */                                                                 \
-        UnpackedType zp = !zero_points.empty() ? zero_points[bd_i].GetElem(bd_j) : 0;                        \
-        QUANT_FUNC(&input[i], output.data(), i, i + block_size, scales[bd], INT4x2_TYPE(zp, 0), nullptr);    \
-        i += block_size;                                                                                     \
-      }                                                                                                      \
-    }                                                                                                        \
-    assert(i == (block_count * broadcast_dim * block_size));                                                 \
+// Avoid using ParQuantizeLinearStdS4/ParQuantizeLinearStdU4 (internal APIs). Use a simple reference
+// quantization implementation that packs 2 int4/uint4 values per byte.
+//
+// For each element: q = round(x / scale) + zp, clamped to [min_val, max_val].
+// Values are then packed into Int4x2/UInt4x2 (2 elements per byte).
+template <>
+inline void QuantizeValues<float, Int4x2>(gsl::span<const float> input,
+                                          gsl::span<Int4x2> output,
+                                          const std::vector<int64_t>& shape,
+                                          gsl::span<const float> scales,
+                                          gsl::span<const Int4x2> zero_points,
+                                          std::optional<int64_t> axis) {
+  const size_t input_rank = shape.size();
+  const size_t num_int4_elems = SizeOfShape(shape);
+  assert(input.size() == num_int4_elems);
+  assert(output.size() == Int4x2::CalcNumInt4Pairs(num_int4_elems));
+
+  size_t block_count = 1;
+  size_t broadcast_dim = 1;
+  size_t block_size = num_int4_elems;
+
+  if (axis.has_value()) {
+    size_t axis_no_neg = *axis < 0 ? static_cast<size_t>(*axis) + input_rank : static_cast<size_t>(*axis);
+    block_count = SizeToDimension(shape, axis_no_neg);
+    broadcast_dim = shape[axis_no_neg];
+    block_size = SizeFromDimension(shape, axis_no_neg + 1);
   }
 
-DEF_QUANTIZE_VALUES_INT4_FUNC(Int4x2, ParQuantizeLinearStdS4)
-DEF_QUANTIZE_VALUES_INT4_FUNC(UInt4x2, ParQuantizeLinearStdU4)
+  assert(scales.size() == broadcast_dim);
+  assert(zero_points.empty() || zero_points.size() == Int4x2::CalcNumInt4Pairs(broadcast_dim));
+
+  std::fill(output.begin(), output.end(), Int4x2{});
+
+  size_t i = 0;
+  for (size_t n = 0; n < block_count; n++) {
+    for (size_t bd = 0; bd < broadcast_dim; bd++) {
+      const auto [zp_pair_idx, zp_elem_idx] = Int4x2::GetTensorElemIndices(bd);
+      const int8_t zp = !zero_points.empty() ? zero_points[zp_pair_idx].GetElem(zp_elem_idx) : static_cast<int8_t>(0);
+      const float scale = scales[bd];
+
+      for (size_t e = 0; e < block_size; e++, i++) {
+        const float q_unclamped = RoundHalfToEven(input[i] / scale) + static_cast<float>(zp);
+        const float q_clamped = std::min(static_cast<float>(Int4x2::max_val),
+                                         std::max(static_cast<float>(Int4x2::min_val), q_unclamped));
+        const int8_t q = static_cast<int8_t>(q_clamped);
+
+        const auto [out_pair_idx, out_elem_idx] = Int4x2::GetTensorElemIndices(i);
+        output[out_pair_idx].SetElem(out_elem_idx, q);
+      }
+    }
+  }
+  assert(i == (block_count * broadcast_dim * block_size));
+}
+
+template <>
+inline void QuantizeValues<float, UInt4x2>(gsl::span<const float> input,
+                                           gsl::span<UInt4x2> output,
+                                           const std::vector<int64_t>& shape,
+                                           gsl::span<const float> scales,
+                                           gsl::span<const UInt4x2> zero_points,
+                                           std::optional<int64_t> axis) {
+  const size_t input_rank = shape.size();
+  const size_t num_uint4_elems = SizeOfShape(shape);
+  assert(input.size() == num_uint4_elems);
+  assert(output.size() == UInt4x2::CalcNumInt4Pairs(num_uint4_elems));
+
+  size_t block_count = 1;
+  size_t broadcast_dim = 1;
+  size_t block_size = num_uint4_elems;
+
+  if (axis.has_value()) {
+    size_t axis_no_neg = *axis < 0 ? static_cast<size_t>(*axis) + input_rank : static_cast<size_t>(*axis);
+    block_count = SizeToDimension(shape, axis_no_neg);
+    broadcast_dim = shape[axis_no_neg];
+    block_size = SizeFromDimension(shape, axis_no_neg + 1);
+  }
+
+  assert(scales.size() == broadcast_dim);
+  assert(zero_points.empty() || zero_points.size() == UInt4x2::CalcNumInt4Pairs(broadcast_dim));
+
+  std::fill(output.begin(), output.end(), UInt4x2{});
+
+  size_t i = 0;
+  for (size_t n = 0; n < block_count; n++) {
+    for (size_t bd = 0; bd < broadcast_dim; bd++) {
+      const auto [zp_pair_idx, zp_elem_idx] = UInt4x2::GetTensorElemIndices(bd);
+      const uint8_t zp = !zero_points.empty() ? zero_points[zp_pair_idx].GetElem(zp_elem_idx) : static_cast<uint8_t>(0);
+      const float scale = scales[bd];
+
+      for (size_t e = 0; e < block_size; e++, i++) {
+        const float q_unclamped = RoundHalfToEven(input[i] / scale) + static_cast<float>(zp);
+        const float q_clamped = std::min(static_cast<float>(UInt4x2::max_val),
+                                         std::max(static_cast<float>(UInt4x2::min_val), q_unclamped));
+        const uint8_t q = static_cast<uint8_t>(q_clamped);
+
+        const auto [out_pair_idx, out_elem_idx] = UInt4x2::GetTensorElemIndices(i);
+        output[out_pair_idx].SetElem(out_elem_idx, q);
+      }
+    }
+  }
+  assert(i == (block_count * broadcast_dim * block_size));
+}
 
 // Refer to test_autoep_utils.h for leveraging unique pointer to unregister plugin EP.
 using RegisteredEpDeviceUniquePtr = std::unique_ptr<const OrtEpDevice, std::function<void(const OrtEpDevice*)>>;
@@ -485,16 +554,16 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
                        ExpectedEPNodeAssignment expected_ep_assignment,
-                       const NameMLValMap& feeds,
-                       std::vector<OrtValue>& output_vals,
+                       std::unordered_map<std::string, Ort::Value>& feeds,
+                       std::vector<Ort::Value>& output_vals,
                        std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt);
 
 void InferenceModel(const std::string& model_data,
                     const char* log_id,
                     const ProviderOptions& provider_options,
                     ExpectedEPNodeAssignment expected_ep_assignment,
-                    const NameMLValMap& feeds,
-                    std::vector<OrtValue>& output_vals,
+                    std::unordered_map<std::string, Ort::Value>& feeds,
+                    std::vector<Ort::Value>& output_vals,
                     const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                     std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
                     std::function<void(const Graph&)>* graph_checker = nullptr);
@@ -603,9 +672,9 @@ class QNNTestEnvironment {
 };
 
 template <typename QuantType>
-void VerifyQDQOutput(const std::vector<OrtValue>& cpu_qdq_outputs,
-                     const std::vector<OrtValue>& qnn_qdq_outputs,
-                     const std::vector<OrtValue>& cpu_f32_outputs,
+void VerifyQDQOutput(const std::vector<Ort::Value>& cpu_qdq_outputs,
+                     const std::vector<Ort::Value>& qnn_qdq_outputs,
+                     const std::vector<Ort::Value>& cpu_f32_outputs,
                      const std::vector<QuantParams<QuantType>>& output_qparams,
                      const std::vector<gsl::span<const float>>& output_vals,
                      const std::vector<int32_t>& output_types,
@@ -623,17 +692,25 @@ void VerifyQDQOutput(const std::vector<OrtValue>& cpu_qdq_outputs,
   const std::string base_output_name = "output_";
   for (size_t i = 0; i < num_outputs; i++) {
     std::string debug_output_name = base_output_name + std::to_string(i);
-    auto& cpu_qdq_tensor = cpu_qdq_outputs[i].Get<Tensor>();
-    auto& qnn_qdq_tensor = qnn_qdq_outputs[i].Get<Tensor>();
+    // Get tensor info
+    auto cpu_f32_info = cpu_f32_outputs[i].GetTensorTypeAndShapeInfo();
+    auto cpu_qdq_info = cpu_qdq_outputs[i].GetTensorTypeAndShapeInfo();
+    auto qnn_qdq_info = qnn_qdq_outputs[i].GetTensorTypeAndShapeInfo();
 
-    ASSERT_EQ(cpu_qdq_tensor.GetElementType(), output_types[i]);
-    ASSERT_EQ(qnn_qdq_tensor.GetElementType(), output_types[i]);
+    ASSERT_EQ(cpu_qdq_info.GetElementType(), output_types[i]);
+    ASSERT_EQ(qnn_qdq_info.GetElementType(), output_types[i]);
 
     if (output_types[i] == ONNX_NAMESPACE::TensorProto_DataType_FLOAT) {
       const size_t num_vals = output_vals[i].size();
-      gsl::span<const float> cpu_f32_vals = output_vals[i];
-      gsl::span<const float> cpu_qdq_vals = cpu_qdq_tensor.DataAsSpan<float>();
-      gsl::span<const float> qnn_qdq_vals = qnn_qdq_tensor.DataAsSpan<float>();
+      // Get data pointers using public API
+      const float* cpu_f32_data = cpu_f32_outputs[i].GetTensorData<float>();
+      const float* cpu_qdq_data = cpu_qdq_outputs[i].GetTensorData<float>();
+      const float* qnn_qdq_data = qnn_qdq_outputs[i].GetTensorData<float>();
+      // Create spans over the data
+      gsl::span<const float> cpu_f32_vals(cpu_f32_data, cpu_f32_info.GetElementCount());
+      gsl::span<const float> cpu_qdq_vals(cpu_qdq_data, cpu_qdq_info.GetElementCount());
+      gsl::span<const float> qnn_qdq_vals(qnn_qdq_data, qnn_qdq_info.GetElementCount());
+
       constexpr QuantType qmin = std::numeric_limits<QuantType>::min();
       constexpr QuantType qmax = std::numeric_limits<QuantType>::max();
       const float output_range = output_qparams[i].scale * static_cast<float>(qmax - qmin);
@@ -698,7 +775,11 @@ void VerifyQDQOutput(const std::vector<OrtValue>& cpu_qdq_outputs,
                   << "Tolerance used = " << tolerance.value * 100.0f << "%" << std::endl;
       }
     } else {
-      VerifyOutput(debug_output_name, cpu_f32_outputs[i].Get<Tensor>(), qnn_qdq_tensor, 1e-4f);
+      VerifyOutput(
+          debug_output_name,
+          cpu_f32_outputs[i],
+          qnn_qdq_outputs[i],
+          1e-4f);
     }
   }
 }
@@ -741,38 +822,30 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
       QNNTestEnvironment::GetInstance().dump_json()) {
     output_dir = QNNTestEnvironment::GetInstance().CreateTestcaseDirs();
   }
-
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
-  auto& logging_manager = DefaultLoggingManager();
-
-  logging_manager.SetDefaultLoggerSeverity(log_severity);
-  if (QNNTestEnvironment::GetInstance().verbose()) {
-    logging_manager.RemoveSink(logging::SinkType::EtwSink);
-    logging_manager.SetDefaultLoggerSeverity(logging::Severity::kVERBOSE);
-  }
-
   // Create float model and serialize it to a string.
-  onnxruntime::Model f32_model("f32_model", false, ModelMetaData(), PathString(),
-                               IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                               logging_manager.DefaultLogger());
-  ModelTestBuilder f32_helper(f32_model.MainGraph());
+  ModelTestBuilder f32_helper;
   std::string f32_model_data;
   f32_model_fn(f32_helper);
-  f32_helper.SetGraphOutputs();
-
-  ASSERT_STATUS_OK(f32_model.MainGraph().Resolve());
-  f32_model.ToProto().SerializeToString(&f32_model_data);
-
-  if (QNNTestEnvironment::GetInstance().dump_onnx()) {
-    auto dump_path = output_dir / ToPathString("dumped_f32_model.onnx");
-    LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx float32 model at: " << dump_path;
-    ASSERT_STATUS_OK(onnxruntime::Model::Save(f32_model, dump_path));
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{f32_helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
   }
+  f32_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+
+  f32_helper.model_.SerializeToString(&f32_model_data);
+
+  // Uncomment to save f32 model to disk for debugging.
+  // {
+  //   std::ofstream ofs("cmp_accuracy.f32.onnx", std::ios::binary);
+  //   ofs.write(f32_model_data.data(), static_cast<std::streamsize>(f32_model_data.size()));
+  // }
 
   // Run f32 model on CPU EP and collect outputs.
-  std::vector<OrtValue> cpu_f32_outputs;
+  std::vector<Ort::Value> cpu_f32_outputs;
   InferenceModelCPU(f32_model_data, "f32_model_logger", ExpectedEPNodeAssignment::All,
                     f32_helper.feeds_, cpu_f32_outputs, graph_optimization_level);
   ASSERT_FALSE(cpu_f32_outputs.empty());
@@ -788,11 +861,13 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   output_types.resize(num_outputs);
 
   for (size_t i = 0; i < num_outputs; i++) {
-    auto& tensor = cpu_f32_outputs[i].Get<Tensor>();
-    int32_t elem_type = tensor.GetElementType();
+    auto tensor_type_info = cpu_f32_outputs[i].GetTensorTypeAndShapeInfo();
+    auto elem_type = tensor_type_info.GetElementType();
 
-    if (elem_type == ONNX_NAMESPACE::TensorProto_DataType_FLOAT) {
-      output_vals[i] = tensor.DataAsSpan<float>();
+    if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+      const float* tensor_data = cpu_f32_outputs[i].GetTensorData<float>();
+      size_t tensor_size = tensor_type_info.GetElementCount();
+      output_vals[i] = gsl::span<const float>(tensor_data, tensor_size);
       output_qparams[i] = GetDataQuantParams<QuantType>(output_vals[i]);
     }
 
@@ -800,29 +875,31 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   }
 
   // Create QDQ model and serialize it to a string.
-  onnxruntime::Model qdq_model("qdq_model", false, ModelMetaData(), PathString(),
-                               IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                               logging_manager.DefaultLogger());
-  ModelTestBuilder qdq_helper(qdq_model.MainGraph());
+  ModelTestBuilder qdq_helper;
   std::string qdq_model_data;
   qdq_model_fn(qdq_helper, output_qparams);
-  qdq_helper.SetGraphOutputs();
 
-  ASSERT_STATUS_OK(qdq_model.MainGraph().Resolve());
-  qdq_model.ToProto().SerializeToString(&qdq_model_data);
-
-  if (QNNTestEnvironment::GetInstance().dump_onnx()) {
-    auto dump_path = output_dir / ToPathString("dumped_qdq_model.onnx");
-    LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx QDQ model at: " << dump_path;
-    ASSERT_STATUS_OK(onnxruntime::Model::Save(qdq_model, dump_path));
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{qdq_helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
   }
+  qdq_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+
+  qdq_helper.model_.SerializeToString(&qdq_model_data);
+
+  // Uncomment to save QDQ model to disk for debugging.
+  // {
+  //   std::ofstream ofs("cmp_accuracy.qdq.onnx", std::ios::binary);
+  //   ofs.write(qdq_model_data.data(), static_cast<std::streamsize>(qdq_model_data.size()));
+  // }
 
   // Run QDQ model on CPU EP and collect outputs.
-  std::vector<OrtValue> cpu_qdq_outputs;
+  std::vector<Ort::Value> cpu_qdq_outputs;
   InferenceModelCPU(qdq_model_data, "qdq_model_logger", ExpectedEPNodeAssignment::All,
                     qdq_helper.feeds_, cpu_qdq_outputs, graph_optimization_level);
 
-  TryEnableQNNSaver(qnn_options);
+  qnn_options["dump_json_qnn_graph"] = "1";
 
   if (QNNTestEnvironment::GetInstance().dump_dlc()) {
     qnn_options["dump_qnn_ir_dlc"] = "1";
@@ -838,12 +915,14 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
     qnn_options["json_qnn_graph_dir"] = output_dir.string();
   }
 
+  TryEnableQNNSaver(qnn_options);
+
   // Run with QNN.
-  std::vector<OrtValue> qnn_qdq_outputs;
+  std::vector<Ort::Value> qnn_qdq_outputs;
   if (!qnn_ctx_model_path.empty()) {
     onnx::ModelProto model_proto;
-    onnxruntime::Model qnn_ctx_model;
-    ASSERT_STATUS_OK(qnn_ctx_model.Load(ToPathString(qnn_ctx_model_path), model_proto));
+    std::ifstream ifs(qnn_ctx_model_path, std::ios::in | std::ios::binary);
+    model_proto.ParseFromIstream(&ifs);
     std::string qnn_ctx_model_data;
     model_proto.SerializeToString(&qnn_ctx_model_data);
     InferenceModel(qnn_ctx_model_data,
@@ -877,8 +956,8 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   }
 }
 
-inline void VerifyFp16Output(const std::vector<OrtValue>& cpu_f16_outputs,
-                             const std::vector<OrtValue>& qnn_f16_outputs,
+inline void VerifyFp16Output(const std::vector<Ort::Value>& cpu_f16_outputs,
+                             const std::vector<Ort::Value>& qnn_f16_outputs,
                              const std::vector<gsl::span<const float>>& output_vals,
                              const std::vector<int32_t>& output_types,
                              const float tolerance) {
@@ -895,17 +974,20 @@ inline void VerifyFp16Output(const std::vector<OrtValue>& cpu_f16_outputs,
   const std::string base_output_name = "output_";
   for (size_t i = 0; i < num_outputs; i++) {
     std::string debug_output_name = base_output_name + std::to_string(i);
-    auto& cpu_f16_tensor = cpu_f16_outputs[i].Get<Tensor>();
-    auto& qnn_f16_tensor = qnn_f16_outputs[i].Get<Tensor>();
+    auto cpu_f16_info = cpu_f16_outputs[i].GetTensorTypeAndShapeInfo();
+    auto qnn_f16_info = qnn_f16_outputs[i].GetTensorTypeAndShapeInfo();
 
-    ASSERT_EQ(cpu_f16_tensor.GetElementType(), ONNX_NAMESPACE::TensorProto_DataType_FLOAT16);
-    ASSERT_EQ(qnn_f16_tensor.GetElementType(), ONNX_NAMESPACE::TensorProto_DataType_FLOAT16);
+    ASSERT_EQ(cpu_f16_info.GetElementType(), ONNX_NAMESPACE::TensorProto_DataType_FLOAT16);
+    ASSERT_EQ(qnn_f16_info.GetElementType(), ONNX_NAMESPACE::TensorProto_DataType_FLOAT16);
     ASSERT_EQ(output_types[i], ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
 
     const size_t num_vals = output_vals[i].size();
     gsl::span<const float> cpu_f32_vals = output_vals[i];
-    gsl::span<const MLFloat16> cpu_f16_vals = cpu_f16_tensor.DataAsSpan<MLFloat16>();
-    gsl::span<const MLFloat16> qnn_f16_vals = qnn_f16_tensor.DataAsSpan<MLFloat16>();
+    const MLFloat16* cpu_f16_data = cpu_f16_outputs[i].GetTensorData<MLFloat16>();
+    const MLFloat16* qnn_f16_data = qnn_f16_outputs[i].GetTensorData<MLFloat16>();
+    // Create spans over the data
+    gsl::span<const MLFloat16> cpu_f16_vals(cpu_f16_data, cpu_f16_info.GetElementCount());
+    gsl::span<const MLFloat16> qnn_f16_vals(qnn_f16_data, qnn_f16_info.GetElementCount());
 
     ASSERT_EQ(num_vals, cpu_f16_vals.size());
     ASSERT_EQ(num_vals, qnn_f16_vals.size());
@@ -991,27 +1073,20 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
       QNNTestEnvironment::GetInstance().dump_json()) {
     output_dir = QNNTestEnvironment::GetInstance().CreateTestcaseDirs();
   }
-
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 
-  auto& logging_manager = DefaultLoggingManager();
-  logging_manager.SetDefaultLoggerSeverity(log_severity);
-  if (QNNTestEnvironment::GetInstance().verbose()) {
-    logging_manager.RemoveSink(logging::SinkType::EtwSink);
-    logging_manager.SetDefaultLoggerSeverity(logging::Severity::kVERBOSE);
-  }
-
   // Create float model and serialize it to a string.
-  onnxruntime::Model f32_model("f32_model", false, ModelMetaData(), PathString(),
-                               IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                               logging_manager.DefaultLogger());
-  ModelTestBuilder f32_helper(f32_model.MainGraph());
+  ModelTestBuilder f32_helper;
   std::string f32_model_data;
   f32_model_fn(f32_helper);
-  f32_helper.SetGraphOutputs();
-  ASSERT_STATUS_OK(f32_model.MainGraph().Resolve());
-  f32_model.ToProto().SerializeToString(&f32_model_data);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{f32_helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  f32_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  f32_helper.model_.SerializeToString(&f32_model_data);
 
   if (QNNTestEnvironment::GetInstance().dump_onnx()) {
     auto dump_path = output_dir / ToPathString("dumped_f32_model.onnx");
@@ -1020,7 +1095,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   }
 
   // Run f32 model on CPU EP and collect outputs.
-  std::vector<OrtValue> cpu_f32_outputs;
+  std::vector<Ort::Value> cpu_f32_outputs;
   InferenceModelCPU(f32_model_data, "f32_model_logger", ExpectedEPNodeAssignment::All,
                     f32_helper.feeds_, cpu_f32_outputs);
   ASSERT_FALSE(cpu_f32_outputs.empty());
@@ -1034,39 +1109,40 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   output_types.resize(num_outputs);
 
   for (size_t i = 0; i < num_outputs; i++) {
-    auto& tensor = cpu_f32_outputs[i].Get<Tensor>();
-    int32_t elem_type = tensor.GetElementType();
+    auto tensor_type_info = cpu_f32_outputs[i].GetTensorTypeAndShapeInfo();
+    auto elem_type = tensor_type_info.GetElementType();
 
-    if (elem_type == ONNX_NAMESPACE::TensorProto_DataType_FLOAT) {
-      output_vals[i] = tensor.DataAsSpan<float>();
+    if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+      const float* tensor_data = cpu_f32_outputs[i].GetTensorData<float>();
+      size_t tensor_size = tensor_type_info.GetElementCount();
+      output_vals[i] = gsl::span<const float>(tensor_data, tensor_size);
     }
 
     output_types[i] = elem_type;
   }
 
   // Create FP16 model and serialize it to a string.
-  onnxruntime::Model f16_model("fp16_model", false, ModelMetaData(), PathString(),
-                               IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                               logging_manager.DefaultLogger());
-  ModelTestBuilder f16_helper(f16_model.MainGraph());
+  ModelTestBuilder f16_helper;
   std::string f16_model_data;
   f16_model_fn(f16_helper);
-  f16_helper.SetGraphOutputs();
-  ASSERT_STATUS_OK(f16_model.MainGraph().Resolve());
-  f16_model.ToProto().SerializeToString(&f16_model_data);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{f16_helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  f16_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  f16_helper.model_.SerializeToString(&f16_model_data);
 
   if (QNNTestEnvironment::GetInstance().dump_onnx()) {
     auto dump_path = output_dir / ToPathString("dumped_f16_model.onnx");
-    LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx float16 model at: " << dump_path;
-    ASSERT_STATUS_OK(onnxruntime::Model::Save(f16_model, dump_path));
+    std::ofstream ofs(dump_path, std::ios::binary);
+    ofs.write(f16_model_data.data(), static_cast<std::streamsize>(f16_model_data.size()));
   }
 
   // Run QDQ model on CPU EP and collect outputs.
-  std::vector<OrtValue> cpu_f16_outputs;
+  std::vector<Ort::Value> cpu_f16_outputs;
   InferenceModelCPU(f16_model_data, "fp16_model_logger", ExpectedEPNodeAssignment::All,
                     f16_helper.feeds_, cpu_f16_outputs);
-
-  TryEnableQNNSaver(qnn_options);
 
   if (QNNTestEnvironment::GetInstance().dump_dlc()) {
     qnn_options["dump_qnn_ir_dlc"] = "1";
@@ -1082,12 +1158,14 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     qnn_options["json_qnn_graph_dir"] = output_dir.string();
   }
 
+  TryEnableQNNSaver(qnn_options);
+
   // Run with QNN.
-  std::vector<OrtValue> qnn_f16_outputs;
+  std::vector<Ort::Value> qnn_f16_outputs;
   if (!qnn_ctx_model_path.empty()) {
     onnx::ModelProto model_proto;
-    onnxruntime::Model qnn_ctx_model;
-    ASSERT_STATUS_OK(qnn_ctx_model.Load(ToPathString(qnn_ctx_model_path), model_proto));
+    std::ifstream ifs(qnn_ctx_model_path, std::ios::in | std::ios::binary);
+    model_proto.ParseFromIstream(&ifs);
     std::string qnn_ctx_model_data;
     model_proto.SerializeToString(&qnn_ctx_model_data);
     InferenceModel(qnn_ctx_model_data,
@@ -1122,9 +1200,10 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
  * \return A pointer to the new input.
  */
 template <typename T>
-inline NodeArg* MakeTestInput(ModelTestBuilder& builder, const TestInputDef<T>& input_def,
-                              AllocatorPtr allocator = nullptr) {
-  NodeArg* input = nullptr;
+inline void MakeTestInput(ModelTestBuilder& builder,
+                          std::string name,
+                          const TestInputDef<T>& input_def,
+                          AllocatorPtr allocator = nullptr) {
   const auto& shape = input_def.GetShape();
   const bool is_initializer = input_def.IsInitializer();
 
@@ -1132,27 +1211,28 @@ inline NodeArg* MakeTestInput(ModelTestBuilder& builder, const TestInputDef<T>& 
     const std::vector<T>& raw_data = input_def.GetRawData();
 
     if (is_initializer) {
-      input = builder.MakeInitializer<T>(shape, raw_data);
+      builder.MakeInitializer<T>(name, shape, raw_data);
     } else {
-      input = builder.MakeInput<T>(shape, raw_data, allocator);
+      builder.MakeInput<T>(name, shape, raw_data, allocator);
     }
   } else {  // Random data
     const auto& rand_info = input_def.GetRandomDataInfo();
 
     if (is_initializer) {
-      input = builder.MakeInitializer<T>(shape, rand_info.min, rand_info.max);
+      builder.MakeInitializer<T>(name, shape, rand_info.min, rand_info.max);
     } else {
-      input = builder.MakeInput<T>(shape, rand_info.min, rand_info.max, allocator);
+      builder.MakeInput<T>(name, shape, rand_info.min, rand_info.max, allocator);
     }
   }
 
-  return input;
+  return;
 }
 
 template <>
-inline NodeArg* MakeTestInput(ModelTestBuilder& builder, const TestInputDef<bool>& input_def,
-                              AllocatorPtr allocator) {
-  NodeArg* input = nullptr;
+inline void MakeTestInput(ModelTestBuilder& builder,
+                          std::string name,
+                          const TestInputDef<bool>& input_def,
+                          AllocatorPtr allocator) {
   const auto& shape = input_def.GetShape();
   const bool is_initializer = input_def.IsInitializer();
 
@@ -1160,19 +1240,19 @@ inline NodeArg* MakeTestInput(ModelTestBuilder& builder, const TestInputDef<bool
     const std::vector<bool>& raw_data = input_def.GetRawData();
 
     if (is_initializer) {
-      input = builder.MakeInitializerBool(shape, raw_data);
+      builder.MakeInitializerBool(name, shape, raw_data);
     } else {
-      input = builder.MakeInput<bool>(shape, raw_data, allocator);
+      builder.MakeInput<bool>(name, shape, raw_data, allocator);
     }
   } else {  // Random data
     if (is_initializer) {
-      input = builder.MakeRandInitializerBool(shape);
+      builder.MakeRandInitializerBool(name, shape);
     } else {
-      input = builder.MakeInputBool(shape, allocator);
+      builder.MakeInputBool(name, shape, allocator);
     }
   }
 
-  return input;
+  return;
 }
 
 // ONNX spec does not allow quantizing float to int32. However, this function will create an int32
@@ -1181,8 +1261,8 @@ inline NodeArg* MakeTestInput(ModelTestBuilder& builder, const TestInputDef<bool
 // See quantization tool: onnx_quantizer.py::quantize_bias_static()
 //
 // i.e., initial bias => manual quantization (int32) => DQ => final float bias
-NodeArg* MakeTestQDQBiasInput(ModelTestBuilder& builder, const TestInputDef<float>& bias_def, float bias_scale,
-                              bool use_contrib_qdq = false);
+std::string MakeTestQDQBiasInput(ModelTestBuilder& builder, const std::string& name, const TestInputDef<float>& bias_def, float bias_scale,
+                                 bool use_contrib_qdq = false);
 
 /**
  * Returns a function that builds a model with a single operator with N inputs type InputType1 and M inputs
@@ -1197,68 +1277,79 @@ NodeArg* MakeTestQDQBiasInput(ModelTestBuilder& builder, const TestInputDef<floa
  * \returns A model building function.
  */
 template <typename InputType1, typename InputType2 = int64_t>
-inline GetTestModelFn BuildOpTestCase(const std::string& op_type,
+inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
+                                      const std::string& op_type,
                                       const std::vector<TestInputDef<InputType1>>& input_defs_1,
                                       const std::vector<TestInputDef<InputType2>>& input_defs_2,
                                       const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                       const std::string& op_domain = kOnnxDomain,
                                       AllocatorPtr input_allocator = nullptr) {
-  return [op_type, input_defs_1, input_defs_2, attrs, op_domain, input_allocator](ModelTestBuilder& builder) {
-    std::vector<NodeArg*> op_inputs;
-    op_inputs.reserve(input_defs_1.size() + input_defs_2.size());
+  return [node_name, op_type, input_defs_1, input_defs_2, attrs, op_domain, input_allocator](ModelTestBuilder& builder) {
+    std::vector<std::string> op_input_names;
+    op_input_names.reserve(input_defs_1.size() + input_defs_2.size());
 
-    for (const auto& input_def : input_defs_1) {
-      NodeArg* input = MakeTestInput<InputType1>(builder, input_def, input_allocator);
-      op_inputs.push_back(input);
+    for (int i = 0; i < input_defs_1.size(); i++) {
+      const std::string tmp_name = "input_defs_1_" + std::to_string(i);
+      MakeTestInput<InputType1>(builder, tmp_name, input_defs_1[i], input_allocator);
+      op_input_names.push_back(tmp_name);
     }
 
-    for (const auto& input_def : input_defs_2) {
-      NodeArg* input = MakeTestInput<InputType2>(builder, input_def, input_allocator);
-      op_inputs.push_back(input);
+    for (int i = 0; i < input_defs_2.size(); i++) {
+      const std::string tmp_name = "input_defs_2_" + std::to_string(i);
+      MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i], input_allocator);
+      op_input_names.push_back(tmp_name);
     }
 
-    auto* output = builder.MakeOutput();
-    Node& onnx_node = builder.AddNode(op_type, op_inputs, {output}, op_domain);
-
-    for (const auto& attr : attrs) {
-      onnx_node.AddAttributeProto(attr);
-    }
+    builder.MakeOutput("Y");
+    builder.AddNode(
+        node_name,
+        op_type,
+        op_input_names,
+        {"Y"},
+        op_domain,
+        attrs);
   };
 }
 
 template <typename InputType1, typename InputType2 = int64_t>
-inline GetTestModelFn BuildOpTestCase(const std::string& op_type,
+inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
+                                      const std::string& op_type,
                                       const std::vector<TestInputDef<InputType1>>& input_defs_1,
                                       const std::vector<TestInputDef<InputType2>>& input_defs_2,
                                       const std::vector<TestInputDef<InputType1>>& input_defs_3,
                                       const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                       const std::string& op_domain = kOnnxDomain,
                                       AllocatorPtr input_allocator = nullptr) {
-  return [op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain, input_allocator](ModelTestBuilder& builder) {
-    std::vector<NodeArg*> op_inputs;
-    op_inputs.reserve(input_defs_1.size() + input_defs_2.size() + input_defs_3.size());
+  return [node_name, op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain, input_allocator](ModelTestBuilder& builder) {
+    std::vector<std::string> op_input_names;
+    op_input_names.reserve(input_defs_1.size() + input_defs_2.size() + input_defs_3.size());
 
-    for (const auto& input_def : input_defs_1) {
-      NodeArg* input = MakeTestInput<InputType1>(builder, input_def, input_allocator);
-      op_inputs.push_back(input);
+    for (int i = 0; i < input_defs_1.size(); i++) {
+      const std::string tmp_name = "input_defs_1_" + std::to_string(i);
+      MakeTestInput<InputType1>(builder, tmp_name, input_defs_1[i], input_allocator);
+      op_input_names.push_back(tmp_name);
     }
 
-    for (const auto& input_def : input_defs_2) {
-      NodeArg* input = MakeTestInput<InputType2>(builder, input_def, input_allocator);
-      op_inputs.push_back(input);
+    for (int i = 0; i < input_defs_2.size(); i++) {
+      const std::string tmp_name = "input_defs_2_" + std::to_string(i);
+      MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i], input_allocator);
+      op_input_names.push_back(tmp_name);
     }
 
-    for (const auto& input_def : input_defs_3) {
-      NodeArg* input = MakeTestInput<InputType1>(builder, input_def, input_allocator);
-      op_inputs.push_back(input);
+    for (int i = 0; i < input_defs_3.size(); i++) {
+      const std::string tmp_name = "input_defs_3_" + std::to_string(i);
+      MakeTestInput<InputType1>(builder, tmp_name, input_defs_3[i], input_allocator);
+      op_input_names.push_back(tmp_name);
     }
 
-    auto* output = builder.MakeOutput();
-    Node& onnx_node = builder.AddNode(op_type, op_inputs, {output}, op_domain);
-
-    for (const auto& attr : attrs) {
-      onnx_node.AddAttributeProto(attr);
-    }
+    builder.MakeOutput("Y");
+    builder.AddNode(
+        node_name,
+        op_type,
+        op_input_names,
+        {"Y"},
+        op_domain,
+        attrs);
   };
 }
 
@@ -1276,6 +1367,7 @@ inline GetTestModelFn BuildOpTestCase(const std::string& op_type,
  */
 template <typename QuantType, typename OtherInputType = int64_t>
 inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
+    const std::string& node_name,
     const std::string& op_type,
     const std::vector<TestInputDef<float>>& quant_input_defs,
     const std::vector<TestInputDef<OtherInputType>>& non_quant_input_defs,
@@ -1283,42 +1375,44 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     const std::string& op_domain = kOnnxDomain,
     bool use_contrib_qdq = false,
     AllocatorPtr input_allocator = nullptr) {
-  return [op_type, quant_input_defs, non_quant_input_defs, attrs, op_domain,
+  return [node_name, op_type, quant_input_defs, non_quant_input_defs, attrs, op_domain,
           use_contrib_qdq, input_allocator](
              ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
-    std::vector<NodeArg*> op_inputs;
-    op_inputs.reserve(quant_input_defs.size() + non_quant_input_defs.size());
+    std::vector<std::string> op_input_names;
+    op_input_names.reserve(quant_input_defs.size() + non_quant_input_defs.size());
 
     // Create QDQ inputs
-    for (const auto& input_def : quant_input_defs) {
-      NodeArg* input = MakeTestInput<float>(builder, input_def, input_allocator);
-      QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-      NodeArg* input_after_qdq = AddQDQNodePair<QuantType>(builder, input, input_qparams.scale,
-                                                           input_qparams.zero_point, use_contrib_qdq);
-      op_inputs.push_back(input_after_qdq);
+    for (size_t i = 0; i < quant_input_defs.size(); i++) {
+      const std::string tmp_name = "quant_input_defs_" + std::to_string(i);
+      MakeTestInput<float>(builder, tmp_name, quant_input_defs[i], input_allocator);
+      QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(quant_input_defs[i]);
+
+      op_input_names.push_back(
+          AddQDQNodePair<QuantType>(builder, "qdq_in" + std::to_string(i), tmp_name, input_qparams.scale,
+                                    input_qparams.zero_point, use_contrib_qdq));
     }
 
     // Create non-QDQ inputs
-    for (const auto& input_def : non_quant_input_defs) {
-      NodeArg* input = MakeTestInput<OtherInputType>(builder, input_def, input_allocator);
-      op_inputs.push_back(input);
+    for (size_t i = 0; i < non_quant_input_defs.size(); i++) {
+      const std::string tmp_name = "non_quant_input_defs_" + std::to_string(i);
+      MakeTestInput<OtherInputType>(builder, tmp_name, non_quant_input_defs[i], input_allocator);
+      op_input_names.push_back(tmp_name);
     }
 
-    // Op -> op_output
-    auto* op_output = builder.MakeIntermediate();
-    Node& onnx_node = builder.AddNode(op_type, op_inputs, {op_output}, op_domain);
-
-    for (const auto& attr : attrs) {
-      onnx_node.AddAttributeProto(attr);
-    }
+    builder.AddNode(node_name, op_type,
+                    op_input_names,
+                    {"Y"},
+                    op_domain,
+                    attrs);
 
     // op_output -> Q -> DQ -> output
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, op_output, output_qparams[0].scale,
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq_out", "Y", output_qparams[0].scale,
                                                      output_qparams[0].zero_point, use_contrib_qdq);
   };
 }
 template <typename QuantType, typename OtherInputType = int64_t>
 inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
+    const std::string& node_name,
     const std::string& op_type,
     const std::vector<TestInputDef<float>>& quant_input_defs,
     const std::vector<TestInputDef<OtherInputType>>& non_quant_input_defs,
@@ -1327,46 +1421,53 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     const std::string& op_domain = kOnnxDomain,
     bool use_contrib_qdq = false,
     AllocatorPtr input_allocator = nullptr) {
-  return [op_type, quant_input_defs, non_quant_input_defs, quant_input_defs_2, attrs, op_domain,
+  return [node_name, op_type, quant_input_defs, non_quant_input_defs, quant_input_defs_2, attrs, op_domain,
           use_contrib_qdq, input_allocator](
              ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
-    std::vector<NodeArg*> op_inputs;
-    op_inputs.reserve(quant_input_defs.size() + non_quant_input_defs.size() + quant_input_defs_2.size());
+    std::vector<std::string> op_input_names;
+
+    op_input_names.reserve(quant_input_defs.size() + non_quant_input_defs.size() + quant_input_defs_2.size());
 
     // Create QDQ inputs
-    for (const auto& input_def : quant_input_defs) {
-      NodeArg* input = MakeTestInput<float>(builder, input_def, input_allocator);
-      QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-      NodeArg* input_after_qdq = AddQDQNodePair<QuantType>(builder, input, input_qparams.scale,
-                                                           input_qparams.zero_point, use_contrib_qdq);
-      op_inputs.push_back(input_after_qdq);
+    for (size_t i = 0; i < quant_input_defs.size(); i++) {
+      const std::string tmp_name = "quant_input_defs_" + std::to_string(i);
+      MakeTestInput<float>(builder, tmp_name, quant_input_defs[i], input_allocator);
+      QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(quant_input_defs[i]);
+
+      op_input_names.push_back(
+          AddQDQNodePair<QuantType>(builder, "qdq_in" + std::to_string(i), tmp_name, input_qparams.scale,
+                                    input_qparams.zero_point, use_contrib_qdq));
     }
 
     // Create non-QDQ inputs
-    for (const auto& input_def : non_quant_input_defs) {
-      NodeArg* input = MakeTestInput<OtherInputType>(builder, input_def, input_allocator);
-      op_inputs.push_back(input);
+    for (size_t i = 0; i < non_quant_input_defs.size(); i++) {
+      const std::string tmp_name = "non_quant_input_defs_" + std::to_string(i);
+      MakeTestInput<OtherInputType>(builder, tmp_name, non_quant_input_defs[i], input_allocator);
+      op_input_names.push_back(tmp_name);
     }
 
     // Create QDQ inputs
-    for (const auto& input_def : quant_input_defs_2) {
-      NodeArg* input = MakeTestInput<float>(builder, input_def, input_allocator);
-      QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-      NodeArg* input_after_qdq = AddQDQNodePair<QuantType>(builder, input, input_qparams.scale,
-                                                           input_qparams.zero_point, use_contrib_qdq);
-      op_inputs.push_back(input_after_qdq);
+    for (size_t i = 0; i < quant_input_defs_2.size(); i++) {
+      const std::string tmp_name = "quant_input_defs_2_" + std::to_string(i);
+      MakeTestInput<float>(builder, tmp_name, quant_input_defs_2[i], input_allocator);
+      QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(quant_input_defs_2[i]);
+
+      op_input_names.push_back(
+          AddQDQNodePair<QuantType>(builder, "qdq2_in" + std::to_string(i), tmp_name, input_qparams.scale,
+                                    input_qparams.zero_point, use_contrib_qdq));
     }
 
     // Op -> op_output
-    auto* op_output = builder.MakeIntermediate();
-    Node& onnx_node = builder.AddNode(op_type, op_inputs, {op_output}, op_domain);
-
-    for (const auto& attr : attrs) {
-      onnx_node.AddAttributeProto(attr);
-    }
+    builder.AddNode(
+        node_name,
+        op_type,
+        op_input_names,
+        {"Y"},
+        op_domain,
+        attrs);
 
     // op_output -> Q -> DQ -> output
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, op_output, output_qparams[0].scale,
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq_out", "Y", output_qparams[0].scale,
                                                      output_qparams[0].zero_point, use_contrib_qdq);
   };
 }
@@ -1387,7 +1488,7 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                      float fp32_abs_err = 1e-5f,
-                     logging::Severity log_severity = logging::Severity::kERROR,
+                     OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                      bool verify_outputs = true,
                      std::function<void(const Graph&)>* ep_graph_checker = nullptr);
 

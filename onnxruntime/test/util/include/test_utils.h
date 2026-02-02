@@ -49,12 +49,12 @@ struct EPVerificationParams {
 
 // Verify equality of two output tensors.
 void VerifyOutput(const std::string& output_name,
-                  const Tensor& expected_tensor,
-                  const Tensor& tensor,
+                  const Ort::Value& expected_value,
+                  const Ort::Value& actual_value,
                   float fp32_abs_err);
 
-// Return number of nodes in the Graph and any subgraphs that are assigned to the specified execution provider
-int CountAssignedNodes(const Graph& current_graph, const std::string& ep_type);
+// TODO: Implement the function once MS release public API about graph partition in 1.24
+// int CountAssignedNodes(const Graph& current_graph, const std::string& ep_type);
 
 // Verify the assignment of nodes to the EP specified by `provider_type`.
 void VerifyEPNodeAssignment(const Graph& graph, const std::string& provider_type,
@@ -67,25 +67,17 @@ using ModelPathOrBytes = std::variant<std::basic_string_view<ORTCHAR_T>,
 // is enabled.
 // session_options_updater can be used to update the SessionOptions the inference session is created with.
 void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
-                               std::string_view log_id,
-                               std::unique_ptr<IExecutionProvider> execution_provider,
-                               const NameMLValMap& feeds,
-                               const EPVerificationParams& params = EPVerificationParams(),
-                               const std::function<void(SessionOptions&)>& session_options_updater = {},
-                               bool verify_outputs = true);
-
-void RunWithEP(OrtSessionWrapper* ort_session,
-               const Ort::RunOptions& ort_ro,
-               const NameMLValMap& feeds,
-               std::vector<OrtValue>& output_vals);
-
-void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
                                Ort::SessionOptions& ort_so,
                                const std::string& provider_type,
                                std::string_view log_id,
-                               const NameMLValMap& feeds,
+                               std::unordered_map<std::string, Ort::Value>& feeds,
                                const EPVerificationParams& params = EPVerificationParams(),
                                bool verify_outputs = true);
+
+void RunWithEP(Ort::Session& ort_session,
+               const Ort::RunOptions& ort_ro,
+               std::unordered_map<std::string, Ort::Value>& feeds,
+               std::vector<Ort::Value>& output_vals);
 
 // Tests model loading only.
 // This can be used to test EPs in builds where only loading (and not running) of a model is supported.
@@ -138,6 +130,27 @@ OrtValue CreateInputOrtValueOnCPU(gsl::span<const int64_t> dims, gsl::span<const
                  DataTypeImpl::GetType<Tensor>()->GetDeleteFunc());
   return ort_value;
 }
+
+// keep these signatures in sync with DECLARE_MAKE_ATTRIBUTE_FNS below
+/** Creates an AttributeProto with the specified name and value. */
+ONNX_NAMESPACE::AttributeProto MakeAttribute(std::string attr_name, int64_t value);
+/** Creates an AttributeProto with the specified name and values. */
+ONNX_NAMESPACE::AttributeProto MakeAttribute(std::string attr_name, gsl::span<const int64_t> values);
+
+#define DECLARE_MAKE_ATTRIBUTE_FNS(type)                                           \
+  ONNX_NAMESPACE::AttributeProto MakeAttribute(std::string attr_name, type value); \
+  ONNX_NAMESPACE::AttributeProto MakeAttribute(std::string attr_name, gsl::span<const type> values)
+
+DECLARE_MAKE_ATTRIBUTE_FNS(float);
+DECLARE_MAKE_ATTRIBUTE_FNS(std::string);
+DECLARE_MAKE_ATTRIBUTE_FNS(ONNX_NAMESPACE::TensorProto);
+#if !defined(DISABLE_SPARSE_TENSORS)
+DECLARE_MAKE_ATTRIBUTE_FNS(ONNX_NAMESPACE::SparseTensorProto);
+#endif
+DECLARE_MAKE_ATTRIBUTE_FNS(ONNX_NAMESPACE::TypeProto);
+DECLARE_MAKE_ATTRIBUTE_FNS(ONNX_NAMESPACE::GraphProto);
+
+#undef DECLARE_MAKE_ATTRIBUTE_FNS
 
 }  // namespace test
 }  // namespace onnxruntime
