@@ -235,21 +235,6 @@ target_include_directories(onnxruntime_test_utils PRIVATE
 set_target_properties(onnxruntime_test_utils PROPERTIES FOLDER "ONNXRuntimeTest")
 source_group(TREE ${TEST_SRC_DIR} FILES ${onnxruntime_test_utils_src})
 
-# This utility library uses onnxruntime c/c++ apis to provide capability of comparing two OrtValues with all supported data type.
-onnxruntime_add_static_library(onnxruntime_test_utils_public_values ${onnxruntime_test_utils_public_values_src})
-onnxruntime_add_include_to_target(onnxruntime_test_utils_public_values onnxruntime_common onnx onnx_proto Eigen3::Eigen)
-target_include_directories(onnxruntime_test_utils_public_values PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${ONNXRUNTIME_ROOT})
-add_dependencies(onnxruntime_test_utils_public_values ${onnxruntime_EXTERNAL_DEPENDENCIES})
-set_target_properties(onnxruntime_test_utils_public_values PROPERTIES FOLDER "ONNXRuntimeTest")
-
-# This utility library uses internal onnxruntime libraries, e.g. onnxruntime::Tensor, to provide capability of comparing two OrtValues with all supported data type.
-onnxruntime_add_static_library(onnxruntime_test_utils_internal_values ${onnxruntime_test_utils_internal_values_src})
-onnxruntime_add_include_to_target(onnxruntime_test_utils_internal_values onnxruntime_common onnx onnx_proto flatbuffers::flatbuffers Boost::mp11 Eigen3::Eigen)
-target_include_directories(onnxruntime_test_utils_internal_values PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${ONNXRUNTIME_ROOT} "${TEST_SRC_DIR}/util/include")
-add_dependencies(onnxruntime_test_utils_internal_values ${onnxruntime_EXTERNAL_DEPENDENCIES})
-set_target_properties(onnxruntime_test_utils_internal_values PROPERTIES FOLDER "ONNXRuntimeTest")
-
-
 # onnxruntime_unittest_utils
 # This is static library containing utilities that are specifically for unit tests.
 # Unlike onnxruntime_test_utils, the source files here may have dependencies on internal onnxruntime code.
@@ -324,6 +309,13 @@ block()
     LIBS ${onnxruntime_provider_test_libs}
     DEPENDS ${onnxruntime_provider_test_deps}
   )
+
+  # Expose QNN SDK headers to unit tests via an interface target
+  add_library(qnn_sdk_headers_include INTERFACE)
+  target_include_directories(qnn_sdk_headers_include INTERFACE
+    ${onnxruntime_QNN_HOME}/include
+    ${onnxruntime_QNN_HOME}/include/QNN)
+  target_link_libraries(onnxruntime_provider_test PRIVATE qnn_sdk_headers_include)
 
   target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT})
 

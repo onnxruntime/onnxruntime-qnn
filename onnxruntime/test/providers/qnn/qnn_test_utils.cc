@@ -26,8 +26,55 @@
 #include "core/optimizer/graph_optimizer_registry.h"
 #include "core/platform/env.h"
 
+// Platform-specific includes for dynamic library loading
+#if defined(_WIN32)
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
+
 namespace onnxruntime {
 namespace test {
+
+// Self-contained dynamic library loading functions to avoid using internal ORT APIs
+namespace {
+
+#if defined(_WIN32)
+// Windows implementation using Win32 API
+void* LoadDynamicLibraryImpl(const std::string& library_path) {
+  return static_cast<void*>(LoadLibraryA(library_path.c_str()));
+}
+
+void* GetSymbolFromLibraryImpl(void* library_handle, const std::string& symbol_name) {
+  if (!library_handle) return nullptr;
+  return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(library_handle), symbol_name.c_str()));
+}
+
+void UnloadDynamicLibraryImpl(void* library_handle) {
+  if (library_handle) {
+    FreeLibrary(static_cast<HMODULE>(library_handle));
+  }
+}
+
+#else
+// Linux implementation using dlopen/dlsym/dlclose
+void* LoadDynamicLibraryImpl(const std::string& library_path) {
+  return dlopen(library_path.c_str(), RTLD_LAZY);
+}
+
+void* GetSymbolFromLibraryImpl(void* library_handle, const std::string& symbol_name) {
+  if (!library_handle) return nullptr;
+  return dlsym(library_handle, symbol_name.c_str());
+}
+
+void UnloadDynamicLibraryImpl(void* library_handle) {
+  if (library_handle) {
+    dlclose(library_handle);
+  }
+}
+#endif
+
+}  // anonymous namespace
 
 std::vector<float> GetFloatDataInRange(float min_val, float max_val, size_t num_elems) {
   if (num_elems == 0) {
@@ -460,6 +507,26 @@ void QnnHTPBackendTests::SetUp() {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, "Failed to check if QNN HTP backend is available.");
     FAIL();
   }
+
+  // query the platform attributes if not already cached.
+  if (!cached_platform_attrs_.has_value()) {
+    QnnPlatformAttributes attrs;
+
+    Ort::Status query_status = QueryQnnPlatformAttributesDirectly(attrs, logger);
+    if (!query_status.IsOK()) {
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, ("QueryQnnPlatformAttributesDirectly failed: " + query_status.GetErrorMessage()).c_str());
+    } else {
+      std::ostringstream oss;
+      oss << "QNN platform attributes: "
+          << "HTP arch: " << attrs.htp_arch
+          << ", DLBC supported: " << attrs.dlbc_supported
+          << ", VTCM size MB: " << attrs.vtcm_size_mb
+          << ", SoC model: " << attrs.soc_model
+          << ", SDK version: " << attrs.sdk_version;
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_INFO, oss.str().c_str());
+      cached_platform_attrs_ = attrs;
+    }
+  }
 }
 
 // TODO
@@ -603,7 +670,7 @@ std::optional<QnnHTPBackendTests::QnnPlatformAttributes> QnnHTPBackendTests::cac
  *   - If QNN context initialization or attribute querying fails, returns an error status.
  *   - In all error cases, the output parameter 'out' is not modified.
  */
-Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests::QnnPlatformAttributes& out, const onnxruntime::logging::Logger& logger) {
+Ort::Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests::QnnPlatformAttributes& out, const Ort::Logger& logger) {
   void* qnn_lib_handle = nullptr;
 
 #if defined(_WIN32)
@@ -612,21 +679,21 @@ Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests
   const std::string backend_path = "libQnnHtp.so";
 #endif
 
-  // Load QNN HTP backend library
-  auto status = Env::Default().LoadDynamicLibrary(ToPathString(backend_path).c_str(), false, &qnn_lib_handle);
-  if (!status.IsOK()) {
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to load QNN HTP backend library: ", backend_path);
+  // Load QNN HTP backend library using self-contained implementation
+  qnn_lib_handle = LoadDynamicLibraryImpl(backend_path);
+  if (!qnn_lib_handle) {
+    return Ort::Status(("Failed to load QNN HTP backend library: " + backend_path).c_str(), ORT_FAIL);
   }
 
   // Get QNN interface providers function
   using QnnInterfaceGetProvidersFn_t = Qnn_ErrorHandle_t (*)(const QnnInterface_t***, uint32_t*);
   QnnInterfaceGetProvidersFn_t qnn_interface_get_providers = nullptr;
 
-  status = Env::Default().GetSymbolFromLibrary(qnn_lib_handle, "QnnInterface_getProviders",
-                                               (void**)&qnn_interface_get_providers);
-  if (!status.IsOK() || !qnn_interface_get_providers) {
-    ORT_IGNORE_RETURN_VALUE(Env::Default().UnloadDynamicLibrary(qnn_lib_handle));
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to get QnnInterface_getProviders symbol");
+  qnn_interface_get_providers = reinterpret_cast<QnnInterfaceGetProvidersFn_t>(
+      GetSymbolFromLibraryImpl(qnn_lib_handle, "QnnInterface_getProviders"));
+  if (!qnn_interface_get_providers) {
+    UnloadDynamicLibraryImpl(qnn_lib_handle);
+    return Ort::Status("Failed to get QnnInterface_getProviders symbol", ORT_FAIL);
   }
 
   // Get QNN interface
@@ -635,15 +702,15 @@ Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests
   Qnn_ErrorHandle_t qnn_status = qnn_interface_get_providers(&interface_providers, &num_providers);
 
   if (qnn_status != QNN_SUCCESS || num_providers == 0 || !interface_providers) {
-    ORT_IGNORE_RETURN_VALUE(Env::Default().UnloadDynamicLibrary(qnn_lib_handle));
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QnnInterface_getProviders failed");
+    UnloadDynamicLibraryImpl(qnn_lib_handle);
+    return Ort::Status("QnnInterface_getProviders failed", ORT_FAIL);
   }
 
   // Use the first provider
   const QnnInterface_t* qnn_interface = interface_providers[0];
   if (!qnn_interface) {
-    ORT_IGNORE_RETURN_VALUE(Env::Default().UnloadDynamicLibrary(qnn_lib_handle));
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "QnnInterface_getProviders failed");
+    UnloadDynamicLibraryImpl(qnn_lib_handle);
+    return Ort::Status("QnnInterface_getProviders failed", ORT_FAIL);
   }
 
   // Extract function pointers from the versioned interface
@@ -658,7 +725,7 @@ Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests
   if (logCreateFn) {
     qnn_status = logCreateFn(nullptr, QNN_LOG_LEVEL_WARN, &log_handle);
     if (qnn_status != QNN_SUCCESS) {
-      LOGS(logger, WARNING) << "Failed to create QNN log handle, continuing without logging";
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "Failed to create QNN log handle, continuing without logging");
     }
   }
 
@@ -668,8 +735,8 @@ Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests
     if (log_handle && logFreeFn) {
       logFreeFn(log_handle);
     }
-    ORT_IGNORE_RETURN_VALUE(Env::Default().UnloadDynamicLibrary(qnn_lib_handle));
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "deviceGetPlatformInfo function not available");
+    UnloadDynamicLibraryImpl(qnn_lib_handle);
+    return Ort::Status("deviceGetPlatformInfo function not available", ORT_FAIL);
   }
 
   qnn_status = getPlatformInfoFn(log_handle, &platform_info_ptr);
@@ -678,11 +745,11 @@ Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests
     if (log_handle && logFreeFn) {
       logFreeFn(log_handle);
     }
-    ORT_IGNORE_RETURN_VALUE(Env::Default().UnloadDynamicLibrary(qnn_lib_handle));
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "deviceGetPlatformInfo failed with error: ", qnn_status);
+    UnloadDynamicLibraryImpl(qnn_lib_handle);
+    return Ort::Status("deviceGetPlatformInfo failed", ORT_FAIL);
   }
 
-  auto ret = Status::OK();
+  auto ret = Ort::Status();
   // Extract platform attributes
   if (platform_info_ptr->version == QNN_DEVICE_PLATFORM_INFO_VERSION_1) {
     const QnnDevice_PlatformInfoV1_t& p = platform_info_ptr->v1;
@@ -716,7 +783,7 @@ Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests
       }
     }
   } else {
-    ret = ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Unsupported QNN device platform info version: ", platform_info_ptr->version);
+    ret = Ort::Status("Unsupported QNN device platform info version", ORT_FAIL);
   }
 
   // Free platform info
@@ -730,7 +797,7 @@ Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackendTests
   }
 
   // Unload library
-  ORT_IGNORE_RETURN_VALUE(Env::Default().UnloadDynamicLibrary(qnn_lib_handle));
+  UnloadDynamicLibraryImpl(qnn_lib_handle);
 
   return ret;
 }
