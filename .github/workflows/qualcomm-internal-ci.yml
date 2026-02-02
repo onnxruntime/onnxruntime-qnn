@@ -4,7 +4,7 @@
 name: Qualcomm Internal PR Workflow
 on:
   push:
-    branches: [main, rel-*]
+    branches: [main, rel-*, dev/hungjuiw/introduce-ort-home]
   pull_request:
     branches: [main, rel-*]
   merge_group:
