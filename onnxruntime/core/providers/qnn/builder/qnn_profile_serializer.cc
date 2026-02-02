@@ -1,9 +1,9 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn-abi/builder/qnn_profile_serializer.h"
+#include "core/providers/qnn/builder/qnn_profile_serializer.h"
 
-#include "core/providers/qnn-abi/qnn_telemetry.h"
+#include "core/providers/qnn/qnn_telemetry.h"
 
 namespace onnxruntime {
 namespace qnn {

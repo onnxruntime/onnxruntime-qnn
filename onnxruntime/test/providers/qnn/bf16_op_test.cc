@@ -9,7 +9,7 @@
 #include "gtest/gtest.h"
 
 #include "core/graph/onnx_protobuf.h"
-#include "test/providers/qnn-abi/qnn_test_utils.h"
+#include "test/providers/qnn/qnn_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
@@ -61,7 +61,7 @@ namespace test {
   provider_options["soc_model"] = "88";       // Target SOC ID for BF16 support
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTestABI(build_test_case, provider_options, opset, expected_ep_assignment, fp32_abs_err);
+  RunQnnModelTest(build_test_case, provider_options, opset, expected_ep_assignment, fp32_abs_err);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64)
@@ -71,83 +71,83 @@ namespace test {
 //
 
 // Test BF16 handling with Add operator - both inputs dynamic
-TEST_F(QnnABIHTPBackendTests, DISABLED_BF16_Add_DynamicInputs) {
+TEST_F(QnnHTPBackendTests, DISABLED_BF16_Add_DynamicInputs) {
   std::vector<int64_t> shape = {2, 3, 4};
   RunBF16ModelTest(
       BuildBF16AddTestCase(
-          TestInputDef<float>(shape, false, GetSequentialFloatDataABI(shape, 0.0f, 0.1f)),
-          TestInputDef<float>(shape, false, GetSequentialFloatDataABI(shape, 0.1f, 0.1f))),
+          TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.0f, 0.1f)),
+          TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.1f, 0.1f))),
       shape);
 }
 
 // Test BF16 handling with Add operator - one input static (initializer)
-TEST_F(QnnABIHTPBackendTests, DISABLED_BF16_Add_StaticInput) {
+TEST_F(QnnHTPBackendTests, DISABLED_BF16_Add_StaticInput) {
   std::vector<int64_t> shape = {2, 3, 4};
   RunBF16ModelTest(
       BuildBF16AddTestCase(
-          TestInputDef<float>(shape, false, GetSequentialFloatDataABI(shape, 0.0f, 0.1f)),
-          TestInputDef<float>(shape, true, GetSequentialFloatDataABI(shape, 0.1f, 0.1f))),
+          TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.0f, 0.1f)),
+          TestInputDef<float>(shape, true, GetSequentialFloatData(shape, 0.1f, 0.1f))),
       shape);
 }
 
 // Test BF16 handling with Add operator - both inputs static
-TEST_F(QnnABIHTPBackendTests, DISABLED_BF16_Add_BothStatic) {
+TEST_F(QnnHTPBackendTests, DISABLED_BF16_Add_BothStatic) {
   std::vector<int64_t> shape = {2, 3, 4};
   RunBF16ModelTest(
       BuildBF16AddTestCase(
-          TestInputDef<float>(shape, true, GetSequentialFloatDataABI(shape, 0.0f, 0.1f)),
-          TestInputDef<float>(shape, true, GetSequentialFloatDataABI(shape, 0.1f, 0.1f))),
+          TestInputDef<float>(shape, true, GetSequentialFloatData(shape, 0.0f, 0.1f)),
+          TestInputDef<float>(shape, true, GetSequentialFloatData(shape, 0.1f, 0.1f))),
       shape);
 }
 
 // Test BF16 handling with MatMul operator - dynamic inputs
-TEST_F(QnnABIHTPBackendTests, DISABLED_BF16_MatMul_DynamicInputs) {
+TEST_F(QnnHTPBackendTests, DISABLED_BF16_MatMul_DynamicInputs) {
   RunBF16ModelTest(
       BuildBF16MatMulTestCase(
-          TestInputDef<float>({2, 3}, false, GetSequentialFloatDataABI({2, 3}, 0.0f, 0.1f)),
-          TestInputDef<float>({3, 4}, false, GetSequentialFloatDataABI({3, 4}, 0.1f, 0.1f))),
+          TestInputDef<float>({2, 3}, false, GetSequentialFloatData({2, 3}, 0.0f, 0.1f)),
+          TestInputDef<float>({3, 4}, false, GetSequentialFloatData({3, 4}, 0.1f, 0.1f))),
       {2, 3});
 }
 
 // Test BF16 handling with MatMul operator - static weight
-TEST_F(QnnABIHTPBackendTests, DISABLED_BF16_MatMul_StaticWeight) {
+TEST_F(QnnHTPBackendTests, DISABLED_BF16_MatMul_StaticWeight) {
   RunBF16ModelTest(
       BuildBF16MatMulTestCase(
-          TestInputDef<float>({2, 3}, false, GetSequentialFloatDataABI({2, 3}, 0.0f, 0.1f)),
-          TestInputDef<float>({3, 4}, true, GetSequentialFloatDataABI({3, 4}, 0.1f, 0.1f))),
+          TestInputDef<float>({2, 3}, false, GetSequentialFloatData({2, 3}, 0.0f, 0.1f)),
+          TestInputDef<float>({3, 4}, true, GetSequentialFloatData({3, 4}, 0.1f, 0.1f))),
       {2, 3});
 }
 
 // Test BF16 handling with MatMul operator - batched inputs
-TEST_F(QnnABIHTPBackendTests, DISABLED_BF16_MatMul_BatchedInputs) {
+TEST_F(QnnHTPBackendTests, DISABLED_BF16_MatMul_BatchedInputs) {
   RunBF16ModelTest(
       BuildBF16MatMulTestCase(
-          TestInputDef<float>({2, 3, 4}, false, GetSequentialFloatDataABI({2, 3, 4}, 0.0f, 0.1f)),
-          TestInputDef<float>({4, 5}, false, GetSequentialFloatDataABI({4, 5}, 0.1f, 0.1f))),
+          TestInputDef<float>({2, 3, 4}, false, GetSequentialFloatData({2, 3, 4}, 0.0f, 0.1f)),
+          TestInputDef<float>({4, 5}, false, GetSequentialFloatData({4, 5}, 0.1f, 0.1f))),
       {2, 3, 4});
 }
 
 // Test BF16 handling with Conv operator - dynamic input
-TEST_F(QnnABIHTPBackendTests, DISABLED_BF16_Conv_DynamicInput) {
+TEST_F(QnnHTPBackendTests, DISABLED_BF16_Conv_DynamicInput) {
   std::vector<int64_t> input_shape = {1, 3, 8, 8};
   std::vector<int64_t> weights_shape = {16, 3, 3, 3};
 
   RunBF16ModelTest(
       BuildBF16ConvTestCase(
-          TestInputDef<float>(input_shape, false, GetSequentialFloatDataABI(input_shape, 0.0f, 0.01f)),
-          TestInputDef<float>(weights_shape, true, GetSequentialFloatDataABI(weights_shape, -0.1f, 0.01f))),
+          TestInputDef<float>(input_shape, false, GetSequentialFloatData(input_shape, 0.0f, 0.01f)),
+          TestInputDef<float>(weights_shape, true, GetSequentialFloatData(weights_shape, -0.1f, 0.01f))),
       input_shape);
 }
 
 // Test BF16 handling with Conv operator - larger input
-TEST_F(QnnABIHTPBackendTests, DISABLED_BF16_Conv_LargerInput) {
+TEST_F(QnnHTPBackendTests, DISABLED_BF16_Conv_LargerInput) {
   std::vector<int64_t> input_shape = {1, 64, 32, 32};
   std::vector<int64_t> weights_shape = {128, 64, 3, 3};
 
   RunBF16ModelTest(
       BuildBF16ConvTestCase(
-          TestInputDef<float>(input_shape, false, GetSequentialFloatDataABI(input_shape, 0.0f, 0.001f)),
-          TestInputDef<float>(weights_shape, true, GetSequentialFloatDataABI(weights_shape, -0.05f, 0.001f))),
+          TestInputDef<float>(input_shape, false, GetSequentialFloatData(input_shape, 0.0f, 0.001f)),
+          TestInputDef<float>(weights_shape, true, GetSequentialFloatData(weights_shape, -0.05f, 0.001f))),
       input_shape,
       ExpectedEPNodeAssignment::All,
       18,
@@ -160,9 +160,9 @@ static GetTestModelFn BuildBF16MultiOpTestCase() {
     std::vector<int64_t> shape = {2, 3, 4};
 
     // Create inputs
-    NodeArg* input1 = MakeTestInput(builder, TestInputDef<float>(shape, false, GetSequentialFloatDataABI(shape, 0.0f, 0.1f)));
-    NodeArg* input2 = MakeTestInput(builder, TestInputDef<float>(shape, false, GetSequentialFloatDataABI(shape, 0.1f, 0.1f)));
-    NodeArg* input3 = MakeTestInput(builder, TestInputDef<float>(shape, false, GetSequentialFloatDataABI(shape, 0.2f, 0.1f)));
+    NodeArg* input1 = MakeTestInput(builder, TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.0f, 0.1f)));
+    NodeArg* input2 = MakeTestInput(builder, TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.1f, 0.1f)));
+    NodeArg* input3 = MakeTestInput(builder, TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.2f, 0.1f)));
 
     // Add1: input1 + input2
     NodeArg* add1_output = builder.MakeIntermediate();
@@ -174,7 +174,7 @@ static GetTestModelFn BuildBF16MultiOpTestCase() {
   };
 }
 
-TEST_F(QnnABIHTPBackendTests, DISABLED_BF16_MultipleOps) {
+TEST_F(QnnHTPBackendTests, DISABLED_BF16_MultipleOps) {
   std::vector<int64_t> shape = {2, 3, 4};
   RunBF16ModelTest(BuildBF16MultiOpTestCase(), shape);
 }
@@ -185,8 +185,8 @@ static GetTestModelFn BuildBF16MultiOutputTestCase() {
     std::vector<int64_t> shape = {2, 3, 4};
 
     // Create inputs
-    NodeArg* input1 = MakeTestInput(builder, TestInputDef<float>(shape, false, GetSequentialFloatDataABI(shape, 0.0f, 0.1f)));
-    NodeArg* input2 = MakeTestInput(builder, TestInputDef<float>(shape, false, GetSequentialFloatDataABI(shape, 0.1f, 0.1f)));
+    NodeArg* input1 = MakeTestInput(builder, TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.0f, 0.1f)));
+    NodeArg* input2 = MakeTestInput(builder, TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.1f, 0.1f)));
 
     // Add: input1 + input2 -> output1
     NodeArg* output1 = builder.MakeOutput();
@@ -198,7 +198,7 @@ static GetTestModelFn BuildBF16MultiOutputTestCase() {
   };
 }
 
-TEST_F(QnnABIHTPBackendTests, DISABLED_BF16_MultipleOutputs) {
+TEST_F(QnnHTPBackendTests, DISABLED_BF16_MultipleOutputs) {
   std::vector<int64_t> shape = {2, 3, 4};
   RunBF16ModelTest(BuildBF16MultiOutputTestCase(), shape);
 }
@@ -212,11 +212,11 @@ static GetTestModelFn BuildBF16ReluTestCase(const TestInputDef<float>& input_def
   };
 }
 
-TEST_F(QnnABIHTPBackendTests, DISABLED_BF16_Relu) {
+TEST_F(QnnHTPBackendTests, DISABLED_BF16_Relu) {
   std::vector<int64_t> shape = {2, 3, 4, 5};
   RunBF16ModelTest(
       BuildBF16ReluTestCase(
-          TestInputDef<float>(shape, false, GetSequentialFloatDataABI(shape, -1.0f, 0.1f))),
+          TestInputDef<float>(shape, false, GetSequentialFloatData(shape, -1.0f, 0.1f))),
       shape);
 }
 
@@ -229,11 +229,11 @@ static GetTestModelFn BuildBF16SigmoidTestCase(const TestInputDef<float>& input_
   };
 }
 
-TEST_F(QnnABIHTPBackendTests, DISABLED_BF16_Sigmoid) {
+TEST_F(QnnHTPBackendTests, DISABLED_BF16_Sigmoid) {
   std::vector<int64_t> shape = {2, 3, 4};
   RunBF16ModelTest(
       BuildBF16SigmoidTestCase(
-          TestInputDef<float>(shape, false, GetSequentialFloatDataABI(shape, -2.0f, 0.2f))),
+          TestInputDef<float>(shape, false, GetSequentialFloatData(shape, -2.0f, 0.2f))),
       shape);
 }
 
@@ -247,11 +247,11 @@ static GetTestModelFn BuildBF16SoftmaxTestCase(const TestInputDef<float>& input_
   };
 }
 
-TEST_F(QnnABIHTPBackendTests, DISABLED_BF16_Softmax) {
+TEST_F(QnnHTPBackendTests, DISABLED_BF16_Softmax) {
   std::vector<int64_t> shape = {2, 3, 4};
   RunBF16ModelTest(
       BuildBF16SoftmaxTestCase(
-          TestInputDef<float>(shape, false, GetSequentialFloatDataABI(shape, 0.0f, 0.1f)),
+          TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.0f, 0.1f)),
           -1),
       shape);
 }
@@ -267,12 +267,12 @@ static GetTestModelFn BuildBF16TransposeTestCase(const TestInputDef<float>& inpu
   };
 }
 
-TEST_F(QnnABIHTPBackendTests, DISABLED_BF16_Transpose) {
+TEST_F(QnnHTPBackendTests, DISABLED_BF16_Transpose) {
   std::vector<int64_t> shape = {2, 3, 4, 5};
   std::vector<int64_t> perm = {0, 2, 1, 3};
   RunBF16ModelTest(
       BuildBF16TransposeTestCase(
-          TestInputDef<float>(shape, false, GetSequentialFloatDataABI(shape, 0.0f, 0.1f)),
+          TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.0f, 0.1f)),
           perm),
       shape);
 }
@@ -288,12 +288,12 @@ static GetTestModelFn BuildBF16ReshapeTestCase(const TestInputDef<float>& input_
   };
 }
 
-TEST_F(QnnABIHTPBackendTests, DISABLED_BF16_Reshape) {
+TEST_F(QnnHTPBackendTests, DISABLED_BF16_Reshape) {
   std::vector<int64_t> input_shape = {2, 3, 4};
   std::vector<int64_t> output_shape = {6, 4};
   RunBF16ModelTest(
       BuildBF16ReshapeTestCase(
-          TestInputDef<float>(input_shape, false, GetSequentialFloatDataABI(input_shape, 0.0f, 0.1f)),
+          TestInputDef<float>(input_shape, false, GetSequentialFloatData(input_shape, 0.0f, 0.1f)),
           output_shape),
       input_shape);
 }
@@ -311,12 +311,12 @@ static GetTestModelFn BuildBF16ConcatTestCase(const std::vector<TestInputDef<flo
   };
 }
 
-TEST_F(QnnABIHTPBackendTests, DISABLED_BF16_Concat) {
+TEST_F(QnnHTPBackendTests, DISABLED_BF16_Concat) {
   std::vector<int64_t> shape1 = {2, 3, 4};
   std::vector<int64_t> shape2 = {2, 5, 4};
   std::vector<TestInputDef<float>> input_defs = {
-      TestInputDef<float>(shape1, false, GetSequentialFloatDataABI(shape1, 0.0f, 0.1f)),
-      TestInputDef<float>(shape2, false, GetSequentialFloatDataABI(shape2, 0.5f, 0.1f))};
+      TestInputDef<float>(shape1, false, GetSequentialFloatData(shape1, 0.0f, 0.1f)),
+      TestInputDef<float>(shape2, false, GetSequentialFloatData(shape2, 0.5f, 0.1f))};
   RunBF16ModelTest(BuildBF16ConcatTestCase(input_defs, 1), shape1);
 }
 
@@ -333,11 +333,11 @@ static GetTestModelFn BuildBF16SplitTestCase(const TestInputDef<float>& input_de
   };
 }
 
-TEST_F(QnnABIHTPBackendTests, DISABLED_BF16_Split) {
+TEST_F(QnnHTPBackendTests, DISABLED_BF16_Split) {
   std::vector<int64_t> shape = {2, 6, 4};
   RunBF16ModelTest(
       BuildBF16SplitTestCase(
-          TestInputDef<float>(shape, false, GetSequentialFloatDataABI(shape, 0.0f, 0.1f)),
+          TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.0f, 0.1f)),
           1,
           2),
       shape);

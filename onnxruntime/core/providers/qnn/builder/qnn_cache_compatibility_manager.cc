@@ -13,11 +13,11 @@
 #include "QnnCommon.h"
 #include "System/QnnSystemContext.h"
 
-#include "core/providers/qnn-abi/builder/qnn_cache_compatibility_manager.h"
-#include "core/providers/qnn-abi/builder/qnn_def.h"
-#include "core/providers/qnn-abi/builder/qnn_quant_params_wrapper.h"
-#include "core/providers/qnn-abi/builder/qnn_utils.h"
-#include "core/providers/qnn-abi/htp_usr_drv_utils.h"
+#include "core/providers/qnn/builder/qnn_cache_compatibility_manager.h"
+#include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
+#include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/htp_usr_drv_utils.h"
 
 namespace onnxruntime {
 namespace qnn {

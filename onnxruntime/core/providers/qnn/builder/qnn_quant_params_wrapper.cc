@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn-abi/builder/qnn_quant_params_wrapper.h"
+#include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
 
 #include <algorithm>
 #include <cassert>
@@ -10,7 +10,7 @@
 
 #include "QnnTypes.h"
 
-#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn/builder/qnn_model_wrapper.h"
 
 #define ALIGN_PTR_UP(ptr, align, type) \
   reinterpret_cast<type>((reinterpret_cast<std::uintptr_t>(ptr) + (align) - 1) & ~((align) - 1))

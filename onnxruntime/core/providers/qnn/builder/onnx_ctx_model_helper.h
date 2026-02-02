@@ -6,8 +6,8 @@
 #include <string>
 #include <vector>
 
-#include "core/providers/qnn-abi/builder/qnn_def.h"
-#include "core/providers/qnn-abi/ort_api.h"
+#include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
 

@@ -1,16 +1,16 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn-abi/builder/onnx_ctx_model_helper.h"
+#include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
 
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 
-#include "core/providers/qnn-abi/builder/qnn_utils.h"
-#include "core/providers/qnn-abi/builder/qnn_model.h"
-#include "core/providers/qnn-abi/ort_api.h"
-#include "core/providers/qnn-abi/shared_context.h"
+#include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/builder/qnn_model.h"
+#include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/shared_context.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -31,7 +31,7 @@ bool GraphHasEpContextNode(const OrtGraph* graph, const OrtApi& ort_api) {
     if (op_type == EPCONTEXT_OP) {
       OrtNodeAttrHelper node_helper(*node);
       std::string cache_source = qnn::utils::GetLowercaseString(node_helper.Get(SOURCE, ""));
-      if (cache_source == "qnnexecutionprovider" || cache_source == "qnn" || cache_source == "qnnabitestprovider") {
+      if (cache_source == "qnnexecutionprovider" || cache_source == "qnn") {
         return true;
       }
     }

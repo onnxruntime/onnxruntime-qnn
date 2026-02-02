@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "core/providers/qnn-abi/ort_api.h"
+#include "core/providers/qnn/ort_api.h"
 
 #ifdef _WIN32
 #include <Windows.h>

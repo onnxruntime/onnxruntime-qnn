@@ -10,8 +10,8 @@
 
 #include <System/QnnSystemInterface.h>
 
-#include "core/providers/qnn-abi/builder/qnn_def.h"
-#include "core/providers/qnn-abi/ort_api.h"
+#include "core/providers/qnn/builder/qnn_def.h"
+#include "core/providers/qnn/ort_api.h"
 
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
 

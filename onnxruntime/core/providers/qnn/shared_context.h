@@ -7,8 +7,8 @@
 #include <mutex>
 #include <vector>
 
-#include "core/providers/qnn-abi/ort_api.h"
-#include "core/providers/qnn-abi/builder/qnn_model.h"
+#include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/builder/qnn_model.h"
 
 namespace onnxruntime {
 

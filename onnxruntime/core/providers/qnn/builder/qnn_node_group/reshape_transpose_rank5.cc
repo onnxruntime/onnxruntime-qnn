@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn-abi/builder/qnn_node_group/reshape_transpose_rank5.h"
+#include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_rank5.h"
 
 #include <gsl/gsl>
 #include <optional>
@@ -14,12 +14,12 @@
 #include <sstream>
 
 #include "core/common/inlined_containers.h"
-#include "core/providers/qnn-abi/ort_api.h"
-#include "core/providers/qnn-abi/builder/qnn_utils.h"
-#include "core/providers/qnn-abi/builder/op_builder_factory.h"
-#include "core/providers/qnn-abi/builder/qnn_node_group/utils.h"
-#include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
-#include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn/builder/qnn_node_group/utils.h"
+#include "core/providers/qnn/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 
 namespace onnxruntime {
 namespace qnn {

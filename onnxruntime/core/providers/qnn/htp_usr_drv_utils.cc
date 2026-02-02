@@ -11,7 +11,7 @@
 #include "HTP/QnnHtpDevice.h"
 #include "QnnTypes.h"
 
-#include "core/providers/qnn-abi/htp_usr_drv_utils.h"
+#include "core/providers/qnn/htp_usr_drv_utils.h"
 
 namespace onnxruntime {
 namespace qnn {

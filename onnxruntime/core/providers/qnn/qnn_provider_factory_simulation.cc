@@ -1,13 +1,13 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License
 
-#include "core/providers/qnn-abi/qnn_provider_factory_simulation.h"
+#include "core/providers/qnn/qnn_provider_factory_simulation.h"
 
 #include <cassert>
 #include <iostream>
 
 #include "core/framework/error_code_helper.h"
-#include "core/providers/qnn-abi/ort_api.h"
+#include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
 
@@ -157,7 +157,7 @@ OrtStatus* CreateEpFactories(const char* registration_name,
   // Factory could use registration_name or define its own EP name.
   std::unique_ptr<onnxruntime::QnnEpFactorySimulation> factory;
   if (registration_name == nullptr) {
-    registration_name = "QnnAbiTestProvider";
+    registration_name = "QnnTestProvider";
   }
   try {
     factory = std::make_unique<onnxruntime::QnnEpFactorySimulation>(registration_name,
