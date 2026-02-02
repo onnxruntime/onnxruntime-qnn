@@ -21,14 +21,16 @@ template <typename DataType>
 GetTestModelFn BuildTransposeTestCase(const TestInputDef<DataType>& input_def,
                                       const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs) {
   return [input_def, attrs](ModelTestBuilder& builder) {
-    NodeArg* input = MakeTestInput(builder, input_def);
+    MakeTestInput<DataType>(builder, "input", input_def);
 
-    NodeArg* output = builder.MakeOutput();
-    Node& test_node = builder.AddNode("Transpose", {input}, {output});
+    builder.MakeOutput("Y");
 
-    for (const auto& attr : attrs) {
-      test_node.AddAttributeProto(attr);
-    }
+    builder.AddNode("Transpose",
+                    "Transpose",
+                    {"input"},
+                    {"Y"},
+                    kOnnxDomain,
+                    attrs);
   };
 }
 
@@ -37,18 +39,27 @@ template <typename QuantType>
 static GetTestQDQModelFn<QuantType> BuildQDQTransposeTestCase(const TestInputDef<float>& input_def,
                                                               const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs) {
   return [input_def, attrs](ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
-    NodeArg* input = MakeTestInput(builder, input_def);
-    QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-    NodeArg* input_qdq = AddQDQNodePair(builder, input, input_qparams.scale, input_qparams.zero_point);
+    // input
+    MakeTestInput(builder, "input", input_def);
 
-    auto* output = builder.MakeIntermediate();
-    Node& test_node = builder.AddNode("Transpose", {input_qdq}, {output});
+    // input -> Q -> DQ -> input_qdq
+    const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
+    const std::string input_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_in", "input",
+                                  input_qparams.scale, input_qparams.zero_point);
 
-    for (const auto& attr : attrs) {
-      test_node.AddAttributeProto(attr);
-    }
+    builder.AddNode("Transpose",
+                    "Transpose",
+                    {input_qdq},
+                    {"Y"},
+                    kOnnxDomain,
+                    attrs);
 
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, output, output_qparams[0].scale, output_qparams[0].zero_point);
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder,
+                                                     "qdq_out",
+                                                     "Y",
+                                                     input_qparams.scale,
+                                                     input_qparams.zero_point);
   };
 }
 
@@ -102,14 +113,14 @@ static void RunTransposeNonQDQOnHTP(const TestInputDef<DataType>& input_def,
 // Check that QNN compiles DQ -> Transpose -> Q as a single unit.
 TEST_F(QnnHTPBackendTests, TransposeQDQU8) {
   RunTransposeQDQTest(TestInputDef<float>({1, 3, 224, 128}, false, 0.0f, 1.0f),
-                      {utils::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
+                      {test::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
                       ExpectedEPNodeAssignment::All);
 }
 
 // Check that QNN supports Transpose with int32 data input on HTP
 TEST_F(QnnHTPBackendTests, TransposeInt32OnHTP) {
   RunTransposeNonQDQOnHTP<int32_t>(TestInputDef<int32_t>({1, 3, 224, 128}, false, -100, 100),
-                                   {utils::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
+                                   {test::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
                                    ExpectedEPNodeAssignment::All);
 }
 
@@ -120,7 +131,7 @@ TEST_F(QnnHTPBackendTests, TransposeInt32OnHTP) {
 // The expected difference is approximately 0.00152922, so the tolerance is adjusted to 5e-3f.
 TEST_F(QnnHTPBackendTests, TransposeFloat32OnHTP) {
   RunTransposeNonQDQOnHTP<float>(TestInputDef<float>({1, 3, 224, 128}, false, 0, 10.0f),
-                                 {utils::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
+                                 {test::MakeAttribute("perm", std::vector<int64_t>{0, 2, 3, 1})},
                                  ExpectedEPNodeAssignment::All, 5e-3f);
 }
 

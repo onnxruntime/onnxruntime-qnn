@@ -36,23 +36,31 @@ static GetTestModelFn GetResizeModelBuilder(const TestInputDef<float>& input_def
                                             const std::string& nearest_mode = "round_prefer_floor",
                                             std::optional<float> cubic_coeff_a = std::nullopt) {
   return [input_def, sizes_data, mode, coordinate_transformation_mode, nearest_mode, cubic_coeff_a](ModelTestBuilder& builder) {
-    NodeArg* input = MakeTestInput(builder, input_def);
-    NodeArg* roi = builder.MakeInitializer<float>({0}, {});
-    NodeArg* scales = builder.MakeInitializer<float>({0}, {});
-    NodeArg* sizes = builder.Make1DInitializer<int64_t>(sizes_data);
+    MakeTestInput<float>(builder, "input", input_def);
 
-    NodeArg* output = builder.MakeOutput();
-    Node& resize_node = builder.AddNode("Resize", {input, roi, scales, sizes}, {output});
-    resize_node.AddAttribute("mode", mode);
-    resize_node.AddAttribute("coordinate_transformation_mode", coordinate_transformation_mode);
+    builder.MakeInitializer<float>("roi", {0}, {});
+    builder.MakeInitializer<float>("scales", {0}, {});
+    builder.Make1DInitializer<int64_t>("sizes", sizes_data);
 
+    std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+    attrs.reserve(mode == "nearest" ? 3u : 2u);
+
+    attrs.push_back(MakeAttribute("mode", mode));
+    attrs.push_back(MakeAttribute("coordinate_transformation_mode", coordinate_transformation_mode));
     if (mode == "nearest") {
-      resize_node.AddAttribute("nearest_mode", nearest_mode);
+      attrs.push_back(MakeAttribute("nearest_mode", nearest_mode));
     }
 
     if (mode == "cubic" && cubic_coeff_a.has_value()) {
-      resize_node.AddAttribute("cubic_coeff_a", *cubic_coeff_a);
+      attrs.push_back(MakeAttribute("cubic_coeff_a", *cubic_coeff_a));
     }
+    builder.MakeOutput("Y");
+    builder.AddNode("Resize",
+                    "Resize",
+                    {"input", "roi", "scales", "sizes"},
+                    {"Y"},
+                    kOnnxDomain,
+                    attrs);
   };
 }
 
@@ -63,22 +71,30 @@ static GetTestModelFn GetResizeModelBuilderWithScales(const TestInputDef<float>&
                                                       const std::string& nearest_mode = "round_prefer_floor",
                                                       std::optional<float> cubic_coeff_a = std::nullopt) {
   return [input_def, scales_data, mode, coordinate_transformation_mode, nearest_mode, cubic_coeff_a](ModelTestBuilder& builder) {
-    NodeArg* input = MakeTestInput(builder, input_def);
-    NodeArg* roi = builder.MakeInitializer<float>({0}, {});
-    NodeArg* scales = builder.Make1DInitializer<float>(scales_data);
+    MakeTestInput<float>(builder, "input", input_def);
 
-    NodeArg* output = builder.MakeOutput();
-    Node& resize_node = builder.AddNode("Resize", {input, roi, scales}, {output});
-    resize_node.AddAttribute("mode", mode);
-    resize_node.AddAttribute("coordinate_transformation_mode", coordinate_transformation_mode);
+    builder.MakeInitializer<float>("roi", {0}, {});
+    builder.Make1DInitializer<float>("scales", scales_data);
 
+    std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+    attrs.reserve(mode == "nearest" ? 3u : 2u);
+
+    attrs.push_back(MakeAttribute("mode", mode));
+    attrs.push_back(MakeAttribute("coordinate_transformation_mode", coordinate_transformation_mode));
     if (mode == "nearest") {
-      resize_node.AddAttribute("nearest_mode", nearest_mode);
+      attrs.push_back(MakeAttribute("nearest_mode", nearest_mode));
     }
 
     if (mode == "cubic" && cubic_coeff_a.has_value()) {
-      resize_node.AddAttribute("cubic_coeff_a", *cubic_coeff_a);
+      attrs.push_back(MakeAttribute("cubic_coeff_a", *cubic_coeff_a));
     }
+    builder.MakeOutput("Y");
+    builder.AddNode("Resize",
+                    "Resize",
+                    {"input", "roi", "scales"},
+                    {"Y"},
+                    kOnnxDomain,
+                    attrs);
   };
 }
 
@@ -92,32 +108,41 @@ static GetTestQDQModelFn<QuantType> GetQDQResizeModelBuilder(const TestInputDef<
   return [input_def, sizes_data, mode,
           coordinate_transformation_mode, nearest_mode, cubic_coeff_a](ModelTestBuilder& builder,
                                                                        std::vector<QuantParams<QuantType>>& output_qparams) {
+    MakeTestInput<float>(builder, "input", input_def);
+    const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
+
     // input -> Q -> DQ ->
-    NodeArg* input = MakeTestInput(builder, input_def);
-    QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-    NodeArg* input_qdq = AddQDQNodePair<QuantType>(builder, input, input_qparams.scale, input_qparams.zero_point);
+    const std::string input_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
 
-    NodeArg* roi = builder.MakeInitializer<float>({0}, {});
-    NodeArg* scales = builder.MakeInitializer<float>({0}, {});
-    NodeArg* sizes = builder.Make1DInitializer<int64_t>(sizes_data);
+    builder.MakeInitializer<float>("roi", {0}, {});
+    builder.MakeInitializer<float>("scales", {0}, {});
+    builder.Make1DInitializer<int64_t>("sizes", sizes_data);
 
-    NodeArg* resize_output = builder.MakeIntermediate();
-    Node& resize_node = builder.AddNode("Resize", {input_qdq, roi, scales, sizes}, {resize_output});
-    resize_node.AddAttribute("mode", mode);
-    resize_node.AddAttribute("coordinate_transformation_mode", coordinate_transformation_mode);
+    std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+    attrs.reserve(mode == "nearest" ? 3u : 2u);
 
+    attrs.push_back(MakeAttribute("mode", mode));
+    attrs.push_back(MakeAttribute("coordinate_transformation_mode", coordinate_transformation_mode));
     if (mode == "nearest") {
-      resize_node.AddAttribute("nearest_mode", nearest_mode);
+      attrs.push_back(MakeAttribute("nearest_mode", nearest_mode));
     }
 
     if (mode == "cubic" && cubic_coeff_a.has_value()) {
-      resize_node.AddAttribute("cubic_coeff_a", *cubic_coeff_a);
+      attrs.push_back(MakeAttribute("cubic_coeff_a", *cubic_coeff_a));
     }
+    builder.AddNode("Resize",
+                    "Resize",
+                    {input_qdq, "roi", "scales", "sizes"},
+                    {"resize_out"},
+                    kOnnxDomain,
+                    attrs);
 
     // Resize requires the output quantization parameters to match the input.
     output_qparams[0] = input_qparams;
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, resize_output, output_qparams[0].scale,
-                                                     output_qparams[0].zero_point);
+
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq_out", "resize_out",
+                                                     output_qparams[0].scale, output_qparams[0].zero_point);
   };
 }
 

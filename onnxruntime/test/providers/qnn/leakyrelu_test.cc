@@ -5,7 +5,6 @@
 
 #include <string>
 #include "core/graph/graph.h"
-#include "core/graph/node_attr_utils.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
@@ -26,8 +25,8 @@ static void RunLeakyReluOpQDQTest(const TestInputDef<float>& input_def,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  TestQDQModelAccuracy(BuildOpTestCase<float>("LeakyRelu", {input_def}, {}, attrs),
-                       BuildQDQOpTestCase<QuantType>("LeakyRelu", {input_def}, {}, attrs),
+  TestQDQModelAccuracy(BuildOpTestCase<float>("LeakyRelu_node", "LeakyRelu", {input_def}, {}, attrs),
+                       BuildQDQOpTestCase<QuantType>("LeakyRelu_node", "LeakyRelu", {input_def}, {}, attrs),
                        provider_options,
                        opset,
                        expected_ep_assignment);
@@ -39,7 +38,7 @@ static void RunLeakyReluOpQDQTest(const TestInputDef<float>& input_def,
 // - Uses uint8 as the quantization type.
 TEST_F(QnnHTPBackendTests, LeakyReluOpSet15) {
   RunLeakyReluOpQDQTest<uint8_t>(TestInputDef<float>({1, 2, 3}, false, {-40.0f, -20.0f, 0.0f, 10.0f, 30.0f, 40.0f}),
-                                 {utils::MakeAttribute("alpha", 0.2f)},
+                                 {test::MakeAttribute("alpha", 0.2f)},
                                  15,
                                  ExpectedEPNodeAssignment::All);
 }
@@ -50,7 +49,7 @@ TEST_F(QnnHTPBackendTests, LeakyReluOpSet15) {
 // - Uses uint8 as the quantization type.
 TEST_F(QnnHTPBackendTests, LeakyReluOpSet16) {
   RunLeakyReluOpQDQTest<uint8_t>(TestInputDef<float>({1, 2, 3}, false, {-40.0f, -20.0f, 0.0f, 10.0f, 30.0f, 40.0f}),
-                                 {utils::MakeAttribute("alpha", 0.2f)},
+                                 {test::MakeAttribute("alpha", 0.2f)},
                                  16,
                                  ExpectedEPNodeAssignment::All);
 }
@@ -67,10 +66,10 @@ TEST_F(QnnHTPBackendTests, LeakyReluFP16OpSet16) {
   provider_options["offload_graph_io_quantization"] = "0";
 
   auto input_def = TestInputDef<float>({1, 2, 3}, false, {-40.0f, -20.0f, 1.0f, 10.0f, 30.0f, 40.0f});
-  TestInputDef<MLFloat16> input_fp16_def = ConvertToFP16InputDef(input_def);
-  auto attrs = {utils::MakeAttribute("alpha", 0.2f)};
-  TestFp16ModelAccuracy(BuildOpTestCase<float>("LeakyRelu", {input_def}, {}, attrs),
-                        BuildOpTestCase<MLFloat16>("LeakyRelu", {input_fp16_def}, {}, attrs),
+  TestInputDef<Ort::Float16_t> input_fp16_def = ConvertToFP16InputDef(input_def);
+  auto attrs = {test::MakeAttribute("alpha", 0.2f)};
+  TestFp16ModelAccuracy(BuildOpTestCase<float>("LeakyRelu_node", "LeakyRelu", {input_def}, {}, attrs),
+                        BuildOpTestCase<Ort::Float16_t>("LeakyRelu_node", "LeakyRelu", {input_fp16_def}, {}, attrs),
                         provider_options,
                         16,
                         ExpectedEPNodeAssignment::All);

@@ -26,7 +26,7 @@ static void RunClipTest(const TestInputDef<DataType>& input_def,
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
 
-  RunQnnModelTest(BuildOpTestCase<DataType, DataType>("Clip", {input_def}, min_max_defs, {}),
+  RunQnnModelTest(BuildOpTestCase<DataType, DataType>("Clip_node", "Clip", {input_def}, min_max_defs, {}),
                   provider_options,
                   opset,
                   expected_ep_assignment,
@@ -106,8 +106,8 @@ static void RunQDQClipTestOnHTP(const TestInputDef<float>& input_def,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  auto f32_model_builder = BuildOpTestCase<float, float>("Clip", {input_def}, {min_max_defs}, {});
-  auto qdq_model_builder = BuildQDQOpTestCase<QType, float>("Clip", {input_def}, {min_max_defs}, {},
+  auto f32_model_builder = BuildOpTestCase<float, float>("Clip_node", "Clip", {input_def}, {min_max_defs}, {});
+  auto qdq_model_builder = BuildQDQOpTestCase<QType, float>("Clip_node", "Clip", {input_def}, {min_max_defs}, {},
                                                             kOnnxDomain, use_contrib_qdq);
 
   TestQDQModelAccuracy(f32_model_builder,
@@ -169,21 +169,26 @@ TEST_F(QnnHTPBackendTests, Clip_U8_Rank5) {
   // QDQ node group, which gets lowered to a single QNN Clip node.
   GetTestModelFn model_fn = [](ModelTestBuilder& builder) {
     // input (u8) -> DQ ->
-    NodeArg* quant_input = builder.MakeInput<uint8_t>({1, 1, 2, 2, 2}, {0, 1, 6, 10, 20, 100, 128, 255});
-    NodeArg* input_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<uint8_t>(quant_input, 1.0f, 0, input_dq);  // scale = 1.0, zp = 0
+    builder.MakeInput<uint8_t>("X", {1, 1, 2, 2, 2}, {0, 1, 6, 10, 20, 100, 128, 255});
+    builder.AddDequantizeLinearNode<uint8_t>("dq", "X", 1.0f, 0, "dq_out");  // scale = 1.0, zp = 0
 
     // Min/Max initializers
-    NodeArg* min_input = builder.MakeScalarInitializer(5.0f);
-    NodeArg* max_input = builder.MakeScalarInitializer(100.0f);
+    builder.MakeScalarInitializer("min", 5.0f);
+    builder.MakeScalarInitializer("max", 100.0f);
 
     // Clip ->
-    NodeArg* clip_output = builder.MakeIntermediate();
-    builder.AddNode("Clip", {input_dq, min_input, max_input}, {clip_output});
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    builder.AddNode(
+        "clip",
+        "Clip",
+        {"dq_out", "min", "max"},
+        {"clip_out"},
+        "",
+        attributes);
 
     // Q -> output (u8)
-    NodeArg* output = builder.MakeOutput();
-    builder.AddQuantizeLinearNode<uint8_t>(clip_output, 1.0f, 0, output);  // scale = 1.0, zp = 0
+    builder.AddQuantizeLinearNode<uint8_t>("q", "clip_out", 1.0f, 0, "Y");  // scale = 1.0, zp = 0
+    builder.MakeOutput("Y");
   };
 
   ProviderOptions provider_options;
@@ -346,20 +351,20 @@ TEST_F(QnnHTPBackendTests, Clip_FP16) {
                                        {-10.0f, -8.0f, -3.5f, 2.2f,
                                         1.3f, 1.5f, 3.2f, 5.8f,
                                         5.8f, 9.7f, 8.5f, 8.9f});
-  std::vector<MLFloat16> f16_data;
+  std::vector<Ort::Float16_t> f16_data;
   std::for_each(f32_input.GetRawData().begin(), f32_input.GetRawData().end(),
                 [&f16_data](const float data) {
-                  f16_data.push_back(static_cast<MLFloat16>(data));
+                  f16_data.push_back(static_cast<Ort::Float16_t>(data));
                 });
-  auto f16_input = TestInputDef<MLFloat16>({1, 3, 2, 2}, false, f16_data);
+  auto f16_input = TestInputDef<Ort::Float16_t>({1, 3, 2, 2}, false, f16_data);
 
   const float min_f32 = 1.2f;
-  const MLFloat16 min_f16 = static_cast<MLFloat16>(min_f32);
+  const Ort::Float16_t min_f16 = static_cast<Ort::Float16_t>(min_f32);
   auto f32_min_input = TestInputDef<float>({}, true, {min_f32});
-  auto f16_min_input = TestInputDef<MLFloat16>({}, true, {min_f16});
+  auto f16_min_input = TestInputDef<Ort::Float16_t>({}, true, {min_f16});
 
-  auto f32_model_builder = BuildOpTestCase<float, float>("Clip", {f32_input}, {f32_min_input}, {});
-  auto f16_model_builder = BuildOpTestCase<MLFloat16, MLFloat16>("Clip", {f16_input}, {f16_min_input}, {});
+  auto f32_model_builder = BuildOpTestCase<float, float>("Clip_node", "Clip", {f32_input}, {f32_min_input}, {});
+  auto f16_model_builder = BuildOpTestCase<Ort::Float16_t, Ort::Float16_t>("Clip_node", "Clip", {f16_input}, {f16_min_input}, {});
   int opset = 13;
   ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All;
 

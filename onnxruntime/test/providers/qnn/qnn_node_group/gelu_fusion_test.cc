@@ -32,31 +32,50 @@ GetTestModelFn BuildGeluPattern1TestCase(const TestInputDef<float>& input_def) {
     constexpr float half = 0.5f;
     constexpr float one = 1.0f;
 
-    // Create input
-    NodeArg* input = MakeTestInput<float>(builder, input_def);
+    builder.graph_->set_name("gelu_pattern1_graph");
 
-    // Create Mul(0.5) branch: input * 0.5
-    NodeArg* half_initializer = builder.MakeScalarInitializer<float>(half);
-    NodeArg* mul_half_output = builder.MakeIntermediate();
-    builder.AddNode("Mul", {input, half_initializer}, {mul_half_output});
+    // input
+    MakeTestInput<float>(builder, "input", input_def);
 
-    // Create main branch: input / sqrt(2)
-    NodeArg* sqrt2_initializer = builder.MakeScalarInitializer<float>(sqrt_2);
-    NodeArg* div_output = builder.MakeIntermediate();
-    builder.AddNode("Div", {input, sqrt2_initializer}, {div_output});
+    // input -> Mul(0.5) -> mul_half_out
+    builder.MakeScalarInitializer<float>("half", half);
+    builder.AddNode("Mul_half",
+                    "Mul",
+                    {"input", "half"},
+                    {"mul_half_out"},
+                    kOnnxDomain);
 
-    // Erf
-    NodeArg* erf_output = builder.MakeIntermediate();
-    builder.AddNode("Erf", {div_output}, {erf_output});
+    // input -> Div(sqrt2) -> div_out
+    builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
+    builder.AddNode("Div_sqrt2",
+                    "Div",
+                    {"input", "sqrt2"},
+                    {"div_out"},
+                    kOnnxDomain);
 
-    // Add 1.0
-    NodeArg* one_initializer = builder.MakeScalarInitializer<float>(one);
-    NodeArg* add_output = builder.MakeIntermediate();
-    builder.AddNode("Add", {erf_output, one_initializer}, {add_output});
+    // div_out -> Erf -> erf_out
+    builder.AddNode("Erf",
+                    "Erf",
+                    {"div_out"},
+                    {"erf_out"},
+                    kOnnxDomain);
 
-    // Final Mul: (add_output) * (mul_half_output)
-    NodeArg* output = builder.MakeOutput();
-    builder.AddNode("Mul", {add_output, mul_half_output}, {output});
+    // erf_out -> Add(1.0) -> add_out
+    builder.MakeScalarInitializer<float>("one", one);
+    builder.AddNode("Add_one",
+                    "Add",
+                    {"erf_out", "one"},
+                    {"add_out"},
+                    kOnnxDomain);
+
+    // add_out * mul_half_out -> output
+    builder.AddNode("Mul_out",
+                    "Mul",
+                    {"add_out", "mul_half_out"},
+                    {"output"},
+                    kOnnxDomain);
+
+    builder.MakeOutput("output");
   };
 }
 
@@ -73,31 +92,50 @@ GetTestModelFn BuildGeluPattern2TestCase(const TestInputDef<float>& input_def) {
     constexpr float half = 0.5f;
     constexpr float one = 1.0f;
 
-    // Create input
-    NodeArg* input = MakeTestInput<float>(builder, input_def);
+    builder.graph_->set_name("gelu_pattern2_graph");
 
-    // Main branch: input / sqrt(2)
-    NodeArg* sqrt2_initializer = builder.MakeScalarInitializer<float>(sqrt_2);
-    NodeArg* div_output = builder.MakeIntermediate();
-    builder.AddNode("Div", {input, sqrt2_initializer}, {div_output});
+    // input
+    MakeTestInput<float>(builder, "input", input_def);
 
-    // Erf
-    NodeArg* erf_output = builder.MakeIntermediate();
-    builder.AddNode("Erf", {div_output}, {erf_output});
+    // input -> Div(sqrt2) -> div_out
+    builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
+    builder.AddNode("Div_sqrt2",
+                    "Div",
+                    {"input", "sqrt2"},
+                    {"div_out"},
+                    kOnnxDomain);
 
-    // Add 1.0
-    NodeArg* one_initializer = builder.MakeScalarInitializer<float>(one);
-    NodeArg* add_output = builder.MakeIntermediate();
-    builder.AddNode("Add", {erf_output, one_initializer}, {add_output});
+    // div_out -> Erf -> erf_out
+    builder.AddNode("Erf",
+                    "Erf",
+                    {"div_out"},
+                    {"erf_out"},
+                    kOnnxDomain);
 
-    // Mul with input: input * add_output
-    NodeArg* mul_output = builder.MakeIntermediate();
-    builder.AddNode("Mul", {input, add_output}, {mul_output});
+    // erf_out -> Add(1.0) -> add_out
+    builder.MakeScalarInitializer<float>("one", one);
+    builder.AddNode("Add_one",
+                    "Add",
+                    {"erf_out", "one"},
+                    {"add_out"},
+                    kOnnxDomain);
 
-    // Final Mul with 0.5: mul_output * 0.5
-    NodeArg* half_initializer = builder.MakeScalarInitializer<float>(half);
-    NodeArg* output = builder.MakeOutput();
-    builder.AddNode("Mul", {mul_output, half_initializer}, {output});
+    // input * add_out -> mul_out
+    builder.AddNode("Mul_input",
+                    "Mul",
+                    {"input", "add_out"},
+                    {"mul_out"},
+                    kOnnxDomain);
+
+    // mul_out * 0.5 -> output
+    builder.MakeScalarInitializer<float>("half", half);
+    builder.AddNode("Mul_half",
+                    "Mul",
+                    {"mul_out", "half"},
+                    {"output"},
+                    kOnnxDomain);
+
+    builder.MakeOutput("output");
   };
 }
 
@@ -109,68 +147,57 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPattern1TestCase(const TestInputDef<flo
     constexpr float half = 0.5f;
     constexpr float one = 1.0f;
 
-    // Create input
-    NodeArg* input = MakeTestInput<float>(builder, input_def);
-    QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
+    builder.graph_->set_name("qdq_gelu_pattern1_graph");
 
-    // Quantize input once
-    NodeArg* input_q = builder.MakeIntermediate();
-    builder.AddQuantizeLinearNode<QuantType>(input, input_qparams.scale, input_qparams.zero_point, input_q);
+    // input
+    MakeTestInput(builder, "input", input_def);
+    const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
+    const std::string input_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
 
-    // Create quantized constants with individual quantization parameters
-    // For scalar constants, use range [0, value] to ensure proper quantization
-    QuantParams<QuantType> sqrt2_qparams = GetTestInputQuantParams<QuantType>(TestInputDef<float>({}, true, 0.0f, sqrt_2));
-    NodeArg* sqrt2_initializer = builder.MakeScalarInitializer<float>(sqrt_2);
-    NodeArg* sqrt2_q = builder.MakeIntermediate();
-    builder.AddQuantizeLinearNode<QuantType>(sqrt2_initializer, sqrt2_qparams.scale, sqrt2_qparams.zero_point, sqrt2_q);
+    // Constants: add explicit QDQ after each initializer (to match expected QDQ patterns).
+    builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
+    builder.MakeScalarInitializer<float>("one", one);
+    builder.MakeScalarInitializer<float>("half", half);
 
-    QuantParams<QuantType> one_qparams = GetTestInputQuantParams<QuantType>(TestInputDef<float>({}, true, 0.0f, one));
-    NodeArg* one_initializer = builder.MakeScalarInitializer<float>(one);
-    NodeArg* one_q = builder.MakeIntermediate();
-    builder.AddQuantizeLinearNode<QuantType>(one_initializer, one_qparams.scale, one_qparams.zero_point, one_q);
+    const std::string sqrt2_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_sqrt2", "sqrt2", input_qparams.scale, input_qparams.zero_point);
+    const std::string one_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_one", "one", input_qparams.scale, input_qparams.zero_point);
+    const std::string half_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_half", "half", input_qparams.scale, input_qparams.zero_point);
 
-    QuantParams<QuantType> half_qparams = GetTestInputQuantParams<QuantType>(TestInputDef<float>({}, true, 0.0f, half));
-    NodeArg* half_initializer = builder.MakeScalarInitializer<float>(half);
-    NodeArg* half_q = builder.MakeIntermediate();
-    builder.AddQuantizeLinearNode<QuantType>(half_initializer, half_qparams.scale, half_qparams.zero_point, half_q);
+    // GELU Pattern 1:
+    // input -> Div(sqrt2) -> Erf -> Add(one) -> Mul(with (input * half))
+    builder.AddNode("Div_sqrt2",
+                    "Div",
+                    {input_qdq, sqrt2_qdq},
+                    {"div_out"},
+                    kOnnxDomain);
 
-    NodeArg* input_dq_1 = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<QuantType>(input_q, input_qparams.scale, input_qparams.zero_point, input_dq_1);
-    NodeArg* sqrt2_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<QuantType>(sqrt2_q, sqrt2_qparams.scale, sqrt2_qparams.zero_point, sqrt2_dq);
-    NodeArg* div_output = builder.MakeIntermediate();
-    builder.AddNode("Div", {input_dq_1, sqrt2_dq}, {div_output});
-    NodeArg* div_q = builder.MakeIntermediate();
-    builder.AddQuantizeLinearNode<QuantType>(div_output, input_qparams.scale, input_qparams.zero_point, div_q);
+    // Add explicit QDQ around Erf to match expected QDQ patterns:
+    // div_out -> Q -> DQ -> erf_in
+    const std::string erf_in_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_erf_in", "div_out", input_qparams.scale, input_qparams.zero_point);
 
-    // DQ -> Erf -> Q
-    NodeArg* div_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<QuantType>(div_q, input_qparams.scale, input_qparams.zero_point, div_dq);
-    NodeArg* erf_output = builder.MakeIntermediate();
-    builder.AddNode("Erf", {div_dq}, {erf_output});
-    NodeArg* erf_q = builder.MakeIntermediate();
-    builder.AddQuantizeLinearNode<QuantType>(erf_output, input_qparams.scale, input_qparams.zero_point, erf_q);
+    // erf_in -> Erf -> erf_out
+    builder.AddNode("Erf",
+                    "Erf",
+                    {erf_in_qdq},
+                    {"erf_out"},
+                    kOnnxDomain);
 
-    // DQ -> Add -> Q
-    NodeArg* erf_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<QuantType>(erf_q, input_qparams.scale, input_qparams.zero_point, erf_dq);
-    NodeArg* one_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<QuantType>(one_q, one_qparams.scale, one_qparams.zero_point, one_dq);
-    NodeArg* add_output = builder.MakeIntermediate();
-    builder.AddNode("Add", {erf_dq, one_dq}, {add_output});
-    NodeArg* add_q = builder.MakeIntermediate();
-    builder.AddQuantizeLinearNode<QuantType>(add_output, input_qparams.scale, input_qparams.zero_point, add_q);
+    // erf_out -> Q -> DQ -> erf_out_qdq
+    const std::string erf_out_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_erf_out", "erf_out", input_qparams.scale, input_qparams.zero_point);
 
-    // DQ -> Mul (with input) -> Q
-    NodeArg* input_dq_2 = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<QuantType>(input_q, input_qparams.scale, input_qparams.zero_point, input_dq_2);
-    NodeArg* add_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<QuantType>(add_q, input_qparams.scale, input_qparams.zero_point, add_dq);
-    NodeArg* mul_output = builder.MakeIntermediate();
-    builder.AddNode("Mul", {input_dq_2, add_dq}, {mul_output});
-    NodeArg* mul_q = builder.MakeIntermediate();
-    builder.AddQuantizeLinearNode<QuantType>(mul_output, input_qparams.scale, input_qparams.zero_point, mul_q);
+    builder.AddNode("Add_one",
+                    "Add",
+                    {erf_out_qdq, one_qdq},
+                    {"add_out"},
+                    kOnnxDomain);
 
+<<<<<<< HEAD
     // Final DQ -> Mul (with 0.5) -> Q
     NodeArg* mul_dq = builder.MakeIntermediate();
     builder.AddDequantizeLinearNode<QuantType>(mul_q, input_qparams.scale, input_qparams.zero_point, mul_dq);
@@ -178,10 +205,21 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPattern1TestCase(const TestInputDef<flo
     builder.AddDequantizeLinearNode<QuantType>(half_q, half_qparams.scale, half_qparams.zero_point, half_dq);
     NodeArg* mul_final_output = builder.MakeIntermediate();
     builder.AddNode("Mul", {mul_dq, half_dq}, {mul_final_output});
+=======
+    // add_out -> Q -> DQ -> add_out_qdq
+    const std::string add_out_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_add_out", "add_out", input_qparams.scale, input_qparams.zero_point);
+    const std::string mul_half_out_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_mul_half_out", "mul_half_out",
+                                  input_qparams.scale, input_qparams.zero_point);
+    builder.AddNode("Mul_out",
+                    "Mul",
+                    {add_out_qdq, mul_half_out_qdq},
+                    {"Y"},
+                    kOnnxDomain);
 
-    // Add output QDQ
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, mul_final_output, output_qparams[0].scale,
-                                                     output_qparams[0].zero_point);
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq_out", "Y",
+                                                     output_qparams[0].scale, output_qparams[0].zero_point);
   };
 }
 
@@ -193,80 +231,78 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPattern2TestCase(const TestInputDef<flo
     constexpr float half = 0.5f;
     constexpr float one = 1.0f;
 
-    // Create input
-    NodeArg* input = MakeTestInput<float>(builder, input_def);
-    QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
+    builder.graph_->set_name("qdq_gelu_pattern2_graph");
 
-    // Quantize input once
-    NodeArg* input_q = builder.MakeIntermediate();
-    builder.AddQuantizeLinearNode<QuantType>(input, input_qparams.scale, input_qparams.zero_point, input_q);
+    // input
+    MakeTestInput(builder, "input", input_def);
+    const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
+    const std::string input_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
 
-    // Create quantized constants with individual quantization parameters
-    // For scalar constants, use range [0, value] to ensure proper quantization
-    QuantParams<QuantType> sqrt2_qparams = GetTestInputQuantParams<QuantType>(TestInputDef<float>({}, true, 0.0f, sqrt_2));
-    NodeArg* sqrt2_initializer = builder.MakeScalarInitializer<float>(sqrt_2);
-    NodeArg* sqrt2_q = builder.MakeIntermediate();
-    builder.AddQuantizeLinearNode<QuantType>(sqrt2_initializer, sqrt2_qparams.scale, sqrt2_qparams.zero_point, sqrt2_q);
+    // Constants: add explicit QDQ after each initializer (to match expected QDQ patterns).
+    builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
+    builder.MakeScalarInitializer<float>("one", one);
+    builder.MakeScalarInitializer<float>("half", half);
 
-    QuantParams<QuantType> one_qparams = GetTestInputQuantParams<QuantType>(TestInputDef<float>({}, true, 0.0f, one));
-    NodeArg* one_initializer = builder.MakeScalarInitializer<float>(one);
-    NodeArg* one_q = builder.MakeIntermediate();
-    builder.AddQuantizeLinearNode<QuantType>(one_initializer, one_qparams.scale, one_qparams.zero_point, one_q);
+    const std::string sqrt2_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_sqrt2", "sqrt2", input_qparams.scale, input_qparams.zero_point);
+    const std::string one_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_one", "one", input_qparams.scale, input_qparams.zero_point);
+    const std::string half_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_half", "half", input_qparams.scale, input_qparams.zero_point);
 
-    QuantParams<QuantType> half_qparams = GetTestInputQuantParams<QuantType>(TestInputDef<float>({}, true, 0.0f, half));
-    NodeArg* half_initializer = builder.MakeScalarInitializer<float>(half);
-    NodeArg* half_q = builder.MakeIntermediate();
-    builder.AddQuantizeLinearNode<QuantType>(half_initializer, half_qparams.scale, half_qparams.zero_point, half_q);
+    // GELU Pattern 2:
+    // input -> Div(sqrt2) -> Erf -> Add(one) -> Mul(with input) -> Mul(half)
+    builder.AddNode("Div_sqrt2",
+                    "Div",
+                    {input_qdq, sqrt2_qdq},
+                    {"div_out"},
+                    kOnnxDomain);
 
-    // Main branch: DQ -> Div -> Q
-    NodeArg* input_dq_1 = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<QuantType>(input_q, input_qparams.scale, input_qparams.zero_point, input_dq_1);
-    NodeArg* sqrt2_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<QuantType>(sqrt2_q, sqrt2_qparams.scale, sqrt2_qparams.zero_point, sqrt2_dq);
-    NodeArg* div_output = builder.MakeIntermediate();
-    builder.AddNode("Div", {input_dq_1, sqrt2_dq}, {div_output});
-    NodeArg* div_q = builder.MakeIntermediate();
-    builder.AddQuantizeLinearNode<QuantType>(div_output, input_qparams.scale, input_qparams.zero_point, div_q);
+    // Add explicit QDQ around Erf to match expected QDQ patterns:
+    // div_out -> Q -> DQ -> erf_in
+    const std::string erf_in_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_erf_in", "div_out", input_qparams.scale, input_qparams.zero_point);
 
-    // DQ -> Erf -> Q
-    NodeArg* div_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<QuantType>(div_q, input_qparams.scale, input_qparams.zero_point, div_dq);
-    NodeArg* erf_output = builder.MakeIntermediate();
-    builder.AddNode("Erf", {div_dq}, {erf_output});
-    NodeArg* erf_q = builder.MakeIntermediate();
-    builder.AddQuantizeLinearNode<QuantType>(erf_output, input_qparams.scale, input_qparams.zero_point, erf_q);
+    // erf_in -> Erf -> erf_out
+    builder.AddNode("Erf",
+                    "Erf",
+                    {erf_in_qdq},
+                    {"erf_out"},
+                    kOnnxDomain);
 
-    // DQ -> Add -> Q
-    NodeArg* erf_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<QuantType>(erf_q, input_qparams.scale, input_qparams.zero_point, erf_dq);
-    NodeArg* one_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<QuantType>(one_q, one_qparams.scale, one_qparams.zero_point, one_dq);
-    NodeArg* add_output = builder.MakeIntermediate();
-    builder.AddNode("Add", {erf_dq, one_dq}, {add_output});
-    NodeArg* add_q = builder.MakeIntermediate();
-    builder.AddQuantizeLinearNode<QuantType>(add_output, input_qparams.scale, input_qparams.zero_point, add_q);
+    // erf_out -> Q -> DQ -> erf_out_qdq
+    const std::string erf_out_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_erf_out", "erf_out", input_qparams.scale, input_qparams.zero_point);
 
-    // DQ -> Mul (with input) -> Q
-    NodeArg* input_dq_2 = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<QuantType>(input_q, input_qparams.scale, input_qparams.zero_point, input_dq_2);
-    NodeArg* add_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<QuantType>(add_q, input_qparams.scale, input_qparams.zero_point, add_dq);
-    NodeArg* mul_output = builder.MakeIntermediate();
-    builder.AddNode("Mul", {input_dq_2, add_dq}, {mul_output});
-    NodeArg* mul_q = builder.MakeIntermediate();
-    builder.AddQuantizeLinearNode<QuantType>(mul_output, input_qparams.scale, input_qparams.zero_point, mul_q);
+    builder.AddNode("Add_one",
+                    "Add",
+                    {erf_out_qdq, one_qdq},
+                    {"add_out"},
+                    kOnnxDomain);
 
-    // Final DQ -> Mul (with 0.5)
-    NodeArg* mul_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<QuantType>(mul_q, input_qparams.scale, input_qparams.zero_point, mul_dq);
-    NodeArg* half_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<QuantType>(half_q, half_qparams.scale, half_qparams.zero_point, half_dq);
-    NodeArg* mul_final_output = builder.MakeIntermediate();
-    builder.AddNode("Mul", {mul_dq, half_dq}, {mul_final_output});
+    // add_out -> Q -> DQ -> add_out_qdq
+    const std::string add_out_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_add_out", "add_out", input_qparams.scale, input_qparams.zero_point);
 
-    // Add output QDQ
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, mul_final_output, output_qparams[0].scale,
-                                                     output_qparams[0].zero_point);
+    builder.AddNode("Mul_input",
+                    "Mul",
+                    {input_qdq, add_out_qdq},
+                    {"mul_out"},
+                    kOnnxDomain);
+
+    // mul_out -> Q -> DQ -> mul_out_qdq
+    const std::string mul_out_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_mul_out", "mul_out", input_qparams.scale, input_qparams.zero_point);
+
+    builder.AddNode("Mul_half",
+                    "Mul",
+                    {mul_out_qdq, half_qdq},
+                    {"Y"},
+                    kOnnxDomain);
+
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq_out", "Y",
+                                                     output_qparams[0].scale, output_qparams[0].zero_point);
   };
 }
 

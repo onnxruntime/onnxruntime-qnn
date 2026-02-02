@@ -12,10 +12,9 @@
 #include <memory>
 #include <unordered_map>
 
-#include "core/graph/graph.h"
-#include "core/graph/node_attr_utils.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
+#include "test/util/include/int4.h"
 #include "gtest/gtest.h"
 
 namespace onnxruntime {
@@ -28,73 +27,79 @@ namespace {
 GetQDQTestCaseFn BuildLPBQGemmTestCase() {
   return [](ModelTestBuilder& builder) -> void {
     // Define the test case for LPBQGemm fusion here
-    const int64_t input_channels = 16;
-    const int64_t output_channels = 16;
-    const int64_t blocks_per_axis = 4;
+    constexpr int64_t input_channels = 16;
+    constexpr int64_t output_channels = 16;
+    constexpr int64_t blocks_per_axis = 4;
     const std::vector<int64_t> input_shape{1, input_channels};
-    auto input_def = TestInputDef<float>(input_shape, false, -0.5f, 0.5f);
-    NodeArg* input = MakeTestInput<float>(builder, input_def);
 
-    // QuantizeLinear for Activation
-    NodeArg* act_ql_output = builder.MakeIntermediate();
-    NodeArg* act_ql_scale = builder.MakeScalarInitializer<float>(0.00005509183756657876f);
-    NodeArg* act_ql_zero_point = builder.MakeScalarInitializer<uint16_t>(23715);
-    builder.AddNode("QuantizeLinear", {input, act_ql_scale, act_ql_zero_point}, {act_ql_output});
+    builder.graph_->set_name("lpbqgemm_fusion_graph");
 
-    // DequantizeLinear for Activation
-    NodeArg* act_dql_output = builder.MakeIntermediate();
-    NodeArg* act_dql_scale = builder.MakeScalarInitializer<float>(0.00005509183756657876f);
-    NodeArg* act_dql_zero_point = builder.MakeScalarInitializer<uint16_t>(23715);
-    builder.AddNode("DequantizeLinear", {act_ql_output, act_dql_scale, act_dql_zero_point}, {act_dql_output});
+    // input
+    const auto input_def = TestInputDef<float>(input_shape, false, -0.5f, 0.5f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // Activation QDQ: input -> Q -> DQ -> act_dq
+    constexpr float act_scale = 0.00005509183756657876f;
+    constexpr uint16_t act_zp = 23715;
+    const std::string act_dq =
+        AddQDQNodePair<uint16_t>(builder, "qdq_act", "input", act_scale, act_zp);
 
     // DequantizeLinear for Scale
-    NodeArg* scale_dql_input = builder.MakeInitializer<uint8_t>({blocks_per_axis, output_channels}, 1, 15);
-    NodeArg* scale_dql_scale = builder.MakeInitializer<float>({output_channels}, 0.01f, 0.02f);
-    std::vector<uint8_t> dql_zero_points_data = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
-    NodeArg* scale_dql_zero_point = builder.Make1DInitializer<uint8_t>(dql_zero_points_data);
-    NodeArg* scale_dql_output = builder.MakeIntermediate();
-    Node& scale_dql = builder.AddNode("DequantizeLinear", {scale_dql_input, scale_dql_scale, scale_dql_zero_point}, {scale_dql_output});
-    scale_dql.AddAttribute("axis", static_cast<int64_t>(1));
+    // scale_dq_in -> DQ (per-channel) -> scale_dq_out
+    builder.MakeInitializer<uint8_t>("scale_dq_in", {blocks_per_axis, output_channels}, 1, 15);
+    builder.MakeInitializer<float>("scale_dq_scale", {output_channels}, 0.01f, 0.02f);
+    std::vector<uint8_t> dql_zero_points_data(output_channels, 0);
+    builder.Make1DInitializer<uint8_t>("scale_dq_zp", dql_zero_points_data);
 
-    // QuantizeLinear for Weight
-    NodeArg* w_ql_input = builder.MakeInitializer<float>({input_channels, output_channels}, -1.0f, 1.0f);
-    std::vector<Int4x2> zero_points_data;
-    size_t num_storage_elems = blocks_per_axis * output_channels;
-    zero_points_data.resize(Int4x2::CalcNumInt4Pairs(num_storage_elems));
+    builder.AddNode("DequantizeLinear",
+                    "scale_dq",
+                    {"scale_dq_in", "scale_dq_scale", "scale_dq_zp"},
+                    {"scale_dq_out"},
+                    kOnnxDomain,
+                    {builder.MakeScalarAttribute("axis", static_cast<int64_t>(1))});
+
+    // Weight QuantizeLinear
+    builder.MakeInitializer<float>("w_fp", {input_channels, output_channels}, -1.0f, 1.0f);
+
+    std::vector<Int4x2> w_zp_data;
+    const size_t num_storage_elems = static_cast<size_t>(blocks_per_axis * output_channels);
+    w_zp_data.resize(Int4x2::CalcNumInt4Pairs(num_storage_elems));
     for (size_t i = 0; i < num_storage_elems; ++i) {
-      size_t r = i >> 1;
-      size_t c = i & 0x1;
-      zero_points_data[r].SetElem(c, 0);
+      const size_t r = i >> 1;
+      const size_t c = i & 0x1;
+      w_zp_data[r].SetElem(c, 0);
     }
-    NodeArg* w_ql_zero_point = builder.MakeInitializer<Int4x2>({blocks_per_axis, output_channels}, zero_points_data);
-    NodeArg* w_ql_output = builder.MakeIntermediate();
-    Node& w_ql = builder.AddNode("QuantizeLinear", {w_ql_input, scale_dql_output, w_ql_zero_point}, {w_ql_output});
-    w_ql.AddAttribute("axis", static_cast<int64_t>(0));
-    w_ql.AddAttribute("block_size", static_cast<int64_t>(4));
+    builder.MakeInitializer<Int4x2>("w_zp", {blocks_per_axis, output_channels}, w_zp_data);
 
-    // DequantizeLinear for Weight
-    NodeArg* w_dql_zero_point = builder.MakeInitializer<Int4x2>({blocks_per_axis, output_channels}, zero_points_data);
-    NodeArg* w_dql_output = builder.MakeIntermediate();
-    Node& w_dql = builder.AddNode("DequantizeLinear", {w_ql_output, scale_dql_output, w_dql_zero_point}, {w_dql_output});
-    w_dql.AddAttribute("axis", static_cast<int64_t>(0));
-    w_dql.AddAttribute("block_size", static_cast<int64_t>(4));
+    builder.AddNode("QuantizeLinear",
+                    "w_q",
+                    {"w_fp", "scale_dq_out", "w_zp"},
+                    {"w_q_out"},
+                    kOnnxDomain,
+                    {builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)),
+                     builder.MakeScalarAttribute("block_size", static_cast<int64_t>(4))});
+
+    // Weight DequantizeLinear
+    builder.AddNode("DequantizeLinear",
+                    "w_dq",
+                    {"w_q_out", "scale_dq_out", "w_zp"},
+                    {"w_dq_out"},
+                    kOnnxDomain,
+                    {builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)),
+                     builder.MakeScalarAttribute("block_size", static_cast<int64_t>(4))});
 
     // Gemm
-    NodeArg* gemm_bias = builder.MakeInitializer<float>({output_channels}, -1.0f, 1.0f);
-    NodeArg* gemm_output = builder.MakeIntermediate();
-    builder.AddNode("Gemm", {act_dql_output, w_dql_output, gemm_bias}, {gemm_output});
+    builder.MakeInitializer<float>("bias", {output_channels}, -1.0f, 1.0f);
+    builder.AddNode("Gemm",
+                    "gemm",
+                    {act_dq, "w_dq_out", "bias"},
+                    {"gemm_out"},
+                    kOnnxDomain);
 
-    // QuantizeLinear for Output
-    NodeArg* output_ql_scale = builder.MakeScalarInitializer<float>(0.00019595865160226822f);
-    NodeArg* output_ql_zero_point = builder.MakeScalarInitializer<uint16_t>(31693);
-    NodeArg* output_ql_output = builder.MakeIntermediate();
-    builder.AddNode("QuantizeLinear", {gemm_output, output_ql_scale, output_ql_zero_point}, {output_ql_output});
-
-    // DequantizeLinear for Output
-    NodeArg* output_dql_scale = builder.MakeScalarInitializer<float>(0.00019595865160226822f);
-    NodeArg* output_dql_zero_point = builder.MakeScalarInitializer<uint16_t>(31693);
-    NodeArg* output_dql_output = builder.MakeOutput();
-    builder.AddNode("DequantizeLinear", {output_ql_output, output_dql_scale, output_dql_zero_point}, {output_dql_output});
+    // Output QDQ: gemm_out -> Q -> DQ -> output
+    constexpr float out_scale = 0.00019595865160226822f;
+    constexpr uint16_t out_zp = 31693;
+    AddQDQNodePairWithOutputAsGraphOutput<uint16_t>(builder, "qdq_out", "gemm_out", out_scale, out_zp);
   };
 }
 
@@ -119,7 +124,7 @@ TEST_F(QnnHTPBackendTests, LPBQGemmFusion) {
                   /*opset_version=*/21,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some,
                   /*fp32_abs_err=*/1e-2f,
-                  /*log_severity =*/logging::Severity::kERROR,
+                  /*log_severity =*/OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   /*verify_outputs=*/false);
 }
 

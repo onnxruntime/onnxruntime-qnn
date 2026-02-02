@@ -26,28 +26,35 @@ static GetTestQDQModelFn<QuantType> BuildQDQGatherElemsTestCase(const TestInputD
                                                                 bool use_contrib_qdq = false) {
   return [input_def, indices_def, attrs, use_contrib_qdq](ModelTestBuilder& builder,
                                                           std::vector<QuantParams<QuantType>>& output_qparams) {
-    // input -> Q -> DQ ->
-    NodeArg* input = MakeTestInput(builder, input_def);
+    ORT_UNUSED_PARAMETER(use_contrib_qdq);  // Build using standard ONNX Q/DQ nodes.
+
+    builder.graph_->set_name("qdq_gather_elements_graph");
+
+    // input (fp32) -> Q -> DQ ->
+    MakeTestInput(builder, "X", input_def);
     QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-    NodeArg* input_qdq = AddQDQNodePair<QuantType>(builder, input, input_qparams.scale, input_qparams.zero_point,
-                                                   use_contrib_qdq);
+    const std::string x_qdq = AddQDQNodePair<QuantType>(
+        builder, "qdq_x", "X", input_qparams.scale, input_qparams.zero_point);
 
     // indices input
-    NodeArg* indices_input = MakeTestInput(builder, indices_def);
+    MakeTestInput(builder, "I", indices_def);
 
     // GatherElements op
-    NodeArg* gather_output = builder.MakeIntermediate();
-    Node& gather_node = builder.AddNode("GatherElements", {input_qdq, indices_input}, {gather_output});
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes = attrs;
+    builder.AddNode(
+        "gather",
+        "GatherElements",
+        {x_qdq, "I"},
+        {"Y"},
+        "",
+        attributes);
 
-    for (const auto& attr : attrs) {
-      gather_node.AddAttributeProto(attr);
-    }
-
-    // op_output -> Q -> DQ -> output
-    // NOTE: Input and output quantization parameters must be equal for GatherElements.
+    // output quant params must equal input quant params for GatherElements.
     output_qparams[0] = input_qparams;  // Overwrite!
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, gather_output, input_qparams.scale,
-                                                     input_qparams.zero_point, use_contrib_qdq);
+
+    // Y -> Q -> DQ -> output
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(
+        builder, "qdq_out", "Y", output_qparams[0].scale, output_qparams[0].zero_point);
   };
 }
 
@@ -65,7 +72,7 @@ static void RunCPUGatherElemsOpTest(const TestInputDef<float>& input_def,
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<DataType, IndexType>("GatherElements", {input_def}, {indices_def}, attrs),
+  RunQnnModelTest(BuildOpTestCase<DataType, IndexType>("GatherElements_node", "GatherElements", {input_def}, {indices_def}, attrs),
                   provider_options,
                   opset,
                   expected_ep_assignment,
@@ -86,7 +93,7 @@ static void RunHTPQDQGatherElemsOpTest(const TestInputDef<float>& input_def,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  auto f32_model_builder = BuildOpTestCase<float, IndexType>("GatherElements", {input_def}, {indices_def}, attrs);
+  auto f32_model_builder = BuildOpTestCase<float, IndexType>("GatherElements_node", "GatherElements", {input_def}, {indices_def}, attrs);
   auto qdq_model_builder = BuildQDQGatherElemsTestCase<QuantType, IndexType>(input_def, indices_def, attrs,
                                                                              use_contrib_qdq);
 
@@ -111,7 +118,7 @@ static void RunHTPGatherElemsOpTest(const TestInputDef<DataType>& input_def,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<DataType, IndexType>("GatherElements", {input_def}, {indices_def}, attrs),
+  RunQnnModelTest(BuildOpTestCase<DataType, IndexType>("GatherElements_node", "GatherElements", {input_def}, {indices_def}, attrs),
                   provider_options,
                   opset,
                   expected_ep_assignment,
@@ -128,7 +135,7 @@ TEST_F(QnnCPUBackendTests, GatherElems_DataF32_IndicesInt64) {
   RunCPUGatherElemsOpTest<float, int64_t>(
       TestInputDef<float>({3, 3}, false, {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f}),
       TestInputDef<int64_t>({2, 3}, false, {1, 2, 0, 2, 0, 0}),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
       ExpectedEPNodeAssignment::All);
 }
 
@@ -138,7 +145,7 @@ TEST_F(QnnCPUBackendTests, GatherElems_DataF32_IndicesInt32) {
   RunCPUGatherElemsOpTest<float, int32_t>(
       TestInputDef<float>({3, 3}, false, {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f}),
       TestInputDef<int32_t>({2, 3}, false, {1, 2, 0, 2, 0, 0}),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
       ExpectedEPNodeAssignment::All);
 }
 
@@ -148,7 +155,7 @@ TEST_F(QnnCPUBackendTests, GatherElems_DataF32_StaticIndicesInt64) {
   RunCPUGatherElemsOpTest<float, int64_t>(
       TestInputDef<float>({3, 3}, false, {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f}),
       TestInputDef<int64_t>({2, 3}, true, {1, 2, 0, 2, 0, 0}),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
       ExpectedEPNodeAssignment::All);
 }
 
@@ -158,7 +165,7 @@ TEST_F(QnnCPUBackendTests, GatherElems_DataF32_StaticIndicesInt32) {
   RunCPUGatherElemsOpTest<float, int32_t>(
       TestInputDef<float>({3, 3}, false, {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f}),
       TestInputDef<int32_t>({2, 3}, true, {1, 2, 0, 2, 0, 0}),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
       ExpectedEPNodeAssignment::All);
 }
 
@@ -173,7 +180,7 @@ TEST_F(QnnHTPBackendTests, GatherElems_DataInt32_IndicesInt32_Rank1) {
   RunHTPGatherElemsOpTest<int32_t, int32_t>(
       TestInputDef<int32_t>({3}, false, {1, 2, 3}),
       TestInputDef<int32_t>({2}, false, {1, 2}),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(0))},
       ExpectedEPNodeAssignment::All);
 }
 
@@ -193,7 +200,7 @@ TEST_F(QnnHTPBackendTests, GatherElems_DataUint8_IndicesInt32) {
   RunHTPQDQGatherElemsOpTest<uint8_t, int32_t>(
       TestInputDef<float>({3, 3}, false, {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f}),
       TestInputDef<int32_t>({2, 3}, false, {1, 2, 0, 2, 0, 0}),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
       ExpectedEPNodeAssignment::All);
 }
 
@@ -203,7 +210,7 @@ TEST_F(QnnHTPBackendTests, GatherElems_DataUint8_StaticIndicesInt32) {
   RunHTPQDQGatherElemsOpTest<uint8_t, int32_t>(
       TestInputDef<float>({3, 3}, false, {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f}),
       TestInputDef<int32_t>({2, 3}, true, {1, 2, 0, 2, 0, 0}),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
       ExpectedEPNodeAssignment::All);
 }
 
@@ -214,7 +221,7 @@ TEST_F(QnnHTPBackendTests, GatherElems_DataUint8_StaticIndicesInt64) {
   RunHTPQDQGatherElemsOpTest<uint8_t, int64_t>(
       TestInputDef<float>({3, 3}, false, {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f}),
       TestInputDef<int64_t>({2, 3}, true, {1, 2, 0, 2, 0, 0}),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
       ExpectedEPNodeAssignment::All);
 }
 
@@ -224,7 +231,7 @@ TEST_F(QnnHTPBackendTests, GatherElems_DataUint8_StaticNegIndicesInt32) {
   RunHTPQDQGatherElemsOpTest<uint8_t, int32_t>(
       TestInputDef<float>({3, 3}, false, {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f}),
       TestInputDef<int32_t>({2, 3}, true, {1, 2, -3, 2, 0, 0}),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
       ExpectedEPNodeAssignment::All);
 }
 
@@ -234,7 +241,7 @@ TEST_F(QnnHTPBackendTests, GatherElems_DataUint8_StaticNegIndicesInt64) {
   RunHTPQDQGatherElemsOpTest<uint8_t, int64_t>(
       TestInputDef<float>({3, 3}, false, {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f}),
       TestInputDef<int64_t>({2, 3}, true, {1, -1, -3, 2, 0, 0}),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
       ExpectedEPNodeAssignment::All);
 }
 
@@ -247,7 +254,7 @@ TEST_F(QnnHTPBackendTests, GatherElems_DataUint16_StaticNegIndicesInt64) {
   RunHTPQDQGatherElemsOpTest<uint16_t, int64_t>(
       TestInputDef<float>(input_shape, false, input_data),
       TestInputDef<int64_t>({1, 1, 2, 2}, true, {0, -1, -3, 2}),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
       ExpectedEPNodeAssignment::All,
       /*opset*/ 21);
 }
@@ -263,7 +270,7 @@ TEST_F(QnnHTPBackendTests, GatherElems_DataUint16_StaticNegIndicesInt64_Large) {
   RunHTPQDQGatherElemsOpTest<uint16_t, int64_t>(
       TestInputDef<float>(input_shape, false, input_data),
       TestInputDef<int64_t>({12, 1024, 1024}, true, -512, 511),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
       ExpectedEPNodeAssignment::All,
       /*opset*/ 21);
 }
@@ -296,7 +303,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_GatherElems_DataUint16_StaticNegIndicesInt64
   RunHTPQDQGatherElemsOpTest<uint16_t, int64_t>(
       TestInputDef<float>(input_shape, false, input_data),
       TestInputDef<int64_t>(indices_shape, true, indices),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
       ExpectedEPNodeAssignment::All,
       /*opset*/ 21);
 }
@@ -308,7 +315,7 @@ TEST_F(QnnHTPBackendTests, GatherElems_DynamicInt64IndicesSupportedAsGraphInput)
   RunHTPQDQGatherElemsOpTest<uint8_t, int64_t>(
       TestInputDef<float>({3, 3}, false, {1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f}),
       TestInputDef<int64_t>({2, 3}, false, {1, 2, 0, 2, 0, 0}),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(1))},
       ExpectedEPNodeAssignment::All);
 }
 

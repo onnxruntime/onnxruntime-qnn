@@ -7,6 +7,7 @@
 
 #include "test/providers/qnn/qnn_test_utils.h"
 
+#include "core/graph/node_attr_utils.h"
 #include "core/graph/onnx_protobuf.h"
 #include "gtest/gtest.h"
 
@@ -18,36 +19,55 @@ GetTestModelFn BuildSplitTestCase(const TestInputDef<DataType>& input_def,
                                   const std::vector<int64_t>& split, bool split_is_input,
                                   int64_t axis, int64_t num_outputs) {
   return [input_def, split, split_is_input, axis, num_outputs](ModelTestBuilder& builder) {
-    std::vector<NodeArg*> op_inputs;
-
-    op_inputs.push_back(MakeTestInput<DataType>(builder, input_def));
-
-    if (split_is_input && !split.empty()) {
-      op_inputs.push_back(builder.Make1DInitializer(split));
-    }
-
     // Determine the actual number of outputs from the 'split' or 'num_outputs' arguments.
     // In opset 18, the num_outputs attribute or the split input can determine the actual number of outputs.
     // In opset 13, the split input determines the number of actual outputs.
     // In opsets < 13, the split attribute determines the number of actual outputs.
-    size_t actual_num_outputs = (num_outputs > -1) ? static_cast<size_t>(num_outputs) : split.size();
+    const size_t actual_num_outputs = (num_outputs > -1) ? static_cast<size_t>(num_outputs) : split.size();
 
-    std::vector<NodeArg*> split_outputs;
-    for (size_t i = 0; i < actual_num_outputs; i++) {
-      split_outputs.push_back(builder.MakeOutput());
+    // input
+    MakeTestInput<DataType>(builder, "input", input_def);
+
+    // split input (initializer)
+    if (split_is_input && !split.empty()) {
+      builder.Make1DInitializer<int64_t>("split", split);
     }
 
-    Node& split_node = builder.AddNode("Split", op_inputs, split_outputs);
+    // outputs
+    std::vector<std::string> split_outputs;
+    split_outputs.reserve(actual_num_outputs);
+    for (size_t i = 0; i < actual_num_outputs; i++) {
+      split_outputs.push_back("Y" + std::to_string(i));
+      builder.MakeOutput(split_outputs.back());
+    }
+
+    // attributes passed during node creation
+    std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+    attrs.reserve(3);
 
     if (!split_is_input && !split.empty()) {
-      split_node.AddAttribute("split", split);
+      attrs.push_back(test::MakeAttribute("split", split));
     }
 
     if (num_outputs > -1) {
-      split_node.AddAttribute("num_outputs", num_outputs);
+      attrs.push_back(test::MakeAttribute("num_outputs", num_outputs));
     }
 
-    split_node.AddAttribute("axis", axis);
+    attrs.push_back(test::MakeAttribute("axis", axis));
+
+    std::vector<std::string> inputs;
+    inputs.reserve(2);
+    inputs.push_back("input");
+    if (split_is_input && !split.empty()) {
+      inputs.push_back("split");
+    }
+
+    builder.AddNode("Split",
+                    "Split",
+                    inputs,
+                    split_outputs,
+                    kOnnxDomain,
+                    attrs);
   };
 }
 
@@ -185,50 +205,73 @@ GetTestQDQModelFn<QuantType> BuildQDQSplitTestCase(const TestInputDef<float>& in
   return [input_def, split, split_is_input, axis, num_outputs,
           use_contrib_qdq](ModelTestBuilder& builder,
                            std::vector<QuantParams<QuantType>>& output_qparams) {
-    std::vector<NodeArg*> op_inputs;
-
-    // Add QDQ input
-    NodeArg* input = MakeTestInput<float>(builder, input_def);
-    QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-    NodeArg* input_after_qdq = AddQDQNodePair<QuantType>(builder, input, input_qparams.scale,
-                                                         input_qparams.zero_point, use_contrib_qdq);
-    op_inputs.push_back(input_after_qdq);
-
-    // Add split input
-    if (split_is_input && !split.empty()) {
-      op_inputs.push_back(builder.Make1DInitializer(split));
-    }
-
     // Determine the actual number of outputs from the 'split' or 'num_outputs' arguments.
     // In opset 18, the num_outputs attribute or the split input can determine the actual number of outputs.
     // In opset 13, the split input determines the number of actual outputs.
     // In opsets < 13, the split attribute determines the number of actual outputs.
-    size_t actual_num_outputs = (num_outputs > -1) ? static_cast<size_t>(num_outputs) : split.size();
+    const size_t actual_num_outputs = (num_outputs > -1) ? static_cast<size_t>(num_outputs) : split.size();
 
-    std::vector<NodeArg*> split_outputs;
-    for (size_t i = 0; i < actual_num_outputs; i++) {
-      split_outputs.push_back(builder.MakeIntermediate());
+    // input
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // QDQ input: input -> Q -> DQ -> input_after_qdq
+    const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
+    const std::string input_after_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_in", "input",
+                                  input_qparams.scale, input_qparams.zero_point, use_contrib_qdq);
+
+    // split input (initializer)
+    if (split_is_input && !split.empty()) {
+      builder.Make1DInitializer<int64_t>("split", split);
     }
 
-    Node& split_node = builder.AddNode("Split", op_inputs, split_outputs);
+    // split outputs (unquantized)
+    std::vector<std::string> split_outputs;
+    split_outputs.reserve(actual_num_outputs);
+    for (size_t i = 0; i < actual_num_outputs; i++) {
+      split_outputs.push_back("split_out" + std::to_string(i));
+    }
+
+    // attributes passed during node creation
+    std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+    attrs.reserve(3);
 
     if (!split_is_input && !split.empty()) {
-      split_node.AddAttribute("split", split);
+      attrs.push_back(test::MakeAttribute("split", split));
     }
 
     if (num_outputs > -1) {
-      split_node.AddAttribute("num_outputs", num_outputs);
+      attrs.push_back(test::MakeAttribute("num_outputs", num_outputs));
     }
 
-    split_node.AddAttribute("axis", axis);
+    attrs.push_back(test::MakeAttribute("axis", axis));
 
-    // op_output -> Q -> DQ -> output
+    std::vector<std::string> inputs;
+    inputs.reserve(2);
+    inputs.push_back(input_after_qdq);
+    if (split_is_input && !split.empty()) {
+      inputs.push_back("split");
+    }
+
+    builder.AddNode("Split",
+                    "Split",
+                    inputs,
+                    split_outputs,
+                    kOnnxDomain,
+                    attrs);
+
+    // outputs: each split_out{i} -> Q -> DQ -> graph output
     assert(output_qparams.size() == actual_num_outputs);
     for (size_t i = 0; i < actual_num_outputs; i++) {
       // NOTE: Input and output quantization parameters must be equal for Split.
       output_qparams[i] = input_qparams;
-      AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, split_outputs[i], output_qparams[i].scale,
-                                                       output_qparams[i].zero_point, use_contrib_qdq);
+
+      AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder,
+                                                       "qdq_out" + std::to_string(i),
+                                                       split_outputs[i],
+                                                       output_qparams[i].scale,
+                                                       output_qparams[i].zero_point,
+                                                       use_contrib_qdq);
     }
   };
 }

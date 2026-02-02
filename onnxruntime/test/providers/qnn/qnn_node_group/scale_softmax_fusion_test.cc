@@ -13,6 +13,8 @@
 namespace onnxruntime {
 namespace test {
 
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+
 namespace {
 
 GetTestModelFn BuildTestCaseScalar(
@@ -22,34 +24,64 @@ GetTestModelFn BuildTestCaseScalar(
     bool reverse_input_order,
     std::optional<int64_t> softmax_axis = std::nullopt) {
   return [&](ModelTestBuilder& builder) -> void {
-    NodeArg* input = MakeTestInput<float>(builder, input_def);
-    NodeArg* scale{nullptr};
+    builder.graph_->set_name("scale_softmax_fusion_scalar_graph");
+
+    // input
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // scale
     if (use_constant) {
-      onnx::TensorProto scale_value_proto;
-      scale_value_proto.set_data_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
-      utils::SetRawDataInTensorProto(scale_value_proto, reinterpret_cast<const char*>(&scale_value), sizeof(float));
-      scale = builder.MakeIntermediate();
-      builder.AddNode("Constant", {}, {scale}).AddAttribute("value", scale_value_proto);
+      builder.AddNode(
+          "const",
+          "Constant",
+          {},
+          {"scale"},
+          "",
+          {builder.MakeScalarAttribute("value", scale_value)});
     } else {
-      scale = builder.MakeScalarInitializer<float>(scale_value);
+      builder.MakeScalarInitializer<float>("scale", scale_value);
     }
-    NodeArg* intermediate = builder.MakeIntermediate();
-    auto mul_inputs = reverse_input_order ? std::vector<NodeArg*>{scale, input} : std::vector<NodeArg*>{input, scale};
-    builder.AddNode("Mul", mul_inputs, {intermediate});
-    Node& softmax = builder.AddNode("Softmax", {intermediate}, {builder.MakeOutput()});
+
+    // Mul
+    if (reverse_input_order) {
+      builder.AddNode("Mul",
+                      "Mul",
+                      {"scale", "input"},
+                      {"mul_out"},
+                      kOnnxDomain);
+    } else {
+      builder.AddNode("Mul",
+                      "Mul",
+                      {"input", "scale"},
+                      {"mul_out"},
+                      kOnnxDomain);
+    }
+
+    // Softmax
+    std::vector<ONNX_NAMESPACE::AttributeProto> softmax_attrs;
     if (softmax_axis.has_value()) {
-      softmax.AddAttribute("axis", softmax_axis.value());
+      softmax_attrs.push_back(builder.MakeScalarAttribute("axis", softmax_axis.value()));
     }
+
+    builder.AddNode("Softmax",
+                    "Softmax",
+                    {"mul_out"},
+                    {"output"},
+                    kOnnxDomain,
+                    softmax_attrs);
+
+    builder.MakeOutput("output");
   };
 }
 
 GetTestModelFn BuildTestCaseNoScalar(const TestInputDef<float>& input_def1, const TestInputDef<float>& input_def2) {
   return [&input_def1, input_def2](ModelTestBuilder& builder) -> void {
-    NodeArg* input = MakeTestInput<float>(builder, input_def1);
-    NodeArg* scale = MakeTestInput<float>(builder, input_def2);
-    NodeArg* intermediate = builder.MakeIntermediate();
-    builder.AddNode("Mul", {input, scale}, {intermediate});
-    builder.AddNode("Softmax", {intermediate}, {builder.MakeOutput()});
+    MakeTestInput<float>(builder, "input", input_def1);
+    MakeTestInput<float>(builder, "scale", input_def2);
+
+    builder.AddNode("Mul", "Mul", {"input", "scale"}, {"mul_out"}, kOnnxDomain);
+    builder.AddNode("Softmax", "Softmax", {"mul_out"}, {"output"}, kOnnxDomain);
+    builder.MakeOutput("output");
   };
 }
 
@@ -61,8 +93,6 @@ ProviderOptions GetProviderOptions() {
 }
 
 }  // namespace
-
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 TEST_F(QnnHTPBackendTests, DISABLED_ScaleSoftmaxFusionScalarInitializer) {
   ProviderOptions provider_options = GetProviderOptions();

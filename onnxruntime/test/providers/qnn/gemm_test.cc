@@ -7,7 +7,6 @@
 #include <string>
 
 #include "test/providers/qnn/qnn_test_utils.h"
-#include "core/graph/node_attr_utils.h"
 
 #include "core/graph/onnx_protobuf.h"
 #include "gtest/gtest.h"
@@ -28,7 +27,7 @@ static void RunGemmTest(const std::vector<TestInputDef<DataType>>& input_defs,
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<float>("Gemm", input_defs, {}, attrs),
+  RunQnnModelTest(BuildOpTestCase<float>("Gemm_node", "Gemm", input_defs, {}, attrs),
                   provider_options,
                   opset,
                   expected_ep_assignment);
@@ -43,14 +42,14 @@ TEST_F(QnnCPUBackendTests, Gemm_NonDefaultAlphaBeta_Unsupported) {
   // Check that alpha != 1.0f is not supported.
   RunGemmTest<float>({TestInputDef<float>({1, 2}, false, -10.0f, 10.0f),
                       TestInputDef<float>({2, 4}, false, -10.0f, 10.0f)},
-                     {utils::MakeAttribute("alpha", 1.5f)},
+                     {test::MakeAttribute("alpha", 1.5f)},
                      ExpectedEPNodeAssignment::None);  // Should not be assigned to QNN EP.
 
   // Check that beta != 1.0f is not supported.
   RunGemmTest<float>({TestInputDef<float>({1, 2}, false, -10.0f, 10.0f),
                       TestInputDef<float>({2, 4}, false, -10.0f, 10.0f),
                       TestInputDef<float>({1, 4}, false, -1.0f, 1.0f)},
-                     {utils::MakeAttribute("beta", 1.2f)},
+                     {test::MakeAttribute("beta", 1.2f)},
                      ExpectedEPNodeAssignment::None);  // Should not be assigned to QNN EP.
 }
 
@@ -106,8 +105,8 @@ TEST_F(QnnCPUBackendTests, Gemm_TransAB_Static_B_And_Bias) {
   RunGemmTest<float>({TestInputDef<float>({6, 1}, false, input_a_data),
                       TestInputDef<float>({4, 6}, true, input_b_data),
                       TestInputDef<float>({1, 4}, true, input_c_data)},
-                     {utils::MakeAttribute("transA", static_cast<int64_t>(1)),
-                      utils::MakeAttribute("transB", static_cast<int64_t>(1))},
+                     {test::MakeAttribute("transA", static_cast<int64_t>(1)),
+                      test::MakeAttribute("transB", static_cast<int64_t>(1))},
                      ExpectedEPNodeAssignment::All);
 }
 
@@ -120,8 +119,8 @@ TEST_F(QnnCPUBackendTests, DISABLED_Gemm_TransAB_Dynamic_B_And_Bias) {
   RunGemmTest<float>({TestInputDef<float>({6, 1}, false, input_a_data),
                       TestInputDef<float>({4, 6}, false, input_b_data),
                       TestInputDef<float>({1, 4}, false, input_c_data)},
-                     {utils::MakeAttribute("transA", static_cast<int64_t>(1)),
-                      utils::MakeAttribute("transB", static_cast<int64_t>(1))},
+                     {test::MakeAttribute("transA", static_cast<int64_t>(1)),
+                      test::MakeAttribute("transB", static_cast<int64_t>(1))},
                      ExpectedEPNodeAssignment::All);
 }
 
@@ -180,15 +179,22 @@ TEST_F(QnnCPUBackendTests, Gemm_Broadcast_Bias_DynamicA_StaticB_StaticC) {
 namespace {
 GetTestModelFn BuildReshapeGemmTestCase(const TestInputDef<float>& input, const TestInputDef<int64_t>& shape,
                                         const TestInputDef<float>& weight, const TestInputDef<float>& bias) {
-  return [&](ModelTestBuilder& builder) {
-    std::vector<NodeArg*> reshape_inputs = {MakeTestInput<float>(builder, input),
-                                            MakeTestInput<int64_t>(builder, shape)};
-    auto* reshape_output = builder.MakeIntermediate();
-    builder.AddNode("Reshape", reshape_inputs, {reshape_output});
-    NodeArg* output = builder.MakeOutput();
-    std::vector<NodeArg*> gemm_inputs = {reshape_output, MakeTestInput<float>(builder, weight),
-                                         MakeTestInput<float>(builder, bias)};
-    builder.AddNode("Gemm", gemm_inputs, {output});
+  return [input, shape, weight, bias](ModelTestBuilder& builder) {
+    // Inputs
+    MakeTestInput(builder, "X", input);
+    MakeTestInput(builder, "shape", shape);
+
+    // Reshape
+    builder.AddNode("reshape", "Reshape", {"X", "shape"}, {"reshaped"});
+
+    // Weights + bias
+    MakeTestInput(builder, "W", weight);
+    MakeTestInput(builder, "B", bias);
+
+    // Gemm
+    builder.AddNode("gemm", "Gemm", {"reshaped", "W", "B"}, {"Y"});
+
+    builder.MakeOutput("Y");
   };
 }
 
@@ -230,41 +236,38 @@ inline GetTestQDQModelFn<InputAQType> BuildQDQGemmTestCase(const std::vector<Tes
     const size_t num_inputs = input_defs.size();
     assert(num_inputs == 2 || num_inputs == 3);
 
-    std::vector<NodeArg*> op_inputs;
-    op_inputs.reserve(num_inputs);
+    builder.graph_->set_name("qdq_gemm_graph");
 
-    // Process input 0
-    NodeArg* input0 = MakeTestInput<float>(builder, input_defs[0]);
-    QuantParams<InputAQType> input0_qparams = GetTestInputQuantParams<InputAQType>(input_defs[0]);
-    NodeArg* input0_after_qdq = AddQDQNodePair<InputAQType>(builder, input0, input0_qparams.scale,
-                                                            input0_qparams.zero_point, use_contrib_qdq);
-    op_inputs.push_back(input0_after_qdq);
+    // A (fp32) -> Q -> DQ
+    MakeTestInput(builder, "A", input_defs[0]);
+    QuantParams<InputAQType> a_qparams = GetTestInputQuantParams<InputAQType>(input_defs[0]);
+    const std::string a_qdq = AddQDQNodePair<InputAQType>(
+        builder, "qdq_a", "A", a_qparams.scale, a_qparams.zero_point, use_contrib_qdq);
 
-    // Process input 1
-    NodeArg* input1 = MakeTestInput<float>(builder, input_defs[1]);
-    QuantParams<InputBQType> input1_qparams = GetTestInputQuantParams<InputBQType>(input_defs[1]);
-    NodeArg* input1_after_qdq = AddQDQNodePair<InputBQType>(builder, input1, input1_qparams.scale,
-                                                            input1_qparams.zero_point, use_contrib_qdq);
-    op_inputs.push_back(input1_after_qdq);
+    // B (fp32) -> Q -> DQ
+    MakeTestInput(builder, "B", input_defs[1]);
+    QuantParams<InputBQType> b_qparams = GetTestInputQuantParams<InputBQType>(input_defs[1]);
+    const std::string b_qdq = AddQDQNodePair<InputBQType>(
+        builder, "qdq_b", "B", b_qparams.scale, b_qparams.zero_point, use_contrib_qdq);
 
-    // Process bias
+    std::vector<std::string> gemm_inputs;
+    gemm_inputs.reserve(num_inputs);
+    gemm_inputs.push_back(a_qdq);
+    gemm_inputs.push_back(b_qdq);
+
+    // Bias (optional): int32 -> DQ
     if (num_inputs == 3) {
-      NodeArg* bias_input = MakeTestQDQBiasInput(builder, input_defs[2], input0_qparams.scale * input1_qparams.scale,
-                                                 use_contrib_qdq);
-      op_inputs.push_back(bias_input);
+      const std::string bias_dq = MakeTestQDQBiasInput(
+          builder, "C", input_defs[2], a_qparams.scale * b_qparams.scale, use_contrib_qdq);
+      gemm_inputs.push_back(bias_dq);
     }
 
-    // Op -> op_output
-    auto* gemm_output = builder.MakeIntermediate();
-    Node& gemm_node = builder.AddNode("Gemm", op_inputs, {gemm_output});
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes = attrs;
+    builder.AddNode("gemm", "Gemm", gemm_inputs, {"Y"}, "", attributes);
 
-    for (const auto& attr : attrs) {
-      gemm_node.AddAttributeProto(attr);
-    }
-
-    // op_output -> Q -> DQ -> output
-    AddQDQNodePairWithOutputAsGraphOutput<InputAQType>(builder, gemm_output, output_qparams[0].scale,
-                                                       output_qparams[0].zero_point, use_contrib_qdq);
+    // Output: Y -> Q -> DQ -> output
+    AddQDQNodePairWithOutputAsGraphOutput<InputAQType>(
+        builder, "qdq_out", "Y", output_qparams[0].scale, output_qparams[0].zero_point, use_contrib_qdq);
   };
 }
 
@@ -282,7 +285,7 @@ static void RunQDQGemmTestOnHTP(const std::vector<TestInputDef<float>>& input_de
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  auto f32_model_builder = BuildOpTestCase<float>("Gemm", input_defs, {}, attrs);
+  auto f32_model_builder = BuildOpTestCase<float>("Gemm_node", "Gemm", input_defs, {}, attrs);
   auto qdq_model_builder = BuildQDQGemmTestCase<InputAQType, InputBQType>(input_defs, attrs, use_contrib_qdq);
   TestQDQModelAccuracy<InputAQType>(f32_model_builder,
                                     qdq_model_builder,
@@ -466,8 +469,8 @@ TEST_F(QnnHTPBackendTests, Gemm_TransAB_Static_B_And_Bias_U8) {
   RunQDQGemmTestOnHTP<uint8_t, uint8_t>({TestInputDef<float>({6, 1}, false, input_a_data),
                                          TestInputDef<float>({4, 6}, true, input_b_data),
                                          TestInputDef<float>({1, 4}, true, input_c_data)},
-                                        {utils::MakeAttribute("transA", static_cast<int64_t>(1)),
-                                         utils::MakeAttribute("transB", static_cast<int64_t>(1))},
+                                        {test::MakeAttribute("transA", static_cast<int64_t>(1)),
+                                         test::MakeAttribute("transB", static_cast<int64_t>(1))},
                                         ExpectedEPNodeAssignment::All);
 }
 
@@ -479,8 +482,8 @@ TEST_F(QnnHTPBackendTests, Gemm_TransAB_Static_B_And_Bias_U16Act_U8Weight) {
   RunQDQGemmTestOnHTP<uint16_t, uint8_t>({TestInputDef<float>({6, 1}, false, input_a_data),
                                           TestInputDef<float>({4, 6}, true, input_b_data),
                                           TestInputDef<float>({1, 4}, true, input_c_data)},
-                                         {utils::MakeAttribute("transA", static_cast<int64_t>(1)),
-                                          utils::MakeAttribute("transB", static_cast<int64_t>(1))},
+                                         {test::MakeAttribute("transA", static_cast<int64_t>(1)),
+                                          test::MakeAttribute("transB", static_cast<int64_t>(1))},
                                          ExpectedEPNodeAssignment::All,
                                          13,     // opset
                                          true);  // Use com.microsoft Q/DQ ops
@@ -505,8 +508,8 @@ TEST_F(QnnHTPBackendTests, Gemm_TransAB_Dynamic_B_And_Bias) {
   RunQDQGemmTestOnHTP<uint8_t, uint8_t>({TestInputDef<float>({6, 1}, false, input_a_data),
                                          TestInputDef<float>({4, 6}, false, input_b_data),
                                          TestInputDef<float>({1, 4}, false, input_c_data)},
-                                        {utils::MakeAttribute("transA", static_cast<int64_t>(1)),
-                                         utils::MakeAttribute("transB", static_cast<int64_t>(1))},
+                                        {test::MakeAttribute("transA", static_cast<int64_t>(1)),
+                                         test::MakeAttribute("transB", static_cast<int64_t>(1))},
                                         ExpectedEPNodeAssignment::All);
 }
 
@@ -533,7 +536,7 @@ TEST_F(QnnGPUBackendTests, Gemm_AlphaBetaUnsupported) {
   // Check that alpha != 1.0f is not supported.
   RunGemmTest<float>({TestInputDef<float>({1, 2}, false, -10.0f, 10.0f),
                       TestInputDef<float>({2, 4}, false, -10.0f, 10.0f)},
-                     {utils::MakeAttribute("alpha", 1.5f)},
+                     {test::MakeAttribute("alpha", 1.5f)},
                      ExpectedEPNodeAssignment::None,  // Should not be assigned to QNN EP.
                      "gpu");
 
@@ -541,7 +544,7 @@ TEST_F(QnnGPUBackendTests, Gemm_AlphaBetaUnsupported) {
   RunGemmTest<float>({TestInputDef<float>({1, 2}, false, -10.0f, 10.0f),
                       TestInputDef<float>({2, 4}, false, -10.0f, 10.0f),
                       TestInputDef<float>({1, 4}, false, -1.0f, 1.0f)},
-                     {utils::MakeAttribute("beta", 1.2f)},
+                     {test::MakeAttribute("beta", 1.2f)},
                      ExpectedEPNodeAssignment::None,  // Should not be assigned to QNN EP.
                      "gpu");
 }
@@ -609,8 +612,8 @@ TEST_F(QnnGPUBackendTests, Gemm_TransposeAB_Static_B_And_Bias) {
   RunGemmTest<float>({TestInputDef<float>({6, 1}, false, input_a_data),
                       TestInputDef<float>({4, 6}, true, input_b_data),
                       TestInputDef<float>({1, 4}, true, input_c_data)},
-                     {utils::MakeAttribute("transA", static_cast<int64_t>(1)),
-                      utils::MakeAttribute("transB", static_cast<int64_t>(1))},
+                     {test::MakeAttribute("transA", static_cast<int64_t>(1)),
+                      test::MakeAttribute("transB", static_cast<int64_t>(1))},
                      ExpectedEPNodeAssignment::All,
                      "gpu");
 }
@@ -623,8 +626,8 @@ TEST_F(QnnGPUBackendTests, Gemm_TransAB_Dynamic_B_And_Bias) {
   RunGemmTest<float>({TestInputDef<float>({6, 1}, false, input_a_data),
                       TestInputDef<float>({4, 6}, false, input_b_data),
                       TestInputDef<float>({1, 4}, false, input_c_data)},
-                     {utils::MakeAttribute("transA", static_cast<int64_t>(1)),
-                      utils::MakeAttribute("transB", static_cast<int64_t>(1))},
+                     {test::MakeAttribute("transA", static_cast<int64_t>(1)),
+                      test::MakeAttribute("transB", static_cast<int64_t>(1))},
                      ExpectedEPNodeAssignment::All,
                      "gpu");
 }
