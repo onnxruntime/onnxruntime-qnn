@@ -10,7 +10,7 @@
 
 #include "core/graph/node_attr_utils.h"
 #include "core/graph/onnx_protobuf.h"
-#include "test/providers/qnn/qnn_test_utils.h"
+#include "test/providers/qnn-abi/qnn_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
@@ -47,13 +47,13 @@ static void RunTopKTestOnCPU(const TestInputDef<DataType>& input_def,
 
   provider_options["backend_type"] = "cpu";
 
-  RunQnnModelTest(BuildTopKTestCase<DataType>(input_def, k_def, attrs),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment,
-                  /*fp32_abs_err*/ 1e-5f,
-                  /*log_severity*/ logging::Severity::kERROR,
-                  /*verify_outputs*/ verify_outputs);
+  RunQnnModelTestABI(BuildTopKTestCase<DataType>(input_def, k_def, attrs),
+                     provider_options,
+                     opset,
+                     expected_ep_assignment,
+                     /*fp32_abs_err*/ 1e-5f,
+                     /*log_severity*/ logging::Severity::kERROR,
+                     /*verify_outputs*/ verify_outputs);
 }
 
 //
@@ -61,24 +61,24 @@ static void RunTopKTestOnCPU(const TestInputDef<DataType>& input_def,
 //
 
 // Test that TopK with a dynamic K input is not supported by QNN EP.
-TEST_F(QnnCPUBackendTests, TopK_DynamicK_Unsupported) {
-  RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+TEST_F(QnnABICPUBackendTests, TopK_DynamicK_Unsupported) {
+  RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 48)),
                           TestInputDef<int64_t>({1}, false /* is_initializer */, {2}),
                           {},                               // Attributes
                           ExpectedEPNodeAssignment::None);  // Should not be assigned to QNN EP.
 }
 
 // Test that TopK with an axis attribute that is not the last dimension.
-TEST_F(QnnCPUBackendTests, TopK_NonLastAxis) {
-  RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+TEST_F(QnnABICPUBackendTests, TopK_NonLastAxis) {
+  RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 48)),
                           TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                           {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
                           ExpectedEPNodeAssignment::All);
 }
 
-// Test that TopK with an axis attribute that is not the last dimension. Set largest to 0.
-TEST_F(QnnCPUBackendTests, TopK_NonLastAxis_Largest_0) {
-  RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+/// Test that TopK with an axis attribute that is not the last dimension. Set largest to 0.
+TEST_F(QnnABICPUBackendTests, TopK_NonLastAxis_Largest_0) {
+  RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 48)),
                           TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                           {utils::MakeAttribute("axis", static_cast<int64_t>(1)),
                            utils::MakeAttribute("largest", static_cast<int64_t>(0))},
@@ -86,24 +86,24 @@ TEST_F(QnnCPUBackendTests, TopK_NonLastAxis_Largest_0) {
 }
 
 // Test TopK on CPU backend: top 2 largest floats from last axis
-TEST_F(QnnCPUBackendTests, TopK_LargestFloats_LastAxis) {
-  RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+TEST_F(QnnABICPUBackendTests, TopK_LargestFloats_LastAxis) {
+  RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 48)),
                           TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                           {},  // Attributes
                           ExpectedEPNodeAssignment::All);
 }
 
 // Test TopK on CPU backend: top 2 largest floats from last axis. Largest to 0.
-TEST_F(QnnCPUBackendTests, TopK_LargestFloats_LastAxis_Largest_0) {
-  RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+TEST_F(QnnABICPUBackendTests, TopK_LargestFloats_LastAxis_Largest_0) {
+  RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 48)),
                           TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                           {utils::MakeAttribute("largest", static_cast<int64_t>(0))},  // Attributes
                           ExpectedEPNodeAssignment::All);
 }
 
 // Test TopK on CPU backend: top 2 largest floats from last axis. Set largest to 0. Set sorted to false.
-TEST_F(QnnCPUBackendTests, TopK_LargestFloats_LastAxis_Largest_0_Sorted) {
-  RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+TEST_F(QnnABICPUBackendTests, TopK_LargestFloats_LastAxis_Largest_0_Sorted) {
+  RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 48)),
                           TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                           {utils::MakeAttribute("largest", static_cast<int64_t>(0)),
                            utils::MakeAttribute("sorted", static_cast<int64_t>(0))},  // Attributes
@@ -113,7 +113,7 @@ TEST_F(QnnCPUBackendTests, TopK_LargestFloats_LastAxis_Largest_0_Sorted) {
 }
 
 // Test TopK on CPU backend: top 2 largest int32s from last axis
-TEST_F(QnnCPUBackendTests, TopK_LargestInt32s_LastAxis) {
+TEST_F(QnnABICPUBackendTests, TopK_LargestInt32s_LastAxis) {
   std::vector<int32_t> input_data = {-6, -5, -4, -3, -2, 0, 1, 2, 3, 4, 5, 6};
   RunTopKTestOnCPU<int32_t>(TestInputDef<int32_t>({1, 2, 2, 3}, false, input_data),
                             TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
@@ -122,7 +122,7 @@ TEST_F(QnnCPUBackendTests, TopK_LargestInt32s_LastAxis) {
 }
 
 // Test TopK on CPU backend: top 2 largest int32s from last axis. Set largest to 0.
-TEST_F(QnnCPUBackendTests, TopK_LargestInt32s_LastAxis_Largest_0) {
+TEST_F(QnnABICPUBackendTests, TopK_LargestInt32s_LastAxis_Largest_0) {
   std::vector<int32_t> input_data = {-6, -5, -4, -3, -2, 0, 1, 2, 3, 4, 5, 6};
   RunTopKTestOnCPU<int32_t>(TestInputDef<int32_t>({1, 2, 2, 3}, false, input_data),
                             TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
@@ -131,7 +131,7 @@ TEST_F(QnnCPUBackendTests, TopK_LargestInt32s_LastAxis_Largest_0) {
 }
 
 // Test TopK on CPU backend: top 2 largest int32s from last axis. Set largest to 0. Set sorted to false.
-TEST_F(QnnCPUBackendTests, TopK_LargestInt32s_LastAxis_Largest_0_Sorted) {
+TEST_F(QnnABICPUBackendTests, TopK_LargestInt32s_LastAxis_Largest_0_Sorted) {
   std::vector<int32_t> input_data = {-6, -5, -4, -3, -2, 0, 1, 2, 3, 4, 5, 6};
   RunTopKTestOnCPU<int32_t>(TestInputDef<int32_t>({1, 2, 2, 3}, false, input_data),
                             TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
@@ -196,40 +196,40 @@ static void RunQDQTopKTestOnHTP(const TestInputDef<float>& input_def,
 
   auto f32_model_builder = BuildTopKTestCase<float>(input_def, k_def, attrs);
   auto qdq_model_builder = BuildQDQTopKTestCase<QType>(input_def, k_def, attrs, use_contrib_qdq);
-  TestQDQModelAccuracy(f32_model_builder,
-                       qdq_model_builder,
-                       provider_options,
-                       opset,
-                       expected_ep_assignment);
+  TestQDQModelAccuracyABI(f32_model_builder,
+                          qdq_model_builder,
+                          provider_options,
+                          opset,
+                          expected_ep_assignment);
 }
 
 // Test 8-bit QDQ TopK on HTP backend: top 2 largest floats from last axis
-TEST_F(QnnHTPBackendTests, TopK_LargestFloats_U8_LastAxis) {
-  RunQDQTopKTestOnHTP<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+TEST_F(QnnABIHTPBackendTests, TopK_LargestFloats_U8_LastAxis) {
+  RunQDQTopKTestOnHTP<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 48)),
                                TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                                {},  // Attributes
                                ExpectedEPNodeAssignment::All);
 }
 
 // Test 8-bit QDQ TopK on HTP backend: top 2 largest floats from last axis. Set largest to 0.
-TEST_F(QnnHTPBackendTests, TopK_LargestFloats_U8_LastAxis_Largest_0) {
-  RunQDQTopKTestOnHTP<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+TEST_F(QnnABIHTPBackendTests, TopK_LargestFloats_U8_LastAxis_Largest_0) {
+  RunQDQTopKTestOnHTP<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 48)),
                                TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                                {utils::MakeAttribute("largest", static_cast<int64_t>(0))},  // Attributes
                                ExpectedEPNodeAssignment::All);
 }
 
 // Test 8-bit QDQ TopK on HTP backend: non-last axis
-TEST_F(QnnHTPBackendTests, TopK_U8_NonLastAxis) {
-  RunQDQTopKTestOnHTP<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+TEST_F(QnnABIHTPBackendTests, TopK_U8_NonLastAxis) {
+  RunQDQTopKTestOnHTP<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 48)),
                                TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                                {utils::MakeAttribute("axis", static_cast<int64_t>(1))},  // Attributes
                                ExpectedEPNodeAssignment::All);
 }
 
 // Test 8-bit QDQ TopK on HTP backend: non-last axis. Set largest to 0.
-TEST_F(QnnHTPBackendTests, TopK_U8_NonLastAxis_Largest_0) {
-  RunQDQTopKTestOnHTP<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
+TEST_F(QnnABIHTPBackendTests, TopK_U8_NonLastAxis_Largest_0) {
+  RunQDQTopKTestOnHTP<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 48)),
                                TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                                {utils::MakeAttribute("axis", static_cast<int64_t>(1)),
                                 utils::MakeAttribute("largest", static_cast<int64_t>(0))},  // Attributes
@@ -237,8 +237,8 @@ TEST_F(QnnHTPBackendTests, TopK_U8_NonLastAxis_Largest_0) {
 }
 
 // Test 16-bit QDQ TopK on HTP backend: top 2 largest floats from last axis
-TEST_F(QnnHTPBackendTests, TopK_LargestFloats_U16_LastAxis) {
-  RunQDQTopKTestOnHTP<uint16_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-20.0f, 20.0f, 48)),
+TEST_F(QnnABIHTPBackendTests, TopK_LargestFloats_U16_LastAxis) {
+  RunQDQTopKTestOnHTP<uint16_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-20.0f, 20.0f, 48)),
                                 TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                                 {},  // Attributes
                                 ExpectedEPNodeAssignment::All,
@@ -246,8 +246,8 @@ TEST_F(QnnHTPBackendTests, TopK_LargestFloats_U16_LastAxis) {
 }
 
 // Test 16-bit QDQ TopK on HTP backend: top 2 largest floats from last axis. Set largest to 0.
-TEST_F(QnnHTPBackendTests, TopK_LargestFloats_U16_LastAxis_Largest_0) {
-  RunQDQTopKTestOnHTP<uint16_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-20.0f, 20.0f, 48)),
+TEST_F(QnnABIHTPBackendTests, TopK_LargestFloats_U16_LastAxis_Largest_0) {
+  RunQDQTopKTestOnHTP<uint16_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-20.0f, 20.0f, 48)),
                                 TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                                 {utils::MakeAttribute("largest", static_cast<int64_t>(0))},  // Attributes
                                 ExpectedEPNodeAssignment::All,
@@ -255,8 +255,8 @@ TEST_F(QnnHTPBackendTests, TopK_LargestFloats_U16_LastAxis_Largest_0) {
 }
 
 // Test 16-bit QDQ TopK on HTP backend: non-last axis
-TEST_F(QnnHTPBackendTests, TopK_U16_NonLastAxis) {
-  RunQDQTopKTestOnHTP<uint16_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-20.0f, 20.0f, 48)),
+TEST_F(QnnABIHTPBackendTests, TopK_U16_NonLastAxis) {
+  RunQDQTopKTestOnHTP<uint16_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-20.0f, 20.0f, 48)),
                                 TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                                 {utils::MakeAttribute("axis", static_cast<int64_t>(1))},  // Attributes
                                 ExpectedEPNodeAssignment::All,
@@ -264,14 +264,15 @@ TEST_F(QnnHTPBackendTests, TopK_U16_NonLastAxis) {
 }
 
 // Test 16-bit QDQ TopK on HTP backend: non-last axis. Set largest to 0.
-TEST_F(QnnHTPBackendTests, TopK_U16_NonLastAxis_Largest_0) {
-  RunQDQTopKTestOnHTP<uint16_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-20.0f, 20.0f, 48)),
+TEST_F(QnnABIHTPBackendTests, TopK_U16_NonLastAxis_Largest_0) {
+  RunQDQTopKTestOnHTP<uint16_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRangeABI(-20.0f, 20.0f, 48)),
                                 TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
                                 {utils::MakeAttribute("axis", static_cast<int64_t>(1)),
                                  utils::MakeAttribute("largest", static_cast<int64_t>(0))},  // Attributes
                                 ExpectedEPNodeAssignment::All,
                                 21);  // opset
 }
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 }  // namespace test
 }  // namespace onnxruntime

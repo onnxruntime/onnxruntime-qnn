@@ -4,13 +4,14 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <string>
+
 #include "core/graph/graph.h"
 #include "core/graph/node_attr_utils.h"
 
 #include "gtest/gtest.h"
 
 #include "test/unittest_util/qdq_test_utils.h"
-#include "test/providers/qnn/qnn_test_utils.h"
+#include "test/providers/qnn-abi/qnn_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
@@ -24,36 +25,36 @@ static void RunRMSNormCpuTest(const TestInputDef<float>& input_def,
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<float>("RMSNormalization", {input_def, scale_def}, {}, attrs),
-                  provider_options,
-                  23,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildOpTestCase<float>("RMSNormalization", {input_def, scale_def}, {}, attrs),
+                     provider_options,
+                     23,
+                     expected_ep_assignment);
 }
 
-TEST_F(QnnCPUBackendTests, RMSNorm) {
-  RunRMSNormCpuTest(TestInputDef<float>({2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                    TestInputDef<float>({2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+TEST_F(QnnABICPUBackendTests, RMSNorm) {
+  RunRMSNormCpuTest(TestInputDef<float>({2, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 6)),
+                    TestInputDef<float>({2, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 6)),
                     {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
                     ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnCPUBackendTests, RMSNorm1D_Axis0) {
-  RunRMSNormCpuTest(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                    TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+TEST_F(QnnABICPUBackendTests, RMSNorm1D_Axis0) {
+  RunRMSNormCpuTest(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 6)),
+                    TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 6)),
                     {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
                     ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnCPUBackendTests, RMSNorm2D) {
-  RunRMSNormCpuTest(TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 18)),
-                    TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 18)),
+TEST_F(QnnABICPUBackendTests, RMSNorm2D) {
+  RunRMSNormCpuTest(TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 18)),
+                    TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 18)),
                     {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
                     ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnCPUBackendTests, RMSNorm3D) {
-  RunRMSNormCpuTest(TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 18)),
-                    TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 18)),
+TEST_F(QnnABICPUBackendTests, RMSNorm3D) {
+  RunRMSNormCpuTest(TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 18)),
+                    TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 18)),
                     {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
                     ExpectedEPNodeAssignment::All);
 }
@@ -128,41 +129,41 @@ static void RunRMSNormQDQTest(const TestInputDef<float>& input_def,
     qdq_model_fn(builder, output_qparams_vec);
   };
 
-  RunQnnModelTestHTPNoVerify(model_fn, provider_options, 23, expected_ep_assignment);
+  RunQnnModelTestABI(model_fn, provider_options, 23, expected_ep_assignment, 1e-5, logging::Severity::kERROR, false);
 }
 
-TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis) {
+TEST_F(QnnABIHTPBackendTests, RMSNorm1D_LastAxis) {
   RunRMSNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, 0.0f, 10.0f),
                                       TestInputDef<float>({3}, true, 0.0f, 10.0f),
                                       {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
                                       ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AU8_WU8) {
-  RunRMSNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                                      TestInputDef<float>({3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),
+TEST_F(QnnABIHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AU8_WU8) {
+  RunRMSNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 6)),
+                                      TestInputDef<float>({3}, true, GetFloatDataInRangeABI(0.0f, 1.0f, 3)),
                                       {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
                                       ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AU16_WU8) {
-  RunRMSNormQDQTest<uint16_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                                       TestInputDef<float>({3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),
+TEST_F(QnnABIHTPBackendTests, RMSNorm1D_LastAxis_StaticScale_AU16_WU8) {
+  RunRMSNormQDQTest<uint16_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 6)),
+                                       TestInputDef<float>({3}, true, GetFloatDataInRangeABI(0.0f, 1.0f, 3)),
                                        {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
                                        ExpectedEPNodeAssignment::All,
                                        true);
 }
 
-TEST_F(QnnHTPBackendTests, RMSNormU8U8_4D_LastAxis) {
-  RunRMSNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 18)),
-                                      TestInputDef<float>({3}, true, GetFloatDataInRange(-2.0f, 2.0f, 3)),
+TEST_F(QnnABIHTPBackendTests, RMSNormU8U8_4D_LastAxis) {
+  RunRMSNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRangeABI(-10.0f, 10.0f, 18)),
+                                      TestInputDef<float>({3}, true, GetFloatDataInRangeABI(-2.0f, 2.0f, 3)),
                                       {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
                                       ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnHTPBackendTests, RMSNorm1D_LastAxis_DynamicScale) {
-  RunRMSNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                                      TestInputDef<float>({3}, false, GetFloatDataInRange(0.0f, 1.0f, 3)),
+TEST_F(QnnABIHTPBackendTests, RMSNorm1D_LastAxis_DynamicScale) {
+  RunRMSNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRangeABI(0.0f, 10.0f, 6)),
+                                      TestInputDef<float>({3}, false, GetFloatDataInRangeABI(0.0f, 1.0f, 3)),
                                       {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
                                       ExpectedEPNodeAssignment::All);
 }
