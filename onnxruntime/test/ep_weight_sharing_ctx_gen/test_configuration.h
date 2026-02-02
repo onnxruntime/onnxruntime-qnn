@@ -18,7 +18,7 @@ namespace qnnctxgen {
 // Configuration for initializing the dynamic plugin EP infrastructure.
 struct PluginEpConfig {
   std::string ep_library_registration_name{};
-  std::string ep_library_path{};
+  std::basic_string<ORTCHAR_T> ep_library_path{};
 
   // Note: Exactly one of `selected_ep_name` or `selected_ep_device_indices` should be set.
   // An empty value for either means it is unset.

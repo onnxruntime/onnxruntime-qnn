@@ -115,7 +115,7 @@ static bool SetPluginEpSessionOptions(Ort::Env& env, Ort::SessionOptions& sessio
                                       const qnnctxgen::PluginEpConfig& config,
                                       PluginEpLibraryRegistrationHandle& plugin_ep_library_registration_handle) {
   auto lib_registration_handle = RegisterPluginEpLibrary(env, config.ep_library_registration_name,
-                                                         ToPathString(config.ep_library_path));
+                                                         config.ep_library_path);
 
   std::vector<Ort::ConstEpDevice> ep_devices = env.GetEpDevices();
   std::vector<Ort::ConstEpDevice> selected_ep_devices{};
@@ -208,7 +208,7 @@ int real_main(int argc, char* argv[]) {
       if (const auto& plugin_ep_config = test_config.machine_config.plugin_ep_config; plugin_ep_config.has_value()) {
         if (!SetPluginEpSessionOptions(env, so, *plugin_ep_config, plugin_ep_library_registration_handle)) {
           std::cerr << "ERROR: Failed to initialize session for plugin EP "
-                    << test_config.machine_config.plugin_ep_config->ep_library_path << std::endl;
+                    << qnnctxgen::ToUTF8String(test_config.machine_config.plugin_ep_config->ep_library_path) << std::endl;
           return 1;
         }
       } else if (provider_name_ == onnxruntime::kQnnExecutionProvider) {

@@ -838,11 +838,11 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   f32_helper.model_.SerializeToString(&f32_model_data);
 
-  // Uncomment to save f32 model to disk for debugging.
-  // {
-  //   std::ofstream ofs("cmp_accuracy.f32.onnx", std::ios::binary);
-  //   ofs.write(f32_model_data.data(), static_cast<std::streamsize>(f32_model_data.size()));
-  // }
+  if (QNNTestEnvironment::GetInstance().dump_onnx()) {
+    auto dump_path = output_dir / ToPathString("dumped_f32_model.onnx");
+    std::ofstream ofs(dump_path, std::ios::binary);
+    ofs.write(f32_model_data.data(), static_cast<std::streamsize>(f32_model_data.size()));
+  }
 
   // Run f32 model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_f32_outputs;
@@ -888,11 +888,11 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   qdq_helper.model_.SerializeToString(&qdq_model_data);
 
-  // Uncomment to save QDQ model to disk for debugging.
-  // {
-  //   std::ofstream ofs("cmp_accuracy.qdq.onnx", std::ios::binary);
-  //   ofs.write(qdq_model_data.data(), static_cast<std::streamsize>(qdq_model_data.size()));
-  // }
+  if (QNNTestEnvironment::GetInstance().dump_onnx()) {
+    auto dump_path = output_dir / ToPathString("dumped_qdq_model.onnx");
+    std::ofstream ofs(dump_path, std::ios::binary);
+    ofs.write(qdq_model_data.data(), static_cast<std::streamsize>(qdq_model_data.size()));
+  }
 
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_qdq_outputs;
@@ -1090,8 +1090,8 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   if (QNNTestEnvironment::GetInstance().dump_onnx()) {
     auto dump_path = output_dir / ToPathString("dumped_f32_model.onnx");
-    LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx float32 model at: " << dump_path;
-    ASSERT_STATUS_OK(onnxruntime::Model::Save(f32_model, dump_path));
+    std::ofstream ofs(dump_path, std::ios::binary);
+    ofs.write(f32_model_data.data(), static_cast<std::streamsize>(f32_model_data.size()));
   }
 
   // Run f32 model on CPU EP and collect outputs.
@@ -1540,7 +1540,16 @@ class QnnHTPBackendTests : public ::testing::Test {
   }
 
   // Query QNN platform attributes by directly calling QNN APIs
-  static Status QueryQnnPlatformAttributesDirectly(QnnPlatformAttributes& out, const onnxruntime::logging::Logger& logger);
+  Ort::Status QueryQnnPlatformAttributesDirectly(QnnPlatformAttributes& out, const Ort::Logger& logger);
+
+  // Returns true if the test should be skipped because HTP FP16 is not supported on this platform.
+  static bool ShouldSkipIfHtpFp16Unsupported() {
+#if defined(_WIN32)  // On Windows ARM64, FP16 is not supported if the HTP architecture is v68.
+    return ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68);
+#else
+    return false;
+#endif
+  }
 
   // Returns true if the test should be skipped because AutoEP is not supported on this platform.
   static bool ShouldSkipIfAutoEpNpuUnsupported() {

@@ -360,6 +360,8 @@ static void SetNameAndType(std::string attr_name, ONNX_NAMESPACE::AttributeProto
 
 MAKE_BASIC_ATTR_IMPL(int64_t, ONNX_NAMESPACE::AttributeProto_AttributeType::AttributeProto_AttributeType_INT, i)
 MAKE_LIST_ATTR_IMPL(int64_t, ONNX_NAMESPACE::AttributeProto_AttributeType::AttributeProto_AttributeType_INTS, ints)
+MAKE_BASIC_ATTR_IMPL(float, ONNX_NAMESPACE::AttributeProto_AttributeType::AttributeProto_AttributeType_FLOAT, f)
+MAKE_LIST_ATTR_IMPL(float, ONNX_NAMESPACE::AttributeProto_AttributeType::AttributeProto_AttributeType_FLOATS, floats)
 MAKE_ATTR_IMPL(std::string, ONNX_NAMESPACE::AttributeProto_AttributeType::AttributeProto_AttributeType_STRING, s)
 MAKE_LIST_ATTR_IMPL(std::string, ONNX_NAMESPACE::AttributeProto_AttributeType::AttributeProto_AttributeType_STRINGS, strings)
 #undef MAKE_BASIC_ATTR_IMPL
