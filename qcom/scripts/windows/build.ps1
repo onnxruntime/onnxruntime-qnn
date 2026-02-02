@@ -16,6 +16,10 @@ param (
     [bool]$BuildNuget = $false,
 
     [Parameter(Mandatory = $false,
+               HelpMessage = "Path to ORT Prebuilt.")]
+    [string]$OrtPrebuiltRoot,
+
+    [Parameter(Mandatory = $false,
                HelpMessage = "Path to QAIRT SDK.")]
     [string]$QairtSdkRoot,
 
@@ -71,6 +75,22 @@ if (-not (Test-Path $BuildDir)) {
 
 Enter-PyVenv $PyVEnv
 
+if ($OrtPrebuiltRoot -eq "") {
+    if ($Arch -eq "x86_64") {
+        $OrtPrebuiltRoot = (Get-OrtX64PrebuiltRoot)
+    }
+    elseif ($Arch -eq "ARM64") {
+        $OrtPrebuiltRoot = (Get-OrtARM64PrebuiltRoot)
+    }
+    else {
+        # TODO: Consider Prebuilt for other Arch
+        $OrtPrebuiltRoot = (Get-OrtARM64PrebuiltRoot)
+    }
+}
+else {
+    $OrtPrebuiltRoot = Resolve-Path -Path $OrtPrebuiltRoot
+}
+
 if ($QairtSdkRoot -eq "") {
     $QairtSdkRoot = (Get-QairtRoot)
 }
@@ -117,7 +137,7 @@ $CommonArgs = `
     "--config", $Config, `
     "--parallel"
 
-$QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot"
+$QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot", "--ort_home", "$OrtPrebuiltRoot"
 $GenerateBuild = $false
 $DoBuild = $false
 $BuildWheel = $false
