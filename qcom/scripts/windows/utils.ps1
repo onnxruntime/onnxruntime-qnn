@@ -214,7 +214,7 @@ function Test-UpdateNeeded() {
         [string]$Config,
         [Parameter(Mandatory = $false)]
         [string]$TargetPyVersion = "",
-        [Parameter(Mandatory = $true)]
+        [Parameter(Mandatory = $false)]
         [string]$QairtSdkRoot,
         [Parameter(Mandatory = $true)]
         [string]$CMakeGenerator,

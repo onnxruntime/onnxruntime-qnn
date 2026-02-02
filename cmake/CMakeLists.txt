@@ -1423,6 +1423,8 @@ if (onnxruntime_USE_VITISAI)
     set(CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH};${CMAKE_CURRENT_LIST_DIR}")
 endif()
 
+include(external/onnxruntime_prebuilt.cmake)
+
 set(ORT_BUILD_INFO "ORT Build Info: ")
 find_package(Git)
 if (Git_FOUND)
@@ -1718,7 +1720,14 @@ if (onnxruntime_BUILD_OBJC)
 endif()
 
 if (onnxruntime_BUILD_UNIT_TESTS)
-  list(APPEND ONNXRUNTIME_CMAKE_FILES onnxruntime_unittests)
+  # Skip unit tests for ARM64EC and ARM64X builds
+  if (DEFINED BUILD_AS_ARM64X)
+    message(STATUS "Skipping unit tests for ARM64X builds")
+  elseif(onnxruntime_target_platform STREQUAL "ARM64EC")
+    message(STATUS "Skipping unit tests for ARM64EC builds")
+  else()
+    include(onnxruntime_unittests.cmake)
+  endif()
 endif()
 
 if (onnxruntime_BUILD_WINML_TESTS)

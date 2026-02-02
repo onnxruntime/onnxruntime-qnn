@@ -7,6 +7,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <string>
 #include <string_view>
 #include <unordered_map>
 
@@ -130,59 +131,22 @@ static bool ParseSessionConfigs(const std::string& configs_string,
   return true;
 }
 
-static bool ParsePluginEpConfig(const std::string& json_file_path, PluginEpConfig& config_out) {
-  using json = nlohmann::json;
-  bool success = true;
+#ifdef _WIN32
+std::string ToUTF8String(std::wstring_view s) {
+  if (s.size() >= static_cast<size_t>(std::numeric_limits<int>::max()))
+    throw std::string("length overflow");
 
-  ORT_TRY {
-    std::ifstream ifs{json_file_path};
-    if (!ifs) {
-      std::cerr << "ERROR: Failed to open plugin EP configuration file at path: "
-                << json_file_path.c_str() << std::endl;
-      return false;
-    }
-
-    std::string content(std::istreambuf_iterator<char>{ifs},
-                        std::istreambuf_iterator<char>{});
-    PluginEpConfig config{};
-    const auto parsed_json = json::parse(content);
-
-    // required keys
-    parsed_json.at("ep_library_registration_name").get_to(config.ep_library_registration_name);
-    parsed_json.at("ep_library_path").get_to(config.ep_library_path);
-
-    // optional keys
-    config.default_ep_options = parsed_json.value<decltype(config.default_ep_options)>("default_ep_options", {});
-    config.selected_ep_name = parsed_json.value<decltype(config.selected_ep_name)>("selected_ep_name", {});
-    config.selected_ep_device_indices =
-        parsed_json.value<decltype(config.selected_ep_device_indices)>("selected_ep_device_indices", {});
-
-    if (config.selected_ep_name.empty() == config.selected_ep_device_indices.empty()) {
-      std::cerr << "ERROR: Plugin EP configuration must specify exactly one of 'selected_ep_name' "
-                << "or 'selected_ep_device_indices'" << std::endl;
-      return false;
-    }
-
-    config_out = std::move(config);
-    return success;
-  }
-  ORT_CATCH(const json::exception& e) {
-    ORT_HANDLE_EXCEPTION([&]() {
-      std::string kExampleValidJsonStr =
-          "{\n"
-          "  \"ep_library_registration_name\": \"example_plugin_ep\",\n"
-          "  \"ep_library_path\": \"/path/to/example_plugin_ep.dll\",\n"
-          "  \"selected_ep_name\": \"example_plugin_ep\"\n"
-          "}";
-
-      success = false;
-      std::cerr << "ERROR: JSON parse error: " << e.what() << std::endl;
-      std::cerr << "This is an example valid JSON configuration:\n"
-                << kExampleValidJsonStr.c_str() << std::endl;
-    });
-  }
-  return success;
+  const int src_len = static_cast<int>(s.size() + 1);
+  const int len = WideCharToMultiByte(CP_UTF8, 0, s.data(), src_len, nullptr, 0, nullptr, nullptr);
+  assert(len > 0);
+  std::string ret(static_cast<size_t>(len) - 1, '\0');
+#pragma warning(disable : 4189)
+  const int r = WideCharToMultiByte(CP_UTF8, 0, s.data(), src_len, (char*)ret.data(), len, nullptr, nullptr);
+  assert(len == r);
+#pragma warning(default : 4189)
+  return ret;
 }
+#endif  // #ifdef _WIN32
 
 /*static*/ bool CommandLineParser::ParseArguments(TestConfig& test_config, int argc, ORTCHAR_T* argv[]) {
   int ch;
@@ -234,7 +198,7 @@ static bool ParsePluginEpConfig(const std::string& json_file_path, PluginEpConfi
           }
           auto pos = token.find("|");
           if (pos == std::string::npos || pos == 0 || pos == token.length()) {
-            ORT_THROW("Use a '|' to separate the key and value for the run-time option you are trying to use.");
+            throw std::string("Use a '|' to separate the key and value for the run-time option you are trying to use.");
           }
 
           std::string key(token.substr(0, pos));
@@ -250,7 +214,7 @@ static bool ParsePluginEpConfig(const std::string& json_file_path, PluginEpConfi
               std::copy(supported_htp_graph_final_opt_modes.begin(), supported_htp_graph_final_opt_modes.end(),
                         std::ostream_iterator<std::string>(str_stream, ","));
               std::string str = str_stream.str();
-              ORT_THROW("Wrong value for htp_graph_finalization_optimization_mode. select from: " + str);
+              throw std::string("Wrong value for htp_graph_finalization_optimization_mode. select from: " + str);
             }
           } else if (key == "enable_htp_fp16_precision" || key == "offload_graph_io_quantization" ||
                      key == "enable_htp_spill_fill_buffer") {
@@ -260,10 +224,10 @@ static bool ParsePluginEpConfig(const std::string& json_file_path, PluginEpConfi
               std::copy(supported_options.begin(), supported_options.end(),
                         std::ostream_iterator<std::string>(str_stream, ","));
               std::string str = str_stream.str();
-              ORT_THROW("Wrong value for " + key + ". select from: " + str);
+              throw std::string("Wrong value for " + key + ". select from: " + str);
             }
           } else {
-            ORT_THROW(
+            throw std::string(
                 "Wrong key type entered. Choose from options: ['backend_type', 'backend_path', 'vtcm_mb', "
                 "'htp_performance_mode', 'htp_graph_finalization_optimization_mode', 'soc_model', 'htp_arch', "
                 "'enable_htp_fp16_precision', 'offload_graph_io_quantization', 'enable_htp_spill_fill_buffer']");
