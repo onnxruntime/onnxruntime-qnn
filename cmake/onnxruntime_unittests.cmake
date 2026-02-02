@@ -356,6 +356,14 @@ file(GLOB onnxruntime_test_utils_src CONFIGURE_DEPENDS
   "${TEST_SRC_DIR}/util/*.cc"
 )
 
+file(GLOB onnxruntime_test_utils_public_values_src CMAKE_CONFIGURE_DEPENDS
+  "${TEST_SRC_DIR}/util/values/public_api/*.cc"
+)
+
+file(GLOB onnxruntime_test_utils_internal_values_src CMAKE_CONFIGURE_DEPENDS
+  "${TEST_SRC_DIR}/util/values/internal_api/*.cc"
+)
+
 file(GLOB onnxruntime_test_common_src CONFIGURE_DEPENDS
   "${TEST_SRC_DIR}/common/*.cc"
   "${TEST_SRC_DIR}/common/*.h"
@@ -597,6 +605,7 @@ set (onnxruntime_shared_lib_test_SRC
 if (NOT onnxruntime_MINIMAL_BUILD)
   list(APPEND onnxruntime_shared_lib_test_SRC ${ONNXRUNTIME_SHARED_LIB_TEST_SRC_DIR}/test_inference.cc)
   list(APPEND onnxruntime_shared_lib_test_SRC ${ONNXRUNTIME_SHARED_LIB_TEST_SRC_DIR}/test_model_builder_api.cc)
+  list(APPEND onnxruntime_shared_lib_test_SRC ${ONNXRUNTIME_SHARED_LIB_TEST_SRC_DIR}/test_env_creation.cc)
 endif()
 
 if(onnxruntime_RUN_ONNX_TESTS)
@@ -619,6 +628,7 @@ set (onnxruntime_webgpu_delay_load_test_SRC
 
 set(onnxruntime_test_common_libs
   onnxruntime_unittest_utils
+  onnxruntime_test_utils_internal_values
   onnxruntime_common
 )
 
@@ -846,6 +856,21 @@ target_include_directories(onnxruntime_test_utils PUBLIC "${TEST_SRC_DIR}/util/i
 set_target_properties(onnxruntime_test_utils PROPERTIES FOLDER "ONNXRuntimeTest")
 source_group(TREE ${TEST_SRC_DIR} FILES ${onnxruntime_test_utils_src})
 
+# This utility library uses onnxruntime c/c++ apis to provide capability of comparing two OrtValues with all supported data type.
+onnxruntime_add_static_library(onnxruntime_test_utils_public_values ${onnxruntime_test_utils_public_values_src})
+onnxruntime_add_include_to_target(onnxruntime_test_utils_public_values onnxruntime_common onnx onnx_proto Eigen3::Eigen)
+target_include_directories(onnxruntime_test_utils_public_values PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${ONNXRUNTIME_ROOT})
+add_dependencies(onnxruntime_test_utils_public_values ${onnxruntime_EXTERNAL_DEPENDENCIES})
+set_target_properties(onnxruntime_test_utils_public_values PROPERTIES FOLDER "ONNXRuntimeTest")
+
+# This utility library uses internal onnxruntime libraries, e.g. onnxruntime::Tensor, to provide capability of comparing two OrtValues with all supported data type.
+onnxruntime_add_static_library(onnxruntime_test_utils_internal_values ${onnxruntime_test_utils_internal_values_src})
+onnxruntime_add_include_to_target(onnxruntime_test_utils_internal_values onnxruntime_common onnx onnx_proto flatbuffers::flatbuffers Boost::mp11 Eigen3::Eigen)
+target_include_directories(onnxruntime_test_utils_internal_values PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${ONNXRUNTIME_ROOT} "${TEST_SRC_DIR}/util/include")
+add_dependencies(onnxruntime_test_utils_internal_values ${onnxruntime_EXTERNAL_DEPENDENCIES})
+set_target_properties(onnxruntime_test_utils_internal_values PROPERTIES FOLDER "ONNXRuntimeTest")
+
+
 # onnxruntime_unittest_utils
 # This is static library containing utilities that are specifically for unit tests.
 # Unlike onnxruntime_test_utils, the source files here may have dependencies on internal onnxruntime code.
@@ -902,9 +927,11 @@ if(NOT IOS)
     set(onnx_test_runner_src_dir ${TEST_SRC_DIR}/onnx)
     file(GLOB onnx_test_runner_common_srcs CONFIGURE_DEPENDS
         ${onnx_test_runner_src_dir}/*.h
-        ${onnx_test_runner_src_dir}/*.cc)
+        ${onnx_test_runner_src_dir}/*.cc
+        ${onnx_test_runner_src_dir}/utils/*.h
+        ${onnx_test_runner_src_dir}/utils/*.cc)
 
-    list(REMOVE_ITEM onnx_test_runner_common_srcs ${onnx_test_runner_src_dir}/main.cc)
+        list(REMOVE_ITEM onnx_test_runner_common_srcs ${onnx_test_runner_src_dir}/main.cc)
 
     onnxruntime_add_static_library(onnx_test_runner_common ${onnx_test_runner_common_srcs})
     if(MSVC)
@@ -953,9 +980,9 @@ if (onnxruntime_ENABLE_CUDA_EP_INTERNAL_TESTS)
   onnxruntime_add_shared_library_module(onnxruntime_providers_cuda_ut ${onnxruntime_test_providers_cuda_ut_src} $<TARGET_OBJECTS:onnxruntime_providers_cuda_obj>)
   config_cuda_provider_shared_module(onnxruntime_providers_cuda_ut)
   onnxruntime_add_include_to_target(onnxruntime_providers_cuda_ut GTest::gtest GTest::gmock)
-  add_dependencies(onnxruntime_providers_cuda_ut onnxruntime_test_utils onnxruntime_common)
+  add_dependencies(onnxruntime_providers_cuda_ut onnxruntime_test_utils)
   target_include_directories(onnxruntime_providers_cuda_ut PRIVATE ${ONNXRUNTIME_ROOT}/core/mickey)
-  target_link_libraries(onnxruntime_providers_cuda_ut PRIVATE GTest::gtest GTest::gmock ${ONNXRUNTIME_MLAS_LIBS} onnxruntime_test_utils onnxruntime_common)
+  target_link_libraries(onnxruntime_providers_cuda_ut PRIVATE GTest::gtest GTest::gmock ${ONNXRUNTIME_MLAS_LIBS} onnxruntime_test_utils onnxruntime_test_utils_internal_values)
   if (MSVC)
     # Cutlass code has an issue with the following:
     # warning C4100: 'magic': unreferenced formal parameter
@@ -1027,6 +1054,43 @@ endif()
 
 partition_provider_test_srcs(all_tests onnxruntime_provider_test_srcs onnxruntime_test_all_srcs)
 
+# Workarounds for onnxruntime test targets.
+function(onnxruntime_apply_test_target_workarounds target)
+  if (MSVC)
+    # TODO: The test code for OpenVINO, QNN, and WebGPU is getting flagged with a warning from ABSL for unreachable code.
+    # Need to figure out how those particular targets/build variants are failing, but regular windows is not.
+    target_compile_options(${target} PRIVATE "/wd4702")
+  endif()
+
+  # TODO fix shorten-64-to-32 warnings
+  # there are some in builds where sizeof(size_t) != sizeof(int64_t), e.g., in 'ONNX Runtime Web CI Pipeline'
+  if (HAS_SHORTEN_64_TO_32 AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    target_compile_options(${target} PRIVATE -Wno-error=shorten-64-to-32)
+  endif()
+endfunction()
+
+function(onnxruntime_apply_emscripten_test_link_settings target)
+  if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+    set_target_properties(${target} PROPERTIES LINK_DEPENDS ${TEST_SRC_DIR}/wasm/onnxruntime_test_adapter.js)
+    set_target_properties(${target} PROPERTIES LINK_DEPENDS ${ONNXRUNTIME_ROOT}/wasm/pre.js)
+    set_target_properties(${target} PROPERTIES LINK_FLAGS "-s STACK_SIZE=5242880 -s INITIAL_MEMORY=536870912 -s ALLOW_MEMORY_GROWTH=1 -s MAXIMUM_MEMORY=4294967296 -s INCOMING_MODULE_JS_API=[preRun,locateFile,arguments,onExit,wasmMemory,buffer,instantiateWasm] --pre-js \"${TEST_SRC_DIR}/wasm/onnxruntime_test_adapter.js\" --pre-js \"${ONNXRUNTIME_ROOT}/wasm/pre.js\" -s \"EXPORTED_RUNTIME_METHODS=['FS']\" --preload-file ${CMAKE_CURRENT_BINARY_DIR}/testdata@/testdata -s EXIT_RUNTIME=1")
+    if (onnxruntime_ENABLE_WEBASSEMBLY_THREADS)
+      set_property(TARGET ${target} APPEND_STRING PROPERTY LINK_FLAGS " -s DEFAULT_PTHREAD_STACK_SIZE=131072 -s PROXY_TO_PTHREAD=1")
+    endif()
+    if (onnxruntime_USE_JSEP)
+      set_target_properties(${target} PROPERTIES LINK_DEPENDS ${ONNXRUNTIME_ROOT}/wasm/pre-jsep.js)
+      set_property(TARGET ${target} APPEND_STRING PROPERTY LINK_FLAGS " --pre-js \"${ONNXRUNTIME_ROOT}/wasm/pre-jsep.js\"")
+    endif()
+
+    ###
+    ### if you want to investigate or debug a test failure in ${target}, replace the following line.
+    ### those flags slow down the CI test significantly, so we don't use them by default.
+    ###
+    #   set_property(TARGET ${target} APPEND_STRING PROPERTY LINK_FLAGS " -s ASSERTIONS=2 -s SAFE_HEAP=1 -s STACK_OVERFLOW_CHECK=2")
+    set_property(TARGET ${target} APPEND_STRING PROPERTY LINK_FLAGS " -s ASSERTIONS=0 -s SAFE_HEAP=0 -s STACK_OVERFLOW_CHECK=1")
+  endif()
+endfunction()
+
 list(APPEND onnxruntime_test_all_srcs ${onnxruntime_unittest_main_src})
 AddTest(
   TARGET onnxruntime_test_all
@@ -1039,6 +1103,8 @@ AddTest(
 )
 target_include_directories(onnxruntime_test_all PRIVATE ${ONNXRUNTIME_ROOT}/core/flatbuffers/schema) # ort.fbs.h
 
+onnxruntime_apply_test_target_workarounds(onnxruntime_test_all)
+
 if (MSVC)
   # The warning means the type of two integral values around a binary operator is narrow than their result.
   # If we promote the two input values first, it could be more tolerant to integer overflow.
@@ -1048,10 +1114,6 @@ if (MSVC)
   target_compile_options(onnxruntime_test_all PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:--compiler-options /wd4244>"
                 "$<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:/wd4244>")
 
-  # TODO: The test code for OpenVINO, QNN, and WebGPU is getting flagged with a warning from ABSL for unreachabel code.
-  # Need to figure out how those particular targets/build variants are failing, but regular windows is not.
-  target_compile_options(onnxruntime_test_all PRIVATE "/wd4702")
-
   # Avoid this compile error in graph_transform_test.cc and qdq_transformer_test.cc:
   # fatal error C1128: number of sections exceeded object file format limit: compile with /bigobj
   set_property(SOURCE "${TEST_SRC_DIR}/optimizer/graph_transform_test.cc"
@@ -1059,18 +1121,6 @@ if (MSVC)
                APPEND PROPERTY COMPILE_OPTIONS "/bigobj")
 else()
   target_compile_options(onnxruntime_test_all PRIVATE "-Wno-parentheses")
-endif()
-
-# TODO fix shorten-64-to-32 warnings
-# there are some in builds where sizeof(size_t) != sizeof(int64_t), e.g., in 'ONNX Runtime Web CI Pipeline'
-if (HAS_SHORTEN_64_TO_32 AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
-  target_compile_options(onnxruntime_test_all PRIVATE -Wno-error=shorten-64-to-32)
-endif()
-
-if (UNIX AND (onnxruntime_USE_TENSORRT OR onnxruntime_USE_NV))
-    # The test_main.cc includes NvInfer.h where it has many deprecated declarations
-    # simply ignore them for TensorRT EP build
-    set_property(TARGET onnxruntime_test_all APPEND_STRING PROPERTY COMPILE_FLAGS "-Wno-deprecated-declarations")
 endif()
 
 if (MSVC AND onnxruntime_ENABLE_STATIC_ANALYSIS)
@@ -1103,25 +1153,7 @@ endif()
 if (onnxruntime_ENABLE_TRAINING_TORCH_INTEROP)
   target_link_libraries(onnxruntime_test_all PRIVATE Python::Python)
 endif()
-if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-  set_target_properties(onnxruntime_test_all PROPERTIES LINK_DEPENDS ${TEST_SRC_DIR}/wasm/onnxruntime_test_adapter.js)
-  set_target_properties(onnxruntime_test_all PROPERTIES LINK_DEPENDS ${ONNXRUNTIME_ROOT}/wasm/pre.js)
-  set_target_properties(onnxruntime_test_all PROPERTIES LINK_FLAGS "-s STACK_SIZE=5242880 -s INITIAL_MEMORY=536870912 -s ALLOW_MEMORY_GROWTH=1 -s MAXIMUM_MEMORY=4294967296 -s INCOMING_MODULE_JS_API=[preRun,locateFile,arguments,onExit,wasmMemory,buffer,instantiateWasm] --pre-js \"${TEST_SRC_DIR}/wasm/onnxruntime_test_adapter.js\" --pre-js \"${ONNXRUNTIME_ROOT}/wasm/pre.js\" -s \"EXPORTED_RUNTIME_METHODS=['FS']\" --preload-file ${CMAKE_CURRENT_BINARY_DIR}/testdata@/testdata -s EXIT_RUNTIME=1")
-  if (onnxruntime_ENABLE_WEBASSEMBLY_THREADS)
-    set_property(TARGET onnxruntime_test_all APPEND_STRING PROPERTY LINK_FLAGS " -s DEFAULT_PTHREAD_STACK_SIZE=131072 -s PROXY_TO_PTHREAD=1")
-  endif()
-  if (onnxruntime_USE_JSEP)
-    set_target_properties(onnxruntime_test_all PROPERTIES LINK_DEPENDS ${ONNXRUNTIME_ROOT}/wasm/pre-jsep.js)
-    set_property(TARGET onnxruntime_test_all APPEND_STRING PROPERTY LINK_FLAGS " --pre-js \"${ONNXRUNTIME_ROOT}/wasm/pre-jsep.js\"")
-  endif()
-
-  ###
-  ### if you want to investigate or debug a test failure in onnxruntime_test_all, replace the following line.
-  ### those flags slow down the CI test significantly, so we don't use them by default.
-  ###
-  #   set_property(TARGET onnxruntime_test_all APPEND_STRING PROPERTY LINK_FLAGS " -s ASSERTIONS=2 -s SAFE_HEAP=1 -s STACK_OVERFLOW_CHECK=2")
-  set_property(TARGET onnxruntime_test_all APPEND_STRING PROPERTY LINK_FLAGS " -s ASSERTIONS=0 -s SAFE_HEAP=0 -s STACK_OVERFLOW_CHECK=1")
-endif()
+onnxruntime_apply_emscripten_test_link_settings(onnxruntime_test_all)
 
 if (onnxruntime_ENABLE_ATEN)
   target_compile_definitions(onnxruntime_test_all PRIVATE ENABLE_ATEN)
@@ -1133,7 +1165,7 @@ onnxruntime_add_static_library(onnx_test_data_proto ${TEST_SRC_DIR}/proto/tml.pr
 add_dependencies(onnx_test_data_proto onnx_proto ${onnxruntime_EXTERNAL_DEPENDENCIES})
 #onnx_proto target should mark this definition as public, instead of private
 target_compile_definitions(onnx_test_data_proto PRIVATE "-DONNX_API=")
-onnxruntime_add_include_to_target(onnx_test_data_proto onnx_proto)
+onnxruntime_add_include_to_target(onnx_test_data_proto onnx_proto ${PROTOBUF_LIB})
 if (MSVC)
     # Cutlass code has an issue with the following:
     # warning C4100: 'magic': unreferenced formal parameter
@@ -1237,7 +1269,9 @@ block()
     DEPENDS ${onnxruntime_provider_test_deps}
   )
 
-  # Expose QNN SDK headers to unit tests via an interface target 
+  onnxruntime_apply_test_target_workarounds(onnxruntime_provider_test)
+
+  # Expose QNN SDK headers to unit tests via an interface target
   if(onnxruntime_USE_QNN)
     add_library(qnn_sdk_headers_include INTERFACE)
     target_include_directories(qnn_sdk_headers_include INTERFACE
@@ -1245,50 +1279,10 @@ block()
       ${onnxruntime_QNN_HOME}/include/QNN)
     target_link_libraries(onnxruntime_provider_test PRIVATE qnn_sdk_headers_include)
   endif()
-  
-  if (UNIX AND (onnxruntime_USE_TENSORRT OR onnxruntime_USE_NV))
-    # The test_main.cc includes NvInfer.h where it has many deprecated declarations
-    # simply ignore them for TensorRT EP build
-    set_property(TARGET onnxruntime_provider_test APPEND_STRING PROPERTY COMPILE_FLAGS "-Wno-deprecated-declarations")
-  endif()
 
   # enable dynamic plugin EP usage
   target_compile_definitions(onnxruntime_provider_test PRIVATE ORT_UNIT_TEST_ENABLE_DYNAMIC_PLUGIN_EP_USAGE)
-
-
-  if (MSVC)
-    # TODO: The test code for OpenVINO, QNN, and WebGPU is getting flagged with a warning from ABSL for unreachabel code.
-    # Need to figure out how those particular targets/build variants are failing, but regular windows is not.
-    target_compile_options(onnxruntime_provider_test PRIVATE "/wd4702")
-  endif()
-
-  # TODO fix shorten-64-to-32 warnings
-  # there are some in builds where sizeof(size_t) != sizeof(int64_t), e.g., in 'ONNX Runtime Web CI Pipeline'
-  if (HAS_SHORTEN_64_TO_32 AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
-    target_compile_options(onnxruntime_provider_test PRIVATE -Wno-error=shorten-64-to-32)
-  endif()
-
-  # copied from onnxruntime_test_all
-  # TODO reuse instead of copy?
-  if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
-    set_target_properties(onnxruntime_provider_test PROPERTIES LINK_DEPENDS ${TEST_SRC_DIR}/wasm/onnxruntime_test_adapter.js)
-    set_target_properties(onnxruntime_provider_test PROPERTIES LINK_DEPENDS ${ONNXRUNTIME_ROOT}/wasm/pre.js)
-    set_target_properties(onnxruntime_provider_test PROPERTIES LINK_FLAGS "-s STACK_SIZE=5242880 -s INITIAL_MEMORY=536870912 -s ALLOW_MEMORY_GROWTH=1 -s MAXIMUM_MEMORY=4294967296 -s INCOMING_MODULE_JS_API=[preRun,locateFile,arguments,onExit,wasmMemory,buffer,instantiateWasm] --pre-js \"${TEST_SRC_DIR}/wasm/onnxruntime_test_adapter.js\" --pre-js \"${ONNXRUNTIME_ROOT}/wasm/pre.js\" -s \"EXPORTED_RUNTIME_METHODS=['FS']\" --preload-file ${CMAKE_CURRENT_BINARY_DIR}/testdata@/testdata -s EXIT_RUNTIME=1")
-    if (onnxruntime_ENABLE_WEBASSEMBLY_THREADS)
-      set_property(TARGET onnxruntime_provider_test APPEND_STRING PROPERTY LINK_FLAGS " -s DEFAULT_PTHREAD_STACK_SIZE=131072 -s PROXY_TO_PTHREAD=1")
-    endif()
-    if (onnxruntime_USE_JSEP)
-      set_target_properties(onnxruntime_provider_test PROPERTIES LINK_DEPENDS ${ONNXRUNTIME_ROOT}/wasm/pre-jsep.js)
-      set_property(TARGET onnxruntime_provider_test APPEND_STRING PROPERTY LINK_FLAGS " --pre-js \"${ONNXRUNTIME_ROOT}/wasm/pre-jsep.js\"")
-    endif()
-
-    ###
-    ### if you want to investigate or debug a test failure in onnxruntime_provider_test, replace the following line.
-    ### those flags slow down the CI test significantly, so we don't use them by default.
-    ###
-    #   set_property(TARGET onnxruntime_provider_test APPEND_STRING PROPERTY LINK_FLAGS " -s ASSERTIONS=2 -s SAFE_HEAP=1 -s STACK_OVERFLOW_CHECK=2")
-    set_property(TARGET onnxruntime_provider_test APPEND_STRING PROPERTY LINK_FLAGS " -s ASSERTIONS=0 -s SAFE_HEAP=0 -s STACK_OVERFLOW_CHECK=1")
-  endif()
+  onnxruntime_apply_emscripten_test_link_settings(onnxruntime_provider_test)
 
   if (IOS)
     add_custom_command(
@@ -1302,6 +1296,7 @@ endif()
 
 set(onnx_test_libs
   onnxruntime_test_utils
+  onnxruntime_test_utils_internal_values
   ${ONNXRUNTIME_TEST_LIBS}
   onnx_test_data_proto
   ${onnxruntime_EXTERNAL_LIBRARIES})
@@ -1329,6 +1324,60 @@ if (NOT IOS)
     set_target_properties(onnx_test_runner PROPERTIES FOLDER "ONNXRuntimeTest")
 
     install(TARGETS onnx_test_runner
+            ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            LIBRARY  DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            BUNDLE   DESTINATION ${CMAKE_INSTALL_LIBDIR}
+            RUNTIME  DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
+
+if (NOT IOS)
+    onnxruntime_add_executable(onnxruntime_plugin_ep_onnx_test
+                               ${onnx_test_runner_src_dir}/plugin_ep/main.cc
+                               ${onnx_test_runner_src_dir}/plugin_ep/command_args_parser.cc
+                               ${onnx_test_runner_src_dir}/plugin_ep/command_args_parser.h)
+    if(MSVC)
+      target_compile_options(onnxruntime_plugin_ep_onnx_test PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:--compiler-options /utf-8>"
+              "$<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:/utf-8>")
+    endif()
+    if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
+      if (onnxruntime_ENABLE_WEBASSEMBLY_THREADS)
+        set_target_properties(onnxruntime_plugin_ep_onnx_test PROPERTIES LINK_FLAGS "-s NODERAWFS=1 -s ALLOW_MEMORY_GROWTH=1 -s PROXY_TO_PTHREAD=1 -s EXIT_RUNTIME=1")
+      else()
+        set_target_properties(onnxruntime_plugin_ep_onnx_test PROPERTIES LINK_FLAGS "-s NODERAWFS=1 -s ALLOW_MEMORY_GROWTH=1")
+      endif()
+    endif()
+
+    # ABSL_FLAGS_STRIP_NAMES is set to 1 by default to disable flag registration when building for Android, iPhone, and "embedded devices".
+    # See the issue: https://github.com/abseil/abseil-cpp/issues/1875
+    # We set it to 0 for all builds to be able to use ABSL flags for onnxruntime_plugin_ep_onnx_test.
+    target_compile_definitions(onnxruntime_plugin_ep_onnx_test PRIVATE ABSL_FLAGS_STRIP_NAMES=0)
+
+    if (onnxruntime_BUILD_SHARED_LIB)
+      set(onnx_test_runner_libs
+            onnx_test_runner_common onnxruntime_test_utils onnxruntime_test_utils_public_values onnxruntime_common
+            onnxruntime onnxruntime_flatbuffers onnx_test_data_proto
+            ${onnxruntime_EXTERNAL_LIBRARIES}
+            absl::flags absl::flags_parse ${SYS_PATH_LIB} ${CMAKE_DL_LIBS})
+
+      target_link_libraries(onnxruntime_plugin_ep_onnx_test PRIVATE ${onnx_test_runner_libs} nlohmann_json::nlohmann_json)
+
+      if(WIN32)
+        target_link_libraries(onnxruntime_plugin_ep_onnx_test PRIVATE debug dbghelp advapi32)
+      endif()
+    else()
+        target_link_libraries(onnxruntime_plugin_ep_onnx_test PRIVATE onnx_test_runner_common absl::flags absl::flags_parse ${onnx_test_libs} nlohmann_json::nlohmann_json)
+    endif()
+
+    target_include_directories(onnxruntime_plugin_ep_onnx_test PRIVATE ${ONNXRUNTIME_ROOT})
+    target_include_directories(onnxruntime_plugin_ep_onnx_test PRIVATE ${onnx_test_runner_src_dir})
+    target_include_directories(onnxruntime_plugin_ep_onnx_test PRIVATE ${TEST_SRC_DIR})
+
+    if (onnxruntime_ENABLE_TRAINING_TORCH_INTEROP)
+      target_link_libraries(onnxruntime_plugin_ep_onnx_test PRIVATE Python::Python)
+    endif()
+    set_target_properties(onnxruntime_plugin_ep_onnx_test PROPERTIES FOLDER "ONNXRuntimeTest")
+
+    install(TARGETS onnxruntime_plugin_ep_onnx_test
             ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}
             LIBRARY  DESTINATION ${CMAKE_INSTALL_LIBDIR}
             BUNDLE   DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -1658,12 +1707,6 @@ endif()
         $<TARGET_FILE_DIR:onnxruntime_shared_lib_test>/testdata)
     endif()
 
-    if (UNIX AND (onnxruntime_USE_TENSORRT OR onnxruntime_USE_NV))
-        # The test_main.cc includes NvInfer.h where it has many deprecated declarations
-        # simply ignore them for TensorRT EP build
-        set_property(TARGET onnxruntime_shared_lib_test APPEND_STRING PROPERTY COMPILE_FLAGS "-Wno-deprecated-declarations")
-    endif()
-
     # test inference using global threadpools
     if (NOT CMAKE_SYSTEM_NAME MATCHES "Android|iOS" AND NOT onnxruntime_MINIMAL_BUILD)
       AddTest(DYN
@@ -1958,12 +2001,6 @@ if (NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
         $<TARGET_FILE_DIR:onnxruntime_customopregistration_test>/testdata)
     endif()
 
-    if (UNIX AND (onnxruntime_USE_TENSORRT OR onnxruntime_USE_NV))
-        # The test_main.cc includes NvInfer.h where it has many deprecated declarations
-        # simply ignore them for TensorRT EP build
-        set_property(TARGET onnxruntime_customopregistration_test APPEND_STRING PROPERTY COMPILE_FLAGS "-Wno-deprecated-declarations")
-    endif()
-
   endif()
 endif()
 
@@ -2143,7 +2180,13 @@ if (onnxruntime_BUILD_SHARED_LIB AND
           "${TEST_SRC_DIR}/autoep/library/example_plugin_ep_kernel_registry/kernels/relu.h"
           "${TEST_SRC_DIR}/autoep/library/example_plugin_ep_kernel_registry/kernels/relu.cc"
           "${TEST_SRC_DIR}/autoep/library/example_plugin_ep_kernel_registry/kernels/binary_op.h"
-          "${TEST_SRC_DIR}/autoep/library/example_plugin_ep_kernel_registry/kernels/binary_op.cc")
+          "${TEST_SRC_DIR}/autoep/library/example_plugin_ep_kernel_registry/kernels/binary_op.cc"
+          "${TEST_SRC_DIR}/autoep/library/example_plugin_ep_kernel_registry/kernels/scan.h"
+          "${TEST_SRC_DIR}/autoep/library/example_plugin_ep_kernel_registry/kernels/scan.cc"
+          "${TEST_SRC_DIR}/autoep/library/example_plugin_ep_kernel_registry/kernels/loop.h"
+          "${TEST_SRC_DIR}/autoep/library/example_plugin_ep_kernel_registry/kernels/loop.cc"
+          "${TEST_SRC_DIR}/autoep/library/example_plugin_ep_kernel_registry/kernels/if.h"
+          "${TEST_SRC_DIR}/autoep/library/example_plugin_ep_kernel_registry/kernels/if.cc")
   onnxruntime_add_shared_library_module(example_plugin_ep_kernel_registry ${onnxruntime_autoep_test_example_plugin_ep_kernel_registry_src})
   target_include_directories(example_plugin_ep_kernel_registry PRIVATE ${REPO_ROOT}/include/onnxruntime/core/session)
   target_link_libraries(example_plugin_ep_kernel_registry PRIVATE onnxruntime ${GSL_TARGET})
@@ -2337,11 +2380,6 @@ if (onnxruntime_BUILD_SHARED_LIB AND NOT CMAKE_SYSTEM_NAME STREQUAL "Emscripten"
           LIBS ${onnxruntime_ep_graph_test_LIBS}
           DEPENDS ${all_dependencies}
   )
-  if (UNIX AND (onnxruntime_USE_TENSORRT OR onnxruntime_USE_NV))
-    # The test_main.cc includes NvInfer.h where it has many deprecated declarations
-    # simply ignore them for TensorRT EP build
-    set_property(TARGET onnxruntime_ep_graph_test APPEND_STRING PROPERTY COMPILE_FLAGS "-Wno-deprecated-declarations")
-  endif()
 endif()
 
 include(onnxruntime_fuzz_test.cmake)

@@ -11,9 +11,7 @@ namespace onnxruntime {
 
 class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
  public:
-  QnnEpFactory(const char* ep_name,
-               ApiPtrs ort_api_in,
-               std::unordered_map<OrtHardwareDeviceType, std::string> supported_backends);
+  QnnEpFactory(const char* ep_name, ApiPtrs ort_api_in);
 
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEpFactory* this_ptr) noexcept;
@@ -38,6 +36,12 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   static OrtStatus* ORT_API_CALL CreateDataTransferImpl(OrtEpFactory* this_ptr,
                                                         OrtDataTransferImpl** data_transfer) noexcept;
   static bool ORT_API_CALL IsStreamAwareImpl(const OrtEpFactory* this_ptr) noexcept;
+  static OrtStatus* ORT_API_CALL ValidateCompiledModelCompatibilityInfoImpl(
+      _In_ OrtEpFactory* this_ptr,
+      _In_reads_(num_devices) const OrtHardwareDevice* const* devices,
+      _In_ size_t num_devices,
+      _In_ const char* compatibility_info,
+      _Out_ OrtCompiledModelCompatibility* model_compatibility) noexcept;
 
   // const OrtApi& ort_api;
   const std::string ep_name_;              // EP name
@@ -46,13 +50,12 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
 
   // Qualcomm vendor ID. Refer to the ACPI ID registry (search Qualcomm): https://uefi.org/ACPI_ID_List
   const uint32_t vendor_id_{'Q' | ('C' << 8) | ('O' << 16) | ('M' << 24)};
-  // Supported OrtHardwareDeviceTypes and their QNN backend paths.
-  const std::unordered_map<OrtHardwareDeviceType, std::string> supported_backends_;
 
   // CPU allocator so we can control the arena behavior. optional as ORT always provides a CPU allocator if needed.
   using MemoryInfoUniquePtr = std::unique_ptr<OrtMemoryInfo, std::function<void(OrtMemoryInfo*)>>;
   MemoryInfoUniquePtr host_accessible_memory_info_;
 
+  QnnEp* qnn_ep_ = nullptr;
   std::vector<OrtEpDevice*> ep_devices_;
 };
 

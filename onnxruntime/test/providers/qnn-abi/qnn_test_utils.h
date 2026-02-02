@@ -6,12 +6,14 @@
 #if !defined(ORT_MINIMAL_BUILD)
 #include <cmath>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <type_traits>
 #include <unordered_map>
 #include "core/framework/provider_options.h"
 #include "core/framework/tensor_shape.h"
 #include "core/common/float16.h"
+#include "core/optimizer/graph_transformer_level.h"
 #include "core/session/onnxruntime_session_options_config_keys.h"
 #include "core/util/qmath.h"
 
@@ -21,6 +23,13 @@
 #include "test/util/include/default_providers.h"
 
 #include "gtest/gtest.h"
+
+// QNN SDK headers for platform attribute queries.
+#include "HTP/QnnHtpDevice.h"
+#include "QnnDevice.h"
+#include "QnnInterface.h"
+#include "QnnLog.h"
+#include "QnnTypes.h"
 
 namespace onnxruntime {
 namespace test {
@@ -475,7 +484,8 @@ void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
                        ExpectedEPNodeAssignment expected_ep_assignment,
                        const NameMLValMap& feeds,
-                       std::vector<OrtValue>& output_vals);
+                       std::vector<OrtValue>& output_vals,
+                       std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt);
 
 void InferenceModelABI(const std::string& model_data,
                        const char* log_id,
@@ -484,6 +494,7 @@ void InferenceModelABI(const std::string& model_data,
                        const NameMLValMap& feeds,
                        std::vector<OrtValue>& output_vals,
                        const std::unordered_map<std::string, std::string>& session_option_pairs = {},
+                       std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
                        std::function<void(const Graph&)>* graph_checker = nullptr);
 
 /**
@@ -720,6 +731,7 @@ inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn,
                                     logging::Severity log_severity = logging::Severity::kERROR,
                                     const std::string& qnn_ctx_model_path = "",
                                     const std::unordered_map<std::string, std::string>& session_option_pairs = {},
+                                    std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
                                     std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr) {
   std::filesystem::path output_dir;
   if (QNNABITestEnvironment::GetInstance().dump_onnx() ||
@@ -760,7 +772,7 @@ inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn,
   // Run f32 model on CPU EP and collect outputs.
   std::vector<OrtValue> cpu_f32_outputs;
   InferenceModelCPU(f32_model_data, "f32_model_logger", ExpectedEPNodeAssignment::All,
-                    f32_helper.feeds_, cpu_f32_outputs);
+                    f32_helper.feeds_, cpu_f32_outputs, graph_optimization_level);
   ASSERT_FALSE(cpu_f32_outputs.empty());
 
   const size_t num_outputs = cpu_f32_outputs.size();
@@ -806,7 +818,7 @@ inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn,
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<OrtValue> cpu_qdq_outputs;
   InferenceModelCPU(qdq_model_data, "qdq_model_logger", ExpectedEPNodeAssignment::All,
-                    qdq_helper.feeds_, cpu_qdq_outputs);
+                    qdq_helper.feeds_, cpu_qdq_outputs, graph_optimization_level);
 
   TryEnableQNNSaverABI(qnn_options);
 
@@ -838,7 +850,8 @@ inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn,
                       expected_ep_assignment,
                       qdq_helper.feeds_,
                       qnn_abi_qdq_outputs,
-                      session_option_pairs);
+                      session_option_pairs,
+                      graph_optimization_level);
   } else {
     InferenceModelABI(qdq_model_data,
                       "qdq_abi_model_logger",
@@ -847,6 +860,7 @@ inline void TestQDQModelAccuracyABI(const GetTestModelFn& f32_model_fn,
                       qdq_helper.feeds_,
                       qnn_abi_qdq_outputs,
                       session_option_pairs,
+                      graph_optimization_level,
                       qnn_ep_graph_checker);
   }
 
@@ -969,7 +983,8 @@ inline void TestFp16ModelAccuracyABI(const GetTestModelFn& f32_model_fn,
                                      float tolerance = 0.004,
                                      logging::Severity log_severity = logging::Severity::kERROR,
                                      const std::string& qnn_ctx_model_path = "",
-                                     const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
+                                     const std::unordered_map<std::string, std::string>& session_option_pairs = {},
+                                     std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt) {
   std::filesystem::path output_dir;
   if (QNNABITestEnvironment::GetInstance().dump_onnx() ||
       QNNABITestEnvironment::GetInstance().dump_dlc() ||
@@ -1007,7 +1022,7 @@ inline void TestFp16ModelAccuracyABI(const GetTestModelFn& f32_model_fn,
   // Run f32 model on CPU EP and collect outputs.
   std::vector<OrtValue> cpu_f32_outputs;
   InferenceModelCPU(f32_model_data, "f32_model_logger", ExpectedEPNodeAssignment::All,
-                    f32_helper.feeds_, cpu_f32_outputs);
+                    f32_helper.feeds_, cpu_f32_outputs, graph_optimization_level);
   ASSERT_FALSE(cpu_f32_outputs.empty());
 
   const size_t num_outputs = cpu_f32_outputs.size();
@@ -1049,7 +1064,7 @@ inline void TestFp16ModelAccuracyABI(const GetTestModelFn& f32_model_fn,
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<OrtValue> cpu_f16_outputs;
   InferenceModelCPU(f16_model_data, "fp16_model_logger", ExpectedEPNodeAssignment::All,
-                    f16_helper.feeds_, cpu_f16_outputs);
+                    f16_helper.feeds_, cpu_f16_outputs, graph_optimization_level);
 
   TryEnableQNNSaverABI(qnn_options);
 
@@ -1081,7 +1096,8 @@ inline void TestFp16ModelAccuracyABI(const GetTestModelFn& f32_model_fn,
                       expected_ep_assignment,
                       f16_helper.feeds_,
                       qnn_abi_f16_outputs,
-                      session_option_pairs);
+                      session_option_pairs,
+                      graph_optimization_level);
   } else {
     InferenceModelABI(f16_model_data,
                       "fp16_model_logger",
@@ -1089,7 +1105,8 @@ inline void TestFp16ModelAccuracyABI(const GetTestModelFn& f32_model_fn,
                       expected_ep_assignment,
                       f16_helper.feeds_,
                       qnn_abi_f16_outputs,
-                      session_option_pairs);
+                      session_option_pairs,
+                      graph_optimization_level);
   }
 
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
@@ -1390,13 +1407,64 @@ class QnnABIHTPBackendTests : public ::testing::Test {
  public:
   static void TearDownTestSuite();
 
+  // Platform capability attributes queried from QNN.
+  struct QnnPlatformAttributes {
+    QnnHtpDevice_Arch_t htp_arch{QNN_HTP_DEVICE_ARCH_NONE};
+    bool dlbc_supported{false};
+    uint32_t vtcm_size_mb{0};
+    uint32_t soc_model{QNN_SOC_MODEL_UNKNOWN};
+    std::string sdk_version;
+  };
+
  protected:
   void SetUp() override;
 
   // Some tests need the Ir backend, which is not always available.
   [[nodiscard]] BackendSupport IsIRBackendSupported() const;
 
-  static BackendSupport cached_htp_support_;  // Set by the first test using this fixture.
+ public:
+  // Returns true if platform attributes are available.
+  static bool HasPlatformAttributes() {
+    return cached_platform_attrs_.has_value();
+  }
+
+  // Cached platform attributes for HTP backend to avoid repeated queries.
+  static const QnnPlatformAttributes& GetPlatformAttributes() {
+    if (!cached_platform_attrs_.has_value()) {
+      ORT_THROW("QNN platform attributes are not available.");
+    }
+    return *cached_platform_attrs_;
+  }
+
+  // Returns true if the test should be skipped because HTP architecture is less than or equal to the provided arch.
+  // Example: if (QnnABIHTPBackendTests::ShouldSkipIfHTPArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) { GTEST_SKIP() << "..."; }
+  static bool ShouldSkipIfHtpArchIsLessThanOrEqualTo(QnnHtpDevice_Arch_t arch) {
+    return HasPlatformAttributes() && GetPlatformAttributes().htp_arch <= arch;
+  }
+
+  // Query QNN platform attributes by directly calling QNN APIs
+  Status QueryQnnPlatformAttributesDirectly(QnnPlatformAttributes& out, const onnxruntime::logging::Logger& logger);
+
+  // Returns true if the test should be skipped because HTP FP16 is not supported on this platform.
+  static bool ShouldSkipIfHtpFp16Unsupported() {
+#if defined(_WIN32)  // On Windows ARM64, FP16 is not supported if the HTP architecture is v68.
+    return ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68);
+#else
+    return false;
+#endif
+  }
+
+  // Returns true if the test should be skipped because AutoEP is not supported on this platform.
+  static bool ShouldSkipIfAutoEpNpuUnsupported() {
+#if defined(_WIN32)  // V68 device (Makena) on win-arm64 doesn't support NPU device discovery with dxcore.dll.
+    return ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68);
+#else
+    return false;
+#endif
+  }
+
+  static std::optional<QnnABIHTPBackendTests::QnnPlatformAttributes> cached_platform_attrs_;  // Set by the first test using this fixture.
+  static BackendSupport cached_htp_support_;                                                  // Set by the first test using this fixture.
   static BackendSupport cached_ir_support_;
 };
 
@@ -1438,6 +1506,27 @@ class QnnABIIRBackendTests : public ::testing::Test {
  * \return True if "axes" is an input, or false if "axes" is an attribute.
  */
 bool ReduceOpHasAxesInputABI(const std::string& op_type, int opset_version);
+
+#define QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS()                                         \
+  do {                                                                               \
+    if (!QnnABIHTPBackendTests::HasPlatformAttributes()) {                           \
+      GTEST_SKIP() << "Test requires platform attributes, which are not available."; \
+    }                                                                                \
+  } while (0)
+
+#define QNN_SKIP_TEST_IF_HTP_FP16_UNSUPPORTED()                                  \
+  do {                                                                           \
+    if (QnnABIHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {               \
+      GTEST_SKIP() << "Test requires HTP FP16 support, which is not available."; \
+    }                                                                            \
+  } while (0)
+
+#define QNN_SKIP_TEST_IF_AUTOEP_NPU_UNSUPPORTED()                                                            \
+  do {                                                                                                       \
+    if (QnnABIHTPBackendTests::ShouldSkipIfAutoEpNpuUnsupported()) {                                         \
+      GTEST_SKIP() << "This platform lacks dxcore.dll NPU discovery capability required by auto-EP feature"; \
+    }                                                                                                        \
+  } while (0)
 
 }  // namespace test
 }  // namespace onnxruntime

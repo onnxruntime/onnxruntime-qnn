@@ -2,8 +2,11 @@
 // Licensed under the MIT License.
 
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <thread>
+
+#include "nlohmann/json.hpp"
 
 #include "core/graph/constants.h"
 #include "core/graph/node_attr_utils.h"
@@ -215,10 +218,17 @@ TEST(QnnABIEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
 
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "constant_floats.onnx";
 
-  Ort::Session session(*ort_env, ort_model_path, so);
-  ASSERT_FALSE(SessionHasEp(session, onnxruntime::kQnnABIExecutionProvider))
-      << "QNN EP was found in registered providers for session "
-      << "when both backend_type and backend_path were specified, which should not happen.";
+  try {
+    Ort::Session session(*ort_env, ort_model_path, so);
+    // FAIL();
+    // TODO: Replace the following assertion with FAIL() once upstream completed.
+    ASSERT_FALSE(SessionHasEp(session, onnxruntime::kQnnABIExecutionProvider))
+        << "QNN EP was found in registered providers for session "
+        << "when both backend_type and backend_path were specified, which should not happen.";
+  } catch (const Ort::Exception& e) {
+    ASSERT_EQ(e.GetOrtErrorCode(), ORT_FAIL);
+    ASSERT_THAT(e.what(), testing::HasSubstr("Only one of 'backend_type' and 'backend_path' should be set."));
+  }
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -1209,6 +1219,7 @@ TEST_F(QnnABIHTPBackendTests, CastAddQDQS16) {
 
 // Test float32 model with FP16 precision
 TEST_F(QnnABIHTPBackendTests, Float32ModelWithFP16PrecisionTest) {
+  QNN_SKIP_TEST_IF_HTP_FP16_UNSUPPORTED();
   ProviderOptions provider_options;
 #if defined(_WIN32)
   provider_options["backend_path"] = "QnnHtp.dll";
@@ -1392,12 +1403,118 @@ TEST_F(QnnABIHTPBackendTests, EPOffloadsGraphIOQuantDequant) {
                                        logging::Severity::kERROR,
                                        /*qnn_ctx_model_path*/ "",
                                        /*session_option_pairs*/ {},
+                                       /*graph_optimization_level*/ std::nullopt,
                                        &graph_checker);
     }
   }
 }
 
-#if !BUILD_QNN_EP_STATIC_LIB
+// Test that DLC I/O tensor names match original ONNX names when offload_graph_io_quantization=1.
+TEST_F(QnnABIHTPBackendTests, OffloadGraphIoQuantizationTensorNameOverrides) {
+  ProviderOptions provider_options;
+#if defined(_WIN32)
+  provider_options["backend_path"] = "QnnHtp.dll";
+#else
+  provider_options["backend_path"] = "libQnnHtp.so";
+#endif
+  provider_options["offload_graph_io_quantization"] = "1";
+
+  const std::filesystem::path dump_dir = "OffloadGraphIoQuantizationTensorNameOverrides";
+  provider_options["json_qnn_graph_dir"] = dump_dir.string();
+  provider_options["dump_json_qnn_graph"] = "1";
+
+  std::filesystem::remove_all(dump_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(dump_dir));
+
+  auto cleanup = gsl::finally([&dump_dir]() { std::filesystem::remove_all(dump_dir); });
+
+  // Build QDQ Sigmoid: x -> Q -> DQ -> Sigmoid -> Q -> DQ -> out
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 21}};
+  auto& logging_manager = DefaultLoggingManager();
+
+  onnxruntime::Model qdq_model("OffloadGraphIoQuantizationTensorNameOverrides",
+                               false,
+                               ModelMetaData(),
+                               PathString(),
+                               IOnnxRuntimeOpSchemaRegistryList(),
+                               domain_to_version,
+                               {},
+                               logging_manager.DefaultLogger());
+  ModelTestBuilder builder(qdq_model.MainGraph());
+
+  const std::string expected_input_name = "input";
+  const std::string expected_output_name = "output";
+
+  std::vector<int64_t> shape = {1, 2, 2, 2};
+  std::vector<float> data = GetFloatDataInRangeABI(0.0f, 1.0f, 8);
+  NodeArg* x = builder.MakeInput<float>(shape, data);
+
+  float scale = 1.0f / 255.0f;
+  uint8_t zero_point = 0;
+
+  NodeArg* q_out = builder.MakeIntermediate();
+  builder.AddQuantizeLinearNode<uint8_t>(x, scale, zero_point, q_out);
+
+  NodeArg* dq1_out = builder.MakeIntermediate();
+  builder.AddDequantizeLinearNode<uint8_t>(q_out, scale, zero_point, dq1_out);
+
+  NodeArg* sigmoid_out = builder.MakeIntermediate();
+  builder.AddNode("Sigmoid", {dq1_out}, {sigmoid_out});
+
+  NodeArg* q2_out = builder.MakeIntermediate();
+  builder.AddQuantizeLinearNode<uint8_t>(sigmoid_out, scale, zero_point, q2_out);
+
+  NodeArg* out = builder.MakeOutput();
+  builder.AddDequantizeLinearNode<uint8_t>(q2_out, scale, zero_point, out);
+
+  builder.SetGraphOutputs();
+  ASSERT_STATUS_OK(qdq_model.MainGraph().Resolve());
+
+  std::string model_data;
+  qdq_model.ToProto().SerializeToString(&model_data);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  Ort::SessionOptions so;
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnABIExecutionProvider, provider_options);
+
+  Ort::Session session(*ort_env, model_data.data(), model_data.size(), so);
+
+  std::filesystem::path json_file_path;
+  for (const auto& dir_entry : std::filesystem::directory_iterator{dump_dir}) {
+    if (dir_entry.is_regular_file() && dir_entry.path().extension().string() == ".json" &&
+        dir_entry.path().filename().string().find("_tensor_log") == std::string::npos) {
+      json_file_path = dir_entry.path();
+      break;
+    }
+  }
+  ASSERT_FALSE(json_file_path.empty()) << "No JSON graph file found in " << dump_dir;
+
+  std::set<std::string> tensor_names;
+  {
+    std::ifstream json_file(json_file_path);
+    ASSERT_TRUE(json_file.is_open()) << "Failed to open JSON file: " << json_file_path;
+
+    nlohmann::json root_json;
+    json_file >> root_json;
+
+    ASSERT_TRUE(root_json.contains("graph")) << "JSON missing 'graph' field";
+    const auto& graph_json = root_json["graph"];
+    ASSERT_TRUE(graph_json.contains("tensors")) << "JSON graph missing 'tensors' field";
+
+    for (const auto& [name, tensor] : graph_json["tensors"].items()) {
+      tensor_names.insert(name);
+    }
+  }
+
+  // Verify original ONNX names appear in DLC (not internal quantized names)
+  EXPECT_TRUE(tensor_names.count(expected_input_name))
+      << "Expected input '" << expected_input_name << "' not found.";
+  EXPECT_TRUE(tensor_names.count(expected_output_name))
+      << "Expected output '" << expected_output_name << "' not found.";
+}
+
+// TODO: Test will be re-enabled for Linux once QNN API issue is resolved
+#if !BUILD_QNN_EP_STATIC_LIB && !defined(__linux__)
 // Tests that loading and unloading of an EP library in the same process does not cause a segfault.
 TEST_F(QnnABIHTPBackendTests, LoadingAndUnloadingOfQnnLibrary_FixSegFault) {
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
@@ -1423,12 +1540,15 @@ TEST_F(QnnABIHTPBackendTests, LoadingAndUnloadingOfQnnLibrary_FixSegFault) {
     EXPECT_NO_THROW(Ort::Session session(*ort_env, ort_model_path, so));
   }
 }
-#endif  // !BUILD_QNN_EP_STATIC_LIB
+#endif  // !BUILD_QNN_EP_STATIC_LIB && !defined(__linux__)
 
 #if defined(WIN32) && !BUILD_QNN_EP_STATIC_LIB
 // Tests autoEP feature to automatically select an EP that supports the NPU.
 // Currently only works on Windows.
 TEST_F(QnnABIHTPBackendTests, AutoEp_PreferNpu) {
+  // V68 device (Makena) on win-arm64 doesn't support NPU device discovery with dxcore.dll,
+  // which is required by auto-EP.Expand commentComment on line R1471ResolvedCode has comments. Press enter to view.
+  QNN_SKIP_TEST_IF_AUTOEP_NPU_UNSUPPORTED();
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnABIExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn_abi.dll")));
 
@@ -1448,6 +1568,82 @@ TEST_F(QnnABIGPUBackendTests, AutoEp_PreferGpu) {
 
   Ort::SessionOptions so;
   so.SetEpSelectionPolicy(OrtExecutionProviderDevicePolicy_PREFER_GPU);
+
+  const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx";
+  Ort::Session session(*ort_env, ort_model_path, so);
+  EXPECT_TRUE(SessionHasEp(session, kQnnABIExecutionProvider));
+
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnABIExecutionProvider));
+}
+
+TEST_F(QnnABIHTPBackendTests, AutoEp_AllDevices) {
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnABIExecutionProvider,
+                                                                     ORT_TSTR("onnxruntime_providers_qnn_abi.dll")));
+
+  Ort::SessionOptions so;
+  auto devices = ort_env->GetEpDevices();
+  std::vector<Ort::ConstEpDevice> selected_devices;
+
+  std::copy_if(devices.begin(),
+               devices.end(),
+               std::back_inserter(selected_devices),
+               [](Ort::ConstEpDevice& d) { return std::string_view(d.EpName()) == kQnnABIExecutionProvider; });
+
+  ASSERT_TRUE(selected_devices.size() > 0) << "No QNN devices were found.";
+
+  so.AppendExecutionProvider_V2(*ort_env, selected_devices, {});
+
+  const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
+  Ort::Session session(*ort_env, ort_model_path, so);
+  EXPECT_TRUE(SessionHasEp(session, kQnnABIExecutionProvider));
+
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnABIExecutionProvider));
+}
+
+TEST_F(QnnABIHTPBackendTests, AutoEp_NpuOnly) {
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnABIExecutionProvider,
+                                                                     ORT_TSTR("onnxruntime_providers_qnn_abi.dll")));
+
+  Ort::SessionOptions so;
+  auto devices = ort_env->GetEpDevices();
+  std::vector<Ort::ConstEpDevice> selected_devices;
+
+  std::copy_if(devices.begin(),
+               devices.end(),
+               std::back_inserter(selected_devices),
+               [](Ort::ConstEpDevice& d) {
+                 return std::string_view(d.EpName()) == kQnnABIExecutionProvider && d.Device().Type() == OrtHardwareDeviceType_NPU;
+               });
+
+  ASSERT_TRUE(selected_devices.size() > 0) << "No QNN NPU device was found.";
+
+  so.AppendExecutionProvider_V2(*ort_env, selected_devices, {});
+
+  const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
+  Ort::Session session(*ort_env, ort_model_path, so);
+  EXPECT_TRUE(SessionHasEp(session, kQnnABIExecutionProvider));
+
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnABIExecutionProvider));
+}
+
+TEST_F(QnnABIGPUBackendTests, AutoEp_GpuOnly) {
+  ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnABIExecutionProvider,
+                                                                     ORT_TSTR("onnxruntime_providers_qnn_abi.dll")));
+
+  Ort::SessionOptions so;
+  auto devices = ort_env->GetEpDevices();
+  std::vector<Ort::ConstEpDevice> selected_devices;
+
+  std::copy_if(devices.begin(),
+               devices.end(),
+               std::back_inserter(selected_devices),
+               [](Ort::ConstEpDevice& d) {
+                 return std::string_view(d.EpName()) == kQnnABIExecutionProvider && d.Device().Type() == OrtHardwareDeviceType_GPU;
+               });
+
+  ASSERT_TRUE(selected_devices.size() > 0) << "No QNN GPU device was found.";
+
+  so.AppendExecutionProvider_V2(*ort_env, selected_devices, {});
 
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx";
   Ort::Session session(*ort_env, ort_model_path, so);

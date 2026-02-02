@@ -41,7 +41,7 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: actions/download-artifact@v3
+      - uses: actions/download-artifact@v4
         with:
           name: ORT ${{inputs.target_os}} ${{inputs.target_arch}} pynone Tests
           path: |
@@ -55,7 +55,7 @@ jobs:
         # not leak huge files on the runner.
         run: >
           exec python3 qcom/build_and_test.py
-          create_venv
+          create_qdc_venv
           test_ort_qdc_${{inputs.target_os}}_${{inputs.target_arch}} --only
 
       - name: Publish Test Report
@@ -66,9 +66,11 @@ jobs:
           report_paths: |
             ${{ github.workspace }}/build/qdc-${{ env.QDC_RESULTS_ARCH }}/*.results.xml
 
-      - uses: actions/upload-artifact@v3
+      - uses: actions/upload-artifact@v4
         if: always() # always run even if the previous step fails
         with:
           name: ORT ${{inputs.target_os}} ${{inputs.target_arch}} pynone Test Results
+          retention-days: 1
           path: |
-            ${{ github.workspace }}/build/qdc--${{ env.QDC_RESULTS_ARCH }}/*.results.xml
+            ${{ github.workspace }}/build/qdc-${{ env.QDC_RESULTS_ARCH }}/*.results.xml
+            ${{ github.workspace }}/build/qdc-${{ env.QDC_RESULTS_ARCH }}/*.txt

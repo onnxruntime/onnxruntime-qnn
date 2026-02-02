@@ -86,9 +86,12 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_ERROR(qnn_model_wrapper.IsPerChannelQuantized(node_unit.Inputs()[0], is_per_chan_quant, quant_axis));
     RETURN_IF(is_per_chan_quant, "QNN EP does not support a standalone DQ op with per-channel quantization");
 
-    if (qnn_model_wrapper.GetModelSettings().offload_graph_io_quantization) {
-      RETURN_IF(qnn_model_wrapper.IsGraphOutput(node_unit.Outputs()[0].name),
-                "QNN EP is configured to not take DQ nodes that generate a graph output.");
+    if (qnn_model_wrapper.GetModelSettings().offload_graph_io_quantization &&
+        qnn_model_wrapper.IsGraphOutput(node_unit.Outputs()[0].name)) {
+      // Map internal (quantized) tensor name to original name in ONNX
+      qnn_model_wrapper.SetTensorNameOverride(/*internal=*/node_unit.Inputs()[0].name,
+                                              /*external=*/node_unit.Outputs()[0].name);
+      return MAKE_EP_FAIL("QNN EP is configured to not take DQ nodes that generate a graph output.");
     }
   }
 
@@ -98,9 +101,12 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_ERROR(qnn_model_wrapper.IsPerChannelQuantized(node_unit.Outputs()[0], is_per_chan_quant, quant_axis));
     RETURN_IF(is_per_chan_quant, "QNN EP does not support a standalone Q op with per-channel quantization");
 
-    if (qnn_model_wrapper.GetModelSettings().offload_graph_io_quantization) {
-      RETURN_IF(qnn_model_wrapper.IsGraphInput(node_unit.Inputs()[0].name),
-                "QNN EP is configured to not take Q nodes that consume a graph input.");
+    if (qnn_model_wrapper.GetModelSettings().offload_graph_io_quantization &&
+        qnn_model_wrapper.IsGraphInput(node_unit.Inputs()[0].name)) {
+      // Map internal (quantized) tensor name to original name in ONNX
+      qnn_model_wrapper.SetTensorNameOverride(/*internal=*/node_unit.Outputs()[0].name,
+                                              /*external=*/node_unit.Inputs()[0].name);
+      return MAKE_EP_FAIL("QNN EP is configured to not take Q nodes that consume a graph input.");
     }
   }
 
@@ -365,15 +371,6 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
   std::vector<std::string> param_tensor_names;
   // Add attribute
-  if (op_type == "Concat") {
-    int32_t default_axis = 0;
-    Qnn_Scalar_t axis_qnn_scalar = QNN_SCALAR_INIT;
-    RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, axis_qnn_scalar, default_axis));
-    QnnParamWrapper axis_param(node_unit.Index(), node_unit.Name(), QNN_OP_SOFTMAX_PARAM_AXIS, axis_qnn_scalar);
-    param_tensor_names.push_back(axis_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
-  }
-
   if (op_type == "LpNormalization") {
     int32_t default_axis = -1;
     Qnn_Scalar_t axis_qnn_scalar = QNN_SCALAR_INIT;

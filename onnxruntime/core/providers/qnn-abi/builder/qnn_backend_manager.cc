@@ -6,7 +6,9 @@
 
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <gsl/gsl>
+#include <memory>
 #include <string>
 
 #include "CPU/QnnCpuCommon.h"
@@ -334,15 +336,15 @@ Ort::Status QnnBackendManager::LoadBackend() {
                                                                                           QNN_API_VERSION_PATCH},
                                                                                          &backend_interface_provider)));
   qnn_interface_ = backend_interface_provider->QNN_INTERFACE_VER_NAME;
-  auto backend_id = backend_interface_provider->backendId;
-  SetQnnBackendType(backend_id);
+  backend_id_ = backend_interface_provider->backendId;
+  SetQnnBackendType(backend_id_);
 
   Qnn_Version_t backend_interface_version = GetQnnInterfaceApiVersion(backend_interface_provider);
   std::ostringstream oss;
   oss << "Found valid interface, version: " << backend_interface_version.major
       << "." << backend_interface_version.minor << "." << backend_interface_version.patch
       << " backend provider name: " << backend_interface_provider->providerName
-      << " backend id: " << backend_id;
+      << " backend id: " << backend_id_;
   ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, oss.str().c_str());
 
   return Ort::Status();
@@ -385,8 +387,8 @@ Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
                                                                                          &backend_interface_provider)));
 
   // Set the "intended" backend type so that QNN builders still make the expected QNN API calls.
-  auto backend_id = backend_interface_provider->backendId;
-  SetQnnBackendType(backend_id);
+  backend_id_ = backend_interface_provider->backendId;
+  SetQnnBackendType(backend_id_);
 
   // Load the serializer backend and set it as the activate backend.
   QnnInterface_t* serializer_interface_provider{nullptr};
@@ -411,7 +413,7 @@ Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
 
   std::ostringstream oss2;
   oss2 << "Intended backend provider name: " << backend_interface_provider->providerName
-       << " backend id: " << backend_id
+       << " backend id: " << backend_id_
        << " interface version: " << backend_interface_version.major
        << "." << backend_interface_version.minor << "." << backend_interface_version.patch;
   ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, oss2.str().c_str());
@@ -1460,197 +1462,81 @@ Ort::Status QnnBackendManager::CreateHtpPowerCfgId(uint32_t device_id,
   return Ort::Status();
 }
 
-Ort::Status QnnBackendManager::SetHtpPowerConfig(uint32_t htp_power_config_client_id,
-                                                 HtpPerformanceMode htp_performance_mode) {
+Ort::Status QnnBackendManager::SetHtpPowerConfigs(uint32_t htp_power_config_client_id,
+                                                  HtpPerformanceMode htp_performance_mode,
+                                                  uint32_t rpc_polling_time,
+                                                  uint32_t rpc_control_latency) {
   // This function is called in QNN EP's OnRunStart() even if QNN backend setup failed and the model is assigned
   // to a different EP. Therefore, we have to check that backend setup actually completed before trying to
   // set an HTP power config ID. Otherwise, this causes a segfault because the QNN backend lib is unloaded.
   RETURN_IF_NOT(backend_setup_completed_, "Cannot set HTP power config ID if backend setup is not complete.");
-  QnnDevice_Infrastructure_t qnn_device_infra = nullptr;
-  auto status = qnn_interface_.deviceGetInfrastructure(&qnn_device_infra);
-  RETURN_IF(QNN_SUCCESS != status, "backendGetPerfInfrastructure failed.");
-
-  auto* htp_infra = static_cast<QnnHtpDevice_Infrastructure_t*>(qnn_device_infra);
-  RETURN_IF(QNN_HTP_DEVICE_INFRASTRUCTURE_TYPE_PERF != htp_infra->infraType,
-            ("HTP infra type = " + std::to_string(htp_infra->infraType) + ", which is not perf infra type.").c_str());
-  QnnHtpDevice_PerfInfrastructure_t& htp_perf_infra = htp_infra->perfInfra;
-
-  constexpr const int kNumConfigs = 1;
-  std::vector<QnnHtpPerfInfrastructure_PowerConfig_t> power_configs(
-      kNumConfigs);
-  QnnHtpPerfInfrastructure_PowerConfig_t& dcvs_config = power_configs[0];
-  dcvs_config.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_DCVS_V3;
-  QnnHtpPerfInfrastructure_DcvsV3_t& dcvs_v3 = dcvs_config.dcvsV3Config;
-  dcvs_v3.contextId = htp_power_config_client_id;
-  dcvs_v3.setSleepDisable = 0;
-  dcvs_v3.sleepDisable = 0;
-  dcvs_v3.setDcvsEnable = 1;
-  dcvs_v3.powerMode = QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_PERFORMANCE_MODE;
-  // choose performance mode
-  switch (htp_performance_mode) {
-    case HtpPerformanceMode::kHtpBurst:
-    case HtpPerformanceMode::kHtpSustainedHighPerformance:
-      dcvs_v3.setSleepLatency = 1;  // true
-      dcvs_v3.sleepLatency = kSleepMinLatency;
-      dcvs_v3.dcvsEnable = kDcvsDisable;
-      dcvs_v3.setBusParams = 1;
-      dcvs_v3.busVoltageCornerMin = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
-      dcvs_v3.busVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
-      dcvs_v3.busVoltageCornerMax = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
-      dcvs_v3.setCoreParams = 1;
-      dcvs_v3.coreVoltageCornerMin = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
-      dcvs_v3.coreVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
-      dcvs_v3.coreVoltageCornerMax = DCVS_VOLTAGE_VCORNER_MAX_VOLTAGE_CORNER;
-      break;
-    case HtpPerformanceMode::kHtpHighPerformance:
-      dcvs_v3.setSleepLatency = 1;  // true
-      dcvs_v3.sleepLatency = kSleepLowLatency;
-      dcvs_v3.dcvsEnable = kDcvsDisable;
-      dcvs_v3.setBusParams = 1;
-      dcvs_v3.busVoltageCornerMin = DCVS_VOLTAGE_VCORNER_TURBO;
-      dcvs_v3.busVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_TURBO;
-      dcvs_v3.busVoltageCornerMax = DCVS_VOLTAGE_VCORNER_TURBO;
-      dcvs_v3.setCoreParams = 1;
-      dcvs_v3.coreVoltageCornerMin = DCVS_VOLTAGE_VCORNER_TURBO;
-      dcvs_v3.coreVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_TURBO;
-      dcvs_v3.coreVoltageCornerMax = DCVS_VOLTAGE_VCORNER_TURBO;
-      break;
-    case HtpPerformanceMode::kHtpBalanced:
-      dcvs_v3.setSleepLatency = 1;  // true
-      dcvs_v3.sleepLatency = kSleepMediumLatency;
-      dcvs_v3.dcvsEnable = kDcvsEnable;
-      dcvs_v3.setBusParams = 1;
-      dcvs_v3.busVoltageCornerMin = DCVS_VOLTAGE_VCORNER_NOM_PLUS;
-      dcvs_v3.busVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_NOM_PLUS;
-      dcvs_v3.busVoltageCornerMax = DCVS_VOLTAGE_VCORNER_NOM_PLUS;
-      dcvs_v3.setCoreParams = 1;
-      dcvs_v3.coreVoltageCornerMin = DCVS_VOLTAGE_VCORNER_NOM_PLUS;
-      dcvs_v3.coreVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_NOM_PLUS;
-      dcvs_v3.coreVoltageCornerMax = DCVS_VOLTAGE_VCORNER_NOM_PLUS;
-      break;
-    case HtpPerformanceMode::kHtpLowBalanced:
-      dcvs_v3.setSleepLatency = 1;  // true
-      dcvs_v3.sleepLatency = kSleepMediumLatency;
-      dcvs_v3.dcvsEnable = kDcvsEnable;
-      dcvs_v3.setBusParams = 1;
-      dcvs_v3.busVoltageCornerMin = DCVS_VOLTAGE_VCORNER_NOM;
-      dcvs_v3.busVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_NOM;
-      dcvs_v3.busVoltageCornerMax = DCVS_VOLTAGE_VCORNER_NOM;
-      dcvs_v3.setCoreParams = 1;
-      dcvs_v3.coreVoltageCornerMin = DCVS_VOLTAGE_VCORNER_NOM;
-      dcvs_v3.coreVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_NOM;
-      dcvs_v3.coreVoltageCornerMax = DCVS_VOLTAGE_VCORNER_NOM;
-      break;
-    case HtpPerformanceMode::kHtpHighPowerSaver:
-      dcvs_v3.setSleepLatency = 1;  // true
-      dcvs_v3.sleepLatency = kSleepMediumLatency;
-      dcvs_v3.dcvsEnable = kDcvsEnable;
-      dcvs_v3.setBusParams = 1;
-      dcvs_v3.busVoltageCornerMin = DCVS_VOLTAGE_VCORNER_SVS_PLUS;
-      dcvs_v3.busVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_SVS_PLUS;
-      dcvs_v3.busVoltageCornerMax = DCVS_VOLTAGE_VCORNER_SVS_PLUS;
-      dcvs_v3.setCoreParams = 1;
-      dcvs_v3.coreVoltageCornerMin = DCVS_VOLTAGE_VCORNER_SVS_PLUS;
-      dcvs_v3.coreVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_SVS_PLUS;
-      dcvs_v3.coreVoltageCornerMax = DCVS_VOLTAGE_VCORNER_SVS_PLUS;
-      break;
-    case HtpPerformanceMode::kHtpPowerSaver:
-      dcvs_v3.setSleepLatency = 1;  // true
-      dcvs_v3.sleepLatency = kSleepMediumLatency;
-      dcvs_v3.dcvsEnable = kDcvsEnable;
-      dcvs_v3.setBusParams = 1;
-      dcvs_v3.busVoltageCornerMin = DCVS_VOLTAGE_VCORNER_SVS;
-      dcvs_v3.busVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_SVS;
-      dcvs_v3.busVoltageCornerMax = DCVS_VOLTAGE_VCORNER_SVS;
-      dcvs_v3.setCoreParams = 1;
-      dcvs_v3.coreVoltageCornerMin = DCVS_VOLTAGE_VCORNER_SVS;
-      dcvs_v3.coreVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_SVS;
-      dcvs_v3.coreVoltageCornerMax = DCVS_VOLTAGE_VCORNER_SVS;
-      break;
-    case HtpPerformanceMode::kHtpLowPowerSaver:
-      dcvs_v3.setSleepLatency = 1;  // true
-      dcvs_v3.sleepLatency = kSleepMediumLatency;
-      dcvs_v3.dcvsEnable = kDcvsEnable;
-      dcvs_v3.setBusParams = 1;
-      dcvs_v3.busVoltageCornerMin = DCVS_VOLTAGE_VCORNER_SVS2;
-      dcvs_v3.busVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_SVS2;
-      dcvs_v3.busVoltageCornerMax = DCVS_VOLTAGE_VCORNER_SVS2;
-      dcvs_v3.setCoreParams = 1;
-      dcvs_v3.coreVoltageCornerMin = DCVS_VOLTAGE_VCORNER_SVS2;
-      dcvs_v3.coreVoltageCornerTarget = DCVS_VOLTAGE_VCORNER_SVS2;
-      dcvs_v3.coreVoltageCornerMax = DCVS_VOLTAGE_VCORNER_SVS2;
-      break;
-    case HtpPerformanceMode::kHtpExtremePowerSaver:
-      dcvs_v3.powerMode = QNN_HTP_PERF_INFRASTRUCTURE_POWERMODE_POWER_SAVER_MODE;
-      dcvs_v3.setSleepLatency = 1;  // true
-      dcvs_v3.sleepLatency = kSleepMediumLatency;
-      dcvs_v3.dcvsEnable = kDcvsEnable;
-      dcvs_v3.setBusParams = 1;
-      dcvs_v3.busVoltageCornerMin = DCVS_VOLTAGE_CORNER_DISABLE;
-      dcvs_v3.busVoltageCornerTarget = DCVS_VOLTAGE_CORNER_DISABLE;
-      dcvs_v3.busVoltageCornerMax = DCVS_VOLTAGE_CORNER_DISABLE;
-      dcvs_v3.setCoreParams = 1;
-      dcvs_v3.coreVoltageCornerMin = DCVS_VOLTAGE_CORNER_DISABLE;
-      dcvs_v3.coreVoltageCornerTarget = DCVS_VOLTAGE_CORNER_DISABLE;
-      dcvs_v3.coreVoltageCornerMax = DCVS_VOLTAGE_CORNER_DISABLE;
-      break;
-    default:
-      ORT_CXX_API_THROW(("Invalid performance profile " +
-                         std::to_string(static_cast<uint8_t>(htp_performance_mode)))
-                            .c_str(),
-                        ORT_EP_FAIL);
-      break;
-  }
-  std::vector<const QnnHtpPerfInfrastructure_PowerConfig_t*> perf_power_configs_ptr = ObtainNullTermPtrVector(power_configs);
-  status = htp_perf_infra.setPowerConfig(htp_power_config_client_id, perf_power_configs_ptr.data());
-  RETURN_IF(QNN_SUCCESS != status, "setPowerConfig failed for HTP performance mode.");
+  RETURN_IF_ERROR(htp_power_config_manager_.AddRpcPollingTime(rpc_polling_time));
+  RETURN_IF_ERROR(htp_power_config_manager_.AddRpcControlLatency(rpc_control_latency));
+  RETURN_IF_ERROR(htp_power_config_manager_.AddHtpPerformanceMode(htp_performance_mode, htp_power_config_client_id));
+  RETURN_IF_ERROR(htp_power_config_manager_.SetPowerConfig(htp_power_config_client_id, GetQnnInterface()));
 
   return Ort::Status();
 }
 
-Ort::Status QnnBackendManager::SetRpcPowerConfigs(uint32_t htp_power_config_client_id,
-                                                  uint32_t rpc_control_latency,
-                                                  uint32_t rpc_polling_time) {
-  // This function is called in QNN EP's OnRunStart() even if QNN backend setup failed and the model is assigned
-  // to a different EP. Therefore, we have to check that backend setup actually completed before trying to
-  // set RPC control latency. Otherwise, this causes a segfault because the QNN backend library is unloaded.
-  RETURN_IF_NOT(backend_setup_completed_, "Cannot set HTP RPC control latency if backend setup is not complete.");
-
-  constexpr int kNumRpcPollingPowerConfigs = 2;
-  std::vector<QnnHtpPerfInfrastructure_PowerConfig_t> rpc_power_configs;
-  rpc_power_configs.reserve(kNumRpcPollingPowerConfigs);
-
-  // Set rpc control latency here
-  if (rpc_control_latency != 0) {
-    auto& rpc_control_latency_cfg = rpc_power_configs.emplace_back();
-    rpc_control_latency_cfg.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_RPC_CONTROL_LATENCY;
-    rpc_control_latency_cfg.rpcControlLatencyConfig = rpc_control_latency;
+Ort::Status QnnBackendManager::SetPerThreadHtpPowerConfigs(const std::thread::id& thread_id, bool pre_run) {
+  PerThreadHtpPowerConfigs_t htp_power_configs;
+  if (!GetPerThreadHtpPowerConfigMapping(thread_id, htp_power_configs)) {
+    return Ort::Status();
   }
 
-  // Note: v68 does not support rpc polling mode
-  if (rpc_polling_time != 0) {
-    auto& rpc_polling_time_cfg = rpc_power_configs.emplace_back();
-    rpc_polling_time_cfg.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_RPC_POLLING_TIME;
-    rpc_polling_time_cfg.rpcPollingTimeConfig = rpc_polling_time;
+  auto htp_power_config_id = htp_power_configs.power_config_id;
+  if (pre_run) {
+    if (htp_power_configs.pre_run_perf_mode.has_value()) {
+      RETURN_IF_ERROR(htp_power_config_manager_.AddHtpPerformanceMode(*htp_power_configs.pre_run_perf_mode,
+                                                                      htp_power_config_id));
+    }
+
+    if (htp_power_configs.rpc_control_latency.has_value()) {
+      RETURN_IF_ERROR(htp_power_config_manager_.AddRpcControlLatency(*htp_power_configs.rpc_control_latency));
+    }
+
+    if (htp_power_configs.rpc_polling_time.has_value()) {
+      RETURN_IF_ERROR(htp_power_config_manager_.AddRpcPollingTime(*htp_power_configs.rpc_polling_time));
+    }
+  } else if (htp_power_configs.post_run_perf_mode.has_value()) {
+    RETURN_IF_ERROR(htp_power_config_manager_.AddHtpPerformanceMode(*htp_power_configs.post_run_perf_mode,
+                                                                    htp_power_config_id));
   }
 
-  if (rpc_power_configs.size() > 0) {
-    QnnDevice_Infrastructure_t qnn_device_infra = nullptr;
-    auto status = qnn_interface_.deviceGetInfrastructure(&qnn_device_infra);
-    RETURN_IF(QNN_SUCCESS != status, "backendGetPerfInfrastructure failed.");
-
-    auto* htp_infra = static_cast<QnnHtpDevice_Infrastructure_t*>(qnn_device_infra);
-    RETURN_IF(QNN_HTP_DEVICE_INFRASTRUCTURE_TYPE_PERF != htp_infra->infraType,
-              ("HTP infra type = " + std::to_string(htp_infra->infraType) + ", which is not perf infra type.").c_str());
-    QnnHtpDevice_PerfInfrastructure_t& htp_perf_infra = htp_infra->perfInfra;
-
-    std::vector<const QnnHtpPerfInfrastructure_PowerConfig_t*> perf_power_configs_ptr =
-        ObtainNullTermPtrVector(rpc_power_configs);
-    status = htp_perf_infra.setPowerConfig(htp_power_config_client_id, perf_power_configs_ptr.data());
-    RETURN_IF(QNN_SUCCESS != status, "setPowerConfig failed for RPC control latency.");
-  }
+  RETURN_IF_ERROR(htp_power_config_manager_.SetPowerConfig(htp_power_config_id, GetQnnInterface()));
 
   return Ort::Status();
+}
+
+Ort::Status QnnBackendManager::AddPerThreadHtpPowerConfigMapping(const std::thread::id& thread_id,
+                                                                 const PerThreadHtpPowerConfigs_t& htp_power_configs) {
+  std::lock_guard<std::mutex> lock(per_thread_power_configs_mutex_);
+
+  auto res = per_thread_power_configs_.find(thread_id);
+  RETURN_IF(res != per_thread_power_configs_.end(),
+            "Trying to set HtpPowerConfigs for the given thread id but it already exists!");
+
+  per_thread_power_configs_.emplace(thread_id, std::move(htp_power_configs));
+
+  return Ort::Status();
+}
+
+bool QnnBackendManager::GetPerThreadHtpPowerConfigMapping(const std::thread::id& thread_id,
+                                                          PerThreadHtpPowerConfigs_t& htp_power_configs) {
+  std::lock_guard<std::mutex> lock(per_thread_power_configs_mutex_);
+
+  auto it = per_thread_power_configs_.find(thread_id);
+  if (it == per_thread_power_configs_.end()) {
+    return false;
+  }
+
+  htp_power_configs = it->second;
+  return true;
+}
+
+void QnnBackendManager::RemovePerThreadHtpPowerConfigMapping(const std::thread::id& thread_id) {
+  std::lock_guard<std::mutex> lock(per_thread_power_configs_mutex_);
+  per_thread_power_configs_.erase(thread_id);
 }
 
 Ort::Status QnnBackendManager::DestroyHTPPowerConfigID(uint32_t htp_power_config_id) {
@@ -1683,6 +1569,11 @@ Ort::Status QnnBackendManager::TerminateQnnLog() {
 }
 
 void QnnBackendManager::ReleaseResources() {
+  if (!backend_setup_completed_) {
+    // Avoid releasing non-setup or already released backend.
+    return;
+  }
+
   auto result = ReleaseContext();
   if (!result.IsOK()) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseContext: " + result.GetErrorMessage()).c_str());
@@ -2220,6 +2111,59 @@ Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t
     RETURN_IF_ERROR(HtpSharedMemoryAllocator::AddAllocationCleanUp(shared_memory_address,
                                                                    std::move(unregister_mem_handle)));
   }
+
+  return Ort::Status();
+}
+
+Ort::Status QnnBackendManager::GetPlatformInfo() {
+  if (!IsNpuBackend(GetQnnBackendType())) {
+    // Add support other backends.
+    return MAKE_EP_FAIL("Only support getting platform info for HTP backend.");
+  }
+
+  if (htp_arch_internal_ == QNN_HTP_DEVICE_ARCH_NONE && htp_arch_ != QNN_HTP_DEVICE_ARCH_NONE) {
+    htp_arch_internal_ = htp_arch_;
+  }
+  if (htp_arch_internal_ != QNN_HTP_DEVICE_ARCH_NONE) {
+    return Ort::Status();
+  }
+
+  RETURN_IF(qnn_interface_.deviceGetPlatformInfo == nullptr || qnn_interface_.deviceFreePlatformInfo == nullptr,
+            "Failed to get valid QnnDevice function pointers.");
+
+  Qnn_ErrorHandle_t result;
+
+  const QnnDevice_PlatformInfo_t* platform_info_raw_ptr = nullptr;
+  result = qnn_interface_.deviceGetPlatformInfo(log_handle_, &platform_info_raw_ptr);
+  RETURN_IF(result != QNN_SUCCESS || platform_info_raw_ptr == nullptr, "Failed to get platform info.");
+
+  std::unique_ptr<const QnnDevice_PlatformInfo_t, std::function<void(const QnnDevice_PlatformInfo_t*)>>
+  platform_info_ptr(
+      platform_info_raw_ptr,
+      [&qnn_interface = qnn_interface_, &log_handle = log_handle_](const QnnDevice_PlatformInfo_t* platform_info) {
+        qnn_interface.deviceFreePlatformInfo(log_handle, platform_info);
+      });
+
+  if (platform_info_ptr->version == QNN_DEVICE_PLATFORM_INFO_VERSION_1) {
+    const QnnDevice_PlatformInfoV1_t& plt_info = platform_info_ptr->v1;
+
+    for (uint32_t idx = 0; idx < plt_info.numHwDevices; ++idx) {
+      const QnnDevice_HardwareDeviceInfo_t& hw_info = plt_info.hwDevices[idx];
+      if (hw_info.version != QNN_DEVICE_HARDWARE_DEVICE_INFO_VERSION_1) {
+        continue;
+      }
+
+      const auto* htp_ext = reinterpret_cast<const QnnHtpDevice_DeviceInfoExtension_t*>(hw_info.v1.deviceInfoExtension);
+      if (htp_ext && htp_ext->devType == QNN_HTP_DEVICE_TYPE_ON_CHIP) {
+        htp_arch_internal_ = htp_ext->onChipDevice.arch;
+        break;
+      }
+    }
+  } else {
+    return MAKE_FAIL("Unrecognized platform info version.");
+  }
+
+  RETURN_IF(htp_arch_internal_ == QNN_HTP_DEVICE_ARCH_NONE, "Failed to get HTP arch.");
 
   return Ort::Status();
 }

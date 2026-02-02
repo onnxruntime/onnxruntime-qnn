@@ -37,6 +37,7 @@ class QnnModel {
                            const OrtNode& fused_node,
                            const qnn::ModelSettings& model_settings,
                            const Ort::Logger& logger,
+                           std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr,
                            const QnnGraph_Config_t** graph_configs = nullptr,
                            const std::string& json_qnn_graph_path = "");
 
@@ -149,6 +150,11 @@ class QnnModel {
 
   Ort::Status SetupTensors(std::vector<QnnTensorInfo>& tensors, const std::vector<QnnTensorWrapper>& tensor_wrappers,
                            bool is_input = true);
+
+  void LogTensorDetails(QnnModelWrapper& qnn_model_wrapper,
+                        const std::string& graph_name,
+                        const std::string& json_qnn_graph_path,
+                        const Ort::Logger& logger) const;
 
   QnnBackendType GetQnnBackendType() { return qnn_backend_type_; }
 

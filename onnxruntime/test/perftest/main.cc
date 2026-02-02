@@ -6,15 +6,16 @@
 #include <random>
 #include "command_args_parser.h"
 #include "performance_runner.h"
+#include "test/onnx/utils/utils.h"
+#include "test/onnx/utils/strings_helper.h"
 #include "utils.h"
-#include "strings_helper.h"
 #include <google/protobuf/stubs/common.h>
 
 using namespace onnxruntime;
 const OrtApi* g_ort = NULL;
 
 int RunPerfTest(Ort::Env& env, const perftest::PerformanceTestConfig& test_config);
-Ort::Status CompileEpContextModel(const Ort::Env& env, const perftest::PerformanceTestConfig& test_config);
+Ort::Status CompileEpContextModel(Ort::Env& env, const perftest::PerformanceTestConfig& test_config);
 
 #ifdef _WIN32
 int real_main(int argc, wchar_t* argv[]) {
@@ -48,7 +49,7 @@ int real_main(int argc, char* argv[]) {
   }
 
   if (!test_config.plugin_ep_names_and_libs.empty()) {
-    perftest::utils::RegisterExecutionProviderLibrary(env, test_config);
+    test::utils::RegisterExecutionProviderLibrary(env, test_config.plugin_ep_names_and_libs, test_config.registered_plugin_eps);
   }
 
   // Unregister all registered plugin EP libraries before program exits.
@@ -58,12 +59,12 @@ int real_main(int argc, char* argv[]) {
   // See "ep_device.ep_factory->ReleaseAllocator" in Environment::CreateSharedAllocatorImpl.
   auto unregister_plugin_eps_at_scope_exit = gsl::finally([&]() {
     if (!test_config.registered_plugin_eps.empty()) {
-      perftest::utils::UnregisterExecutionProviderLibrary(env, test_config);  // this won't throw
+      test::utils::UnregisterExecutionProviderLibrary(env, test_config.registered_plugin_eps);  // this won't throw
     }
   });
 
   if (test_config.list_available_ep_devices) {
-    perftest::utils::ListEpDevices(env);
+    test::utils::ListEpDevices(env);
     if (test_config.registered_plugin_eps.empty()) {
       fprintf(stdout, "No plugin execution provider libraries are registered. Please specify them using \"--plugin_ep_libs\"; otherwise, only CPU may be available.\n");
     }
@@ -82,6 +83,12 @@ int real_main(int argc, char* argv[]) {
         return -1;
     }
 
+    std::cout << "Model compiled successfully to " << ToUTF8String(test_config.run_config.compile_model_path) << "\n";
+    if (test_config.run_config.compile_only) {
+      return 0;
+    }
+
+    std::cout << "\n> Running EP context model...\n";
     {
       test_config.model_info.model_file_path = test_config.run_config.compile_model_path;
       status = RunPerfTest(env, test_config);
@@ -134,14 +141,20 @@ int RunPerfTest(Ort::Env& env, const perftest::PerformanceTestConfig& test_confi
   return 0;
 }
 
-Ort::Status CompileEpContextModel(const Ort::Env& env, const perftest::PerformanceTestConfig& test_config) {
+Ort::Status CompileEpContextModel(Ort::Env& env, const perftest::PerformanceTestConfig& test_config) {
   auto output_ctx_model_path = test_config.run_config.compile_model_path;
   const auto provider_name = test_config.machine_config.provider_type_name;
 
   Ort::SessionOptions session_options;
 
-  std::unordered_map<std::string, std::string> provider_options;
-  session_options.AppendExecutionProvider(provider_name, provider_options);
+  // Add EP devices if any (created by plugin EP)
+  if (!test_config.registered_plugin_eps.empty()) {
+    perftest::utils::AppendPluginExecutionProviders(env, session_options, test_config);
+  } else {
+    // Regular non-plugin EP
+    std::unordered_map<std::string, std::string> provider_options;
+    session_options.AppendExecutionProvider(provider_name, provider_options);
+  }
 
   // free dim override
   if (!test_config.run_config.free_dim_name_overrides.empty()) {

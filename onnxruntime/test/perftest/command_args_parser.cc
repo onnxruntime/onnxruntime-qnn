@@ -19,7 +19,7 @@
 #include <core/session/onnxruntime_run_options_config_keys.h>
 
 #include "test_configuration.h"
-#include "strings_helper.h"
+#include "test/onnx/utils/strings_helper.h"
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -197,10 +197,13 @@ ABSL_FLAG(std::string, select_ep_devices, "", "Specifies a semicolon-separated l
 ABSL_FLAG(std::string, filter_ep_devices, "",
           "Specifies EP or Device metadata entries as key-value pairs to filter ep devices passed to AppendExecutionProvider_V2.\n"
           "[Usage]: --filter_ep_devices \"<key1>|<value1> <key2>|<value2>\" \n"
-          "Devices that match any of the key-value pair will be appended to the session. --select_ep_devices will take precedence over this option.\n");
+          "Devices that match any of the key-value pair will be appended to the session. --select_ep_devices will take precedence over this option.\n"
+          "[Example] --filter_ep_devices \"ov_device|NPU ov_device|CPU\" \n"
+          "Above example will append npu device first if available, followed by cpu device.");
 ABSL_FLAG(bool, compile_ep_context, DefaultPerformanceTestConfig().run_config.compile_ep_context, "Generate an EP context model");
 ABSL_FLAG(std::string, compile_model_path, "model_ctx.onnx", "The compiled model path for saving EP context model. Overwrites if already exists");
 ABSL_FLAG(bool, compile_binary_embed, DefaultPerformanceTestConfig().run_config.compile_binary_embed, "Embed binary blob within EP context node");
+ABSL_FLAG(bool, compile_only, DefaultPerformanceTestConfig().run_config.compile_only, "Only compile EP context model without running it");
 ABSL_FLAG(bool, h, false, "Print program usage.");
 
 namespace onnxruntime {
@@ -230,8 +233,8 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
   absl::SetFlagsUsageConfig(config);
   absl::SetProgramUsageMessage(CustomUsageMessage());
 
-  auto utf8_argv_strings = utils::ConvertArgvToUtf8Strings(argc, argv);
-  auto utf8_argv = utils::CStringsFromStrings(utf8_argv_strings);
+  auto utf8_argv_strings = test::utils::ConvertArgvToUtf8Strings(argc, argv);
+  auto utf8_argv = test::utils::CStringsFromStrings(utf8_argv_strings);
   auto positional = absl::ParseCommandLine(static_cast<int>(utf8_argv.size()), utf8_argv.data());
 
   // -f
@@ -242,7 +245,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
       // To preserve the previous usage of '-f', where users may specify it multiple times to override different dimension names,
       // we need to manually parse argv.
       std::string option = "f";
-      if (!ParseDimensionOverrideFromArgv(argc, utf8_argv_strings, option, test_config.run_config.free_dim_name_overrides)) {
+      if (!test::utils::ParseDimensionOverrideFromArgv(argc, utf8_argv_strings, option, test_config.run_config.free_dim_name_overrides)) {
         return false;
       }
     }
@@ -254,7 +257,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
     if (!dim_override_str.empty()) {
       // Same reason as '-f' above to manully parse argv.
       std::string option = "F";
-      if (!ParseDimensionOverrideFromArgv(argc, utf8_argv_strings, option, test_config.run_config.free_dim_denotation_overrides)) {
+      if (!test::utils::ParseDimensionOverrideFromArgv(argc, utf8_argv_strings, option, test_config.run_config.free_dim_denotation_overrides)) {
         return false;
       }
     }
@@ -490,7 +493,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
     const auto& session_configs = absl::GetFlag(FLAGS_C);
     if (!session_configs.empty()) {
       ORT_TRY {
-        ParseSessionConfigs(session_configs, test_config.run_config.session_config_entries);
+        test::utils::ParseSessionConfigs(session_configs, test_config.run_config.session_config_entries);
       }
       ORT_CATCH(const std::exception& ex) {
         ORT_HANDLE_EXCEPTION([&]() {
@@ -534,7 +537,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
   // --plugin_eps
   {
     const auto& plugin_eps = absl::GetFlag(FLAGS_plugin_eps);
-    if (!plugin_eps.empty()) ParseEpList(plugin_eps, test_config.machine_config.plugin_provider_type_list);
+    if (!plugin_eps.empty()) test::utils::ParseEpList(plugin_eps, test_config.machine_config.plugin_provider_type_list);
   }
 
   // --plugin_ep_options
@@ -560,7 +563,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
     const auto& filter_ep_devices = absl::GetFlag(FLAGS_filter_ep_devices);
     if (!filter_ep_devices.empty()) {
       ORT_TRY {
-        ParseEpDeviceFilterKeyValuePairs(filter_ep_devices, test_config.filter_ep_device_kv_pairs);
+        test::utils::ParseEpDeviceFilterKeyValuePairs(filter_ep_devices, test_config.filter_ep_device_kv_pairs);
       }
       ORT_CATCH(const std::exception& ex) {
         ORT_HANDLE_EXCEPTION([&]() {
@@ -580,6 +583,9 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
 
   // --compile_binary_embed
   test_config.run_config.compile_binary_embed = absl::GetFlag(FLAGS_compile_binary_embed);
+
+  // --compile_only
+  test_config.run_config.compile_only = absl::GetFlag(FLAGS_compile_only);
 
   if (positional.size() == 2) {
     test_config.model_info.model_file_path = ToPathString(positional[1]);
