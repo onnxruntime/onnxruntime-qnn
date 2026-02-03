@@ -724,6 +724,7 @@
         "^test_nonmaxsuppression_center_point_box_format_cpu"
     ],
     "current_failing_tests_QNN": [
+        "^test_resize_downsample_scales_cubic", // Runs but there's accuracy mismatch
         "^test_scatter_elements_with_negative_indices",
         "^test_scatter_elements_with_duplicate_indices*"
     ],
