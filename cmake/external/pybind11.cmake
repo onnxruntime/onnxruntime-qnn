@@ -9,4 +9,3 @@ onnxruntime_fetchcontent_declare(
     FIND_PACKAGE_ARGS 2.13 NAMES pybind11
 )
 onnxruntime_fetchcontent_makeavailable(pybind11_project)
-
