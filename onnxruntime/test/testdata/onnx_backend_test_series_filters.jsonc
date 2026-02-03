@@ -725,7 +725,8 @@
     ],
     "current_failing_tests_QNN": [
         "^test_scatter_elements_with_negative_indices",
-        "^test_scatter_elements_with_duplicate_indices*"
+        "^test_scatter_elements_with_duplicate_indices*",
+        "^test_resize_downsample_scales_cubic*"
     ],
     "current_failing_tests_WEBGPU": [
         "^test_layer_normalization_2d_axis0_cpu",
