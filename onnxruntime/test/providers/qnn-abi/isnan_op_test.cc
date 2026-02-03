@@ -19,11 +19,11 @@ namespace test {
 // and that inference outputs for QNN EP and CPU EP match.
 template <typename DataType>
 static void RunIsNanTest(const std::vector<TestInputDef<DataType>>& input_defs,
-                           const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                           ExpectedEPNodeAssignment expected_ep_assignment,
-                           float fp32_abs_err = 1e-5,
-                           const std::string& backend_name = "cpu",
-                           int opset = 13) {
+                         const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                         ExpectedEPNodeAssignment expected_ep_assignment,
+                         float fp32_abs_err = 1e-5,
+                         const std::string& backend_name = "cpu",
+                         int opset = 13) {
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = backend_name;
@@ -52,7 +52,7 @@ TEST_F(QnnABICPUBackendTests, IsNaN_Scalar) {
   RunIsNanTest<float>({TestInputDef<float>(input_shape, false, input_data)},
                       {},
                       ExpectedEPNodeAssignment::All,
-                     0.0f); 
+                      0.0f);
 }
 
 TEST_F(QnnABICPUBackendTests, IsNaN_Mix_2d) {
@@ -72,14 +72,14 @@ TEST_F(QnnABICPUBackendTests, IsNaN_Mix_2d) {
 //
 // Skip qdq test since IsNaN only support fp.
 TEST_F(QnnABIHTPBackendTests, IsNaN_Scalar) {
-  const std::vector<int64_t> input_shape{}; 
+  const std::vector<int64_t> input_shape{};
   const std::vector<float> input_data{MakeNaN()};
 
   RunIsNanTest<float>({TestInputDef<float>(input_shape, false, input_data)},
                       {},
                       ExpectedEPNodeAssignment::All,
                       0.0f,
-                    "htp"); 
+                      "htp");
 }
 
 TEST_F(QnnABIHTPBackendTests, IsNaN_Mix_2d) {
@@ -87,11 +87,11 @@ TEST_F(QnnABIHTPBackendTests, IsNaN_Mix_2d) {
   const std::vector<float> input_data{MakeNaN(), MakeNaN(), 1.0f, 2.0f,
                                       3.0f, 4.0f, MakeNaN(), MakeNaN()};
 
-  RunIsNanTest<float>({TestInputDef<float>(input_shape,false, input_data)},
+  RunIsNanTest<float>({TestInputDef<float>(input_shape, false, input_data)},
                       {},
                       ExpectedEPNodeAssignment::All,
                       0.0f,
-                      "htp");  
+                      "htp");
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
