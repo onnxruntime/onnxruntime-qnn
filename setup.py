@@ -141,19 +141,11 @@ class InstallCommand(InstallCommandBase):
         return ret
 
 
-providers_qnn = "onnxruntime_providers_qnn"
+providers_qnn = "onnxruntime_providers_qnn_abi"
 if platform.system() == "Linux":
     providers_qnn = "lib" + providers_qnn + ".so"
-    # TODO: Remove the following lines containing `shutil`
-    # once we remove the QNN EP non-ABI build and remove the "_abi" suffix.
-    shutil.move("libonnxruntime_providers_qnn.so", "libonnxruntime_providers_qnn_non_abi.so")
-    shutil.move("libonnxruntime_providers_qnn_abi.so", "libonnxruntime_providers_qnn.so")
 elif platform.system() == "Windows":
     providers_qnn = providers_qnn + ".dll"
-    # TODO: Remove the following lines containing `shutil`
-    # once we remove the QNN EP non-ABI build and remove the "_abi" suffix.
-    shutil.move("onnxruntime_providers_qnn.dll", "onnxruntime_providers_qnn_non_abi.dll")
-    shutil.move("onnxruntime_providers_qnn_abi.dll", "onnxruntime_providers_qnn.dll")
 
 # Additional binaries
 dl_libs = []
