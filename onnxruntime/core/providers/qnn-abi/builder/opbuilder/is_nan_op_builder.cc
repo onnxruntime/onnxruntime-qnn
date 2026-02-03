@@ -1,8 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include <unordered_set>
-
 #include "core/providers/qnn-abi/builder/op_builder_factory.h"
 #include "core/providers/qnn-abi/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn-abi/builder/qnn_model_wrapper.h"
@@ -66,13 +64,13 @@ Ort::Status IsNanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
   const std::string& org_output_name = node_unit.Outputs()[0].name;
   const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(org_output_name);
   std::vector<uint32_t> output_shape = output_info.shape;
-  std::string isnan_node_name = utils::GetUniqueName(node_unit, "_IsNan");
+  const std::string isnan_node_name = utils::GetUniqueName(node_unit, "_IsNan");
 
   QnnTensorWrapper isnan_output(org_output_name,
                                 is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE,
                                 output_info.qnn_data_type,
                                 output_info.quant_param.Copy(),
-                                std::vector<uint32_t>(output_shape));
+                                std::move(output_shape));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(isnan_output)), "Failed to add tensor.");
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(isnan_node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
