@@ -58,9 +58,9 @@ def get_qnn_asset_file_list(is_windows_platform=None):
 
     # Main QNN EP provider library
     if is_windows_platform:
-        providers_qnn = "onnxruntime_providers_qnn.dll"
+        providers_qnn = "onnxruntime_providers_qnn_abi.dll"
     else:
-        providers_qnn = "libonnxruntime_providers_qnn.so"
+        providers_qnn = "libonnxruntime_providers_qnn_abi.so"
 
     files = [providers_qnn]
 
@@ -194,6 +194,9 @@ def build_zip_asset(
         log.info(f"Creating zip: {zip_path}")
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
             for filename, file_path in found_files:
+                if 'onnxruntime_providers_qnn_abi' in filename:
+                    filename.replace('_abi', '')
+
                 zipf.write(file_path, filename)
                 log.debug(f"Added to zip: {filename}")
 
