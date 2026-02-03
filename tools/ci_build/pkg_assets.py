@@ -194,7 +194,7 @@ def build_zip_asset(
         log.info(f"Creating zip: {zip_path}")
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
             for filename, file_path in found_files:
-                if 'onnxruntime_providers_qnn_abi' in filename:
+                if "onnxruntime_providers_qnn_abi" in filename:
                     filename.replace('_abi', '')
 
                 zipf.write(file_path, filename)
