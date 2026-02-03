@@ -988,7 +988,7 @@
       "test_resize_downsample_nearest",
       "test_resize_downsample_scales_cubic_A_n0p5_exclude_outside",
       // "test_resize_downsample_scales_cubic_align_corners",
-      // "test_resize_downsample_scales_cubic",
+      "test_resize_downsample_scales_cubic",
       // "test_resize_downsample_scales_linear_align_corners",
       "test_resize_downsample_scales_linear",
       "test_resize_downsample_scales_nearest",
