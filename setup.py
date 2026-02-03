@@ -242,8 +242,8 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 
-packages = ["onnxruntime_qnn"]
-package_data = {"onnxruntime_qnn": data + extra}
+packages = ["onnxruntime"]
+package_data = {"onnxruntime": data + extra}
 
 version_number = ""
 with open("VERSION_NUMBER") as f:
