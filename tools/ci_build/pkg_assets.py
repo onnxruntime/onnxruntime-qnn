@@ -174,7 +174,7 @@ def build_zip_asset(
         found_files = []
 
         for filename in asset_files:
-            file_path = os.path.join(os.path.join(cwd, "onnxruntime_qnn"), filename)
+            file_path = os.path.join(cwd, filename)
             if os.path.exists(file_path):
                 found_files.append((filename, file_path))
                 log.debug(f"Found asset file: {file_path}")
