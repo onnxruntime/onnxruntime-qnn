@@ -30,6 +30,7 @@ REPO_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, "..", ".."))
 sys.path.insert(0, os.path.join(REPO_DIR, "tools", "python"))
 import util.android as android  # noqa: E402
 from build_args import parse_arguments  # noqa: E402
+from pkg_assets import build_zip_asset  # noqa: E402
 from util import (  # noqa: E402
     generate_android_triplets,
     generate_linux_triplets,
@@ -2652,6 +2653,15 @@ def main():
                 args.use_migraphx,
                 args.enable_training_apis,
                 args.msbuild_extra_options,
+            )
+
+        if args.build_zip_asset:
+            build_zip_asset(
+                source_dir,
+                build_dir,
+                configs,
+                args.zip_asset_name_suffix,
+                use_ninja=(args.cmake_generator == "Ninja"),
             )
 
     if args.test and args.build_nuget:

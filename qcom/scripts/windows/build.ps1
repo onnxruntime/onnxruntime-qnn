@@ -117,6 +117,7 @@ $QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot"
 $GenerateBuild = $false
 $DoBuild = $false
 $BuildWheel = $false
+$BuildZip = $true
 $MakeTestArchive = $false
 $RunTests = $false
 $TestRunner = "$RepoRoot\qcom\scripts\windows\run_tests.ps1"
@@ -267,6 +268,25 @@ else {
                                     --use_qnn `
                                     --qnn_version=$QairtSdkVersion `
                                     $PyNightlyArg
+                            }
+                        }
+                    }
+                }
+
+                if ($BuildZip) {
+                    Use-PyVenv -PyVenv $BuildVEnv {
+                        Use-WorkingDir -Path $BuildOutputDir {
+                            $PkgAssetsArgs = @(
+                                "--source", $RepoRoot,
+                                "--build_dir", $BuildDir,
+                                "--config", $Config,
+                                "--verbose"
+                            )
+                            if ($CMakeGenerator -eq "Ninja") {
+                                $PkgAssetsArgs += "--use_ninja"
+                            }
+                            Assert-Success -ErrorMessage "Failed to build wheel" {
+                                python.exe (Join-Path $RepoRoot "tools\ci_build\pkg_assets.py") @PkgAssetsArgs
                             }
                         }
                     }
