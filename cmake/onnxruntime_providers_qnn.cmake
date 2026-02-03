@@ -130,6 +130,13 @@
       endforeach()
     endif()
   endif()
+
+  add_custom_command(
+    TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT}/test/testdata
+    $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/testdata)
+
   if (EXISTS "${onnxruntime_QNN_HOME}/Qualcomm AI Hub Proprietary License.pdf")
     add_custom_command(
       TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
