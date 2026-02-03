@@ -340,7 +340,7 @@ def generate_files(line_list, args):
 
     if is_windows_build:
         nuget_dependencies = {
-            "qnn_ep_shared_lib": "onnxruntime_providers_qnn.dll",
+            "qnn_ep_shared_lib": "onnxruntime_providers_qnn_abi.dll",
         }
 
         runtimes_target = '" target="runtimes\\win-'
@@ -431,16 +431,6 @@ def generate_files(line_list, args):
 
     # Process execution providers which are built as shared libs
     if args.execution_provider == "qnn" or (is_qnn_package and not is_ado_packaging_build):
-        # TODO: Remove the following lines containing `shutil`
-        # once we remove the QNN EP non-ABI build and remove the "_abi" suffix.
-        shutil.move(
-            os.path.join(args.native_build_path, "onnxruntime_providers_qnn.dll"),
-            os.path.join(args.native_build_path, "onnxruntime_providers_qnn_non_abi.dll"),
-        )
-        shutil.move(
-            os.path.join(args.native_build_path, "onnxruntime_providers_qnn_abi.dll"),
-            os.path.join(args.native_build_path, "onnxruntime_providers_qnn.dll"),
-        )
         files_list.append(
             "<file src="
             + '"'
