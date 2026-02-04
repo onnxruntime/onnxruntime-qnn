@@ -1844,7 +1844,9 @@ TEST_F(QnnHTPBackendTests, TestMismatchedGraphInputAndTensorWrapperCount) {
 #if !BUILD_QNN_EP_STATIC_LIB
 // Tests that both the actual QNN EP and the simulated QNN EP can be registered for ABI compatibility.
 // Tests that the simulated QNN EP is equal to the actual QNN EP.
-TEST_F(QnnCPUBackendTests, TestSimulatedQnnEp) {
+// TODO: Consider alternate approach to test backward compatibility without building
+// additional onnxruntime_providers_qnn_simulation.dll
+TEST_F(QnnCPUBackendTests, DISABLED_TestSimulatedQnnEp) {
   // Run with QNN-ABI.
   onnxruntime::ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
