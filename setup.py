@@ -8,7 +8,6 @@ import datetime
 import logging
 import platform
 import shlex
-import shutil
 import subprocess
 import sys
 from glob import glob
