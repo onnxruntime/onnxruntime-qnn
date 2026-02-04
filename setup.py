@@ -247,9 +247,12 @@ classifiers = [
 packages = ["onnxruntime_qnn"]
 package_data = {"onnxruntime_qnn": data + extra}
 
-version_number = ""
-with open("VERSION_NUMBER") as f:
-    version_number = f.readline().strip()
+# TODO: We will package the Python Wheel for QNN EP Library Later
+version_number = "1.25.0"
+version_number_path = path.join(getcwd(), "VERSION_NUMBER")
+if path.exists(version_number_path):
+    with open(version_number_path) as f:
+        version_number = f.readline().strip()
 if nightly_build:
     # https://docs.microsoft.com/en-us/azure/devops/pipelines/build/variables
     build_suffix = environ.get("BUILD_BUILDNUMBER")
@@ -329,7 +332,7 @@ def save_build_and_package_info(package_name, version_number, qnn_version):
             f.write(f"qnn_version = '{qnn_version}'\n")
 
 
-save_build_and_package_info(package_name, version_number, qnn_version)
+# save_build_and_package_info(package_name, version_number, cuda_version, qnn_version)
 
 extras_require = {}
 setup(
