@@ -450,6 +450,7 @@ def generate_files(line_list, args):
                 "src",
                 "Qualcomm.ML.OnnxRuntime.QNN",
                 "bin",
+                args.target_architecture,
                 args.build_config,
                 "netstandard2.0",
                 "Qualcomm.ML.OnnxRuntime.QNN.dll",

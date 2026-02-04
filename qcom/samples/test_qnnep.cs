@@ -1,3 +1,6 @@
+// Copyright (c) Qualcomm Innovation Center, Inc. All rights reserved.
+// Licensed under the MIT License.
+
 // Program.cs
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;

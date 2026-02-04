@@ -156,6 +156,7 @@ jobs:
         if: ${{ inputs.upload_nuget }}
         with:
           name: ORT ${{inputs.target_os}} ${{ inputs.target_arch }} Python ${{ inputs.target_py_vsn }} QNN NuGet Package
+          retention-days: 1
           path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/Qualcomm.ML.OnnxRuntime.QNN*.nupkg
 
