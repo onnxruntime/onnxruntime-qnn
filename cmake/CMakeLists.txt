@@ -1709,8 +1709,7 @@ if (onnxruntime_BUILD_NODEJS)
 endif()
 
 if (onnxruntime_ENABLE_PYTHON)
-  message(STATUS "Python Build is enabled")
-  list(APPEND ONNXRUNTIME_CMAKE_FILES onnxruntime_python)
+  message(STATUS "Temporarily skip Python Build for QNN ABI Implementation")
 endif()
 
 if (onnxruntime_BUILD_OBJC)

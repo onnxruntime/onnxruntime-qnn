@@ -577,36 +577,7 @@ if path.isdir(path.join("onnxruntime", "external")):
         ]
     )
 
-packages = [
-    "onnxruntime",
-    "onnxruntime.backend",
-    "onnxruntime.capi",
-    "onnxruntime.datasets",
-    "onnxruntime.tools",
-    "onnxruntime.tools.mobile_helpers",
-    "onnxruntime.tools.ort_format_model",
-    "onnxruntime.tools.ort_format_model.ort_flatbuffers_py",
-    "onnxruntime.tools.ort_format_model.ort_flatbuffers_py.fbs",
-    "onnxruntime.tools.qdq_helpers",
-    "onnxruntime.tools.qnn",
-    "onnxruntime.quantization",
-    "onnxruntime.quantization.operators",
-    "onnxruntime.quantization.CalTableFlatBuffers",
-    "onnxruntime.quantization.fusions",
-    "onnxruntime.quantization.execution_providers.qnn",
-    "onnxruntime.quantization.neural_compressor",
-    "onnxruntime.transformers",
-    "onnxruntime.transformers.models.bart",
-    "onnxruntime.transformers.models.bert",
-    "onnxruntime.transformers.models.gpt2",
-    "onnxruntime.transformers.models.llama",
-    "onnxruntime.transformers.models.longformer",
-    "onnxruntime.transformers.models.phi2",
-    "onnxruntime.transformers.models.sam2",
-    "onnxruntime.transformers.models.stable_diffusion",
-    "onnxruntime.transformers.models.t5",
-    "onnxruntime.transformers.models.whisper",
-]
+packages = []
 
 package_data = {"onnxruntime.tools.mobile_helpers": ["*.md", "*.config"]}
 data_files = []
@@ -720,9 +691,12 @@ if package_name == "onnxruntime-tvm":
 
 package_data["onnxruntime"] = data + examples + extra
 
-version_number = ""
-with open("VERSION_NUMBER") as f:
-    version_number = f.readline().strip()
+# TODO: We will package the Python Wheel for QNN EP Library Later
+version_number = "1.25.0"
+version_number_path = path.join(getcwd(), "VERSION_NUMBER")
+if path.exists(version_number_path):
+    with open(version_number_path) as f:
+        version_number = f.readline().strip()
 if nightly_build:
     # https://docs.microsoft.com/en-us/azure/devops/pipelines/build/variables
     build_suffix = environ.get("BUILD_BUILDNUMBER")
@@ -847,7 +821,7 @@ def save_build_and_package_info(package_name, version_number, cuda_version, qnn_
             f.write(f"qnn_version = '{qnn_version}'\n")
 
 
-save_build_and_package_info(package_name, version_number, cuda_version, qnn_version)
+# save_build_and_package_info(package_name, version_number, cuda_version, qnn_version)
 
 extras_require = {}
 if package_name == "onnxruntime-gpu" and cuda_major_version:
