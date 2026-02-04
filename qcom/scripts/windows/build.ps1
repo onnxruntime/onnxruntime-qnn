@@ -16,8 +16,8 @@ param (
     [string]$QairtSdkRoot,
 
     [Parameter(Mandatory = $false,
-               HelpMessage = "What to do: build|archive|test|generate_sln|package.")]
-    [ValidateSet("build", "archive", "test", "generate_sln", "package")]
+               HelpMessage = "What to do: build|archive|test|generate_sln.")]
+    [ValidateSet("build", "archive", "test", "generate_sln")]
     [string]$Mode = "build",
 
     [Parameter(Mandatory = $false,
@@ -116,7 +116,6 @@ $CommonArgs = `
 $QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot"
 $GenerateBuild = $false
 $DoBuild = $false
-$DoPackage = $false
 $BuildWheel = $false
 $BuildZip = $true
 $MakeTestArchive = $false
@@ -186,9 +185,6 @@ switch ($Mode) {
     "archive" {
         $MakeTestArchive = $true
     }
-    "package" {
-        $DoPackage = $true
-    }
     default {
         throw "Unknown build mode $Mode."
     }
@@ -254,18 +250,21 @@ else {
                     & cmake --build (Join-Path $BuildDir $Config) --config $Config
                 }
 
-                $BuildOutputDir = (Join-Path $BuildDir $Config)
-                if ($CMakeGenerator -ne "Ninja") {
-                    $BuildOutputDir = (Join-Path $BuildOutputDir $Config)
-                }
-
                 if ($BuildWheel) {
+                    $BuildOutputDir = (Join-Path $BuildDir $Config)
+                    if ($CMakeGenerator -eq "Visual Studio 17 2022") {
+                        $BuildOutputDir = (Join-Path $BuildOutputDir $Config)
+                    }
                     if ($env:ORT_NIGHTLY_BUILD) {
                         $PyNightlyArg = "--nightly_build"
                     }
                     Use-PyVenv -PyVenv $BuildVEnv {
                         Use-WorkingDir -Path $BuildOutputDir {
                             Assert-Success -ErrorMessage "Failed to build wheel" {
+                                python.exe (Join-Path $RepoRoot "setup.py") `
+                                    bdist_wheel `
+                                    --wheel_name_suffix=qcom_internal `
+                                    --use_qnn `
                                     --qnn_version=$QairtSdkVersion `
                                     $PyNightlyArg
                             }
