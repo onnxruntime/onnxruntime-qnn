@@ -2821,15 +2821,6 @@ def main():
                 args.msbuild_extra_options,
             )
 
-        if args.build_zip_asset:
-            build_zip_asset(
-                source_dir,
-                build_dir,
-                configs,
-                args.zip_asset_name_suffix,
-                use_ninja=(args.cmake_generator == "Ninja"),
-            )
-
     if args.test and args.build_nuget:
         run_csharp_tests(
             source_dir,
