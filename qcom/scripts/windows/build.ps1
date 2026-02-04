@@ -290,7 +290,7 @@ else {
                 if ($BuildNuget) {
                     Use-PyVenv -PyVenv $BuildVEnv {
                         Assert-Success -ErrorMessage "Failed to build nuget" {
-                            .\build.bat $ArchArgs $CommonArgs $QnnArgs $PlatformArgs
+                            .\build.bat --skip_tests $ArchArgs $CommonArgs $QnnArgs $PlatformArgs
                         }
                     }
                 }
