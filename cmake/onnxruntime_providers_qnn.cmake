@@ -137,6 +137,18 @@
     ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT}/test/testdata
     $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/testdata)
 
+  add_custom_command(
+    TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:onnxruntime> $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>
+    COMMENT "Copying onnxruntime.dll to Build Folder for onnx-test-runner"
+  )
+
+  add_custom_command(
+    TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy ${onnxruntime_ORT_HOME}/lib/onnxruntime_providers_shared.dll $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>
+    COMMENT "Copying onnxruntime_providers_shared.dll to Build Folder for onnx-test-runner"
+  )
+
   if (EXISTS "${onnxruntime_QNN_HOME}/Qualcomm AI Hub Proprietary License.pdf")
     add_custom_command(
       TARGET ${onnxruntime_providers_qnn_target} POST_BUILD

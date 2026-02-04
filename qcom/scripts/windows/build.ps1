@@ -270,6 +270,7 @@ else {
         $OnnxTestBinariesDir = (Join-Path $RepoRoot "onnx_test_binaries\v1.23.2\$ArchSubDir")
         $OnnxTestRunnerPath = (Join-Path $OnnxTestBinariesDir "onnx_test_runner.exe")
         $OnnxRuntimePerfTestPath = (Join-Path $OnnxTestBinariesDir "onnxruntime_perf_test.exe")
+        $OnnxRuntimePluginEpOnnxTestPath = (Join-Path $OnnxTestBinariesDir "onnxruntime_plugin_ep_onnx_test.exe")
         
         if (Test-Path $OnnxTestRunnerPath) {
             Copy-Item -Path $OnnxTestRunnerPath -Destination (Join-Path $BuildDir $Config)
@@ -283,6 +284,13 @@ else {
             Write-Host "Copied onnxruntime_perf_test.exe ($ArchSubDir) to build directory"
         } else {
             Write-Warning "onnxruntime_perf_test.exe not found at $OnnxRuntimePerfTestPath"
+        }
+        
+        if (Test-Path $OnnxRuntimePluginEpOnnxTestPath) {
+            Copy-Item -Path $OnnxRuntimePluginEpOnnxTestPath -Destination (Join-Path $BuildDir $Config)
+            Write-Host "Copied onnxruntime_plugin_ep_onnx_test.exe ($ArchSubDir) to build directory"
+        } else {
+            Write-Warning "onnxruntime_plugin_ep_onnx_test.exe not found at $OnnxRuntimePluginEpOnnxTestPath"
         }
     }
 
