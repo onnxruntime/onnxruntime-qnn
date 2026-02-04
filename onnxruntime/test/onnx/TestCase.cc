@@ -982,7 +982,6 @@ std::unique_ptr<std::set<BrokenTest>> GetBrokenTests(const std::string& provider
       {"mxnet_arcface", "Model is an invalid ONNX model"},
       {"unique_not_sorted_without_axis", "Expected data for 'Y' is incorrect and in sorted order."},
       {"cumsum_1d_reverse_exclusive", "only failing linux GPU CI. Likely build error."},
-      {"resize_downsample_scales_cubic", "results mismatch with onnx tests"},
       {"resize_downsample_scales_cubic_align_corners", "results mismatch with onnx tests"},
       {"resize_downsample_scales_linear_align_corners", "results mismatch with onnx tests"},
       {"resize_tf_crop_and_resize", "Bad onnx test output. Needs test fix."},
