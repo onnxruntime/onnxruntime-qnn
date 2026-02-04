@@ -241,8 +241,8 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
 ]
 
-packages = ["onnxruntime"]
-package_data = {"onnxruntime": data + extra}
+packages = ["onnxruntime_qnn"]
+package_data = {"onnxruntime_qnn": data + extra}
 
 version_number = ""
 with open("VERSION_NUMBER") as f:
@@ -318,7 +318,7 @@ with open(requirements_path) as f:
 def save_build_and_package_info(package_name, version_number, qnn_version):
     sys.path.append(path.join(path.dirname(__file__), "onnxruntime", "python"))
 
-    version_path = path.join("onnxruntime", "capi", "build_and_package_info.py")
+    version_path = path.join("onnxruntime_qnn", "build_and_package_info.py")
     with open(version_path, "w") as f:
         f.write(f"package_name = '{package_name}'\n")
         f.write(f"__version__ = '{version_number}'\n")

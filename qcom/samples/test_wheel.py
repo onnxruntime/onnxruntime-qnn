@@ -1,3 +1,6 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the MIT License.
+
 import numpy as np
 import onnxruntime_qnn as qnn_ep
 
@@ -6,7 +9,7 @@ import onnxruntime as ort
 # Path to the plugin EP library
 ep_lib_path = qnn_ep.get_library_path()
 # Registration name can be anything the application chooses
-ep_registration_name = "QnnTestProvider"
+ep_registration_name = qnn_ep.get_qnn_ep_registration_name()
 
 # Register plugin EP library with ONNX Runtime
 ort.register_execution_provider_library(ep_registration_name, ep_lib_path)
