@@ -11,11 +11,12 @@ import sys
 import zipfile
 from pathlib import Path
 
-QCOM_ROOT = Path(__file__).parent.parent.parent
-REPO_ROOT = QCOM_ROOT.parent
+# Insert tools/python to sys.path
+_repo_root = Path(__file__).resolve().parent.parent.parent.parent
+sys.path.insert(0, str(_repo_root / "tools" / "python"))
 
-sys.path.insert(0, os.path.join(REPO_ROOT, "tools", "python"))
 from util import get_logger, is_windows
+
 
 log = get_logger("pkg_assets")
 

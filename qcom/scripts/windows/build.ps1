@@ -277,6 +277,7 @@ else {
                     Use-PyVenv -PyVenv $BuildVEnv {
                         Use-WorkingDir -Path $BuildOutputDir {
                             $ZipAssetArgs = @(
+                                "--source", $RepoRoot,
                                 "--build_dir", $BuildDir,
                                 "--config", $Config,
                                 "--build_zip_asset"
