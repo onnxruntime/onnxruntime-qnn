@@ -91,7 +91,7 @@ jobs:
           archive_ort_windows_arm64
           test_ort_windows_arm64
 
-        # TODO: Now, we don't support arm64 python wheel for now
+        # TODO: We will support arm64 python wheel
         # test_ort_windows_arm64_pysmoke
         # test_ort_windows_arm64_pygpu
 
