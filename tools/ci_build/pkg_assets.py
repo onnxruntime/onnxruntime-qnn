@@ -43,7 +43,7 @@ def parse_version_number(source_dir):
         return None
 
 
-def get_qnn_asset_file_list(is_windows_platform=None):
+def get_qnn_asset_file_list():
     """
     Returns the list of QNN asset files to include in the zip package.
 
@@ -53,20 +53,9 @@ def get_qnn_asset_file_list(is_windows_platform=None):
     Returns:
         list[str]: List of filenames to include
     """
-    if is_windows_platform is None:
-        is_windows_platform = is_windows()
-
-    # Main QNN EP provider library
-    if is_windows_platform:
-        providers_qnn = "onnxruntime_providers_qnn_abi.dll"
-    else:
-        providers_qnn = "libonnxruntime_providers_qnn_abi.so"
-
-    files = [providers_qnn]
-
-    # QNN runtime dependencies (matching setup.py)
-    if is_windows_platform:
-        qnn_deps = [
+    qnn_assets = {
+        "windows": [
+            "onnxruntime_providers_qnn_abi.dll",
             "Genie.dll",
             "QnnCpu.dll",
             "QnnGpu.dll",
@@ -83,10 +72,9 @@ def get_qnn_asset_file_list(is_windows_platform=None):
             "libqnnhtpv73.cat",
             "QnnHtpV68Stub.dll",
             "libQnnHtpV68Skel.so",
-        ]
-    else:
-        # Linux/AIX
-        qnn_deps = [
+        ],
+        "others": [
+            "libonnxruntime_providers_qnn_abi.so",
             "libGenie.so",
             "libQnnCpu.so",
             "libQnnGpu.so",
@@ -98,10 +86,9 @@ def get_qnn_asset_file_list(is_windows_platform=None):
             "libQnnSaver.so",
             "libQnnSystem.so",
             "libHtpPrepare.so",
-        ]
-
-    files.extend(qnn_deps)
-    return files
+        ],
+    }
+    return qnn_assets["windows"] if is_windows() else qnn_assets["others"]
 
 
 def build_zip_asset(
@@ -194,11 +181,13 @@ def build_zip_asset(
         log.info(f"Creating zip: {zip_path}")
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
             for filename, file_path in found_files:
+                # TODO: we will remove this once the rename completed.
+                zip_filename = filename
                 if "onnxruntime_providers_qnn_abi" in filename:
-                    filename.replace("_abi", "")
+                    zip_filename = filename.replace("_abi", "")
 
-                zipf.write(file_path, filename)
-                log.debug(f"Added to zip: {filename}")
+                zipf.write(file_path, zip_filename)
+                log.debug(f"Added to zip: {zip_filename}")
 
         log.info(f"Created zip asset: {zip_path} ({len(found_files)} files)")
         created_zips.append(zip_path)
