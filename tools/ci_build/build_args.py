@@ -906,7 +906,6 @@ def parse_arguments() -> argparse.Namespace:
     # Language Bindings
     add_python_binding_args(parser)
     add_csharp_binding_args(parser)
-
     add_java_binding_args(parser)
     add_nodejs_binding_args(parser)
     add_objc_binding_args(parser)

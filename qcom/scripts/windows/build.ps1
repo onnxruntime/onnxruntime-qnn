@@ -208,16 +208,6 @@ if ($MakeTestArchive) {
     if (-not $?) {
         $failed = $true
     }
-
-    python.exe "$RepoRoot\qcom\scripts\all\pkg_assets.py" `
-        "--source=$RepoRoot" `
-        "--build_dir=$BuildDir" `
-        "--config=$Config" `
-        "--verbose"
-
-    if (-not $?) {
-        $failed = $true
-    }
 }
 else {
     if ($CMakeGenerator -eq "Ninja") {
@@ -265,6 +255,7 @@ else {
                     if ($CMakeGenerator -eq "Visual Studio 17 2022") {
                         $BuildOutputDir = (Join-Path $BuildOutputDir $Config)
                     }
+
                     if ($env:ORT_NIGHTLY_BUILD) {
                         $PyNightlyArg = "--nightly_build"
                     }
@@ -294,7 +285,7 @@ else {
                                 $ZipAssetArgs += "--cmake_generator", "Ninja"
                             }
                             Assert-Success -ErrorMessage "Failed to build zip asset" {
-                                python.exe (Join-Path $RepoRoot "tools\ci_build\build.py") @ZipAssetArgs
+                                python.exe (Join-Path $RepoRoot "qcom\scripts\all\pkg_assets.py") @ZipAssetArgs
                             }
                         }
                     }
