@@ -124,20 +124,6 @@
       endforeach()
     endif()
   endif()
-
-  # Copy onnxruntime_providers_qnn.dll to directory
-  add_custom_command(
-    TARGET ${onnxruntime_providers_qnn_abi_target} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:${onnxruntime_providers_qnn_abi_target}> $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_abi_target}>
-    COMMENT "Copying onnxruntime_providers_qnn.dll to directory"
-  )
-
-  # Copy required __init__.py to directory
-  add_custom_command(
-    TARGET ${onnxruntime_providers_qnn_abi_target} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${ONNXRUNTIME_ROOT}/python/__init__.py $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_abi_target}>
-    COMMENT "Copying __init__.py to directory"
-  )
   if (EXISTS "${onnxruntime_QNN_HOME}/Qualcomm AI Hub Proprietary License.pdf")
     add_custom_command(
       TARGET ${onnxruntime_providers_qnn_abi_target} POST_BUILD
