@@ -1330,6 +1330,17 @@ Status QNNExecutionProvider::CompileFromOrtGraph(const std::vector<FusedNodeAndG
   return Status::OK();
 }
 
+static std::string GetElementTypeString(int onnx_type) {
+  switch (onnx_type) {
+        case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT: return "float32";
+        case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32: return "uint32_t";
+        case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:  return "int32_t";
+        case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:  return "int64_t";
+        // Add more if your model uses other types
+    }
+    throw std::runtime_error("Unsupported tensor element type");
+}
+
 // Convert ORT tensor type to byte size
 static size_t GetElementSizeONNX(int onnx_type) {
     switch (onnx_type) {
@@ -1359,11 +1370,11 @@ static void BuildIONames(const Node& node, GenieNodeState& st) {
             desc.shape.push_back(d.dim_value());
         }
 
-        size_t elem_size = GetElementSizeONNX(inp_def->TypeAsProto()->tensor_type().elem_type());
+        desc.elem_size = GetElementSizeONNX(inp_def->TypeAsProto()->tensor_type().elem_type());
         size_t total_elems = 1;
         for (auto s : desc.shape) total_elems *= s;
 
-        desc.byte_size = total_elems * elem_size;
+        desc.byte_size = total_elems * desc.elem_size;
 
         st.inputs.push_back(desc);
     }
@@ -1383,10 +1394,10 @@ static void BuildIONames(const Node& node, GenieNodeState& st) {
             desc.shape.push_back(d.dim_value());
         }
 
-        size_t elem_size = GetElementSizeONNX(out_def->TypeAsProto()->tensor_type().elem_type());
+        desc.elem_size = GetElementSizeONNX(out_def->TypeAsProto()->tensor_type().elem_type());
         size_t total_elems = 1;
         for (auto s : desc.shape) total_elems *= s;
-        desc.byte_size = total_elems * elem_size;
+        desc.byte_size = total_elems * desc.elem_size;
 
         st.outputs.push_back(desc);
     }
@@ -1415,11 +1426,28 @@ Status GenieCompute(void* state, OrtKernelContext* ctx, const OrtApi* ort_api)
     ort_api->GetTensorData(in_val, &in_data);
     if (!in_data) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "ORT input data is null");
 
-    auto& io = st->inputs[i];
-      std::string input_config = "{\"dimensions\": [1,1],\"data-type\": \"uint32_t\"}";
-      const char *input_config_ptr = input_config.c_str();
+    OrtTensorTypeAndShapeInfo* info = nullptr;
+    ort_api->GetTensorTypeAndShape(in_val, &info);
+    ONNXTensorElementDataType elem_type;
+    ort_api->GetTensorElementType(info, &elem_type);
 
-    io.byte_size = 4;
+    size_t dim_count = 0;
+    ort_api->GetDimensionsCount(info, &dim_count);
+    std::vector<int64_t> dims(dim_count);
+    ort_api->GetDimensions(info, dims.data(), dim_count);
+    std::string dimString = "";
+    int64_t numElem = 1;
+    for(auto d: dims) {
+      numElem *= d;
+      dimString +=  std::to_string(d)+",";
+    }
+    dimString.pop_back();
+
+    auto& io = st->inputs[i];
+    std::string input_config = "{\"dimensions\": ["+ dimString + "],\"data-type\": \""+GetElementTypeString(elem_type)+"\"}";
+    const char *input_config_ptr = input_config.c_str();
+
+    io.byte_size = (size_t)GetElementSizeONNX(elem_type)*numElem;
     Genie_Status_t rc = st->api->Node_setData(
         st->node,
         io.io_name,
@@ -1441,42 +1469,56 @@ Status GenieCompute(void* state, OrtKernelContext* ctx, const OrtApi* ort_api)
   // 3) Get outputs (fixed size, single callback)
   for (size_t i = 0; i < st->outputs.size(); ++i) {
     const auto& io = st->outputs[i];
-    OrtValue* out_val = nullptr;
-    ort_api->KernelContext_GetOutput(
-        ctx, i, io.shape.data(), io.shape.size(), &out_val);
 
-    if (!out_val) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "ORT output is null");
-
-    void* out_data = nullptr;
-    static std::vector<float> outputData;
-    ort_api->GetTensorMutableData(out_val, &out_data);
-    if (!out_data) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "ORT output data is null");
-
-    std::string output_config = "{}";
-    const char *output_config_ptr = output_config.c_str();
-    
+    static std::vector<std::byte> outputData;
+    static std::vector<int64_t> outputShape;
     GenieNode_IOCallback_t OutputCallback = [](const void* data,
                             const size_t dataSize,
                             const char* outputConfig,
                             void* userData)
     {
-        if (outputConfig) {
-            std::cout << "[GenieCallback] Error: outputConfig got." << outputConfig << std::endl;
-        }
         if (userData) {
             std::cout << "[GenieCallback] Got userData" << std::endl;
         }
-        outputData.resize(dataSize/4);
+        
+        // Parse outputConfig to fetch output shape
+        std::string outputInfo = outputConfig;
+        size_t firstB = outputInfo.find('[');
+        size_t secondB = outputInfo.find(']');
+        std::string shapeStr = outputInfo.substr(firstB + 1, secondB - firstB - 1);
+        std::stringstream ss(shapeStr);
+        std::string dim;
+        while (std::getline(ss, dim, ',')) {
+          outputShape.push_back((int64_t)std::stoi(dim));
+        }
+
+        // Set appropriate datasize for output buffer
+        outputData.resize(dataSize);
         std::memcpy(outputData.data(), data, dataSize);
     };
 
+    std::string output_config = "{}";
+    const char *output_config_ptr = output_config.c_str();
     Genie_Status_t rc = st->api->Node_getData(
         st->node,
         io.io_name,
         output_config_ptr /*ioConfig*/,
         OutputCallback
       );
-    std::memcpy(out_data, outputData.data(), outputData.size()*4);
+
+    OrtValue* out_val = nullptr;
+    ort_api->KernelContext_GetOutput(
+        ctx, i, outputShape.data(), outputShape.size(), &out_val);
+
+    if (!out_val) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "ORT output is null");
+
+    void* out_data = nullptr;
+    ort_api->GetTensorMutableData(out_val, &out_data);
+    if (!out_data) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "ORT output data is null");
+
+    std::memcpy(out_data, outputData.data(), outputData.size());
+    outputShape.clear();
+    outputData.clear();
 
     if (rc != 0) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "GenieNode_getData failed");
   }

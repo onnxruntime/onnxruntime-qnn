@@ -91,6 +91,7 @@ struct GenieNodeState {
         GenieNode_IOName_t io_name;
         std::string        ort_name;
         std::vector<int64_t> shape;
+        size_t             elem_size;
         size_t             byte_size;
     };
     std::vector<IODesc> inputs;
