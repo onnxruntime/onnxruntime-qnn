@@ -308,7 +308,7 @@ else {
                             if ($CMakeGenerator -eq "Ninja") {
                                 $PkgAssetsArgs += "--use_ninja"
                             }
-                            Assert-Success -ErrorMessage "Failed to build wheel" {
+                            Assert-Success -ErrorMessage "Failed to build zip" {
                                 python.exe (Join-Path $RepoRoot "tools\ci_build\pkg_assets.py") @PkgAssetsArgs
                             }
                         }
