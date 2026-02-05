@@ -334,6 +334,7 @@ setup(
     version=version_number,
     description="ONNX Runtime is a runtime accelerator for Machine Learning models",
     long_description=long_description,
+    long_description_content_type="text/x-rst",
     author="Microsoft Corporation",
     author_email="onnxruntime@microsoft.com",
     cmdclass=cmd_classes,
