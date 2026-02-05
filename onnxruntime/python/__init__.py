@@ -8,10 +8,6 @@ import os
 EP_NAME = "QnnExecutionProvider"
 
 
-def get_qnn_ep_registration_name():
-    return EP_NAME
-
-
 def get_ep_names():
     return [EP_NAME]
 
