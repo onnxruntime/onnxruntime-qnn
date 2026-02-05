@@ -98,6 +98,7 @@ class TestOrt(TestBase):
         self.__assert_passes(self.__get_test_cmd(test_cmd, test_def.working_dir))
 
     @pytest.mark.parametrize("test_def", MODEL_TEST_DEFINITIONS, ids=MODEL_TEST_IDS)
+    @pytest.mark.skip("Skip ProviderBridge EP Testing as we switch to Plugin EP")
     def test_onnx_models_legacy_runner(self, test_def: ModelTestDef) -> None:
         runner_exe = Path(CONFIG.device_build_root) / "onnx_test_runner"
 
