@@ -68,15 +68,29 @@ jobs:
 
   build-and-test-windows-arm64:
     if: ${{ inputs.do_all || inputs.do_windows_arm64 }}
-    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
-    secrets: inherit
-    with:
-      nightly_build: ${{ inputs.nightly_build }}
-      build_runner_arch: ${{ inputs.windows_arm64_runner_arch }}
-      target_arch: arm64
-      upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' }}
-      target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
-      test_runner_arch: arm64
+    runs-on: ["self-hosted", "ARM64", "Windows", "Build"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Build and Test ARM64 Windows
+        run: >
+          python.exe
+          qcom/build_and_test.py
+          --target-py-version 3.12
+          --build-nuget
+          archive_ort_windows_arm64
+          test_ort_windows_arm64
+          test_ort_windows_arm64_pysmoke
+          test_ort_windows_arm64_pygpu
+
+      - name: Publish Test Report
+        uses: mikepenz/action-junit-report@v4.0.4
+        if: always() # always run even if the previous step fails
+        with:
+          check_name: windows-arm64-py3.12-test-results
+          report_paths: |
+            ${{ github.workspace }}/build/windows-arm64/Release/*.results.xml
 
   build-and-test-windows-arm64ec:
     if: ${{ inputs.do_all }}
