@@ -248,6 +248,7 @@ class TaskLibrary:
                 "aarch64_manylinux_2_34",
                 self.__config,
                 self.__target_py_version,
+                self.__ort_prebuilt_root,
                 self.__qairt_sdk_root,
                 "build",
                 extra_args=extra_args,
@@ -269,6 +270,7 @@ class TaskLibrary:
                         "aarch64",
                         self.__config,
                         None,  # target-py_version
+                        self.__ort_prebuilt_root,
                         self.__qairt_sdk_root,
                         "archive",
                     )
@@ -289,6 +291,7 @@ class TaskLibrary:
                     "aarch64_manylinux_2_34",
                     self.__config,
                     self.__target_py_version,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "archive",
                 )
@@ -307,6 +310,7 @@ class TaskLibrary:
                     "aarch64_oe_gcc11_2",
                     self.__config,
                     None,  # target-py_version
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "archive",
                 )
@@ -325,6 +329,7 @@ class TaskLibrary:
                     "x86_64",
                     self.__config,
                     self.__target_py_version,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "archive",
                 )
@@ -427,6 +432,7 @@ class TaskLibrary:
                         "aarch64",
                         self.__config,
                         None,  # target_py_version
+                        self.__ort_prebuilt_root,
                         self.__qairt_sdk_root,
                         "build",
                         extra_args=["--no-warnings-as-errors"],
@@ -462,6 +468,7 @@ class TaskLibrary:
                     "aarch64_oe_gcc11_2",
                     self.__config,
                     None,  # target-py-version
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
                 )
@@ -492,6 +499,7 @@ class TaskLibrary:
                     "x86_64",
                     self.__config,
                     self.__target_py_version,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
                 )
@@ -737,6 +745,7 @@ class TaskLibrary:
                     "aarch64_manylinux_2_34",
                     self.__config,
                     self.__target_py_version,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
                 )
@@ -755,6 +764,7 @@ class TaskLibrary:
                     "x86_64",
                     self.__config,
                     self.__target_py_version,
+                    self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
                 )
