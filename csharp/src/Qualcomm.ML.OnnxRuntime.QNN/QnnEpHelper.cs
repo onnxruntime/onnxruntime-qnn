@@ -1,5 +1,5 @@
-// Copyright (c) Qualcomm Innovation Center, Inc. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 using System;
 using System.IO;

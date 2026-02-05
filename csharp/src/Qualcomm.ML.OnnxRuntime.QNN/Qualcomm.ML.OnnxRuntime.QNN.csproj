@@ -7,7 +7,7 @@
     <Description>Helper utilities for QNN Execution Provider - provides GetLibraryPath(), GetEpNames() and GetEpName() functions</Description>
     <Authors>Qualcomm</Authors>
     <Company>Qualcomm</Company>
-    <Copyright>© Qualcomm Innovation Center, Inc. All rights reserved.</Copyright>
+    <Copyright>Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries. All rights reserved.</Copyright>
     <PackageTags>onnxruntime;qnn;qualcomm;ai;ml;inference</PackageTags>
   </PropertyGroup>
 

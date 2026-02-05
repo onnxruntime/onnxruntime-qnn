@@ -301,10 +301,10 @@ def generate_metadata(line_list, args):
     metadata_list = ["<metadata>"]
     generate_id(metadata_list, args.package_name)
     generate_version(metadata_list, args.package_version)
-    generate_authors(metadata_list, "Qualcomm")
-    generate_owners(metadata_list, "Qualcomm")
+    generate_authors(metadata_list, "Microsoft")
+    generate_owners(metadata_list, "Microsoft")
     generate_description(metadata_list, args.package_name)
-    generate_copyright(metadata_list, "\xc2\xa9 " + "Qualcomm Corporation. All rights reserved.")
+    generate_copyright(metadata_list, "\xc2\xa9 " + "Microsoft Corporation. All rights reserved.")
     generate_tags(metadata_list, tags)
     generate_icon(metadata_list, "ORT_icon_for_light_bg.png")
     generate_license(metadata_list)
