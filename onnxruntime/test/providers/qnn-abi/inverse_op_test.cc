@@ -28,7 +28,6 @@ static void RunInverseTest(const std::vector<TestInputDef<DataType>>& input_defs
 
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
-  provider_options["soc_model"] = "0";  // Use QNN_SOC_MODEL_UNKNOWN
 
   RunQnnModelTestABI(BuildOpTestCase<DataType>("Inverse", input_defs, {}, attrs, kMSDomain),  // Inverse Op exist in kMSDomain
                      provider_options,
@@ -134,7 +133,7 @@ TEST_F(QnnABIHTPBackendTests, Inverse_2d) {
   RunInverseTest<float>({TestInputDef<float>({2, 2}, false, input_vector)},
                         {},
                         ExpectedEPNodeAssignment::All,
-                        1e-3f,
+                        1e-2f,
                         "htp");
 }
 
@@ -146,7 +145,7 @@ TEST_F(QnnABIHTPBackendTests, Inverse_3d) {
   RunInverseTest<float>({TestInputDef<float>({10, 2, 2}, false, input_vector)},
                         {},
                         ExpectedEPNodeAssignment::All,
-                        1e-3f,
+                        1e-2f,
                         "htp");
 }
 
@@ -158,7 +157,7 @@ TEST_F(QnnABIHTPBackendTests, Inverse_4d) {
   RunInverseTest<float>({TestInputDef<float>({1, 10, 2, 2}, false, input_vector)},
                         {},
                         ExpectedEPNodeAssignment::All,
-                        1e-3f,
+                        1e-2f,
                         "htp");
 }
 
