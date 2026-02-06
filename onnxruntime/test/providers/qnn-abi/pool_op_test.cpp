@@ -264,7 +264,7 @@ TEST_F(QnnABIHTPBackendTests, MaxPool_Rank3_stride1_HTP_u8) {
        utils::MakeAttribute("pads", std::vector<int64_t>{1, 1}),
        utils::MakeAttribute("dilations", std::vector<int64_t>{1}),
        utils::MakeAttribute("ceil_mode", static_cast<int64_t>(0)),
-       //  utils::MakeAttribute("storage_order", static_cast<int64_t>(0)),
+       utils::MakeAttribute("storage_order", static_cast<int64_t>(0)),
        utils::MakeAttribute("auto_pad", "NOTSET")},
       ExpectedEPNodeAssignment::All);
 }
