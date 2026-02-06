@@ -2407,6 +2407,8 @@ def main():
     qnn_home = ""
     if args.use_qnn:
         qnn_home = args.qnn_home
+        if not args.skip_pip_install:
+            run_subprocess([sys.executable, "-m", "pip", "install", "mako", "numpy", "lxml", "clang"])
 
     # if using tensorrt, setup tensorrt paths
     tensorrt_home = ""

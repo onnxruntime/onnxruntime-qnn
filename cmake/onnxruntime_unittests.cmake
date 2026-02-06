@@ -782,6 +782,7 @@ if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_RED
     list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn_abi)
 
     list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_shared)
+    include(qnn_udo_unittest.cmake)
   endif()
 endif()
 
