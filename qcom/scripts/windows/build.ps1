@@ -252,6 +252,41 @@ else {
         Copy-Item -Path $TestRunner -Destination (Join-Path $BuildDir $Config)
         Copy-Item (Join-Path $CMakeBinDir "ctest.exe") -Destination (Join-Path $BuildDir $Config)
         Copy-Item -Path $RepoRoot\qcom\scripts\all\python_test_files.txt -Destination (Join-Path $BuildDir $Config)
+
+        # Copy ONNX test binaries from onnx_test_binaries directory based on architecture
+        $ArchSubDir = switch ($Arch) {
+            "x86_64" { "x64" }
+            "arm64" { "arm64" }
+            "aarch64" { "arm64" }
+            "arm64ec" { "arm64" }
+            default { "x64" }
+        }
+
+        $OnnxTestBinariesDir = (Join-Path $RepoRoot "onnx_test_binaries\windows\$ArchSubDir")
+        $OnnxTestRunnerPath = (Join-Path $OnnxTestBinariesDir "onnx_test_runner.exe")
+        $OnnxRuntimePerfTestPath = (Join-Path $OnnxTestBinariesDir "onnxruntime_perf_test.exe")
+
+        if (Test-Path $OnnxTestRunnerPath) {
+            Copy-Item -Path $OnnxTestRunnerPath -Destination (Join-Path $BuildDir $Config)
+            Write-Host "Copied onnx_test_runner.exe ($ArchSubDir) to build directory"
+        } else {
+            Write-Warning "onnx_test_runner.exe not found at $OnnxTestRunnerPath"
+        }
+
+        if (Test-Path $OnnxRuntimePerfTestPath) {
+            Copy-Item -Path $OnnxRuntimePerfTestPath -Destination (Join-Path $BuildDir $Config)
+            Write-Host "Copied onnxruntime_perf_test.exe ($ArchSubDir) to build directory"
+        } else {
+            Write-Warning "onnxruntime_perf_test.exe not found at $OnnxRuntimePerfTestPath"
+        }
+
+        $OnnxRuntimePluginEpTestPath = (Join-Path $OnnxTestBinariesDir "onnxruntime_plugin_ep_onnx_test.exe")
+        if (Test-Path $OnnxRuntimePluginEpTestPath) {
+            Copy-Item -Path $OnnxRuntimePluginEpTestPath -Destination (Join-Path $BuildDir $Config)
+            Write-Host "Copied onnxruntime_plugin_ep_onnx_test.exe ($ArchSubDir) to build directory"
+        } else {
+            Write-Warning "onnxruntime_plugin_ep_onnx_test.exe not found at $OnnxRuntimePluginEpTestPath"
+        }
     }
 
     if ($GenerateBuild -or $DoBuild) {

@@ -22,7 +22,7 @@ $CTestExe = (Join-Path $RootDir "ctest.exe")
 
 # Single-config generators like Ninja put runners in the parent directory
 # of the rest of the ONNX Runtime build.
-if (Test-Path (Join-Path $RootDir "onnx_test_runner.exe")) {
+if (Test-Path (Join-Path $RootDir "onnxruntime_plugin_ep_onnx_test.exe")) {
     $OnnxTestRunnerExe = (Join-Path $RootDir "onnx_test_runner.exe")
     $OnnxEpTestRunnerExe = (Join-Path $RootDir "onnxruntime_plugin_ep_onnx_test.exe")
 } else {
