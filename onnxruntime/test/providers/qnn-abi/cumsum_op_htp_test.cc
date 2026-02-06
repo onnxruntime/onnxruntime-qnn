@@ -35,8 +35,6 @@ static void RunCumSumOpTest(const std::string& op_type,
                      opset_version,
                      expected_ep_assignment,
                      fp32_abs_err);
-
-  provider_options["soc_model"] = "0";  // Restore to QNN_SOC_MODEL_UNKNOWN
 }
 
 // Non-QDQ model, CumSum with float input and axis input as initializer with axis 0
