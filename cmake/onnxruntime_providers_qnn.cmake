@@ -115,7 +115,7 @@
     # Create destination directory first to ensure it exists
     add_custom_command(
       TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>
+      COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/onnxruntime_qnn
       COMMENT "Creating QNN library destination directory"
     )
 
@@ -125,14 +125,26 @@
         add_custom_command(
           TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
           COMMAND ${CMAKE_COMMAND} -E copy_if_different "${QNN_LIB_FILE}" $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>
-          COMMENT "Copying QNN library: ${QNN_LIB_FILE}"
+          COMMENT "Copying QNN library to Build Folder: ${QNN_LIB_FILE}"
+        )
+        add_custom_command(
+          TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+          COMMAND ${CMAKE_COMMAND} -E copy_if_different "${QNN_LIB_FILE}" $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/onnxruntime_qnn
+          COMMENT "Copying QNN library to onnxruntime_qnn for Python Wheel: ${QNN_LIB_FILE}"
         )
       endforeach()
     endif()
+
+    # Copy onnxruntime_providers_qnn.dll to onnxruntime_qnn directory
+    add_custom_command(
+      TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:${onnxruntime_providers_qnn_target}> $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/onnxruntime_qnn
+      COMMENT "Copying onnxruntime_providers_qnn.dll to onnxruntime_qnn directory"
+    )
   endif()
   if (EXISTS "${onnxruntime_QNN_HOME}/Qualcomm AI Hub Proprietary License.pdf")
     add_custom_command(
       TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy "${onnxruntime_QNN_HOME}/Qualcomm AI Hub Proprietary License.pdf" $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>
+      COMMAND ${CMAKE_COMMAND} -E copy "${onnxruntime_QNN_HOME}/Qualcomm AI Hub Proprietary License.pdf" $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/onnxruntime_qnn
       )
   endif()
