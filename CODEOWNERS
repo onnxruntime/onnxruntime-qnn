@@ -1,4 +1,10 @@
+# ONNX Runtime QNN Code Owners
+# This repository is maintained by Qualcomm with Microsoft as the original copyright holder
+
 /CODEOWNERS @microsoft/onnxruntime-admin
+
+# QNN Execution Provider
+/onnxruntime/core/providers/qnn/ @microsoft/onnxruntime-admin
 
 # Mobile
 /onnxruntime/core/flatbuffers/schema/ort.fbs @microsoft/onnxruntime-mobile

@@ -5,22 +5,22 @@ We're always looking for your help to improve the product (bug fixes, new featur
 ## Contribute a code change
 
 * Start by reading the [Engineering Design](https://onnxruntime.ai/docs/reference/high-level-design.html). More documentation can be found in the [repo docs folder](./docs/) and [on the repo wiki](https://github.com/microsoft/onnxruntime/wiki), as well as the user facing docs on the [ONNX Runtime website](https://onnxruntime.ai/docs).
-* If your change is non-trivial or introduces new public facing APIs (discussed in more detail below) please use the [feature request issue template](https://github.com/microsoft/onnxruntime/issues/new?template=feature_request.md) to discuss it with the team and get consensus on the basic design and direction first. For all other changes, you can directly create a pull request (PR) and we'll be happy to take a look.
+* If your change is non-trivial or introduces new public facing APIs (discussed in more detail below) please use the [feature request issue template](https://github.com/onnxruntime/onnxruntime-qnn/issues/new?template=feature_request.md) to discuss it with the team and get consensus on the basic design and direction first. For all other changes, you can directly create a pull request (PR) and we'll be happy to take a look.
 * Make sure your PR adheres to the [PR Guidelines](./docs/PR_Guidelines.md) and [Coding Conventions and Standards](./docs/Coding_Conventions_and_Standards.md) established by the team.
-* If you're unsure about any of the above and want to contribute, you're welcome to [start a discussion](https://github.com/microsoft/onnxruntime/discussions) with the team.
+* If you're unsure about any of the above and want to contribute, you're welcome to [start a discussion](https://github.com/onnxruntime/onnxruntime-qnn/discussions) with the team.
 
 ## Propose a new public API
 
- ONNX Runtime has a collection of [public APIs](./README.md#api-documentation).  Some of these APIs make their way back into the Windows OS.  We make compatibility commitments for these APIs and follow a structured process when adding to them.  Please use the [Feature Request issue template](https://github.com/microsoft/onnxruntime/issues/new?template=feature_request.md) before starting any PRs that affect any of the public APIs.
+ ONNX Runtime QNN has a collection of [public APIs](./README.md#api-documentation).  Some of these APIs make their way back into the Windows OS.  We make compatibility commitments for these APIs and follow a structured process when adding to them.  Please use the [Feature Request issue template](https://github.com/onnxruntime/onnxruntime-qnn/issues/new?template=feature_request.md) before starting any PRs that affect any of the public APIs.
 
  If your proposal contributes the Windows Machine Learning WinRT API and will affect the Windows.AI.MachineLearning namespace, please review [Windows ML main principles](./docs/WinML_principles.md) before you submit your request.
 
 ## Process details
 
-Please search the [issue tracker](https://github.com/microsoft/onnxruntime/issues) for a similar idea first: there may already be an issue you can contribute to.
+Please search the [issue tracker](https://github.com/onnxruntime/onnxruntime-qnn/issues) for a similar idea first: there may already be an issue you can contribute to.
 
 1. **Create Issue**
-To propose a new feature or API please start by filing a new issue in the [issue tracker](https://github.com/microsoft/onnxruntime/issues).
+To propose a new feature or API please start by filing a new issue in the [issue tracker](https://github.com/onnxruntime/onnxruntime-qnn/issues).
 Include as much detail as you have. It's fine if it's not a complete design: just a summary and rationale is a good starting point.
 
 2. **Discussion**
@@ -28,7 +28,7 @@ We'll keep the issue open for community discussion until it has been resolved or
 Note that if an issue isn't a high priority or has many open questions then it might stay open for a long time.
 
 3. **Owner Review**
-The ONNX Runtime team will review the proposal and either approve or close the issue based on whether it broadly aligns with the [Onnx Runtime Roadmap - High Level Goals section](./docs/Roadmap.md) and contribution guidelines.
+The ONNX Runtime QNN team will review the proposal and either approve or close the issue based on whether it broadly aligns with the [Onnx Runtime Roadmap - High Level Goals section](./docs/Roadmap.md) and contribution guidelines.
 
 4. **API Review**
 If the feature adds new APIs then we'll start an API review. All new public APIs must be reviewed before merging.
@@ -53,13 +53,13 @@ Tutorials, how-to guides and API reference docs for ONNX Runtime are published a
 
 The html docs are generated from markdown using Jekyll and published using GitHub Pages.
 
-To update the docs, create a Pull Request against the [gh-pages](https://github.com/microsoft/onnxruntime/tree/gh-pages) branch of the [ONNX Runtime repo](https://github.com/microsoft/onnxruntime).
+To update the docs, create a Pull Request against the [gh-pages](https://github.com/microsoft/onnxruntime/tree/gh-pages) branch of the [ONNX Runtime repo](https://github.com/microsoft/onnxruntime) or against this repository for QNN-specific documentation.
 
 To preview your changes, you can push to the gh-pages branch in your fork and this will publish a staged version of your changes to <github user name>.github.io/onnxruntime/docs.
 
 Once your PR is approved and merged, your changes will be automatically published to https://onnxruntime.ai/docs.
 
-Note: technical reference docs for developers of ONNX Runtime source code can be found [here](https://github.com/microsoft/onnxruntime/docs)
+Note: technical reference docs for developers of ONNX Runtime QNN source code can be found in the [docs folder](./docs)
 
 ## Licensing guidelines
 
