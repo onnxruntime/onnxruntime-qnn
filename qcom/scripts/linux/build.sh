@@ -267,6 +267,40 @@ else
     cp "${test_runner}" "${build_dir}/${config}/"
     cp "${cmake_bindir}/ctest" "${build_dir}/${config}/"
     cp "${REPO_ROOT}/qcom/scripts/all/python_test_files.txt" "${build_dir}/${config}/"
+
+    # Copy ONNX test binaries from onnx_test_binaries directory based on architecture
+    arch_subdir=""
+    case "${target_arch}" in
+      "x86_64") arch_subdir="x64" ;;
+      "aarch64"|"aarch64_oe_gcc11_2") arch_subdir="arm64" ;;
+      *) arch_subdir="x64" ;;
+    esac
+
+    onnx_test_binaries_dir="${REPO_ROOT}/onnx_test_binaries/linux/${arch_subdir}"
+    onnx_test_runner_path="${onnx_test_binaries_dir}/onnx_test_runner"
+    onnxruntime_perf_test_path="${onnx_test_binaries_dir}/onnxruntime_perf_test"
+    onnxruntime_plugin_ep_test_path="${onnx_test_binaries_dir}/onnxruntime_plugin_ep_onnx_test"
+
+    if [ -f "${onnx_test_runner_path}" ]; then
+      cp "${onnx_test_runner_path}" "${build_dir}/${config}/"
+      log_info "Copied onnx_test_runner (${arch_subdir}) to build directory"
+    else
+      log_debug "onnx_test_runner not found at ${onnx_test_runner_path}"
+    fi
+
+    if [ -f "${onnxruntime_perf_test_path}" ]; then
+      cp "${onnxruntime_perf_test_path}" "${build_dir}/${config}/"
+      log_info "Copied onnxruntime_perf_test (${arch_subdir}) to build directory"
+    else
+      log_debug "onnxruntime_perf_test not found at ${onnxruntime_perf_test_path}"
+    fi
+
+    if [ -f "${onnxruntime_plugin_ep_test_path}" ]; then
+      cp "${onnxruntime_plugin_ep_test_path}" "${build_dir}/${config}/"
+      log_info "Copied onnxruntime_plugin_ep_onnx_test (${arch_subdir}) to build directory"
+    else
+      log_debug "onnxruntime_plugin_ep_onnx_test not found at ${onnxruntime_plugin_ep_test_path}"
+    fi
   fi
 
   if [ "${#action_args[@]}" -gt 0 ]; then

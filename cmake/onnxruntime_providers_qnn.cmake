@@ -175,12 +175,16 @@
       COMMENT "Copying onnxruntime_providers_shared.dll to Build Folder for test runner"
     )
   elseif(UNIX AND NOT ANDROID)
-    # Copy .so files for Linux but skip for Android
-    add_custom_command(
-      TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy ${onnxruntime_ORT_HOME}/lib/libonnxruntime.so $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>
-      COMMENT "Copying libonnxruntime.so to Build Folder for test runner (Linux)"
-    )
+    # Copy all versions of libonnxruntime.so files for Linux but skip for Android
+    # This will copy libonnxruntime.so, libonnxruntime.so.1, libonnxruntime.so.1.24.1, etc.
+    file(GLOB ONNXRUNTIME_SO_FILES "${onnxruntime_ORT_HOME}/lib/libonnxruntime.so*")
+    foreach(SO_FILE ${ONNXRUNTIME_SO_FILES})
+      add_custom_command(
+        TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SO_FILE}" $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>
+        COMMENT "Copying ${SO_FILE} to Build Folder for test runner (Linux)"
+      )
+    endforeach()
 
     add_custom_command(
       TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
