@@ -143,7 +143,6 @@ $TestModelsViaEpPlugin = {
     Write-Host "--=-=-=- Running ONNX model $Suite tests with the ABI-stable EP plugin -=--=-=-"
     & $OnnxEpTestRunnerExe `
         -j 1 `
-        -e qnn `
         --plugin_ep_libs "qnn|onnxruntime_providers_qnn.dll" `
         --plugin_eps qnn `
         -i "backend_type|$Backend" `
