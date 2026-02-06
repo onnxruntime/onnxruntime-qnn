@@ -161,17 +161,36 @@
     )
   endif()
 
-  add_custom_command(
-    TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy ${onnxruntime_ORT_HOME}/lib/onnxruntime.dll $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>
-    COMMENT "Copying onnxruntime.dll to Build Folder for test runner"
-  )
+  # Platform-specific copying of onnxruntime and onnxruntime_providers_shared
+  if(WIN32)
+    add_custom_command(
+      TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy ${onnxruntime_ORT_HOME}/lib/onnxruntime.dll $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>
+      COMMENT "Copying onnxruntime.dll to Build Folder for test runner"
+    )
 
-  add_custom_command(
-    TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy ${onnxruntime_ORT_HOME}/lib/onnxruntime_providers_shared.dll $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>
-    COMMENT "Copying onnxruntime_providers_shared.dll to Build Folder for test runner"
-  )
+    add_custom_command(
+      TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy ${onnxruntime_ORT_HOME}/lib/onnxruntime_providers_shared.dll $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>
+      COMMENT "Copying onnxruntime_providers_shared.dll to Build Folder for test runner"
+    )
+  elseif(UNIX AND NOT ANDROID)
+    # Copy .so files for Linux but skip for Android
+    add_custom_command(
+      TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy ${onnxruntime_ORT_HOME}/lib/libonnxruntime.so $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>
+      COMMENT "Copying libonnxruntime.so to Build Folder for test runner (Linux)"
+    )
+
+    add_custom_command(
+      TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy ${onnxruntime_ORT_HOME}/lib/libonnxruntime_providers_shared.so $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>
+      COMMENT "Copying libonnxruntime_providers_shared.so to Build Folder for test runner (Linux)"
+    )
+  elseif(ANDROID)
+    # Skip copying for Android builds
+    message(STATUS "Skipping onnxruntime library copying for Android build")
+  endif()
 
   if (EXISTS "${onnxruntime_QNN_HOME}/Qualcomm AI Hub Proprietary License.pdf")
     add_custom_command(
