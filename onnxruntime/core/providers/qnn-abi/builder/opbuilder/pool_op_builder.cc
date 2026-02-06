@@ -179,12 +179,11 @@ Ort::Status PoolOpBuilder::SetCommonPoolParams(const OrtNodeAttrHelper& node_hel
   }
 
   auto auto_pad = node_helper.Get("auto_pad", std::string("NOTSET"));
+  if (output_shape.size() == 3) {
+    // Calculate rank-4 output shape for rank-3 input.
+    RETURN_IF_ERROR(AmendOutputShapeForRank3Pool(input_shape, filter_size, stride, pad_amount, output_shape));
+  }
   if (auto_pad.compare("NOTSET") != 0) {
-    if (output_shape.size() == 3) {
-      // Calculate rank-4 output shape for rank-3 input.
-      RETURN_IF_ERROR(AmendOutputShapeForRank3Pool(input_shape, filter_size, stride, pad_amount, output_shape));
-    }
-
     for (size_t axis = 0; axis < rank - 2; ++axis) {
       uint32_t total_pads = (output_shape[axis + 1] - 1) * stride[axis] +
                             (filter_size[axis] - 1) * dilations[axis] + 1 - input_shape[axis + 1];
@@ -352,9 +351,9 @@ Ort::Status PoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     return Ort::Status();
   }
 
+  std::vector<uint32_t> output_shape;
   if (op_type == "MaxPool" || op_type == "AveragePool") {
     const auto& outputs = node_unit.Outputs();
-    std::vector<uint32_t> output_shape;
     RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(outputs[0].shape, output_shape), "Cannot get shape");
 
     RETURN_IF_ERROR(SetCommonPoolParams(node_helper,
@@ -443,8 +442,6 @@ Ort::Status PoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   if (onnx_in_shape.size() == 3) {
     onnx_in_shape = {onnx_in_shape[0], 1, onnx_in_shape[1], onnx_in_shape[2]};
   }
-  std::vector<uint32_t> pooled_shape;
-  RETURN_IF_ERROR(AmendOutputShapeForRank3Pool(onnx_in_shape, filter_size, stride, pad_amount, pooled_shape));
 
   const auto& outputs = node_unit.Outputs();
   const std::string real_out = outputs[0].name;
@@ -458,7 +455,7 @@ Ort::Status PoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
       QNN_TENSOR_TYPE_NATIVE,
       reshape_input_info.qnn_data_type,
       output_info.quant_param.Copy(),
-      std::move(pooled_shape));
+      std::move(output_shape));
 
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(pool_tensor)), "Failed to add tensor for pool_out");
 
