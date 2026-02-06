@@ -133,7 +133,7 @@ TEST_F(QnnABIHTPBackendTests, Inverse_2d) {
   RunInverseTest<float>({TestInputDef<float>({2, 2}, false, input_vector)},
                         {},
                         ExpectedEPNodeAssignment::All,
-                        1e-2f,
+                        1e-3f,
                         "htp");
 }
 
@@ -145,7 +145,7 @@ TEST_F(QnnABIHTPBackendTests, Inverse_3d) {
   RunInverseTest<float>({TestInputDef<float>({10, 2, 2}, false, input_vector)},
                         {},
                         ExpectedEPNodeAssignment::All,
-                        1e-2f,
+                        1e-3f,
                         "htp");
 }
 
@@ -157,7 +157,7 @@ TEST_F(QnnABIHTPBackendTests, Inverse_4d) {
   RunInverseTest<float>({TestInputDef<float>({1, 10, 2, 2}, false, input_vector)},
                         {},
                         ExpectedEPNodeAssignment::All,
-                        1e-2f,
+                        1e-3f,
                         "htp");
 }
 
