@@ -13,13 +13,6 @@ from .vcpkg_helpers import (  # noqa: F401
     generate_windows_triplets,
 )
 
-try:
-    import flatbuffers  # noqa: F401
-
-    from .reduced_build_config_parser import parse_config  # noqa: F401
-except ImportError:
-    get_logger("tools_python_utils").info("flatbuffers module is not installed. parse_config will not be available")
-
 # see if we can make the pytorch helpers available.
 import importlib.util
 
