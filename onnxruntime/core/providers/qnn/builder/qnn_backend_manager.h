@@ -12,6 +12,7 @@
 #include <dlfcn.h>
 #endif
 
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -353,6 +354,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                       Qnn_Version_t req_version,
                                       T** interface_provider);
 
+  Ort::Status GetQnnOpPackageInfo(const char* lib_path,
+                                  const char* interface_name,
+                                  const QnnOpPackage_Info_t** op_package_info);
+
   bool IsDevicePropertySupported();
 
   std::string GetBackendBuildId() {
@@ -394,78 +399,116 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   };
 
   Ort::Status LoadOpPackage() {
-    // assume op_packages passed in represented in
-    // op_packages|<OpTpye>:<PackagePath>:<InterfaceSymbolName>:<OptionalTarget>,<OpTpye2>:<PackagePath2>:<InterfaceSymbolName2>:<OptionalTarget2>
-    for (const auto& op_package : op_packages_) {
-      RETURN_IF(nullptr == qnn_interface_.backendRegisterOpPackage, "backendRegisterOpPackageFnHandle is nullptr.");
+    RETURN_IF(nullptr == qnn_interface_.backendRegisterOpPackage, "backendRegisterOpPackageFnHandle is nullptr.");
 
+    auto RegisterOpPackage = [&](const std::string& path,
+                                 const std::string& interface,
+                                 const std::string& target,
+                                 const QnnOpPackage_Info_t*& op_package_info) -> Ort::Status {
       Qnn_ErrorHandle_t result = qnn_interface_.backendRegisterOpPackage(
           backend_handle_,
-          op_package.path.c_str(),
-          op_package.interface.c_str(),
-          op_package.target.c_str());
+          path.c_str(),
+          interface.c_str(),
+          target.c_str());
 
       if (result != QNN_SUCCESS) {
         switch (result) {
           case QNN_BACKEND_ERROR_INVALID_ARGUMENT:
             ORT_CXX_LOG(logger_,
-                        ORT_LOGGING_LEVEL_ERROR,
+                        ORT_LOGGING_LEVEL_WARNING,
                         "Invalid argument, please check if op package path or interface provider is NULL.");
             break;
           case QNN_BACKEND_ERROR_OP_PACKAGE_NOT_FOUND:
             ORT_CXX_LOG(logger_,
-                        ORT_LOGGING_LEVEL_ERROR,
-                        ("Could not open op package path. op_pack_path: " + op_package.path).c_str());
+                        ORT_LOGGING_LEVEL_WARNING,
+                        ("Could not open op package path. op_pack_path: " + path).c_str());
             break;
           case QNN_BACKEND_ERROR_OP_PACKAGE_IF_PROVIDER_NOT_FOUND:
             ORT_CXX_LOG(logger_,
-                        ORT_LOGGING_LEVEL_ERROR,
+                        ORT_LOGGING_LEVEL_WARNING,
                         "Could not find interfaceProvider symbol in op package library.");
             break;
           case QNN_BACKEND_ERROR_OP_PACKAGE_REGISTRATION_FAILED:
-            ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Op package registration failed.");
+            ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, "Op package registration failed.");
             break;
           case QNN_BACKEND_ERROR_OP_PACKAGE_UNSUPPORTED_VERSION:
             ORT_CXX_LOG(logger_,
-                        ORT_LOGGING_LEVEL_ERROR,
+                        ORT_LOGGING_LEVEL_WARNING,
                         "Op package has interface version not supported by this backend.");
             break;
           case QNN_BACKEND_ERROR_NOT_SUPPORTED:
-            ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Op package registration is not supported.");
+            ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, "Op package registration is not supported.");
             break;
           case QNN_BACKEND_ERROR_INVALID_HANDLE:
-            ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "backend is not a valid handle.");
+            ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, "backend is not a valid handle.");
             break;
           case QNN_BACKEND_ERROR_OP_PACKAGE_DUPLICATE:
             ORT_CXX_LOG(logger_,
-                        ORT_LOGGING_LEVEL_ERROR,
+                        ORT_LOGGING_LEVEL_WARNING,
                         "OpPackageName+OpName must be unique. Op package content information can be be obtained with"
                         "QnnOpPackage interface. Indicates that an Op with the same package name and op name was"
                         "already registered.");
             break;
           case QNN_COMMON_ERROR_SYSTEM_COMMUNICATION:
-            ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "SSR occurrence (successful recovery).");
+            ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, "SSR occurrence (successful recovery).");
             break;
           case QNN_COMMON_ERROR_SYSTEM_COMMUNICATION_FATAL:
-            ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "SSR occurrence (unsuccessful recovery).");
+            ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, "SSR occurrence (unsuccessful recovery).");
             break;
           default:
             ORT_CXX_LOG(logger_,
-                        ORT_LOGGING_LEVEL_ERROR,
+                        ORT_LOGGING_LEVEL_WARNING,
                         "Unknown error occurred while initializing logging in the QNN backend.");
             break;
         }
       }
       RETURN_IF(QNN_SUCCESS != result,
                 ("Failed to register op package to backend. Error: " + QnnErrorHandleToString(result)).c_str());
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Successfully register the op package.");
+
+      RETURN_IF_ERROR(GetQnnOpPackageInfo(path.c_str(), interface.c_str(), &op_package_info));
+
+      ORT_CXX_LOGF(logger_,
+                   ORT_LOGGING_LEVEL_INFO,
+                   "Successfully registered op package '%s'.", op_package_info->packageName);
+
+      return Ort::Status();
+    };
+
+    // assume op_packages passed in represented in
+    // op_packages|<OpType>:<PackagePath>:<InterfaceSymbolName>:<OptionalTarget>,<OpType2>:<PackagePath2>:<InterfaceSymbolName2>:<OptionalTarget2>
+    for (const auto& op_package : op_packages_) {
+      const QnnOpPackage_Info_t* op_package_info{nullptr};
+      RETURN_IF_ERROR(RegisterOpPackage(op_package.path, op_package.interface, op_package.target, op_package_info));
+
       std::string op_package_for_registration = op_package.interface;
       std::string suffix = "InterfaceProvider";
       if (op_package_for_registration.size() >= suffix.size() &&
           op_package_for_registration.compare(op_package_for_registration.size() - suffix.size(), suffix.size(), suffix) == 0) {
         op_package_for_registration.erase(op_package_for_registration.size() - suffix.size());
       }
+
       registerUDO(op_package.op_type, op_package_for_registration);
+    }
+
+    if (IsGpuBackend(GetQnnBackendType())) {
+      // Load the GPU OpPackage for extended ONNX support, and register all its ops as UDOs to QNN EP.
+      const auto op_package_path = std::filesystem::path(GetBackendLibDir()) /
+                                   onnxruntime::utils::MakeSharedLibraryPath("QnnGpuOpPkgOnnx");
+
+      const QnnOpPackage_Info_t* op_package_info{nullptr};
+      if (RegisterOpPackage(op_package_path.string(), "QnnOpPackage_interfaceProvider", "", op_package_info).IsOK() &&
+          op_package_info != nullptr) {
+        for (size_t i = 0; i < op_package_info->numOperations; i++) {
+          registerUDO(op_package_info->operationNames[i], op_package_info->packageName);
+        }
+      } else if constexpr (QNN_API_VERSION_MAJOR >= 2 && QNN_API_VERSION_MINOR >= 34) {
+        // QnnGpuOpPkgOnnx is distributed in the QAIRT SDK starting from 2.45 (API version 2.34).
+        // It can be still be loaded with older versions (if building QNN EP from source with an old SDK),
+        // but only warn about a failure to load on supported versions.
+        ORT_CXX_LOGF(logger_,
+                     ORT_LOGGING_LEVEL_WARNING,
+                     "Failed to register '%s'. GPU support for GenAI models will be reduced.", op_package_path.c_str());
+      }
     }
 
     return Ort::Status();

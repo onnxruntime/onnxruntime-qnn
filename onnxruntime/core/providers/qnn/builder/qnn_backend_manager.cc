@@ -275,6 +275,50 @@ Ort::Status QnnBackendManager::GetQnnInterfaceProvider(const char* lib_path,
   return Ort::Status();
 }
 
+Ort::Status QnnBackendManager::GetQnnOpPackageInfo(const char* lib_path,
+                                                   const char* interface_name,
+                                                   const QnnOpPackage_Info_t** op_package_info) {
+  std::string error_msg;
+  void* op_package_lib_handle = LoadLib(lib_path,
+                                        static_cast<int>(DlOpenFlag::DL_NOW) | static_cast<int>(DlOpenFlag::DL_GLOBAL),
+                                        error_msg);
+  RETURN_IF(nullptr == op_package_lib_handle, ("Unable to load Op Package, error: " + error_msg + " " + DlError()).c_str());
+
+  // Get QNN Interface provider
+  QnnOpPackage_InterfaceProvider_t GetInterfaceProvider{nullptr};
+  GetInterfaceProvider = ResolveSymbol<QnnOpPackage_InterfaceProvider_t>(op_package_lib_handle, interface_name, logger_);
+  RETURN_IF(nullptr == GetInterfaceProvider, "Failed to get Op Package interface provider!");
+
+  QnnOpPackage_Interface_t interface = QNN_OP_PACKAGE_INTERFACE_INIT;
+  auto result = GetInterfaceProvider(&interface);
+
+  RETURN_IF(QNN_SUCCESS != result, "Failed to get Op Package info!");
+
+  Qnn_Version_t op_package_api_version_1_4 = QNN_OP_PACKAGE_API_VERSION_1_4_0;
+  Qnn_Version_t op_package_api_version_2_0 = QNN_OP_PACKAGE_API_VERSION_2_0_0;
+  QnnOpPackage_GetInfoFn_t GetInfo{nullptr};
+
+  // Check the interface's API version against the available versions.
+  // Major versions must match. The interface's minor version must be greater OR equal with a suitable patch version.
+  if (interface.interfaceVersion.major == op_package_api_version_1_4.major &&
+      (interface.interfaceVersion.minor > op_package_api_version_1_4.minor ||
+       (interface.interfaceVersion.minor == op_package_api_version_1_4.minor &&
+        interface.interfaceVersion.patch >= op_package_api_version_1_4.patch))) {
+    GetInfo = interface.v1_4.getInfo;
+  } else if (interface.interfaceVersion.major == op_package_api_version_2_0.major &&
+             (interface.interfaceVersion.minor > op_package_api_version_2_0.minor ||
+              (interface.interfaceVersion.minor == op_package_api_version_2_0.minor &&
+               interface.interfaceVersion.patch >= op_package_api_version_2_0.patch))) {
+    GetInfo = interface.v2_0.getInfo;
+  }
+
+  RETURN_IF(GetInfo == nullptr, "Failed to get Op Package info!");
+  result = GetInfo(op_package_info);
+  RETURN_IF(result != QNN_SUCCESS, "Failed to get Op Package info!");
+
+  return Ort::Status();
+}
+
 void QnnBackendManager::SetQnnBackendType(uint32_t backend_id) {
   switch (backend_id) {
     case QNN_BACKEND_ID_CPU:
