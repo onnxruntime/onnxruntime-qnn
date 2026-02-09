@@ -34,19 +34,11 @@
 // Forward declarations for NodeUnit-related classes
 namespace onnxruntime {
 
-static std::string MakeSharedLibraryPath(std::string_view name) {
-#if defined(_WIN32)
-  return MakeString(name, ".dll");
-#else
-  return MakeString("lib", name, ".so");
-#endif
-}
-
-const std::string kDefaultCpuBackendPath = MakeSharedLibraryPath("QnnCpu");
-const std::string kDefaultGpuBackendPath = MakeSharedLibraryPath("QnnGpu");
-const std::string kDefaultHtpBackendPath = MakeSharedLibraryPath("QnnHtp");
-const std::string kDefaultSaverBackendPath = MakeSharedLibraryPath("QnnSaver");
-const std::string kDefaultIrBackendPath = MakeSharedLibraryPath("QnnIr");
+const std::string kDefaultCpuBackendPath = utils::MakeSharedLibraryPath("QnnCpu");
+const std::string kDefaultGpuBackendPath = utils::MakeSharedLibraryPath("QnnGpu");
+const std::string kDefaultHtpBackendPath = utils::MakeSharedLibraryPath("QnnHtp");
+const std::string kDefaultSaverBackendPath = utils::MakeSharedLibraryPath("QnnSaver");
+const std::string kDefaultIrBackendPath = utils::MakeSharedLibraryPath("QnnIr");
 
 static bool ParseBackendTypeName(std::string_view backend_type_name,
                                  std::string& backend_path,

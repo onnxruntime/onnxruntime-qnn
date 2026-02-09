@@ -426,11 +426,7 @@ Ort::Status QnnBackendManager::LoadQnnSystemLib() {
     return Ort::Status();
   }
 
-#ifdef _WIN32
-  std::string system_lib_file = "QnnSystem.dll";
-#else
-  std::string system_lib_file = "libQnnSystem.so";
-#endif  // #ifdef _WIN32
+  std::string system_lib_file = onnxruntime::utils::MakeSharedLibraryPath("QnnSystem");
   ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, "Loading QnnSystem lib");
   std::filesystem::path lib_file_path(backend_path_.c_str());
   std::string sys_file_path(lib_file_path.remove_filename().string() + system_lib_file);
