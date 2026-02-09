@@ -1,3 +1,5 @@
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the MIT License.
 
 function(download_and_expand archive toolchain_dir url md5value)
   # Make toolchain_dir absolute relative to the current binary dir
@@ -22,12 +24,9 @@ endfunction()
 
 
 # QNN EP udo tests not require CPU EP op implementations for accuracy evaluation
-list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/udo/udo_op_test.cpp)
 find_package(Python REQUIRED COMPONENTS Interpreter)
 if(UNIX)
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        # set -Wno-parentheses for linux to avoid compile error of extra parentheses in included files
-        set_source_files_properties(${TEST_SRC_DIR}/providers/qnn/udo/udo_op_test.cpp PROPERTIES COMPILE_FLAGS "-Wno-parentheses")
         find_program(MAKE_EXECUTABLE make)
 
         # Linux CPU

@@ -12,6 +12,7 @@
 #include <filesystem>
 #include <string>
 #include <variant>
+
 #include "core/framework/op_kernel.h"
 #include "core/graph/contrib_ops/contrib_defs.h"
 #include "core/graph/graph.h"
@@ -20,8 +21,8 @@
 #include "core/graph/onnx_protobuf.h"
 #include "core/session/onnxruntime_session_options_config_keys.h"
 
+#include "test/providers/qnn-abi/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
-#include "test/providers/qnn/qnn_test_utils.h"
 
 #include "gtest/gtest.h"
 
@@ -167,10 +168,10 @@ static void RunOpTestOnCPU(const std::string& op_type,
   provider_options["op_packages"] = op_packages;
 
   register_custom_op_to_cpu_provider(op_type, funcPtr);
-  RunQnnModelTest(BuildUDOTestCase<float>(op_type, input_defs, attrs, onnx_domain),
-                  provider_options,
-                  opset_version,
-                  expected_ep_assignment);
+  RunQnnModelTestABI(BuildUDOTestCase<float>(op_type, input_defs, attrs, onnx_domain),
+                     provider_options,
+                     opset_version,
+                     expected_ep_assignment);
 }
 
 // Runs a QDQ model on the QNN HTP backend and compares output to CPU EP.
@@ -216,7 +217,7 @@ std::string getLibPath(std::string backend) {
 #endif
 }
 
-TEST_F(QnnCPUBackendTests, UDO_Op_Increment) {
+TEST_F(QnnABICPUBackendTests, UDO_Op_Increment) {
   auto input = TestInputDef<float>({1, 32}, false, -1.0f, 1.0f);
   std::filesystem::path path = getLibPath("cpu");
   RunOpTestOnCPU("Increment",
@@ -228,7 +229,7 @@ TEST_F(QnnCPUBackendTests, UDO_Op_Increment) {
                  ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnCPUBackendTests, UDO_Op_Increment_with_constant) {
+TEST_F(QnnABICPUBackendTests, UDO_Op_Increment_with_constant) {
   auto input = TestInputDef<float>({1, 32}, false, -1.0f, 1.0f);
   std::filesystem::path path = getLibPath("cpu");
   RunOpTestOnCPU("Increment",
@@ -242,7 +243,7 @@ TEST_F(QnnCPUBackendTests, UDO_Op_Increment_with_constant) {
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
-TEST_F(QnnHTPBackendTests, UDO_Op_Increment) {
+TEST_F(QnnABIHTPBackendTests, UDO_Op_Increment) {
   auto input = TestInputDef<float>({1, 32}, false, -1.0f, 1.0f);
   std::filesystem::path path = getLibPath("htp");
   RunOpTestOnHTP("Increment",
@@ -254,17 +255,17 @@ TEST_F(QnnHTPBackendTests, UDO_Op_Increment) {
                  ExpectedEPNodeAssignment::All);
 }
 
-// TEST_F(QnnHTPBackendTests, UDO_Op_Increment_with_constant) {
-//   auto input = TestInputDef<float>({1, 32}, false, -1.0f, 1.0f);
-//   std::filesystem::path path = getLibPath("htp");
-//   RunOpTestOnHTP("Increment",
-//                  {input},
-//                  {utils::MakeAttribute("constant", static_cast<float>(2.0))},
-//                  "Increment:" + path.string() + ":IncrementOpPackageInterfaceProvider:CPU",
-//                  BuildIncrementKernelCreateInfo,
-//                  11,
-//                  ExpectedEPNodeAssignment::All);
-// }
+TEST_F(QnnABIHTPBackendTests, UDO_Op_Increment_with_constant) {
+  auto input = TestInputDef<float>({1, 32}, false, -1.0f, 1.0f);
+  std::filesystem::path path = getLibPath("htp");
+  RunOpTestOnHTP("Increment",
+                 {input},
+                 {utils::MakeAttribute("constant", static_cast<float>(2.0))},
+                 "Increment:" + path.string() + ":IncrementOpPackageInterfaceProvider:CPU",
+                 BuildIncrementKernelCreateInfo,
+                 11,
+                 ExpectedEPNodeAssignment::All);
+}
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
