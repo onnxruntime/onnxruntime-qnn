@@ -12,6 +12,7 @@
 #include "QnnTypes.h"
 
 #include "core/providers/qnn/htp_usr_drv_utils.h"
+#include "core/providers/qnn/qnn_ep_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -23,11 +24,7 @@ namespace {
 // QNN-EP COPY START
 
 std::string getLibName() {
-#ifdef _WIN32
-  return "HtpUsrDrv.dll";
-#else
-  return "libHtpUsrDrv.so";
-#endif
+  return onnxruntime::utils::MakeSharedLibraryPath("HtpUsrDrv");
 }
 
 #ifdef _WIN32
@@ -389,15 +386,10 @@ Ort::Status IsHtpUsrDrvEnabled(const std::string& backend_lib_dir, const uint32_
 
   const std::filesystem::path backend_lib_dir_path(backend_lib_dir);
 
-#ifdef _WIN32
-  const std::string prepare_lib_path = "QnnHtpPrepare.dll";
-  const std::string stub_lib_path = "QnnHtp" + htp_arch_string + "Stub.dll";
+  const std::string prepare_lib_path = onnxruntime::utils::MakeSharedLibraryPath("QnnHtpPrepare");
+  const std::string stub_lib_path = onnxruntime::utils::MakeSharedLibraryPath("QnnHtp" + htp_arch_string + "Stub");
+  // Note: libQnnHtp*Skel.so is the correct format even on Windows.
   const std::string skel_lib_path = "libQnnHtp" + htp_arch_string + "Skel.so";
-#else
-  const std::string prepare_lib_path = "libQnnHtpPrepare.so";
-  const std::string stub_lib_path = "libQnnHtp" + htp_arch_string + "Stub.so";
-  const std::string skel_lib_path = "libQnnHtp" + htp_arch_string + "Skel.so";
-#endif
 
   if (!std::filesystem::exists(backend_lib_dir_path / prepare_lib_path) ||
       !std::filesystem::exists(backend_lib_dir_path / stub_lib_path) ||
