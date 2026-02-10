@@ -142,6 +142,22 @@
       COMMENT "Copying onnxruntime_providers_qnn.dll to onnxruntime_qnn directory"
     )
   endif()
+  # Copy license files to output directory
+  add_custom_command(
+    TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${REPO_ROOT}/ThirdPartyNotices.txt
+        ${REPO_ROOT}/docs/Privacy.md
+        ${REPO_ROOT}/LICENSE
+        $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>
+    COMMENT "Copying license files"
+  )
+  if (EXISTS "${onnxruntime_QNN_HOME}/LICENSE.pdf")
+    add_custom_command(
+      TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy "${onnxruntime_QNN_HOME}/LICENSE.pdf" $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/Qualcomm_LICENSE.pdf
+    )
+  endif()
   if (EXISTS "${onnxruntime_QNN_HOME}/Qualcomm AI Hub Proprietary License.pdf")
     add_custom_command(
       TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
