@@ -139,6 +139,7 @@ class QNNExecutionProvider : public IExecutionProvider {
   // Genie pathway-specific variables
   std::shared_ptr<qnn::GenieBackendManager> genie_backend_manager_;
   mutable std::shared_ptr<GenieApiLoader> genie_api_loader_;
+  GenieLog_Level_t genie_log_level_ = GENIE_LOG_LEVEL_INFO;
 };
 
 }  // namespace onnxruntime

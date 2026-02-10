@@ -110,8 +110,6 @@ bool IsIrBackend(QnnBackendType backend_type);
 
 bool IsCpuBackend(QnnBackendType backend_type);
 
-bool IsGenieBackend(QnnBackendType backend_type);
-
 bool IsNpuBackend(QnnBackendType backend_type);
 
 bool IsGpuBackend(QnnBackendType backend_type);

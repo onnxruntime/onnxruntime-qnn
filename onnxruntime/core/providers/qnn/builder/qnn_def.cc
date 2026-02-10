@@ -590,9 +590,6 @@ bool IsCpuBackend(QnnBackendType backend_type) {
   return backend_type == QnnBackendType::CPU;
 }
 
-bool IsGenieBackend(QnnBackendType backend_type) {
-  return backend_type == QnnBackendType::GENIE;
-}
 
 // Is it Qualcomm hardware ?
 bool IsQpuBackend(QnnBackendType backend_type) {

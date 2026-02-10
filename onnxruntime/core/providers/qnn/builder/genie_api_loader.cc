@@ -61,6 +61,16 @@ void GenieApiLoader::Init() {
 
         api_.NodeConfig_free =
             (TYPE_GenieNodeConfig_free)must_dlsym(handle_, "GenieNodeConfig_free");
+    
+        api_.Log_create =
+            (TYPE_GenieLog_create)must_dlsym(handle_, "GenieLog_create");
+    
+        api_.NodeConfig_bindLogger =
+            (TYPE_GenieNodeConfig_bindLogger)must_dlsym(handle_, "GenieNodeConfig_bindLogger");
+        
+        api_.Log_free =
+            (TYPE_GenieLog_free)must_dlsym(handle_, "GenieLog_free");
+
 
 
     } catch (const std::exception& ex) {

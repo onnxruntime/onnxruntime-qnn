@@ -117,6 +117,13 @@ static bool ParseBackendTypeName(std::string_view backend_type_name, std::string
   return false;
 }
 
+static GenieLog_Level_t ResolveGenieLogLevel(const std::string& lvl) {
+    if (lvl == "error")   return GENIE_LOG_LEVEL_ERROR;
+    if (lvl == "warn")    return GENIE_LOG_LEVEL_WARN;
+    if (lvl == "verbose") return GENIE_LOG_LEVEL_VERBOSE;
+    return GENIE_LOG_LEVEL_INFO;
+}
+
 static void ParseProfilingLevel(std::string profiling_level_string,
                                 qnn::ProfilingLevel& profiling_level) {
   profiling_level_string = qnn::utils::GetLowercaseString(profiling_level_string);
@@ -387,6 +394,14 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
     stop_share_ep_contexts_ =
         config_options->GetConfigOrDefault(kOrtSessionOptionStopShareEpContexts, "0") == "1";
     LOGS_DEFAULT(VERBOSE) << "User specified option - stop share EP contexts across sessions: " << stop_share_ep_contexts_;
+  }
+
+  {
+      static const std::string GENIE_LOG_LEVEL_KEY = "genie_log_level";
+      auto it = provider_options_map.find(GENIE_LOG_LEVEL_KEY);
+      if (it != provider_options_map.end()) {
+          genie_log_level_ = ResolveGenieLogLevel(it->second);
+      }
   }
 
   std::string backend_path{};
@@ -1656,9 +1671,10 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
     
       // 5) Wire up NodeComputeInfo
       NodeComputeInfo info;
+      const GenieLog_Level_t genie_log_level_local = genie_log_level_;
 
       // Create state
-      info.create_state_func = [builder](ComputeContext* context, FunctionState* state) {        
+      info.create_state_func = [builder, genie_log_level_local](ComputeContext* context, FunctionState* state) {        
           std::cout << "compute_info.create_state_func context->node_name: " << context->node_name << std::endl;  
           auto* st = new GenieNodeState();
           st->api = builder->api;
@@ -1671,6 +1687,29 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
               delete st;
           }
           st->config = cfg;
+
+          
+          GenieLog* gLogger = nullptr;
+          const GenieLogConfig_Handle_t cfgHandle = nullptr;
+          const GenieLog_Callback_t     cb        = nullptr;
+          const GenieLog_Level_t        level     = genie_log_level_;
+
+          if (st->api->Log_create(cfgHandle, cb, level, &gLogger) != 0) {
+            st->api->NodeConfig_free(cfg);
+            delete st;
+            return -1;
+          }
+          st->genieLogger = gLogger;
+
+                    
+          if (st->api->NodeConfig_bindLogger(cfg, gLogger) != 0) {
+            if (st->api->Log_free) st->api->Log_free(gLogger);
+            st->api->NodeConfig_free(cfg);
+            delete st;
+            return -1;
+          }
+
+
 
           // 3) Create GenieNode (node)
           GenieNode* dlg = nullptr;
@@ -1700,6 +1739,7 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
         const auto* api = st->api;
         if (api) {
           if (st->node)   api->Node_free(st->node);
+          if (st->genieLogger && api->Log_free) api->Log_free(st->genieLogger);
           if (st->config) api->NodeConfig_free(st->config);
         }
         delete st;

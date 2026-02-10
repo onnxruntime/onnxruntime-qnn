@@ -10,9 +10,29 @@
 
 typedef void* GenieNodeConfig;
 typedef void* GenieNode;
+typedef void* GenieLog;
 
 typedef int Genie_Status_t;
 typedef int GenieNode_IOName_t;
+
+
+
+typedef enum {
+  GENIE_LOG_LEVEL_ERROR   = 0,
+  GENIE_LOG_LEVEL_WARN    = 1,
+  GENIE_LOG_LEVEL_INFO    = 2,
+  GENIE_LOG_LEVEL_VERBOSE = 3
+} GenieLog_Level_t;
+
+typedef void* GenieLogConfig_Handle_t;
+
+
+typedef void (*GenieLog_Callback_t)(GenieLog logHandle,
+                                    const char* fmt,
+                                    GenieLog_Level_t level,
+                                    uint64_t timestamp,
+                                    va_list argp);
+
 
 // Output CallBack
 typedef void (*GenieNode_IOCallback_t)(
@@ -47,6 +67,22 @@ typedef Genie_Status_t (*TYPE_GenieNode_execute)(
     const char* executionConfig,
     const void* userData);
 
+typedef Genie_Status_t (*TYPE_GenieLog_create)(
+  const GenieLogConfig_Handle_t configHandle,
+  const GenieLog_Callback_t callback,
+  GenieLog_Level_t logLevel,
+  GenieLog** out_logger);
+
+  
+typedef Genie_Status_t (*TYPE_GenieNodeConfig_bindLogger)(
+  GenieNodeConfig* cfg,
+  GenieLog* logger);
+
+  
+typedef Genie_Status_t (*TYPE_GenieLog_free)(
+  GenieLog* logger);
+
+
 typedef Genie_Status_t (*TYPE_GenieNode_free)(
     GenieNode* dlg);
 
@@ -62,6 +98,10 @@ struct GenieApi {
     TYPE_GenieNode_execute               Node_execute;
     TYPE_GenieNode_free                  Node_free;
     TYPE_GenieNodeConfig_free            NodeConfig_free;
+    TYPE_GenieLog_create                 Log_create;
+    TYPE_GenieNodeConfig_bindLogger      NodeConfig_bindLogger;
+    TYPE_GenieLog_free                   Log_free;
+
 };
 
 // GenieApiLoader: resolves and owns symbol table
@@ -86,6 +126,7 @@ struct GenieNodeState {
     const GenieApi* api = nullptr;
     GenieNodeConfig* config = nullptr;
     GenieNode*       node   = nullptr;
+    GenieLog*        genieLogger = nullptr;
 
     struct IODesc {
         GenieNode_IOName_t io_name;
