@@ -142,10 +142,11 @@
       COMMENT "Copying onnxruntime_providers_qnn.dll to onnxruntime_qnn directory"
     )
   endif()
-  # Copy license files to output directory
+  # Copy version & license files to output directory
   add_custom_command(
     TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${REPO_ROOT}/VERSION_NUMBER
         ${REPO_ROOT}/ThirdPartyNotices.txt
         ${REPO_ROOT}/docs/Privacy.md
         ${REPO_ROOT}/LICENSE

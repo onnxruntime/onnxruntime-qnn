@@ -8,11 +8,8 @@ import datetime
 import logging
 import platform
 import shlex
-import shutil
 import subprocess
 import sys
-import tempfile
-import zipfile
 from glob import glob
 from os import environ, getcwd, path, remove
 from shutil import copyfile
