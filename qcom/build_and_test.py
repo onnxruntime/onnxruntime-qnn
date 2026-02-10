@@ -1053,7 +1053,7 @@ def get_ort_prebuilt_root(root_from_args: Path | None) -> Path | None:
     elif ORT_PREBUILT_ROOT_ENV_VAR in os.environ:
         ort_prebuilt = Path(os.environ[ORT_PREBUILT_ROOT_ENV_VAR])
     else:
-        # Let the build fetch QAIRT
+        # Let the build fetch ORT
         return None
 
     if not ort_prebuilt.exists():
