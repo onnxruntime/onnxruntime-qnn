@@ -1,14 +1,16 @@
 <p align="center"><img width="50%" src="docs/images/ONNX_Runtime_logo_dark.png" /></p>
 
-**ONNX Runtime QNN is a specialized version of ONNX Runtime optimized for Qualcomm's AI accelerators**.
+**ONNX Runtime QNN is an ONNX Runtime execution provider optimized for Qualcomm's hardware**.
 
-**ONNX Runtime QNN** provides high-performance inference for machine learning models on Qualcomm platforms, supporting models from deep learning frameworks such as PyTorch and TensorFlow/Keras. ONNX Runtime QNN leverages Qualcomm's AI Engine Direct SDK (QNN) to deliver optimal performance on Qualcomm hardware accelerators. [Learn more &rarr;](https://www.onnxruntime.ai/docs/#onnx-runtime-for-inferencing)
+**ONNX Runtime QNN** provides high-performance inference for machine learning models on Qualcomm platforms. ONNX Runtime QNN leverages Qualcomm's AI Runtime (QAIRT) to deliver optimal performance on Qualcomm hardware accelerators. [Learn more &rarr;](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html)
 
-This repository is maintained by Qualcomm and contains the QNN-specific implementation of ONNX Runtime. For the general ONNX Runtime project, please visit [microsoft/onnxruntime](https://github.com/microsoft/onnxruntime).
+This repository is maintained by Qualcomm and contains the QNN-specific execution provider for ONNX Runtime. For the general ONNX Runtime project, please visit [microsoft/onnxruntime](https://github.com/microsoft/onnxruntime).
 
 ## Get Started & Resources
 
-* **General Information**: [onnxruntime.ai](https://onnxruntime.ai)
+* **General Information**:
+  - [onnxruntime.ai](https://onnxruntime.ai)
+  - [QNN Execution Provider](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html)
 
 * **Usage documentation and tutorials**: [onnxruntime.ai/docs](https://onnxruntime.ai/docs)
 

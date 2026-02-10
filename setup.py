@@ -332,7 +332,7 @@ extras_require = {}
 setup(
     name=package_name,
     version=version_number,
-    description="ONNX Runtime QNN is a runtime accelerator for Machine Learning models optimized for Qualcomm AI accelerators",
+    description="ONNX Runtime QNN is an onnxruntime execution provider optimized for Qualcomm AI accelerators",
     long_description=long_description,
     long_description_content_type="text/x-rst",
     author="Microsoft Corporation",

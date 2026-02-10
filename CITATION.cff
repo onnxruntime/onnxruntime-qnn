@@ -5,7 +5,7 @@ message: "Please use this information to cite ONNX Runtime QNN in
 authors:
   - name: ONNX Runtime QNN developers
 date-released: 2018-11-29
-url: "https://onnxruntime.ai"
+url: "https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html"
 repository-code: "https://github.com/onnxruntime/onnxruntime-qnn"
 license: "MIT"
 keywords:
