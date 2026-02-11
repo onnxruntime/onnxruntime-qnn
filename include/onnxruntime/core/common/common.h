@@ -90,6 +90,12 @@ void LogRuntimeError(uint32_t session_id, const common::Status& status, const ch
 #endif
 
 // Capture where a message is coming from. Use __FUNCTION__ rather than the much longer __PRETTY_FUNCTION__
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wbuiltin-macro-redefined"
+#define __FILE__ __FILE_NAME__
+#pragma clang diagnostic pop
+#endif
 #define ORT_WHERE ::onnxruntime::CodeLocation(__FILE__, __LINE__, static_cast<const char*>(__FUNCTION__))
 
 #define ORT_WHERE_WITH_STACK \
