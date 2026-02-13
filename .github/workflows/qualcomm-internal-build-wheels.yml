@@ -24,10 +24,11 @@ jobs:
       nightly_build: ${{ inputs.nightly_build }}
       target_os: linux
       target_arch: aarch64_manylinux_2_34
-      upload_test_archive: false
-      upload_wheel: true
-      run_tests: false
       target_py_vsn: "3.10"
+      run_tests: false
+      test_wheel: false
+      upload_test_archive: false
+      upload_wheel: false
 
   build-linux-aarch64-manylinux_2_34_311:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
@@ -36,10 +37,11 @@ jobs:
       nightly_build: ${{ inputs.nightly_build }}
       target_os: linux
       target_arch: aarch64_manylinux_2_34
-      upload_test_archive: false
-      upload_wheel: true
-      run_tests: false
       target_py_vsn: "3.11"
+      run_tests: false
+      test_wheel: false
+      upload_test_archive: false
+      upload_wheel: false
 
   build-linux-aarch64-manylinux_2_34_312:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
@@ -48,10 +50,11 @@ jobs:
       nightly_build: ${{ inputs.nightly_build }}
       target_os: linux
       target_arch: aarch64_manylinux_2_34
-      upload_test_archive: false
-      upload_wheel: true
-      run_tests: false
       target_py_vsn: "3.12"
+      run_tests: false
+      test_wheel: false
+      upload_test_archive: false
+      upload_wheel: false
 
   build-linux-aarch64-manylinux_2_34_313:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
@@ -60,10 +63,11 @@ jobs:
       nightly_build: ${{ inputs.nightly_build }}
       target_os: linux
       target_arch: aarch64_manylinux_2_34
-      upload_test_archive: false
-      upload_wheel: true
-      run_tests: false
       target_py_vsn: "3.13"
+      run_tests: false
+      test_wheel: false
+      upload_test_archive: false
+      upload_wheel: false
 
   build-linux-x86_64:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
@@ -76,8 +80,10 @@ jobs:
       # wheel distribution story is yet. For now, this is just so that all of the job and artifact names reflect the
       # version of cpython that's installed on our Linux build machines.
       target_py_vsn: "3.10"
-      run_tests: false
+      run_tests: true
+      test_wheel: true
       upload_test_archive: false
+      upload_wheel: true
 
   build-windows-arm64_311:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
@@ -90,8 +96,9 @@ jobs:
       build_runner_arch: ARM64
       test_runner_arch: ARM64
       run_tests: false
-      test_wheel: true
+      test_wheel: false
       upload_test_archive: false
+      upload_wheel: false
 
   build-windows-arm64_312:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
@@ -104,8 +111,9 @@ jobs:
       build_runner_arch: ARM64
       test_runner_arch: ARM64
       run_tests: false
-      test_wheel: true
+      test_wheel: false
       upload_test_archive: false
+      upload_wheel: false
 
   build-windows-arm64_313:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
@@ -118,8 +126,9 @@ jobs:
       build_runner_arch: ARM64
       test_runner_arch: ARM64
       run_tests: false
-      test_wheel: true
+      test_wheel: false
       upload_test_archive: false
+      upload_wheel: false
 
   build-windows-arm64x_311:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
@@ -131,8 +140,9 @@ jobs:
       target_py_vsn: "3.11"
       test_runner_arch: ARM64
       run_tests: false
-      test_wheel: true
+      test_wheel: false
       upload_test_archive: false
+      upload_wheel: false
 
   build-windows-arm64x_312:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
@@ -144,8 +154,9 @@ jobs:
       target_py_vsn: "3.12"
       test_runner_arch: ARM64
       run_tests: false
-      test_wheel: true
+      test_wheel: false
       upload_test_archive: false
+      upload_wheel: false
 
   build-windows-arm64x_313:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
@@ -157,5 +168,6 @@ jobs:
       target_py_vsn: "3.13"
       test_runner_arch: ARM64
       run_tests: false
-      test_wheel: true
+      test_wheel: false
       upload_test_archive: false
+      upload_wheel: false
