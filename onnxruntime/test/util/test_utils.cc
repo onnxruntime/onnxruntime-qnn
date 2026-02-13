@@ -232,6 +232,23 @@ void RunWithEP(Ort::Session& ort_session,
                                 ort_output_names_cstr.size());
 }
 
+void RunWithEP(ModelPathOrBytes model_path_or_bytes,
+               Ort::SessionOptions& ort_so,
+               const std::string& /* provider_type */,
+               std::string_view log_id,
+               std::unordered_map<std::string, Ort::Value>& feeds,
+               std::vector<Ort::Value>& fetches) {
+  std::vector<std::byte> model_data_buffer{};
+  const auto model_data = GetModelBytes(model_path_or_bytes, model_data_buffer);
+
+  // Run with EP
+  Ort::Session ort_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), ort_so);
+  Ort::RunOptions ort_run_options;
+  ort_run_options.SetRunTag(log_id.data());
+
+  RunWithEP(ort_session, ort_run_options, feeds, fetches);
+}
+
 void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
                                Ort::SessionOptions& ort_so,
                                const std::string& /* provider_type */,

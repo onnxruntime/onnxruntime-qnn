@@ -188,6 +188,7 @@ set(onnxruntime_test_common_libs
   GTest::gmock
   ${onnxruntime_EXTERNAL_LIBRARIES}
   onnxruntime
+  onnxruntime_providers_shared
   onnxruntime_test_utils
   onnxruntime_unittest_utils
   cpuinfo::cpuinfo
@@ -200,6 +201,13 @@ if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_RED
   if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
     list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_test_utils.cc)
     list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_test_utils.h)
+    list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_basic_test.cc)
+    list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/udo/udo_op_test.cpp)
+    if(UNIX)
+      # set -Wno-parentheses for linux to avoid compile error of extra parentheses in included files
+      set_source_files_properties(${TEST_SRC_DIR}/providers/qnn/udo/udo_op_test.cpp PROPERTIES COMPILE_FLAGS "-Wno-parentheses")
+    endif()
+    include(qnn_udo_unittest.cmake)
     list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn)
   endif()
 endif()
@@ -320,6 +328,12 @@ block()
     COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:onnxruntime> $<TARGET_FILE_DIR:onnxruntime_provider_test>
     COMMENT "Copying onnxruntime.dll to Build Folder for unittests"
   )
+
+  add_custom_command(
+    TARGET onnxruntime_provider_test POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT}/test/testdata
+    $<TARGET_FILE_DIR:onnxruntime_provider_test>/testdata)
 
   add_custom_command(
     TARGET onnxruntime_provider_test POST_BUILD

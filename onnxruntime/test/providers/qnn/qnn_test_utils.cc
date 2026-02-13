@@ -268,6 +268,47 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
                             verify_outputs);
 }
 
+void RunQnnEpTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options, Ort::SessionOptions& session_options,
+                  int opset_version, std::vector<Ort::Value>& fetches, OrtLoggingLevel log_severity) {
+  // Add kMSDomain to cover contrib op like Gelu
+  const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}, {"my_domain", opset_version}};
+
+  ModelTestBuilder helper;
+  build_test_case(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  // TODO: Upgrade the ONNX IR VERSION to 12 when using ORT 1.24 prebuilt
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+
+  // Serialize the model to a string.
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  // Uncomment to save f32 model to disk for debugging.
+  // {
+  //   std::ofstream ofs("model.onnx", std::ios::binary);
+  //   ofs.write(model_data.data(), static_cast<std::streamsize>(model_data.size()));
+  // }
+
+  // Run with QNN.
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  const std::string& registration_name = "QNNExecutionProvider";
+  // Ort::SessionOptions session_options;
+
+  session_options.SetLogSeverityLevel(log_severity);
+
+  TryEnableQNNSaver(provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
+  RunWithEP(AsByteSpan(model_data.data(), model_data.size()),
+   session_options,
+   registration_name,
+   "QNN_EP_TestLogID",
+   helper.feeds_,
+   fetches);
+}
+
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
                        ExpectedEPNodeAssignment expected_ep_assignment,

@@ -39,14 +39,20 @@ message(STATUS "onnxruntime_ORT_HOME: ${onnxruntime_ORT_HOME}")
 
 # Create imported target for ONNX Runtime
 add_library(onnxruntime SHARED IMPORTED GLOBAL)
+add_library(onnxruntime_providers_shared SHARED IMPORTED GLOBAL)
 # Add dependency on the external projects to ensure they're downloaded first
-add_dependencies(onnxruntime ort_repo)
+add_dependencies(onnxruntime onnxruntime_providers_shared ort_repo)
 
 # Hack since cmake check the existence of INTERFACE_INCLUDE_DIRECTORIES
 file(MAKE_DIRECTORY ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT})
 # Set the import library (.lib file for linking)
 set_target_properties(onnxruntime PROPERTIES
     IMPORTED_LOCATION ${onnxruntime_ORT_HOME}/lib/onnxruntime.dll
+    IMPORTED_IMPLIB ${onnxruntime_ORT_HOME}/lib/onnxruntime.lib
+    INTERFACE_INCLUDE_DIRECTORIES ${onnxruntime_ORT_HOME}/include
+)
+set_target_properties(onnxruntime_providers_shared PROPERTIES
+    IMPORTED_LOCATION ${onnxruntime_ORT_HOME}/lib/onnxruntime_providers_shared.dll
     IMPORTED_IMPLIB ${onnxruntime_ORT_HOME}/lib/onnxruntime.lib
     INTERFACE_INCLUDE_DIRECTORIES ${onnxruntime_ORT_HOME}/include
 )

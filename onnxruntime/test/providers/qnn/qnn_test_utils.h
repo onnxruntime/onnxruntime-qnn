@@ -1357,7 +1357,8 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
                      OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                      bool verify_outputs = true,
                      std::function<void(const Graph&)>* ep_graph_checker = nullptr);
-
+void RunQnnEpTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options, Ort::SessionOptions& session_options,
+                  int opset_version, std::vector<Ort::Value>& fetches, OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
 enum class BackendSupport {
   SUPPORT_UNKNOWN,
   UNSUPPORTED,
