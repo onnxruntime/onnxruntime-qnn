@@ -278,7 +278,8 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                      float fp32_abs_err, OrtLoggingLevel log_severity, bool verify_outputs,
-                     std::function<void(const Ort::Session&)>* ep_graph_checker) {
+                     std::function<void(const Ort::Session&)>* ep_graph_checker,
+                     std::shared_ptr<Ort::SessionOptions> session_options) {
   CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(provider_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
@@ -338,38 +339,46 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   // Run with QNN.
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = "QNNExecutionProvider";
-  Ort::SessionOptions session_options;
+  if (!session_options) {
+    session_options = std::make_shared<Ort::SessionOptions>();
+  }
 
-  session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
-  session_options.SetLogSeverityLevel(log_severity);
+  session_options->AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
+  session_options->SetLogSeverityLevel(log_severity);
   if (QNNTestEnvironment::GetInstance().verbose()) {
-    session_options.SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
+    session_options->SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
   }
 
   TryEnableQNNSaver(provider_options);
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
+  // Clone before mutation so the CPU reference session inherits the user's custom op domains, etc.
+  std::shared_ptr<Ort::SessionOptions> cpu_session_options = std::make_shared<Ort::SessionOptions>(session_options->Clone());
+  RegisterQnnEpLibrary(registered_ep_device, *session_options, registration_name, provider_options);
   RunAndVerifyOutputsWithEP(AsByteSpan(model_data.data(), model_data.size()),
-                            session_options,
+                            *session_options,
                             registration_name,
                             "QNN_EP_TestLogID",
                             helper.feeds_,
                             verification_params,
-                            verify_outputs);
+                            verify_outputs,
+                            cpu_session_options);
 }
 
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
                        std::unordered_map<std::string, Ort::Value>& feeds,
                        std::vector<Ort::Value>& output_vals,
-                       std::optional<GraphOptimizationLevel> graph_optimization_level) {
-  Ort::SessionOptions session_options;
-  session_options.SetLogId(log_id);
+                       std::optional<GraphOptimizationLevel> graph_optimization_level,
+                       std::shared_ptr<Ort::SessionOptions> session_options) {
+  if (!session_options) {
+    session_options = std::make_shared<Ort::SessionOptions>();
+  }
+  session_options->SetLogId(log_id);
 
   if (graph_optimization_level.has_value()) {
-    session_options.SetGraphOptimizationLevel(graph_optimization_level.value());
+    session_options->SetGraphOptimizationLevel(graph_optimization_level.value());
   }
 
-  Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
+  Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), *session_options);
 
   // Prepare inputs using public API
   std::vector<std::string> ort_input_names = session.GetInputNames();
@@ -415,33 +424,36 @@ void InferenceModel(const std::string& model_data,
                     OrtLoggingLevel log_severity,
                     const std::unordered_map<std::string, std::string>& session_option_pairs,
                     std::optional<GraphOptimizationLevel> graph_optimization_level,
-                    std::function<void(const Ort::Session&)>* graph_checker) {
+                    std::function<void(const Ort::Session&)>* graph_checker,
+                    std::shared_ptr<Ort::SessionOptions> session_options) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = "QNNExecutionProvider";
-  Ort::SessionOptions session_options;
+  if (!session_options) {
+    session_options = std::make_shared<Ort::SessionOptions>();
+  }
   if (graph_optimization_level.has_value()) {
-    session_options.SetGraphOptimizationLevel(*graph_optimization_level);
+    session_options->SetGraphOptimizationLevel(*graph_optimization_level);
   }
 
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, *session_options, registration_name, provider_options);
 
-  session_options.SetLogId(log_id);
-  session_options.SetLogSeverityLevel(log_severity);
+  session_options->SetLogId(log_id);
+  session_options->SetLogSeverityLevel(log_severity);
 
   if (QNNTestEnvironment::GetInstance().verbose()) {
-    session_options.SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
+    session_options->SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
   }
 
   for (auto key_value : session_option_pairs) {
-    session_options.AddConfigEntry(key_value.first.c_str(), key_value.second.c_str());
+    session_options->AddConfigEntry(key_value.first.c_str(), key_value.second.c_str());
   }
 
   Ort::RunOptions ort_run_options;
   ort_run_options.SetRunTag(log_id);
 
   auto provider_type = "QNNExecutionProvider";
-  session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
-  Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
+  session_options->AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
+  Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), *session_options);
   ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(session, provider_type, expected_ep_assignment));
 
   if (graph_checker) {

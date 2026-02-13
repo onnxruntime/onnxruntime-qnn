@@ -67,6 +67,11 @@ cmake_windows_x86_64:
   sha256: cf35a516c4f5f4646b301e51c8e24b168cc012c3b1453b8f675303b54eb0ef45
   content_root: cmake-{version}-windows-x86_64
   bindir: bin
+hexagon_linux_x86_64:
+  version: 6.5.0.0
+  url: https://softwarecenter.qualcomm.com/api/download/software/sdks/Hexagon_SDK/Linux/Debian/6.5.0.0/Hexagon_SDK_Linux.zip
+  sha256: 668626f75c38ce1ca993768953db9bf4b632753c3e32ed8363a8287e3aaffc9a
+  content_root: Hexagon_SDK
 lcov_linux_x86_64:
   version: 1.16
   url: https://github.com/linux-test-project/lcov/releases/download/v{version}/lcov-{version}.tar.gz
@@ -103,6 +108,12 @@ java_windows_x86_64:
   url: https://download.oracle.com/java/{major_version}/archive/jdk-{version}_windows-x64_bin.zip
   sha256: 6cce98ce38b86737c63912fd1df9ecfee1fe209ab08c0e1e16500f054e67de48
   content_root: jdk-{version}
+  bindir: bin
+llvm_linux_x86_64:
+  version: 21.1.8
+  url: https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-Linux-X64.tar.xz
+  sha256: b3b7f2801d15d50736acea3c73982994d025b01c2f035b91ae3b49d1b575732b
+  content_root: LLVM-{version}-Linux-X64
   bindir: bin
 maven_linux_x86_64:
   version: 3.9.8

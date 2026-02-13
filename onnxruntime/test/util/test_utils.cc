@@ -240,15 +240,18 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
                                std::string_view log_id,
                                const std::unordered_map<std::string, Ort::Value>& feeds,
                                const EPVerificationParams& params,
-                               bool verify_outputs) {
+                               bool verify_outputs,
+                               std::shared_ptr<Ort::SessionOptions> cpu_so) {
   std::vector<std::byte> model_data_buffer{};
   const auto model_data = GetModelBytes(model_path_or_bytes, model_data_buffer);
 
   //
   // get expected output from CPU EP using public API
   //
-  Ort::SessionOptions cpu_so;
-  Ort::Session cpu_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), cpu_so);
+  if (!cpu_so) {
+    cpu_so = std::make_shared<Ort::SessionOptions>();
+  }
+  Ort::Session cpu_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), *cpu_so);
 
   // fetch all outputs using public API
   std::vector<std::string> output_names;
