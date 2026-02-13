@@ -94,7 +94,7 @@ on:
         type: boolean
       upload_wheel:
         description: "If true, include the wheel as a workflow artifact."
-        default: false
+        default: true
         type: boolean
 
 env:
