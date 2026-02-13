@@ -4,6 +4,8 @@
 
 This guide provides instructions for developing features for the ONNX Runtime (ORT) QNN Execution Provider using the ABI-compliant EP library. The ABI compatibility ensures stable interfaces and streamlined session creation.
 
+- **Note**: QNN EP version < 2.0 is **NOT** included in this page.
+
 ## Contents
 
 - [Objective](#objective)
@@ -92,11 +94,9 @@ After building, you'll have:
 #### Workflow Steps
 
 1. Pull latest commits from the [onnxruntime-qnn](https://github.com/onnxruntime/onnxruntime-qnn) repository
-2. Implement ABI-specific changes in the repository
+2. Implement QNN EP-specific changes in the repository
 3. Test your changes locally
 4. Submit a pull request
-
-**Note:** Maintaining feature parity with non-ABI implementations is NOT necessary.
 
 #### Coding Guidelines
 
@@ -128,14 +128,15 @@ IR writer integration and debug tools are in development for ABI workflows. For 
 1. **onnxruntime_perf_test** - Performance testing
    ```bash
    onnxruntime_perf_test.exe `
-      --plugin_ep_libs "QnnExecutionProvider|onnxruntime_providers_qnn.dll" `
-      --plugin_eps "QnnExecutionProvider" `
+      --plugin_ep_libs "QNNExecutionProvider|onnxruntime_providers_qnn.dll" `
+      --plugin_eps "QNNExecutionProvider" `
       -i "backend_path|QnnHtp.dll" -C "session.disable_cpu_ep_fallback|1" `
       -m times -r 100 model.onnx
    ```
 
 2. **onnx_test_runner** - Model validation
    - **Note:** `onnx_test_runner.exe` doesn't work with ABI library on ORT 1.24
+   - **Node:** `onnx_test_runner.exe` in this repo is compatible with ABI library
 
 #### Unit Testing Application
 
