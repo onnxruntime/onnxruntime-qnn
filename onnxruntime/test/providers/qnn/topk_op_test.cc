@@ -52,6 +52,7 @@ static void RunTopKTestOnCPU(const TestInputDef<DataType>& input_def,
                   opset,
                   expected_ep_assignment,
                   /*fp32_abs_err*/ 1e-5f,
+                  nullptr,
                   /*log_severity*/ logging::Severity::kERROR,
                   /*verify_outputs*/ verify_outputs);
 }

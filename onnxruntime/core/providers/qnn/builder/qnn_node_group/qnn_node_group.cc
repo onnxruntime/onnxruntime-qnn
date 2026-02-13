@@ -72,7 +72,7 @@ class QnnNodeUnitWrapper : public IQnnNodeGroup {
 /// The type of a function that tries to fuse NodeUnits into a IQnnNodeGroup.
 /// </summary>
 using FusionFunc = std::function<std::unique_ptr<IQnnNodeGroup>(QnnModelWrapper& qnn_model_wrapper,
-                                                                const OrtNodeUnit& udo_node_unit,
+                                                                const OrtNodeUnit& node_unit,
                                                                 const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
                                                                 const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
                                                                 const Ort::Logger& logger)>;

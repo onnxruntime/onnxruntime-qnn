@@ -247,6 +247,7 @@ TEST_F(QnnHTPBackendTests, MaxPool1D_ReshapeNodesPresent) {
                   18,
                   ExpectedEPNodeAssignment::All,
                   1e-5,
+                  nullptr,
                   logging::Severity::kERROR,
                   true,
                   &check_num_nodes);

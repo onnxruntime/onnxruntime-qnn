@@ -1916,6 +1916,7 @@ TEST_F(QnnHTPBackendTests, RandomUniformLikeAddTest) {
                   14,
                   ExpectedEPNodeAssignment::All,
                   1e-5f,
+                  nullptr,
                   logging::Severity::kERROR,
                   false);
 }

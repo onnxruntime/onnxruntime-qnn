@@ -118,6 +118,7 @@ TEST_F(QnnHTPBackendTests, LPBQMatMulFusion) {
                   /*opset_version=*/21,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some,
                   /*fp32_abs_err=*/1e-2f,
+                  /*session_options=*/nullptr,
                   /*log_severity =*/logging::Severity::kERROR,
                   /*verify_outputs=*/false);
 }

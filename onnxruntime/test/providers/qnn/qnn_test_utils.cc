@@ -187,7 +187,8 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
 
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
-                     float fp32_abs_err, logging::Severity log_severity, bool verify_outputs,
+                     float fp32_abs_err, std::shared_ptr<Ort::SessionOptions> session_options,
+                     logging::Severity log_severity, bool verify_outputs,
                      std::function<void(const Graph&)>* ep_graph_checker) {
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
@@ -248,11 +249,12 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   // Run with QNN.
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = onnxruntime::kQnnExecutionProvider;
-  Ort::SessionOptions session_options;
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
-
+  if(!session_options){
+    session_options = std::make_shared<Ort::SessionOptions>();
+  }
+  RegisterQnnEpLibrary(registered_ep_device, *session_options, registration_name, provider_options);
   RunAndVerifyOutputsWithEP(AsByteSpan(model_data.data(), model_data.size()),
-                            session_options,
+                            *session_options,
                             registration_name,
                             "QNN_EP_TestLogID",
                             helper.feeds_,
@@ -263,18 +265,21 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
                        ExpectedEPNodeAssignment expected_ep_assignment,
+                       std::shared_ptr<SessionOptions> so,
                        const NameMLValMap& feeds,
                        std::vector<OrtValue>& output_vals,
                        std::optional<GraphOptimizationLevel> graph_optimization_level) {
-  SessionOptions so;
-  so.session_logid = log_id;
+  if(!so){
+    so = std::make_shared<SessionOptions>();
+  }
+  so->session_logid = log_id;
   if (graph_optimization_level.has_value()) {
-    so.graph_optimization_level = static_cast<TransformerLevel>(*graph_optimization_level);
+    so->graph_optimization_level = static_cast<TransformerLevel>(*graph_optimization_level);
   }
   RunOptions run_options;
-  run_options.run_tag = so.session_logid;
+  run_options.run_tag = so->session_logid;
 
-  InferenceSessionWrapper session_object{so, GetEnvironment()};
+  InferenceSessionWrapper session_object{*so, GetEnvironment()};
 
   std::string provider_type = kCpuExecutionProvider;
   ASSERT_STATUS_OK(session_object.Load(model_data.data(), static_cast<int>(model_data.size())));
@@ -311,26 +316,29 @@ void InferenceModel(const std::string& model_data,
                     ExpectedEPNodeAssignment expected_ep_assignment,
                     const NameMLValMap& feeds,
                     std::vector<OrtValue>& output_vals,
+                    std::shared_ptr<Ort::SessionOptions> session_options,
                     const std::unordered_map<std::string, std::string>& session_option_pairs,
                     std::optional<GraphOptimizationLevel> graph_optimization_level,
                     std::function<void(const Graph&)>* graph_checker) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = onnxruntime::kQnnExecutionProvider;
-  Ort::SessionOptions session_options;
-  if (graph_optimization_level.has_value()) {
-    session_options.SetGraphOptimizationLevel(*graph_optimization_level);
+  if(!session_options){
+    session_options = std::make_shared<Ort::SessionOptions>();
   }
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
+  if (graph_optimization_level.has_value()) {
+    session_options->SetGraphOptimizationLevel(*graph_optimization_level);
+  }
+  RegisterQnnEpLibrary(registered_ep_device, *session_options, registration_name, provider_options);
 
-  session_options.SetLogId(log_id);
+  session_options->SetLogId(log_id);
   for (auto key_value : session_option_pairs) {
-    session_options.AddConfigEntry(key_value.first.c_str(), key_value.second.c_str());
+    session_options->AddConfigEntry(key_value.first.c_str(), key_value.second.c_str());
   }
 
   Ort::RunOptions ort_run_options;
   ort_run_options.SetRunTag(log_id);
 
-  OrtSessionWrapper ort_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), session_options);
+  OrtSessionWrapper ort_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), *session_options);
 
   // Verify node assignment.
   const auto& graph = ort_session.GetGraph();
