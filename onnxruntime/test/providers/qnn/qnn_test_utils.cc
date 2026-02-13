@@ -274,7 +274,8 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                      float fp32_abs_err, OrtLoggingLevel log_severity, bool verify_outputs,
-                     std::function<void(const Ort::Session&)>* ep_graph_checker) {
+                     std::function<void(const Ort::Session&)>* ep_graph_checker,
+                     Ort::CustomOpDomain* custom_op_domain) {
   CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(provider_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
@@ -335,6 +336,9 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = "QNNExecutionProvider";
   Ort::SessionOptions session_options;
+  if (custom_op_domain != nullptr) {
+    session_options.Add(*custom_op_domain);
+  }
 
   session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
   session_options.SetLogSeverityLevel(log_severity);
@@ -350,15 +354,20 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
                             "QNN_EP_TestLogID",
                             helper.feeds_,
                             verification_params,
-                            verify_outputs);
+                            verify_outputs,
+                            custom_op_domain);
 }
 
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
                        std::unordered_map<std::string, Ort::Value>& feeds,
                        std::vector<Ort::Value>& output_vals,
-                       std::optional<GraphOptimizationLevel> graph_optimization_level) {
+                       std::optional<GraphOptimizationLevel> graph_optimization_level,
+                       Ort::CustomOpDomain* custom_op_domain) {
   Ort::SessionOptions session_options;
+  if (custom_op_domain != nullptr) {
+    session_options.Add(*custom_op_domain);
+  }
   session_options.SetLogId(log_id);
 
   if (graph_optimization_level.has_value()) {
@@ -411,10 +420,14 @@ void InferenceModel(const std::string& model_data,
                     OrtLoggingLevel log_severity,
                     const std::unordered_map<std::string, std::string>& session_option_pairs,
                     std::optional<GraphOptimizationLevel> graph_optimization_level,
-                    std::function<void(const Ort::Session&)>* graph_checker) {
+                    std::function<void(const Ort::Session&)>* graph_checker,
+                    Ort::CustomOpDomain* custom_op_domain) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = "QNNExecutionProvider";
   Ort::SessionOptions session_options;
+  if (custom_op_domain != nullptr) {
+    session_options.Add(*custom_op_domain);
+  }
   if (graph_optimization_level.has_value()) {
     session_options.SetGraphOptimizationLevel(*graph_optimization_level);
   }

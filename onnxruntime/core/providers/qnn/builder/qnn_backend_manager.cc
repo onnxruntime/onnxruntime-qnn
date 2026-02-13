@@ -1846,7 +1846,9 @@ Ort::Status QnnBackendManager::SetupBackend(
   }
 
   if (status.IsOK()) {
-    RETURN_IF_ERROR(LoadOpPackage());
+    status = LoadOpPackage();
+  }
+  if (status.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "LoadOpPackage succeed.");
   }
 

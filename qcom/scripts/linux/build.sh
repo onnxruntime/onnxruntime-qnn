@@ -112,7 +112,10 @@ if [ -z "${qairt_sdk_root}" ]; then
 fi
 
 cmake_bindir="$(get_cmake_bindir)"
-PATH="${cmake_bindir}:$(get_ninja_bindir):${PATH}"
+llvm_contentdir="$(get_llvm_contentdir)"
+# Trigger Hexagon SDK download/extract; cmake discovers the path via ORT_BUILD_TOOLS_PATH or its fallback.
+get_hexagon_sdk_contentdir > /dev/null
+PATH="${cmake_bindir}:$(get_ninja_bindir):${llvm_contentdir}/bin:${PATH}"
 
 mkdir -p "${build_dir}/${config}"
 

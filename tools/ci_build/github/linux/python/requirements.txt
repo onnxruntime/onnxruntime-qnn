@@ -13,3 +13,5 @@ onnx-ir==0.1.10; python_version < "3.14"
 jinja2
 markupsafe
 onnx==1.21.0; python_version < "3.14"
+mako
+lxml
