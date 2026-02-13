@@ -5,6 +5,7 @@
 The QNN Execution Provider can be built as an ABI-compatible plugin library that works with pre-built ONNX Runtime releases. This approach provides better compatibility and allows you to use the QNN EP with official ONNX Runtime distributions.
 
 See more information on the QNN execution provider [here](./QNN-ExecutionProvider.md).
+- **Note**: QNN EP version < 2.0 is **NOT** included in this page, please refer to [build page](https://onnxruntime.ai/docs/build/eps.html#qnn) for QNN EP version < 2.0.
 
 ## Prerequisites
 
