@@ -2,11 +2,14 @@
 // Licensed under the MIT License.
 
 #include "core/providers/qnn/builder/qnn_quant_params_wrapper.h"
+
 #include <algorithm>
 #include <cassert>
 #include <optional>
 #include <vector>
+
 #include "QnnTypes.h"
+
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 
 #define ALIGN_PTR_UP(ptr, align, type) \
@@ -24,7 +27,7 @@ QnnQuantParamsWrapper::QnnQuantParamsWrapper(const QnnQuantParamsWrapper& other)
     block_encoding_tensor_rank_ = other.block_encoding_tensor_rank_;
     num_scaleoffsets = other.num_blocks_;
   }
-  Status status = Init(other.params_, num_scaleoffsets, block_encoding_tensor_rank_);
+  Ort::Status status = Init(other.params_, num_scaleoffsets, block_encoding_tensor_rank_);
   assert(status.IsOK());  // Expect other QnnQuantParamsWrapper to always have a supported quantization encoding.
 }
 
@@ -37,7 +40,7 @@ QnnQuantParamsWrapper& QnnQuantParamsWrapper::operator=(const QnnQuantParamsWrap
       block_encoding_tensor_rank_ = other.block_encoding_tensor_rank_;
       num_scaleoffsets = other.num_blocks_;
     }
-    Status status = Init(other.params_, num_scaleoffsets, block_encoding_tensor_rank_);
+    Ort::Status status = Init(other.params_, num_scaleoffsets, block_encoding_tensor_rank_);
     assert(status.IsOK());  // Expect other QnnQuantParamsWrapper to always have a supported quantization encoding.
   }
 
@@ -163,11 +166,10 @@ QnnQuantParamsWrapper::QnnQuantParamsWrapper(gsl::span<const float> per_channel_
 }
 
 // Construct a BlockEncoding BQ quantization param.
-QnnQuantParamsWrapper::QnnQuantParamsWrapper(
-    gsl::span<const float> scales,
-    gsl::span<const int32_t> offsets,
-    gsl::span<const uint32_t> block_sizes,
-    Qnn_DataType_t tensor_data_type) {
+QnnQuantParamsWrapper::QnnQuantParamsWrapper(gsl::span<const float> scales,
+                                             gsl::span<const int32_t> offsets,
+                                             gsl::span<const uint32_t> block_sizes,
+                                             Qnn_DataType_t tensor_data_type) {
   ORT_UNUSED_PARAMETER(tensor_data_type);
   assert(block_sizes.size() > 0);
   assert(scales.size() > 0);
@@ -196,8 +198,8 @@ QnnQuantParamsWrapper::QnnQuantParamsWrapper(
 }
 
 // Get a copy of scales. Works for both per-tensor and per-channel.
-Status QnnQuantParamsWrapper::GetScales(/*out*/ std::vector<float>& scales) const {
-  ORT_RETURN_IF_NOT(params_.encodingDefinition == QNN_DEFINITION_DEFINED, "Unquantized qparams does not have scales");
+Ort::Status QnnQuantParamsWrapper::GetScales(/*out*/ std::vector<float>& scales) const {
+  RETURN_IF_NOT(params_.encodingDefinition == QNN_DEFINITION_DEFINED, "Unquantized qparams does not have scales");
 
   switch (params_.quantizationEncoding) {
     case QNN_QUANTIZATION_ENCODING_SCALE_OFFSET:
@@ -247,11 +249,12 @@ Status QnnQuantParamsWrapper::GetScales(/*out*/ std::vector<float>& scales) cons
       break;
     }
     default:
-      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Unsupported QNN quantization encoding: ",
-                             params_.quantizationEncoding);
+      return MAKE_EP_FAIL(("Unsupported QNN quantization encoding: " +
+                           std::to_string(params_.quantizationEncoding))
+                              .c_str());
   }
 
-  return Status::OK();
+  return Ort::Status();
 }
 
 QnnQuantParamsWrapper QnnQuantParamsWrapper::Copy() const {
@@ -259,7 +262,7 @@ QnnQuantParamsWrapper QnnQuantParamsWrapper::Copy() const {
 }
 
 // Initializes by copying from a Qnn_QuantizeParams_t.
-Status QnnQuantParamsWrapper::Init(const Qnn_QuantizeParams_t& params, const size_t num_scaleoffsets, const size_t tensor_rank) {
+Ort::Status QnnQuantParamsWrapper::Init(const Qnn_QuantizeParams_t& params, const size_t num_scaleoffsets, const size_t tensor_rank) {
   if (per_channel_data_) {
     per_channel_data_.reset(nullptr);
     params_ = QNN_QUANTIZE_PARAMS_INIT;
@@ -267,7 +270,7 @@ Status QnnQuantParamsWrapper::Init(const Qnn_QuantizeParams_t& params, const siz
 
   if (params.encodingDefinition != QNN_DEFINITION_DEFINED) {
     params_ = params;
-    return Status::OK();
+    return Ort::Status();
   }
 
   switch (params.quantizationEncoding) {
@@ -384,16 +387,19 @@ Status QnnQuantParamsWrapper::Init(const Qnn_QuantizeParams_t& params, const siz
       break;
     }
     default:
-      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Unsupported QNN quantization encoding: ", params.quantizationEncoding);
+      return MAKE_EP_FAIL(("Unsupported QNN quantization encoding: " +
+                           std::to_string(params.quantizationEncoding))
+                              .c_str());
   }
 
-  return Status::OK();
+  return Ort::Status();
 }
 
 // Initialize this object from a (potentially) quantized ONNX tensor.
 // QnnModelWrapper provides utilities for unpacking scale and zero-point ONNX initializers.
-Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper, const NodeUnitIODef& io_def) {
-  const std::optional<NodeUnitIODef::QuantParam>& ort_quant_params = io_def.quant_param;
+Ort::Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper,
+                                        const OrtNodeUnitIODef& io_def) {
+  const std::optional<OrtNodeUnitIODef::QuantParam>& ort_quant_params = io_def.quant_param;
 
   if (per_channel_data_) {
     per_channel_data_.reset(nullptr);
@@ -403,23 +409,22 @@ Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper, con
   if (!ort_quant_params.has_value()) {
     params_.encodingDefinition = QNN_DEFINITION_UNDEFINED;
     params_.quantizationEncoding = QNN_QUANTIZATION_ENCODING_UNDEFINED;
-    return Status::OK();
+    return Ort::Status();
   }
 
   std::vector<float> scales;
   std::vector<int32_t> zero_points;
 
-  ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales(ort_quant_params->scale.Name(), scales));
+  RETURN_IF_ERROR(qnn_model_wrapper.UnpackScales(ort_quant_params->scale, scales));
 
   bool is_int4_type = false;
 
   if (ort_quant_params->zero_point != nullptr) {
-    int32_t onnx_tp_type = 0;
-    ORT_RETURN_IF_ERROR(qnn_model_wrapper.UnpackZeroPoints(ort_quant_params->zero_point->Name(), zero_points,
-                                                           onnx_tp_type));
+    ONNXTensorElementDataType onnx_tp_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackZeroPoints(ort_quant_params->zero_point, zero_points, onnx_tp_type));
 
-    is_int4_type = (onnx_tp_type == ONNX_NAMESPACE::TensorProto_DataType_INT4) ||
-                   (onnx_tp_type == ONNX_NAMESPACE::TensorProto_DataType_UINT4);
+    is_int4_type = (onnx_tp_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4) ||
+                   (onnx_tp_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4);
   }
 
   const bool is_per_tensor = scales.size() == 1;
@@ -433,7 +438,7 @@ Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper, con
     params_.scaleOffsetEncoding.scale = scales[0];
 
     if (ort_quant_params->zero_point != nullptr) {
-      ORT_RETURN_IF_NOT(zero_points.size() == 1, "Expected one zero-point value");
+      RETURN_IF_NOT(zero_points.size() == 1, "Expected one zero-point value");
       params_.scaleOffsetEncoding.offset = zero_points[0];
     } else {
       params_.scaleOffsetEncoding.offset = 0;
@@ -445,29 +450,29 @@ Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper, con
     params_.bwScaleOffsetEncoding.scale = scales[0];
 
     if (ort_quant_params->zero_point != nullptr) {
-      ORT_RETURN_IF_NOT(zero_points.size() == 1, "Expected one zero-point value");
+      RETURN_IF_NOT(zero_points.size() == 1, "Expected one zero-point value");
       params_.bwScaleOffsetEncoding.offset = zero_points[0];
     } else {
       params_.bwScaleOffsetEncoding.offset = 0;
     }
   } else if (!is_per_tensor && is_int4_type) {
-    const auto* io_shape = io_def.node_arg.Shape();
-    ORT_RETURN_IF(io_shape == nullptr, "Input/output tensor proto must have a shape");
-    const int32_t io_rank = io_shape->dim_size();
+    const std::vector<int64_t> io_shape = io_def.shape;
+    RETURN_IF(io_shape.empty(), "Input/output tensor proto must have a shape");
+    const int32_t io_rank = static_cast<int32_t>(io_shape.size());
 
     constexpr int64_t DEFAULT_QDQ_AXIS = 1;
     int64_t axis = ort_quant_params->axis.value_or(DEFAULT_QDQ_AXIS);
     if (axis < 0) {
       axis += io_rank;
     }
-    ORT_RETURN_IF_NOT(axis >= 0 && axis < io_rank,
-                      "Quantization axis must be within the range [0, rank - 1]");
+    RETURN_IF_NOT(axis >= 0 && axis < io_rank,
+                  "Quantization axis must be within the range [0, rank - 1]");
 
     const size_t num_elems = scales.size();
     const bool no_zero_points = zero_points.empty();
-    ORT_RETURN_IF_NOT(num_elems > 1, "Expected more than one scale value");
-    ORT_RETURN_IF_NOT(no_zero_points || zero_points.size() == num_elems,
-                      "Expected the same number of zero-points and scales for per-channel quantization");
+    RETURN_IF_NOT(num_elems > 1, "Expected more than one scale value");
+    RETURN_IF_NOT(no_zero_points || zero_points.size() == num_elems,
+                  "Expected the same number of zero-points and scales for per-channel quantization");
 
     params_.encodingDefinition = QNN_DEFINITION_DEFINED;
     params_.quantizationEncoding = QNN_QUANTIZATION_ENCODING_BW_AXIS_SCALE_OFFSET;
@@ -494,26 +499,26 @@ Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper, con
     params_.bwAxisScaleOffsetEncoding.scales = scales_span.data();
     params_.bwAxisScaleOffsetEncoding.offsets = zps_span.data();
   } else if (!is_per_tensor && !is_int4_type) {
-    const auto* io_shape = io_def.node_arg.Shape();
-    ORT_RETURN_IF(io_shape == nullptr, "Input/output tensor proto must have a shape");
-    const int32_t io_rank = io_shape->dim_size();
+    const std::vector<int64_t> io_shape = io_def.shape;
+    RETURN_IF(io_shape.empty(), "Input/output tensor proto must have a shape");
+    const int32_t io_rank = static_cast<int32_t>(io_shape.size());
 
     constexpr int64_t DEFAULT_QDQ_AXIS = 1;
     int64_t axis = ort_quant_params->axis.value_or(DEFAULT_QDQ_AXIS);
     if (axis < 0) {
       axis += io_rank;
     }
-    ORT_RETURN_IF_NOT(axis >= 0 && axis < io_rank,
-                      "Quantization axis must be within the range [0, rank - 1]");
+    RETURN_IF_NOT(axis >= 0 && axis < io_rank,
+                  "Quantization axis must be within the range [0, rank - 1]");
 
     params_.encodingDefinition = QNN_DEFINITION_DEFINED;
     params_.quantizationEncoding = QNN_QUANTIZATION_ENCODING_AXIS_SCALE_OFFSET;
 
     const size_t num_elems = scales.size();
     const bool no_zero_points = zero_points.empty();
-    ORT_RETURN_IF_NOT(num_elems > 1, "Expected more than one scale value");
-    ORT_RETURN_IF_NOT(no_zero_points || zero_points.size() == num_elems,
-                      "Expected the same number of zero-points and scales for per-channel quantization");
+    RETURN_IF_NOT(num_elems > 1, "Expected more than one scale value");
+    RETURN_IF_NOT(no_zero_points || zero_points.size() == num_elems,
+                  "Expected the same number of zero-points and scales for per-channel quantization");
 
     const size_t num_bytes = num_elems * sizeof(Qnn_ScaleOffset_t);
     constexpr std::uintptr_t align = alignof(Qnn_ScaleOffset_t);
@@ -530,10 +535,11 @@ Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper, con
     params_.axisScaleOffsetEncoding.numScaleOffsets = static_cast<uint32_t>(num_elems);
     params_.axisScaleOffsetEncoding.scaleOffset = data_span.data();
   } else {
-    return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Unexpected tensor kind for QuantParamsWrapper::Init()");
+    return MAKE_EP_FAIL("Unexpected tensor kind for QuantParamsWrapper::Init()");
   }
 
-  return Status::OK();
+  return Ort::Status();
 }
+
 }  // namespace qnn
 }  // namespace onnxruntime

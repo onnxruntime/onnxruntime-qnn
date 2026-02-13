@@ -105,6 +105,19 @@ TEST_F(QnnCPUBackendTests, MaxPool_Global) {
                 ExpectedEPNodeAssignment::All);
 }
 
+TEST_F(QnnCPUBackendTests, MaxPool_Rank3) {
+  RunPoolOpTest("MaxPool",
+                TestInputDef<float>({1, 16, 120}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
+                {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
+                 utils::MakeAttribute("strides", std::vector<int64_t>{1}),
+                 utils::MakeAttribute("pads", std::vector<int64_t>{1, 1}),
+                 utils::MakeAttribute("dilations", std::vector<int64_t>{1}),
+                 utils::MakeAttribute("ceil_mode", static_cast<int64_t>(0)),
+                 utils::MakeAttribute("storage_order", static_cast<int64_t>(0)),
+                 utils::MakeAttribute("auto_pad", "NOTSET")},
+                ExpectedEPNodeAssignment::All);
+}
+
 TEST_F(QnnCPUBackendTests, MaxPool_Large_Input) {
   RunPoolOpTest("MaxPool",
                 TestInputDef<float>({1, 125, 8, 56}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
@@ -220,32 +233,40 @@ TEST_F(QnnHTPBackendTests, MaxPool1D_ReshapeNodesPresent) {
     maxpool_node.AddAttribute("auto_pad", "NOTSET");
   };
 
-  // Build and serialize the model
-  auto& logging_manager = DefaultLoggingManager();
-  onnxruntime::Model model("maxpool1d", false, ModelMetaData(), PathString(), IOnnxRuntimeOpSchemaRegistryList(), {}, {},
-                           logging_manager.DefaultLogger());
-  ModelTestBuilder builder(model.MainGraph());
-  build_test_case(builder);
-  builder.SetGraphOutputs();
-  ASSERT_STATUS_OK(model.MainGraph().Resolve());
-  std::string model_data;
-  model.ToProto().SerializeToString(&model_data);
-
-  // Setup session options and register QNN HTP EP
-  SessionOptions so;
   ProviderOptions options;
   options["backend_type"] = "htp";
 
-  InferenceSessionWrapper session{so, GetEnvironment()};
-  auto qnn_ep = QnnExecutionProviderWithOptions(options, &so);
-  ASSERT_STATUS_OK(session.RegisterExecutionProvider(std::move(qnn_ep)));
-  ASSERT_STATUS_OK(session.Load(model_data.data(), static_cast<int>(model_data.size())));
-  ASSERT_STATUS_OK(session.Initialize());
-  const Graph& graph = session.GetGraph();
-  int number_of_nodes = graph.NumberOfNodes();
+  std::function<void(const Graph&)> check_num_nodes = [](const Graph& graph) {
+    int number_of_nodes = graph.NumberOfNodes();
+    // The Reshape -> Pool -> Reshape gets fused to a single QNN node
+    EXPECT_EQ(number_of_nodes, 1) << "Expected 1 QNN fused node for MaxPool rank-3 input.";
+  };
 
-  // The Reshape -> Pool -> Reshape gets fused to a single QNN node
-  EXPECT_EQ(number_of_nodes, 1) << "Expected 1 QNN fused node for MaxPool rank-3 input.";
+  RunQnnModelTest(build_test_case,
+                  options,
+                  18,
+                  ExpectedEPNodeAssignment::All,
+                  1e-5,
+                  logging::Severity::kERROR,
+                  true,
+                  &check_num_nodes);
+}
+
+// 1-D MaxPool HTP test for rank-3 without ceil with padding 1
+TEST_F(QnnHTPBackendTests, MaxPool_Rank3_stride1_HTP_u8) {
+  RunQDQPoolOpTest<uint8_t>(
+      "MaxPool",
+      TestInputDef<float>({1, 3, 3}, false, -10.0f, 10.0f),
+      // A single 1-D kernel of length 3
+      {utils::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
+       utils::MakeAttribute("strides", std::vector<int64_t>{1}),
+       // 1-D pad: only two values
+       utils::MakeAttribute("pads", std::vector<int64_t>{1, 1}),
+       utils::MakeAttribute("dilations", std::vector<int64_t>{1}),
+       utils::MakeAttribute("ceil_mode", static_cast<int64_t>(0)),
+       utils::MakeAttribute("storage_order", static_cast<int64_t>(0)),
+       utils::MakeAttribute("auto_pad", "NOTSET")},
+      ExpectedEPNodeAssignment::All);
 }
 
 // 1-D MaxPool HTP test for rank-3 without ceil
