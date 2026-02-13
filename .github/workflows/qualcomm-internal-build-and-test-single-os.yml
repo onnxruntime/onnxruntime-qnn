@@ -36,7 +36,7 @@ on:
         default: false
         type: boolean
       upload_test_archive:
-        default: false
+        default: true
         type: boolean
       upload_wheel:
         default: true
@@ -90,7 +90,7 @@ on:
         type: boolean
       upload_test_archive:
         description: "If true, build a test archive and include is as an artifact."
-        default: false
+        default: true
         type: boolean
       upload_wheel:
         description: "If true, include the wheel as a workflow artifact."
