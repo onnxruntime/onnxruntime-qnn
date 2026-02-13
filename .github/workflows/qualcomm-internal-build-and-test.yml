@@ -111,7 +111,7 @@ jobs:
     with:
       nightly_build: ${{ inputs.nightly_build }}
       target_arch: arm64ec
-      # upload_wheel: true  # Disabled until quota problem is sorted out
+      upload_wheel: true  # Disabled until quota problem is sorted out
       # test_wheel: true
       test_wheel: false  # Disabled until an appropriate runner is available
       target_py_vsn: ${{ inputs.target_py_vsn }}
