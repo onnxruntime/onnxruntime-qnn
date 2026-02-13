@@ -7,7 +7,6 @@
 import datetime
 import logging
 import platform
-import re
 import shlex
 import subprocess
 import sys
@@ -89,12 +88,7 @@ elif parse_arg_remove_boolean(sys.argv, "--use_azure"):
 elif parse_arg_remove_boolean(sys.argv, "--use_qnn"):
     is_qnn = True
     package_name = "onnxruntime-qnn"
-    # This version may include a trailing timestamp. We just want x.y.z.
-    full_qnn_version = parse_arg_remove_string(sys.argv, "--qnn_version=")
-    if full_qnn_version is not None:
-        qnn_version_match = re.match(r"^\d+\.\d+.\d+", full_qnn_version)
-        if qnn_version_match is not None:
-            qnn_version = qnn_version_match.group(0)
+    qnn_version = parse_arg_remove_string(sys.argv, "--qnn_version=")
 elif parse_arg_remove_boolean(sys.argv, "--use_webgpu"):
     package_name = "onnxruntime-webgpu"
 
@@ -395,7 +389,6 @@ if platform.system() == "Linux" or platform.system() == "AIX":
     libs.append(providers_qnn)
     # QNN
     qnn_deps = [
-        "libGenie.so",
         "libQnnCpu.so",
         "libQnnGpu.so",
         "libQnnHtp.so",
@@ -457,7 +450,6 @@ else:
     libs.extend(["dxcompiler.dll", "dxil.dll"])
     # QNN V68/V73/V81 dependencies
     qnn_deps = [
-        "Genie.dll",
         "QnnCpu.dll",
         "QnnGpu.dll",
         "QnnHtp.dll",

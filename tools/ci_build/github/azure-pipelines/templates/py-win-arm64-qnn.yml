@@ -32,6 +32,8 @@ jobs:
     name: ${{ parameters.MACHINE_POOL }}
     os: windows
     hostArchitecture: Arm64
+    demands:
+      - Agent.Version -equals 4.264.2
   templateContext:
     sdl:
       codeSignValidation:
@@ -118,7 +120,7 @@ jobs:
     displayName: 'Build wheel'
     inputs:
       scriptPath: '$(Build.SourcesDirectory)\setup.py'
-      arguments: 'bdist_wheel $(NightlyBuildOption) --use_qnn --qnn_version=${{ parameters.QNN_SDK }}'
+      arguments: 'bdist_wheel $(NightlyBuildOption) --wheel_name_suffix=qnn'
       workingDirectory: '$(Build.BinariesDirectory)\RelWithDebInfo\RelWithDebInfo'
 
   - task: CopyFiles@2

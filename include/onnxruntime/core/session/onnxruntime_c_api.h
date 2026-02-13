@@ -7196,27 +7196,30 @@ struct OrtApi {
    */
   ORT_API_T(void, RunOptionsSetSyncStream, _Inout_ OrtRunOptions* options, _In_ OrtSyncStream* sync_stream);
 
-  /** \brief Enable profiling for this run
+  /** \brief Get the element data type and shape for an OrtValue that represents a Tensor (scalar, dense, or sparse).
    *
-   * \param[in] options
-   * \param[in] profile_file_prefix The prefix for the profile file. The actual filename will be:
-   *                                <profile_file_prefix>_<timestamp>.json
+   * \note This function is an alternative to ::GetTensorTypeAndShape() that does not allocate a new array for
+   *       the shape data. The OrtValue instance's internal shape data is returned directly.
+   *
+   * \note Returns an error if the underlying OrtValue is not a Tensor.
+   *
+   * \param[in] value The OrtValue instance.
+   * \param[out] elem_type Output parameter set to the tensor element data type.
+   * \param[out] shape_data Output parameter set to the OrtValue instance's internal shape data array.
+   *                        For a scalar, `shape_data` is NULL and `shape_data_count` is 0.
+   *                        Must not be released as it is owned by the OrtValue instance. This pointer becomes invalid
+   *                        when the OrtValue is released or if the underlying shape data is updated or reallocated.
+   * \param[out] shape_data_count Output parameter set to the number of elements in `shape_data`.
+   *                              `shape_data_count` is 0 for a scalar.
    *
    * \snippet{doc} snippets.dox OrtStatus Return Value
    *
-   * \since Version 1.25.
+   * \since Version 1.24.
    */
-  ORT_API2_STATUS(RunOptionsEnableProfiling, _Inout_ OrtRunOptions* options, _In_ const ORTCHAR_T* profile_file_prefix);
-
-  /** \brief Disable profiling for this run
-   *
-   * \param[in] options
-   *
-   * \snippet{doc} snippets.dox OrtStatus Return Value
-   *
-   * \since Version 1.25.
-   */
-  ORT_API2_STATUS(RunOptionsDisableProfiling, _Inout_ OrtRunOptions* options);
+  ORT_API2_STATUS(GetTensorElementTypeAndShapeDataReference, _In_ const OrtValue* value,
+                  _Out_ ONNXTensorElementDataType* elem_type,
+                  _Outptr_result_maybenull_ const int64_t** shape_data,
+                  _Out_ size_t* shape_data_count);
 };
 
 /*

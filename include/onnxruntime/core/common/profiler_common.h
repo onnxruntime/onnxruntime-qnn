@@ -4,9 +4,9 @@
 #pragma once
 
 #include "core/common/common.h"
-#include "core/common/inlined_containers.h"
 
 #include <string>
+#include <unordered_map>
 
 namespace onnxruntime {
 namespace profiling {
@@ -35,7 +35,7 @@ struct EventRecord {
               std::string&& event_name,
               long long time_stamp,
               long long duration,
-              InlinedHashMap<std::string, std::string>&& event_args)
+              std::unordered_map<std::string, std::string>&& event_args)
       : cat(category),
         pid(process_id),
         tid(thread_id),
@@ -50,7 +50,7 @@ struct EventRecord {
               const std::string& event_name,
               long long time_stamp,
               long long duration,
-              const InlinedHashMap<std::string, std::string>& event_args)
+              const std::unordered_map<std::string, std::string>& event_args)
       : cat(category),
         pid(process_id),
         tid(thread_id),
@@ -70,7 +70,7 @@ struct EventRecord {
   std::string name{};
   long long ts = 0;
   long long dur = 0;
-  InlinedHashMap<std::string, std::string> args{};
+  std::unordered_map<std::string, std::string> args{};
 };
 
 using Events = std::vector<EventRecord>;

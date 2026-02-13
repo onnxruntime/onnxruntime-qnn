@@ -12,6 +12,10 @@ param (
     [bool]$BuildAsX = $false,
 
     [Parameter(Mandatory = $false,
+               HelpMessage = "If true, build NuGet package.")]
+    [bool]$BuildNuget = $false,
+
+    [Parameter(Mandatory = $false,
                HelpMessage = "Path to QAIRT SDK.")]
     [string]$QairtSdkRoot,
 
@@ -117,6 +121,7 @@ $QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot"
 $GenerateBuild = $false
 $DoBuild = $false
 $BuildWheel = $false
+$BuildZip = $true
 $MakeTestArchive = $false
 $RunTests = $false
 $TestRunner = "$RepoRoot\qcom\scripts\windows\run_tests.ps1"
@@ -161,6 +166,17 @@ if ($BuildAsX) {
 # The ORT build incorrectly enables use of Kleidiai when using Ninja on Windows,
 # even if ArmNN is not requested. Manually turn it off.
 $PlatformArgs = @("--no_kleidiai")
+
+if ($BuildNuget) {
+    $TargetNugetDir = (Get-NugetBinDir)
+    $env:Path = "$TargetNugetDir;" + $env:Path
+    $TargetNugetExe = (Join-Path $TargetNugetDir "nuget.exe")
+    Assert-Success -ErrorMessage "Failed to fetch the nuget.exe" {
+        Get-Command nuget.exe -ErrorAction SilentlyContinue
+    }
+    Write-Host "Building Nuget using $TargetNugetExe"
+    $CommonArgs += "--build_nuget"
+}
 
 if ($CMakeGenerator -eq "Ninja") {
     # The default somehow gives us paths that are too long in CI
@@ -264,9 +280,36 @@ else {
                                 python.exe (Join-Path $RepoRoot "setup.py") `
                                     bdist_wheel `
                                     --wheel_name_suffix=qcom_internal `
-                                    --use_qnn `
                                     --qnn_version=$QairtSdkVersion `
                                     $PyNightlyArg
+                            }
+                        }
+                    }
+                }
+
+                if ($BuildNuget) {
+                    Use-PyVenv -PyVenv $BuildVEnv {
+                        Use-WorkingDir -Path $BuildOutputDir {
+                            Assert-Success -ErrorMessage "Failed to build nuget" {
+                                .\build.bat $ArchArgs $CommonArgs $QnnArgs $PlatformArgs
+                            }
+                        }
+                    }
+                }
+                if ($BuildZip) {
+                    Use-PyVenv -PyVenv $BuildVEnv {
+                        Use-WorkingDir -Path $BuildOutputDir {
+                            $PkgAssetsArgs = @(
+                                "--source", $RepoRoot,
+                                "--build_dir", $BuildDir,
+                                "--config", $Config,
+                                "--verbose"
+                            )
+                            if ($CMakeGenerator -eq "Ninja") {
+                                $PkgAssetsArgs += "--use_ninja"
+                            }
+                            Assert-Success -ErrorMessage "Failed to build zip" {
+                                python.exe (Join-Path $RepoRoot "tools\ci_build\pkg_assets.py") @PkgAssetsArgs
                             }
                         }
                     }

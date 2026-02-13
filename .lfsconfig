@@ -1,5 +1,0 @@
-[lfs]
-
-url = ssh://git@artifactory-edge-np.qualcomm.com:1339/artifactory/mlgtaiwan-ort-gitlfs-virtual
-
-pushurl = ssh://git@artifactory-np.qualcomm.com:1339/artifactory/mlgtaiwan-ort-gitlfs-virtual
