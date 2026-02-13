@@ -5,6 +5,9 @@ It uses the Qualcomm AI Runtime SDK (QAIRT SDK) to construct a QNN graph from an
 be executed by a supported accelerator backend library.
 ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC's.
 
+- **Note**: QNN EP version < 2.0 is **NOT** included in this page, please refer to [this page](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html) for QNN EP version < 2.0.
+- **Note**: QNN EP version < 2.0 will be deprecated and no longer maintained.
+
 ## Contents
 
 - [Install Pre-requisites (Build from Source Only)](#install-pre-requisites-build-from-source-only)
@@ -78,10 +81,6 @@ The QNN Execution Provider supports a number of configuration options. These pro
 
 **Note:** `backend_path` is an alternative to `backend_type`. At most one of the two should be specified.
 `backend_path` requires a platform-specific path (e.g., `libQnnCpu.so` vs. `QnnCpu.dll`) but also allows one to specify an arbitrary path.
-
-|`"ep_select_backend_path"`|Description|
-|---|-----|
-|Backend library path (string)|Alternative way to specify the backend path. Same as `backend_path`.|
 
 |`"profiling_level"`|Description|
 |---|---|
@@ -221,7 +220,7 @@ import onnxruntime_qnn as qnn_ep
 
 # Register QNN EP library
 ep_lib_path = qnn_ep.get_library_path()
-ep_registration_name = "QnnExecutionProvider"
+ep_registration_name = "QNNExecutionProvider"
 ort.register_execution_provider_library(ep_registration_name, ep_lib_path)
 
 # Select QNN EP device
@@ -350,6 +349,7 @@ ort.unregister_execution_provider_library(ep_registration_name)
 |com.microsoft:DequantizeLinear|Provides 16-bit integer dequantization support|
 |com.microsoft:Gelu||
 |com.microsoft:QuantizeLinear|Provides 16-bit integer quantization support|
+|com.microsoft.MatMulNBits|Supported bits == 4 on GPU backend|
 
 Supported data types vary by operator and QNN backend. Refer to the [QAIRT SDK documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/operations.html) for more information.
 
@@ -477,7 +477,7 @@ import numpy as np
 # Register QNN EP library
 # The registration name is used as the EP name for QNN EP
 ep_lib_path = qnn_ep.get_library_path()
-ep_registration_name = "QnnExecutionProvider"
+ep_registration_name = "QNNExecutionProvider"
 ort.register_execution_provider_library(ep_registration_name, ep_lib_path)
 
 # Select OrtEpDevice(s) matching the registration name (which is the EP name for QNN EP)
@@ -541,7 +541,7 @@ import onnxruntime_qnn as qnn_ep
 # Register QNN EP library
 # The registration name is used as the EP name for QNN EP
 ep_lib_path = qnn_ep.get_library_path()
-ep_registration_name = "QnnExecutionProvider"
+ep_registration_name = "QNNExecutionProvider"
 ort.register_execution_provider_library(ep_registration_name, ep_lib_path)
 
 # Select OrtEpDevice(s) matching the registration name (which is the EP name for QNN EP)
@@ -552,7 +552,7 @@ if len(selected_ep_devices) == 0:
     raise RuntimeError("QNN EP device not found")
 
 # Configure QNN EP options for GPU backend
-ep_options = {"backend_path": "QnnGpu.dll"}  # Use GPU backend
+ep_options = {"backend_type": "gpu"}  # Use GPU backend
 
 # Add QNN EP to session
 options = ort.SessionOptions()
@@ -654,7 +654,7 @@ import numpy as np
 
 # Register QNN EP library
 ep_lib_path = qnn_ep.get_library_path()
-ep_registration_name = "QnnExecutionProvider"
+ep_registration_name = "QNNExecutionProvider"
 ort.register_execution_provider_library(ep_registration_name, ep_lib_path)
 
 # Select QNN EP device
@@ -663,7 +663,7 @@ selected_ep_devices = [ep_device for ep_device in all_ep_devices if ep_device.ep
 
 # Configure EP options with profiling
 ep_options = {
-    "backend_path": "path/to/QnnHtp.dll",  # Use libQnnHtp.so if on Linux
+    "backend_type": "htp",
     "htp_performance_mode": "burst",
     "device_id": "0",
     "htp_graph_finalization_optimization_mode": "3",
@@ -713,7 +713,7 @@ import numpy as np
 
 # Register QNN EP library
 ep_lib_path = qnn_ep.get_library_path()
-ep_registration_name = "QnnExecutionProvider"
+ep_registration_name = "QNNExecutionProvider"
 ort.register_execution_provider_library(ep_registration_name, ep_lib_path)
 
 # Select QNN EP device
@@ -722,7 +722,7 @@ selected_ep_devices = [ep_device for ep_device in all_ep_devices if ep_device.ep
 
 # Configure EP options with optrace profiling
 ep_options = {
-    "backend_path": "path/to/QnnHtp.dll",  # Use libQnnHtp.so if on Linux
+    "backend_type": "htp",
     "htp_performance_mode": "burst",
     "device_id": "0",
     "htp_graph_finalization_optimization_mode": "3",
@@ -803,7 +803,7 @@ Additionally, if user creates the QNN context binary (`qnn_ctx.bin`) with weight
 ### Using QNN EP as a Plugin EP
 
 QNN EP can be used as a plugin execution provider. This is the recommended approach as it follows the standardized plugin EP pattern described in the [EP Context Design documentation](https://onnxruntime.ai/docs/execution-providers/EP-Context-Design.html).
-> **Note**: QNN EP requires the ep registartion name as "QnnExecutionProvider", and the ep_device name is the same as the registration name.
+> **Note**: QNN EP requires the ep registartion name as "QNNExecutionProvider", and the ep_device name is the same as the registration name.
 
 ### C++
 C API details are [here](https://onnxruntime.ai/docs/get-started/with-c.html).
@@ -811,7 +811,7 @@ C API details are [here](https://onnxruntime.ai/docs/get-started/with-c.html).
 ```cpp
 #include "onnxruntime_cxx_api.h"
 
-const char* lib_registration_name = "QnnExecutionProvider";
+const char* lib_registration_name = "QNNExecutionProvider";
 Ort::Env env = Ort::Env{ORT_LOGGING_LEVEL_ERROR, "Default"};
 
 // Register QNN EP library with ONNX Runtime
@@ -839,7 +839,7 @@ env.RegisterExecutionProviderLibrary(
 
     // Configure QNN EP options
     Ort::KeyValuePairs ep_options;
-    ep_options.Append("backend_path", "QnnHtp.dll");
+    ep_options.Append("backend_type", "htp");
 
     // Create session with QNN EP
     Ort::SessionOptions session_options;
@@ -862,7 +862,7 @@ import onnxruntime_qnn as qnn_ep
 # Register QNN EP library
 # The registration name is used as the EP name for QNN EP
 ep_lib_path = qnn_ep.get_library_path()
-ep_registration_name = "QnnExecutionProvider"
+ep_registration_name = "QNNExecutionProvider"
 ort.register_execution_provider_library(ep_registration_name, ep_lib_path)
 
 # Select OrtEpDevice(s) matching the registration name (which is the EP name for QNN EP)
