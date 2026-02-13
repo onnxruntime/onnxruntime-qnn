@@ -246,6 +246,7 @@ TEST_F(QnnHTPBackendTests, MaxPool1D_ReshapeNodesPresent) {
                   18,
                   ExpectedEPNodeAssignment::All,
                   1e-5,
+                  nullptr,
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   true,
                   &check_num_nodes);

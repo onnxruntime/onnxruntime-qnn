@@ -1212,7 +1212,8 @@ TEST_F(QnnHTPBackendTests, ProfilingTest) {
                   provider_options,
                   13,
                   ExpectedEPNodeAssignment::All,
-                  0.008f);
+                  0.008f,
+                  nullptr);
 
   VerifyFileExistsAndIsNonEmpty(provider_options["profiling_file_path"]);
   std::remove(provider_options["profiling_file_path"].c_str());
@@ -1247,7 +1248,8 @@ TEST_F(QnnHTPBackendTests, OptraceTest) {
                   provider_options,
                   13,
                   ExpectedEPNodeAssignment::All,
-                  0.008f);
+                  0.008f,
+                  nullptr);
 
   VerifyFileExistsAndIsNonEmpty(provider_options["profiling_file_path"]);
   std::remove(provider_options["profiling_file_path"].c_str());
@@ -1335,7 +1337,8 @@ TEST_F(QnnHTPBackendTests, Float32ModelWithFP16PrecisionTest) {
                   provider_options,
                   13,
                   ExpectedEPNodeAssignment::All,
-                  0.008f);
+                  0.008f,
+                  nullptr);
 }
 
 // Test that QNN EP only handles nodes with static shapes and rejects nodes with dynamic shape I/O.
@@ -1398,6 +1401,7 @@ TEST_F(QnnHTPBackendTests, EPRejectsDynamicShapesF32) {
                   /*opset*/ 19,
                   ExpectedEPNodeAssignment::Some,
                   /*abs_err*/ 1e-4f,
+                  /*session_options*/ nullptr,
                   logging::Severity::kERROR,
                   /*verify_output*/ true,
                   &ep_graph_checker);
@@ -1508,6 +1512,7 @@ TEST_F(QnnHTPBackendTests, EPOffloadsGraphIOQuantDequant) {
                                     /*opset*/ 21,
                                     expected_ep_assignment,
                                     /*abs_err*/ QDQTolerance(),
+                                    /*session_options*/ nullptr,
                                     logging::Severity::kERROR,
                                     /*qnn_ctx_model_path*/ "",
                                     /*session_option_pairs*/ {},
@@ -1945,7 +1950,8 @@ TEST_F(QnnHTPBackendTests, TestMismatchedGraphInputAndTensorWrapperCount) {
                   provider_options,
                   11,
                   ExpectedEPNodeAssignment::All,
-                  0.008f);
+                  0.008f,
+                  nullptr);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -1956,7 +1962,6 @@ TEST_F(QnnHTPBackendTests, TestMismatchedGraphInputAndTensorWrapperCount) {
 // TODO: Consider alternate approach to test backward compatibility without building
 // additional onnxruntime_providers_qnn_simulation.dll
 TEST_F(QnnCPUBackendTests, DISABLED_TestSimulatedQnnEp) {
-  // Run with QNN-ABI.
   onnxruntime::ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
 

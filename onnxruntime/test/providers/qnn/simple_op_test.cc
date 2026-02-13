@@ -1984,6 +1984,7 @@ TEST_F(QnnHTPBackendTests, RandomUniformLikeAddTest) {
                   14,
                   ExpectedEPNodeAssignment::All,
                   1e-5f,
+                  nullptr,
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   false);
 }

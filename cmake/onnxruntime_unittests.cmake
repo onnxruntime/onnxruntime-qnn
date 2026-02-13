@@ -201,6 +201,12 @@ if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_RED
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/*)
   list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/optimizer/*)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/udo/udo_op_test.cpp)
+  if(UNIX)
+    # set -Wno-parentheses for linux to avoid compile error of extra parentheses in included files
+    set_source_files_properties(${TEST_SRC_DIR}/providers/qnn/udo/udo_op_test.cpp PROPERTIES COMPILE_FLAGS "-Wno-parentheses")
+  endif()
+  include(qnn_udo_unittest.cmake)
   list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn)
   if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
     list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_shared)

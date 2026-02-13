@@ -215,7 +215,12 @@ static void RunQDQResizeOpTest(const TestInputDef<float>& input_def,
                        opset,
                        expected_ep_assignment,
                        tolerance,
+<<<<<<< HEAD
                        OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+=======
+                       nullptr,
+                       logging::Severity::kERROR,
+>>>>>>> 0dc97060b4 (add udo unit test)
                        "",
                        session_option_pairs,
                        graph_optimization_level);
@@ -481,7 +486,12 @@ TEST_F(QnnHTPBackendTests, ResizeU8_2xCubicHalfPixelFloor_scales) {
                        19,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
+<<<<<<< HEAD
                        OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+=======
+                       nullptr,
+                       logging::Severity::kERROR,
+>>>>>>> 0dc97060b4 (add udo unit test)
                        "",
                        {},
                        GraphOptimizationLevel::ORT_DISABLE_ALL);
@@ -537,7 +547,12 @@ TEST_F(QnnHTPBackendTests, ResizeU8_2xCubicHalfPixel_scales_downsample) {
                        19,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
+<<<<<<< HEAD
                        OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+=======
+                       nullptr,
+                       logging::Severity::kERROR,
+>>>>>>> 0dc97060b4 (add udo unit test)
                        "",
                        {},
                        GraphOptimizationLevel::ORT_DISABLE_ALL);

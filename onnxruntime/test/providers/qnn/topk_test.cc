@@ -54,6 +54,7 @@ static void RunTopKTestOnCPU(const TestInputDef<DataType>& input_def,
                   opset,
                   expected_ep_assignment,
                   /*fp32_abs_err*/ 1e-5f,
+                  /*session_options*/nullptr,
                   /*log_severity*/ OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   /*verify_outputs*/ verify_outputs);
 }

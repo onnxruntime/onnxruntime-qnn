@@ -1274,6 +1274,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheEmbedModeTest) {
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
+                       nullptr,
                        logging::Severity::kERROR,
                        "",  // context model file path, not required for this inference
                        session_option_pairs);
@@ -1290,6 +1291,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheEmbedModeTest) {
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
+                       nullptr,
                        logging::Severity::kERROR,
                        context_model_file,
                        session_option_pairs2);
@@ -1326,6 +1328,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
+                       nullptr,
                        logging::Severity::kERROR,
                        "",  // context model file path, not required for this inference
                        session_option_pairs);
@@ -1345,6 +1348,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
+                       nullptr,
                        logging::Severity::kERROR,
                        context_binary_file,
                        session_option_pairs2);
@@ -1404,6 +1408,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_InvalidGraph) {
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
+                       nullptr,
                        logging::Severity::kERROR,
                        "",  // context model file path, not required for this inference
                        session_option_pairs);
@@ -1596,6 +1601,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary2InputsTest) {
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
+                       nullptr,
                        logging::Severity::kERROR,
                        "",  // context model file path, not required for this inference
                        session_option_pairs);
@@ -1612,6 +1618,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary2InputsTest) {
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
+                       nullptr,
                        logging::Severity::kERROR,
                        context_model_file,
                        session_option_pairs2);
@@ -1649,6 +1656,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphName
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
+                       nullptr,
                        logging::Severity::kERROR,
                        "",  // context model file path, not required for this inference
                        session_option_pairs);
