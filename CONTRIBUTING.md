@@ -9,12 +9,6 @@ We're always looking for your help to improve the product (bug fixes, new featur
 * Make sure your PR adheres to the [PR Guidelines](./docs/PR_Guidelines.md) and [Coding Conventions and Standards](./docs/Coding_Conventions_and_Standards.md) established by the team.
 * If you're unsure about any of the above and want to contribute, you're welcome to [start a discussion](https://github.com/onnxruntime/onnxruntime-qnn/discussions) with the team.
 
-## Propose a new public API
-
- ONNX Runtime QNN has a collection of [public APIs](./README.md#api-documentation).  Some of these APIs make their way back into the Windows OS.  We make compatibility commitments for these APIs and follow a structured process when adding to them.  Please use the [Feature Request issue template](https://github.com/onnxruntime/onnxruntime-qnn/issues/new?template=feature_request.md) before starting any PRs that affect any of the public APIs.
-
- If your proposal contributes the Windows Machine Learning WinRT API and will affect the Windows.AI.MachineLearning namespace, please review [Windows ML main principles](./docs/WinML_principles.md) before you submit your request.
-
 ## Process details
 
 Please search the [issue tracker](https://github.com/onnxruntime/onnxruntime-qnn/issues) for a similar idea first: there may already be an issue you can contribute to.
