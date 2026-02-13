@@ -26,7 +26,6 @@ jobs:
       target_arch: aarch64_manylinux_2_34
       target_py_vsn: "3.10"
       run_tests: false
-      test_wheel: false
       upload_test_archive: false
       upload_wheel: false
 
@@ -39,7 +38,6 @@ jobs:
       target_arch: aarch64_manylinux_2_34
       target_py_vsn: "3.11"
       run_tests: false
-      test_wheel: false
       upload_test_archive: false
       upload_wheel: false
 
@@ -52,7 +50,6 @@ jobs:
       target_arch: aarch64_manylinux_2_34
       target_py_vsn: "3.12"
       run_tests: false
-      test_wheel: false
       upload_test_archive: false
       upload_wheel: false
 
@@ -65,7 +62,6 @@ jobs:
       target_arch: aarch64_manylinux_2_34
       target_py_vsn: "3.13"
       run_tests: false
-      test_wheel: false
       upload_test_archive: false
       upload_wheel: false
 
@@ -80,8 +76,7 @@ jobs:
       # wheel distribution story is yet. For now, this is just so that all of the job and artifact names reflect the
       # version of cpython that's installed on our Linux build machines.
       target_py_vsn: "3.10"
-      run_tests: true
-      test_wheel: true
+      run_tests: false
       upload_test_archive: false
       upload_wheel: true
 
@@ -96,7 +91,7 @@ jobs:
       build_runner_arch: ARM64
       test_runner_arch: ARM64
       run_tests: false
-      test_wheel: false
+      test_wheel: false  # Re-enable Python smoke tests when we start uploading them again
       upload_test_archive: false
       upload_wheel: false
 
@@ -111,7 +106,7 @@ jobs:
       build_runner_arch: ARM64
       test_runner_arch: ARM64
       run_tests: false
-      test_wheel: false
+      test_wheel: false  # Re-enable Python smoke tests when we start uploading them again
       upload_test_archive: false
       upload_wheel: false
 
@@ -126,7 +121,7 @@ jobs:
       build_runner_arch: ARM64
       test_runner_arch: ARM64
       run_tests: false
-      test_wheel: false
+      test_wheel: false  # Re-enable Python smoke tests when we start uploading them again
       upload_test_archive: false
       upload_wheel: false
 
@@ -140,7 +135,7 @@ jobs:
       target_py_vsn: "3.11"
       test_runner_arch: ARM64
       run_tests: false
-      test_wheel: false
+      test_wheel: false  # Re-enable Python smoke tests when we start uploading them again
       upload_test_archive: false
       upload_wheel: false
 
@@ -154,7 +149,7 @@ jobs:
       target_py_vsn: "3.12"
       test_runner_arch: ARM64
       run_tests: false
-      test_wheel: false
+      test_wheel: false  # Re-enable Python smoke tests when we start uploading them again
       upload_test_archive: false
       upload_wheel: false
 
@@ -168,6 +163,6 @@ jobs:
       target_py_vsn: "3.13"
       test_runner_arch: ARM64
       run_tests: false
-      test_wheel: false
+      test_wheel: false  # Re-enable Python smoke tests when we start uploading them again
       upload_test_archive: false
       upload_wheel: false
