@@ -111,16 +111,6 @@ class BaseOpBuilder : public IOpBuilder {
                            const Ort::Logger& logger,
                            std::vector<std::string>& input_names) const ORT_MUST_USE_RESULT;
 
-  Ort::Status AddCastNode(QnnModelWrapper& qnn_model_wrapper,
-                          const std::string& cast_node_name,
-                          const std::string& input_name,
-                          const std::string& output_name,
-                          Qnn_TensorType_t output_tensor_type,
-                          Qnn_DataType_t output_data_type,
-                          QnnQuantParamsWrapper&& output_quant_params,
-                          std::vector<uint32_t>&& output_shape,
-                          bool do_op_validation) const ORT_MUST_USE_RESULT;
-
   Ort::Status AddZeroBiasInput(QnnModelWrapper& qnn_model_wrapper,
                                const QnnQuantParamsWrapper& input0_qparams,
                                const QnnQuantParamsWrapper& input1_qparams,
