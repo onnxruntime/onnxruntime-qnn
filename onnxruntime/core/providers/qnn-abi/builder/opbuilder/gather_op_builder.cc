@@ -201,7 +201,44 @@ Ort::Status GatherOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                            bool do_op_validation) const {
   const auto& inputs = node_unit.Inputs();
   RETURN_IF(inputs.size() != 2, ("QNN EP: " + node_unit.OpType() + " operator must have two inputs").c_str());
-  RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
+
+  const auto& input0 = inputs[0];
+  std::vector<uint32_t> input0_shape;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input0.shape, input0_shape),
+                "Cannot get input[0] shape");
+
+  const auto& output0 = node_unit.Outputs()[0];
+  std::vector<uint32_t> output0_shape;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output0.shape, output0_shape),
+                "Cannot get output shape");
+
+  bool input_has_unit_dim = (input0_shape.size() >= 1 && input0_shape[0] == 1);
+  bool output_has_unit_dim = (output0_shape.size() >= 1 && output0_shape[0] == 1);
+  bool input_is_rank6 = (input0_shape.size() == 6);
+  bool output_is_rank6 = (output0_shape.size() == 6);
+  bool has_rank6 = input_is_rank6 || output_is_rank6;
+
+  if (input_has_unit_dim && output_has_unit_dim && has_rank6) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_INFO,
+                "Converting rank 6 tensor to rank 5 for Gather Op");
+    
+    std::vector<uint32_t> squeezed_input_shape(input0_shape.begin() + 1, input0_shape.end());
+    std::string squeezed_input_name = utils::GetUniqueName(input0.name, "_squeezed");
+
+    QnnQuantParamsWrapper quant_param;
+    RETURN_IF_ERROR(quant_param.Init(qnn_model_wrapper, input0));
+
+    Qnn_DataType_t data_type;
+    RETURN_IF_ERROR(utils::GetQnnDataType(quant_param.IsQuantized(), input0.type, data_type));
+
+    RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(
+        input0.name, squeezed_input_name, input0_shape, squeezed_input_shape,
+        data_type, quant_param, do_op_validation, false, false));
+
+    input_names.push_back(squeezed_input_name);
+  } else {
+    RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, input0, logger, input_names));
+  }
 
   int64_t input0_axis_dim = 0;
   RETURN_IF_ERROR(GetInput0AxisDimValue(qnn_model_wrapper, node_unit, /*default_axis_value=*/0, input0_axis_dim));
@@ -215,11 +252,34 @@ Ort::Status GatherOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                          bool do_op_validation) const {
   const bool is_gather_elems = node_unit.OpType() == "GatherElements";
 
+  const auto& input0 = node_unit.Inputs()[0];
+  std::vector<uint32_t> input0_shape;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input0.shape, input0_shape),
+                "Cannot get input[0] shape");
+
+  const auto& output0 = node_unit.Outputs()[0];
+  std::vector<uint32_t> output0_shape;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output0.shape, output0_shape),
+                "Cannot get output shape");
+
+  bool input_has_unit_dim = (input0_shape.size() >= 1 && input0_shape[0] == 1);
+  bool output_has_unit_dim = (output0_shape.size() >= 1 && output0_shape[0] == 1);
+  bool input_is_rank6 = (input0_shape.size() == 6);
+  bool output_is_rank6 = (output0_shape.size() == 6);
+  bool has_rank6 = input_is_rank6 || output_is_rank6;
+  bool needs_squeeze_unsqueeze = input_has_unit_dim && output_has_unit_dim && has_rank6;
+
   // Create QNN 'axis' parameter.
   std::vector<std::string> param_tensor_names;
   int32_t axis_value = 0;
   Qnn_Scalar_t axis_qnn_scalar = QNN_SCALAR_INIT;
   RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, axis_qnn_scalar, axis_value));
+
+  if (needs_squeeze_unsqueeze && axis_value > 0) {
+    axis_value = axis_value - 1;
+    axis_qnn_scalar.int32Value = axis_value;
+  }
+
   QnnParamWrapper axis_param(node_unit.Index(), node_unit.Name(),
                              (is_gather_elems ? QNN_OP_GATHER_ELEMENTS_PARAM_AXIS : QNN_OP_GATHER_PARAM_AXIS),
                              axis_qnn_scalar);
@@ -276,7 +336,7 @@ Ort::Status GatherOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(gather_output.shape, target_output_shape), "Cannot get shape");
 
   bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
-  bool reshape_required = (qnn_output_shape.size() != target_output_shape.size());
+  bool reshape_required = (qnn_output_shape.size() != target_output_shape.size()) || needs_squeeze_unsqueeze;
 
   struct CastNodeInfo {
     std::string node_name;
