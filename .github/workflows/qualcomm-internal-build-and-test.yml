@@ -125,7 +125,7 @@ jobs:
 
       - name: Build Android
         run: |
-        python3 qcom/build_and_test.py archive_ort_android_aarch64
+          python3 qcom/build_and_test.py archive_ort_android_aarch64
 
       - uses: actions/upload-artifact@v4
         with:
