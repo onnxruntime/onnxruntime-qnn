@@ -294,9 +294,9 @@ Ort::Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
       RETURN_IF_ERROR(ProcessConstantValue(qnn_model_wrapper, param_tensor_names, node_unit, inputs[2]));
     } else {
       // when dtype == QNN_DATATYPE_FLOAT_16, HTP doesn't support specify pad_constant_value. Use default 0.
-      std::vector<uint8_t> unpacked_tensor;
-      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info.initializer_tensor, unpacked_tensor));
-      MLFloat16 fp16_value = *reinterpret_cast<const MLFloat16*>(unpacked_tensor.data());
+      std::vector<uint8_t> unpacked_pad_constant_tensor;
+      RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info.initializer_tensor, unpacked_pad_constant_tensor));
+      MLFloat16 fp16_value = *reinterpret_cast<const MLFloat16*>(unpacked_pad_constant_tensor.data());
       RETURN_IF_NOT(0 == fp16_value, "pad_constant_value only support 0 when dtype = QNN_DATATYPE_FLOAT_16.");
     }
   }
