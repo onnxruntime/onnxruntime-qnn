@@ -289,17 +289,16 @@ Ort::Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
     TensorInfo input_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[2], input_info));
     // Pad doesn't support QNN_DATATYPE_FLOAT_16 pad_constant_value.
-    if (input_info.qnn_data_type != QNN_DATATYPE_FLOAT_16){
+    if (input_info.qnn_data_type != QNN_DATATYPE_FLOAT_16) {
       // Process optional input constant_value
       RETURN_IF_ERROR(ProcessConstantValue(qnn_model_wrapper, param_tensor_names, node_unit, inputs[2]));
-    }else{
-      // when dtype == QNN_DATATYPE_FLOAT_16, HTP doesn't support specify pad_constant_value. Use default 0. 
+    } else {
+      // when dtype == QNN_DATATYPE_FLOAT_16, HTP doesn't support specify pad_constant_value. Use default 0.
       std::vector<uint8_t> unpacked_tensor;
       RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info.initializer_tensor, unpacked_tensor));
       MLFloat16 fp16_value = *reinterpret_cast<const MLFloat16*>(unpacked_tensor.data());
-      RETURN_IF_NOT(0==fp16_value, "pad_constant_value only support 0 when dtype = QNN_DATATYPE_FLOAT_16.");
+      RETURN_IF_NOT(0 == fp16_value, "pad_constant_value only support 0 when dtype = QNN_DATATYPE_FLOAT_16.");
     }
-
   }
 
   if (!has_negative) {
