@@ -6,7 +6,6 @@ name: Scheduled Publish of ONNX Runtime Execution Provider wheel
 on:
   schedule:
     - cron: "0 9 * * *"  # Every day at 2am in San Diego/PDT (9am UTC)
-  workflow_dispatch:  # REMOVE BEFORE MERGING
 
 jobs:
   publish-wheels:
