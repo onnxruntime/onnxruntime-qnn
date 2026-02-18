@@ -2,6 +2,10 @@
 # SPDX-License-Identifier: MIT
 
 name: Qualcomm Internal Single OS Build
+
+permissions:
+  checks: write
+
 on:
   workflow_call:
     inputs:
