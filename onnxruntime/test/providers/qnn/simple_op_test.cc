@@ -112,20 +112,20 @@ TEST_F(QnnCPUBackendTests, SpaceToDepth_Flaky2) {
   }
 }
 
-// Test f32 Relu on the CPU backend.
-// TODO: When this is fixed, enable ActivationOpTest.Relu test in cpu/activation/activation_op_test tests.
-// Disabled because QNN SDK 2.17 Relu treats inf as FLT_MAX.
-// Log: the value pair (inf, 3.40282347e+38) at index #12 don't match
-TEST_F(QnnCPUBackendTests, DISABLED_UnaryOp_Relu) {
-  std::vector<float> input_data{-1.0f, 0, 1.0f,
+TEST_F(QnnCPUBackendTests, UnaryOp_Relu) {
+  std::vector<float> input_data{-1.0f, 0.0f, 1.0f,
                                 100.0f, -100.0f, 1000.0f, -1000.0f,
                                 FLT_MIN, FLT_MIN / 10, -FLT_MIN / 10,
-                                FLT_MAX, -FLT_MAX, std::numeric_limits<float>::infinity()};
-  RunOpTestOnCPU("Relu",
-                 {TestInputDef<float>({13}, false, input_data)},
-                 {},
-                 14,
-                 ExpectedEPNodeAssignment::All);
+                                FLT_MAX, -FLT_MAX,
+                                std::numeric_limits<float>::infinity()};
+  std::vector<std::vector<int64_t>> shapes  {{13}, {1, 13}, {1, 1, 13}, {1, 1, 1, 13}, {1, 1, 1, 1, 13}};
+  for (const auto& shape : shapes) {
+    RunOpTestOnCPU("Relu",
+                   {TestInputDef<float>(shape, false, input_data)},
+                   {},
+                   13,
+                   ExpectedEPNodeAssignment::All);
+  }
 }
 
 TEST_F(QnnCPUBackendTests, Concat_EmptyInput) {
@@ -394,21 +394,42 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Elu_U16) {
                          true);
 }
 
-// Tests accuracy of QDQ Relu
-// TODO: Relu does not set negative values to zero!
-// Could be due to ORT's ReluQuantFusion!
-//
-// Inaccuracy detected for output 'output', element 0.
-// Output quant params: scale=0.039215687662363052, zero_point=0.
-// Expected val: 0
-// QNN QDQ val: -10 (err 10)
-// CPU QDQ val: 0 (err 0)
-TEST_F(QnnHTPBackendTests, UnaryOp_Relu) {
-  RunQDQOpTest<uint8_t>("Relu",
-                        {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
-                        {},
-                        14,
-                        ExpectedEPNodeAssignment::All);
+TEST_F(QnnHTPBackendTests, UnaryOp_Relu_U8) {
+  std::vector<float> input_data {-1000.0f, -100.0f, -1.0f, -0.01f, -FLT_MIN, 0.0f,
+                                   FLT_MIN, 0.01f, 1.0f, 100.0f, 1000.0f, 10000.0f};
+  std::vector<std::vector<int64_t>> shapes {{12}, {3, 4}, {2, 2, 3}, {1, 2, 2, 3}, {1, 1, 2, 2, 3}};
+  for (const auto& shape : shapes) {
+    RunQDQOpTest<uint8_t>("Relu",
+                          {TestInputDef<float>(shape, false, input_data)},
+                          {},
+                          14,
+                          ExpectedEPNodeAssignment::All);
+  }
+}
+
+TEST_F(QnnHTPBackendTests, UnaryOp_Relu_U16) {
+  std::vector<float> input_data{-1000.0f, -100.0f, -1.0f, -0.01f, -FLT_MIN, 0.0f,
+                                   FLT_MIN, 0.01f, 1.0f, 100.0f, 1000.0f, 10000.0f};
+  RunQDQOpTest<uint16_t>("Relu",
+                         {TestInputDef<float>({3, 4}, false, input_data)},
+                         {},
+                         14,
+                         ExpectedEPNodeAssignment::All,
+                         kOnnxDomain,
+                         /*use_contrib_qdq=*/true);
+}
+
+TEST_F(QnnHTPBackendTests, UnaryOp_Relu_FP16) {
+  QNN_SKIP_TEST_IF_HTP_FP16_UNSUPPORTED();
+  std::vector<float> input_data  {-1.0f, 0.0f, 1.0f,
+                                   100.0f, -100.0f, 1000.0f, -1000.0f,
+                                   FLT_MIN, FLT_MIN / 10, -FLT_MIN / 10,
+                                   65504.0f, -65504.0f};
+  RunFP16OpTest("Relu",
+                {TestInputDef<float>({3, 4}, false, input_data)},
+                {},
+                13,
+                ExpectedEPNodeAssignment::All);
 }
 
 // Check that QNN compiles DQ -> HardSwish -> Q as a single unit.
