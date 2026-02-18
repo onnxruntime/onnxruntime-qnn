@@ -293,7 +293,8 @@ Ort::Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
       // Process optional input constant_value
       RETURN_IF_ERROR(ProcessConstantValue(qnn_model_wrapper, param_tensor_names, node_unit, inputs[2]));
     } else {
-      // when dtype == QNN_DATATYPE_FLOAT_16, HTP doesn't support specify pad_constant_value. Use default 0.
+      // Qualcomm backends don't support QNN_DATATYPE_FLOAT_16 pad_constant_value. Will use default 0.
+      // Fail validation when a fp16 pad_constant_value is not 0.
       std::vector<uint8_t> unpacked_pad_constant_tensor;
       RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info.initializer_tensor, unpacked_pad_constant_tensor));
       MLFloat16 fp16_value = *reinterpret_cast<const MLFloat16*>(unpacked_pad_constant_tensor.data());
