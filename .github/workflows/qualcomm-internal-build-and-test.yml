@@ -4,6 +4,7 @@
 name: Qualcomm Internal Build & Test
 
 permissions:
+  contents: read
   checks: write
 
 on:

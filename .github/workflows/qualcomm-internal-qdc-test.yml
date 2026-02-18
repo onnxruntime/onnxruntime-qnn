@@ -4,6 +4,7 @@
 name: Qualcomm Internal Tests on QDC
 
 permissions:
+  contents: read
   checks: write
 
 on:

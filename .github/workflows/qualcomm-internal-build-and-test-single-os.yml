@@ -4,6 +4,7 @@
 name: Qualcomm Internal Single OS Build
 
 permissions:
+  contents: read
   checks: write
 
 on:
