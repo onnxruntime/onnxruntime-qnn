@@ -28,6 +28,7 @@ static void RunInverseTest(const std::vector<TestInputDef<DataType>>& input_defs
 
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["soc_model"] = "30";
 
   RunQnnModelTest(BuildOpTestCase<DataType>("Inverse", input_defs, {}, attrs, kMSDomain),  // Inverse Op exist in kMSDomain
                   provider_options,
