@@ -4,6 +4,7 @@
 name: Qualcomm Internal PR Workflow
 
 permissions:
+  contents: read
   checks: write
 
 on:
