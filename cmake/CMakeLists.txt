@@ -7,13 +7,6 @@ cmake_minimum_required(VERSION 3.28)
 
 # Don't let cmake set a default value for CMAKE_CUDA_ARCHITECTURES
 cmake_policy(SET CMP0104 OLD)
-
-set(ZLIB_FOUND TRUE CACHE BOOL "")
-set(ZLIB_LIBRARY "" CACHE STRING "" FORCE)
-set(ZLIB_LIBRARIES "" CACHE INTERNAL "")
-set(ZLIB_INCLUDE_DIR "" CACHE INTERNAL "")
-include(external/libzip.cmake)
-
 # Project
 project(onnxruntime C CXX ASM)
 

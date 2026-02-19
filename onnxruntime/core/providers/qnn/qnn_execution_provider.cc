@@ -1,32 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License
 
-#ifdef _WIN32
-#include <windows.h>
-#include <psapi.h>
-#include <libloaderapi.h>
-#include <set>
-#else
-#include <dlfcn.h>
-#endif
-
-
-#if defined(_WIN32)
-  #include <windows.h>
-  inline void* dynlib_sym(void* h, const char* name) {
-    HMODULE hmod = reinterpret_cast<HMODULE>(h);
-    return reinterpret_cast<void*>(::GetProcAddress(hmod, name));
-  }
-#else
-  #include <dlfcn.h>
-  using dynlib_handle = void*;
-  inline dynlib_handle dynlib_open(const char* path) { return ::dlopen(path, RTLD_NOW); }
-  inline void* dynlib_sym(dynlib_handle h, const char* name) { return ::dlsym(h, name); }
-  inline void dynlib_close(dynlib_handle h) { if (h) ::dlclose(h); }
-  inline const char* dynlib_error() { return ::dlerror(); }
-#endif
-
-
 #include "qnn_execution_provider.h"
 
 #include <filesystem>
@@ -47,8 +21,6 @@
 #include "core/providers/qnn/qnn_telemetry.h"
 #include "core/providers/qnn/rpcmem_library.h"
 #include "core/providers/qnn/shared_context.h"
-
-#include "core/providers/qnn/zip_utils.h"
 
 namespace onnxruntime {
 
@@ -619,7 +591,7 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
   static const std::string SKIP_QNN_VERSION_CHECK = "skip_qnn_version_check";
   auto skip_qnn_version_check = ParseBoolOption(SKIP_QNN_VERSION_CHECK, false, provider_options_map);
 
-
+  
 
   // For context binary generation with weight sharing enabled, use the QnnBackendManager from the shared context if it exits
   // So that all graphs from later sessions will be compiled into the same QNN context
@@ -630,7 +602,6 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
       SharedContext::GetInstance().ResetSharedQnnBackendManager();
     }
   } else if (IsGenieSession(backend_path)) {
-    std::cout << "++++++++++++++++++ BACKEND PATH +++++++++++" << backend_path << std::endl;
     genie_backend_manager_ = qnn::GenieBackendManager::Create(
       qnn::GenieBackendManagerConfig{
         backend_path
@@ -651,7 +622,7 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
                                    op_packages,
                                    skip_qnn_version_check}
     );
-
+    
     if (enable_vtcm_backup_buffer_sharing_) {
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
     }
@@ -961,15 +932,12 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
 
   std::vector<std::unique_ptr<ComputeCapability>> result;
 
-  std::cout << "[SAMRAT: qnn_execution_provider]: BEFORE ISSUBGRAPH DECIDED" << std::endl;
   if (graph_viewer.IsSubgraph()) {
     return result;
   }
   const size_t num_nodes_in_graph = static_cast<size_t>(graph_viewer.NumberOfNodes());
-
-  std::cout << "[SAMRAT: qnn_execution_provider]: BEFORE CONTEXT DECIDED" << std::endl;
+   
   bool is_qnn_ctx_model = qnn::GraphHasEpContextNode(graph_viewer);
-  std::cout << "[SAMRAT: qnn_execution_provider]: HAS EP CONTEXT DECIDED" << std::endl;
 
   const auto gen_metadef_name = [&]() {
     uint64_t model_hash;
@@ -1146,7 +1114,7 @@ QNNExecutionProvider::GetGenieCapability(const onnxruntime::GraphViewer& graph_v
   std::vector<std::unique_ptr<ComputeCapability>> result;
 
   const auto& logger = *GetLogger();
-
+  
   const size_t num_nodes_in_graph = static_cast<size_t>(graph_viewer.NumberOfNodes());
   if (num_nodes_in_graph != 1) {
     ORT_THROW("Only one node is allowed in Genie model, found: " + num_nodes_in_graph);
@@ -1163,7 +1131,7 @@ QNNExecutionProvider::GetGenieCapability(const onnxruntime::GraphViewer& graph_v
   if (Status::OK() != rt) {
     LOGS(logger, ERROR) << "SetupBackend failed for Genie backend library" << rt.ErrorMessage();
   }
-
+  
   // Identify the single node in the graph (which should be the only node)
   const auto& node = *graph_viewer.Nodes().begin();
 
@@ -1332,162 +1300,6 @@ Status QNNExecutionProvider::CompileFromOrtGraph(const std::vector<FusedNodeAndG
   return Status::OK();
 }
 
-
-static std::string read_file_to_string(const std::string& path) {
-    std::ifstream ifs(path, std::ios::in | std::ios::binary);
-    if (!ifs) throw std::runtime_error("Cannot open config file: " + path);
-    std::ostringstream oss;
-    oss << ifs.rdbuf();
-    return oss.str();
-}
-
-
-static void* must_dlsym(void* h, const char* name) {
-    void* p = dynlib_sym(h, name);
-    if (!p) throw std::runtime_error(std::string("dlsym failed for symbol: ") + name);
-    return p;
-}
-
-// Callback implementation
-// void queryCallback(const char* response, int sentence_code, void* userData) {
-//   if (response) {
-//       std::cout << response << " ";
-//   }
-//   if(userData && sentence_code) {
-//     std::cout << "[Callback] User data passed \n";
-//   }
-// }
-typedef void (*GenieDialog_TokenQueryCallback_t)(const uint32_t* response, const uint32_t numTokens, const int status, const void* userData);
-
-void queryCallback(const uint32_t* response, const uint32_t numTokens, const int sentence_code, const void* userData) {
-  if (numTokens) {
-    for(uint32_t i = 0; i<numTokens; i++)
-      std::cout << response[i] << " ";
-  }
-  if(userData && sentence_code) {
-    std::cout << "[Callback] User data passed \n";
-  }
-}
-
-Status QNNExecutionProvider::ExecuteGenieModel(onnxruntime::PathString context_model_path) {
-  std::wcout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: context_model_path: " << context_model_path << std::endl;
-  namespace fs = std::filesystem;
-  const fs::path model_path{context_model_path};
-  const fs::path parent    = model_path.parent_path();
-  const std::wstring stem  = model_path.stem().wstring(); // wide stem without extension
-
-  const fs::path zip_path      = parent / (stem + L"_og.zip");
-  const fs::path unzip_dir     = parent / (stem + L"_unzipped");
-  const fs::path genie_cfg_path= unzip_dir / L"genie_config.json";
-
-  // If you need narrow UTF-8 strings for downstream code:
-  const std::string zip_dir_path      = ToUTF8String(zip_path.wstring());
-  const std::string unzip_dir_path    = ToUTF8String(unzip_dir.wstring());
-  const std::string genie_config_path = ToUTF8String(genie_cfg_path.wstring());
-  std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: Genie Config Path: " << genie_config_path << std::endl;
-  std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: Genie unzip Path: " << unzip_dir_path << std::endl;
-  std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: Genie zip Path: " << zip_dir_path << std::endl;
-  std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: Proper Updated 2" << std::endl;
-
-  // auto unzipped = UnzipFile(zip_dir_path, unzip_dir_path);
-  // std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: Unzipping Status: " << unzipped << std::endl;
-
-  // Type declarations
-  typedef void* GenieDialogConfig;
-  typedef void* GenieDialog;
-
-  // Status type
-  typedef int Genie_Status_t;
-
-  // Sentence code enum (adjust to your SDK values)
-  typedef int GenieDialog_SentenceCode_t;
-
-  // Callback type
-  typedef void (*GenieDialog_QueryCallback_t)(const char* response, GenieDialog_SentenceCode_t status, void* userData);
-
-
-  typedef Genie_Status_t (*TYPE_GenieDialogConfig_createFromJson)(const char* json, GenieDialogConfig** out);
-  typedef Genie_Status_t (*TYPE_GenieDialog_create)(GenieDialogConfig* cfg, GenieDialog** out);
-  typedef Genie_Status_t (*TYPE_GenieDialog_free)(GenieDialog*);
-  typedef Genie_Status_t (*TYPE_GenieDialogConfig_free)(GenieDialogConfig*);
-  typedef Genie_Status_t (*TYPE_GenieDialog_query)(GenieDialog* dlg,
-                                                  const char* queryStr,
-                                                  GenieDialog_SentenceCode_t sentenceCode,
-                                                  GenieDialog_QueryCallback_t callback,
-                                                  const void* userData);
-  typedef Genie_Status_t (*TYPE_GenieDialog_tokenQuery)(GenieDialog* dlg,
-                                                  const uint32_t* inputTokens,
-                                                  const uint32_t numTokens,
-                                                  int sentenceCode,
-                                                  GenieDialog_TokenQueryCallback_t callback,
-                                                  const void* userData);
-
-
-
-
-  auto genie_backend_handle = genie_backend_manager_->getGenieBackendHandle();
-
-  auto fPtrGenieDialogConfig_createFromJson      = (TYPE_GenieDialogConfig_createFromJson)must_dlsym(genie_backend_handle, "GenieDialogConfig_createFromJson");
-  auto fPtrGenieDialog_create                    = (TYPE_GenieDialog_create)must_dlsym(genie_backend_handle, "GenieDialog_create");
-  // auto fPtrGenieDialog_query                     = (TYPE_GenieDialog_query)must_dlsym(genie_backend_handle, "GenieDialog_query");
-  auto fPtrGenieDialog_tokenQuery                = (TYPE_GenieDialog_tokenQuery)must_dlsym(genie_backend_handle, "GenieDialog_tokenQuery");
-  auto fPtrGenieDialog_free                      = (TYPE_GenieDialog_free)must_dlsym(genie_backend_handle, "GenieDialog_free");
-  auto fPtrGenieDialogConfig_free                = (TYPE_GenieDialogConfig_free)must_dlsym(genie_backend_handle, "GenieDialogConfig_free");
-
-
-  // std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: fPtrGenieDialog_create : " << fPtrGenieDialog_create << \
-  //                                                                      " : fPtrGenieDialog_query : " << fPtrGenieDialog_query << \
-  //                                                                      " : fPtrGenieDialog_tokenQuery : " << fPtrGenieDialog_tokenQuery << \
-  //                                                                      " : fPtrGenieDialogConfig_createFromJson : "  << fPtrGenieDialogConfig_createFromJson << \
-  //                                                                      " : fPtrGenieDialog_free: " << fPtrGenieDialog_free << \
-  //                                                                      " : fPtrGenieDialogConfig_free: " << fPtrGenieDialogConfig_free << \
-  //                                                                       std::endl;
-
-  // if(!fPtrGenieDialogConfig_createFromJson || !fPtrGenieDialog_create || !fPtrGenieDialog_query || !fPtrGenieDialog_tokenQuery || !fPtrGenieDialog_free || !fPtrGenieDialogConfig_free) {
-  //   std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: Failed to load Genie Symbol: Refer flag values" << std::endl;
-  // }
-  std::string genieConfigJsonText = read_file_to_string(genie_config_path);
-
-  // Create Genie Config
-  GenieDialogConfig* cfg = nullptr;
-  int st = fPtrGenieDialogConfig_createFromJson(genieConfigJsonText.c_str(), &cfg);
-  if (st != 0) {
-    std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: GenieDialogConfig_createFromJson failed: " << st << std::endl;
-  }
-
-  std::cout << cfg << std::endl;
-
-
-  GenieDialog* dlg = nullptr;
-  st = fPtrGenieDialog_create(cfg, &dlg);
-  if (st != 0) {
-    std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: fPtrGenieDialog_create failed: " << st << std::endl;
-  }
-
-  std::string prompt = "What is two plus two";
-  uint32_t prompt_token[] = {1724, 338, 1023, 2298, 1023};
-  const uint32_t *prompt_ptr = prompt_token;
-
-  uint32_t num_tokens = 5;
-  std::cout << "Prompt String: " << prompt << std::endl;
-  // st = fPtrGenieDialog_query(dlg, prompt.c_str(), 0, queryCallback, nullptr);
-  st = fPtrGenieDialog_tokenQuery(dlg, prompt_ptr, num_tokens, 0, queryCallback, nullptr);
-  if (st != 0) {
-    std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: fPtrGenieDialog_query failed: " << st << std::endl;
-  }
-  st = fPtrGenieDialogConfig_free(cfg);
-  if (st != 0) {
-    std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: fPtrGenieDialogConfig_free failed: " << st << std::endl;
-  }
-  st = fPtrGenieDialog_free(dlg);
-  if (st != 0) {
-    std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: fPtrGenieDialog_free failed: " << st << std::endl;
-  }
-
-
-  return Status::OK();
-}
-
 Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused_nodes_and_graphs,
                                      std::vector<NodeComputeInfo>& node_compute_funcs) {
   const auto& logger = *GetLogger();
@@ -1496,6 +1308,7 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
   bool is_genie_model = qnn::IsFusedGraphHasZipCtxNode(fused_nodes_and_graphs);
 
   bool is_ctx_file_exist = false;
+
   onnxruntime::PathString context_model_path;
   const onnxruntime::GraphViewer& graph_viewer_0(fused_nodes_and_graphs[0].filtered_graph);
   if (is_qnn_ctx_model || context_cache_enabled_) {
@@ -1508,7 +1321,6 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
                                 graph_viewer_0.ModelPath().native(),
                                 context_model_path);
   }
-  std::wcout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc]: context_model_path: " << context_model_path << std::endl;
 
   if (is_qnn_ctx_model) {
     // Get QnnModel from EP shared contexts
@@ -1592,11 +1404,7 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
     return Status::OK();
   } else if (is_genie_model) {
 
-    std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc]: In Genie Execution Mode" << std::endl;
-    std::cout << genie_backend_manager_ << std::endl;
-    auto exec_status = ExecuteGenieModel(context_model_path);
-
-    return exec_status;
+    return Status::OK();
   }
 
   ORT_RETURN_IF_ERROR(CompileFromOrtGraph(fused_nodes_and_graphs, node_compute_funcs, logger));
