@@ -472,10 +472,6 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
   auto htp_performance_mode_pos = provider_options_map.find(HTP_PERFORMANCE_MODE);
   if (htp_performance_mode_pos != provider_options_map.end()) {
     ParseHtpPerformanceMode(htp_performance_mode_pos->second, default_htp_performance_mode_);
-
-    if (qnn::HtpPerformanceMode::kHtpBurst == default_htp_performance_mode_) {
-      default_rpc_polling_time_ = 9999;
-    }
   }
 
   htp_graph_finalization_opt_mode_ = qnn::HtpGraphFinalizationOptimizationMode::kDefault;
@@ -587,8 +583,6 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
 
   model_settings_.offload_graph_io_quantization = ParseBoolOption("offload_graph_io_quantization", true,
                                                                   provider_options_map);
-
-  model_settings_.htp_bf16_enable = ParseBoolOption("htp_bf16_enable", false, provider_options_map);
 
   if (disable_cpu_ep_fallback_ && model_settings_.offload_graph_io_quantization) {
     LOGS_DEFAULT(INFO) << "Fallback to CPU EP is disabled, but user tried to configure QNN EP to offload graph I/O "
@@ -974,26 +968,6 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
   const size_t num_nodes_in_graph = static_cast<size_t>(graph_viewer.NumberOfNodes());
 
   std::cout << "[SAMRAT: qnn_execution_provider]: BEFORE CONTEXT DECIDED" << std::endl;
-  const auto& logger = *GetLogger();
-
-  // Check BF16 compatibility early
-  if (model_settings_.htp_bf16_enable) {
-    // Check SoC model
-    uint32_t soc_model = qnn_backend_manager_->GetSocModel();
-    if (soc_model == QNN_SOC_MODEL_UNKNOWN) {
-      LOGS(logger, WARNING) << "BF16 mode is enabled but soc_model is not specified. "
-                            << "Both parameters must be set together for BF16 support. "
-                            << "QNN EP will not handle any nodes.";
-      return result;  // Empty result means QNN EP won't handle any nodes
-    } else if (soc_model < 88) {
-      LOGS(logger, WARNING) << "BF16 mode is enabled but SoC model is " << soc_model
-                            << " (expected 88 and above). QNN EP will not handle any nodes.";
-      return result;  // Empty result means QNN EP won't handle any nodes
-    }
-
-    LOGS(logger, INFO) << "BF16 mode enabled with compatible hardware: SoC " << soc_model;
-  }
-
   bool is_qnn_ctx_model = qnn::GraphHasEpContextNode(graph_viewer);
   std::cout << "[SAMRAT: qnn_execution_provider]: HAS EP CONTEXT DECIDED" << std::endl;
 
@@ -1402,7 +1376,7 @@ Status QNNExecutionProvider::ExecuteGenieModel(onnxruntime::PathString context_m
   const fs::path parent    = model_path.parent_path();
   const std::wstring stem  = model_path.stem().wstring(); // wide stem without extension
 
-  const fs::path zip_path      = parent / (stem + L".zip");
+  const fs::path zip_path      = parent / (stem + L"_og.zip");
   const fs::path unzip_dir     = parent / (stem + L"_unzipped");
   const fs::path genie_cfg_path= unzip_dir / L"genie_config.json";
 
@@ -1415,8 +1389,8 @@ Status QNNExecutionProvider::ExecuteGenieModel(onnxruntime::PathString context_m
   std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: Genie zip Path: " << zip_dir_path << std::endl;
   std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: Proper Updated 2" << std::endl;
 
-  auto unzipped = UnzipFile(zip_dir_path, unzip_dir_path);
-  std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: Unzipping Status: " << unzipped << std::endl;
+  // auto unzipped = UnzipFile(zip_dir_path, unzip_dir_path);
+  // std::cout << "[SAMRAT QNN_EXECUTION_PROVIDER.cc::ExecuteGenieModel]: Unzipping Status: " << unzipped << std::endl;
 
   // Type declarations
   typedef void* GenieDialogConfig;
@@ -1683,12 +1657,12 @@ static bool TryGetConfigEntry(const ConfigOptions& config_options, const std::st
   return true;
 }
 
-bool QNNExecutionProvider::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
-                                                       const ConfigOptions& config_options) {
+qnn::PerThreadHtpPowerConfigs_t QNNExecutionProvider::GetPerThreadHtpPowerConfigs(const ConfigOptions& config_options) {
   qnn::HtpPerformanceMode pre_run_htp_performance_mode = qnn::HtpPerformanceMode::kHtpDefault;
   qnn::HtpPerformanceMode post_run_htp_performance_mode = qnn::HtpPerformanceMode::kHtpDefault;
 
-  bool configs_set = false;
+  qnn::PerThreadHtpPowerConfigs_t per_thread_htp_power_configs;
+
   std::string htp_perf_mode = "";
   if (TryGetConfigEntry(config_options, kOrtRunOptionsConfigQnnPerfMode, htp_perf_mode)) {
     ParseHtpPerformanceMode(htp_perf_mode, pre_run_htp_performance_mode);
@@ -1702,9 +1676,6 @@ bool QNNExecutionProvider::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerCon
   uint32_t rpc_control_latency = 0;
   if (TryGetConfigEntry(config_options, kOrtRunOptionsConfigQnnRpcControlLatency, rpc_latency)) {
     rpc_control_latency = static_cast<uint32_t>(std::stoul(rpc_latency));
-    per_thread_htp_power_configs.rpc_control_latency = rpc_control_latency;
-    configs_set = true;
-
     LOGS_DEFAULT(VERBOSE) << "rpc_control_latency: " << rpc_control_latency;
   }
 
@@ -1715,17 +1686,18 @@ bool QNNExecutionProvider::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerCon
 
   if (qnn::HtpPerformanceMode::kHtpDefault != pre_run_htp_performance_mode) {
     per_thread_htp_power_configs.pre_run_perf_mode = pre_run_htp_performance_mode;
-    // rpc polling time will only be updated with perf mode changes
-    per_thread_htp_power_configs.rpc_polling_time = rpc_polling_time;
-    configs_set = true;
   }
 
   if (qnn::HtpPerformanceMode::kHtpDefault != post_run_htp_performance_mode) {
     per_thread_htp_power_configs.post_run_perf_mode = post_run_htp_performance_mode;
-    configs_set = true;
   }
 
-  return configs_set;
+  if (rpc_control_latency > 0 || rpc_polling_time > 0) {
+    per_thread_htp_power_configs.rpc_configs = {rpc_control_latency,
+                                                rpc_polling_time};
+  }
+
+  return per_thread_htp_power_configs;
 }
 
 Status QNNExecutionProvider::OnRunStart(const onnxruntime::RunOptions& run_options) {
@@ -1739,12 +1711,10 @@ Status QNNExecutionProvider::OnRunStart(const onnxruntime::RunOptions& run_optio
   uint32_t htp_power_config_id = 0;
   if (GetHtpPowerConfigId(htp_power_config_id)) {
     auto thread_id = std::this_thread::get_id();
-    qnn::PerThreadHtpPowerConfigs_t per_thread_htp_power_configs;
-    if (GetPerThreadHtpPowerConfigs(per_thread_htp_power_configs, config_options)) {
-      per_thread_htp_power_configs.power_config_id = htp_power_config_id;
-      ORT_RETURN_IF_ERROR(qnn_backend_manager_->AddPerThreadHtpPowerConfigMapping(thread_id,
-                                                                                  per_thread_htp_power_configs));
-    }
+    auto per_thread_htp_power_configs = GetPerThreadHtpPowerConfigs(config_options);
+    per_thread_htp_power_configs.power_config_id = htp_power_config_id;
+    ORT_RETURN_IF_ERROR(qnn_backend_manager_->AddPerThreadHtpPowerConfigMapping(thread_id,
+                                                                                per_thread_htp_power_configs));
   }
 
   std::string lora_config = "";
@@ -1833,17 +1803,10 @@ Status QNNExecutionProvider::SetEpDynamicOptions(gsl::span<const char* const> ke
       qnn::HtpPerformanceMode htp_performance_mode = qnn::HtpPerformanceMode::kHtpDefault;
       ParseHtpPerformanceMode(value, htp_performance_mode);
 
-      uint32_t rpc_polling_time = 0;
-      if (htp_performance_mode == qnn::HtpPerformanceMode::kHtpBurst) {
-        rpc_polling_time = 9999;
-      }
-
       uint32_t htp_power_config_id = 0;
       if (GetHtpPowerConfigId(htp_power_config_id)) {
-        ORT_RETURN_IF_ERROR(qnn_backend_manager_->SetHtpPowerConfigs(htp_power_config_id,
-                                                                     htp_performance_mode,
-                                                                     rpc_polling_time,
-                                                                     default_rpc_control_latency_));
+        ORT_RETURN_IF_ERROR(qnn_backend_manager_->SetHtpPowerConfig(htp_power_config_id,
+                                                                    htp_performance_mode));
       }
     } else {
       LOGS_DEFAULT(ERROR) << "EP Dynamic Option \"" << key << "\" is not currently supported.";
@@ -1878,19 +1841,18 @@ void QNNExecutionProvider::CreateHtpPowerConfigId() const {
 
   Status rt = qnn_backend_manager_->CreateHtpPowerCfgId(device_id_, core_id, htp_power_config_id);
 
-  if (rt.IsOK()) {
+  if (rt == Status::OK()) {
     htp_power_config_id_ = htp_power_config_id;
 
-    rt = qnn_backend_manager_->SetHtpPowerConfigs(htp_power_config_id,
-                                                  default_htp_performance_mode_,
-                                                  default_rpc_polling_time_,
-                                                  default_rpc_control_latency_);
-
-    if (!rt.IsOK()) {
-      LOGS_DEFAULT(ERROR) << "Unable to set HTP power configurations.";
+    if (qnn::HtpPerformanceMode::kHtpDefault != default_htp_performance_mode_) {
+      ORT_IGNORE_RETURN_VALUE(qnn_backend_manager_->SetHtpPowerConfig(htp_power_config_id,
+                                                                      default_htp_performance_mode_));
     }
-  } else {
-    LOGS_DEFAULT(ERROR) << "Failed to create HTP power config id.";
+    if (default_rpc_control_latency_ > 0 || default_rpc_polling_time_ > 0) {
+      ORT_IGNORE_RETURN_VALUE(qnn_backend_manager_->SetRpcPowerConfigs(htp_power_config_id,
+                                                                       default_rpc_control_latency_,
+                                                                       default_rpc_polling_time_));
+    }
   }
 }
 
