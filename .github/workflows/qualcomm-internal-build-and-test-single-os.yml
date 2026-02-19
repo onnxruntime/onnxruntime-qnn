@@ -111,7 +111,6 @@ env:
 jobs:
   build:
     name: "build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
-    environment: protected-pr-ci
     runs-on: ["self-hosted", "${{inputs.target_os}}", "${{ inputs.build_runner_arch }}", "Build"]
     defaults:
       run:
@@ -176,7 +175,6 @@ jobs:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
     if: ${{ inputs.run_tests && !inputs.build_test_same_runner }}
     needs: [build]
-    environment: protected-pr-ci
     runs-on: ["self-hosted", "${{inputs.target_os}}", "${{ inputs.test_runner_arch }}", "Build"]
     defaults:
       run:
@@ -219,7 +217,6 @@ jobs:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke"
     if: ${{ inputs.test_wheel }}
     needs: [build]
-    environment: protected-pr-ci
     runs-on: ["self-hosted", "${{inputs.target_os}}", "${{ inputs.test_runner_arch }}", "Build"]
     defaults:
       run:

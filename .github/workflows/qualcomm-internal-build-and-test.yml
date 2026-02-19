@@ -110,7 +110,6 @@ jobs:
 
   lint:
     if: ${{ inputs.do_all }}
-    environment: protected-pr-ci
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
       - uses: actions/checkout@v4
@@ -123,7 +122,6 @@ jobs:
 
   build-android-aarch64:
     if: ${{ inputs.do_all }}
-    environment: protected-pr-ci
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
       - uses: actions/checkout@v4

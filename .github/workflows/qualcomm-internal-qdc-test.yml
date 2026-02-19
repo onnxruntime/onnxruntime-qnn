@@ -37,7 +37,6 @@ env:
 jobs:
   test:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-pynone"
-    environment: protected-pr-ci
     runs-on: ["self-hosted", "Linux", "QDC"]
     defaults:
       run:
