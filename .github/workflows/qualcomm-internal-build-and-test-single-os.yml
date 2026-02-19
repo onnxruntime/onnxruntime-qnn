@@ -52,14 +52,6 @@ on:
       upload_zip:
         default: false
         type: boolean
-      pr_sha:
-        description: "PR head SHA for commit status reporting"
-        type: string
-        default: ""
-      pr_ref:
-        description: "PR head ref for checkout"
-        type: string
-        default: ""
   workflow_dispatch:
     inputs:
       target_os:
@@ -124,25 +116,9 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
-      - name: Create pending status
-        if: ${{ inputs.pr_sha != '' }}
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ inputs.pr_sha }}',
-              state: 'pending',
-              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',
-              description: 'Building...',
-              context: 'build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != "None" && inputs.target_py_vsn || "none"}}'
-            });
-
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          ref: ${{ inputs.pr_ref != '' && inputs.pr_ref || github.ref }}
 
       - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         run: >
@@ -195,38 +171,6 @@ jobs:
           path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime-qnn*.zip
 
-      - name: Update build status
-        if: ${{ always() && inputs.pr_sha != '' }}
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const jobStatus = '${{ job.status }}';
-            let state, description;
-
-            if (jobStatus === 'success') {
-              state = 'success';
-              description = 'Build completed successfully';
-            } else if (jobStatus === 'failure') {
-              state = 'failure';
-              description = 'Build failed';
-            } else if (jobStatus === 'cancelled') {
-              state = 'error';
-              description = 'Build was cancelled';
-            } else {
-              state = 'error';
-              description = `Build completed with status: ${jobStatus}`;
-            }
-
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ inputs.pr_sha }}',
-              state: state,
-              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',
-              description: description,
-              context: 'build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != "None" && inputs.target_py_vsn || "none"}}'
-            });
-
   test:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
     if: ${{ inputs.run_tests && !inputs.build_test_same_runner }}
@@ -236,25 +180,9 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
-      - name: Create pending status
-        if: ${{ inputs.pr_sha != '' }}
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ inputs.pr_sha }}',
-              state: 'pending',
-              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',
-              description: 'Running tests...',
-              context: 'test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != "None" && inputs.target_py_vsn || "none"}}'
-            });
-
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          ref: ${{ inputs.pr_ref != '' && inputs.pr_ref || github.ref }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -285,38 +213,6 @@ jobs:
           path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
-      - name: Update test status
-        if: ${{ always() && inputs.pr_sha != '' }}
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const jobStatus = '${{ job.status }}';
-            let state, description;
-
-            if (jobStatus === 'success') {
-              state = 'success';
-              description = 'Tests passed';
-            } else if (jobStatus === 'failure') {
-              state = 'failure';
-              description = 'Tests failed';
-            } else if (jobStatus === 'cancelled') {
-              state = 'error';
-              description = 'Tests were cancelled';
-            } else {
-              state = 'error';
-              description = `Tests completed with status: ${jobStatus}`;
-            }
-
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ inputs.pr_sha }}',
-              state: state,
-              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',
-              description: description,
-              context: 'test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != "None" && inputs.target_py_vsn || "none"}}'
-            });
-
   test-wheel:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke"
     if: ${{ inputs.test_wheel }}
@@ -326,25 +222,9 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
-      - name: Create pending status
-        if: ${{ inputs.pr_sha != '' }}
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ inputs.pr_sha }}',
-              state: 'pending',
-              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',
-              description: 'Running wheel smoke tests...',
-              context: 'test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != "None" && inputs.target_py_vsn || "none"}}-wheel-smoke'
-            });
-
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          ref: ${{ inputs.pr_ref != '' && inputs.pr_ref || github.ref }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -360,35 +240,3 @@ jobs:
           create_venv
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}_pysmoke
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}_pygpu --only
-
-      - name: Update wheel test status
-        if: ${{ always() && inputs.pr_sha != '' }}
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const jobStatus = '${{ job.status }}';
-            let state, description;
-
-            if (jobStatus === 'success') {
-              state = 'success';
-              description = 'Wheel smoke tests passed';
-            } else if (jobStatus === 'failure') {
-              state = 'failure';
-              description = 'Wheel smoke tests failed';
-            } else if (jobStatus === 'cancelled') {
-              state = 'error';
-              description = 'Wheel smoke tests were cancelled';
-            } else {
-              state = 'error';
-              description = `Wheel smoke tests completed with status: ${jobStatus}`;
-            }
-
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ inputs.pr_sha }}',
-              state: state,
-              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',
-              description: description,
-              context: 'test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != "None" && inputs.target_py_vsn || "none"}}-wheel-smoke'
-            });
