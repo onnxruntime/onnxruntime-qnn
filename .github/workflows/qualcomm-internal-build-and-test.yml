@@ -30,6 +30,14 @@ on:
       target_py_vsn:
         default: "3.12"
         type: string
+      pr_sha:
+        description: "PR head SHA for commit status reporting"
+        type: string
+        default: ""
+      pr_ref:
+        description: "PR head ref for checkout"
+        type: string
+        default: ""
 
 env:
   ORT_NIGHTLY_BUILD: "${{ inputs.nightly_build == true && '1' || '0' }}"
@@ -48,6 +56,8 @@ jobs:
       # wheel distribution story is yet. For now, this is just so that all of the job and artifact names reflect the
       # version of cpython that's installed on our Linux build machines.
       target_py_vsn: "3.10"
+      pr_sha: ${{ inputs.pr_sha }}
+      pr_ref: ${{ inputs.pr_ref }}
 
   build-linux-aarch64-oe-gcc11_2:
       if: ${{ inputs.do_all }}
@@ -61,6 +71,8 @@ jobs:
         upload_test_archive: true
         upload_wheel: false
         run_tests: false
+        pr_sha: ${{ inputs.pr_sha }}
+        pr_ref: ${{ inputs.pr_ref }}
 
   # TODO: [AISW-167150] Cannot use HTP on QDC qcs6490
   #test-linux-aarch64-oe-gcc11_2:
@@ -85,6 +97,8 @@ jobs:
       upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' }}
       target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
       test_runner_arch: arm64
+      pr_sha: ${{ inputs.pr_sha }}
+      pr_ref: ${{ inputs.pr_ref }}
 
   build-and-test-windows-arm64ec:
     if: ${{ inputs.do_all }}
@@ -98,6 +112,8 @@ jobs:
       target_py_vsn: ${{ inputs.target_py_vsn }}
       run_tests: false  # ARM64ec unit tests are horribly broken (though model tests seem fine).
       test_runner_arch: arm64
+      pr_sha: ${{ inputs.pr_sha }}
+      pr_ref: ${{ inputs.pr_ref }}
 
   build-and-test-windows-x86_64:
     if: ${{ inputs.do_all }}
@@ -107,26 +123,92 @@ jobs:
       nightly_build: ${{ inputs.nightly_build }}
       target_arch: x86_64
       target_py_vsn: ${{ inputs.target_py_vsn }}
+      pr_sha: ${{ inputs.pr_sha }}
+      pr_ref: ${{ inputs.pr_ref }}
 
   lint:
     if: ${{ inputs.do_all }}
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
+      - name: Create pending status
+        if: ${{ inputs.pr_sha != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ inputs.pr_sha }}',
+              state: 'pending',
+              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',
+              description: 'Running linter...',
+              context: 'lint'
+            });
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ inputs.pr_ref != '' && inputs.pr_ref || github.ref }}
 
       - name: Run Linting Tool
         run: |
           python3 qcom/build_and_test.py lint
 
+      - name: Update lint status
+        if: ${{ always() && inputs.pr_sha != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const jobStatus = '${{ job.status }}';
+            let state, description;
+
+            if (jobStatus === 'success') {
+              state = 'success';
+              description = 'Linting passed';
+            } else if (jobStatus === 'failure') {
+              state = 'failure';
+              description = 'Linting failed';
+            } else if (jobStatus === 'cancelled') {
+              state = 'error';
+              description = 'Linting was cancelled';
+            } else {
+              state = 'error';
+              description = `Linting completed with status: ${jobStatus}`;
+            }
+
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ inputs.pr_sha }}',
+              state: state,
+              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',
+              description: description,
+              context: 'lint'
+            });
+
   build-android-aarch64:
     if: ${{ inputs.do_all }}
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
+      - name: Create pending status
+        if: ${{ inputs.pr_sha != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ inputs.pr_sha }}',
+              state: 'pending',
+              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',
+              description: 'Building Android...',
+              context: 'build-android-aarch64'
+            });
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+          ref: ${{ inputs.pr_ref != '' && inputs.pr_ref || github.ref }}
 
       - name: Build Android
         run: |
@@ -137,6 +219,38 @@ jobs:
           name: ORT android aarch64 pynone Tests
           path: |
             ${{ github.workspace }}/build/onnxruntime-tests-android-aarch64.zip
+
+      - name: Update build status
+        if: ${{ always() && inputs.pr_sha != '' }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const jobStatus = '${{ job.status }}';
+            let state, description;
+
+            if (jobStatus === 'success') {
+              state = 'success';
+              description = 'Android build completed successfully';
+            } else if (jobStatus === 'failure') {
+              state = 'failure';
+              description = 'Android build failed';
+            } else if (jobStatus === 'cancelled') {
+              state = 'error';
+              description = 'Android build was cancelled';
+            } else {
+              state = 'error';
+              description = `Android build completed with status: ${jobStatus}`;
+            }
+
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ inputs.pr_sha }}',
+              state: state,
+              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',
+              description: description,
+              context: 'build-android-aarch64'
+            });
 
  # Intentionally not "test-android-aarch64" to avoid breaking required PR checks
   test-android:
