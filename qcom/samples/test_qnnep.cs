@@ -41,8 +41,9 @@ namespace QnnEpNuGetTest
             Console.WriteLine($"EP Name: {epName}");
 
             // Register the QNN execution provider library
+            string epRegistrationName = "QNNExecutionProvider";
             env.RegisterExecutionProviderLibrary(
-                "QnnExecutionProvider",
+                epRegistrationName,
                 epLibPath);
 
             var epDevices = env.GetEpDevices();
@@ -104,7 +105,7 @@ namespace QnnEpNuGetTest
                     }
                 }
             }
-            env.UnregisterExecutionProviderLibrary("QnnExecutionProvider");
+            env.UnregisterExecutionProviderLibrary(epRegistrationName);
         }
     }
 }

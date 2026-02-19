@@ -5,7 +5,7 @@
 
 import os
 
-EP_NAME = "QnnExecutionProvider"
+EP_NAME = "QNNExecutionProvider"
 
 
 def get_ep_names():

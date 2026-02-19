@@ -14,7 +14,7 @@ namespace Qualcomm.ML.OnnxRuntime.QNN
     /// </summary>
     public static class QnnEpHelper
     {
-        private const string EpName = "QnnExecutionProvider";
+        private const string EpName = "QNNExecutionProvider";
         private static readonly string[] EpNames = { EpName };
         
         // Cache platform-specific values to avoid repeated checks
@@ -27,7 +27,7 @@ namespace Qualcomm.ML.OnnxRuntime.QNN
         /// <summary>
         /// Get the QNN execution provider name
         /// </summary>
-        /// <returns>The EP name ("QnnExecutionProvider")</returns>
+        /// <returns>The EP name ("QNNExecutionProvider")</returns>
         public static string GetEpName() => EpName;
 
         /// <summary>
