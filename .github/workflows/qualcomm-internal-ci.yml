@@ -77,10 +77,6 @@ jobs:
 
   build-and-test-all:
     name: Build & Test
-    if: |
-      always() &&
-      (github.event_name == 'workflow_dispatch' ||
-       (github.event_name == 'issue_comment' && needs.check-trigger.outputs.should_run == 'true'))
     uses: ./.github/workflows/qualcomm-internal-build-and-test.yml
     secrets: inherit
     with:
