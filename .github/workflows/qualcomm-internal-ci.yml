@@ -77,7 +77,6 @@ jobs:
 
   build-and-test-all:
     name: Build & Test
-    needs: [check-trigger]
     if: |
       always() &&
       (github.event_name == 'workflow_dispatch' ||
