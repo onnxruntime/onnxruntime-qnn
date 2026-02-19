@@ -298,10 +298,6 @@ if(NOT TARGET Boost::mp11)
   endif()
 endif()
 
-# # LibZip should be made available
-# include(external/libzip.cmake)
-# message(STATUS "LIBZIP DONE")
-
 set(JSON_BuildTests OFF CACHE INTERNAL "")
 set(JSON_Install ON CACHE INTERNAL "")
 

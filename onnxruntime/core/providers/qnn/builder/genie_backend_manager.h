@@ -38,8 +38,6 @@ class GenieBackendManager : public std::enable_shared_from_this<GenieBackendMana
   // Initializes handles to Genie resources (device, logger, etc.).
   Status SetupBackend(const logging::Logger& logger);
 
-  void* getGenieBackendHandle() {return backend_lib_handle_;}
-
  private:
   Status LoadBackend();
 
