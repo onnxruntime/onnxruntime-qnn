@@ -9,7 +9,7 @@ permissions:
   pull-requests: write
 
 on:
-# push, pull_request, and merge_goup need to be removed before repo is made public
+# push, pull_request, and merge_goup need to be removed
   push:
     branches: [main, rel-*]
   pull_request:
