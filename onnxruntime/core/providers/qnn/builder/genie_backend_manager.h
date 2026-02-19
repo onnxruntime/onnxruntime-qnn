@@ -38,6 +38,12 @@ class GenieBackendManager : public std::enable_shared_from_this<GenieBackendMana
   // Initializes handles to Genie resources (device, logger, etc.).
   Status SetupBackend(const logging::Logger& logger);
 
+  void* getGenieBackendHandle() {return backend_lib_handle_;}
+
+  Status GetZipContextPath(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs,
+                          onnxruntime::PathString model_path,
+                          std::filesystem::path& zip_extract_path);
+  Status GetGenieConfig(std::filesystem::path zip_extracted_path, std::string& genieConfigJsonText);
  private:
   Status LoadBackend();
 

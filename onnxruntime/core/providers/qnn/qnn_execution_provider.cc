@@ -1,6 +1,32 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License
 
+#ifdef _WIN32
+#include <windows.h>
+#include <psapi.h>
+#include <libloaderapi.h>
+#include <set>
+#else
+#include <dlfcn.h>
+#endif
+
+
+#if defined(_WIN32)
+  #include <windows.h>
+  inline void* dynlib_sym(void* h, const char* name) {
+    HMODULE hmod = reinterpret_cast<HMODULE>(h);
+    return reinterpret_cast<void*>(::GetProcAddress(hmod, name));
+  }
+#else
+  #include <dlfcn.h>
+  using dynlib_handle = void*;
+  inline dynlib_handle dynlib_open(const char* path) { return ::dlopen(path, RTLD_NOW); }
+  inline void* dynlib_sym(dynlib_handle h, const char* name) { return ::dlsym(h, name); }
+  inline void dynlib_close(dynlib_handle h) { if (h) ::dlclose(h); }
+  inline const char* dynlib_error() { return ::dlerror(); }
+#endif
+
+
 #include "qnn_execution_provider.h"
 
 #include <filesystem>
@@ -21,6 +47,8 @@
 #include "core/providers/qnn/qnn_telemetry.h"
 #include "core/providers/qnn/rpcmem_library.h"
 #include "core/providers/qnn/shared_context.h"
+
+#include "core/providers/qnn/zip_utils.h"
 
 namespace onnxruntime {
 
@@ -591,7 +619,7 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
   static const std::string SKIP_QNN_VERSION_CHECK = "skip_qnn_version_check";
   auto skip_qnn_version_check = ParseBoolOption(SKIP_QNN_VERSION_CHECK, false, provider_options_map);
 
-  
+
 
   // For context binary generation with weight sharing enabled, use the QnnBackendManager from the shared context if it exits
   // So that all graphs from later sessions will be compiled into the same QNN context
@@ -622,7 +650,7 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
                                    op_packages,
                                    skip_qnn_version_check}
     );
-    
+
     if (enable_vtcm_backup_buffer_sharing_) {
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
     }
@@ -936,7 +964,7 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
     return result;
   }
   const size_t num_nodes_in_graph = static_cast<size_t>(graph_viewer.NumberOfNodes());
-   
+
   bool is_qnn_ctx_model = qnn::GraphHasEpContextNode(graph_viewer);
 
   const auto gen_metadef_name = [&]() {
@@ -1114,7 +1142,7 @@ QNNExecutionProvider::GetGenieCapability(const onnxruntime::GraphViewer& graph_v
   std::vector<std::unique_ptr<ComputeCapability>> result;
 
   const auto& logger = *GetLogger();
-  
+
   const size_t num_nodes_in_graph = static_cast<size_t>(graph_viewer.NumberOfNodes());
   if (num_nodes_in_graph != 1) {
     ORT_THROW("Only one node is allowed in Genie model, found: " + num_nodes_in_graph);
@@ -1131,7 +1159,9 @@ QNNExecutionProvider::GetGenieCapability(const onnxruntime::GraphViewer& graph_v
   if (Status::OK() != rt) {
     LOGS(logger, ERROR) << "SetupBackend failed for Genie backend library" << rt.ErrorMessage();
   }
-  
+
+  genie_api_loader_ = std::make_shared<GenieApiLoader>(genie_backend_manager_->getGenieBackendHandle());
+
   // Identify the single node in the graph (which should be the only node)
   const auto& node = *graph_viewer.Nodes().begin();
 
@@ -1300,6 +1330,162 @@ Status QNNExecutionProvider::CompileFromOrtGraph(const std::vector<FusedNodeAndG
   return Status::OK();
 }
 
+// Convert ORT tensor type to byte size
+static size_t GetElementSizeONNX(int onnx_type) {
+    switch (onnx_type) {
+        case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT: return 4;
+        case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32: return 4;
+        case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:  return 4;
+        case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:  return 8;
+        // Add more if your model uses other types
+    }
+    throw std::runtime_error("Unsupported tensor element type");
+}
+
+// Helper: Store Input/Output tensor details
+static void BuildIONames(const Node& node, GenieNodeState& st) {
+    // Inputs
+    st.inputs.reserve(node.InputDefs().size());
+
+    for (auto* inp_def : node.InputDefs()) {
+        GenieNodeState::IODesc desc;
+
+        desc.io_name = 300;
+        desc.ort_name = inp_def->Name();
+
+        const auto* shape_proto = inp_def->Shape();
+        desc.shape.clear();
+        for (auto& d : shape_proto->dim()) {
+            desc.shape.push_back(d.dim_value());
+        }
+
+        size_t elem_size = GetElementSizeONNX(inp_def->TypeAsProto()->tensor_type().elem_type());
+        size_t total_elems = 1;
+        for (auto s : desc.shape) total_elems *= s;
+
+        desc.byte_size = total_elems * elem_size;
+
+        st.inputs.push_back(desc);
+    }
+
+    // Outputs
+    st.outputs.reserve(node.OutputDefs().size());
+
+    for (auto* out_def : node.OutputDefs()) {
+        GenieNodeState::IODesc desc;
+
+        desc.io_name = 350;
+        desc.ort_name = out_def->Name();
+
+        const auto* shape_proto = out_def->Shape();
+        desc.shape.clear();
+        for (auto& d : shape_proto->dim()) {
+            desc.shape.push_back(d.dim_value());
+        }
+
+        size_t elem_size = GetElementSizeONNX(out_def->TypeAsProto()->tensor_type().elem_type());
+        size_t total_elems = 1;
+        for (auto s : desc.shape) total_elems *= s;
+        desc.byte_size = total_elems * elem_size;
+
+        st.outputs.push_back(desc);
+    }
+}
+
+// ------------------------------------------------------------
+// Main compute function called by ORT during model execution
+// ------------------------------------------------------------
+Status GenieCompute(void* state, OrtKernelContext* ctx, const OrtApi* ort_api)
+{
+    GenieNodeState* st = reinterpret_cast<GenieNodeState*>(state);
+    
+    if (!st) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Null GenieNodeState");
+    if (!st->api) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Null GenieApi");
+    if (!st->node) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Null GenieDialog node handle");
+    std::lock_guard<std::mutex> guard(st->mu);
+
+    
+// 1) Set inputs
+  for (size_t i = 0; i < st->inputs.size(); ++i) {
+    const OrtValue* in_val = nullptr;
+    ort_api->KernelContext_GetInput(ctx, i, &in_val);
+    if (!in_val) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "ORT input is null");
+
+    const void* in_data = nullptr;
+    ort_api->GetTensorData(in_val, &in_data);
+    if (!in_data) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "ORT input data is null");
+
+    auto& io = st->inputs[i];
+      std::string input_config = "{\"dimensions\": [1,1],\"data-type\": \"uint32_t\"}";
+      const char *input_config_ptr = input_config.c_str();
+
+    io.byte_size = 4;
+    Genie_Status_t rc = st->api->Node_setData(
+        st->node,
+        io.io_name,
+        in_data,
+        io.byte_size,
+        input_config_ptr);
+
+    if (rc != 0) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "GenieNode_setData failed");
+  }
+
+  // 2) Execute
+  {
+    std::string exec_config = "{}";
+    const char *exec_config_ptr = exec_config.c_str();
+    Genie_Status_t rc = st->api->Node_execute(st->node, exec_config_ptr /*executionConfig*/, nullptr /*userData*/);
+    if (rc != 0) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "GenieNode_execute failed");
+  }
+
+  // 3) Get outputs (fixed size, single callback)
+  for (size_t i = 0; i < st->outputs.size(); ++i) {
+    const auto& io = st->outputs[i];
+    OrtValue* out_val = nullptr;
+    ort_api->KernelContext_GetOutput(
+        ctx, i, io.shape.data(), io.shape.size(), &out_val);
+
+    if (!out_val) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "ORT output is null");
+
+    void* out_data = nullptr;
+    static std::vector<float> outputData;
+    ort_api->GetTensorMutableData(out_val, &out_data);
+    if (!out_data) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "ORT output data is null");
+
+    std::string output_config = "{}";
+    const char *output_config_ptr = output_config.c_str();
+    
+    GenieNode_IOCallback_t OutputCallback = [](const void* data,
+                            const size_t dataSize,
+                            const char* outputConfig,
+                            void* userData)
+    {
+        if (outputConfig) {
+            std::cout << "[GenieCallback] Error: outputConfig got." << outputConfig << std::endl;
+        }
+        if (userData) {
+            std::cout << "[GenieCallback] Got userData" << std::endl;
+        }
+        outputData.resize(dataSize/4);
+        std::memcpy(outputData.data(), data, dataSize);
+    };
+
+    Genie_Status_t rc = st->api->Node_getData(
+        st->node,
+        io.io_name,
+        output_config_ptr /*ioConfig*/,
+        OutputCallback
+      );
+    std::memcpy(out_data, outputData.data(), outputData.size()*4);
+
+    if (rc != 0) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "GenieNode_getData failed");
+  }
+
+  return Status::OK();  // success
+}
+
+
+
 Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused_nodes_and_graphs,
                                      std::vector<NodeComputeInfo>& node_compute_funcs) {
   const auto& logger = *GetLogger();
@@ -1308,7 +1494,6 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
   bool is_genie_model = qnn::IsFusedGraphHasZipCtxNode(fused_nodes_and_graphs);
 
   bool is_ctx_file_exist = false;
-
   onnxruntime::PathString context_model_path;
   const onnxruntime::GraphViewer& graph_viewer_0(fused_nodes_and_graphs[0].filtered_graph);
   if (is_qnn_ctx_model || context_cache_enabled_) {
@@ -1403,6 +1588,85 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
 
     return Status::OK();
   } else if (is_genie_model) {
+
+    std::filesystem::path zip_extracted_path;
+    auto st = genie_backend_manager_->GetZipContextPath(fused_nodes_and_graphs, context_model_path, zip_extracted_path);
+    std::string genieConfigJsonText;
+    st = genie_backend_manager_->GetGenieConfig(zip_extracted_path, genieConfigJsonText);
+    const GenieApi& genie_api_ = genie_api_loader_->Get();
+    for (auto fused_node_and_graph : fused_nodes_and_graphs) {
+
+      Node& fused_node = fused_node_and_graph.fused_node;
+      
+      // 1) Create runtime state
+      GenieNodeState* genieNodeState = new GenieNodeState();
+      genieNodeState->api = &genie_api_;
+      
+      // Build everything you can at compile time
+      auto builder = std::make_shared<GenieNodeBuilder>();
+      builder->api = &genie_api_;
+      builder->json_config = genieConfigJsonText;
+
+      BuildIONames(fused_node, *genieNodeState);
+            
+      builder->inputs  = genieNodeState->inputs;
+      builder->outputs = genieNodeState->outputs;
+    
+      // 5) Wire up NodeComputeInfo
+      NodeComputeInfo info;
+
+      // Create state
+      info.create_state_func = [builder](ComputeContext* context, FunctionState* state) {        
+          std::cout << "compute_info.create_state_func context->node_name: " << context->node_name << std::endl;  
+          auto* st = new GenieNodeState();
+          st->api = builder->api;
+          st->inputs = builder->inputs;
+          st->outputs = builder->outputs;
+
+          // 2) Create GenieNodeConfig
+          GenieNodeConfig* cfg = nullptr;
+          if (st->api->NodeConfig_createFromJson(builder->json_config.c_str(), &cfg) != 0) {
+              delete st;
+          }
+          st->config = cfg;
+
+          // 3) Create GenieNode (node)
+          GenieNode* dlg = nullptr;
+          if (st->api->Node_create(cfg, &dlg) != 0) {
+              st->api->NodeConfig_free(cfg);
+              delete st;
+          }
+          st->node = dlg;
+
+          *state = reinterpret_cast<FunctionState>(st);
+          return 0;
+      };
+
+      // Compute
+      info.compute_func = [](FunctionState state, const OrtApi* ort_api, OrtKernelContext* ctx) {
+          auto* st = reinterpret_cast<GenieNodeState*>(state);
+          auto s = GenieCompute(st, ctx, ort_api);
+          return s;
+      };
+
+      // Release state
+      
+      info.release_state_func = [](FunctionState state) {
+        auto* st = reinterpret_cast<GenieNodeState*>(state);
+        if (!st) return;
+
+        const auto* api = st->api;
+        if (api) {
+          if (st->node)   api->Node_free(st->node);
+          if (st->config) api->NodeConfig_free(st->config);
+        }
+        delete st;
+      };
+
+      // Hook final compute info
+      node_compute_funcs.push_back(std::move(info));
+
+    }
 
     return Status::OK();
   }
@@ -1509,26 +1773,29 @@ qnn::PerThreadHtpPowerConfigs_t QNNExecutionProvider::GetPerThreadHtpPowerConfig
 }
 
 Status QNNExecutionProvider::OnRunStart(const onnxruntime::RunOptions& run_options) {
-  auto backend_type = qnn_backend_manager_->GetQnnBackendType();
-  if (qnn::QnnBackendType::HTP != backend_type && qnn::QnnBackendType::DSP != backend_type) {
-    return Status::OK();
-  }
 
-  const ConfigOptions& config_options = RunOptions__GetConfigOptions(run_options);
+  if(qnn_backend_manager_) {
+    auto backend_type = qnn_backend_manager_->GetQnnBackendType();
+    if (qnn::QnnBackendType::HTP != backend_type && qnn::QnnBackendType::DSP != backend_type) {
+      return Status::OK();
+    }
 
-  uint32_t htp_power_config_id = 0;
-  if (GetHtpPowerConfigId(htp_power_config_id)) {
-    auto thread_id = std::this_thread::get_id();
-    auto per_thread_htp_power_configs = GetPerThreadHtpPowerConfigs(config_options);
-    per_thread_htp_power_configs.power_config_id = htp_power_config_id;
-    ORT_RETURN_IF_ERROR(qnn_backend_manager_->AddPerThreadHtpPowerConfigMapping(thread_id,
-                                                                                per_thread_htp_power_configs));
-  }
+    const ConfigOptions& config_options = RunOptions__GetConfigOptions(run_options);
 
-  std::string lora_config = "";
-  if (TryGetConfigEntry(config_options, kOrtRunOptionsConfigQnnLoraConfig, lora_config)) {
-    LOGS_DEFAULT(VERBOSE) << "lora_config: " << lora_config;
-    ORT_RETURN_IF_ERROR(qnn_backend_manager_->ParseLoraConfig(lora_config));
+    uint32_t htp_power_config_id = 0;
+    if (GetHtpPowerConfigId(htp_power_config_id)) {
+      auto thread_id = std::this_thread::get_id();
+      auto per_thread_htp_power_configs = GetPerThreadHtpPowerConfigs(config_options);
+      per_thread_htp_power_configs.power_config_id = htp_power_config_id;
+      ORT_RETURN_IF_ERROR(qnn_backend_manager_->AddPerThreadHtpPowerConfigMapping(thread_id,
+                                                                                  per_thread_htp_power_configs));
+    }
+
+    std::string lora_config = "";
+    if (TryGetConfigEntry(config_options, kOrtRunOptionsConfigQnnLoraConfig, lora_config)) {
+      LOGS_DEFAULT(VERBOSE) << "lora_config: " << lora_config;
+      ORT_RETURN_IF_ERROR(qnn_backend_manager_->ParseLoraConfig(lora_config));
+    }
   }
 
   return Status::OK();
@@ -1537,17 +1804,18 @@ Status QNNExecutionProvider::OnRunStart(const onnxruntime::RunOptions& run_optio
 Status QNNExecutionProvider::OnRunEnd(bool /*sync_stream*/, const onnxruntime::RunOptions& run_options) {
   ORT_UNUSED_PARAMETER(run_options);
 
-  auto backend_type = qnn_backend_manager_->GetQnnBackendType();
-  if (qnn::QnnBackendType::HTP != backend_type && qnn::QnnBackendType::DSP != backend_type) {
-    return Status::OK();
-  }
+  if(qnn_backend_manager_) {
+    auto backend_type = qnn_backend_manager_->GetQnnBackendType();
+    if (qnn::QnnBackendType::HTP != backend_type && qnn::QnnBackendType::DSP != backend_type) {
+      return Status::OK();
+    }
 
-  uint32_t htp_power_config_id;
-  if (GetHtpPowerConfigId(htp_power_config_id)) {
-    auto thread_id = std::this_thread::get_id();
-    qnn_backend_manager_->RemovePerThreadHtpPowerConfigMapping(thread_id);
+    uint32_t htp_power_config_id;
+    if (GetHtpPowerConfigId(htp_power_config_id)) {
+      auto thread_id = std::this_thread::get_id();
+      qnn_backend_manager_->RemovePerThreadHtpPowerConfigMapping(thread_id);
+    }
   }
-
   return Status::OK();
 }
 

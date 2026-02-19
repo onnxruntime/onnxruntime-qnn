@@ -23,6 +23,7 @@
 #include "core/providers/qnn/shared_context.h"
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/zip_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -43,7 +44,7 @@ Status GenieBackendManager::SetupBackend(const logging::Logger& logger) {
   }
 
   logger_ = &logger;
-  
+
   // Load the Genie backend library
   Status status = LoadBackend();
   if (!status.IsOK()) {
@@ -203,6 +204,41 @@ Status GenieBackendManager::UnloadLib(void* handle) {
     return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Failed to free library.");
   }
 #endif  // defined(_WIN32)
+
+  return Status::OK();
+}
+
+Status GenieBackendManager::GetZipContextPath(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs,
+                                              onnxruntime::PathString context_model_path,
+                                              std::filesystem::path& zip_extract_path) {
+    // Process the context zip from the model
+    namespace fs = std::filesystem;
+    const fs::path model_path{context_model_path};
+    const fs::path parent    = model_path.parent_path();
+    const std::wstring stem  = model_path.stem().wstring();
+    std::string zip_path;
+    auto status = qnn::GetEpContextZipPath(fused_nodes_and_graphs, zip_path);
+    const fs::path abs_zip_path = parent / zip_path;
+    zip_extract_path = parent / abs_zip_path.stem();
+    bool already_extracted =  fs::exists(zip_extract_path) &&
+                              fs::is_directory(zip_extract_path) &&
+                              !fs::is_empty(zip_extract_path);
+    if(!already_extracted) {
+      ORT_RETURN_IF_NOT(UnzipFile(ToUTF8String(abs_zip_path.wstring()), ToUTF8String(zip_extract_path.wstring())),
+                        "Failed to extract context zip");
+    }
+
+    return Status::OK();
+}
+
+Status GenieBackendManager::GetGenieConfig(std::filesystem::path zip_extracted_path, std::string& genieConfigJsonText) {
+
+  auto genie_cfg_path= ToUTF8String((zip_extracted_path / L"executor_config.json").wstring());
+  std::ifstream ifs(genie_cfg_path, std::ios::in | std::ios::binary);
+  if (!ifs) throw std::runtime_error("Cannot open config file: " + genie_cfg_path);
+  std::ostringstream oss;
+  oss << ifs.rdbuf();
+  genieConfigJsonText = oss.str();
 
   return Status::OK();
 }

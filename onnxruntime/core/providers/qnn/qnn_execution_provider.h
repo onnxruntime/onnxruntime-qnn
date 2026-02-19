@@ -11,6 +11,7 @@
 
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/builder/genie_backend_manager.h"
+#include "core/providers/qnn/builder/genie_api_loader.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model.h"
@@ -137,6 +138,7 @@ class QNNExecutionProvider : public IExecutionProvider {
 
   // Genie pathway-specific variables
   std::shared_ptr<qnn::GenieBackendManager> genie_backend_manager_;
+  mutable std::shared_ptr<GenieApiLoader> genie_api_loader_;
 };
 
 }  // namespace onnxruntime

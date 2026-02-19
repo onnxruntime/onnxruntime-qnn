@@ -22,20 +22,40 @@ bool GraphHasEpContextNode(const onnxruntime::GraphViewer& graph_viewer,
 
   // Default implementation assumes EP_CONTEXT_TYPE_BIN for backwards compatibility
   for (const auto& node : graph_viewer.Nodes()) {
-    
+
     if (EPCONTEXT_OP == node.OpType()) {
       NodeAttrHelper node_helper(node);
       std::string cache_source = qnn::utils::GetLowercaseString(node_helper.Get(SOURCE, ""));
       std::string ep_context_type_of_node = qnn::utils::GetLowercaseString(node_helper.Get(EP_CONTEXT_TYPE, EP_CONTEXT_TYPE_BIN));
 
       // TODO - Should update this to only be DLC export or QAIRT, need to minimize potential future issues w/ backwards compatibility
-      if ((cache_source == "qnnexecutionprovider" || cache_source == "qnn" || cache_source == "qairtexport") 
+      if ((cache_source == "qnnexecutionprovider" || cache_source == "qnn" || cache_source == "qairtexport")
               && ep_context_type == ep_context_type_of_node) {
         return true;
       }
     }
   }
   return false;
+}
+
+Status GetEpContextZipPath(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs,
+                            std::string& zip_path) {
+  for (const auto& fused_node_graph : fused_nodes_and_graphs) {
+    const onnxruntime::GraphViewer& graph_viewer(fused_node_graph.filtered_graph);
+    if(GraphHasEpContextNode(graph_viewer, EP_CONTEXT_TYPE_ZIP))
+    {
+      for (const auto& node : graph_viewer.Nodes()) {
+          if (EPCONTEXT_OP == node.OpType()) {
+            NodeAttrHelper node_helper(node);
+            zip_path = node_helper.Get("ep_zip_context", "");
+            if(zip_path != "")
+              return Status::OK();
+          }
+        }
+    }
+  }
+  ORT_RETURN_IF(zip_path == "", "Failed to extract zip_path from EP_CONTEXT node");
+  return Status::OK();
 }
 
 bool GraphHasZipContextNode(const onnxruntime::GraphViewer& graph_viewer) {

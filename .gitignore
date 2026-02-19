@@ -197,3 +197,16 @@ Package.resolved
 .build/
 .swiftpm/
 repros/
+
+
+
+*.dll
+*.exe
+*.jar
+*.mp3
+*.bin
+*.so
+*.a
+*.lib
+*.cat
+cmake/external/git.Win32.2.41.03.patch/
