@@ -88,6 +88,8 @@ class QNNExecutionProvider : public IExecutionProvider {
   std::vector<std::unique_ptr<ComputeCapability>>
   GetGenieCapability(const onnxruntime::GraphViewer& graph_view) const;
 
+  void EnsureGenieBackendManagerCreated(std::string backend_path = std::string()) const;
+
  private:
   // Will return true if any power config options need to be updated
   bool GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
@@ -137,7 +139,7 @@ class QNNExecutionProvider : public IExecutionProvider {
   std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library_ = nullptr;
 
   // Genie pathway-specific variables
-  std::shared_ptr<qnn::GenieBackendManager> genie_backend_manager_;
+  mutable std::shared_ptr<qnn::GenieBackendManager> genie_backend_manager_;
   mutable std::shared_ptr<GenieApiLoader> genie_api_loader_;
   GenieLog_Level_t genie_log_level_ = GENIE_LOG_LEVEL_INFO;
 };

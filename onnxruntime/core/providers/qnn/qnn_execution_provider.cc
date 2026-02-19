@@ -396,12 +396,11 @@ QNNExecutionProvider::QNNExecutionProvider(const ProviderOptions& provider_optio
     LOGS_DEFAULT(VERBOSE) << "User specified option - stop share EP contexts across sessions: " << stop_share_ep_contexts_;
   }
 
-  {
-      static const std::string GENIE_LOG_LEVEL_KEY = "genie_log_level";
-      auto it = provider_options_map.find(GENIE_LOG_LEVEL_KEY);
-      if (it != provider_options_map.end()) {
-          genie_log_level_ = ResolveGenieLogLevel(it->second);
-      }
+    static const std::string GENIE_LOG_LEVEL_KEY = "genie_log_level";
+    auto it = provider_options_map.find(GENIE_LOG_LEVEL_KEY);
+    if (it != provider_options_map.end()) {
+        genie_log_level_ = ResolveGenieLogLevel(it->second);
+
   }
 
   std::string backend_path{};
@@ -968,6 +967,15 @@ static void GetContextOnnxModelFilePath(const std::string& user_context_cache_pa
   }
 }
 
+void QNNExecutionProvider::EnsureGenieBackendManagerCreated(std::string backend_path) const {
+  if (genie_backend_manager_) return;
+
+  std::string path = !backend_path.empty() ? backend_path : kDefaultGenieBackendPath;
+  genie_backend_manager_ = qnn::GenieBackendManager::Create(
+    qnn::GenieBackendManagerConfig{ path }
+  );
+}
+
 std::vector<std::unique_ptr<ComputeCapability>>
 QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer,
                                     const IKernelLookup& /*kernel_lookup*/,
@@ -976,6 +984,11 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
   // Short-circuit GetCapability handling for Genie library, else continue with normal EP handling
   const auto& logger = *GetLogger();
   if (genie_backend_manager_) {
+    return GetGenieCapability(graph_viewer);
+  }
+
+  if (qnn::GraphHasZipContextNode(graph_viewer)) {
+    EnsureGenieBackendManagerCreated("");
     return GetGenieCapability(graph_viewer);
   }
 
@@ -1718,7 +1731,7 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
           GenieLog* gLogger = nullptr;
           const GenieLogConfig_Handle_t cfgHandle = nullptr;
           const GenieLog_Callback_t     cb        = nullptr;
-          const GenieLog_Level_t        level     = genie_log_level_;
+          const GenieLog_Level_t        level     = genie_log_level_local;
 
           if (st->api->Log_create(cfgHandle, cb, level, &gLogger) != 0) {
             st->api->NodeConfig_free(cfg);
@@ -1891,7 +1904,7 @@ Status QNNExecutionProvider::OnRunStart(const onnxruntime::RunOptions& run_optio
     }
 
     const ConfigOptions& config_options = RunOptions__GetConfigOptions(run_options);
-    
+
     uint32_t htp_power_config_id = 0;
     if (GetHtpPowerConfigId(htp_power_config_id)) {
       auto thread_id = std::this_thread::get_id();
