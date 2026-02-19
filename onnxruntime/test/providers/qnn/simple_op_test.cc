@@ -113,17 +113,15 @@ TEST_F(QnnCPUBackendTests, SpaceToDepth_Flaky2) {
 }
 
 TEST_F(QnnCPUBackendTests, UnaryOp_Relu) {
-  std::vector<float> input_data{-1.0f, 0.0f, 1.0f,
-                                100.0f, -100.0f, 1000.0f, -1000.0f,
-                                FLT_MIN, FLT_MIN / 10, -FLT_MIN / 10,
-                                FLT_MAX, -FLT_MAX,
+  std::vector<float> input_data{-1.0f, 0.0f, 100.0f, -100.0f, 1000.0f, -1000.0f,
+                                FLT_MIN, FLT_MIN / 10, -FLT_MIN / 10, FLT_MAX, -FLT_MAX,
                                 std::numeric_limits<float>::infinity()};
-  std::vector<std::vector<int64_t>> shapes  {{13}, {1, 13}, {1, 1, 13}, {1, 1, 1, 13}, {1, 1, 1, 1, 13}};
+  std::vector<std::vector<int64_t>> shapes{{12}, {3, 4}, {1, 2, 6}, {2, 2, 1, 3}, {1, 2, 1, 2, 3}};
   for (const auto& shape : shapes) {
     RunOpTestOnCPU("Relu",
                    {TestInputDef<float>(shape, false, input_data)},
                    {},
-                   13,
+                   7,
                    ExpectedEPNodeAssignment::All);
   }
 }
@@ -395,14 +393,14 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Elu_U16) {
 }
 
 TEST_F(QnnHTPBackendTests, UnaryOp_Relu_U8) {
-  std::vector<float> input_data {-1000.0f, -100.0f, -1.0f, -0.01f, -FLT_MIN, 0.0f,
-                                   FLT_MIN, 0.01f, 1.0f, 100.0f, 1000.0f, 10000.0f};
-  std::vector<std::vector<int64_t>> shapes {{12}, {3, 4}, {2, 2, 3}, {1, 2, 2, 3}, {1, 1, 2, 2, 3}};
+  std::vector<float> input_data{-1000.0f, -100.0f, -1.0f, -0.01f, -FLT_MIN, 0.0f,
+                                FLT_MIN, 0.01f, 1.0f, 100.0f, 1000.0f, 10000.0f};
+  std::vector<std::vector<int64_t>> shapes{{12}, {3, 4}, {2, 2, 3}, {1, 2, 2, 3}, {1, 1, 2, 2, 3}};
   for (const auto& shape : shapes) {
     RunQDQOpTest<uint8_t>("Relu",
                           {TestInputDef<float>(shape, false, input_data)},
                           {},
-                          14,
+                          10,
                           ExpectedEPNodeAssignment::All);
   }
 }
@@ -413,7 +411,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Relu_U16) {
   RunQDQOpTest<uint16_t>("Relu",
                          {TestInputDef<float>({3, 4}, false, input_data)},
                          {},
-                         14,
+                         10,
                          ExpectedEPNodeAssignment::All,
                          kOnnxDomain,
                          /*use_contrib_qdq=*/true);
@@ -428,7 +426,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Relu_FP16) {
   RunFP16OpTest("Relu",
                 {TestInputDef<float>({3, 4}, false, input_data)},
                 {},
-                13,
+                7,
                 ExpectedEPNodeAssignment::All);
 }
 
