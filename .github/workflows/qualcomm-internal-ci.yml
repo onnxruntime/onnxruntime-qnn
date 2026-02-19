@@ -9,7 +9,13 @@ permissions:
   pull-requests: write
 
 on:
-  # Trigger on PR comments containing "/test"
+# push, pull_request, and merge_goup need to be removed before repo is made public
+  push:
+    branches: [main, rel-*]
+  pull_request:
+    branches: [main, rel-*]
+  merge_group:
+    types: [checks_requested]
   issue_comment:
     types: [created]
   # Allow this workflow to be run manually from the Actions tab
