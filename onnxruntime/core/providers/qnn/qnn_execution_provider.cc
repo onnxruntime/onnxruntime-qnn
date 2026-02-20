@@ -999,8 +999,6 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
   }
   const size_t num_nodes_in_graph = static_cast<size_t>(graph_viewer.NumberOfNodes());
 
-  const auto& logger = *GetLogger();
-
   // Check BF16 compatibility early
   if (model_settings_.htp_bf16_enable) {
     // Check SoC model
@@ -1914,15 +1912,6 @@ Status QNNExecutionProvider::OnRunStart(const onnxruntime::RunOptions& run_optio
         ORT_RETURN_IF_ERROR(qnn_backend_manager_->AddPerThreadHtpPowerConfigMapping(thread_id,
                                                                                     per_thread_htp_power_configs));
       }
-    }
-
-    uint32_t htp_power_config_id = 0;
-    if (GetHtpPowerConfigId(htp_power_config_id)) {
-      auto thread_id = std::this_thread::get_id();
-      auto per_thread_htp_power_configs = GetPerThreadHtpPowerConfigs(config_options);
-      per_thread_htp_power_configs.power_config_id = htp_power_config_id;
-      ORT_RETURN_IF_ERROR(qnn_backend_manager_->AddPerThreadHtpPowerConfigMapping(thread_id,
-                                                                                  per_thread_htp_power_configs));
     }
 
     std::string lora_config = "";
