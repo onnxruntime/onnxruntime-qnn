@@ -40,85 +40,84 @@ jobs:
     steps:
       - name: Check if comment triggers CI
         id: check
-        run: |
-          # Handle workflow_dispatch events (for testing comment trigger behavior)
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "Triggered by workflow_dispatch - emulating /test comment"
-            PR_NUMBER="${{ github.event.inputs.pr_number }}"
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            // Handle workflow_dispatch events (for testing comment trigger behavior)
+            if (context.eventName === 'workflow_dispatch') {
+              console.log('Triggered by workflow_dispatch - emulating /test comment');
+              const prNumber = context.payload.inputs.pr_number;
 
-            # Fetch PR details
-            PR_DATA=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              -H "Accept: application/vnd.github.v3+json" \
-              "https://api.github.com/repos/${{ github.repository }}/pulls/${PR_NUMBER}")
+              // Fetch PR details
+              const pr = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: parseInt(prNumber)
+              });
 
-            PR_TITLE=$(echo "$PR_DATA" | jq -r '.title')
-            PR_SHA=$(echo "$PR_DATA" | jq -r '.head.sha')
-            PR_REF=$(echo "$PR_DATA" | jq -r '.head.ref')
+              console.log(`Testing PR #${pr.data.number}: ${pr.data.title}`);
+              console.log(`Head SHA: ${pr.data.head.sha}`);
+              console.log(`Head ref: ${pr.data.head.ref}`);
 
-            echo "Testing PR #${PR_NUMBER}: ${PR_TITLE}"
-            echo "Head SHA: ${PR_SHA}"
-            echo "Head ref: ${PR_REF}"
+              core.setOutput('should_run', 'true');
+              core.setOutput('pr_number', pr.data.number.toString());
+              core.setOutput('pr_sha', pr.data.head.sha);
+              core.setOutput('pr_ref', pr.data.head.ref);
+              return;
+            }
 
-            echo "should_run=true" >> $GITHUB_OUTPUT
-            echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
-            echo "pr_sha=${PR_SHA}" >> $GITHUB_OUTPUT
-            echo "pr_ref=${PR_REF}" >> $GITHUB_OUTPUT
-            exit 0
-          fi
+            // Handle issue_comment events
+            // Check if this is a PR (not a regular issue)
+            if (!context.payload.issue.pull_request) {
+              console.log("Not a pull request, skipping");
+              core.setOutput('should_run', 'false');
+              return;
+            }
 
-          # Handle issue_comment events
-          # Check if this is a PR (not a regular issue)
-          if [ "${{ github.event.issue.pull_request }}" = "" ]; then
-            echo "Not a pull request, skipping"
-            echo "should_run=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
+            // Check if comment contains "/test"
+            const comment = context.payload.comment.body;
+            if (!comment.match(/^\/test$|^\/test\s|\s\/test$|\s\/test\s/)) {
+              console.log("Comment does not contain '/test', skipping");
+              core.setOutput('should_run', 'false');
+              return;
+            }
 
-          # Check if comment contains "/test"
-          COMMENT_BODY="${{ github.event.comment.body }}"
-          if ! echo "$COMMENT_BODY" | grep -qE '(^/test$|^/test\s|\s/test$|\s/test\s)'; then
-            echo "Comment does not contain '/test', skipping"
-            echo "should_run=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
+            const authorAssociation = context.payload.comment.author_association;
+            if (authorAssociation !== 'OWNER' && authorAssociation !== 'MEMBER') {
+              console.log(`User is not an owner or member (association: ${authorAssociation}), skipping`);
+              core.setOutput('should_run', 'false');
+              return;
+            }
 
-          # Check author association
-          AUTHOR_ASSOC="${{ github.event.comment.author_association }}"
-          if [ "$AUTHOR_ASSOC" != "OWNER" ] && [ "$AUTHOR_ASSOC" != "MEMBER" ]; then
-            echo "User is not an owner or member (association: ${AUTHOR_ASSOC}), skipping"
-            echo "should_run=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
+            // Fetch PR details
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
 
-          # Fetch PR details
-          PR_NUMBER="${{ github.event.issue.number }}"
-          PR_DATA=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            -H "Accept: application/vnd.github.v3+json" \
-            "https://api.github.com/repos/${{ github.repository }}/pulls/${PR_NUMBER}")
+            console.log(`PR #${pr.data.number}: ${pr.data.title}`);
+            console.log(`Head SHA: ${pr.data.head.sha}`);
+            console.log(`Head ref: ${pr.data.head.ref}`);
 
-          PR_TITLE=$(echo "$PR_DATA" | jq -r '.title')
-          PR_SHA=$(echo "$PR_DATA" | jq -r '.head.sha')
-          PR_REF=$(echo "$PR_DATA" | jq -r '.head.ref')
-
-          echo "PR #${PR_NUMBER}: ${PR_TITLE}"
-          echo "Head SHA: ${PR_SHA}"
-          echo "Head ref: ${PR_REF}"
-
-          echo "should_run=true" >> $GITHUB_OUTPUT
-          echo "pr_number=${PR_NUMBER}" >> $GITHUB_OUTPUT
-          echo "pr_sha=${PR_SHA}" >> $GITHUB_OUTPUT
-          echo "pr_ref=${PR_REF}" >> $GITHUB_OUTPUT
+            core.setOutput('should_run', 'true');
+            core.setOutput('pr_number', pr.data.number.toString());
+            core.setOutput('pr_sha', pr.data.head.sha);
+            core.setOutput('pr_ref', pr.data.head.ref);
 
       - name: Add rocket reaction
         if: steps.check.outputs.should_run == 'true' && github.event_name == 'issue_comment'
-        run: |
-          curl --request POST \
-            --url https://api.github.com/repos/${{ github.repository }}/issues/comments/${{ github.event.comment.id }}/reactions \
-            --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
-            --header 'content-type: application/json' \
-            --header 'Accept: application/vnd.github.v3+json' \
-            --data '{"content":"rocket"}' \
-            --fail
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'rocket'
+            });
 
   build-and-test-all:
     name: Build & Test
