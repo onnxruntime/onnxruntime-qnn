@@ -10,10 +10,6 @@ permissions:
   statuses: write
 
 on:
-  push:
-    branches:
-      - main
-      - rel-*
   workflow_call:
     inputs:
       do_all:
