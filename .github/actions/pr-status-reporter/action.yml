@@ -21,16 +21,16 @@ inputs:
 outputs:
   sha:
     description: 'PR head SHA'
-    value: ${{ steps.get_pr.outputs.sha }}
+    value: ${{ steps.report_status.outputs.sha }}
   ref:
     description: 'PR head ref'
-    value: ${{ steps.get_pr.outputs.ref }}
+    value: ${{ steps.report_status.outputs.ref }}
 
 runs:
   using: 'composite'
   steps:
     - name: Get PR details and report status
-      id: get_pr
+      id: report_status
       uses: actions/github-script@v7
       with:
         script: |

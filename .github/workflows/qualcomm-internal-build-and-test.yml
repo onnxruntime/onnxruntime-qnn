@@ -123,20 +123,33 @@ jobs:
     if: ${{ inputs.do_all }}
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
-      - name: Report pending status
+      - name: Get PR details
         if: inputs.pr_number != ''
-        id: pr_status_pending
-        uses: ./.github/actions/pr-status-reporter
+        id: pr_details
+        uses: actions/github-script@v7
         with:
-          pr_number: ${{ inputs.pr_number }}
-          status_context: 'lint'
-          status_state: 'pending'
-          status_description: 'Running linter...'
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: parseInt('${{ inputs.pr_number }}')
+            });
+            core.setOutput('ref', pr.data.head.ref);
+            core.setOutput('sha', pr.data.head.sha);
 
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          ref: ${{ inputs.pr_number != '' && steps.pr_status_pending.outputs.ref || github.ref }}
+          ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
+
+      - name: Report pending status
+        if: inputs.pr_number != ''
+        uses: ./.github/actions/pr-status-reporter
+        with:
+          sha: ${{ steps.pr_details.outputs.sha }}
+          status_context: 'lint'
+          status_state: 'pending'
+          status_description: 'Running linter...'
 
       - name: Run Linting Tool
         run: |
@@ -146,7 +159,7 @@ jobs:
         if: always() && inputs.pr_number != ''
         uses: ./.github/actions/pr-status-reporter
         with:
-          pr_number: ${{ inputs.pr_number }}
+          sha: ${{ steps.pr_details.outputs.sha }}
           status_context: 'lint'
           status_state: ${{ job.status == 'success' && 'success' || 'failure' }}
           status_description: ${{ job.status == 'success' && 'Linting passed' || 'Linting failed' }}
@@ -155,20 +168,33 @@ jobs:
     if: ${{ inputs.do_all }}
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
-      - name: Report pending status
+      - name: Get PR details
         if: inputs.pr_number != ''
-        id: pr_status_pending
-        uses: ./.github/actions/pr-status-reporter
+        id: pr_details
+        uses: actions/github-script@v7
         with:
-          pr_number: ${{ inputs.pr_number }}
-          status_context: 'build-android-aarch64'
-          status_state: 'pending'
-          status_description: 'Building Android...'
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: parseInt('${{ inputs.pr_number }}')
+            });
+            core.setOutput('ref', pr.data.head.ref);
+            core.setOutput('sha', pr.data.head.sha);
 
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          ref: ${{ inputs.pr_number != '' && steps.pr_status_pending.outputs.ref || github.ref }}
+          ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
+
+      - name: Report pending status
+        if: inputs.pr_number != ''
+        uses: ./.github/actions/pr-status-reporter
+        with:
+          sha: ${{ steps.pr_details.outputs.sha }}
+          status_context: 'build-android-aarch64'
+          status_state: 'pending'
+          status_description: 'Building Android...'
 
       - name: Build Android
         run: |
@@ -184,7 +210,7 @@ jobs:
         if: always() && inputs.pr_number != ''
         uses: ./.github/actions/pr-status-reporter
         with:
-          pr_number: ${{ inputs.pr_number }}
+          sha: ${{ steps.pr_details.outputs.sha }}
           status_context: 'build-android-aarch64'
           status_state: ${{ job.status == 'success' && 'success' || 'failure' }}
           status_description: ${{ job.status == 'success' && 'Android build succeeded' || 'Android build failed' }}

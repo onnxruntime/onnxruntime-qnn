@@ -122,20 +122,33 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
+      - name: Get PR details
+        if: inputs.pr_number != ''
+        id: pr_details
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: parseInt('${{ inputs.pr_number }}')
+            });
+            core.setOutput('ref', pr.data.head.ref);
+            core.setOutput('sha', pr.data.head.sha);
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
+
       - name: Report pending status
         if: inputs.pr_number != ''
-        id: pr_status_pending
         uses: ./.github/actions/pr-status-reporter
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
           status_state: 'pending'
           status_description: 'Building...'
-
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          ref: ${{ inputs.pr_number != '' && steps.pr_status_pending.outputs.ref || github.ref }}
 
       - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         run: >
@@ -206,20 +219,33 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
+      - name: Get PR details
+        if: inputs.pr_number != ''
+        id: pr_details
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: parseInt('${{ inputs.pr_number }}')
+            });
+            core.setOutput('ref', pr.data.head.ref);
+            core.setOutput('sha', pr.data.head.sha);
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
+
       - name: Report pending status
         if: inputs.pr_number != ''
-        id: pr_status_pending
         uses: ./.github/actions/pr-status-reporter
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
           status_state: 'pending'
           status_description: 'Running tests...'
-
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          ref: ${{ inputs.pr_number != '' && steps.pr_status_pending.outputs.ref || github.ref }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -268,20 +294,33 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
+      - name: Get PR details
+        if: inputs.pr_number != ''
+        id: pr_details
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: parseInt('${{ inputs.pr_number }}')
+            });
+            core.setOutput('ref', pr.data.head.ref);
+            core.setOutput('sha', pr.data.head.sha);
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
+
       - name: Report pending status
         if: inputs.pr_number != ''
-        id: pr_status_pending
         uses: ./.github/actions/pr-status-reporter
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke
           status_state: 'pending'
           status_description: 'Testing wheel...'
-
-      - uses: actions/checkout@v4
-        with:
-          submodules: recursive
-          ref: ${{ inputs.pr_number != '' && steps.pr_status_pending.outputs.ref || github.ref }}
 
       - uses: actions/download-artifact@v4
         with:
