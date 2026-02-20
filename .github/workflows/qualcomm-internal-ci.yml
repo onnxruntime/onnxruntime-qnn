@@ -11,6 +11,13 @@ permissions:
   statuses: write
 
 on:
+  # TODO push, pull_request, and merge_goup need to be removed
+  push:
+    branches: [main, rel-*]
+  pull_request:
+    branches: [main, rel-*]
+  merge_group:
+    types: [checks_requested]
   issue_comment:
     types: [created]
   # Allow this workflow to be run manually from the Actions tab for testing
