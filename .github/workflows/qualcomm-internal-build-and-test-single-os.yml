@@ -127,17 +127,18 @@ jobs:
       - name: Report pending status
         if: inputs.pr_sha != ''
         run: |
+          PY_VSN="${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
           curl --request POST \
             --url https://api.github.com/repos/${{ github.repository }}/statuses/${{ inputs.pr_sha }} \
             --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
             --header 'content-type: application/json' \
             --header 'Accept: application/vnd.github.v3+json' \
-            --data '{
-              "state": "pending",
-              "context": "build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != '\''None'\'' && inputs.target_py_vsn || '\''none'\''}}",
-              "description": "Building...",
-              "target_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            }' \
+            --data "{
+              \"state\": \"pending\",
+              \"context\": \"build-${{inputs.target_os}}-${{inputs.target_arch}}-py${PY_VSN}\",
+              \"description\": \"Building...\",
+              \"target_url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+            }" \
             --fail
 
       - uses: actions/checkout@v4
@@ -207,6 +208,7 @@ jobs:
             DESCRIPTION="Build failed"
           fi
 
+          PY_VSN="${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
           curl --request POST \
             --url https://api.github.com/repos/${{ github.repository }}/statuses/${{ inputs.pr_sha }} \
             --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
@@ -214,7 +216,7 @@ jobs:
             --header 'Accept: application/vnd.github.v3+json' \
             --data "{
               \"state\": \"${STATE}\",
-              \"context\": \"build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}\",
+              \"context\": \"build-${{inputs.target_os}}-${{inputs.target_arch}}-py${PY_VSN}\",
               \"description\": \"${DESCRIPTION}\",
               \"target_url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
             }" \
@@ -232,17 +234,18 @@ jobs:
       - name: Report pending status
         if: inputs.pr_sha != ''
         run: |
+          PY_VSN="${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
           curl --request POST \
             --url https://api.github.com/repos/${{ github.repository }}/statuses/${{ inputs.pr_sha }} \
             --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
             --header 'content-type: application/json' \
             --header 'Accept: application/vnd.github.v3+json' \
-            --data '{
-              "state": "pending",
-              "context": "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != '\''None'\'' && inputs.target_py_vsn || '\''none'\''}}",
-              "description": "Running tests...",
-              "target_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            }' \
+            --data "{
+              \"state\": \"pending\",
+              \"context\": \"test-${{inputs.target_os}}-${{inputs.target_arch}}-py${PY_VSN}\",
+              \"description\": \"Running tests...\",
+              \"target_url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+            }" \
             --fail
 
       - uses: actions/checkout@v4
@@ -290,6 +293,7 @@ jobs:
             DESCRIPTION="Tests failed"
           fi
 
+          PY_VSN="${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
           curl --request POST \
             --url https://api.github.com/repos/${{ github.repository }}/statuses/${{ inputs.pr_sha }} \
             --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
@@ -297,7 +301,7 @@ jobs:
             --header 'Accept: application/vnd.github.v3+json' \
             --data "{
               \"state\": \"${STATE}\",
-              \"context\": \"test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}\",
+              \"context\": \"test-${{inputs.target_os}}-${{inputs.target_arch}}-py${PY_VSN}\",
               \"description\": \"${DESCRIPTION}\",
               \"target_url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
             }" \
@@ -315,17 +319,18 @@ jobs:
       - name: Report pending status
         if: inputs.pr_sha != ''
         run: |
+          PY_VSN="${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
           curl --request POST \
             --url https://api.github.com/repos/${{ github.repository }}/statuses/${{ inputs.pr_sha }} \
             --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
             --header 'content-type: application/json' \
             --header 'Accept: application/vnd.github.v3+json' \
-            --data '{
-              "state": "pending",
-              "context": "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != '\''None'\'' && inputs.target_py_vsn || '\''none'\''}}-wheel-smoke",
-              "description": "Testing wheel...",
-              "target_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-            }' \
+            --data "{
+              \"state\": \"pending\",
+              \"context\": \"test-${{inputs.target_os}}-${{inputs.target_arch}}-py${PY_VSN}-wheel-smoke\",
+              \"description\": \"Testing wheel...\",
+              \"target_url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+            }" \
             --fail
 
       - uses: actions/checkout@v4
@@ -359,6 +364,7 @@ jobs:
             DESCRIPTION="Wheel tests failed"
           fi
 
+          PY_VSN="${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
           curl --request POST \
             --url https://api.github.com/repos/${{ github.repository }}/statuses/${{ inputs.pr_sha }} \
             --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
@@ -366,7 +372,7 @@ jobs:
             --header 'Accept: application/vnd.github.v3+json' \
             --data "{
               \"state\": \"${STATE}\",
-              \"context\": \"test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke\",
+              \"context\": \"test-${{inputs.target_os}}-${{inputs.target_arch}}-py${PY_VSN}-wheel-smoke\",
               \"description\": \"${DESCRIPTION}\",
               \"target_url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
             }" \
