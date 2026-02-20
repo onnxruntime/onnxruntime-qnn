@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 name: 'PR Status Reporter'
-description: 'Fetches PR details and reports commit status'
+description: 'Fetches PR details and reports commit status + check run'
 
 inputs:
   pr_number:
@@ -44,6 +44,9 @@ runs:
 
             const sha = pr.data.head.sha;
             const ref = pr.data.head.ref;
+            const statusState = '${{ inputs.status_state }}';
+            const statusContext = '${{ inputs.status_context }}';
+            const statusDescription = '${{ inputs.status_description }}';
 
             console.log(`PR #${{ inputs.pr_number }}: SHA=${sha}, REF=${ref}`);
 
@@ -51,18 +54,51 @@ runs:
             core.setOutput('sha', sha);
             core.setOutput('ref', ref);
 
-            // Report commit status
+            // Map status state to check run format
+            let checkStatus, checkConclusion;
+            if (statusState === 'pending') {
+              checkStatus = 'in_progress';
+              checkConclusion = null;
+            } else {
+              checkStatus = 'completed';
+              checkConclusion = statusState === 'success' ? 'success' : 'failure';
+            }
+
+            // Create commit status (shows at bottom of PR)
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
               sha: sha,
-              state: '${{ inputs.status_state }}',
-              context: '${{ inputs.status_context }}',
-              description: '${{ inputs.status_description }}',
+              state: statusState,
+              context: statusContext,
+              description: statusDescription,
               target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
             });
 
-            console.log(`Status reported: ${{ inputs.status_state }} - ${{ inputs.status_description }}`);
+            console.log(`Commit status created: ${statusState} - ${statusDescription}`);
+
+            // Create check run (shows in Checks tab)
+            const checkRunParams = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              name: statusContext,
+              head_sha: sha,
+              status: checkStatus,
+              details_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',
+              output: {
+                title: statusDescription,
+                summary: `Status: ${statusState}\n\nContext: ${statusContext}`
+              }
+            };
+
+            // Only set conclusion when completed
+            if (checkConclusion !== null) {
+              checkRunParams.conclusion = checkConclusion;
+            }
+
+            await github.rest.checks.create(checkRunParams);
+
+            console.log(`Check run created: ${checkStatus}${checkConclusion ? ` (${checkConclusion})` : ''}`);
           } catch (error) {
             core.error(`Failed to fetch PR or report status: ${error.message}`);
             throw error;
