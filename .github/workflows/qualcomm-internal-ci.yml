@@ -36,6 +36,20 @@ jobs:
       should_run: ${{ steps.check.outputs.should_run }}
       pr_number: ${{ steps.check.outputs.pr_number }}
     steps:
+      - name: Debug concurrency group
+        run: |
+          echo "=== Concurrency Group Debug Info ==="
+          echo "Concurrency group: ${{ github.workflow }}-${{ github.event.inputs.pr_number || github.event.issue.number || github.head_ref || github.run_id }}"
+          echo ""
+          echo "Event name: ${{ github.event_name }}"
+          echo "Workflow name: ${{ github.workflow }}"
+          echo ""
+          echo "PR number (workflow_dispatch input): ${{ github.event.inputs.pr_number }}"
+          echo "Issue number (issue_comment): ${{ github.event.issue.number }}"
+          echo "Head ref (pull_request): ${{ github.head_ref }}"
+          echo "Run ID (fallback): ${{ github.run_id }}"
+          echo "===================================="
+
       - name: Check if comment triggers CI
         id: check
         uses: actions/github-script@v7
