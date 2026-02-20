@@ -1,0 +1,69 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: 'PR Status Reporter'
+description: 'Fetches PR details and reports commit status'
+
+inputs:
+  pr_number:
+    description: 'PR number to fetch details for'
+    required: true
+  status_context:
+    description: 'Status context name (e.g., build-linux-x86_64-py3.12)'
+    required: true
+  status_state:
+    description: 'Status state: pending, success, or failure'
+    required: true
+  status_description:
+    description: 'Status description message'
+    required: true
+
+outputs:
+  sha:
+    description: 'PR head SHA'
+    value: ${{ steps.get_pr.outputs.sha }}
+  ref:
+    description: 'PR head ref'
+    value: ${{ steps.get_pr.outputs.ref }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Get PR details and report status
+      id: get_pr
+      uses: actions/github-script@v7
+      with:
+        script: |
+          try {
+            // Fetch PR details
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: parseInt('${{ inputs.pr_number }}')
+            });
+
+            const sha = pr.data.head.sha;
+            const ref = pr.data.head.ref;
+
+            console.log(`PR #${{ inputs.pr_number }}: SHA=${sha}, REF=${ref}`);
+
+            // Set outputs
+            core.setOutput('sha', sha);
+            core.setOutput('ref', ref);
+
+            // Report commit status
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: sha,
+              state: '${{ inputs.status_state }}',
+              context: '${{ inputs.status_context }}',
+              description: '${{ inputs.status_description }}',
+              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+            });
+
+            console.log(`Status reported: ${{ inputs.status_state }} - ${{ inputs.status_description }}`);
+          } catch (error) {
+            core.error(`Failed to fetch PR or report status: ${error.message}`);
+            throw error;
+          }

@@ -123,41 +123,20 @@ jobs:
     if: ${{ inputs.do_all }}
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
-      - name: Get PR details
-        if: inputs.pr_number != ''
-        id: pr_details
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: parseInt('${{ inputs.pr_number }}')
-            });
-            core.setOutput('sha', pr.data.head.sha);
-            core.setOutput('ref', pr.data.head.ref);
-
       - name: Report pending status
         if: inputs.pr_number != ''
-        uses: actions/github-script@v7
+        id: pr_status_pending
+        uses: ./.github/actions/pr-status
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ steps.pr_details.outputs.sha }}',
-              state: 'pending',
-              context: 'lint',
-              description: 'Running linter...',
-              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-            });
+          pr_number: ${{ inputs.pr_number }}
+          status_context: 'lint'
+          status_state: 'pending'
+          status_description: 'Running linter...'
 
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
+          ref: ${{ inputs.pr_number != '' && steps.pr_status_pending.outputs.ref || github.ref }}
 
       - name: Run Linting Tool
         run: |
@@ -165,62 +144,31 @@ jobs:
 
       - name: Report final status
         if: always() && inputs.pr_number != ''
-        uses: actions/github-script@v7
+        uses: ./.github/actions/pr-status
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const conclusion = '${{ job.status }}';
-            const state = conclusion === 'success' ? 'success' : 'failure';
-            const description = state === 'success' ? 'Linting passed' : 'Linting failed';
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ steps.pr_details.outputs.sha }}',
-              state: state,
-              context: 'lint',
-              description: description,
-              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-            });
+          pr_number: ${{ inputs.pr_number }}
+          status_context: 'lint'
+          status_state: ${{ job.status == 'success' && 'success' || 'failure' }}
+          status_description: ${{ job.status == 'success' && 'Linting passed' || 'Linting failed' }}
 
   build-android-aarch64:
     if: ${{ inputs.do_all }}
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
-      - name: Get PR details
-        if: inputs.pr_number != ''
-        id: pr_details
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: parseInt('${{ inputs.pr_number }}')
-            });
-            core.setOutput('sha', pr.data.head.sha);
-            core.setOutput('ref', pr.data.head.ref);
-
       - name: Report pending status
         if: inputs.pr_number != ''
-        uses: actions/github-script@v7
+        id: pr_status_pending
+        uses: ./.github/actions/pr-status
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ steps.pr_details.outputs.sha }}',
-              state: 'pending',
-              context: 'build-android-aarch64',
-              description: 'Building Android...',
-              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-            });
+          pr_number: ${{ inputs.pr_number }}
+          status_context: 'build-android-aarch64'
+          status_state: 'pending'
+          status_description: 'Building Android...'
 
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
+          ref: ${{ inputs.pr_number != '' && steps.pr_status_pending.outputs.ref || github.ref }}
 
       - name: Build Android
         run: |
@@ -234,22 +182,12 @@ jobs:
 
       - name: Report final status
         if: always() && inputs.pr_number != ''
-        uses: actions/github-script@v7
+        uses: ./.github/actions/pr-status
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const conclusion = '${{ job.status }}';
-            const state = conclusion === 'success' ? 'success' : 'failure';
-            const description = state === 'success' ? 'Android build succeeded' : 'Android build failed';
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ steps.pr_details.outputs.sha }}',
-              state: state,
-              context: 'build-android-aarch64',
-              description: description,
-              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-            });
+          pr_number: ${{ inputs.pr_number }}
+          status_context: 'build-android-aarch64'
+          status_state: ${{ job.status == 'success' && 'success' || 'failure' }}
+          status_description: ${{ job.status == 'success' && 'Android build succeeded' || 'Android build failed' }}
 
  # Intentionally not "test-android-aarch64" to avoid breaking required PR checks
   test-android:

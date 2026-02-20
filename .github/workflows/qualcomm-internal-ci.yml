@@ -47,20 +47,27 @@ jobs:
               console.log('Triggered by workflow_dispatch - emulating /test comment');
               const prNumber = context.payload.inputs.pr_number;
 
-              // Fetch PR details
-              const pr = await github.rest.pulls.get({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                pull_number: parseInt(prNumber)
-              });
+              // Fetch PR details with validation
+              try {
+                const pr = await github.rest.pulls.get({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  pull_number: parseInt(prNumber)
+                });
 
-              console.log(`Testing PR #${pr.data.number}: ${pr.data.title}`);
-              console.log(`Head SHA: ${pr.data.head.sha}`);
-              console.log(`Head ref: ${pr.data.head.ref}`);
+                console.log(`Testing PR #${pr.data.number}: ${pr.data.title}`);
+                console.log(`Head SHA: ${pr.data.head.sha}`);
+                console.log(`Head ref: ${pr.data.head.ref}`);
 
-            core.setOutput('should_run', 'true');
-            core.setOutput('pr_number', pr.data.number.toString());
-            return;
+                core.setOutput('should_run', 'true');
+                core.setOutput('pr_number', pr.data.number.toString());
+                return;
+              } catch (error) {
+                console.error(`Failed to fetch PR #${prNumber}: ${error.message}`);
+                core.setFailed(`Invalid PR number: ${prNumber}`);
+                core.setOutput('should_run', 'false');
+                return;
+              }
             }
 
             // Handle issue_comment events
@@ -86,19 +93,25 @@ jobs:
               return;
             }
 
-            // Fetch PR details
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number
-            });
+            // Fetch PR details with validation
+            try {
+              const pr = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.issue.number
+              });
 
-            console.log(`PR #${pr.data.number}: ${pr.data.title}`);
-            console.log(`Head SHA: ${pr.data.head.sha}`);
-            console.log(`Head ref: ${pr.data.head.ref}`);
+              console.log(`PR #${pr.data.number}: ${pr.data.title}`);
+              console.log(`Head SHA: ${pr.data.head.sha}`);
+              console.log(`Head ref: ${pr.data.head.ref}`);
 
-            core.setOutput('should_run', 'true');
-            core.setOutput('pr_number', pr.data.number.toString());
+              core.setOutput('should_run', 'true');
+              core.setOutput('pr_number', pr.data.number.toString());
+            } catch (error) {
+              console.error(`Failed to fetch PR #${context.issue.number}: ${error.message}`);
+              core.setOutput('should_run', 'false');
+              return;
+            }
 
       - name: Add rocket reaction
         if: steps.check.outputs.should_run == 'true' && github.event_name == 'issue_comment'

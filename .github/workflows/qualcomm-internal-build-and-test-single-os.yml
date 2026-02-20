@@ -122,42 +122,20 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
-      - name: Get PR details
-        if: inputs.pr_number != ''
-        id: pr_details
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: parseInt('${{ inputs.pr_number }}')
-            });
-            core.setOutput('sha', pr.data.head.sha);
-            core.setOutput('ref', pr.data.head.ref);
-
       - name: Report pending status
         if: inputs.pr_number != ''
-        uses: actions/github-script@v7
+        id: pr_status_pending
+        uses: ./.github/actions/pr-status
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const pyVsn = '${{ inputs.target_py_vsn }}' !== 'None' ? '${{ inputs.target_py_vsn }}' : 'none';
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ steps.pr_details.outputs.sha }}',
-              state: 'pending',
-              context: `build-${{inputs.target_os}}-${{inputs.target_arch}}-py${pyVsn}`,
-              description: 'Building...',
-              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-            });
+          pr_number: ${{ inputs.pr_number }}
+          status_context: build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
+          status_state: 'pending'
+          status_description: 'Building...'
 
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
+          ref: ${{ inputs.pr_number != '' && steps.pr_status_pending.outputs.ref || github.ref }}
 
       - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         run: >
@@ -212,29 +190,12 @@ jobs:
 
       - name: Report final status
         if: always() && inputs.pr_number != ''
-        uses: actions/github-script@v7
+        uses: ./.github/actions/pr-status
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const jobStatus = '${{ job.status }}';
-            const state = jobStatus === 'success' ? 'success' : 'failure';
-            const description = jobStatus === 'success' ? 'Build succeeded' : 'Build failed';
-            const pyVsn = '${{ inputs.target_py_vsn }}' !== 'None' ? '${{ inputs.target_py_vsn }}' : 'none';
-
-            try {
-              await github.rest.repos.createCommitStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                sha: '${{ steps.pr_details.outputs.sha }}',
-                state: state,
-                context: `build-${{inputs.target_os}}-${{inputs.target_arch}}-py${pyVsn}`,
-                description: description,
-                target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-              });
-            } catch (error) {
-              console.error('Failed to create commit status:', error);
-              // Don't fail the workflow if status creation fails
-            }
+          pr_number: ${{ inputs.pr_number }}
+          status_context: build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
+          status_state: ${{ job.status == 'success' && 'success' || 'failure' }}
+          status_description: ${{ job.status == 'success' && 'Build succeeded' || 'Build failed' }}
 
   test:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
@@ -245,42 +206,20 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
-      - name: Get PR details
-        if: inputs.pr_number != ''
-        id: pr_details
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: parseInt('${{ inputs.pr_number }}')
-            });
-            core.setOutput('sha', pr.data.head.sha);
-            core.setOutput('ref', pr.data.head.ref);
-
       - name: Report pending status
         if: inputs.pr_number != ''
-        uses: actions/github-script@v7
+        id: pr_status_pending
+        uses: ./.github/actions/pr-status
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const pyVsn = '${{ inputs.target_py_vsn }}' !== 'None' ? '${{ inputs.target_py_vsn }}' : 'none';
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ steps.pr_details.outputs.sha }}',
-              state: 'pending',
-              context: `test-${{inputs.target_os}}-${{inputs.target_arch}}-py${pyVsn}`,
-              description: 'Running tests...',
-              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-            });
+          pr_number: ${{ inputs.pr_number }}
+          status_context: test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
+          status_state: 'pending'
+          status_description: 'Running tests...'
 
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
+          ref: ${{ inputs.pr_number != '' && steps.pr_status_pending.outputs.ref || github.ref }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -313,29 +252,12 @@ jobs:
 
       - name: Report final status
         if: always() && inputs.pr_number != ''
-        uses: actions/github-script@v7
+        uses: ./.github/actions/pr-status
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const jobStatus = '${{ job.status }}';
-            const state = jobStatus === 'success' ? 'success' : 'failure';
-            const description = jobStatus === 'success' ? 'Tests passed' : 'Tests failed';
-            const pyVsn = '${{ inputs.target_py_vsn }}' !== 'None' ? '${{ inputs.target_py_vsn }}' : 'none';
-
-            try {
-              await github.rest.repos.createCommitStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                sha: '${{ steps.pr_details.outputs.sha }}',
-                state: state,
-                context: `test-${{inputs.target_os}}-${{inputs.target_arch}}-py${pyVsn}`,
-                description: description,
-                target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-              });
-            } catch (error) {
-              console.error('Failed to create commit status:', error);
-              // Don't fail the workflow if status creation fails
-            }
+          pr_number: ${{ inputs.pr_number }}
+          status_context: test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
+          status_state: ${{ job.status == 'success' && 'success' || 'failure' }}
+          status_description: ${{ job.status == 'success' && 'Tests passed' || 'Tests failed' }}
 
   test-wheel:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke"
@@ -346,42 +268,20 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
-      - name: Get PR details
-        if: inputs.pr_number != ''
-        id: pr_details
-        uses: actions/github-script@v7
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: parseInt('${{ inputs.pr_number }}')
-            });
-            core.setOutput('sha', pr.data.head.sha);
-            core.setOutput('ref', pr.data.head.ref);
-
       - name: Report pending status
         if: inputs.pr_number != ''
-        uses: actions/github-script@v7
+        id: pr_status_pending
+        uses: ./.github/actions/pr-status
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const pyVsn = '${{ inputs.target_py_vsn }}' !== 'None' ? '${{ inputs.target_py_vsn }}' : 'none';
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ steps.pr_details.outputs.sha }}',
-              state: 'pending',
-              context: `test-${{inputs.target_os}}-${{inputs.target_arch}}-py${pyVsn}-wheel-smoke`,
-              description: 'Testing wheel...',
-              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-            });
+          pr_number: ${{ inputs.pr_number }}
+          status_context: test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke
+          status_state: 'pending'
+          status_description: 'Testing wheel...'
 
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
+          ref: ${{ inputs.pr_number != '' && steps.pr_status_pending.outputs.ref || github.ref }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -400,26 +300,9 @@ jobs:
 
       - name: Report final status
         if: always() && inputs.pr_number != ''
-        uses: actions/github-script@v7
+        uses: ./.github/actions/pr-status
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          script: |
-            const jobStatus = '${{ job.status }}';
-            const state = jobStatus === 'success' ? 'success' : 'failure';
-            const description = jobStatus === 'success' ? 'Wheel tests passed' : 'Wheel tests failed';
-            const pyVsn = '${{ inputs.target_py_vsn }}' !== 'None' ? '${{ inputs.target_py_vsn }}' : 'none';
-
-            try {
-              await github.rest.repos.createCommitStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                sha: '${{ steps.pr_details.outputs.sha }}',
-                state: state,
-                context: `test-${{inputs.target_os}}-${{inputs.target_arch}}-py${pyVsn}-wheel-smoke`,
-                description: description,
-                target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-              });
-            } catch (error) {
-              console.error('Failed to create commit status:', error);
-              // Don't fail the workflow if status creation fails
-            }
+          pr_number: ${{ inputs.pr_number }}
+          status_context: test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke
+          status_state: ${{ job.status == 'success' && 'success' || 'failure' }}
+          status_description: ${{ job.status == 'success' && 'Wheel tests passed' || 'Wheel tests failed' }}
