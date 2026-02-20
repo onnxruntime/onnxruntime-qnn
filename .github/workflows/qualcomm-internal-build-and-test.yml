@@ -146,7 +146,7 @@ jobs:
         if: inputs.pr_number != ''
         uses: ./.github/actions/pr-status-reporter
         with:
-          sha: ${{ steps.pr_details.outputs.sha }}
+          pr_number: ${{ inputs.pr_number }}
           status_context: 'lint'
           status_state: 'pending'
           status_description: 'Running linter...'
@@ -159,7 +159,7 @@ jobs:
         if: always() && inputs.pr_number != ''
         uses: ./.github/actions/pr-status-reporter
         with:
-          sha: ${{ steps.pr_details.outputs.sha }}
+          pr_number: ${{ inputs.pr_number }}
           status_context: 'lint'
           status_state: ${{ job.status == 'success' && 'success' || 'failure' }}
           status_description: ${{ job.status == 'success' && 'Linting passed' || 'Linting failed' }}
@@ -191,7 +191,7 @@ jobs:
         if: inputs.pr_number != ''
         uses: ./.github/actions/pr-status-reporter
         with:
-          sha: ${{ steps.pr_details.outputs.sha }}
+          pr_number: ${{ inputs.pr_number }}
           status_context: 'build-android-aarch64'
           status_state: 'pending'
           status_description: 'Building Android...'
@@ -210,7 +210,7 @@ jobs:
         if: always() && inputs.pr_number != ''
         uses: ./.github/actions/pr-status-reporter
         with:
-          sha: ${{ steps.pr_details.outputs.sha }}
+          pr_number: ${{ inputs.pr_number }}
           status_context: 'build-android-aarch64'
           status_state: ${{ job.status == 'success' && 'success' || 'failure' }}
           status_description: ${{ job.status == 'success' && 'Android build succeeded' || 'Android build failed' }}
