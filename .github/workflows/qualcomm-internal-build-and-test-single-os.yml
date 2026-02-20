@@ -126,18 +126,19 @@ jobs:
     steps:
       - name: Report pending status
         if: inputs.pr_sha != ''
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ inputs.pr_sha }}',
-              state: 'pending',
-              context: `build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}`,
-              description: 'Building...',
-              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-            });
+        run: |
+          curl --request POST \
+            --url https://api.github.com/repos/${{ github.repository }}/statuses/${{ inputs.pr_sha }} \
+            --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+            --header 'content-type: application/json' \
+            --header 'Accept: application/vnd.github.v3+json' \
+            --data '{
+              "state": "pending",
+              "context": "build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != '\''None'\'' && inputs.target_py_vsn || '\''none'\''}}",
+              "description": "Building...",
+              "target_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }' \
+            --fail
 
       - uses: actions/checkout@v4
         with:
@@ -197,21 +198,27 @@ jobs:
 
       - name: Report final status
         if: always() && inputs.pr_sha != ''
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const conclusion = '${{ job.status }}';
-            const state = conclusion === 'success' ? 'success' : 'failure';
-            const description = state === 'success' ? 'Build succeeded' : 'Build failed';
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ inputs.pr_sha }}',
-              state: state,
-              context: `build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}`,
-              description: description,
-              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-            });
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            STATE="success"
+            DESCRIPTION="Build succeeded"
+          else
+            STATE="failure"
+            DESCRIPTION="Build failed"
+          fi
+
+          curl --request POST \
+            --url https://api.github.com/repos/${{ github.repository }}/statuses/${{ inputs.pr_sha }} \
+            --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+            --header 'content-type: application/json' \
+            --header 'Accept: application/vnd.github.v3+json' \
+            --data "{
+              \"state\": \"${STATE}\",
+              \"context\": \"build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}\",
+              \"description\": \"${DESCRIPTION}\",
+              \"target_url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+            }" \
+            --fail || true
 
   test:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
@@ -224,18 +231,19 @@ jobs:
     steps:
       - name: Report pending status
         if: inputs.pr_sha != ''
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ inputs.pr_sha }}',
-              state: 'pending',
-              context: `test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}`,
-              description: 'Running tests...',
-              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-            });
+        run: |
+          curl --request POST \
+            --url https://api.github.com/repos/${{ github.repository }}/statuses/${{ inputs.pr_sha }} \
+            --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+            --header 'content-type: application/json' \
+            --header 'Accept: application/vnd.github.v3+json' \
+            --data '{
+              "state": "pending",
+              "context": "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != '\''None'\'' && inputs.target_py_vsn || '\''none'\''}}",
+              "description": "Running tests...",
+              "target_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }' \
+            --fail
 
       - uses: actions/checkout@v4
         with:
@@ -273,21 +281,27 @@ jobs:
 
       - name: Report final status
         if: always() && inputs.pr_sha != ''
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const conclusion = '${{ job.status }}';
-            const state = conclusion === 'success' ? 'success' : 'failure';
-            const description = state === 'success' ? 'Tests passed' : 'Tests failed';
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ inputs.pr_sha }}',
-              state: state,
-              context: `test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}`,
-              description: description,
-              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-            });
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            STATE="success"
+            DESCRIPTION="Tests passed"
+          else
+            STATE="failure"
+            DESCRIPTION="Tests failed"
+          fi
+
+          curl --request POST \
+            --url https://api.github.com/repos/${{ github.repository }}/statuses/${{ inputs.pr_sha }} \
+            --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+            --header 'content-type: application/json' \
+            --header 'Accept: application/vnd.github.v3+json' \
+            --data "{
+              \"state\": \"${STATE}\",
+              \"context\": \"test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}\",
+              \"description\": \"${DESCRIPTION}\",
+              \"target_url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+            }" \
+            --fail || true
 
   test-wheel:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke"
@@ -300,18 +314,19 @@ jobs:
     steps:
       - name: Report pending status
         if: inputs.pr_sha != ''
-        uses: actions/github-script@v7
-        with:
-          script: |
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ inputs.pr_sha }}',
-              state: 'pending',
-              context: `test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke`,
-              description: 'Testing wheel...',
-              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-            });
+        run: |
+          curl --request POST \
+            --url https://api.github.com/repos/${{ github.repository }}/statuses/${{ inputs.pr_sha }} \
+            --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+            --header 'content-type: application/json' \
+            --header 'Accept: application/vnd.github.v3+json' \
+            --data '{
+              "state": "pending",
+              "context": "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != '\''None'\'' && inputs.target_py_vsn || '\''none'\''}}-wheel-smoke",
+              "description": "Testing wheel...",
+              "target_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            }' \
+            --fail
 
       - uses: actions/checkout@v4
         with:
@@ -335,18 +350,24 @@ jobs:
 
       - name: Report final status
         if: always() && inputs.pr_sha != ''
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const conclusion = '${{ job.status }}';
-            const state = conclusion === 'success' ? 'success' : 'failure';
-            const description = state === 'success' ? 'Wheel tests passed' : 'Wheel tests failed';
-            await github.rest.repos.createCommitStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              sha: '${{ inputs.pr_sha }}',
-              state: state,
-              context: `test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke`,
-              description: description,
-              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
-            });
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            STATE="success"
+            DESCRIPTION="Wheel tests passed"
+          else
+            STATE="failure"
+            DESCRIPTION="Wheel tests failed"
+          fi
+
+          curl --request POST \
+            --url https://api.github.com/repos/${{ github.repository }}/statuses/${{ inputs.pr_sha }} \
+            --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+            --header 'content-type: application/json' \
+            --header 'Accept: application/vnd.github.v3+json' \
+            --data "{
+              \"state\": \"${STATE}\",
+              \"context\": \"test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke\",
+              \"description\": \"${DESCRIPTION}\",
+              \"target_url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"
+            }" \
+            --fail || true
