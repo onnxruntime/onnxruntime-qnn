@@ -17,6 +17,10 @@ inputs:
   status_description:
     description: 'Status description message'
     required: true
+  suite_id:
+    description: 'Optional check suite ID to associate this check run with'
+    required: false
+    default: ''
 
 outputs:
   sha:
@@ -47,8 +51,9 @@ runs:
             const statusState = '${{ inputs.status_state }}';
             const statusContext = '${{ inputs.status_context }}';
             const statusDescription = '${{ inputs.status_description }}';
+            const suiteId = '${{ inputs.suite_id }}';
 
-            console.log(`PR #${{ inputs.pr_number }}: SHA=${sha}, REF=${ref}`);
+            console.log(`PR #${{ inputs.pr_number }}: SHA=${sha}, REF=${ref}${suiteId ? `, Suite=${suiteId}` : ''}`);
 
             // Set outputs
             core.setOutput('sha', sha);
@@ -82,6 +87,11 @@ runs:
                 summary: `Status: ${statusState}\n\nContext: ${statusContext}`
               }
             };
+
+            // Associate with check suite if provided
+            if (suiteId) {
+              checkRunParams.check_suite_id = parseInt(suiteId);
+            }
 
             // Set conclusion if completed
             if (checkConclusion) {
