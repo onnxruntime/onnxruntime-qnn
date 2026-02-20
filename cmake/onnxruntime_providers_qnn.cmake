@@ -166,7 +166,9 @@
   if (EXISTS "${onnxruntime_QNN_HOME}/LICENSE.pdf")
     add_custom_command(
       TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+        # Copy to output directory, required for zip archive
         COMMAND ${CMAKE_COMMAND} -E copy "${onnxruntime_QNN_HOME}/LICENSE.pdf" $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/Qualcomm_LICENSE.pdf
+        # Copy to onnxruntime_qnn directory, required for python wheel
         COMMAND ${CMAKE_COMMAND} -E copy "${onnxruntime_QNN_HOME}/LICENSE.pdf" $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/onnxruntime_qnn/Qualcomm_LICENSE.pdf
     )
   endif()

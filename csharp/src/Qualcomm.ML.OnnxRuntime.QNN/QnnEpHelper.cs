@@ -45,20 +45,28 @@ namespace Qualcomm.ML.OnnxRuntime.QNN
         public static string GetLibraryPath() => GetLibraryPathInternal(GetEpLibraryName(), "QNN EP");
 
         /// <summary>
-        /// Get the full path to the QNN HTP library (QnnHtp.dll or libQnnHtp.so)
-        /// </summary>
-        /// <returns>Full path to the QNN HTP library</returns>
-        /// <exception cref="FileNotFoundException">Thrown when QNN HTP library file is not found</exception>
-        /// <exception cref="PlatformNotSupportedException">Thrown when platform is not supported</exception>
-        public static string GetQnnHtpLibraryPath() => GetLibraryPathInternal(GetQnnHtpLibraryName(), "QNN HTP");
-
-        /// <summary>
         /// Get the full path to the QNN CPU library (QnnCpu.dll or libQnnCpu.so)
         /// </summary>
         /// <returns>Full path to the QNN CPU library</returns>
         /// <exception cref="FileNotFoundException">Thrown when QNN CPU library file is not found</exception>
         /// <exception cref="PlatformNotSupportedException">Thrown when platform is not supported</exception>
         public static string GetQnnCpuLibraryPath() => GetLibraryPathInternal(GetQnnCpuLibraryName(), "QNN CPU");
+
+        /// <summary>
+        /// Get the full path to the QNN GPU library (QnnGpu.dll or libQnnGpu.so)
+        /// </summary>
+        /// <returns>Full path to the QNN GPU library</returns>
+        /// <exception cref="FileNotFoundException">Thrown when QNN GPU library file is not found</exception>
+        /// <exception cref="PlatformNotSupportedException">Thrown when platform is not supported</exception>
+        public static string GetQnnGpuLibraryPath() => GetLibraryPathInternal(GetQnnGpuLibraryName(), "QNN GPU");
+
+        /// <summary>
+        /// Get the full path to the QNN HTP library (QnnHtp.dll or libQnnHtp.so)
+        /// </summary>
+        /// <returns>Full path to the QNN HTP library</returns>
+        /// <exception cref="FileNotFoundException">Thrown when QNN HTP library file is not found</exception>
+        /// <exception cref="PlatformNotSupportedException">Thrown when platform is not supported</exception>
+        public static string GetQnnHtpLibraryPath() => GetLibraryPathInternal(GetQnnHtpLibraryName(), "QNN HTP");
 
         private static string GetLibraryPathInternal(string libraryName, string libraryDescription)
         {
@@ -78,9 +86,11 @@ namespace Qualcomm.ML.OnnxRuntime.QNN
 
         private static string GetEpLibraryName() => GetPlatformLibraryName("onnxruntime_providers_qnn");
 
-        private static string GetQnnHtpLibraryName() => GetPlatformLibraryName("QnnHtp");
-
         private static string GetQnnCpuLibraryName() => GetPlatformLibraryName("QnnCpu");
+
+        private static string GetQnnGpuLibraryName() => GetPlatformLibraryName("QnnGpu");
+
+        private static string GetQnnHtpLibraryName() => GetPlatformLibraryName("QnnHtp");
 
         private static string GetPlatformLibraryName(string baseName)
         {

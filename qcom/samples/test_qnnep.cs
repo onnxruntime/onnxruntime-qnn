@@ -24,12 +24,15 @@ namespace QnnEpNuGetTest
             // Get EP library path
             string epLibPath = QnnEpHelper.GetLibraryPath();
             Console.WriteLine($"EP Library: {epLibPath}");
-            // Get QNN HTP path
-            string htpLibPath = QnnEpHelper.GetQnnHtpLibraryPath();
-            Console.WriteLine($"HTP Library: {htpLibPath}");
             // Get QNN CPU path
             string cpuLibPath = QnnEpHelper.GetQnnCpuLibraryPath();
             Console.WriteLine($"CPU Library: {cpuLibPath}");
+            // Get QNN GPU path
+            string gpuLibPath = QnnEpHelper.GetQnnGpuLibraryPath();
+            Console.WriteLine($"GPU Library: {gpuLibPath}");
+            // Get QNN HTP path
+            string htpLibPath = QnnEpHelper.GetQnnHtpLibraryPath();
+            Console.WriteLine($"HTP Library: {htpLibPath}");
             // Get all EP names
             var epNames = QnnEpHelper.GetEpNames();
             foreach (var availableEpName in epNames)
