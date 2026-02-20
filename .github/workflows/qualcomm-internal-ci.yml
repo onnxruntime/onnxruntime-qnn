@@ -90,7 +90,7 @@ jobs:
             core.setOutput('pr_ref', pr.data.head.ref);
 
       - name: Add rocket reaction
-        if: steps.check.outputs.should_run == 'true'
+        if: steps.check.outputs.should_run == 'true' && github.event_name == 'issue_comment'
         uses: actions/github-script@v7
         with:
           script: |
