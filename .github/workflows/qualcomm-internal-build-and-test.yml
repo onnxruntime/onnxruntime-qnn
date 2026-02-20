@@ -31,12 +31,8 @@ on:
       target_py_vsn:
         default: "3.12"
         type: string
-      pr_ref:
-        description: "PR head ref for checkout"
-        type: string
-        default: ""
-      pr_sha:
-        description: "PR head SHA for commit status reporting"
+      pr_number:
+        description: "PR number for fetching PR details"
         type: string
         default: ""
 
@@ -57,8 +53,7 @@ jobs:
       # wheel distribution story is yet. For now, this is just so that all of the job and artifact names reflect the
       # version of cpython that's installed on our Linux build machines.
       target_py_vsn: "3.10"
-      pr_ref: ${{ inputs.pr_ref }}
-      pr_sha: ${{ inputs.pr_sha }}
+      pr_number: ${{ inputs.pr_number }}
 
   build-linux-aarch64-oe-gcc11_2:
       if: ${{ inputs.do_all }}
@@ -72,8 +67,7 @@ jobs:
         upload_test_archive: true
         upload_wheel: false
         run_tests: false
-        pr_ref: ${{ inputs.pr_ref }}
-        pr_sha: ${{ inputs.pr_sha }}
+        pr_number: ${{ inputs.pr_number }}
 
   # TODO: [AISW-167150] Cannot use HTP on QDC qcs6490
   #test-linux-aarch64-oe-gcc11_2:
@@ -98,8 +92,7 @@ jobs:
       upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' }}
       target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
       test_runner_arch: arm64
-      pr_ref: ${{ inputs.pr_ref }}
-      pr_sha: ${{ inputs.pr_sha }}
+      pr_number: ${{ inputs.pr_number }}
 
   build-and-test-windows-arm64ec:
     if: ${{ inputs.do_all }}
@@ -113,8 +106,7 @@ jobs:
       target_py_vsn: ${{ inputs.target_py_vsn }}
       run_tests: false  # ARM64ec unit tests are horribly broken (though model tests seem fine).
       test_runner_arch: arm64
-      pr_ref: ${{ inputs.pr_ref }}
-      pr_sha: ${{ inputs.pr_sha }}
+      pr_number: ${{ inputs.pr_number }}
 
   build-and-test-windows-x86_64:
     if: ${{ inputs.do_all }}
@@ -124,22 +116,37 @@ jobs:
       nightly_build: ${{ inputs.nightly_build }}
       target_arch: x86_64
       target_py_vsn: ${{ inputs.target_py_vsn }}
-      pr_ref: ${{ inputs.pr_ref }}
-      pr_sha: ${{ inputs.pr_sha }}
+      pr_number: ${{ inputs.pr_number }}
 
   lint:
     if: ${{ inputs.do_all }}
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
-      - name: Report pending status
-        if: inputs.pr_sha != ''
+      - name: Get PR details
+        if: inputs.pr_number != ''
+        id: pr_details
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: parseInt('${{ inputs.pr_number }}')
+            });
+            core.setOutput('sha', pr.data.head.sha);
+            core.setOutput('ref', pr.data.head.ref);
+
+      - name: Report pending status
+        if: inputs.pr_number != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: '${{ inputs.pr_sha }}',
+              sha: '${{ steps.pr_details.outputs.sha }}',
               state: 'pending',
               context: 'lint',
               description: 'Running linter...',
@@ -149,16 +156,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          ref: ${{ inputs.pr_ref != '' && inputs.pr_ref || github.ref }}
+          ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
 
       - name: Run Linting Tool
         run: |
           python3 qcom/build_and_test.py lint
 
       - name: Report final status
-        if: always() && inputs.pr_sha != ''
+        if: always() && inputs.pr_number != ''
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const conclusion = '${{ job.status }}';
             const state = conclusion === 'success' ? 'success' : 'failure';
@@ -166,7 +174,7 @@ jobs:
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: '${{ inputs.pr_sha }}',
+              sha: '${{ steps.pr_details.outputs.sha }}',
               state: state,
               context: 'lint',
               description: description,
@@ -177,15 +185,31 @@ jobs:
     if: ${{ inputs.do_all }}
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
-      - name: Report pending status
-        if: inputs.pr_sha != ''
+      - name: Get PR details
+        if: inputs.pr_number != ''
+        id: pr_details
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: parseInt('${{ inputs.pr_number }}')
+            });
+            core.setOutput('sha', pr.data.head.sha);
+            core.setOutput('ref', pr.data.head.ref);
+
+      - name: Report pending status
+        if: inputs.pr_number != ''
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: '${{ inputs.pr_sha }}',
+              sha: '${{ steps.pr_details.outputs.sha }}',
               state: 'pending',
               context: 'build-android-aarch64',
               description: 'Building Android...',
@@ -195,7 +219,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          ref: ${{ inputs.pr_ref != '' && inputs.pr_ref || github.ref }}
+          ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
 
       - name: Build Android
         run: |
@@ -208,9 +232,10 @@ jobs:
             ${{ github.workspace }}/build/onnxruntime-tests-android-aarch64.zip
 
       - name: Report final status
-        if: always() && inputs.pr_sha != ''
+        if: always() && inputs.pr_number != ''
         uses: actions/github-script@v7
         with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const conclusion = '${{ job.status }}';
             const state = conclusion === 'success' ? 'success' : 'failure';
@@ -218,7 +243,7 @@ jobs:
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: '${{ inputs.pr_sha }}',
+              sha: '${{ steps.pr_details.outputs.sha }}',
               state: state,
               context: 'build-android-aarch64',
               description: description,

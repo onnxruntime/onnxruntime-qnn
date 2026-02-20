@@ -53,12 +53,8 @@ on:
       upload_zip:
         default: false
         type: boolean
-      pr_ref:
-        description: "PR head ref for checkout"
-        type: string
-        default: ""
-      pr_sha:
-        description: "PR head SHA for commit status reporting"
+      pr_number:
+        description: "PR number for fetching PR details"
         type: string
         default: ""
   workflow_dispatch:
@@ -125,8 +121,23 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
+      - name: Get PR details
+        if: inputs.pr_number != ''
+        id: pr_details
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: parseInt('${{ inputs.pr_number }}')
+            });
+            core.setOutput('sha', pr.data.head.sha);
+            core.setOutput('ref', pr.data.head.ref);
+
       - name: Report pending status
-        if: inputs.pr_sha != ''
+        if: inputs.pr_number != ''
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -135,7 +146,7 @@ jobs:
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: '${{ inputs.pr_sha }}',
+              sha: '${{ steps.pr_details.outputs.sha }}',
               state: 'pending',
               context: `build-${{inputs.target_os}}-${{inputs.target_arch}}-py${pyVsn}`,
               description: 'Building...',
@@ -145,7 +156,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          ref: ${{ inputs.pr_ref != '' && inputs.pr_ref || github.ref }}
+          ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
 
       - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         run: >
@@ -199,7 +210,7 @@ jobs:
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime-qnn*.zip
 
       - name: Report final status
-        if: always() && inputs.pr_sha != ''
+        if: always() && inputs.pr_number != ''
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -213,7 +224,7 @@ jobs:
               await github.rest.repos.createCommitStatus({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                sha: '${{ inputs.pr_sha }}',
+                sha: '${{ steps.pr_details.outputs.sha }}',
                 state: state,
                 context: `build-${{inputs.target_os}}-${{inputs.target_arch}}-py${pyVsn}`,
                 description: description,
@@ -233,8 +244,23 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
+      - name: Get PR details
+        if: inputs.pr_number != ''
+        id: pr_details
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: parseInt('${{ inputs.pr_number }}')
+            });
+            core.setOutput('sha', pr.data.head.sha);
+            core.setOutput('ref', pr.data.head.ref);
+
       - name: Report pending status
-        if: inputs.pr_sha != ''
+        if: inputs.pr_number != ''
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -243,7 +269,7 @@ jobs:
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: '${{ inputs.pr_sha }}',
+              sha: '${{ steps.pr_details.outputs.sha }}',
               state: 'pending',
               context: `test-${{inputs.target_os}}-${{inputs.target_arch}}-py${pyVsn}`,
               description: 'Running tests...',
@@ -253,7 +279,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          ref: ${{ inputs.pr_ref != '' && inputs.pr_ref || github.ref }}
+          ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -285,7 +311,7 @@ jobs:
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
       - name: Report final status
-        if: always() && inputs.pr_sha != ''
+        if: always() && inputs.pr_number != ''
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -299,7 +325,7 @@ jobs:
               await github.rest.repos.createCommitStatus({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                sha: '${{ inputs.pr_sha }}',
+                sha: '${{ steps.pr_details.outputs.sha }}',
                 state: state,
                 context: `test-${{inputs.target_os}}-${{inputs.target_arch}}-py${pyVsn}`,
                 description: description,
@@ -319,8 +345,23 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
+      - name: Get PR details
+        if: inputs.pr_number != ''
+        id: pr_details
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: parseInt('${{ inputs.pr_number }}')
+            });
+            core.setOutput('sha', pr.data.head.sha);
+            core.setOutput('ref', pr.data.head.ref);
+
       - name: Report pending status
-        if: inputs.pr_sha != ''
+        if: inputs.pr_number != ''
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -329,7 +370,7 @@ jobs:
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              sha: '${{ inputs.pr_sha }}',
+              sha: '${{ steps.pr_details.outputs.sha }}',
               state: 'pending',
               context: `test-${{inputs.target_os}}-${{inputs.target_arch}}-py${pyVsn}-wheel-smoke`,
               description: 'Testing wheel...',
@@ -339,7 +380,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-          ref: ${{ inputs.pr_ref != '' && inputs.pr_ref || github.ref }}
+          ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -357,7 +398,7 @@ jobs:
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}_pygpu --only
 
       - name: Report final status
-        if: always() && inputs.pr_sha != ''
+        if: always() && inputs.pr_number != ''
         uses: actions/github-script@v7
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
@@ -371,7 +412,7 @@ jobs:
               await github.rest.repos.createCommitStatus({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                sha: '${{ inputs.pr_sha }}',
+                sha: '${{ steps.pr_details.outputs.sha }}',
                 state: state,
                 context: `test-${{inputs.target_os}}-${{inputs.target_arch}}-py${pyVsn}-wheel-smoke`,
                 description: description,

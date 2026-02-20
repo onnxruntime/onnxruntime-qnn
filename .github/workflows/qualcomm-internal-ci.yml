@@ -35,8 +35,6 @@ jobs:
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
       pr_number: ${{ steps.check.outputs.pr_number }}
-      pr_sha: ${{ steps.check.outputs.pr_sha }}
-      pr_ref: ${{ steps.check.outputs.pr_ref }}
     steps:
       - name: Check if comment triggers CI
         id: check
@@ -60,11 +58,9 @@ jobs:
               console.log(`Head SHA: ${pr.data.head.sha}`);
               console.log(`Head ref: ${pr.data.head.ref}`);
 
-              core.setOutput('should_run', 'true');
-              core.setOutput('pr_number', pr.data.number.toString());
-              core.setOutput('pr_sha', pr.data.head.sha);
-              core.setOutput('pr_ref', pr.data.head.ref);
-              return;
+            core.setOutput('should_run', 'true');
+            core.setOutput('pr_number', pr.data.number.toString());
+            return;
             }
 
             // Handle issue_comment events
@@ -103,8 +99,6 @@ jobs:
 
             core.setOutput('should_run', 'true');
             core.setOutput('pr_number', pr.data.number.toString());
-            core.setOutput('pr_sha', pr.data.head.sha);
-            core.setOutput('pr_ref', pr.data.head.ref);
 
       - name: Add rocket reaction
         if: steps.check.outputs.should_run == 'true' && github.event_name == 'issue_comment'
@@ -129,5 +123,4 @@ jobs:
     secrets: inherit
     with:
       do_all: true
-      pr_ref: ${{ needs.check-trigger.outputs.pr_ref }}
-      pr_sha: ${{ needs.check-trigger.outputs.pr_sha }}
+      pr_number: ${{ needs.check-trigger.outputs.pr_number }}
