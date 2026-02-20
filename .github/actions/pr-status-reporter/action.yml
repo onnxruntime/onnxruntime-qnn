@@ -12,15 +12,11 @@ inputs:
     description: 'Status context name (e.g., build-linux-x86_64-py3.12)'
     required: true
   status_state:
-    description: 'Status state: in_progress, success, or failure'
+    description: 'Status state: pending, success, or failure'
     required: true
   status_description:
     description: 'Status description message'
     required: true
-  suite_id:
-    description: 'Optional check suite ID to associate this check run with'
-    required: false
-    default: ''
 
 outputs:
   sha:
@@ -51,56 +47,25 @@ runs:
             const statusState = '${{ inputs.status_state }}';
             const statusContext = '${{ inputs.status_context }}';
             const statusDescription = '${{ inputs.status_description }}';
-            const suiteId = '${{ inputs.suite_id }}';
 
-            console.log(`PR #${{ inputs.pr_number }}: SHA=${sha}, REF=${ref}${suiteId ? `, Suite=${suiteId}` : ''}`);
+            console.log(`PR #${{ inputs.pr_number }}: SHA=${sha}, REF=${ref}`);
 
             // Set outputs
             core.setOutput('sha', sha);
             core.setOutput('ref', ref);
 
-            // Map status_state to GitHub Checks API format
-            let checkStatus, checkConclusion;
-            if (statusState === 'in_progress') {
-              checkStatus = 'in_progress';
-              checkConclusion = null;
-            } else if (statusState === 'success') {
-              checkStatus = 'completed';
-              checkConclusion = 'success';
-            } else if (statusState === 'failure') {
-              checkStatus = 'completed';
-              checkConclusion = 'failure';
-            } else {
-              throw new Error(`Invalid status_state: ${statusState}. Must be 'in_progress', 'success', or 'failure'.`);
-            }
-
-            // Create check run
-            const checkRunParams = {
+            // Create commit status
+            await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              name: statusContext,
-              head_sha: sha,
-              status: checkStatus,
-              details_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',
-              output: {
-                title: statusDescription,
-                summary: `Status: ${statusState}\n\nContext: ${statusContext}`
-              }
-            };
+              sha: sha,
+              state: statusState,
+              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}',
+              description: statusDescription,
+              context: statusContext
+            });
 
-            // Associate with check suite if provided
-            if (suiteId) {
-              checkRunParams.check_suite_id = parseInt(suiteId);
-            }
-
-            // Set conclusion if completed
-            if (checkConclusion) {
-              checkRunParams.conclusion = checkConclusion;
-            }
-
-            await github.rest.checks.create(checkRunParams);
-
-            console.log(`Check run created: ${statusContext} - ${statusState}`);
+            console.log(`Commit status created: ${statusContext} - ${statusState}`);
           } catch (error) {
             core.error(`Failed to fetch PR or report status: ${error.message}`);
             throw error;

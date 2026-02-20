@@ -10,6 +10,10 @@ permissions:
   statuses: write
 
 on:
+  push:
+    branches:
+      - main
+      - rel-*
   workflow_call:
     inputs:
       do_all:
@@ -41,43 +45,9 @@ env:
   ORT_NIGHTLY_BUILD: "${{ inputs.nightly_build == true && '1' || '0' }}"
 
 jobs:
-  create-suite:
-    if: ${{ inputs.pr_number != '' }}
-    runs-on: ubuntu-latest
-    outputs:
-      suite_id: ${{ steps.create.outputs.suite_id }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Create check suite
-        id: create
-        uses: actions/github-script@v7
-        with:
-          script: |
-            // Fetch PR details
-            const pr = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: parseInt('${{ inputs.pr_number }}')
-            });
-
-            const sha = pr.data.head.sha;
-            console.log(`Creating check suite for PR #${{ inputs.pr_number }}, SHA=${sha}`);
-
-            // Create check suite
-            const suite = await github.rest.checks.createSuite({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              head_sha: sha
-            });
-
-            const suiteId = suite.data.id;
-            console.log(`Check suite created: ${suiteId}`);
-            core.setOutput('suite_id', suiteId);
 
   build-and-test-linux-x86_64:
-    needs: [create-suite]
-    if: ${{ always() && inputs.do_all }}
+    if: ${{ inputs.do_all }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
@@ -89,11 +59,9 @@ jobs:
       # version of cpython that's installed on our Linux build machines.
       target_py_vsn: "3.10"
       pr_number: ${{ inputs.pr_number }}
-      suite_id: ${{ needs.create-suite.outputs.suite_id }}
 
   build-linux-aarch64-oe-gcc11_2:
-      needs: [create-suite]
-      if: ${{ always() && inputs.do_all }}
+      if: ${{ inputs.do_all }}
       uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
       secrets: inherit
       with:
@@ -105,7 +73,6 @@ jobs:
         upload_wheel: false
         run_tests: false
         pr_number: ${{ inputs.pr_number }}
-        suite_id: ${{ needs.create-suite.outputs.suite_id }}
 
   # TODO: [AISW-167150] Cannot use HTP on QDC qcs6490
   #test-linux-aarch64-oe-gcc11_2:
@@ -120,8 +87,7 @@ jobs:
   # TODO: Re-enable test_ort_windows_arm64_pysmoke and test_ort_windows_arm64_pygpu
   #       once Python Wheel for Plugin EP library is completed
   build-and-test-windows-arm64:
-    needs: [create-suite]
-    if: ${{ always() && (inputs.do_all || inputs.do_windows_arm64) }}
+    if: ${{ inputs.do_all || inputs.do_windows_arm64 }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
@@ -132,11 +98,9 @@ jobs:
       target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
       test_runner_arch: arm64
       pr_number: ${{ inputs.pr_number }}
-      suite_id: ${{ needs.create-suite.outputs.suite_id }}
 
   build-and-test-windows-arm64ec:
-    needs: [create-suite]
-    if: ${{ always() && inputs.do_all }}
+    if: ${{ inputs.do_all }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
@@ -148,11 +112,9 @@ jobs:
       run_tests: false  # ARM64ec unit tests are horribly broken (though model tests seem fine).
       test_runner_arch: arm64
       pr_number: ${{ inputs.pr_number }}
-      suite_id: ${{ needs.create-suite.outputs.suite_id }}
 
   build-and-test-windows-x86_64:
-    needs: [create-suite]
-    if: ${{ always() && inputs.do_all }}
+    if: ${{ inputs.do_all }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
@@ -160,11 +122,9 @@ jobs:
       target_arch: x86_64
       target_py_vsn: ${{ inputs.target_py_vsn }}
       pr_number: ${{ inputs.pr_number }}
-      suite_id: ${{ needs.create-suite.outputs.suite_id }}
 
   lint:
-    needs: [create-suite]
-    if: ${{ always() && inputs.do_all }}
+    if: ${{ inputs.do_all }}
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
       - name: Get PR details
@@ -192,9 +152,8 @@ jobs:
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: 'lint'
-          status_state: 'in_progress'
+          status_state: 'pending'
           status_description: 'Running linter...'
-          suite_id: ${{ needs.create-suite.outputs.suite_id }}
 
       - name: Run Linting Tool
         run: |
@@ -208,11 +167,9 @@ jobs:
           status_context: 'lint'
           status_state: ${{ job.status == 'success' && 'success' || 'failure' }}
           status_description: ${{ job.status == 'success' && 'Linting passed' || 'Linting failed' }}
-          suite_id: ${{ needs.create-suite.outputs.suite_id }}
 
   build-android-aarch64:
-    needs: [create-suite]
-    if: ${{ always() && inputs.do_all }}
+    if: ${{ inputs.do_all }}
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
       - name: Get PR details
@@ -240,9 +197,8 @@ jobs:
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: 'build-android-aarch64'
-          status_state: 'in_progress'
+          status_state: 'pending'
           status_description: 'Building Android...'
-          suite_id: ${{ needs.create-suite.outputs.suite_id }}
 
       - name: Build Android
         run: |
@@ -262,7 +218,6 @@ jobs:
           status_context: 'build-android-aarch64'
           status_state: ${{ job.status == 'success' && 'success' || 'failure' }}
           status_description: ${{ job.status == 'success' && 'Android build succeeded' || 'Android build failed' }}
-          suite_id: ${{ needs.create-suite.outputs.suite_id }}
 
  # Intentionally not "test-android-aarch64" to avoid breaking required PR checks
   test-android:

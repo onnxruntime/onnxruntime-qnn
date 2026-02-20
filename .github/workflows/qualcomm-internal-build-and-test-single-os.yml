@@ -58,10 +58,6 @@ on:
         description: "PR number for fetching PR details"
         type: string
         default: ""
-      suite_id:
-        description: "Check suite ID to associate check runs with"
-        type: string
-        default: ""
   workflow_dispatch:
     inputs:
       target_os:
@@ -151,9 +147,8 @@ jobs:
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
-          status_state: 'in_progress'
+          status_state: 'pending'
           status_description: 'Building...'
-          suite_id: ${{ inputs.suite_id }}
 
       - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         run: >
@@ -214,7 +209,6 @@ jobs:
           status_context: build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
           status_state: ${{ job.status == 'success' && 'success' || 'failure' }}
           status_description: ${{ job.status == 'success' && 'Build succeeded' || 'Build failed' }}
-          suite_id: ${{ inputs.suite_id }}
 
   test:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
@@ -250,9 +244,8 @@ jobs:
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
-          status_state: 'in_progress'
+          status_state: 'pending'
           status_description: 'Running tests...'
-          suite_id: ${{ inputs.suite_id }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -291,7 +284,6 @@ jobs:
           status_context: test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
           status_state: ${{ job.status == 'success' && 'success' || 'failure' }}
           status_description: ${{ job.status == 'success' && 'Tests passed' || 'Tests failed' }}
-          suite_id: ${{ inputs.suite_id }}
 
   test-wheel:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke"
@@ -327,9 +319,8 @@ jobs:
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke
-          status_state: 'in_progress'
+          status_state: 'pending'
           status_description: 'Testing wheel...'
-          suite_id: ${{ inputs.suite_id }}
 
       - uses: actions/download-artifact@v4
         with:
@@ -354,4 +345,3 @@ jobs:
           status_context: test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke
           status_state: ${{ job.status == 'success' && 'success' || 'failure' }}
           status_description: ${{ job.status == 'success' && 'Wheel tests passed' || 'Wheel tests failed' }}
-          suite_id: ${{ inputs.suite_id }}
