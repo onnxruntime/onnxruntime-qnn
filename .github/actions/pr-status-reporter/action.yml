@@ -77,22 +77,8 @@ runs:
 
             console.log(`Commit status created: ${statusState} - ${statusDescription}`);
 
-            // Try to create check suite for this SHA (might help with PR association)
-            let checkSuiteId;
-            try {
-              const suite = await github.rest.checks.createSuite({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                head_sha: sha
-              });
-              checkSuiteId = suite.data.id;
-              console.log(`Check suite created: ${checkSuiteId}`);
-            } catch (error) {
-              // Suite might already exist or creation might fail - that's okay
-              console.log(`Check suite creation skipped: ${error.message}`);
-            }
-
             // Create check run (shows in Checks tab)
+            // GitHub will automatically associate it with a check suite
             const checkRunParams = {
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -106,11 +92,6 @@ runs:
               }
             };
 
-            // Add check suite ID if we got one
-            if (checkSuiteId) {
-              checkRunParams.check_suite_id = checkSuiteId;
-            }
-
             // Only set conclusion when completed
             if (checkConclusion !== null) {
               checkRunParams.conclusion = checkConclusion;
@@ -118,7 +99,7 @@ runs:
 
             await github.rest.checks.create(checkRunParams);
 
-            console.log(`Check run created: ${checkStatus}${checkConclusion ? ` (${checkConclusion})` : ''}${checkSuiteId ? ` in suite ${checkSuiteId}` : ''}`);
+            console.log(`Check run created: ${checkStatus}${checkConclusion ? ` (${checkConclusion})` : ''}`);
           } catch (error) {
             core.error(`Failed to fetch PR or report status: ${error.message}`);
             throw error;
