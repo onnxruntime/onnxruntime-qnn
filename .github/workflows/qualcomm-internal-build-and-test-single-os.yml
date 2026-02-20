@@ -134,7 +134,7 @@ jobs:
               repo: context.repo.repo,
               sha: '${{ inputs.pr_sha }}',
               state: 'pending',
-              context: 'build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != ''None'' && inputs.target_py_vsn || ''none''}}',
+              context: `build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}`,
               description: 'Building...',
               target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
             });
@@ -208,7 +208,7 @@ jobs:
               repo: context.repo.repo,
               sha: '${{ inputs.pr_sha }}',
               state: state,
-              context: 'build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != ''None'' && inputs.target_py_vsn || ''none''}}',
+              context: `build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}`,
               description: description,
               target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
             });
@@ -232,7 +232,7 @@ jobs:
               repo: context.repo.repo,
               sha: '${{ inputs.pr_sha }}',
               state: 'pending',
-              context: 'test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != ''None'' && inputs.target_py_vsn || ''none''}}',
+              context: `test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}`,
               description: 'Running tests...',
               target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
             });
@@ -284,7 +284,7 @@ jobs:
               repo: context.repo.repo,
               sha: '${{ inputs.pr_sha }}',
               state: state,
-              context: 'test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != ''None'' && inputs.target_py_vsn || ''none''}}',
+              context: `test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}`,
               description: description,
               target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
             });
@@ -308,7 +308,7 @@ jobs:
               repo: context.repo.repo,
               sha: '${{ inputs.pr_sha }}',
               state: 'pending',
-              context: 'test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != ''None'' && inputs.target_py_vsn || ''none''}}-wheel-smoke',
+              context: `test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke`,
               description: 'Testing wheel...',
               target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
             });
@@ -346,7 +346,7 @@ jobs:
               repo: context.repo.repo,
               sha: '${{ inputs.pr_sha }}',
               state: state,
-              context: 'test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != ''None'' && inputs.target_py_vsn || ''none''}}-wheel-smoke',
+              context: `test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke`,
               description: description,
               target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
             });
