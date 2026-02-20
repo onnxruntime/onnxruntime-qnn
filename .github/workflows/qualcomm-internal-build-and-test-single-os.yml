@@ -56,6 +56,10 @@ on:
         description: "PR head ref for checkout"
         type: string
         default: ""
+      pr_sha:
+        description: "PR head SHA for commit status reporting"
+        type: string
+        default: ""
   workflow_dispatch:
     inputs:
       target_os:
@@ -120,6 +124,21 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
+      - name: Report pending status
+        if: inputs.pr_sha != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ inputs.pr_sha }}',
+              state: 'pending',
+              context: 'build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != "None" && inputs.target_py_vsn || "none"}}',
+              description: 'Building...',
+              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+            });
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -176,6 +195,24 @@ jobs:
           path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime-qnn*.zip
 
+      - name: Report final status
+        if: always() && inputs.pr_sha != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const conclusion = '${{ job.status }}';
+            const state = conclusion === 'success' ? 'success' : 'failure';
+            const description = state === 'success' ? 'Build succeeded' : 'Build failed';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ inputs.pr_sha }}',
+              state: state,
+              context: 'build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != "None" && inputs.target_py_vsn || "none"}}',
+              description: description,
+              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+            });
+
   test:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
     if: ${{ inputs.run_tests && !inputs.build_test_same_runner }}
@@ -185,6 +222,21 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
+      - name: Report pending status
+        if: inputs.pr_sha != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ inputs.pr_sha }}',
+              state: 'pending',
+              context: 'test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != "None" && inputs.target_py_vsn || "none"}}',
+              description: 'Running tests...',
+              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+            });
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -219,6 +271,24 @@ jobs:
           path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
+      - name: Report final status
+        if: always() && inputs.pr_sha != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const conclusion = '${{ job.status }}';
+            const state = conclusion === 'success' ? 'success' : 'failure';
+            const description = state === 'success' ? 'Tests passed' : 'Tests failed';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ inputs.pr_sha }}',
+              state: state,
+              context: 'test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != "None" && inputs.target_py_vsn || "none"}}',
+              description: description,
+              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+            });
+
   test-wheel:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke"
     if: ${{ inputs.test_wheel }}
@@ -228,6 +298,21 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
+      - name: Report pending status
+        if: inputs.pr_sha != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ inputs.pr_sha }}',
+              state: 'pending',
+              context: 'test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != "None" && inputs.target_py_vsn || "none"}}-wheel-smoke',
+              description: 'Testing wheel...',
+              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+            });
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -247,3 +332,21 @@ jobs:
           create_venv
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}_pysmoke
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}_pygpu --only
+
+      - name: Report final status
+        if: always() && inputs.pr_sha != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const conclusion = '${{ job.status }}';
+            const state = conclusion === 'success' ? 'success' : 'failure';
+            const description = state === 'success' ? 'Wheel tests passed' : 'Wheel tests failed';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ inputs.pr_sha }}',
+              state: state,
+              context: 'test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != "None" && inputs.target_py_vsn || "none"}}-wheel-smoke',
+              description: description,
+              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+            });

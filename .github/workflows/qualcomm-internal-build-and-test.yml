@@ -34,6 +34,10 @@ on:
         description: "PR head ref for checkout"
         type: string
         default: ""
+      pr_sha:
+        description: "PR head SHA for commit status reporting"
+        type: string
+        default: ""
 
 env:
   ORT_NIGHTLY_BUILD: "${{ inputs.nightly_build == true && '1' || '0' }}"
@@ -53,6 +57,7 @@ jobs:
       # version of cpython that's installed on our Linux build machines.
       target_py_vsn: "3.10"
       pr_ref: ${{ inputs.pr_ref }}
+      pr_sha: ${{ inputs.pr_sha }}
 
   build-linux-aarch64-oe-gcc11_2:
       if: ${{ inputs.do_all }}
@@ -67,6 +72,7 @@ jobs:
         upload_wheel: false
         run_tests: false
         pr_ref: ${{ inputs.pr_ref }}
+        pr_sha: ${{ inputs.pr_sha }}
 
   # TODO: [AISW-167150] Cannot use HTP on QDC qcs6490
   #test-linux-aarch64-oe-gcc11_2:
@@ -92,6 +98,7 @@ jobs:
       target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
       test_runner_arch: arm64
       pr_ref: ${{ inputs.pr_ref }}
+      pr_sha: ${{ inputs.pr_sha }}
 
   build-and-test-windows-arm64ec:
     if: ${{ inputs.do_all }}
@@ -106,6 +113,7 @@ jobs:
       run_tests: false  # ARM64ec unit tests are horribly broken (though model tests seem fine).
       test_runner_arch: arm64
       pr_ref: ${{ inputs.pr_ref }}
+      pr_sha: ${{ inputs.pr_sha }}
 
   build-and-test-windows-x86_64:
     if: ${{ inputs.do_all }}
@@ -116,11 +124,27 @@ jobs:
       target_arch: x86_64
       target_py_vsn: ${{ inputs.target_py_vsn }}
       pr_ref: ${{ inputs.pr_ref }}
+      pr_sha: ${{ inputs.pr_sha }}
 
   lint:
     if: ${{ inputs.do_all }}
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
+      - name: Report pending status
+        if: inputs.pr_sha != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ inputs.pr_sha }}',
+              state: 'pending',
+              context: 'lint',
+              description: 'Running linter...',
+              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+            });
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -130,10 +154,43 @@ jobs:
         run: |
           python3 qcom/build_and_test.py lint
 
+      - name: Report final status
+        if: always() && inputs.pr_sha != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const conclusion = '${{ job.status }}';
+            const state = conclusion === 'success' ? 'success' : 'failure';
+            const description = state === 'success' ? 'Linting passed' : 'Linting failed';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ inputs.pr_sha }}',
+              state: state,
+              context: 'lint',
+              description: description,
+              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+            });
+
   build-android-aarch64:
     if: ${{ inputs.do_all }}
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
+      - name: Report pending status
+        if: inputs.pr_sha != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ inputs.pr_sha }}',
+              state: 'pending',
+              context: 'build-android-aarch64',
+              description: 'Building Android...',
+              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+            });
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -148,6 +205,24 @@ jobs:
           name: ORT android aarch64 pynone Tests
           path: |
             ${{ github.workspace }}/build/onnxruntime-tests-android-aarch64.zip
+
+      - name: Report final status
+        if: always() && inputs.pr_sha != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const conclusion = '${{ job.status }}';
+            const state = conclusion === 'success' ? 'success' : 'failure';
+            const description = state === 'success' ? 'Android build succeeded' : 'Android build failed';
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: '${{ inputs.pr_sha }}',
+              state: state,
+              context: 'build-android-aarch64',
+              description: description,
+              target_url: '${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+            });
 
  # Intentionally not "test-android-aarch64" to avoid breaking required PR checks
   test-android:
