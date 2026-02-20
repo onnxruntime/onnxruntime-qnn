@@ -82,6 +82,15 @@ std::unique_ptr<IQnnNodeGroup> CastLoneQFusion::TryFusion(
   if (qnn_model_wrapper.IsConstantInput(cast_node_unit.Inputs()[0].name)) {
     return nullptr;
   }
+
+  TensorInfo cast_input_info = {};
+  if (!qnn_model_wrapper.GetTensorInfo(cast_node_unit.Inputs()[0], cast_input_info).IsOK()) {
+    return nullptr;
+  }
+  if (cast_input_info.qnn_data_type != QNN_DATATYPE_FLOAT_16 &&
+      cast_input_info.qnn_data_type != QNN_DATATYPE_FLOAT_32) {
+    return nullptr;
+  }
   std::array<const OrtNodeUnit*, 2> node_unit_array{&cast_node_unit, quantize_linear};
   auto node_units = gsl::make_span<const OrtNodeUnit*>(node_unit_array.data(), 2);
 
