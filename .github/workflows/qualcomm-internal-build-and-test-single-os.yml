@@ -125,7 +125,7 @@ jobs:
       - name: Report pending status
         if: inputs.pr_number != ''
         id: pr_status_pending
-        uses: ./.github/actions/pr-status
+        uses: ./.github/actions/pr-status-reporter
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
@@ -190,7 +190,7 @@ jobs:
 
       - name: Report final status
         if: always() && inputs.pr_number != ''
-        uses: ./.github/actions/pr-status
+        uses: ./.github/actions/pr-status-reporter
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
@@ -209,7 +209,7 @@ jobs:
       - name: Report pending status
         if: inputs.pr_number != ''
         id: pr_status_pending
-        uses: ./.github/actions/pr-status
+        uses: ./.github/actions/pr-status-reporter
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
@@ -252,7 +252,7 @@ jobs:
 
       - name: Report final status
         if: always() && inputs.pr_number != ''
-        uses: ./.github/actions/pr-status
+        uses: ./.github/actions/pr-status-reporter
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
@@ -271,7 +271,7 @@ jobs:
       - name: Report pending status
         if: inputs.pr_number != ''
         id: pr_status_pending
-        uses: ./.github/actions/pr-status
+        uses: ./.github/actions/pr-status-reporter
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke
@@ -300,7 +300,7 @@ jobs:
 
       - name: Report final status
         if: always() && inputs.pr_number != ''
-        uses: ./.github/actions/pr-status
+        uses: ./.github/actions/pr-status-reporter
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke

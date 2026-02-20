@@ -126,7 +126,7 @@ jobs:
       - name: Report pending status
         if: inputs.pr_number != ''
         id: pr_status_pending
-        uses: ./.github/actions/pr-status
+        uses: ./.github/actions/pr-status-reporter
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: 'lint'
@@ -144,7 +144,7 @@ jobs:
 
       - name: Report final status
         if: always() && inputs.pr_number != ''
-        uses: ./.github/actions/pr-status
+        uses: ./.github/actions/pr-status-reporter
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: 'lint'
@@ -158,7 +158,7 @@ jobs:
       - name: Report pending status
         if: inputs.pr_number != ''
         id: pr_status_pending
-        uses: ./.github/actions/pr-status
+        uses: ./.github/actions/pr-status-reporter
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: 'build-android-aarch64'
@@ -182,7 +182,7 @@ jobs:
 
       - name: Report final status
         if: always() && inputs.pr_number != ''
-        uses: ./.github/actions/pr-status
+        uses: ./.github/actions/pr-status-reporter
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: 'build-android-aarch64'
