@@ -7,6 +7,8 @@ permissions:
   contents: read
   checks: write
   pull-requests: write
+  actions: read
+  statuses: write
 
 on:
   issue_comment:
@@ -27,33 +29,52 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       should_run: ${{ steps.check.outputs.should_run }}
+      pr_number: ${{ steps.check.outputs.pr_number }}
+      pr_sha: ${{ steps.check.outputs.pr_sha }}
+      pr_ref: ${{ steps.check.outputs.pr_ref }}
     steps:
       - name: Check if comment triggers CI
         id: check
-        run: |
-          # Check if this is a PR (not a regular issue)
-          if [ "${{ github.event.issue.pull_request }}" == "" ]; then
-            echo "Not a pull request, skipping"
-            echo "should_run=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Check if this is a PR (not a regular issue)
+            if (!context.payload.issue.pull_request) {
+              console.log("Not a pull request, skipping");
+              core.setOutput('should_run', 'false');
+              return;
+            }
 
-          # Check if comment contains "/test" (case-sensitive)
-          if ! echo "${{ github.event.comment.body }}" | grep -q "^/test$\|^/test[[:space:]]\|[[:space:]]/test$\|[[:space:]]/test[[:space:]]"; then
-            echo "Comment does not contain '/test', skipping"
-            echo "should_run=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
+            // Check if comment contains "/test"
+            const comment = context.payload.comment.body;
+            if (!comment.match(/^\/test$|^\/test\s|\s\/test$|\s\/test\s/)) {
+              console.log("Comment does not contain '/test', skipping");
+              core.setOutput('should_run', 'false');
+              return;
+            }
 
-          AUTHOR_ASSOCIATION="${{ github.event.comment.author_association }}"
-          if [ "$AUTHOR_ASSOCIATION" != "OWNER" ] && [ "$AUTHOR_ASSOCIATION" != "MEMBER" ]; then
-            echo "User is not an owner or member (association: $AUTHOR_ASSOCIATION), skipping"
-            echo "should_run=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
+            const authorAssociation = context.payload.comment.author_association;
+            if (authorAssociation !== 'OWNER' && authorAssociation !== 'MEMBER') {
+              console.log(`User is not an owner or member (association: ${authorAssociation}), skipping`);
+              core.setOutput('should_run', 'false');
+              return;
+            }
 
-          echo "All checks passed, CI will run"
-          echo "should_run=true" >> $GITHUB_OUTPUT
+            // Fetch PR details
+            const pr = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number
+            });
+
+            console.log(`PR #${pr.data.number}: ${pr.data.title}`);
+            console.log(`Head SHA: ${pr.data.head.sha}`);
+            console.log(`Head ref: ${pr.data.head.ref}`);
+
+            core.setOutput('should_run', 'true');
+            core.setOutput('pr_number', pr.data.number.toString());
+            core.setOutput('pr_sha', pr.data.head.sha);
+            core.setOutput('pr_ref', pr.data.head.ref);
 
       - name: Add rocket reaction
         if: steps.check.outputs.should_run == 'true'
@@ -77,3 +98,15 @@ jobs:
     secrets: inherit
     with:
       do_all: true
+      pr_ref: ${{ needs.check-trigger.outputs.pr_ref }}
+
+  monitor-status:
+    name: Monitor Build Status
+    if: |
+      github.event_name == 'issue_comment' && needs.check-trigger.outputs.should_run == 'true'
+    needs: [check-trigger]
+    uses: ./.github/workflows/qualcomm-internal-status-monitor.yml
+    secrets: inherit
+    with:
+      workflow_run_id: ${{ github.run_id }}
+      pr_sha: ${{ needs.check-trigger.outputs.pr_sha }}
