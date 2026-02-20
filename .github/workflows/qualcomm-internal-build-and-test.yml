@@ -148,7 +148,7 @@ jobs:
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: 'lint'
-          status_state: 'pending'
+          status_state: 'in_progress'
           status_description: 'Running linter...'
 
       - name: Run Linting Tool
@@ -193,7 +193,7 @@ jobs:
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: 'build-android-aarch64'
-          status_state: 'pending'
+          status_state: 'in_progress'
           status_description: 'Building Android...'
 
       - name: Build Android
