@@ -142,13 +142,13 @@ jobs:
           submodules: recursive
           ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
 
-      - name: Report in_progress status
+      - name: Report pending status
         if: inputs.pr_number != ''
         uses: ./.github/actions/pr-status-reporter
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: 'lint'
-          status_state: 'in_progress'
+          status_state: 'pending'
           status_description: 'Running linter...'
 
       - name: Run Linting Tool
@@ -187,13 +187,13 @@ jobs:
           submodules: recursive
           ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
 
-      - name: Report in_progress status
+      - name: Report pending status
         if: inputs.pr_number != ''
         uses: ./.github/actions/pr-status-reporter
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: 'build-android-aarch64'
-          status_state: 'in_progress'
+          status_state: 'pending'
           status_description: 'Building Android...'
 
       - name: Build Android

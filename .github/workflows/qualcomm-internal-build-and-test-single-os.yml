@@ -141,13 +141,13 @@ jobs:
           submodules: recursive
           ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
 
-      - name: Report in_progress status
+      - name: Report pending status
         if: inputs.pr_number != ''
         uses: ./.github/actions/pr-status-reporter
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
-          status_state: 'in_progress'
+          status_state: 'pending'
           status_description: 'Building...'
 
       - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
@@ -238,13 +238,13 @@ jobs:
           submodules: recursive
           ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
 
-      - name: Report in_progress status
+      - name: Report pending status
         if: inputs.pr_number != ''
         uses: ./.github/actions/pr-status-reporter
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
-          status_state: 'in_progress'
+          status_state: 'pending'
           status_description: 'Running tests...'
 
       - uses: actions/download-artifact@v4
@@ -313,13 +313,13 @@ jobs:
           submodules: recursive
           ref: ${{ inputs.pr_number != '' && steps.pr_details.outputs.ref || github.ref }}
 
-      - name: Report in_progress status
+      - name: Report pending status
         if: inputs.pr_number != ''
         uses: ./.github/actions/pr-status-reporter
         with:
           pr_number: ${{ inputs.pr_number }}
           status_context: test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke
-          status_state: 'in_progress'
+          status_state: 'pending'
           status_description: 'Testing wheel...'
 
       - uses: actions/download-artifact@v4
