@@ -85,6 +85,38 @@ runs:
             }
             console.log(`\n=== End Check Runs ===\n`);
 
+            // Fetch current check suites for the ref using direct REST API
+            console.log(`\n=== Fetching Check Suites for SHA: ${sha} ===`);
+            const checkSuitesResponse = await github.request('GET /repos/{owner}/{repo}/commits/{ref}/check-suites', {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: sha,
+              headers: {
+                'X-GitHub-Api-Version': '2022-11-28'
+              }
+            });
+
+            console.log(`Total check suites found: ${checkSuitesResponse.data.total_count}`);
+            console.log(`\n=== Check Suites Details ===`);
+
+            if (checkSuitesResponse.data.check_suites.length === 0) {
+              console.log('No check suites found for this commit.');
+            } else {
+              checkSuitesResponse.data.check_suites.forEach((suite, index) => {
+                console.log(`\n--- Check Suite ${index + 1} ---`);
+                console.log(`ID: ${suite.id}`);
+                console.log(`Status: ${suite.status}`);
+                console.log(`Conclusion: ${suite.conclusion || 'N/A'}`);
+                console.log(`Head Branch: ${suite.head_branch}`);
+                console.log(`Head SHA: ${suite.head_sha}`);
+                console.log(`Created: ${suite.created_at || 'N/A'}`);
+                console.log(`Updated: ${suite.updated_at || 'N/A'}`);
+                console.log(`URL: ${suite.url}`);
+                console.log(`App: ${suite.app?.name || 'N/A'} (ID: ${suite.app?.id || 'N/A'})`);
+              });
+            }
+            console.log(`\n=== End Check Suites ===\n`);
+
             // Create commit status
             console.log(`Creating commit status: ${statusContext} - ${statusState}`);
             await github.rest.repos.createCommitStatus({
