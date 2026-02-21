@@ -77,6 +77,7 @@ runs:
                 console.log(`ID: ${check.id}`);
                 console.log(`Status: ${check.status}`);
                 console.log(`Conclusion: ${check.conclusion || 'N/A'}`);
+                console.log(`Associated PRs: ${check.pull_requests?.map(pr => `#${pr.number}`).join(', ') || 'None'}`);
                 console.log(`Started: ${check.started_at || 'N/A'}`);
                 console.log(`Completed: ${check.completed_at || 'N/A'}`);
                 console.log(`URL: ${check.html_url}`);
@@ -107,6 +108,7 @@ runs:
                 console.log(`ID: ${suite.id}`);
                 console.log(`Status: ${suite.status}`);
                 console.log(`Conclusion: ${suite.conclusion || 'N/A'}`);
+                console.log(`Associated PRs: ${suite.pull_requests?.map(pr => `#${pr.number}`).join(', ') || 'None'}`);
                 console.log(`Head Branch: ${suite.head_branch}`);
                 console.log(`Head SHA: ${suite.head_sha}`);
                 console.log(`Created: ${suite.created_at || 'N/A'}`);
