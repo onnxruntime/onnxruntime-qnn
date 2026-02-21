@@ -54,7 +54,39 @@ runs:
             core.setOutput('sha', sha);
             core.setOutput('ref', ref);
 
+            // Fetch current check runs for the ref using direct REST API
+            console.log(`\n=== Fetching Check Runs for SHA: ${sha} ===`);
+            const checkRunsResponse = await github.request('GET /repos/{owner}/{repo}/commits/{ref}/check-runs', {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: sha,
+              headers: {
+                'X-GitHub-Api-Version': '2022-11-28'
+              }
+            });
+
+            console.log(`Total check runs found: ${checkRunsResponse.data.total_count}`);
+            console.log(`\n=== Check Runs Details ===`);
+
+            if (checkRunsResponse.data.check_runs.length === 0) {
+              console.log('No check runs found for this commit.');
+            } else {
+              checkRunsResponse.data.check_runs.forEach((check, index) => {
+                console.log(`\n--- Check Run ${index + 1} ---`);
+                console.log(`Name: ${check.name}`);
+                console.log(`ID: ${check.id}`);
+                console.log(`Status: ${check.status}`);
+                console.log(`Conclusion: ${check.conclusion || 'N/A'}`);
+                console.log(`Started: ${check.started_at || 'N/A'}`);
+                console.log(`Completed: ${check.completed_at || 'N/A'}`);
+                console.log(`URL: ${check.html_url}`);
+                console.log(`App: ${check.app?.name || 'N/A'} (ID: ${check.app?.id || 'N/A'})`);
+              });
+            }
+            console.log(`\n=== End Check Runs ===\n`);
+
             // Create commit status
+            console.log(`Creating commit status: ${statusContext} - ${statusState}`);
             await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
