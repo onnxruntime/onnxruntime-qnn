@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <OpDefCollection
-        PackageName="IncrementOpPackage"
+        PackageName="MyAddOpPackage"
         Domain="example"
         Version="1.0"
 >
     <OpDefList>
         <!--Example Op Package which shows how a package can be defined using supplemental info-->
         <OpDef>
-            <Name>Increment</Name>
+            <Name>MyAdd</Name>
             <Description>
                 <Content>
                     An UDO that add constant to input for demo
@@ -19,7 +19,7 @@
                     <Content>input</Content>
                 </Description>
                 <Mandatory>true</Mandatory>
-                <Datatype>QNN_DATATYPE_UFIXED_POINT_8</Datatype>
+                <Datatype>QNN_DATATYPE_FLOAT_32</Datatype>
                 <Shape>
                     <Rank>ND</Rank>
                 </Shape>
@@ -31,7 +31,7 @@
                     <Content>output</Content>
                 </Description>
                 <Mandatory>true</Mandatory>
-                <Datatype>QNN_DATATYPE_UFIXED_POINT_8</Datatype>
+                <Datatype>QNN_DATATYPE_FLOAT_32</Datatype>
                 <Shape>
                     <Rank>ND</Rank>
                 </Shape>
@@ -48,29 +48,8 @@
             </Parameter>
 
             <!--This Op is implemented on these Backends-->
-            <SupportedBackend>HTP</SupportedBackend>
+            <SupportedBackend>CPU</SupportedBackend>
         </OpDef>
     </OpDefList>
-
-    <SupplementalOpDefList Backend="HTP">
-        <SupportedOps>
-            <OpName>Increment</OpName>
-        </SupportedOps>
-
-        <!--Increment-->
-        <SupplementalOpDef>
-            <Name>Increment</Name>
-
-            <Input>
-                <Name>in[0]</Name>
-                <Datatype>QNN_DATATYPE_UFIXED_POINT_8</Datatype>
-            </Input>
-
-            <Output>
-                <Name>out[0]</Name>
-                <Datatype>QNN_DATATYPE_UFIXED_POINT_8</Datatype>
-            </Output>
-        </SupplementalOpDef>
-    </SupplementalOpDefList>
 
 </OpDefCollection>

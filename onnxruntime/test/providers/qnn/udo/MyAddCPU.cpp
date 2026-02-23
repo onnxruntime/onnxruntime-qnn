@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 //==============================================================================
-// Auto Generated Code for IncrementOpPackage
+// Auto Generated Code for MyAddOpPackage
 //==============================================================================
 #include <iostream>
 #include <string>
@@ -78,7 +78,7 @@ Qnn_ErrorHandle_t populateFromNode(const QnnOpPackage_Node_t node,
 
 Qnn_ErrorHandle_t validateOpConfig(Qnn_OpConfig_t opConfig) {
   QNN_CUSTOM_BE_ENSURE_EQ(
-      strcmp(opConfig.v1.typeName, "Increment"), 0, QNN_OP_PACKAGE_ERROR_INVALID_ARGUMENT)
+      strcmp(opConfig.v1.typeName, "MyAdd"), 0, QNN_OP_PACKAGE_ERROR_INVALID_ARGUMENT)
 
   QNN_CUSTOM_BE_ENSURE_EQ(opConfig.v1.numOfInputs, 1, QNN_OP_PACKAGE_ERROR_VALIDATION_FAILURE)
   QNN_CUSTOM_BE_ENSURE_EQ(opConfig.v1.numOfOutputs, 1, QNN_OP_PACKAGE_ERROR_VALIDATION_FAILURE)
@@ -87,10 +87,10 @@ Qnn_ErrorHandle_t validateOpConfig(Qnn_OpConfig_t opConfig) {
 }
 }  // namespace increment
 
-CustomOpRegistration_t* register_IncrementCustomOp() {
+CustomOpRegistration_t* register_MyAddCustomOp() {
   using namespace increment;
-  static CustomOpRegistration_t IncrementRegister = {execute, finalize, nullptr, validateOpConfig, populateFromNode};
-  return &IncrementRegister;
+  static CustomOpRegistration_t MyAddRegister = {execute, finalize, nullptr, validateOpConfig, populateFromNode};
+  return &MyAddRegister;
 }
 
-REGISTER_OP(Increment, register_IncrementCustomOp);
+REGISTER_OP(MyAdd, register_MyAddCustomOp);

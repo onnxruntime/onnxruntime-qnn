@@ -227,6 +227,7 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
 
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
+                     std::shared_ptr<Ort::SessionOptions> session_options,
                      float fp32_abs_err, OrtLoggingLevel log_severity, bool verify_outputs,
                      std::function<void(const Graph&)>* ep_graph_checker) {
   EPVerificationParams verification_params;
@@ -253,14 +254,16 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   // Run with QNN.
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = "QNNExecutionProvider";
-  Ort::SessionOptions session_options;
+  if(!session_options){
+    session_options = std::make_shared<Ort::SessionOptions>();
+  }
 
-  session_options.SetLogSeverityLevel(log_severity);
+  session_options->SetLogSeverityLevel(log_severity);
 
   TryEnableQNNSaver(provider_options);
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, *session_options, registration_name, provider_options);
   RunAndVerifyOutputsWithEP(AsByteSpan(model_data.data(), model_data.size()),
-                            session_options,
+                            *session_options,
                             registration_name,
                             "QNN_EP_TestLogID",
                             helper.feeds_,
@@ -271,7 +274,8 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
 void RunQnnEpTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options, Ort::SessionOptions& session_options,
                   int opset_version, std::vector<Ort::Value>& fetches, OrtLoggingLevel log_severity) {
   // Add kMSDomain to cover contrib op like Gelu
-  const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}, {"my_domain", opset_version}};
+  // Add udo_domain to cover udo feature
+  const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}, {"udo_domain", opset_version}};
 
   ModelTestBuilder helper;
   build_test_case(helper);
@@ -312,12 +316,15 @@ void RunQnnEpTest(const GetTestModelFn& build_test_case, ProviderOptions provide
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
                        ExpectedEPNodeAssignment expected_ep_assignment,
+                       std::shared_ptr<Ort::SessionOptions> session_options,
                        std::unordered_map<std::string, Ort::Value>& feeds,
                        std::vector<Ort::Value>& output_vals) {
-  Ort::SessionOptions session_options;
-  session_options.SetLogId(log_id);
+  if(!session_options){
+    session_options = std::make_shared<Ort::SessionOptions>();
+  }
+  session_options->SetLogId(log_id);
 
-  Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
+  Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), *session_options);
 
   // Prepare inputs using public API
   std::vector<std::string> ort_input_names = session.GetInputNames();
@@ -360,20 +367,23 @@ void InferenceModel(const std::string& model_data,
                     ExpectedEPNodeAssignment expected_ep_assignment,
                     std::unordered_map<std::string, Ort::Value>& feeds,
                     std::vector<Ort::Value>& output_vals,
+                    std::shared_ptr<Ort::SessionOptions> session_options,
                     const std::unordered_map<std::string, std::string>& session_option_pairs,
                     std::function<void(const Graph&)>* graph_checker) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = "QNNExecutionProvider";
-  Ort::SessionOptions session_options;
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
+  if(!session_options){
+    session_options = std::make_shared<Ort::SessionOptions>();
+  }
+  RegisterQnnEpLibrary(registered_ep_device, *session_options, registration_name, provider_options);
 
-  session_options.SetLogId(log_id);
+  session_options->SetLogId(log_id);
 
   // Uncomment to dump verbose output to stdout.
   // session_options.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
 
   for (auto key_value : session_option_pairs) {
-    session_options.AddConfigEntry(key_value.first.c_str(), key_value.second.c_str());
+    session_options->AddConfigEntry(key_value.first.c_str(), key_value.second.c_str());
   }
 
   Ort::RunOptions ort_run_options;
@@ -385,9 +395,9 @@ void InferenceModel(const std::string& model_data,
   if (test_suite_name != "QnnCPUBackendTests" &&
       expected_ep_assignment == ExpectedEPNodeAssignment::All) {
     // ASSERT_EQ(ep_nodes, graph.NumberOfNodes()) << "Not all nodes were assigned to " << registration_name;
-    session_options.AddConfigEntry("session.disable_cpu_ep_fallback", "1");
+    session_options->AddConfigEntry("session.disable_cpu_ep_fallback", "1");
   }
-  Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
+  Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), *session_options);
 
   // TODO: Implement graph_checker once public API for ep partition is ready
   // const auto& graph = ort_session.GetGraph();

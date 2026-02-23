@@ -1,7 +1,7 @@
 
 # QNN User‑Defined Operation (UDO)
 
-A **User‑Defined Operation (UDO)** allows developers to extend the Qualcomm® Neural Network (QNN) runtimes with custom operators. UDO enables execution of operations that are **not natively supported** in the default QNN op set, while maintaining compatibility with model conversion, compilation, and runtime execution.
+A **User‑Defined Operation (UDO)** allows developers to extend the Qualcomm® Neural Network (QNN) runtimes with custom operators. UDO enables execution of operations that are not natively supported in the default QNN op set, while maintaining compatibility with model conversion, compilation, and runtime execution.
 
 ---
 
@@ -28,8 +28,8 @@ The configuration defines:
 - Backend information
 
 Schema references are available in the QNN SDK. You can also
-see [IncrementOpPackageCpu.xml](../../../../onnxruntime/test/providers/qnn/udo/IncrementOpPackageCpu.xml) for CPU backend
-and [IncrementOpPackageHtp.xml](../../../../onnxruntime/test/providers/qnn/udo/IncrementOpPackageHtp.xml) for HTP backend.
+see [MyAddOpPackageCpu.xml](../../../../onnxruntime/test/providers/qnn/udo/MyAddOpPackageCpu.xml) for CPU backend
+and [MyAddOpPackageHtp.xml](../../../../onnxruntime/test/providers/qnn/udo/MyAddOpPackageHtp.xml) for HTP backend.
 
 ---
 
@@ -53,8 +53,8 @@ The generator creates:
 Fill in the generated skeleton:
 
 Your custom logic goes into `src/ops/*.cpp`.
-see [IncrementCPU.cpp](../../../../onnxruntime/test/providers/qnn/udo/IncrementCPU.cpp) for CPU backend
-and [IncrementHTP.cpp](../../../../onnxruntime/test/providers/qnn/udo/IncrementHTP.cpp) for HTP backend.
+see [MyAddCPU.cpp](../../../../onnxruntime/test/providers/qnn/udo/MyAddCPU.cpp) for CPU backend
+and [MyAddHTP.cpp](../../../../onnxruntime/test/providers/qnn/udo/MyAddHTP.cpp) for HTP backend.
 
 ---
 

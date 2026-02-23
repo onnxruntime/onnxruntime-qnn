@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 //==============================================================================
-// Auto Generated Code for IncrementOpPackage
+// Auto Generated Code for MyAddOpPackage
 //==============================================================================
 #include "HTP/core/constraints.h"
 #include "HTP/core/op_package_feature_support.h"
@@ -11,7 +11,7 @@
 #include "HTP/core/simple_reg.h"
 #include "QnnOpPackage.h"
 
-BEGIN_PKG_OP_DEFINITION(PKG_Increment);
+BEGIN_PKG_OP_DEFINITION(PKG_MyAdd);
 
 // op execute function declarations
 template <typename TensorType>
@@ -23,9 +23,9 @@ static float incrementCostFunc(const Op* op);
 /*
  * method 1 for defining op, using default cost value (i.e. GLACIAL) and default flag
  * (Flags::RESOURCE_HVX) syntax: DEF_PACKAGE_OP(F,OP) e.g. DEF_PACKAGE_OP((incrementImpl<Tensor>),
- * "Increment")
+ * "MyAdd")
  */
-DEF_PACKAGE_OP((incrementImpl<Tensor>), "Increment")
+DEF_PACKAGE_OP((incrementImpl<Tensor>), "MyAdd")
 
 /*
  * method 2 for defining op with specified cost value (one of GLACIAL, SNAIL, FAST, FREE)
@@ -33,7 +33,7 @@ DEF_PACKAGE_OP((incrementImpl<Tensor>), "Increment")
  * syntax: DEF_PACKAGE_OP_AND_COST_AND_FLAGS(F,OP,COST,...)
  * can use zero or more flags, FLAG options are IS_CONST, INHIBIT_CONST_PROP,
  * RESOURCE_HVX, RESOURCE_HMX(not supported in external op packages)
- * e.g. DEF_PACKAGE_OP_AND_COST_AND_FLAGS((incrementImpl<PlainFloatTensor>), "Increment", SNAIL)
+ * e.g. DEF_PACKAGE_OP_AND_COST_AND_FLAGS((incrementImpl<PlainFloatTensor>), "MyAdd", SNAIL)
  */
 
 /*
@@ -41,7 +41,7 @@ DEF_PACKAGE_OP((incrementImpl<Tensor>), "Increment")
  * cost function pointer type: typedef float (*cost_function) (const Op * op);
  * syntax: DEF_PACKAGE_OP_AND_COST_F_AND_FLAGS(F,OP,COST_F,...)
  * e.g. DEF_PACKAGE_OP_AND_COST_F_AND_FLAGS((incrementImpl<PlainFloatTensor>),
- * "Increment", incrementCostFunc, Flags::RESOURCE_HVX)
+ * "MyAdd", incrementCostFunc, Flags::RESOURCE_HVX)
  */
 
 /*
@@ -77,7 +77,7 @@ DEF_PACKAGE_OP((incrementImpl<Tensor>), "Increment")
  *       graph construction will skip this parameter when this parameter is not provided at
  *       Qnn_addNode
  */
-DEF_PACKAGE_PARAM_ORDER("Increment", "constant", false, nullptr)
+DEF_PACKAGE_PARAM_ORDER("MyAdd", "constant", false, nullptr)
 
 /* execute functions for ops */
 
@@ -116,4 +116,4 @@ __attribute__((unused)) static float incrementCostFunc(const Op* op) {
 /* At the bottom of the op file, call END_PKG_OP_DEFINITION(<name>),
    where <name> is as BEGIN_PKG_OP_DEFINITION
 */
-END_PKG_OP_DEFINITION(PKG_Increment);
+END_PKG_OP_DEFINITION(PKG_MyAdd);

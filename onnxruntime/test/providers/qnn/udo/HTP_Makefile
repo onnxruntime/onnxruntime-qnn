@@ -35,6 +35,8 @@ HEXAGON_SDK_BASE := $(dir $(HEXAGON_SDK_ROOT))
 $(info "HEXAGON_SDK_ROOT is [${HEXAGON_SDK_ROOT}]")
 # Users should note that the tools version may change between hexagon sdk versions
 # Following combination of SDK and Tool version is supported
+# [Changed]
+# Below paths are updated to adapt to hexagon sdk of community version
 HEXAGON_SDK_ROOT_V68 := $(HEXAGON_SDK_BASE)/6.5.0.0
 HEXAGON_SDK_ROOT_V69 := $(HEXAGON_SDK_BASE)/6.5.0.0
 HEXAGON_SDK_ROOT_V73 := $(HEXAGON_SDK_BASE)/6.5.0.0
@@ -53,6 +55,7 @@ HEXAGON_TOOLS_VERSION_V81 := 19.0.07
 HEXAGON_TOOLS_VERSION_V85 := 19.0.07
 #Updated to point to latest sdk to match with libQnnHtp.so
 HEXAGON_TOOLS_VERSION_X86 := 19.0.07
+# [Changed End]
 
 ifndef ANDROID_NDK_ROOT
 ifeq ($(MAKECMDGOALS),htp_aarch64)

@@ -543,6 +543,7 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
                        ExpectedEPNodeAssignment expected_ep_assignment,
+                       std::shared_ptr<Ort::SessionOptions> session_options,
                        std::unordered_map<std::string, Ort::Value>& feeds,
                        std::vector<Ort::Value>& output_vals);
 
@@ -550,6 +551,7 @@ void InferenceModel(const std::string& model_data,
                     const char* log_id,
                     const ProviderOptions& provider_options,
                     ExpectedEPNodeAssignment expected_ep_assignment,
+                    std::shared_ptr<Ort::SessionOptions> session_options,
                     std::unordered_map<std::string, Ort::Value>& feeds,
                     std::vector<Ort::Value>& output_vals,
                     const std::unordered_map<std::string, std::string>& session_option_pairs = {},
@@ -726,6 +728,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                                  const GetTestQDQModelFn<QuantType>& qdq_model_fn,
                                  ProviderOptions qnn_options, int opset_version,
                                  ExpectedEPNodeAssignment expected_ep_assignment,
+                                 std::shared_ptr<Ort::SessionOptions> session_options = nullptr,
                                  QDQTolerance tolerance = QDQTolerance(),
                                  logging::Severity log_severity = logging::Severity::kERROR,
                                  const std::string& qnn_ctx_model_path = "",
@@ -756,8 +759,12 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run f32 model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_f32_outputs;
-  InferenceModelCPU(f32_model_data, "f32_model_logger", ExpectedEPNodeAssignment::All,
-                    f32_helper.feeds_, cpu_f32_outputs);
+  InferenceModelCPU(f32_model_data,
+                    "f32_model_logger",
+                    ExpectedEPNodeAssignment::All,
+                    session_options,
+                    f32_helper.feeds_,
+                    cpu_f32_outputs);
   ASSERT_FALSE(cpu_f32_outputs.empty());
 
   const size_t num_outputs = cpu_f32_outputs.size();
@@ -806,8 +813,12 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_qdq_outputs;
-  InferenceModelCPU(qdq_model_data, "qdq_model_logger", ExpectedEPNodeAssignment::All,
-                    qdq_helper.feeds_, cpu_qdq_outputs);
+  InferenceModelCPU(qdq_model_data,
+                    "qdq_model_logger",
+                    ExpectedEPNodeAssignment::All,
+                    nullptr,
+                    qdq_helper.feeds_,
+                    cpu_qdq_outputs);
 
   TryEnableQNNSaver(qnn_options);
   // Run with QNN.
@@ -822,6 +833,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                    "qnn_ctx_model_logger",
                    qnn_options,
                    expected_ep_assignment,
+                   session_options,
                    qdq_helper.feeds_,
                    qnn_qdq_outputs,
                    session_option_pairs);
@@ -830,6 +842,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                    "qdq_model_logger",
                    qnn_options,
                    expected_ep_assignment,
+                   session_options,
                    qdq_helper.feeds_,
                    qnn_qdq_outputs,
                    session_option_pairs,
@@ -977,8 +990,12 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run f32 model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_f32_outputs;
-  InferenceModelCPU(f32_model_data, "f32_model_logger", ExpectedEPNodeAssignment::All,
-                    f32_helper.feeds_, cpu_f32_outputs);
+  InferenceModelCPU(f32_model_data,
+                    "f32_model_logger",
+                    ExpectedEPNodeAssignment::All,
+                    nullptr,
+                    f32_helper.feeds_,
+                    cpu_f32_outputs);
   ASSERT_FALSE(cpu_f32_outputs.empty());
 
   const size_t num_outputs = cpu_f32_outputs.size();
@@ -1021,8 +1038,12 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_f16_outputs;
-  InferenceModelCPU(f16_model_data, "fp16_model_logger", ExpectedEPNodeAssignment::All,
-                    f16_helper.feeds_, cpu_f16_outputs);
+  InferenceModelCPU(f16_model_data,
+                    "fp16_model_logger",
+                    ExpectedEPNodeAssignment::All,
+                    nullptr,
+                    f16_helper.feeds_,
+                    cpu_f16_outputs);
 
   TryEnableQNNSaver(qnn_options);
 
@@ -1038,6 +1059,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                    "qnn_ctx_model_logger",
                    qnn_options,
                    expected_ep_assignment,
+                   nullptr,
                    f16_helper.feeds_,
                    qnn_f16_outputs,
                    session_option_pairs);
@@ -1046,6 +1068,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                    "fp16_model_logger",
                    qnn_options,
                    expected_ep_assignment,
+                   nullptr,
                    f16_helper.feeds_,
                    qnn_f16_outputs,
                    session_option_pairs);
@@ -1353,6 +1376,7 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
  */
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
+                     std::shared_ptr<Ort::SessionOptions> session_options = nullptr,
                      float fp32_abs_err = 1e-5f,
                      OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                      bool verify_outputs = true,
