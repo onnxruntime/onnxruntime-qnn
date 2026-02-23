@@ -85,6 +85,14 @@ static void RunReduceTest(const std::string& op_type,
   provider_options["offload_graph_io_quantization"] = "0";
   if (enable_fp16) {
     provider_options["backend_type"] = "htp";
+#if defined(_WIN32)
+    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+      GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+    }
+#endif
+#if defined(__linux__) && !defined(__aarch64__)
+    provider_options["soc_model"] = "87";
+#endif
     provider_options["enable_htp_fp16_precision"] = "1";
   } else {
     provider_options["backend_type"] = "cpu";
@@ -330,8 +338,7 @@ TEST_F(QnnCPUBackendTests, ReduceL2Opset13) {
 //
 // Failed QNN Opvalidation because of 5D input. It runs OK if bypass the op validation
 // Issue fixed in 2.30
-TEST_F(QnnHTPBackendTests, ReduceSumOpset11_5D_FP16) {
-  QNN_SKIP_TEST_IF_HTP_FP16_UNSUPPORTED();
+TEST_F(QnnHTPBackendTests, ReduceSumOpset11_5D_FP32_as_FP16) {
   float fp32_abs_err = 3e-2f;
   bool enable_fp16 = true;
   RunReduceTest<float>("ReduceSum",

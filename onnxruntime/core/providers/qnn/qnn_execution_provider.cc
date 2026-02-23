@@ -767,6 +767,15 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                 ("BF16 mode enabled with compatible hardware: SoC " + std::to_string(soc_model)).c_str());
   }
 
+  // Check FP16 precision compatibility.
+  if (enable_HTP_FP16_precision_ && soc_model == QNN_SOC_MODEL_UNKNOWN) {
+    const std::string message =
+        "FP16 precision mode is enabled but soc_model is not specified. "
+        "Both parameters must be set together for FP16 precision support.";
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
+    throw std::runtime_error(message);
+  }
+
   if (disable_cpu_ep_fallback_ && model_settings_.offload_graph_io_quantization) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_INFO,

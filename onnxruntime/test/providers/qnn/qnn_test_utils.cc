@@ -471,13 +471,8 @@ static BackendSupport GetHTPSupport(const onnxruntime::logging::Logger& logger) 
 }
 
 void QnnHTPBackendTests::SetUp() {
-  if (cached_htp_support_ == BackendSupport::SUPPORTED) {
-    return;
-  }
-
   const auto& logger = DefaultLoggingManager().DefaultLogger();
 
-  // Determine if HTP backend is supported only if we done so haven't before.
   if (cached_htp_support_ == BackendSupport::SUPPORT_UNKNOWN) {
     cached_htp_support_ = GetHTPSupport(logger);
   }
@@ -490,10 +485,8 @@ void QnnHTPBackendTests::SetUp() {
     FAIL();
   }
 
-  // query the platform attributes if not already cached.
   if (!cached_platform_attrs_.has_value()) {
     QnnPlatformAttributes attrs;
-
     Status query_status = QueryQnnPlatformAttributesDirectly(attrs, logger);
     if (!query_status.IsOK()) {
       LOGS(logger, WARNING) << "QueryQnnPlatformAttributesDirectly failed: " << query_status.ErrorMessage();
@@ -509,15 +502,7 @@ void QnnHTPBackendTests::SetUp() {
   }
 }
 
-// TODO
-// There is an unknown behavior that "soc_model" config somehow remains in HTP backend throughout different testcases
-// within the same process. Once the option "soc_model=60" is set, all following testcases would be implicitly applied
-// (which can be checked in verbose logging). This problem causes QnnHTPBackendTests.Inverse_2d/3d/4d on Linux failed
-// with accuracy issue 0.259040415 vs. 0.256103545. Although this precision mismatch may be expected as HTP fp16/fp32
-// behaviors could differ on different platforms, here adopts workaround to avoid modifying non-ABI parts. Concretely,
-// "soc_model=30", which is the default setting, is set to HTP backend again after QnnHTPBackendTests testsuite is
-// completed. Note that this is not an ABI-specific issue and exists in non-ABI UT as well but it is not observed
-// previously due to the execution order of testcases.
+// QNN caches soc_model at process level; reset it after the suite to prevent cross-test contamination.
 void QnnHTPBackendTests::TearDownTestSuite() {
 #if !defined(__aarch64__) && !defined(_M_ARM64)
   if (cached_htp_support_ != BackendSupport::SUPPORTED) {
@@ -559,7 +544,7 @@ void QnnHTPBackendTests::TearDownTestSuite() {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = onnxruntime::kQnnExecutionProvider;
   Ort::SessionOptions session_options;
-  ProviderOptions provider_options = {{"backend_type", "htp"}, {"soc_model", "30"}};
+  ProviderOptions provider_options = {{"backend_type", "htp"}, {"soc_model", "0"}};
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
 
   OrtEpFactory* qnn_ep_factory = registered_ep_device->GetMutableFactory();
