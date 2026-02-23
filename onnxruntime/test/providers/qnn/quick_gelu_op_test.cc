@@ -24,6 +24,14 @@ static void RunQuickGeluTest(const TestInputDef<DataType>& input_def,
   provider_options["backend_type"] = backend_name;
 
   if (backend_name == "htp") {
+#if defined(_WIN32)
+    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+      GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+    }
+#endif
+#if defined(__linux__) && !defined(__aarch64__)
+    provider_options["soc_model"] = "87";
+#endif
     provider_options["enable_htp_fp16_precision"] = "1";
   }
 

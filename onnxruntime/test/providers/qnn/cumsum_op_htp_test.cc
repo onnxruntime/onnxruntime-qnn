@@ -27,7 +27,9 @@ static void RunCumSumOpTest(const std::string& op_type,
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = "87";
+#endif
 
   // Runs model with a Q/DQ binary op and compares the outputs of the CPU and QNN EPs.
   RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>(op_type, {input_def_1}, {input_def_2}, attrs),

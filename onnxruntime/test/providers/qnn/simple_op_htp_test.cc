@@ -201,6 +201,14 @@ static void RunOpTest(const std::string& op_type,
   provider_options["backend_type"] = "htp";
 
   if (enable_htp_fp16_precision) {
+#if defined(_WIN32)
+    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+      GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+    }
+#endif
+#if defined(__linux__) && !defined(__aarch64__)
+    provider_options["soc_model"] = "87";
+#endif
     provider_options["enable_htp_fp16_precision"] = "1";
   }
 
@@ -228,6 +236,14 @@ static void RunOpTest(const std::string& op_type,
   provider_options["backend_type"] = "htp";
 
   if (enable_htp_fp16_precision) {
+#if defined(_WIN32)
+    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+      GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+    }
+#endif
+#if defined(__linux__) && !defined(__aarch64__)
+    provider_options["soc_model"] = "87";
+#endif
     provider_options["enable_htp_fp16_precision"] = "1";
   }
 
@@ -1318,19 +1334,29 @@ TEST_F(QnnHTPBackendTests, ScatterElements_Float_Reduction_None) {
   std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
   std::vector<int64_t> indices = {1};
   std::vector<float> updates = {10.0f};
-  RunOpTest<float, int64_t>("ScatterElements",
-                            {
-                                TestInputDef<float>({4}, false, std::move(data)),
-                            },
-                            {
-                                TestInputDef<int64_t>({1}, false, std::move(indices)),
-                            },
-                            {
-                                TestInputDef<float>({1}, false, std::move(updates)),
-                            },
-                            {},
-                            17,
-                            ExpectedEPNodeAssignment::All);
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = "87";
+#endif
+
+  RunQnnModelTest(BuildOpTestCase<float, int64_t>(
+            "ScatterElements",
+            {
+              TestInputDef<float>({4}, false, std::move(data)),
+            },
+            {
+              TestInputDef<int64_t>({1}, false, std::move(indices)),
+            },
+            {
+              TestInputDef<float>({1}, false, std::move(updates)),
+            },
+            {},
+            kOnnxDomain),
+          provider_options,
+          17,
+          ExpectedEPNodeAssignment::All);
 }
 
 // Test ScatterElements with default attributes on HTP
@@ -1756,8 +1782,7 @@ TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_QDQ_Supported) {
 
 // Check that QNN EP can support float32 HardSigmoid on HTP.
 // Enables running f32 ops using fp16 precision.
-TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_F32_as_FP16) {
-  QNN_SKIP_TEST_IF_HTP_FP16_UNSUPPORTED();
+TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_FP32_as_FP16) {
   std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 16);
 
   RunOpTest<float>("HardSigmoid",
@@ -1783,8 +1808,6 @@ TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_F32_as_FP16) {
 
 // Check that QNN EP can support float16 HardSigmoid on HTP
 TEST_F(QnnHTPBackendTests, UnaryOp_HardSigmoid_FP16) {
-  QNN_SKIP_TEST_IF_HTP_FP16_UNSUPPORTED();
-
   std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 16);
 
   RunFP16OpTest("HardSigmoid",
@@ -1837,11 +1860,17 @@ static GetTestModelFn BuildHardSigmoidFusionTestCase(TestInputDef<FloatType>& in
 // Test FP32 fusion of HardSigmoid into HardSwish on the HTP backend with the enable_htp_fp16_precision option enabled
 // to run it with fp16 precision.
 TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP32_as_FP16) {
-  QNN_SKIP_TEST_IF_HTP_FP16_UNSUPPORTED();
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = "htp";
-
+#if defined(_WIN32)
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = "87";
+#endif
   provider_options["enable_htp_fp16_precision"] = "1";
 
   std::vector<float> input_data = {-8.0f, -2.0f, 0.0f, 0.5f, 0.9f, 1.1f, 3.3f, 8.0f,
@@ -1861,10 +1890,12 @@ TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP32_as_FP16) {
 
 // Test FP16 fusion of HardSigmoid into HardSwish on the HTP backend.
 TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP16) {
-  QNN_SKIP_TEST_IF_HTP_FP16_UNSUPPORTED();
-
+#if defined(_WIN32)
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
   ProviderOptions provider_options;
-
   provider_options["backend_type"] = "htp";
 
   std::vector<float> input_data = {-8.0f, -2.0f, 0.0f, 0.5f, 0.9f, 1.1f, 3.3f, 8.0f,

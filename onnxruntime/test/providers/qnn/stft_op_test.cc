@@ -28,6 +28,9 @@ static void RunStftOpTest(const TestInputDef<SignalType>& signal_def,
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = "87";
+#endif
 
   // Create a model builder function
   auto build_test_case = [signal_def, frame_step_def, window_def, frame_length_def, attrs](ModelTestBuilder& builder) {
