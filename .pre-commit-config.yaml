@@ -1,0 +1,9 @@
+repos:
+  - repo: local
+    hooks:
+      - id: qcom-lint-and-fix
+        name: lint_and_fix
+        entry: ./qcom/build_and_test.py lint_and_fix
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
