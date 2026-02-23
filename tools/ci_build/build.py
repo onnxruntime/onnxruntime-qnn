@@ -24,7 +24,6 @@ from util import (  # noqa: E402
     generate_windows_triplets,
     get_logger,
     is_linux,
-    is_macOS,
     is_windows,
     parse_qnn_version_from_sdk_yaml,
     run,
@@ -522,11 +521,8 @@ def generate_build_tree(
                 cxxflags = cflags.copy()
                 if not args.disable_exceptions:
                     cxxflags.append("/EHsc")
-            elif is_linux() or is_macOS():
-                if is_linux():
-                    ldflags = ["-Wl,-Bsymbolic-functions", "-Wl,-z,relro", "-Wl,-z,now", "-Wl,-z,noexecstack"]
-                else:
-                    ldflags = []
+            elif is_linux():
+                ldflags = ["-Wl,-Bsymbolic-functions", "-Wl,-z,relro", "-Wl,-z,now", "-Wl,-z,noexecstack"]
                 if config == "Release":
                     cflags = [
                         "-DNDEBUG",
@@ -566,7 +562,7 @@ def generate_build_tree(
                         "-pipe",
                         "-g",
                     ]
-                if is_linux() and platform.machine() == "x86_64":
+                if platform.machine() == "x86_64":
                     # The following flags needs GCC 8 and newer
                     cflags += ["-fstack-clash-protection"]
                     if not args.rv64:
@@ -917,7 +913,7 @@ def main():
     if args.android and args.use_vcpkg and args.android_ndk_path is not None and os.path.exists(args.android_ndk_path):
         os.environ["ANDROID_NDK_HOME"] = args.android_ndk_path
 
-    if not is_windows() and not is_macOS():
+    if not is_windows():
         if not args.allow_running_as_root:
             is_root_user = os.geteuid() == 0
             if is_root_user:

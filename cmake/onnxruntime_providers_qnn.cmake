@@ -35,13 +35,9 @@
   endif()
   message(STATUS "QNN SDK version ${QNN_SDK_VERSION}")
 
-  # TODO: Can we remove this line?
-  set(onnxruntime_providers_qnn_srcs ${onnxruntime_providers_qnn_ep_srcs})
+  source_group(TREE ${ONNXRUNTIME_ROOT}/core FILES ${onnxruntime_providers_qnn_ep_srcs})
 
-  # TODO: Investigate the source_group
-  # source_group(TREE ${ONNXRUNTIME_ROOT}/core FILES ${onnxruntime_providers_qnn_srcs})
-
-  set(onnxruntime_providers_qnn_all_srcs ${onnxruntime_providers_qnn_srcs})
+  set(onnxruntime_providers_qnn_all_srcs ${onnxruntime_providers_qnn_ep_srcs})
   if(WIN32)
     # Sets the DLL version info on Windows: https://learn.microsoft.com/en-us/windows/win32/menurc/versioninfo-resource
     list(APPEND onnxruntime_providers_qnn_all_srcs "${ONNXRUNTIME_ROOT}/core/providers/qnn/onnxruntime_providers_qnn.rc")
@@ -50,7 +46,6 @@
   onnxruntime_add_shared_library_module(onnxruntime_providers_qnn ${onnxruntime_providers_qnn_all_srcs})
   onnxruntime_add_include_to_target(onnxruntime_providers_qnn ${GSL_TARGET} safeint_interface nlohmann_json::nlohmann_json)
 
-  # TODO: Investigate whether we need ${CMAKE_DL_LIBS} in the target_link_libraries
   target_link_libraries(onnxruntime_providers_qnn PRIVATE ${ABSEIL_LIBS})
 
   add_dependencies(onnxruntime_providers_qnn ort_repo)
