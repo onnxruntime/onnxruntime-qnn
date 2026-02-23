@@ -1342,21 +1342,21 @@ TEST_F(QnnHTPBackendTests, ScatterElements_Float_Reduction_None) {
 #endif
 
   RunQnnModelTest(BuildOpTestCase<float, int64_t>(
-            "ScatterElements",
-            {
-              TestInputDef<float>({4}, false, std::move(data)),
-            },
-            {
-              TestInputDef<int64_t>({1}, false, std::move(indices)),
-            },
-            {
-              TestInputDef<float>({1}, false, std::move(updates)),
-            },
-            {},
-            kOnnxDomain),
-          provider_options,
-          17,
-          ExpectedEPNodeAssignment::All);
+                      "ScatterElements",
+                      {
+                          TestInputDef<float>({4}, false, std::move(data)),
+                      },
+                      {
+                          TestInputDef<int64_t>({1}, false, std::move(indices)),
+                      },
+                      {
+                          TestInputDef<float>({1}, false, std::move(updates)),
+                      },
+                      {},
+                      kOnnxDomain),
+                  provider_options,
+                  17,
+                  ExpectedEPNodeAssignment::All);
 }
 
 // Test ScatterElements with default attributes on HTP
