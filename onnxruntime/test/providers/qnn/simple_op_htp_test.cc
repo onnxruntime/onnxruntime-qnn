@@ -207,7 +207,7 @@ static void RunOpTest(const std::string& op_type,
     }
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
-    provider_options["soc_model"] = "87";
+    provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
     provider_options["enable_htp_fp16_precision"] = "1";
   }
@@ -242,7 +242,7 @@ static void RunOpTest(const std::string& op_type,
     }
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
-    provider_options["soc_model"] = "87";
+    provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
     provider_options["enable_htp_fp16_precision"] = "1";
   }
@@ -1338,7 +1338,7 @@ TEST_F(QnnHTPBackendTests, ScatterElements_Float_Reduction_None) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 #if defined(__linux__) && !defined(__aarch64__)
-  provider_options["soc_model"] = "87";
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
 
   RunQnnModelTest(BuildOpTestCase<float, int64_t>(
@@ -1869,7 +1869,7 @@ TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP32_as_FP16) {
   }
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
-  provider_options["soc_model"] = "87";
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
   provider_options["enable_htp_fp16_precision"] = "1";
 

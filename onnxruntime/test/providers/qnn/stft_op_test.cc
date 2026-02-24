@@ -29,7 +29,7 @@ static void RunStftOpTest(const TestInputDef<SignalType>& signal_def,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 #if defined(__linux__) && !defined(__aarch64__)
-  provider_options["soc_model"] = "87";
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
 
   // Create a model builder function

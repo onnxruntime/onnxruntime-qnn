@@ -38,7 +38,7 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_Default) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 #if defined(__linux__) && !defined(__aarch64__)
-  provider_options["soc_model"] = "87";
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
 
   RunQnnModelTest(build_test_case,
@@ -106,7 +106,7 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_MultipleGroups) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 #if defined(__linux__) && !defined(__aarch64__)
-  provider_options["soc_model"] = "87";
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
 
   RunQnnModelTest(build_test_case,
@@ -139,7 +139,7 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_LargeEpsilon) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 #if defined(__linux__) && !defined(__aarch64__)
-  provider_options["soc_model"] = "87";
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
 
   RunQnnModelTest(build_test_case,
@@ -173,7 +173,7 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_3D) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 #if defined(__linux__) && !defined(__aarch64__)
-  provider_options["soc_model"] = "87";
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
 
   RunQnnModelTest(build_test_case,

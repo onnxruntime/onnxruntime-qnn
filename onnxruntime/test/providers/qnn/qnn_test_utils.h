@@ -1403,8 +1403,6 @@ enum class BackendSupport {
 // TODO: Remove once HTP can be emulated on Windows ARM64.
 class QnnHTPBackendTests : public ::testing::Test {
  public:
-  static void TearDownTestSuite();
-
   // Platform capability attributes queried from QNN.
   struct QnnPlatformAttributes {
     QnnHtpDevice_Arch_t htp_arch{QNN_HTP_DEVICE_ARCH_NONE};

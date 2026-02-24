@@ -64,7 +64,7 @@ static void RunCastOpTest(const std::vector<int64_t>& shape, ONNX_NAMESPACE::Ten
       }
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
-      provider_options["soc_model"] = "87";
+      provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
       provider_options["enable_htp_fp16_precision"] = "1";
     } else {

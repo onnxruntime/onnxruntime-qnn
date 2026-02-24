@@ -768,7 +768,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 
   // Enforce SoC model to be set on x86_64 Linux (simulator) when enable FP16.
-  // the HTP backend can determine the SoC itself, so soc_model is not required.
 #if defined(__linux__) && !defined(__aarch64__)
   if (enable_HTP_FP16_precision_ && soc_model == QNN_SOC_MODEL_UNKNOWN) {
     const std::string message =

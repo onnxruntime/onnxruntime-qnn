@@ -1750,7 +1750,7 @@ static void DumpModelWithSharedCtx(ProviderOptions provider_options,
 #ifndef __aarch64__
 #ifndef _M_ARM64
   // weight sharing only available for v73 and higher
-  provider_options["soc_model"] = "60";
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SC8380XP);
 #endif  // !_M_ARM64
 #endif  // !__aarch64__
 

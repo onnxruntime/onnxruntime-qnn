@@ -28,7 +28,7 @@ static void RunCumSumOpTest(const std::string& op_type,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 #if defined(__linux__) && !defined(__aarch64__)
-  provider_options["soc_model"] = "87";
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
 
   // Runs model with a Q/DQ binary op and compares the outputs of the CPU and QNN EPs.
@@ -40,7 +40,6 @@ static void RunCumSumOpTest(const std::string& op_type,
 }
 
 // Non-QDQ model, CumSum with float input and axis input as initializer with axis 0
-// Passed with provider_options["soc_model"] = "87". Failed with default soc_model: 35
 TEST_F(QnnHTPBackendTests, CumSum_float_int32_e0_r0_axis_0) {
   RunCumSumOpTest<float, int32_t>("CumSum",
                                   TestInputDef<float>({3, 2}, false, {1.3f, 7.2f, 0.4f, 3.4f, 5.7f, 0.8f}),
@@ -52,7 +51,6 @@ TEST_F(QnnHTPBackendTests, CumSum_float_int32_e0_r0_axis_0) {
 }
 
 // Non-QDQ model, CumSum with float input and axis input as initializer with axis -1
-// Passed with provider_options["soc_model"] = "87". Failed with default soc_model: 35
 TEST_F(QnnHTPBackendTests, CumSum_float_int32_e0_r0_axis_neg1) {
   RunCumSumOpTest<float, int32_t>("CumSum",
                                   TestInputDef<float>({3, 2}, false, {1.3f, 7.2f, 0.4f, 3.4f, 5.7f, 0.8f}),
@@ -64,7 +62,6 @@ TEST_F(QnnHTPBackendTests, CumSum_float_int32_e0_r0_axis_neg1) {
 }
 
 // Test int64 axis
-// Passed with provider_options["soc_model"] = "87". Failed with default soc_model: 35
 TEST_F(QnnHTPBackendTests, CumSum_float_int64_e0_r0_axis_1) {
   RunCumSumOpTest<float, int64_t>("CumSum",
                                   TestInputDef<float>({3, 2}, false, {1.3f, 7.2f, 0.4f, 3.4f, 5.7f, 0.8f}),

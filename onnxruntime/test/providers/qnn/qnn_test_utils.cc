@@ -502,64 +502,6 @@ void QnnHTPBackendTests::SetUp() {
   }
 }
 
-// QNN caches soc_model at process level; reset it after the suite to prevent cross-test contamination.
-void QnnHTPBackendTests::TearDownTestSuite() {
-#if !defined(__aarch64__) && !defined(_M_ARM64)
-  if (cached_htp_support_ != BackendSupport::SUPPORTED) {
-    return;
-  }
-
-  const auto& logger = DefaultLoggingManager().DefaultLogger();
-
-  // Build simple Relu graph.
-  onnxruntime::Model model("TearDown QnnHTPBackendTests", false, logger);
-  Graph& graph = model.MainGraph();
-  ModelTestBuilder helper(graph);
-
-  auto build_test_case = BuildOpTestCase<float, float>(
-      "Relu",
-      {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f)},
-      {},
-      {});
-
-  build_test_case(helper);
-  helper.SetGraphOutputs();
-  auto status = model.MainGraph().Resolve();
-  if (!status.IsOK()) {
-    LOGS(logger, WARNING) << "Failed to tear down QnnHTPBackendTests.";
-    return;
-  }
-
-  // Create QNN EP and call GetCapability().
-  onnxruntime::GraphViewer graph_viewer(graph);
-  std::unique_ptr<EpGraph> ep_graph = nullptr;
-  if (!EpGraph::Create(graph_viewer, ep_graph).IsOK()) {
-    LOGS(logger, WARNING) << "Failed to tear down QnnHTPBackendTests.";
-    return;
-  }
-
-  MockKernelLookup kernel_lookup;
-  OrtEpGraphSupportInfo graph_support_info(*ep_graph, kernel_lookup);
-
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string& registration_name = onnxruntime::kQnnExecutionProvider;
-  Ort::SessionOptions session_options;
-  ProviderOptions provider_options = {{"backend_type", "htp"}, {"soc_model", "0"}};
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
-
-  OrtEpFactory* qnn_ep_factory = registered_ep_device->GetMutableFactory();
-  OrtEp* qnn_ep = nullptr;
-  if (qnn_ep_factory->CreateEp(qnn_ep_factory, nullptr, nullptr, 0, session_options, logger.ToExternal(), &qnn_ep)) {
-    qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
-    LOGS(logger, WARNING) << "Failed to tear down QnnHTPBackendTests.";
-    return;
-  }
-
-  status = ToStatusAndRelease(qnn_ep->GetCapability(qnn_ep, ep_graph->ToExternal(), &graph_support_info));
-  qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
-#endif  // !defined(__aarch64__) && !defined(_M_ARM64)
-}
-
 // Checks if Qnn Gpu backend can run a graph on the system.
 // Creates a one node graph with relu op,
 // then calls QNN EP's GetCapability() function
