@@ -197,9 +197,9 @@ set(onnxruntime_test_common_libs
 set (onnxruntime_test_providers_dependencies ${onnxruntime_EXTERNAL_DEPENDENCIES})
 set(onnxruntime_test_framework_src_patterns)
 if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_REDUCED_OPS_BUILD)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_test_utils.cc)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_test_utils.h)
   if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
-    list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_test_utils.cc)
-    list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_test_utils.h)
     list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn)
   endif()
 endif()
@@ -224,13 +224,13 @@ else()
     target_compile_options(onnxruntime_test_utils PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Wno-error=character-conversion>")
   endif()
 endif()
-onnxruntime_add_include_to_target(onnxruntime_test_utils GTest::gtest GTest::gmock onnx onnx_proto flatbuffers::flatbuffers nlohmann_json::nlohmann_json Boost::mp11 safeint_interface Eigen3::Eigen)
+onnxruntime_add_include_to_target(onnxruntime_test_utils GTest::gtest GTest::gmock onnx onnx_proto flatbuffers::flatbuffers nlohmann_json::nlohmann_json Boost::mp11 safeint_interface Eigen3::Eigen ${GSL_TARGET} date::date)
 add_dependencies(onnxruntime_test_utils ${onnxruntime_EXTERNAL_DEPENDENCIES})
-target_include_directories(onnxruntime_test_utils PRIVATE
+target_include_directories(onnxruntime_test_utils PUBLIC "${TEST_SRC_DIR}/util/include"
+                           PRIVATE
                            ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT}
                            ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}
                            ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session
-                           "${TEST_SRC_DIR}/util/include"
                            )
 set_target_properties(onnxruntime_test_utils PROPERTIES FOLDER "ONNXRuntimeTest")
 source_group(TREE ${TEST_SRC_DIR} FILES ${onnxruntime_test_utils_src})
@@ -321,18 +321,6 @@ block()
 
   # For onnxruntime_cxx_api.h
   target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session)
-
-  add_custom_command(
-    TARGET onnxruntime_provider_test POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:onnxruntime> $<TARGET_FILE_DIR:onnxruntime_provider_test>
-    COMMENT "Copying onnxruntime.dll to Build Folder for unittests"
-  )
-
-  add_custom_command(
-    TARGET onnxruntime_provider_test POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy ${onnxruntime_ORT_HOME}/lib/onnxruntime_providers_shared.dll $<TARGET_FILE_DIR:onnxruntime_provider_test>
-    COMMENT "Copying onnxruntime_providers_shared.dll to Build Folder for unittests"
-  )
 
   # Exclude test_dynamic_plugin_ep when using prebuilt ONNX Runtime
   # TODO: Evaluate whether we can enable test_dynamic_plugin_ep with public API

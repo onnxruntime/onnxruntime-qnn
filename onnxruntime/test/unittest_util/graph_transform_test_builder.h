@@ -641,71 +641,41 @@ class ModelTestBuilder {
   /** Gets the TensorProto_DataType corresponding to the template type `T`. */
   template <typename T>
   constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType() {
-    return ONNX_NAMESPACE::TensorProto_DataType_UNDEFINED;
-  }
-  template <>
-  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<float>() {
-    return ONNX_NAMESPACE::TensorProto_DataType_FLOAT;
-  }
-  template <>
-  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<uint8_t>() {
-    return ONNX_NAMESPACE::TensorProto_DataType_UINT8;
-  }
-  template <>
-  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<int8_t>() {
-    return ONNX_NAMESPACE::TensorProto_DataType_INT8;
-  }
-  template <>
-  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<uint16_t>() {
-    return ONNX_NAMESPACE::TensorProto_DataType_UINT16;
-  }
-  template <>
-  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<int16_t>() {
-    return ONNX_NAMESPACE::TensorProto_DataType_INT16;
-  }
-  template <>
-  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<int32_t>() {
-    return ONNX_NAMESPACE::TensorProto_DataType_INT32;
-  }
-  template <>
-  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<int64_t>() {
-    return ONNX_NAMESPACE::TensorProto_DataType_INT64;
-  }
-  template <>
-  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<std::string>() {
-    return ONNX_NAMESPACE::TensorProto_DataType_STRING;
-  }
-  template <>
-  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<bool>() {
-    return ONNX_NAMESPACE::TensorProto_DataType_BOOL;
-  }
-  template <>
-  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<Ort::Float16_t>() {
-    return ONNX_NAMESPACE::TensorProto_DataType_FLOAT16;
-  }
-  template <>
-  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<double>() {
-    return ONNX_NAMESPACE::TensorProto_DataType_DOUBLE;
-  }
-  template <>
-  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<uint32_t>() {
-    return ONNX_NAMESPACE::TensorProto_DataType_UINT32;
-  }
-  template <>
-  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<uint64_t>() {
-    return ONNX_NAMESPACE::TensorProto_DataType_UINT64;
-  }
-  template <>
-  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<Ort::BFloat16_t>() {
-    return ONNX_NAMESPACE::TensorProto_DataType_BFLOAT16;
-  }
-  template <>
-  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<UInt4x2>() {
-    return ONNX_NAMESPACE::TensorProto_DataType_UINT4;
-  }
-  template <>
-  constexpr ONNX_NAMESPACE::TensorProto_DataType ToTensorProtoElementType<Int4x2>() {
-    return ONNX_NAMESPACE::TensorProto_DataType_INT4;
+    if constexpr (std::is_same_v<T, float>) {
+      return ONNX_NAMESPACE::TensorProto_DataType_FLOAT;
+    } else if constexpr (std::is_same_v<T, uint8_t>) {
+      return ONNX_NAMESPACE::TensorProto_DataType_UINT8;
+    } else if constexpr (std::is_same_v<T, int8_t>) {
+      return ONNX_NAMESPACE::TensorProto_DataType_INT8;
+    } else if constexpr (std::is_same_v<T, uint16_t>) {
+      return ONNX_NAMESPACE::TensorProto_DataType_UINT16;
+    } else if constexpr (std::is_same_v<T, int16_t>) {
+      return ONNX_NAMESPACE::TensorProto_DataType_INT16;
+    } else if constexpr (std::is_same_v<T, int32_t>) {
+      return ONNX_NAMESPACE::TensorProto_DataType_INT32;
+    } else if constexpr (std::is_same_v<T, int64_t>) {
+      return ONNX_NAMESPACE::TensorProto_DataType_INT64;
+    } else if constexpr (std::is_same_v<T, std::string>) {
+      return ONNX_NAMESPACE::TensorProto_DataType_STRING;
+    } else if constexpr (std::is_same_v<T, bool>) {
+      return ONNX_NAMESPACE::TensorProto_DataType_BOOL;
+    } else if constexpr (std::is_same_v<T, Ort::Float16_t>) {
+      return ONNX_NAMESPACE::TensorProto_DataType_FLOAT16;
+    } else if constexpr (std::is_same_v<T, double>) {
+      return ONNX_NAMESPACE::TensorProto_DataType_DOUBLE;
+    } else if constexpr (std::is_same_v<T, uint32_t>) {
+      return ONNX_NAMESPACE::TensorProto_DataType_UINT32;
+    } else if constexpr (std::is_same_v<T, uint64_t>) {
+      return ONNX_NAMESPACE::TensorProto_DataType_UINT64;
+    } else if constexpr (std::is_same_v<T, Ort::BFloat16_t>) {
+      return ONNX_NAMESPACE::TensorProto_DataType_BFLOAT16;
+    } else if constexpr (std::is_same_v<T, UInt4x2>) {
+      return ONNX_NAMESPACE::TensorProto_DataType_UINT4;
+    } else if constexpr (std::is_same_v<T, Int4x2>) {
+      return ONNX_NAMESPACE::TensorProto_DataType_INT4;
+    } else {
+      return ONNX_NAMESPACE::TensorProto_DataType_UNDEFINED;
+    }
   }
 };
 
