@@ -247,11 +247,13 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
 
   {
     CreateGroupNormOpBuilder("GroupNormalization", *this);
+    CreateGroupNormOpBuilder("GroupNorm", *this);
   }
 
   {
     CreateTanOpBuilder("Tan", *this);
   }
+
 }
 
 const IOpBuilder* GetOpBuilder(const std::string& onnx_op_type) {
