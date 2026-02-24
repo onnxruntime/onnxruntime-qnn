@@ -62,7 +62,10 @@ class QNNExecutionProvider : public IExecutionProvider {
 
   Status SetEpDynamicOptions(gsl::span<const char* const> keys,
                              gsl::span<const char* const> value) override;
-
+  uint64_t GetKvCacheRewindValue() const noexcept {
+              return genie_kv_cache_rewind_.load(std::memory_order_acquire); }
+  void ResetKvCacheRewindValue() noexcept {
+              genie_kv_cache_rewind_.store(0, std::memory_order_release);  }
  private:
   std::unordered_set<const Node*> GetSupportedNodes(const GraphViewer& graph_viewer,
                                                     const std::unordered_map<const Node*, const NodeUnit*>& node_unit_map,
@@ -142,6 +145,7 @@ class QNNExecutionProvider : public IExecutionProvider {
   mutable std::shared_ptr<qnn::GenieBackendManager> genie_backend_manager_;
   mutable std::shared_ptr<GenieApiLoader> genie_api_loader_;
   GenieLog_Level_t genie_log_level_ = GENIE_LOG_LEVEL_INFO;
+  std::atomic<uint64_t> genie_kv_cache_rewind_{0};
 };
 
 }  // namespace onnxruntime

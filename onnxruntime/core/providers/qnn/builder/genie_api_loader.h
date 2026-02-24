@@ -5,6 +5,10 @@
 #include <stdexcept>
 #include <vector>
 
+namespace onnxruntime {
+class QNNExecutionProvider;   // ← declare the type name only
+}
+
 
 // Genie symbol types declarations
 
@@ -13,7 +17,35 @@ typedef void* GenieNode;
 typedef void* GenieLog;
 
 typedef int Genie_Status_t;
-typedef int GenieNode_IOName_t;
+
+typedef enum {
+  GENIE_NODE_TEXT_GENERATOR_TEXT_INPUT            = 0,
+  GENIE_NODE_TEXT_GENERATOR_EMBEDDING_INPUT       = 1,
+  GENIE_NODE_TEXT_GENERATOR_TEXT_OUTPUT           = 2,
+  GENIE_NODE_TEXT_ENCODER_TEXT_INPUT              = 100,
+  GENIE_NODE_TEXT_ENCODER_EMBEDDING_OUTPUT        = 101,
+  GENIE_NODE_IMAGE_ENCODER_IMAGE_INPUT            = 200,
+  GENIE_NODE_IMAGE_ENCODER_EMBEDDING_OUTPUT       = 201,
+  GENIE_NODE_IMAGE_ENCODER_IMAGE_POS_SIN          = 202,
+  GENIE_NODE_IMAGE_ENCODER_IMAGE_POS_COS          = 203,
+  GENIE_NODE_IMAGE_ENCODER_IMAGE_FULL_ATTN_MASK   = 204,
+  GENIE_NODE_IMAGE_ENCODER_IMAGE_WINDOW_ATTN_MASK = 205,
+
+  // model specific
+  GENIE_NODE_IMAGE_ENCODER_PRETILE_EMBEDDING_INPUT   = 206,  // Llama3.2-11B
+  GENIE_NODE_IMAGE_ENCODER_POSTTILE_EMBEDDING_INPUT  = 207,  // Llama3.2-11B
+  GENIE_NODE_IMAGE_ENCODER_GATED_POS_EMBEDDING_INPUT = 208,  // Llama3.2-11B
+
+  // encoder decoder
+  GENIE_NODE_DIFFUSER_TEXT_EMBEDDING_INPUT   = 300,
+  GENIE_NODE_DIFFUSER_IMAGE_EMBEDDING_OUTPUT = 301,
+  GENIE_NODE_DIFFUSER_NOISE_INPUT            = 302,
+  GENIE_NODE_DIFFUSER_TIMESTEP_INPUT         = 303,
+
+  GENIE_NODE_LM_EXECUTOR_TOKEN_INPUT     = 400,
+  GENIE_NODE_LM_EXECUTOR_EMBEDDING_INPUT = 401,
+  GENIE_NODE_LM_EXECUTOR_LOGIT_OUTPUT    = 450
+} GenieNode_IOName_t;
 
 
 
@@ -60,12 +92,16 @@ typedef Genie_Status_t (*TYPE_GenieNode_getData)(
     GenieNode* dlg,
     GenieNode_IOName_t io_name,
     const char* ioConfig,
-    GenieNode_IOCallback_t nodeCallback);
+    GenieNode_IOCallback_t nodeCallback,
+    void* userData);
 
 typedef Genie_Status_t (*TYPE_GenieNode_execute)(
     GenieNode* dlg,
     const char* executionConfig,
     const void* userData);
+
+typedef Genie_Status_t (*TYPE_GenieNode_reset)(
+    GenieNode* dlg);
 
 typedef Genie_Status_t (*TYPE_GenieLog_create)(
   const GenieLogConfig_Handle_t configHandle,
@@ -97,6 +133,7 @@ struct GenieApi {
     TYPE_GenieNode_getData               Node_getData;
     TYPE_GenieNode_execute               Node_execute;
     TYPE_GenieNode_free                  Node_free;
+    TYPE_GenieNode_reset                 Node_reset;
     TYPE_GenieNodeConfig_free            NodeConfig_free;
     TYPE_GenieLog_create                 Log_create;
     TYPE_GenieNodeConfig_bindLogger      NodeConfig_bindLogger;
@@ -127,6 +164,7 @@ struct GenieNodeState {
     GenieNodeConfig* config = nullptr;
     GenieNode*       node   = nullptr;
     GenieLog*        genieLogger = nullptr;
+    onnxruntime::QNNExecutionProvider* owner = nullptr;
 
     struct IODesc {
         GenieNode_IOName_t io_name;

@@ -392,6 +392,12 @@ static const char* const kOrtSessionOptionsQDQMatMulNBitsAccuracyLevel = "sessio
 // "Efficient": OS treats this workload is efficiency oriented with low scheduling priority and efficient processor performance.
 static const char* const kOrtEpDynamicOptionsWorkloadType = "ep.dynamic.workload_type";
 
+// THIS OPTION IS NOT A REGULAR SESSION OPTION SINCE IT CAN BE MODIFIED AT ANY TIME
+// Meant to be used with SetEpDynamicOptions
+// Specify the amount of kvcache rewind.
+static const char* const kOrtEpDynamicOptionsRewindKVCache = "ep.dynamic.rewind_kvcache";
+
+
 // Disables model compilation during session initialization.
 //
 // If this option is set to "1", inference session creation will fail with error code ORT_MODEL_REQUIRES_COMPILATION

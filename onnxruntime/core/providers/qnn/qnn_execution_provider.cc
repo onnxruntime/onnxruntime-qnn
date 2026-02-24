@@ -1413,7 +1413,7 @@ static void BuildIONames(const Node& node, GenieNodeState& st) {
     for (auto* inp_def : node.InputDefs()) {
         GenieNodeState::IODesc desc;
 
-        desc.io_name = 300;
+        desc.io_name = GENIE_NODE_LM_EXECUTOR_TOKEN_INPUT;
         desc.ort_name = inp_def->Name();
 
         const auto* shape_proto = inp_def->Shape();
@@ -1437,7 +1437,7 @@ static void BuildIONames(const Node& node, GenieNodeState& st) {
     for (auto* out_def : node.OutputDefs()) {
         GenieNodeState::IODesc desc;
 
-        desc.io_name = 350;
+        desc.io_name = GENIE_NODE_LM_EXECUTOR_LOGIT_OUTPUT;
         desc.ort_name = out_def->Name();
 
         const auto* shape_proto = out_def->Shape();
@@ -1460,15 +1460,24 @@ static void BuildIONames(const Node& node, GenieNodeState& st) {
 // ------------------------------------------------------------
 Status GenieCompute(void* state, OrtKernelContext* ctx, const OrtApi* ort_api)
 {
-    GenieNodeState* st = reinterpret_cast<GenieNodeState*>(state);
-    
-    if (!st) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Null GenieNodeState");
-    if (!st->api) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Null GenieApi");
-    if (!st->node) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Null GenieDialog node handle");
-    std::lock_guard<std::mutex> guard(st->mu);
+  GenieNodeState* st = reinterpret_cast<GenieNodeState*>(state);
+  
+  if (!st) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Null GenieNodeState");
+  if (!st->api) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Null GenieApi");
+  if (!st->node) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "Null GenieDialog node handle");
+  std::lock_guard<std::mutex> guard(st->mu);
 
+  // Reset KV-Cache if required
+  if (st->owner) {
+    const uint64_t rewind_kvcache_value = st->owner->GetKvCacheRewindValue();
+    if (rewind_kvcache_value == 1) {
+      st->api->Node_reset(st->node);
+      // Now reset the value, to prevent repeated rewind
+      st->owner->ResetKvCacheRewindValue();
+    }
+  }
     
-// 1) Set inputs
+  // 1) Set inputs
   for (size_t i = 0; i < st->inputs.size(); ++i) {
     const OrtValue* in_val = nullptr;
     ort_api->KernelContext_GetInput(ctx, i, &in_val);
@@ -1529,8 +1538,8 @@ Status GenieCompute(void* state, OrtKernelContext* ctx, const OrtApi* ort_api)
                             const char* outputConfig,
                             void* userData)
     {
-        if (userData) {
-            std::cout << "[GenieCallback] Got userData" << std::endl;
+        if (!userData && userData) { // Need to use variable, else will fail
+            std::cout << "[GenieCallback] Got userData : " << std::endl;
         }
         
         // Parse outputConfig to fetch output shape
@@ -1551,11 +1560,13 @@ Status GenieCompute(void* state, OrtKernelContext* ctx, const OrtApi* ort_api)
 
     std::string output_config = "{}";
     const char *output_config_ptr = output_config.c_str();
+    
     Genie_Status_t rc = st->api->Node_getData(
         st->node,
         io.io_name,
         output_config_ptr /*ioConfig*/,
-        OutputCallback
+        OutputCallback,
+        nullptr
       );
 
     OrtValue* out_val = nullptr;
@@ -1711,12 +1722,13 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
       const GenieLog_Level_t genie_log_level_local = genie_log_level_;
 
       // Create state
-      info.create_state_func = [builder, genie_log_level_local](ComputeContext* context, FunctionState* state) {        
+      info.create_state_func = [builder, genie_log_level_local, this](ComputeContext* context, FunctionState* state) {        
           std::cout << "compute_info.create_state_func context->node_name: " << context->node_name << std::endl;  
           auto* st = new GenieNodeState();
           st->api = builder->api;
           st->inputs = builder->inputs;
           st->outputs = builder->outputs;
+          st->owner = this;
 
           // 2) Create GenieNodeConfig
           GenieNodeConfig* cfg = nullptr;
@@ -1984,8 +1996,14 @@ Status QNNExecutionProvider::SetEpDynamicOptions(gsl::span<const char* const> ke
   while (key_it != keys.end() && value_it != values.end()) {
     std::string key(*key_it);
     std::string value(*value_it);
-
-    if (key == kOrtEpDynamicOptionsWorkloadType) {
+    
+    if (key==kOrtEpDynamicOptionsRewindKVCache) {
+      uint64_t rewind_value = std::stoull(value);
+      if(!genie_backend_manager_) {
+        return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "Genie Execution Not Set.");
+      }
+      genie_kv_cache_rewind_.fetch_add(rewind_value, std::memory_order_acq_rel); 
+    } else if (key == kOrtEpDynamicOptionsWorkloadType) {
       if (value == "Default") {
         ORT_RETURN_IF_ERROR(qnn_backend_manager_->ResetContextPriority());
       } else if (value == "Efficient") {
