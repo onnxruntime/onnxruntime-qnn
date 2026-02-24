@@ -339,7 +339,7 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
 
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
-                       ExpectedEPNodeAssignment expected_ep_assignment,
+                       ExpectedEPNodeAssignment expected_ep_assignment [[maybe_unused]],
                        std::unordered_map<std::string, Ort::Value>& feeds,
                        std::vector<Ort::Value>& output_vals,
                        std::optional<GraphOptimizationLevel> graph_optimization_level) {
@@ -395,7 +395,7 @@ void InferenceModel(const std::string& model_data,
                     std::vector<Ort::Value>& output_vals,
                     const std::unordered_map<std::string, std::string>& session_option_pairs,
                     std::optional<GraphOptimizationLevel> graph_optimization_level,
-                    std::function<void(const Graph&)>* graph_checker) {
+                    std::function<void(const Graph&)>* graph_checker [[maybe_unused]]) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = "QNNExecutionProvider";
   Ort::SessionOptions session_options;

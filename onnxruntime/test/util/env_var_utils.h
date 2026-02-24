@@ -7,6 +7,7 @@
 #include <sstream>
 #include <optional>
 #include <iostream>
+#include <cstdlib>
 
 template <typename T>
 constexpr bool ParseWithFromChars = !std::is_same_v<bool, T> && (std::is_integral_v<T> || std::is_floating_point_v<T>);
@@ -95,9 +96,9 @@ inline bool TryParseStringWithClassicLocale(std::string_view str, bool& value) {
 
 template <typename T>
 std::optional<T> ParseEnvironmentVariable(const std::string& name) {
+#ifdef _WIN32
   char* env_var = nullptr;
   size_t sz = 0;
-  // TODO: Deal with the environment variable on Linux
   _dupenv_s(&env_var, &sz, name.c_str());
 
   // Check if environment variable exists
@@ -108,6 +109,17 @@ std::optional<T> ParseEnvironmentVariable(const std::string& name) {
   const std::string value_str(env_var);
   // Free the memory allocated by _dupenv_s
   free(env_var);
+#else
+  // On non-Windows platforms, use getenv
+  const char* env_var = std::getenv(name.c_str());
+
+  // Check if environment variable exists
+  if (env_var == nullptr) {
+    return {};
+  }
+
+  const std::string value_str(env_var);
+#endif
 
   if (value_str.empty()) {
     return {};

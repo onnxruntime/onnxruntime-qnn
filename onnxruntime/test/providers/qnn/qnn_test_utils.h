@@ -1064,7 +1064,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                                   int opset_version,
                                   ExpectedEPNodeAssignment expected_ep_assignment,
                                   float tolerance = 0.004,
-                                  logging::Severity log_severity = logging::Severity::kERROR,
+                                  OrtLoggingLevel log_severity [[maybe_unused]] = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                                   const std::string& qnn_ctx_model_path = "",
                                   const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
   std::filesystem::path output_dir;
