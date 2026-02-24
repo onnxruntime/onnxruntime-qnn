@@ -91,9 +91,7 @@ else {
 }
 
 if ($QairtSdkRoot -eq "") {
-    if ($Mode -ne "test") {
-        $QairtSdkRoot = (Get-QairtRoot)
-    }
+    $QairtSdkRoot = (Get-QairtRoot)
 }
 else {
     $QairtSdkRoot = Resolve-Path -Path $QairtSdkRoot
@@ -123,9 +121,7 @@ $ArchArgs = @()
 if ($CMakeGenerator -eq "Ninja") {
     # We don't have Visual Studio to set up the build environment so do it
     # manually with somthing akin to vcvarsall.bat.
-    if ($Mode -ne "test") {
-        Enter-MsvcEnv -TargetArch $Arch
-    }
+    Enter-MsvcEnv -TargetArch $Arch
 } elseif ($Arch -ne "x86_64") {
     # Tell the EP build that we're cross-compiling to ARM64.
     # We do not do this when using Ninja because our fake vcvars handles
@@ -350,9 +346,7 @@ else {
     if ($RunTests) {
 
         Push-Location (Join-Path $BuildDir $Config)
-        if ($Mode -ne "test") {
-            $OnnxModelsRoot = (Get-OnnxModelsRoot)
-        }
+        $OnnxModelsRoot = (Get-OnnxModelsRoot)
         & .\run_tests.ps1 -Config $Config -OnnxModelsRoot $OnnxModelsRoot
 
         if (-not $?) {
