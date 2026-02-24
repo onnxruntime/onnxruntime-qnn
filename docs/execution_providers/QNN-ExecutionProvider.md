@@ -544,19 +544,20 @@ ep_lib_path = qnn_ep.get_library_path()
 ep_registration_name = "QNNExecutionProvider"
 ort.register_execution_provider_library(ep_registration_name, ep_lib_path)
 
-# Select OrtEpDevice(s) matching the registration name (which is the EP name for QNN EP)
+# Select OrtEpDevice(s) matching the registration name (which is the EP name for QNN EP) and the device type (GPU)
 all_ep_devices = ort.get_ep_devices()
-selected_ep_devices = [ep_device for ep_device in all_ep_devices if ep_device.ep_name == ep_registration_name]
+selected_gpu_ep_devices = [ep_device for ep_device in all_ep_devices if ep_device.ep_name == ep_registration_name \
+                            and ep_device.device.type == ort.OrtHardwareDeviceType.GPU]
 
-if len(selected_ep_devices) == 0:
-    raise RuntimeError("QNN EP device not found")
+if len(selected_gpu_ep_devices) == 0:
+    raise RuntimeError("QNN GPU EP device not found")
 
-# Configure QNN EP options for GPU backend
-ep_options = {"backend_type": "gpu"}  # Use GPU backend
+# Once we filtered the ep devices, we don't need to specify the backend path
+ep_options = {}
 
 # Add QNN EP to session
 options = ort.SessionOptions()
-options.add_provider_for_devices(selected_ep_devices, ep_options)
+options.add_provider_for_devices(selected_gpu_ep_devices, ep_options)
 
 # Create an ONNX Runtime session.
 # TODO: Provide the path to your ONNX model
