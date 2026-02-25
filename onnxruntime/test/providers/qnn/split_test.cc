@@ -121,6 +121,16 @@ TEST_F(QnnCPUBackendTests, Split_Equal_Axis0_Opset13) {
                                ExpectedEPNodeAssignment::All);
 }
 
+// Test Split opset 13 on CPU backend: no-op
+TEST_F(QnnCPUBackendTests, Split_Noop_Opset13) {
+  RunSplitOpTestOnCPU<float>(TestInputDef<float>({1, 2}, false, {1.0f, 2.0f}),
+                             {1},  // split
+                             0,    // axis
+                             -1,   // num_outputs (not in opset 13)
+                             13,   // opset
+                             ExpectedEPNodeAssignment::All);
+}
+
 // Test Split opset 11 on CPU backend: equal split of axis 0
 TEST_F(QnnCPUBackendTests, Split_Equal_Axis0_Opset11) {
   RunSplitOpTestOnCPU<float>(TestInputDef<float>({4, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.f, 8.f}),
@@ -288,6 +298,17 @@ TEST_F(QnnHTPBackendTests, Split_Int32_Opset13) {
                                ExpectedEPNodeAssignment::All);
 }
 
+// Test that HTP can run non-QDQ Split (no-op).
+TEST_F(QnnHTPBackendTests, Split_Noop_Opset13) {
+  // Equal split.
+  RunSplitOpTestOnHTP<int32_t>(TestInputDef<int32_t>({1, 2}, false, {1, 2}),
+                               {1},  // split
+                               0,    // axis
+                               -1,   // num_outputs (not in opset 13)
+                               13,   // opset
+                               ExpectedEPNodeAssignment::All);
+}
+
 // Test 8-bit QDQ Split opset 18 on HTP backend: equal split of axis 0 via 'num_outputs' attribute
 // and 'split' input.
 TEST_F(QnnHTPBackendTests, Split_Equal_Axis0_Opset18) {
@@ -394,6 +415,16 @@ TEST_F(QnnHTPBackendTests, Split_Unequal_Axis1_Opset11) {
                                   1,       // axis
                                   -1,      // num_outputs (not in opset 11)
                                   11,      // opset
+                                  ExpectedEPNodeAssignment::All);
+}
+
+// Test QDQ Split opset 13 on HTP backend: no-op
+TEST_F(QnnHTPBackendTests, Split_QDQ_Noop_Opset13) {
+  RunQDQSplitOpTestOnHTP<uint8_t>(TestInputDef<float>({1, 2}, false, {1.0f, 2.0f}),
+                                  {1},  // split
+                                  0,    // axis
+                                  -1,   // num_outputs (not in opset 13)
+                                  13,   // opset
                                   ExpectedEPNodeAssignment::All);
 }
 
