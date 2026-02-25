@@ -227,11 +227,7 @@ Ort::Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
   }
 
   bool has_negative = std::any_of(tensor_data, tensor_data + size, [](int64_t item) { return item < 0; });
-  bool has_positive = std::any_of(tensor_data, tensor_data + size, [](int64_t item) { return item > 0; });
-
-  // Zero padding value gives 3110 error on QNN on NPU.
-  const bool is_npu_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
-  RETURN_IF(is_npu_backend && !has_positive && !has_negative, "Got QNN invalid zero only padding value.");
+  bool has_positive = std::any_of(tensor_data, tensor_data + size, [](int64_t item) { return item >= 0; });
 
   // Onnx Pads are int64, Qnn uses uint32
   std::vector<uint32_t> pad_amount;
