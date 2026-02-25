@@ -162,6 +162,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
 
   {
     CreateRMSNormOpBuilder("RMSNormalization", *this);
+    CreateRMSNormOpBuilder("SimplifiedLayerNormalization", *this);
   }
 
   {
