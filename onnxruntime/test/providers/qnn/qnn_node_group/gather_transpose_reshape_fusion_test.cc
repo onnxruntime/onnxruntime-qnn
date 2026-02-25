@@ -158,17 +158,35 @@ TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_ColMajor) {
                   1e-2f);  // fp32_abs_err: HTP uses fixed-point arithmetic, allow small numerical differences
 }
 
-// Test Case 3: Invalid Fusion - Transpose perm violates constraints
-// Permutation [0, 1, 3, 2, 4, 5] moves dimension 3 into the first 3 positions.
-// This should NOT be fused by our specific fusion logic, as it requires d0,d1,d2 to stay fixed.
-// However, if it's not fused, QNN might reject it due to rank-6 if it tries to run it naively.
-// In this test environment, "All" nodes assigned to EP might fail if the EP rejects rank-6.
-// But we mainly want to ensure our fusion doesn't crash or produce wrong results if it *were* to run.
-// Since QNN doesn't support Rank 6, this model would likely fall back to CPU or fail graph finalization
-// if not fused. We expect EP assignment to be NONE or PARTIAL if fusion fails and QNN rejects rank 6.
-//
-// For this test, we'll just check that a valid case runs.
-// We can add a negative test if we can assert "Not Fused".
+// Asymmetric indices: idx0 != idx1 (6x8 split of d4=48), row-major.
+// Input: [1, 1, 1, 8, 48], Gather Out: [1, 1, 1, 8, 6, 8] (Rank 6)
+// Transpose Perm: [0, 1, 2, 4, 3, 5] -> [1, 1, 1, 6, 8, 8]
+// Reshape: [1, 6, 8, 8]
+TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_AsymmetricIndices) {
+  ProviderOptions provider_options = GetProviderOptions();
+
+  auto input_def = TestInputDef<float>({1, 1, 1, 8, 48}, false, -1.0f, 1.0f);
+  std::vector<int64_t> indices_data = CreateRowMajorIndices(6, 8);
+
+  RunQnnModelTest(
+      BuildGatherTransposeReshapeTestCase(input_def, {6, 8}, indices_data, {0, 1, 2, 4, 3, 5}, {1, 6, 8, 8}),
+      provider_options, 13, ExpectedEPNodeAssignment::All, 1e-2f);
+}
+
+// Merged batch dims > 1: d0*d1*d2 = 2*3*4 = 24, col-major indices.
+// Input: [2, 3, 4, 16, 36], Gather Out: [2, 3, 4, 16, 6, 6] (Rank 6)
+// Transpose Perm: [0, 1, 2, 5, 4, 3] -> [2, 3, 4, 6, 6, 16]
+// Reshape: [24, 36, 16]
+TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_MergedBatchDims) {
+  ProviderOptions provider_options = GetProviderOptions();
+
+  auto input_def = TestInputDef<float>({2, 3, 4, 16, 36}, false, -1.0f, 1.0f);
+  std::vector<int64_t> indices_data = CreateColMajorIndices(6, 6);
+
+  RunQnnModelTest(
+      BuildGatherTransposeReshapeTestCase(input_def, {6, 6}, indices_data, {0, 1, 2, 5, 4, 3}, {24, 36, 16}),
+      provider_options, 13, ExpectedEPNodeAssignment::All, 1e-2f);
+}
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
