@@ -471,12 +471,15 @@ static BackendSupport GetHTPSupport(const onnxruntime::logging::Logger& logger) 
 }
 
 void QnnHTPBackendTests::SetUp() {
+  if (cached_htp_support_ == BackendSupport::SUPPORTED) {
+    return;
+  }
   const auto& logger = DefaultLoggingManager().DefaultLogger();
 
   if (cached_htp_support_ == BackendSupport::SUPPORT_UNKNOWN) {
     cached_htp_support_ = GetHTPSupport(logger);
   }
-
+  // Determine if HTP backend is supported only if we done so haven't before.
   if (cached_htp_support_ == BackendSupport::UNSUPPORTED) {
     LOGS(logger, WARNING) << "QNN HTP backend is not available! Skipping test.";
     GTEST_SKIP();
@@ -485,6 +488,7 @@ void QnnHTPBackendTests::SetUp() {
     FAIL();
   }
 
+  // query the platform attributes if not already cached.
   if (!cached_platform_attrs_.has_value()) {
     QnnPlatformAttributes attrs;
     Status query_status = QueryQnnPlatformAttributesDirectly(attrs, logger);
