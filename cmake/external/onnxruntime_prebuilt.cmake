@@ -76,3 +76,37 @@ ExternalProject_Add(
 # TODO: In long-term, we aim to remove the dependency of QNN-EP plugin library on ORT Core
 set(ONNXRUNTIME_APPLICATION_SOURCE_ROOT "${CMAKE_BINARY_DIR}/_deps/ort_repo-src/onnxruntime")
 set(ONNXRUNTIME_APPLICATION_INCLUDE_ROOT "${CMAKE_BINARY_DIR}/_deps/ort_repo-src/include/onnxruntime")
+
+###########################################################################
+# Import prebuilt ONNX Runtime libraries/binaries
+###########################################################################
+
+message(STATUS "onnxruntime_ORT_HOME: ${onnxruntime_ORT_HOME}")
+
+# Create imported target for ONNX Runtime
+add_library(onnxruntime_prebuilt SHARED IMPORTED GLOBAL)
+# Add dependency on the external projects to ensure they're downloaded first
+add_dependencies(onnxruntime_prebuilt ort_repo)
+
+# Hack since cmake check the existence of INTERFACE_INCLUDE_DIRECTORIES
+file(MAKE_DIRECTORY ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT})
+
+# Platform-specific library configuration
+if(WIN32)
+    # Windows: Use .dll for IMPORTED_LOCATION and .lib for IMPORTED_IMPLIB
+    set_target_properties(onnxruntime_prebuilt PROPERTIES
+        IMPORTED_LOCATION ${onnxruntime_ORT_HOME}/lib/onnxruntime.dll
+        IMPORTED_IMPLIB ${onnxruntime_ORT_HOME}/lib/onnxruntime.lib
+        INTERFACE_INCLUDE_DIRECTORIES ${onnxruntime_ORT_HOME}/include
+    )
+elseif(UNIX AND NOT ANDROID)
+    # Linux: Use .so for IMPORTED_LOCATION
+    set_target_properties(onnxruntime_prebuilt PROPERTIES
+        IMPORTED_LOCATION ${onnxruntime_ORT_HOME}/lib/libonnxruntime.so
+        INTERFACE_INCLUDE_DIRECTORIES ${onnxruntime_ORT_HOME}/include
+    )
+else()
+    # Fallback for other platforms
+    message(WARNING "Unsupported platform for onnxruntime_prebuilt library configuration")
+endif()
+###########################################################################

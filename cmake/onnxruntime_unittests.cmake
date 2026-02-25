@@ -187,7 +187,8 @@ set(onnxruntime_test_common_libs
   GTest::gtest
   GTest::gmock
   ${onnxruntime_EXTERNAL_LIBRARIES}
-  onnxruntime
+  # TODO: Remove the suffix _prebuilt once we complete standalone build
+  onnxruntime_prebuilt
   onnxruntime_test_utils
   onnxruntime_unittest_utils
   cpuinfo::cpuinfo
@@ -323,6 +324,41 @@ block()
 
   # For onnxruntime_cxx_api.h
   target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session)
+
+   # Platform-specific copying of onnxruntime and onnxruntime_providers_shared
+  if(WIN32)
+    add_custom_command(
+      TARGET onnxruntime_provider_test POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy ${onnxruntime_ORT_HOME}/lib/onnxruntime.dll $<TARGET_FILE_DIR:onnxruntime_provider_test>
+      COMMENT "Copying onnxruntime.dll to Build Folder for test runner"
+    )
+
+    add_custom_command(
+      TARGET onnxruntime_provider_test POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy ${onnxruntime_ORT_HOME}/lib/onnxruntime_providers_shared.dll $<TARGET_FILE_DIR:onnxruntime_provider_test>
+      COMMENT "Copying onnxruntime_providers_shared.dll to Build Folder for test runner"
+    )
+  elseif(UNIX AND NOT ANDROID)
+    # Copy all versions of libonnxruntime.so files for Linux but skip for Android
+    # This will copy libonnxruntime.so, libonnxruntime.so.1, libonnxruntime.so.1.24.1, etc.
+    file(GLOB ONNXRUNTIME_SO_FILES "${onnxruntime_ORT_HOME}/lib/libonnxruntime.so*")
+    foreach(SO_FILE ${ONNXRUNTIME_SO_FILES})
+      add_custom_command(
+        TARGET onnxruntime_provider_test POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SO_FILE}" $<TARGET_FILE_DIR:onnxruntime_provider_test>
+        COMMENT "Copying ${SO_FILE} to Build Folder for test runner (Linux)"
+      )
+    endforeach()
+
+    add_custom_command(
+      TARGET onnxruntime_provider_test POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy ${onnxruntime_ORT_HOME}/lib/libonnxruntime_providers_shared.so $<TARGET_FILE_DIR:onnxruntime_provider_test>
+      COMMENT "Copying libonnxruntime_providers_shared.so to Build Folder for test runner (Linux)"
+    )
+  elseif(ANDROID)
+    # Skip copying for Android builds
+    message(STATUS "Skipping onnxruntime library copying for Android build")
+  endif()
 
   # Exclude test_dynamic_plugin_ep when using prebuilt ONNX Runtime
   # TODO: Evaluate whether we can enable test_dynamic_plugin_ep with public API
