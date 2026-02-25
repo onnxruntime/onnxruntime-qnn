@@ -14,6 +14,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/cast_lone_q_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/channel_shuffle_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/dq_q_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/gather_transpose_reshape_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/gelu_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/hardsigmoid_mul_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/lpbqgemm_fusion.h"
@@ -80,6 +81,7 @@ using FusionFunc = std::function<std::unique_ptr<IQnnNodeGroup>(QnnModelWrapper&
 // Maps a starting operator type to the fusion function.
 static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"DequantizeLinear", {DQQFusion::TryFusion}},
+    {"Gather", {GatherTransposeReshapeFusion::TryFusion}},
     {"HardSigmoid", {HardSigmoidMulFusion::TryFusion}},
     {"MatMul", {LowPowerBlockQuantizedMatMulFusion::TryFusion}},
     {"Gemm", {LowPowerBlockQuantizedGemmFusion::TryFusion, ReshapeGemmFusion::TryFusion}},
@@ -125,6 +127,7 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
   // For now, all fusions involve standalone node units (i.e., no wrapping DQ/Q nodes) except
   // MatMul w/ LPBQ encodings, Erf, and Reshape.
   if (starting_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode &&
+      starting_node_unit.OpType() != "Gather" &&
       starting_node_unit.OpType() != "MatMul" &&
       starting_node_unit.OpType() != "Erf" &&
       starting_node_unit.OpType() != "Reshape") {
