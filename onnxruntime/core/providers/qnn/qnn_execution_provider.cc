@@ -1532,16 +1532,21 @@ Status GenieCompute(void* state, OrtKernelContext* ctx, const OrtApi* ort_api)
   for (size_t i = 0; i < st->outputs.size(); ++i) {
     const auto& io = st->outputs[i];
 
-    static std::vector<std::byte> outputData;
-    static std::vector<int64_t> outputShape;
+
+
+    struct OutputDataInfo{
+      std::vector<std::byte> outputData;
+      std::vector<int64_t> outputShape;
+    } outputDataInfo;
+
     GenieNode_IOCallback_t OutputCallback = [](const void* data,
                             const size_t dataSize,
                             const char* outputConfig,
                             void* userData)
     {
-        if (!userData && userData) { // Need to use variable, else will fail
-            std::cout << "[GenieCallback] Got userData : " << std::endl;
-        }
+
+        auto* outDatInfo = static_cast<OutputDataInfo*>(userData);
+        outDatInfo->outputShape.clear();
         
         // Parse outputConfig to fetch output shape
         std::string outputInfo = outputConfig;
@@ -1551,12 +1556,13 @@ Status GenieCompute(void* state, OrtKernelContext* ctx, const OrtApi* ort_api)
         std::stringstream ss(shapeStr);
         std::string dim;
         while (std::getline(ss, dim, ',')) {
-          outputShape.push_back((int64_t)std::stoi(dim));
+          outDatInfo->outputShape.push_back((int64_t)std::stoi(dim));
         }
 
         // Set appropriate datasize for output buffer
-        outputData.resize(dataSize);
-        std::memcpy(outputData.data(), data, dataSize);
+        outDatInfo->outputData.clear();
+        outDatInfo->outputData.resize(dataSize);
+        std::memcpy(outDatInfo->outputData.data(), data, dataSize);
     };
 
     std::string output_config = "{}";
@@ -1567,12 +1573,12 @@ Status GenieCompute(void* state, OrtKernelContext* ctx, const OrtApi* ort_api)
         io.io_name,
         output_config_ptr /*ioConfig*/,
         OutputCallback,
-        nullptr
+        &outputDataInfo
       );
 
     OrtValue* out_val = nullptr;
     ort_api->KernelContext_GetOutput(
-        ctx, i, outputShape.data(), outputShape.size(), &out_val);
+        ctx, i, outputDataInfo.outputShape.data(), outputDataInfo.outputShape.size(), &out_val);
 
     if (!out_val) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "ORT output is null");
 
@@ -1580,9 +1586,9 @@ Status GenieCompute(void* state, OrtKernelContext* ctx, const OrtApi* ort_api)
     ort_api->GetTensorMutableData(out_val, &out_data);
     if (!out_data) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "ORT output data is null");
 
-    std::memcpy(out_data, outputData.data(), outputData.size());
-    outputShape.clear();
-    outputData.clear();
+    std::memcpy(out_data, outputDataInfo.outputData.data(), outputDataInfo.outputData.size());
+    outputDataInfo.outputShape.clear();
+    outputDataInfo.outputData.clear();
 
     if (rc != 0) return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "GenieNode_getData failed");
   }
