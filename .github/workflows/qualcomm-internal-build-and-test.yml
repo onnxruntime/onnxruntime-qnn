@@ -26,7 +26,7 @@ on:
       # Cross-compiling from X64 to ARM64 is faster with our runners, but cannot produce a wheel.
       windows_arm64_runner_arch:
         type: string
-        default: "X64"
+        default: "ARM64"
       target_py_vsn:
         default: "3.12"
         type: string
@@ -80,7 +80,7 @@ jobs:
     secrets: inherit
     with:
       nightly_build: ${{ inputs.nightly_build }}
-      build_runner_arch: ARM64
+      build_runner_arch: ${{ inputs.windows_arm64_runner_arch }}
       target_arch: arm64
       upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' }}
       target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
