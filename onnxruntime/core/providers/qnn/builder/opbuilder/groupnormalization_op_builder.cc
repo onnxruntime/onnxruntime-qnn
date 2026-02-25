@@ -87,8 +87,10 @@ Ort::Status GroupNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper
   }
 
   // Support both "num_groups" (ONNX GroupNormalization) and "groups" (com.microsoft.GroupNorm)
-  int64_t num_groups = node_helper.Get("num_groups", static_cast<int64_t>(0));
-  if (num_groups == 0) {
+  int64_t num_groups;
+  if (node_unit.OpType() == "GroupNormalization") {
+    num_groups = node_helper.Get("num_groups", static_cast<int64_t>(1));
+  } else {
     num_groups = node_helper.Get("groups", static_cast<int64_t>(1));
   }
   if (num_groups <= 0) {
@@ -100,9 +102,11 @@ Ort::Status GroupNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper
   }
 
   // Check activation attribute for com.microsoft.GroupNorm
-  const int64_t activation = node_helper.Get("activation", static_cast<int64_t>(0));
-  if (activation != 0 && activation != 1) {
-    return MAKE_EP_FAIL("QNN GroupNorm only supports activation=0 (None) or activation=1 (SiLU)");
+  if (node_unit.OpType() == "GroupNorm") {
+    const int64_t activation = node_helper.Get("activation", static_cast<int64_t>(0));
+    if (activation != 0 && activation != 1) {
+      return MAKE_EP_FAIL("QNN GroupNorm only supports activation=0 (None) or activation=1 (SiLU)");
+    }
   }
 
   // Continue Op validation if it's NHWC transformed
@@ -153,22 +157,14 @@ Ort::Status GroupNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   if (scale_info.qnn_data_type != input_info.qnn_data_type) {
     // Create Cast node for scale
     std::string casted_scale_name = utils::GetUniqueName(node_unit.Name() + "_scale_cast");
-    QnnTensorWrapper casted_scale_tensor(casted_scale_name,
-                                         QNN_TENSOR_TYPE_NATIVE,
-                                         input_info.qnn_data_type,
-                                         QnnQuantParamsWrapper(),
-                                         std::vector<uint32_t>(scale_info.shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(casted_scale_tensor)),
-                  "Failed to add casted scale tensor.");
-
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit.Name() + "_scale_cast"),
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_CAST,
-                                                  {scale_input_name},
-                                                  {casted_scale_name},
-                                                  std::vector<std::string>(),
-                                                  do_op_validation),
-                  "Failed to create Cast node for scale.");
+    RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(casted_scale_name,
+                                                  scale_input_name,
+                                                  casted_scale_name,
+                                                  QNN_TENSOR_TYPE_NATIVE,
+                                                  input_info.qnn_data_type,
+                                                  QnnQuantParamsWrapper(),
+                                                  std::move(scale_info.shape),
+                                                  do_op_validation));
 
     scale_input_name = casted_scale_name;
   }
@@ -176,22 +172,14 @@ Ort::Status GroupNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   if (bias_info.qnn_data_type != input_info.qnn_data_type) {
     // Create Cast node for bias
     std::string casted_bias_name = utils::GetUniqueName(node_unit.Name() + "_bias_cast");
-    QnnTensorWrapper casted_bias_tensor(casted_bias_name,
-                                        QNN_TENSOR_TYPE_NATIVE,
-                                        input_info.qnn_data_type,
-                                        QnnQuantParamsWrapper(),
-                                        std::vector<uint32_t>(bias_info.shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(casted_bias_tensor)),
-                  "Failed to add casted bias tensor.");
-
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit.Name() + "_bias_cast"),
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_CAST,
-                                                  {bias_input_name},
-                                                  {casted_bias_name},
-                                                  std::vector<std::string>(),
-                                                  do_op_validation),
-                  "Failed to create Cast node for bias.");
+    RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(casted_bias_name,
+                                                  bias_input_name,
+                                                  casted_bias_name,
+                                                  QNN_TENSOR_TYPE_NATIVE,
+                                                  input_info.qnn_data_type,
+                                                  QnnQuantParamsWrapper(),
+                                                  std::move(bias_info.shape),
+                                                  do_op_validation));
 
     bias_input_name = casted_bias_name;
   }
@@ -211,8 +199,10 @@ Ort::Status GroupNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   qnn_model_wrapper.AddParamWrapper(std::move(epsilon_param_wrapper));
 
   // Support both "num_groups" (ONNX GroupNormalization) and "groups" (com.microsoft.GroupNorm)
-  int64_t num_groups = node_helper.Get("num_groups", static_cast<int64_t>(0));
-  if (num_groups == 0) {
+  int64_t num_groups;
+  if (node_unit.OpType() == "GroupNormalization") {
+    num_groups = node_helper.Get("num_groups", static_cast<int64_t>(1));
+  } else {
     num_groups = node_helper.Get("groups", static_cast<int64_t>(1));
   }
   Qnn_Scalar_t num_groups_param = QNN_SCALAR_INIT;
