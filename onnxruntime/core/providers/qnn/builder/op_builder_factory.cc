@@ -233,6 +233,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   }
 
   {
+    CreateRopeOpBuilder("RotaryEmbedding", *this);
+  }
+
+  {
     CreateQuickGeluOpBuilder("QuickGelu", *this);
   }
 
