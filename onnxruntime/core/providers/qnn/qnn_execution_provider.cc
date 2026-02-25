@@ -121,7 +121,8 @@ static GenieLog_Level_t ResolveGenieLogLevel(const std::string& lvl) {
     if (lvl == "error")   return GENIE_LOG_LEVEL_ERROR;
     if (lvl == "warn")    return GENIE_LOG_LEVEL_WARN;
     if (lvl == "verbose") return GENIE_LOG_LEVEL_VERBOSE;
-    return GENIE_LOG_LEVEL_INFO;
+    if (lvl == "info")    return GENIE_LOG_LEVEL_INFO;
+    return GENIE_LOG_LEVEL_NONE;
 }
 
 static void ParseProfilingLevel(std::string profiling_level_string,
@@ -1470,7 +1471,7 @@ Status GenieCompute(void* state, OrtKernelContext* ctx, const OrtApi* ort_api)
   // Reset KV-Cache if required
   if (st->owner) {
     const uint64_t rewind_kvcache_value = st->owner->GetKvCacheRewindValue();
-    if (rewind_kvcache_value == 1) {
+    if (rewind_kvcache_value == 0) {
       st->api->Node_reset(st->node);
       // Now reset the value, to prevent repeated rewind
       st->owner->ResetKvCacheRewindValue();
@@ -1743,22 +1744,22 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
           const GenieLog_Callback_t     cb        = nullptr;
           const GenieLog_Level_t        level     = genie_log_level_local;
 
-          if (st->api->Log_create(cfgHandle, cb, level, &gLogger) != 0) {
-            st->api->NodeConfig_free(cfg);
-            delete st;
-            return -1;
+          if (level != GENIE_LOG_LEVEL_NONE) {
+            if (st->api->Log_create(cfgHandle, cb, level, &gLogger) != 0) {
+              st->api->NodeConfig_free(cfg);
+              delete st;
+              return -1;
+            }
+            st->genieLogger = gLogger;
+
+                      
+            if (st->api->NodeConfig_bindLogger(cfg, gLogger) != 0) {
+              if (st->api->Log_free) st->api->Log_free(gLogger);
+              st->api->NodeConfig_free(cfg);
+              delete st;
+              return -1;
+            }
           }
-          st->genieLogger = gLogger;
-
-                    
-          if (st->api->NodeConfig_bindLogger(cfg, gLogger) != 0) {
-            if (st->api->Log_free) st->api->Log_free(gLogger);
-            st->api->NodeConfig_free(cfg);
-            delete st;
-            return -1;
-          }
-
-
 
           // 3) Create GenieNode (node)
           GenieNode* dlg = nullptr;
@@ -2002,7 +2003,7 @@ Status QNNExecutionProvider::SetEpDynamicOptions(gsl::span<const char* const> ke
       if(!genie_backend_manager_) {
         return ORT_MAKE_STATUS(ONNXRUNTIME, INVALID_ARGUMENT, "Genie Execution Not Set.");
       }
-      genie_kv_cache_rewind_.fetch_add(rewind_value, std::memory_order_acq_rel); 
+      genie_kv_cache_rewind_.store(rewind_value, std::memory_order_acq_rel); 
     } else if (key == kOrtEpDynamicOptionsWorkloadType) {
       if (value == "Default") {
         ORT_RETURN_IF_ERROR(qnn_backend_manager_->ResetContextPriority());

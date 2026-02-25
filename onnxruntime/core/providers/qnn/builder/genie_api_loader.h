@@ -50,6 +50,7 @@ typedef enum {
 
 
 typedef enum {
+  GENIE_LOG_LEVEL_NONE    = -1,
   GENIE_LOG_LEVEL_ERROR   = 0,
   GENIE_LOG_LEVEL_WARN    = 1,
   GENIE_LOG_LEVEL_INFO    = 2,
