@@ -3,6 +3,11 @@
 
 name: Publish ONNX Runtime Execution Provider wheel
 
+permissions:
+  checks: write
+  contents: read
+  id-token: write
+
 on:
   workflow_call:
     inputs:
@@ -35,9 +40,6 @@ jobs:
     name: "Publish distribution to PyPI"
     runs-on: [Linux, self-hosted, Build]
     needs: [build-wheels]
-    permissions:
-      contents: read
-      id-token: write
 
     steps:
       - uses: actions/checkout@v4.1.1
