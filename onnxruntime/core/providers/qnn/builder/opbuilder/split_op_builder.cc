@@ -99,8 +99,17 @@ Ort::Status SplitOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
     }
   }
 
-  // Get the length according to axis and split it equally
   if (split_index.size() == 0) {
+    if (node_unit.Outputs().size() == 1) {
+      // This Split is essentially a no-op.
+      RETURN_IF_ERROR(qnn_model_wrapper.AddNoopReshapeNode(node_unit.Name(),
+                                                           input_names[0],
+                                                           node_unit.Outputs()[0],
+                                                           do_op_validation));
+      return Ort::Status();
+    }
+
+    // Get the length according to axis and split it equally
     std::vector<uint32_t> input_shape;
     RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Inputs()[0].shape, input_shape), "Cannot get shape");
     RETURN_IF_NOT(static_cast<int32_t>(input_shape.size()) > axis_value, "axis not valid!");

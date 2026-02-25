@@ -957,6 +957,35 @@ Ort::Status QnnModelWrapper::AddTransposeNode(size_t node_index,
   return Ort::Status();
 }
 
+Ort::Status QnnModelWrapper::AddNoopReshapeNode(const std::string& node_name,
+                                                const std::string& input_name,
+                                                const OrtNodeUnitIODef& output,
+                                                bool do_op_validation) {
+  const auto tensor_wrapper_it = model_tensors_map_.find(input_name);
+  // Since no-op node is usually identified during op builder's ProcessAttributesAndOutputs, input should already
+  // processed and added.
+  RETURN_IF(tensor_wrapper_it == model_tensors_map_.end(), "Input tensor wrapper not exist for no-op node.");
+  const QnnTensorWrapper& input_tensor_wrapper = tensor_wrapper_it->second;
+
+  QnnTensorWrapper output_tensor_wrapper;
+  RETURN_IF_ERROR(MakeTensorWrapper(output, output_tensor_wrapper));
+  RETURN_IF(input_tensor_wrapper.GetTensorDims() != output_tensor_wrapper.GetTensorDims(),
+            "Expecting identical shapes for no-op input/output.");
+  std::string output_name = output_tensor_wrapper.GetName();
+  RETURN_IF_NOT(AddTensorWrapper(std::move(output_tensor_wrapper)), "Failed to add no-op output tensor.");
+
+  RETURN_IF_NOT(CreateQnnNode(utils::GetUniqueName(node_name),
+                              QNN_OP_PACKAGE_NAME_QTI_AISW,
+                              QNN_OP_RESHAPE,
+                              {input_name},
+                              {output_name},
+                              {},
+                              do_op_validation),
+                "Failed to add no-op node.");
+
+  return Ort::Status();
+}
+
 void QnnModelWrapper::GetGraphInputOutputTensorWrapper(const std::vector<std::string>& tensor_name_list,
                                                        std::vector<QnnTensorWrapper>& wrappers_list) {
   for (const auto& tensor_name : tensor_name_list) {
