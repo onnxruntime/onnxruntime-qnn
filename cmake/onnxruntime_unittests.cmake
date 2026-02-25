@@ -224,7 +224,9 @@ else()
     target_compile_options(onnxruntime_test_utils PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Wno-error=character-conversion>")
   endif()
 endif()
-onnxruntime_add_include_to_target(onnxruntime_test_utils GTest::gtest GTest::gmock onnx onnx_proto flatbuffers::flatbuffers nlohmann_json::nlohmann_json Boost::mp11 safeint_interface Eigen3::Eigen ${GSL_TARGET} date::date)
+onnxruntime_add_include_to_target(onnxruntime_test_utils GTest::gtest GTest::gmock onnx onnx_proto
+                                  flatbuffers::flatbuffers nlohmann_json::nlohmann_json Boost::mp11
+                                  safeint_interface Eigen3::Eigen ${GSL_TARGET} date::date ${ABSEIL_LIBS})
 add_dependencies(onnxruntime_test_utils ${onnxruntime_EXTERNAL_DEPENDENCIES})
 target_include_directories(onnxruntime_test_utils PUBLIC "${TEST_SRC_DIR}/util/include"
                            PRIVATE
