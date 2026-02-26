@@ -19,12 +19,6 @@ class MultiHeadAttentionOpBuilder : public BaseOpBuilder {
                             const Ort::Logger& logger) const override final ORT_MUST_USE_RESULT;
 
  protected:
-  Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                            const OrtNodeUnit& node_unit,
-                            const Ort::Logger& logger,
-                            std::vector<std::string>& input_names,
-                            bool do_op_validation) const override ORT_MUST_USE_RESULT;
-
   Ort::Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                           const OrtNodeUnit& node_unit,
                                           std::vector<std::string>&& input_names,
@@ -68,62 +62,52 @@ Ort::Status MultiHeadAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mode
   const auto& outputs = node_unit.Outputs();
 
   // MultiHeadAttention requires at least query input
-  if (inputs.size() < 1) {
-    return MAKE_EP_FAIL("MultiHeadAttention requires at least query input");
-  }
+  RETURN_IF(inputs.size() < 1, "MultiHeadAttention requires at least query input");
 
   // Check that we have at least one output
-  if (outputs.size() < 1) {
-    return MAKE_EP_FAIL("MultiHeadAttention requires at least one output");
-  }
+  RETURN_IF(outputs.size() < 1, "MultiHeadAttention requires at least one output");
 
   // Get num_heads attribute
   OrtNodeAttrHelper node_helper(node_unit);
   int64_t num_heads = node_helper.Get("num_heads", static_cast<int64_t>(0));
-  if (num_heads <= 0) {
-    return MAKE_EP_FAIL("num_heads must be positive");
-  }
+  RETURN_IF(num_heads <= 0, "num_heads must be positive");
 
   // Check input shapes
   std::vector<uint32_t> query_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, query_shape),
                 "Cannot get shape of query input");
 
-  if (query_shape.size() != 3 && query_shape.size() != 5) {
-    return MAKE_EP_FAIL("MultiHeadAttention query input must be 3D or 5D tensor");
-  }
+  RETURN_IF(query_shape.size() != 3 && query_shape.size() != 5,
+            "MultiHeadAttention query input must be 3D or 5D tensor");
 
-  // Determine input format
+  // Determine input format is packed_qkv, packed_kv, or separated_qkv
   bool is_packed_qkv = (query_shape.size() == 5);
   bool is_packed_kv = false;
+  bool is_seperated_qkv = false;
 
   if (!is_packed_qkv && inputs.size() >= 2 && inputs[1].Exists()) {
     std::vector<uint32_t> key_shape;
     RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[1].shape, key_shape),
                   "Cannot get shape of key input");
     is_packed_kv = (key_shape.size() == 5);
+    is_seperated_qkv = !is_packed_kv;
   }
 
-  // Validate input configuration
-  if (!is_packed_qkv) {
-    if (inputs.size() < 2 || !inputs[1].Exists()) {
-      return MAKE_EP_FAIL("MultiHeadAttention requires key input when not using packed QKV");
-    }
-
-    if (!is_packed_kv && (inputs.size() < 3 || !inputs[2].Exists())) {
-      return MAKE_EP_FAIL("MultiHeadAttention requires value input when not using packed QKV or packed KV");
-    }
-  }
+  // Validate input size accroding to imput format
+  RETURN_IF(is_packed_qkv && inputs.size() > 1 && inputs[1].Exists(),
+            "MultiHeadAttention only supports Packed QKV format with one input");
+  RETURN_IF(is_packed_kv && inputs.size() > 2 && inputs[2].Exists(),
+            "MultiHeadAttention only supports Packed KV format with two inputs");
+  RETURN_IF(is_seperated_qkv && inputs.size() > 3 && inputs[3].Exists(),
+            "MultiHeadAttention only supports Seperated QKV format with three inputs");
 
   // Don't support additional inputs for now
-  if (inputs.size() > 3 && inputs[3].Exists()) {
-    return MAKE_EP_FAIL("MultiHeadAttention bias input is not supported in QNN provider yet");
-  }
+  RETURN_IF(inputs.size() > 3 && inputs[3].Exists(),
+            "MultiHeadAttention bias input is not supported in QNN provider yet");
 
   // Don't support multiple outputs
-  if (outputs.size() > 1) {
-    return MAKE_EP_FAIL("MultiHeadAttention with multiple outputs is not supported in QNN provider yet");
-  }
+  RETURN_IF(outputs.size() > 1,
+            "MultiHeadAttention with multiple outputs is not supported in QNN provider yet");
 
   return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
 }
@@ -513,60 +497,6 @@ Ort::Status MultiHeadAttentionOpBuilder::UnpackKV(
                                                    input_info.quant_param,
                                                    do_op_validation,
                                                    false, false));
-
-  return Ort::Status();
-}
-
-Ort::Status MultiHeadAttentionOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                                       const OrtNodeUnit& node_unit,
-                                                       const Ort::Logger& logger,
-                                                       std::vector<std::string>& input_names,
-                                                       bool do_op_validation) const {
-  ORT_UNUSED_PARAMETER(do_op_validation);
-  ORT_UNUSED_PARAMETER(logger);
-
-  const auto& inputs = node_unit.Inputs();
-
-  // Determine input format by checking shapes
-  std::vector<uint32_t> query_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, query_shape),
-                "Cannot get shape of query input");
-
-  bool is_packed_qkv = (query_shape.size() == 5);
-  bool is_packed_kv = false;
-
-  if (!is_packed_qkv && inputs.size() >= 2 && inputs[1].Exists()) {
-    std::vector<uint32_t> key_shape;
-    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[1].shape, key_shape),
-                  "Cannot get shape of key input");
-    is_packed_kv = (key_shape.size() == 5);
-  }
-
-  // Process Query input (always required)
-  RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
-
-  if (is_packed_qkv) {
-    // Packed QKV format: query contains all Q, K, V data
-    // No additional inputs needed for K and V
-  } else if (is_packed_kv) {
-    // Packed KV format: key contains both K and V data
-    RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[1], logger, input_names));
-  } else {
-    // Separate Q, K, V format
-    // Process Key input
-    if (inputs.size() > 1 && inputs[1].Exists()) {
-      RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[1], logger, input_names));
-    } else {
-      return MAKE_EP_FAIL("Key input is required for separate QKV format");
-    }
-
-    // Process Value input
-    if (inputs.size() > 2 && inputs[2].Exists()) {
-      RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[2], logger, input_names));
-    } else {
-      return MAKE_EP_FAIL("Value input is required for separate QKV format");
-    }
-  }
 
   return Ort::Status();
 }

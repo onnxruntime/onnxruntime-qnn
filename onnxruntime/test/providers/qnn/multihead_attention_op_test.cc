@@ -147,6 +147,9 @@ TEST_F(QnnHTPBackendTests, MultiHeadAttention_FP16) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["enable_htp_fp16_precision"] = "1";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
 
   const int64_t batch_size = 1;
   const int64_t sequence_length = 4;
