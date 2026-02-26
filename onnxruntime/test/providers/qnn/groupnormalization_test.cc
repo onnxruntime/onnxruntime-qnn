@@ -214,6 +214,7 @@ TEST_F(QnnHTPBackendTests, MsGroupNorm_Float_Default) {
                   ExpectedEPNodeAssignment::All,
                   0.01f,
                   logging::Severity::kERROR,
+                  // Set verify_outputs to false since CPU backend doens't support contrib groupnorm
                   false);
 }
 
@@ -249,6 +250,7 @@ TEST_F(QnnCPUBackendTests, MsGroupNorm_Float_CPU) {
                   ExpectedEPNodeAssignment::All,
                   0.01f,
                   logging::Severity::kERROR,
+                  // Set verify_outputs to false since CPU backend doens't support contrib groupnorm
                   false);
 }
 
@@ -287,6 +289,7 @@ TEST_F(QnnHTPBackendTests, MsGroupNorm_Float_MultipleGroups) {
                   ExpectedEPNodeAssignment::All,
                   0.01f,
                   logging::Severity::kERROR,
+                  // Set verify_outputs to false since CPU backend doens't support contrib groupnorm
                   false);
 }
 
@@ -322,6 +325,7 @@ TEST_F(QnnHTPBackendTests, MsGroupNorm_Float_3D) {
                   ExpectedEPNodeAssignment::All,
                   0.01f,
                   logging::Severity::kERROR,
+                  // Set verify_outputs to false since CPU backend doens't support contrib groupnorm
                   false);
 }
 
@@ -356,6 +360,7 @@ TEST_F(QnnHTPBackendTests, MsGroupNorm_Float_SiLU) {
                   ExpectedEPNodeAssignment::All,
                   0.01f,
                   logging::Severity::kERROR,
+                  // Set verify_outputs to false since CPU backend doens't support contrib groupnorm
                   false);
 }
 
@@ -391,6 +396,7 @@ TEST_F(QnnCPUBackendTests, MsGroupNorm_Float_SiLU_CPU) {
                   ExpectedEPNodeAssignment::All,
                   0.01f,
                   logging::Severity::kERROR,
+                  // Set verify_outputs to false since CPU backend doens't support contrib groupnorm
                   false);
 }
 
@@ -429,6 +435,7 @@ TEST_F(QnnHTPBackendTests, MsGroupNorm_Float_SiLU_MultipleGroups) {
                   ExpectedEPNodeAssignment::All,
                   0.01f,
                   logging::Severity::kERROR,
+                  // Set verify_outputs to false since CPU backend doens't support contrib groupnorm
                   false);
 }
 
@@ -465,6 +472,7 @@ TEST_F(QnnHTPBackendTests, MsGroupNorm_Float32Input_Float16ScaleBias) {
                   ExpectedEPNodeAssignment::All,
                   0.01f,
                   logging::Severity::kERROR,
+                  // Set verify_outputs to false since CPU backend doens't support contrib groupnorm
                   false);
 }
 
@@ -501,6 +509,7 @@ TEST_F(QnnHTPBackendTests, MsGroupNorm_Float32Input_Float16ScaleBias_SiLU) {
                   ExpectedEPNodeAssignment::All,
                   0.01f,
                   logging::Severity::kERROR,
+                  // Set verify_outputs to false since CPU backend doens't support contrib groupnorm
                   false);
 }
 

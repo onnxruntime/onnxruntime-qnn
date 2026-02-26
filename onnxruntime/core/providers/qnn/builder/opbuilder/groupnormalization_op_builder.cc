@@ -87,6 +87,7 @@ Ort::Status GroupNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper
   }
 
   // Support both "num_groups" (ONNX GroupNormalization) and "groups" (com.microsoft.GroupNorm)
+  // Note: we cannot use node_unit.Domain() because the op domain may have been transformed to kMSInternalNHWCDomain.
   int64_t num_groups;
   if (node_unit.OpType() == "GroupNormalization") {
     num_groups = node_helper.Get("num_groups", static_cast<int64_t>(1));
@@ -199,6 +200,7 @@ Ort::Status GroupNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   qnn_model_wrapper.AddParamWrapper(std::move(epsilon_param_wrapper));
 
   // Support both "num_groups" (ONNX GroupNormalization) and "groups" (com.microsoft.GroupNorm)
+  // Note: we cannot use node_unit.Domain() because the op domain may have been transformed to kMSInternalNHWCDomain.
   int64_t num_groups;
   if (node_unit.OpType() == "GroupNormalization") {
     num_groups = node_helper.Get("num_groups", static_cast<int64_t>(1));
