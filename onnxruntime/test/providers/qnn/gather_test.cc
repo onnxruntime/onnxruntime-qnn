@@ -80,6 +80,73 @@ GetTestQDQModelFn<QuantType> BuildQDQGatherNdTestCase(const TestInputDef<float>&
   };
 }
 
+template <typename QuantType, typename IndicesType>
+GetTestModelFn BuildTwoGatherSharedIndicesTestCase(const TestInputDef<float>& input_def0,
+                                                   const TestInputDef<float>& input_def1,
+                                                   const TestInputDef<IndicesType>& indices_def,
+                                                   const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs) {
+  return [input_def0, input_def1, indices_def, attrs](ModelTestBuilder& builder) {
+    NodeArg* input0 = MakeTestInput(builder, input_def0);
+    NodeArg* input1 = MakeTestInput(builder, input_def1);
+    NodeArg* indices_input = MakeTestInput(builder, indices_def);
+
+    NodeArg* gather0_output = builder.MakeOutput();
+    Node& gather0_node = builder.AddNode("Gather", {input0, indices_input}, {gather0_output});
+    for (const auto& attr : attrs) {
+      gather0_node.AddAttributeProto(attr);
+    }
+
+    NodeArg* gather1_output = builder.MakeOutput();
+    Node& gather1_node = builder.AddNode("Gather", {input1, indices_input}, {gather1_output});
+    for (const auto& attr : attrs) {
+      gather1_node.AddAttributeProto(attr);
+    }
+  };
+}
+
+template <typename QuantType, typename IndicesType>
+GetTestQDQModelFn<QuantType> BuildQDQTwoGatherSharedIndicesTestCase(
+    const TestInputDef<float>& input_def0,
+    const TestInputDef<float>& input_def1,
+    const TestInputDef<IndicesType>& indices_def,
+    const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+    bool use_contrib_qdq = false) {
+  return [input_def0, input_def1, indices_def, attrs, use_contrib_qdq](
+             ModelTestBuilder& builder,
+             std::vector<QuantParams<QuantType>>& output_qparams) {
+    NodeArg* input0 = MakeTestInput(builder, input_def0);
+    NodeArg* input1 = MakeTestInput(builder, input_def1);
+
+    QuantParams<QuantType> input0_qparams = GetTestInputQuantParams<QuantType>(input_def0);
+    QuantParams<QuantType> input1_qparams = GetTestInputQuantParams<QuantType>(input_def1);
+    NodeArg* input0_qdq = AddQDQNodePair<QuantType>(builder, input0, input0_qparams.scale,
+                                                    input0_qparams.zero_point, use_contrib_qdq);
+    NodeArg* input1_qdq = AddQDQNodePair<QuantType>(builder, input1, input1_qparams.scale,
+                                                    input1_qparams.zero_point, use_contrib_qdq);
+
+    NodeArg* indices_input = MakeTestInput(builder, indices_def);
+
+    NodeArg* gather0_output = builder.MakeIntermediate();
+    Node& gather0_node = builder.AddNode("Gather", {input0_qdq, indices_input}, {gather0_output});
+    for (const auto& attr : attrs) {
+      gather0_node.AddAttributeProto(attr);
+    }
+
+    NodeArg* gather1_output = builder.MakeIntermediate();
+    Node& gather1_node = builder.AddNode("Gather", {input1_qdq, indices_input}, {gather1_output});
+    for (const auto& attr : attrs) {
+      gather1_node.AddAttributeProto(attr);
+    }
+
+    output_qparams[0] = input0_qparams;
+    output_qparams[1] = input1_qparams;
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, gather0_output, input0_qparams.scale,
+                                                     input0_qparams.zero_point, use_contrib_qdq);
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, gather1_output, input1_qparams.scale,
+                                                     input1_qparams.zero_point, use_contrib_qdq);
+  };
+}
+
 // Test the accuracy of a QDQ Gather model on QNN EP. Checks if the QDQ model on QNN EP as accurate as the QDQ model on CPU EP
 // (compared to float32 model).
 template <typename QuantType, typename IndicesType>
@@ -96,6 +163,30 @@ static void RunQDQGatherOpTest(const TestInputDef<float>& input_def,
   auto f32_model_builder = BuildOpTestCase<float, IndicesType>("Gather", {input_def}, {indices_def}, attrs);
   auto qdq_model_builder = BuildQDQGatherTestCase<QuantType, IndicesType>(input_def, indices_def, attrs,
                                                                           use_contrib_qdq);
+
+  TestQDQModelAccuracy<QuantType>(f32_model_builder,
+                                  qdq_model_builder,
+                                  provider_options,
+                                  opset,
+                                  expected_ep_assignment);
+}
+
+template <typename QuantType, typename IndicesType>
+static void RunQDQTwoGatherSharedIndicesOpTest(const TestInputDef<float>& input_def0,
+                                               const TestInputDef<float>& input_def1,
+                                               const TestInputDef<IndicesType>& indices_def,
+                                               const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                                               int opset,
+                                               ExpectedEPNodeAssignment expected_ep_assignment,
+                                               bool use_contrib_qdq = false) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  auto f32_model_builder = BuildTwoGatherSharedIndicesTestCase<QuantType, IndicesType>(
+      input_def0, input_def1, indices_def, attrs);
+  auto qdq_model_builder = BuildQDQTwoGatherSharedIndicesTestCase<QuantType, IndicesType>(
+      input_def0, input_def1, indices_def, attrs, use_contrib_qdq);
 
   TestQDQModelAccuracy<QuantType>(f32_model_builder,
                                   qdq_model_builder,
@@ -155,6 +246,22 @@ TEST_F(QnnHTPBackendTests, GatherOp_IndicesStaticInt32_NegativeIndices) {
                                        {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
                                        13,
                                        ExpectedEPNodeAssignment::All);
+}
+
+// Two Gather ops with shared static negative indices on axis 0 and different input sizes.
+TEST_F(QnnHTPBackendTests, GatherOp_SharedStaticNegIndices_TwoInputs_Axis0) {
+  const std::vector<int64_t> input0_shape{3, 2};
+  const std::vector<int64_t> input1_shape{4, 2};
+  const std::vector<float> input0_data = GetSequentialFloatData(input0_shape, 1.0f, 1.0f);
+  const std::vector<float> input1_data = GetSequentialFloatData(input1_shape, 10.0f, 1.0f);
+
+  RunQDQTwoGatherSharedIndicesOpTest<uint8_t, int32_t>(
+      TestInputDef<float>(input0_shape, false, input0_data),
+      TestInputDef<float>(input1_shape, false, input1_data),
+      TestInputDef<int32_t>({2, 2}, true, {-1, 0, 1, 2}),
+      {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
+      13,
+      ExpectedEPNodeAssignment::All);
 }
 
 // Test creates a DQ -> Gather -> Q -> DQ graph, and checks that all
