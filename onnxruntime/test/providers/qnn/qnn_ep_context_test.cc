@@ -3006,16 +3006,14 @@ static void TestModelCompatibilityApiValidate(const CompatibilityTestInfo& test_
   ep_factory->ReleaseEp(ep_factory, ep);
 }
 
-// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
-TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate) {
+TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate) {
   CompatibilityTestInfo test_info;
   test_info.htp_arch = static_cast<uint32_t>(QnnHTPBackendTests::GetPlatformAttributes().htp_arch);
 
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_SUPPORTED_OPTIMAL);
 }
 
-// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
-TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_NoEp) {
+TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_NoEp) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, {{"backend_type", "htp"}});
@@ -3027,16 +3025,14 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_NoEp) {
   ASSERT_TRUE(message.find("Unable to validate model compatibility without EP created.") != std::string::npos);
 }
 
-// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
-TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_DiffBackend) {
+TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_DiffBackend) {
   CompatibilityTestInfo test_info;
   test_info.backend_id = QNN_BACKEND_ID_CPU;
 
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }
 
-// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
-TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewApiVersion) {
+TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewApiVersion) {
   CompatibilityTestInfo test_info;
   test_info.backend_api_version_major = 9999;
   test_info.backend_api_version_minor = 9999;
@@ -3045,8 +3041,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbTradRtTrad_
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }
 
-// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
-TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewBlobVersion) {
+TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewBlobVersion) {
   CompatibilityTestInfo test_info;
   test_info.context_blob_version_major = 9999;
   test_info.context_blob_version_minor = 9999;
@@ -3113,16 +3108,14 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbHnrdRtHnrd_
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }
 
-// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
-TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbOldHtpArch) {
+TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbOldHtpArch) {
   CompatibilityTestInfo test_info;
   test_info.htp_arch = 0;
 
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_SUPPORTED_PREFER_RECOMPILATION);
 }
 
-// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
-TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbNewHtpArch) {
+TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbNewHtpArch) {
   CompatibilityTestInfo test_info;
   test_info.htp_arch = 9999;
 
