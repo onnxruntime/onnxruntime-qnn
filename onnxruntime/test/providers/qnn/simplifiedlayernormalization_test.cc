@@ -113,7 +113,6 @@ static void RunSimplifiedLayerNormQDQTest(const TestInputDef<float>& input_def,
                   1e-5f, logging::Severity::kERROR, false);
 }
 
-
 // Basic 2D input, axis=0.
 TEST_F(QnnCPUBackendTests, SimplifiedLayerNorm_2D_Axis0) {
   RunSimplifiedLayerNormCpuTest(
