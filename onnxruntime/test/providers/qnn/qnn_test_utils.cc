@@ -24,7 +24,6 @@
 #include "core/session/onnxruntime_cxx_api.h"
 #include "core/session/onnxruntime_session_options_config_keys.h"
 #include "core/optimizer/graph_optimizer_registry.h"
-#include "core/platform/env.h"
 
 // Platform-specific includes for dynamic library loading
 #if defined(_WIN32)
@@ -474,16 +473,6 @@ std::string MakeTestQDQBiasInput(ModelTestBuilder& builder,
   return name + "_dq_out";
 }
 
-// Mock IKernelLookup class passed to QNN EP's GetCapability() function in order to
-// determine if the HTP backend is supported on specific platforms (e.g., Windows ARM64).
-// TODO: Remove once HTP can be emulated on Windows ARM64.
-class MockKernelLookup : public onnxruntime::IExecutionProvider::IKernelLookup {
- public:
-  const KernelCreateInfo* LookUpKernel(const Node& /* node */) const {
-    // Do nothing.
-    return nullptr;
-  }
-};
 // TODO: Consider using public DeviceCompatibility API for this function
 static BackendSupport GetHTPSupport() {
   return BackendSupport::SUPPORTED;
@@ -539,8 +528,14 @@ void QnnHTPBackendTests::SetUp() {
 // completed. Note that this is not an ABI-specific issue and exists in non-ABI UT as well but it is not observed
 // previously due to the execution order of testcases.
 void QnnHTPBackendTests::TearDownTestSuite() {
+#if !defined(__aarch64__) && !defined(_M_ARM64)
+  if (cached_htp_support_ != BackendSupport::SUPPORTED) {
+    return;
+  }
   // TODO: Consider using public DeviceCompatibility API for this function
   return;
+
+#endif  // !defined(__aarch64__) && !defined(_M_ARM64)
 }
 
 // Checks if Qnn Gpu backend can run a graph on the system.

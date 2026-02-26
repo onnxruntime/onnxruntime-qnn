@@ -75,21 +75,6 @@ if (-not (Test-Path $BuildDir)) {
 
 Enter-PyVenv $PyVEnv
 
-if ($OrtPrebuiltRoot -eq "") {
-    if ($Arch -eq "x86_64") {
-        $OrtPrebuiltRoot = (Get-OrtX64PrebuiltRoot)
-    }
-    elseif ($Arch -eq "aarch64" -or $Arch -eq "arm64" -or $Arch -eq "arm64ec") {
-        $OrtPrebuiltRoot = (Get-OrtARM64PrebuiltRoot)
-    }
-    else {
-        Write-Warning "No prebuilt ORT available for architecture '$Arch'. Please provide OrtPrebuiltRoot parameter."
-    }
-}
-else {
-    $OrtPrebuiltRoot = Resolve-Path -Path $OrtPrebuiltRoot
-}
-
 if ($QairtSdkRoot -eq "") {
     $QairtSdkRoot = (Get-QairtRoot)
 }
@@ -136,7 +121,11 @@ $CommonArgs = `
     "--config", $Config, `
     "--parallel"
 
-$QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot", "--ort_home", "$OrtPrebuiltRoot"
+$QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot"
+if ($OrtPrebuiltRoot -ne "") {
+    $OrtPrebuiltRoot = Resolve-Path -Path $OrtPrebuiltRoot
+    $QnnArgs += "--ort_home $OrtPrebuiltRoot"
+}
 $GenerateBuild = $false
 $DoBuild = $false
 $BuildWheel = $false

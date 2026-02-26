@@ -96,14 +96,6 @@ if [ -z "${qairt_sdk_root}" ]; then
     qairt_sdk_root="$(get_qairt_contentdir)"
 fi
 
-if [ -z "${ort_prebuilt_root}" ]; then
-    if [ "${target_arch}" == "aarch64_oe_gcc11_2" ]; then
-        ort_prebuilt_root="$(get_ort_aarch64_prebuilt_root)"
-    else
-        ort_prebuilt_root="$(get_ort_x64_prebuilt_root)"
-    fi
-fi
-
 cmake_bindir="$(get_cmake_bindir)"
 PATH="${cmake_bindir}:$(get_ninja_bindir):${PATH}"
 
@@ -165,7 +157,10 @@ test_runner=
 
 case "${target_platform}" in
   linux)
-    qnn_args=(--use_qnn --qnn_home "${qairt_sdk_root}" --ort_home "${ort_prebuilt_root}")
+    qnn_args=(--use_qnn --qnn_home "${qairt_sdk_root}")
+    if [ -n "${ort_prebuilt_root}" ]; then
+      qnn_args+=("--ort_home ${ort_prebuilt_root}")
+    fi
     platform_args=(--build_shared_lib)
 
     test_runner="${REPO_ROOT}/qcom/scripts/linux/run_tests.sh"
@@ -221,8 +216,10 @@ case "${target_platform}" in
       android_ndk_path="$(get_android_ndk_root)"
     fi
 
-    # TODO: Add --ort_home "${ort_prebuilt_root}" once MS release ORT prebuilt for Android
     qnn_args=(--use_qnn static_lib --qnn_home "${qairt_sdk_root}")
+    if [ -n "${ort_prebuilt_root}" ]; then
+      qnn_args+=("--ort_home ${ort_prebuilt_root}")
+    fi
     platform_args=(--build_shared_lib \
                    --android_sdk_path "${android_sdk_path}" \
                    --android_ndk_path "${android_ndk_path}" \
