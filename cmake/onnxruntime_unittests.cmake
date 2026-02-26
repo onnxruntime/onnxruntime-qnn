@@ -213,7 +213,7 @@ file(GLOB onnxruntime_test_framework_src CONFIGURE_DEPENDS
 #Because it could dynamically link to onnxruntime. Otherwise you will have two copies of onnxruntime in the same
 #process and you won't know which one you are testing.
 onnxruntime_add_static_library(onnxruntime_test_utils ${onnxruntime_test_utils_src})
-add_dependencies(onnxruntime_test_utils ort_repo)
+add_dependencies(onnxruntime_test_utils ort_core)
 if(MSVC)
   target_compile_options(onnxruntime_test_utils PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:--compiler-options /utf-8>"
           "$<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:/utf-8>")
@@ -250,7 +250,7 @@ file(GLOB onnxruntime_unittest_utils_src CONFIGURE_DEPENDS
     "${TEST_SRC_DIR}/unittest_util/*.cc")
 
 onnxruntime_add_static_library(onnxruntime_unittest_utils ${onnxruntime_unittest_utils_src})
-add_dependencies(onnxruntime_unittest_utils ort_repo)
+add_dependencies(onnxruntime_unittest_utils ort_core)
 
 target_include_directories(onnxruntime_unittest_utils PRIVATE
                            ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT}
@@ -324,41 +324,6 @@ block()
 
   # For onnxruntime_cxx_api.h
   target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session)
-
-   # Platform-specific copying of onnxruntime and onnxruntime_providers_shared
-  if(WIN32)
-    add_custom_command(
-      TARGET onnxruntime_provider_test POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy ${onnxruntime_ORT_HOME}/lib/onnxruntime.dll $<TARGET_FILE_DIR:onnxruntime_provider_test>
-      COMMENT "Copying onnxruntime.dll to Build Folder for test runner"
-    )
-
-    add_custom_command(
-      TARGET onnxruntime_provider_test POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy ${onnxruntime_ORT_HOME}/lib/onnxruntime_providers_shared.dll $<TARGET_FILE_DIR:onnxruntime_provider_test>
-      COMMENT "Copying onnxruntime_providers_shared.dll to Build Folder for test runner"
-    )
-  elseif(UNIX AND NOT ANDROID)
-    # Copy all versions of libonnxruntime.so files for Linux but skip for Android
-    # This will copy libonnxruntime.so, libonnxruntime.so.1, libonnxruntime.so.1.24.1, etc.
-    file(GLOB ONNXRUNTIME_SO_FILES "${onnxruntime_ORT_HOME}/lib/libonnxruntime.so*")
-    foreach(SO_FILE ${ONNXRUNTIME_SO_FILES})
-      add_custom_command(
-        TARGET onnxruntime_provider_test POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${SO_FILE}" $<TARGET_FILE_DIR:onnxruntime_provider_test>
-        COMMENT "Copying ${SO_FILE} to Build Folder for test runner (Linux)"
-      )
-    endforeach()
-
-    add_custom_command(
-      TARGET onnxruntime_provider_test POST_BUILD
-      COMMAND ${CMAKE_COMMAND} -E copy ${onnxruntime_ORT_HOME}/lib/libonnxruntime_providers_shared.so $<TARGET_FILE_DIR:onnxruntime_provider_test>
-      COMMENT "Copying libonnxruntime_providers_shared.so to Build Folder for test runner (Linux)"
-    )
-  elseif(ANDROID)
-    # Skip copying for Android builds
-    message(STATUS "Skipping onnxruntime library copying for Android build")
-  endif()
 
   # Exclude test_dynamic_plugin_ep when using prebuilt ONNX Runtime
   # TODO: Evaluate whether we can enable test_dynamic_plugin_ep with public API

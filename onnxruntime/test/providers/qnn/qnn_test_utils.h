@@ -19,7 +19,7 @@
 #include "core/optimizer/graph_transformer_level.h"
 #include "core/session/onnxruntime_session_options_config_keys.h"
 #include "core/util/qmath.h"
-#include "core/platform/env_var_utils.h"
+#include "test/util/env_var_utils.h"
 
 #include "test/unittest_util/qdq_test_utils.h"
 #include "test/util/include/test_utils.h"
@@ -1504,6 +1504,8 @@ enum class BackendSupport {
 // TODO: Remove once HTP can be emulated on Windows ARM64.
 class QnnHTPBackendTests : public ::testing::Test {
  public:
+  static void TearDownTestSuite();
+
   // Platform capability attributes queried from QNN.
   struct QnnPlatformAttributes {
     QnnHtpDevice_Arch_t htp_arch{QNN_HTP_DEVICE_ARCH_NONE};
