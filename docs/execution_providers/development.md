@@ -136,7 +136,7 @@ IR writer integration and debug tools are in development for ABI workflows. For 
 
 2. **onnx_test_runner** - Model validation
    - **Note:** `onnx_test_runner.exe` doesn't work with ABI library on ORT 1.24
-   - **Node:** `onnx_test_runner.exe` in this repo is compatible with ABI library
+   - **Note:** `onnx_test_runner.exe` in this repo is compatible with ABI library
 
 #### Unit Testing Application
 
