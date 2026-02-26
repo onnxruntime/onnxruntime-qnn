@@ -1508,6 +1508,200 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
     }                                                                                                        \
   } while (0)
 
+// ============================================================
+// Simple op test helpers
+//
+// These four functions cover the common test patterns: build a single-op
+// model from (op_type, input_defs, attrs), wire up the right backend and
+// provider options, and run the comparison.  Use them instead of calling
+// RunQnnModelTest / TestQDQModelAccuracy / TestFp16ModelAccuracy directly
+// when your test doesn't need extra provider options.
+// ============================================================
+
+// Runs an f32 (non-QDQ) model on the QNN CPU backend and compares output to CPU EP.
+template <typename InputType = float>
+static void RunF32ModelOnCpu(const std::string& op_type,
+                             const std::vector<TestInputDef<InputType>>& input_defs,
+                             const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                             int opset_version,
+                             ExpectedEPNodeAssignment expected_ep_assignment,
+                             const std::string& op_domain = kOnnxDomain) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildOpTestCase<InputType>(op_type, input_defs, {}, attrs, op_domain),
+                  provider_options,
+                  opset_version,
+                  expected_ep_assignment);
+}
+
+// Overload for ops with mixed-type inputs (e.g. float data + int64 indices).
+template <typename InputType1, typename InputType2 = int64_t>
+static void RunF32ModelOnCpu(const std::string& op_type,
+                             const std::vector<TestInputDef<InputType1>>& input_defs_1,
+                             const std::vector<TestInputDef<InputType2>>& input_defs_2,
+                             const std::vector<TestInputDef<InputType1>>& input_defs_3,
+                             const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                             int opset_version,
+                             ExpectedEPNodeAssignment expected_ep_assignment,
+                             const std::string& op_domain = kOnnxDomain) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3,
+                                                         attrs, op_domain),
+                  provider_options,
+                  opset_version,
+                  expected_ep_assignment);
+}
+
+// Runs an f32 (non-QDQ) model on the HTP backend and compares output to CPU EP.
+// Pass enable_htp_fp16_precision=true to let HTP execute f32 ops at fp16 precision.
+template <typename InputType = float>
+static void RunF32ModelOnHtp(const std::string& op_type,
+                             const std::vector<TestInputDef<InputType>>& input_defs,
+                             const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                             int opset_version,
+                             ExpectedEPNodeAssignment expected_ep_assignment,
+                             const std::string& op_domain = kOnnxDomain,
+                             float fp32_abs_err = 1e-5f,
+                             bool enable_htp_fp16_precision = false) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+
+  if (enable_htp_fp16_precision) {
+#if defined(_WIN32)
+    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+      GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+    }
+#endif
+#if defined(__linux__) && !defined(__aarch64__)
+    provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+    provider_options["enable_htp_fp16_precision"] = "1";
+  }
+
+  RunQnnModelTest(BuildOpTestCase<InputType>(op_type, input_defs, {}, attrs, op_domain),
+                  provider_options,
+                  opset_version,
+                  expected_ep_assignment,
+                  fp32_abs_err);
+}
+
+// Overload for ops with mixed-type inputs (e.g. bool/int64 data alongside float).
+template <typename InputType1, typename InputType2 = int64_t>
+static void RunF32ModelOnHtp(const std::string& op_type,
+                             const std::vector<TestInputDef<InputType1>>& input_defs_1,
+                             const std::vector<TestInputDef<InputType2>>& input_defs_2,
+                             const std::vector<TestInputDef<InputType1>>& input_defs_3,
+                             const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                             int opset_version,
+                             ExpectedEPNodeAssignment expected_ep_assignment,
+                             const std::string& op_domain = kOnnxDomain,
+                             float fp32_abs_err = 1e-5f,
+                             bool enable_htp_fp16_precision = false) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+
+  if (enable_htp_fp16_precision) {
+#if defined(_WIN32)
+    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+      GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+    }
+#endif
+#if defined(__linux__) && !defined(__aarch64__)
+    provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+    provider_options["enable_htp_fp16_precision"] = "1";
+  }
+
+  RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3,
+                                                         attrs, op_domain),
+                  provider_options,
+                  opset_version,
+                  expected_ep_assignment,
+                  fp32_abs_err);
+}
+
+// Runs a QDQ model on the HTP backend. Compares accuracy against CPU EP running both the f32 model
+// and the QDQ model.
+template <typename InputQType = uint8_t>
+static void RunQdqModelOnHtp(const std::string& op_type,
+                             const std::vector<TestInputDef<float>>& input_defs,
+                             const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                             int opset_version,
+                             ExpectedEPNodeAssignment expected_ep_assignment,
+                             const std::string& op_domain = kOnnxDomain,
+                             bool use_contrib_qdq = false,
+                             QDQTolerance tolerance = QDQTolerance()) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type, input_defs, {}, attrs, op_domain),
+                       BuildQDQOpTestCase<InputQType>(op_type, input_defs, {}, attrs, op_domain, use_contrib_qdq),
+                       provider_options,
+                       opset_version,
+                       expected_ep_assignment,
+                       tolerance);
+}
+
+// Overload for ops with mixed-type inputs (e.g. float data + int64 indices).
+template <typename InputQType = uint8_t, typename InputType2 = int64_t>
+static void RunQdqModelOnHtp(const std::string& op_type,
+                             const std::vector<TestInputDef<float>>& input_defs_1,
+                             const std::vector<TestInputDef<InputType2>>& input_defs_2,
+                             const std::vector<TestInputDef<float>>& input_defs_3,
+                             const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                             int opset_version,
+                             ExpectedEPNodeAssignment expected_ep_assignment,
+                             const std::string& op_domain = kOnnxDomain,
+                             bool use_contrib_qdq = false,
+                             QDQTolerance tolerance = QDQTolerance()) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestQDQModelAccuracy(BuildOpTestCase<float, InputType2>(op_type, input_defs_1, input_defs_2, input_defs_3,
+                                                         attrs, op_domain),
+                       BuildQDQOpTestCase<InputQType, InputType2>(op_type, input_defs_1, input_defs_2,
+                                                                  input_defs_3, attrs, op_domain, use_contrib_qdq),
+                       provider_options,
+                       opset_version,
+                       expected_ep_assignment,
+                       tolerance);
+}
+
+// Runs a native f16 model on the HTP backend and compares accuracy to CPU EP running the f32 reference.
+inline void RunF16ModelOnHtp(const std::string& op_type,
+                             const std::vector<TestInputDef<float>>& input_defs,
+                             const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                             int opset_version,
+                             ExpectedEPNodeAssignment expected_ep_assignment,
+                             const std::string& op_domain = kOnnxDomain,
+                             float tolerance = 0.004f) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+
+  std::vector<TestInputDef<MLFloat16>> input_fp16_defs;
+  input_fp16_defs.reserve(input_defs.size());
+  for (size_t i = 0; i < input_defs.size(); i++) {
+    input_fp16_defs.push_back(ConvertToFP16InputDef(input_defs[i]));
+  }
+
+  auto model_fp32_fn = BuildOpTestCase<float>(op_type, input_defs, {}, attrs, op_domain);
+  auto model_fp16_fn = BuildOpTestCase<MLFloat16>(op_type, input_fp16_defs, {}, attrs, op_domain);
+
+  TestFp16ModelAccuracy(model_fp32_fn,
+                        model_fp16_fn,
+                        provider_options,
+                        opset_version,
+                        expected_ep_assignment,
+                        tolerance);
+}
+
 }  // namespace test
 }  // namespace onnxruntime
 
