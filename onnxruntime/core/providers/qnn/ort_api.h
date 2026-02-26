@@ -132,6 +132,10 @@ class OrtLoggingManager {
     return GetLoggerInstance();
   }
 
+  static const OrtLogger*& GetDefaultLoggerPtr() {
+    return GetLoggerPtr();
+  }
+
   static bool HasDefaultLogger() {
     return GetLoggerPtr() != nullptr;
   }

@@ -2098,6 +2098,33 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
   return status.release();
 }
 
+OrtStatus* QnnEp::GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevice* /*hw*/,
+                                                          OrtDeviceEpIncompatibilityDetails* details) noexcept {
+  std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
+  Ort::Status status = qnn_backend_manager_->SetupBackend(false, false, false, false, dummy_map);
+
+  if (!status.IsOK()) {
+    uint32_t reasons = static_cast<uint32_t>(OrtDeviceEpIncompatibility_UNKNOWN);
+    const std::string error_message = status.GetErrorMessage();
+    if (error_message.find("LoadBackend") != std::string::npos) {
+      reasons = static_cast<uint32_t>(OrtDeviceEpIncompatibility_MISSING_DEPENDENCY);
+    } else if (error_message.find("InitializeBackend") != std::string::npos || error_message.find("CreateDevice") != std::string::npos) {
+      reasons = static_cast<uint32_t>(OrtDeviceEpIncompatibility_DRIVER_INCOMPATIBLE);
+    }
+
+    return ep_api.DeviceEpIncompatibilityDetails_SetDetails(
+        details,
+        reasons,
+        QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED,
+        error_message.c_str());
+  }
+
+  // Release backend to avoid interfering later usage.
+  qnn_backend_manager_->ReleaseResources();
+
+  return status.release();
+}
+
 bool QnnEp::GetHtpPowerConfigId(uint32_t& htp_power_config_id) {
   std::lock_guard<std::mutex> lock(config_id_mutex_);
   if (!htp_power_config_id_.has_value()) {

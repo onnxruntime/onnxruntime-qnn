@@ -7,6 +7,8 @@
 #include <iostream>
 #include <optional>
 
+#include "QnnCommon.h"
+
 #include "core/framework/error_code_helper.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_allocator.h"
@@ -28,6 +30,12 @@ static const std::unordered_map<OrtHardwareDeviceType, std::string> kDefaultBack
 #endif
 };
 
+static const std::unordered_map<OrtHardwareDeviceType, std::string> kSupportedBackendTypes = {
+    {OrtHardwareDeviceType_CPU, "cpu"},
+    {OrtHardwareDeviceType_NPU, "htp"},
+    {OrtHardwareDeviceType_GPU, "gpu"},
+};
+
 namespace onnxruntime {
 
 // OrtEpApi infrastructure to be able to use the QNN EP as an OrtEpFactory for auto EP selection.
@@ -46,6 +54,7 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   CreateDataTransfer = CreateDataTransferImpl;
   IsStreamAware = IsStreamAwareImpl;
   ValidateCompiledModelCompatibilityInfo = ValidateCompiledModelCompatibilityInfoImpl;
+  GetHardwareDeviceIncompatibilityDetails = GetHardwareDeviceIncompatibilityDetailsImpl;
 
   // HOST_ACCESSIBLE memory.
   OrtMemoryInfo* mem_info = nullptr;
@@ -286,6 +295,68 @@ OrtStatus* ORT_API_CALL QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl
                                                                   num_devices,
                                                                   compatibility_info,
                                                                   model_compatibility);
+}
+
+OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImpl(
+    _In_ OrtEpFactory* this_ptr,
+    _In_ const OrtHardwareDevice* hw,
+    _Inout_ OrtDeviceEpIncompatibilityDetails* details) noexcept {
+  auto* factory = static_cast<QnnEpFactory*>(this_ptr);
+
+  // Check if the device type is supported by QNN EP
+  auto device_type = factory->ort_api.HardwareDevice_Type(hw);
+  auto vendor_id = factory->ort_api.HardwareDevice_VendorId(hw);
+
+  // QNN EP supports general CPU devices and NPU/GPU devices with Qualcomm vendor ID
+  if ((kDefaultBackends.find(device_type) != kDefaultBackends.end() && vendor_id != factory->vendor_id_) && device_type != OrtHardwareDeviceType_CPU) {
+    uint32_t reasons = static_cast<uint32_t>(OrtDeviceEpIncompatibility_DEVICE_INCOMPATIBLE);
+    return factory->ep_api.DeviceEpIncompatibilityDetails_SetDetails(
+        details,
+        reasons,
+        QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED,
+        "QNN EP only supports general CPU devices and Qualcomm NPU and GPU devices");
+  }
+
+  // Create a temporary QNN EP and to check device compatibility
+  // Create minimal session options for backend setup
+  OrtSessionOptions* temp_session_options = nullptr;
+  RETURN_IF_NOT_NULL(factory->ort_api.CreateSessionOptions(&temp_session_options));
+
+  // Determine backend type based on device type
+  auto supported_backend_types_it = kSupportedBackendTypes.find(device_type);
+  if (supported_backend_types_it != kSupportedBackendTypes.end()) {
+    std::string backend_type = supported_backend_types_it->second;
+    RETURN_IF_NOT_NULL(factory->ort_api.AddSessionConfigEntry(temp_session_options, "backend_type", backend_type.c_str()));
+  }
+
+  // Use default logger for the compatibility check
+  // TODO: There should be a better solution.
+  const OrtLogger* logger = OrtLoggingManager::GetDefaultLoggerPtr();
+
+  // Try to create a temporary QNN EP to test backend setup
+  std::unique_ptr<QnnEp> temp_qnn_ep;
+  try {
+    temp_qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *temp_session_options, logger);
+    RETURN_IF_NOT_NULL(temp_qnn_ep->GetHardwareDeviceIncompatibilityDetails(hw, details));
+  } catch (...) {
+    uint32_t reasons = static_cast<uint32_t>(OrtDeviceEpIncompatibility_UNKNOWN);
+    return factory->ep_api.DeviceEpIncompatibilityDetails_SetDetails(
+        details,
+        reasons,
+        QNN_COMMON_ERROR_UNDEFINED,
+        "Unknown exception occurred while creating QNN EP for compatibility check");
+  }
+
+  // Clean up
+  factory->ort_api.ReleaseSessionOptions(temp_session_options);
+
+  // If we got here, the device is compatible
+  uint32_t reasons = static_cast<uint32_t>(OrtDeviceEpIncompatibility_NONE);
+  return factory->ep_api.DeviceEpIncompatibilityDetails_SetDetails(
+      details,
+      reasons,
+      QNN_SUCCESS,
+      "Device is compatible with QNN EP");
 }
 
 }  // namespace onnxruntime
