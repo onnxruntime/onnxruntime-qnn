@@ -3,9 +3,10 @@
 
 include(ExternalProject)
 
-set(ORT_SOURCE_DIR "${CMAKE_BINARY_DIR}/_deps/ort-src")
-set(ORT_BUILD_DIR "${CMAKE_BINARY_DIR}/_deps/ort-build")
-set(GIT_TAG "v1.24.1")
+set(ORT_SOURCE_DIR "${ort_core_SOURCE_DIR}")
+set(ORT_BUILD_DIR "${ort_core_BINARY_DIR}")
+message(STATUS "ORT_SOURCE_DIR: " ${ORT_SOURCE_DIR})
+message(STATUS "ORT_BUILD_DIR: " ${ORT_BUILD_DIR})
 
 # Determine the correct path for the test executable based on generator type
 # Single-config generators (like Ninja) don't have config subdirectories
@@ -116,17 +117,11 @@ list(APPEND ORT_INSTALL_COMMAND
 )
 
 ExternalProject_Add(
-    ort_core
-    DOWNLOAD_COMMAND
-        ${CMAKE_COMMAND} -E remove_directory ${ORT_SOURCE_DIR}
-        COMMAND ${CMAKE_COMMAND} -E make_directory ${ORT_SOURCE_DIR}
-        COMMAND git clone https://github.com/microsoft/onnxruntime.git ${ORT_SOURCE_DIR}
-        COMMAND ${CMAKE_COMMAND} -E chdir ${ORT_SOURCE_DIR} git sparse-checkout init --cone
-        COMMAND ${CMAKE_COMMAND} -E chdir ${ORT_SOURCE_DIR} git sparse-checkout set capi cmake include onnxruntime tools samples
-        COMMAND ${CMAKE_COMMAND} -E chdir ${ORT_SOURCE_DIR} git checkout ${GIT_TAG}
-    PATCH_COMMAND
-        ${CMAKE_COMMAND} -E echo "Applying patch for the test binary onnxruntime_plugin_ep_onnx_test"
-        COMMAND ${CMAKE_COMMAND} -E chdir ${ORT_SOURCE_DIR} git apply ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_test_binaries.patch
+    ort_core_target
+    SOURCE_DIR ${ORT_SOURCE_DIR}
+    BINARY_DIR ${ORT_BUILD_DIR}
+    DOWNLOAD_COMMAND ""
+    PATCH_COMMAND ""
     CONFIGURE_COMMAND ""
     BUILD_COMMAND ${ORT_BUILD_COMMAND}
     INSTALL_COMMAND ${ORT_INSTALL_COMMAND}
@@ -147,7 +142,7 @@ set(ONNXRUNTIME_APPLICATION_INCLUDE_ROOT "${ORT_SOURCE_DIR}/include/onnxruntime"
 # Create imported target for ONNX Runtime
 add_library(onnxruntime_prebuilt SHARED IMPORTED GLOBAL)
 # Add dependency on the external projects to ensure they're downloaded first
-add_dependencies(onnxruntime_prebuilt ort_core)
+add_dependencies(onnxruntime_prebuilt ort_core_target)
 
 # Hack since cmake check the existence of INTERFACE_INCLUDE_DIRECTORIES
 file(MAKE_DIRECTORY ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT})
