@@ -213,7 +213,7 @@ file(GLOB onnxruntime_test_framework_src CONFIGURE_DEPENDS
 #Because it could dynamically link to onnxruntime. Otherwise you will have two copies of onnxruntime in the same
 #process and you won't know which one you are testing.
 onnxruntime_add_static_library(onnxruntime_test_utils ${onnxruntime_test_utils_src})
-add_dependencies(onnxruntime_test_utils ort_core)
+add_dependencies(onnxruntime_test_utils ort_core_target)
 if(MSVC)
   target_compile_options(onnxruntime_test_utils PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:--compiler-options /utf-8>"
           "$<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:/utf-8>")
@@ -250,7 +250,7 @@ file(GLOB onnxruntime_unittest_utils_src CONFIGURE_DEPENDS
     "${TEST_SRC_DIR}/unittest_util/*.cc")
 
 onnxruntime_add_static_library(onnxruntime_unittest_utils ${onnxruntime_unittest_utils_src})
-add_dependencies(onnxruntime_unittest_utils ort_core)
+add_dependencies(onnxruntime_unittest_utils ort_core_target)
 
 target_include_directories(onnxruntime_unittest_utils PRIVATE
                            ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT}
