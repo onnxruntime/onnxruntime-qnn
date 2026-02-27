@@ -63,6 +63,12 @@ jobs:
           create_qdc_venv
           test_ort_qdc_${{inputs.target_os}}_${{inputs.target_arch}} --only
 
+      - name: Cleanup QDC Runner tmp files
+        if: always()
+        run: |
+          echo "Cleaning $TMPDIR/QdcRunner-*"
+          rm -fr $TMPDIR/QdcRunner-*
+
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v4.0.4
         if: always() # always run even if the previous step fails
