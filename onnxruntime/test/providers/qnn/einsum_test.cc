@@ -351,11 +351,9 @@ TEST_F(QnnHTPBackendTests, EinsumRank3MatMulTransposeY_QK) {
       /*tolerance=*/1e-2f);
 }
 
-// The value pair (65.1049271, 65.0625076) at index #51 don't match, which is -0.0424194 from 65.1049
-// Disable this Rank3 test on HTP since it has accuracy issue.
-TEST_F(QnnHTPBackendTests, DISABLED_EinsumRank3MatMul_QK) {
-  const std::vector<int64_t> shape0{4, 5, 6};
-  const std::vector<int64_t> shape1{4, 6, 5};
+TEST_F(QnnHTPBackendTests, EinsumRank3MatMul_QK) {
+  const std::vector<int64_t> shape0{2, 3, 4};
+  const std::vector<int64_t> shape1{2, 4, 3};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
   const std::vector<float> data1 = GetSequentialFloatData(shape1, /*start=*/-0.1f, /*step=*/0.05f);
   RunQnnEinsum<float>(
