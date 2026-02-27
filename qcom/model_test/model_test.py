@@ -14,6 +14,7 @@ import accuracy_metrics as am
 import jsonc
 import numpy as np
 import onnx
+import onnxruntime_qnn
 
 import onnxruntime
 
@@ -21,8 +22,9 @@ DEFAULT_RTOL = 1e-3
 DEFAULT_ATOL = 1e-5
 DEFAULT_COSINE_SIMILARITY: float | None = None
 
-
 BackendT = Literal["cpu", "gpu", "htp"]
+
+_ep_plugin_loaded = False
 
 
 class ModelTestDef(NamedTuple):
@@ -50,6 +52,9 @@ class ModelTestCase:
 
         session_options = onnxruntime.SessionOptions()
 
+        qnn_device, backend_path = get_qnn_ep_device(model_def.backend_type)
+        session_options.add_provider_for_devices([qnn_device], {"backend_path": str(backend_path)})
+
         if not model_def.enable_cpu_fallback and model_def.backend_type != "cpu":
             session_options.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
 
@@ -65,8 +70,6 @@ class ModelTestCase:
         self.__session = onnxruntime.InferenceSession(
             model_def.model_root / f"{model_def.model_root.name}.onnx",
             sess_options=session_options,
-            providers=["QNNExecutionProvider"],
-            provider_options=[{"backend_type": model_def.backend_type}],
         )
 
     def load_inputs(self) -> list[dict[str, np.ndarray]]:
@@ -238,6 +241,49 @@ class ModelTestSuite:
     def run(self) -> None:
         for test in self.tests:
             ModelTestCase(test).run()
+
+
+def get_backend_type(device_type: onnxruntime.OrtHardwareDeviceType) -> BackendT:
+    return cast(
+        BackendT,
+        {
+            onnxruntime.OrtHardwareDeviceType.CPU: "cpu",
+            onnxruntime.OrtHardwareDeviceType.GPU: "gpu",
+            onnxruntime.OrtHardwareDeviceType.NPU: "htp",
+        }[device_type],
+    )
+
+
+def get_qnn_backend_path(backend_type: BackendT) -> Path:
+    return Path(
+        {
+            "cpu": onnxruntime_qnn.get_qnn_cpu_path,
+            "gpu": onnxruntime_qnn.get_qnn_gpu_path,
+            "htp": onnxruntime_qnn.get_qnn_htp_path,
+        }[backend_type]()
+    )
+
+
+def get_qnn_ep_device(backend_type: BackendT) -> tuple[onnxruntime.OrtEpDevice, Path]:
+    """
+    Get the QNN EP device.
+
+    :return: A tuple of OrtEpDevice and a dict of backend names to QNN backend paths.
+    """
+    global _ep_plugin_loaded  # noqa: PLW0603
+    if not _ep_plugin_loaded:
+        onnxruntime.register_execution_provider_library("QNNExecutionProvider", onnxruntime_qnn.get_library_path())
+        _ep_plugin_loaded = True
+
+    ep_names = onnxruntime_qnn.get_ep_names()
+    assert len(ep_names) == 1, f"Got {len(ep_names)} EP names, expected 1"
+
+    qnn_ep_devices = [ed for ed in onnxruntime.get_ep_devices() if ed.ep_name == ep_names[0]]
+
+    eps_and_devices = {get_backend_type(ed.device.type): ed for ed in qnn_ep_devices}
+    ep_device = eps_and_devices[backend_type]
+
+    return ep_device, get_qnn_backend_path(backend_type)
 
 
 def initialize_logging(log_name: str) -> None:
