@@ -48,6 +48,12 @@ else()
     message(STATUS "  Python Executable: ${Python3_EXECUTABLE}")
     message(STATUS "  CMake Generator: ${CMAKE_GENERATOR}")
 
+    if (${CMAKE_SYSTEM_NAME} STREQUAL "Android")
+        set(QNN_LIBRARY_KIND static_lib)
+    else()
+        set(QNN_LIBRARY_KIND shared_lib)
+    endif()
+
     # Build ONNX Runtime from source using the provided build.py command
     set(ORT_BUILD_COMMAND
         ${CMAKE_COMMAND} -E echo "Building ONNX Runtime from source..."
@@ -58,22 +64,44 @@ else()
         --parallel
         --skip_tests
         --cmake_generator "${CMAKE_GENERATOR}"
-        --use_qnn
+        --use_qnn "${QNN_LIBRARY_KIND}"
         --qnn_home "${onnxruntime_QNN_HOME}"
         --no_kleidiai
         --use_cache
-        --targets onnxruntime_perf_test onnxruntime_plugin_ep_onnx_test onnxruntime
-        COMMAND ${CMAKE_COMMAND} -E echo "ONNX Runtime build completed successfully"
     )
-    if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+    if (${CMAKE_SYSTEM_NAME} STREQUAL "Android")
         list(APPEND ORT_BUILD_COMMAND --android)
-        list(APPEND ORT_BUILD_COMMAND --android_sdk_path ${ANDROID_SDK_PATH})
-        list(APPEND ORT_BUILD_COMMAND --android_ndk_path ${ANDROID_NDK_PATH})
-        list(APPEND ORT_BUILD_COMMAND --android_abi ${ANDROID_ABI})
-        list(APPEND ORT_BUILD_COMMAND --android_api ${ANDROID_MIN_SDK})
-    elseif(ORT_PLATFORM STREQUAL "arm64" OR ORT_PLATFORM STREQUAL "arm64ec")
-        list(APPEND ORT_BUILD_COMMAND --${ORT_PLATFORM})
+        list(APPEND ORT_BUILD_COMMAND --android_sdk_path)
+        list(APPEND ORT_BUILD_COMMAND ${ANDROID_SDK_PATH})
+        list(APPEND ORT_BUILD_COMMAND --android_ndk_path)
+        list(APPEND ORT_BUILD_COMMAND ${ANDROID_NDK_PATH})
+        list(APPEND ORT_BUILD_COMMAND --android_abi)
+        list(APPEND ORT_BUILD_COMMAND ${ANDROID_ABI})
+        list(APPEND ORT_BUILD_COMMAND --android_api)
+        list(APPEND ORT_BUILD_COMMAND ${ANDROID_MIN_SDK})
+        # Note: For Android builds, we don't add --${ORT_PLATFORM} to avoid architecture conflicts
+    elseif(${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
+        # Handle CMAKE_TOOLCHAIN_FILE and ARM64 for Linux aarch64
+        if(onnxruntime_target_platform STREQUAL "aarch64")
+            list(APPEND ORT_BUILD_COMMAND --cmake_extra_defines)
+            list(APPEND ORT_BUILD_COMMAND "CMAKE_TOOLCHAIN_FILE:FILEPATH=${CMAKE_TOOLCHAIN_FILE}")
+            list(APPEND ORT_BUILD_COMMAND --cmake_extra_defines)
+            list(APPEND ORT_BUILD_COMMAND "ARM64:BOOL=TRUE")
+
+            # Disable SVE for aarch64 builds
+            list(APPEND ORT_BUILD_COMMAND --no_sve)
+        endif()
+    else()
+        # Windows
+        if(NOT (${CMAKE_GENERATOR} STREQUAL "Ninja") AND (${ORT_PLATFORM} STREQUAL "arm64" OR ${ORT_PLATFORM} STREQUAL "arm64ec"))
+            list(APPEND ORT_BUILD_COMMAND --${ORT_PLATFORM})
+        endif()
     endif()
+
+    list(APPEND ORT_BUILD_COMMAND --targets)
+    list(APPEND ORT_BUILD_COMMAND onnxruntime_perf_test)
+    list(APPEND ORT_BUILD_COMMAND onnxruntime_plugin_ep_onnx_test)
+    list(APPEND ORT_BUILD_COMMAND onnxruntime)
 
     if(IS_MULTI_CONFIG)
         # Multi-config generators: executable is in config subdirectory
@@ -102,7 +130,7 @@ if(WIN32)
             "${ORT_PREBUILT_SOURCE}/onnxruntime_plugin_ep_onnx_test.exe"
             "${ORT_PREBUILT_DEST}"
     )
-else()
+elseif(UNIX AND NOT ANDROID)
     # Linux: Use file globbing to copy existing .so files and test executable
     # This will copy libonnxruntime.so, libonnxruntime.so.1, libonnxruntime.so.1.24.1, etc.
     list(APPEND ORT_INSTALL_COMMAND
@@ -114,6 +142,14 @@ else()
             "${ORT_PREBUILT_SOURCE}/onnxruntime_plugin_ep_onnx_test"
             "${ORT_PREBUILT_DEST}"
     )
+else()
+    list(APPEND ORT_INSTALL_COMMAND
+        COMMAND ${CMAKE_COMMAND} -E echo "Copying Android ONNX Runtime files"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${ORT_PREBUILT_SOURCE}/libonnxruntime.so"
+            "${ORT_PREBUILT_SOURCE}/onnxruntime_plugin_ep_onnx_test"
+            "${ORT_PREBUILT_DEST}"
+    )
 endif()
 
 # Add completion message
@@ -121,6 +157,7 @@ list(APPEND ORT_INSTALL_COMMAND
     COMMAND ${CMAKE_COMMAND} -E echo "File copying completed"
 )
 
+message(STATUS "ORT_BUILD_COMMAND for ExternalProject: ${ORT_BUILD_COMMAND}")
 ExternalProject_Add(
     ort_core_target
     SOURCE_DIR ${ORT_SOURCE_DIR}
