@@ -1,6 +1,7 @@
 coloredlogs
 flatbuffers
 numpy >= 1.21.6
+onnxruntime >= 1.24.2
 packaging
 protobuf
 sympy

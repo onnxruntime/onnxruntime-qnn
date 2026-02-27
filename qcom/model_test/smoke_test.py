@@ -4,11 +4,10 @@
 import os
 from pathlib import Path
 
+import onnxruntime_qnn
 import pytest
 from model_test import ModelTestCase, ModelTestDef, ModelTestSuite
 from model_zoo_test import get_xfails
-
-import onnxruntime
 
 SMOKE_TESTS = list(
     ModelTestSuite(
@@ -34,4 +33,4 @@ def test_models(test_def: ModelTestDef) -> None:
 
 
 def test_qnn_version() -> None:
-    assert onnxruntime.capi.build_and_package_info.qnn_version is not None
+    assert onnxruntime_qnn.build_and_package_info.qnn_version is not None

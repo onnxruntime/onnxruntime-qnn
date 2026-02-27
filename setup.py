@@ -102,17 +102,6 @@ try:
             if not is_manylinux:
                 self.root_is_pure = False
 
-        def get_tag(self):
-            # Override to use py3 tag instead of specific Python versions
-            # This makes the wheel work with any Python 3.10+
-            # Since there are no .pyd files, only native DLLs/SOs
-            impl, abi, plat = super().get_tag()
-            # Use 'py3' instead of specific version like 'cp310', 'cp311', etc.
-            impl = "py3"
-            # Use 'none' for ABI since we have no Python C extensions
-            abi = "none"
-            return impl, abi, plat
-
         def run(self):
             _bdist_wheel.run(self)
             if is_manylinux and not disable_auditwheel_repair and not is_qnn:
@@ -352,10 +341,5 @@ setup(
     extras_require=extras_require,
     python_requires=">=3.10",
     keywords="onnx machine learning qnn qualcomm",
-    entry_points={
-        "console_scripts": [
-            "onnxruntime_test = onnxruntime.tools.onnxruntime_test:main",
-        ]
-    },
     classifiers=classifiers,
 )

@@ -154,29 +154,6 @@ $TestModelsViaEpPlugin = {
     return $false
 }
 
-$TestModelsViaLegacy = {
-    param(
-        [Parameter(Mandatory = $true)]
-        [ValidateSet("cpu", "gpu", "htp")]
-        [string]$Backend,
-        [Parameter(Mandatory = $true)]
-        [string]$Suite,
-        [string]$TestPath = "testdata/$Suite"
-    )
-
-    Write-Host "--=-=-=- Running ONNX model $Suite tests with the legacy ProviderBridge EP -=--=-=-"
-    & $OnnxTestRunnerExe `
-        -j 1 `
-        -e qnn `
-        -i "backend_type|$Backend" `
-        $TestPath | Write-Host
-    if (-not $?) {
-        return $true
-    }
-    return $false
-}
-
-
 Write-Host "--=-=-=- Running ONNX model tests -=--=-=-"
 
 Push-Location $OnnxModelsRoot
