@@ -85,11 +85,11 @@ set(ORT_INSTALL_COMMAND
     ${CMAKE_COMMAND} -E echo "Copying files from ${ORT_PREBUILT_SOURCE} to ${ORT_PREBUILT_DEST}"
 )
 
-# Platform-specific library copying using file globbing to handle missing files gracefully
+# Platform-specific library copying
 if(WIN32)
     # Windows: Use file globbing to copy existing .dll and .lib files
     list(APPEND ORT_INSTALL_COMMAND
-        COMMAND ${CMAKE_COMMAND} -E echo "Copying Windows ONNX Runtime files using glob patterns..."
+        COMMAND ${CMAKE_COMMAND} -E echo "Copying Windows ONNX Runtime files"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${ORT_PREBUILT_SOURCE}/onnxruntime.dll"
             "${ORT_PREBUILT_SOURCE}/onnxruntime.lib"
@@ -98,10 +98,14 @@ if(WIN32)
     )
 else()
     # Linux: Use file globbing to copy existing .so files and test executable
+    # This will copy libonnxruntime.so, libonnxruntime.so.1, libonnxruntime.so.1.24.1, etc.
     list(APPEND ORT_INSTALL_COMMAND
         COMMAND ${CMAKE_COMMAND} -E echo "Copying Linux ONNX Runtime files"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${ORT_PREBUILT_SOURCE}/libonnxruntime.so*"
+            "${ORT_PREBUILT_SOURCE}/libonnxruntime.so"
+            "${ORT_PREBUILT_SOURCE}/libonnxruntime.so.1"
+            "${ORT_PREBUILT_SOURCE}/libonnxruntime.so.${ORT_CORE_VER}"
+            "${ORT_PREBUILT_SOURCE}/onnxruntime_plugin_ep_onnx_test"
             "${ORT_PREBUILT_DEST}"
     )
 endif()
