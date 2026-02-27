@@ -384,13 +384,8 @@ TEST_F(QnnHTPBackendTests, Gemm_Broadcast_Bias_DynamicA_StaticB_StaticC) {
 // Expected val: 120.73912048339844
 // QNN QDQ val: 0 (err 120.73912048339844)
 // CPU QDQ val: 120.73889923095703 (err 0.00022125244140625)
-// Issue fixed in 2.30
-#ifdef __linux__
-// Failed on Linux with 2.31
-TEST_F(QnnHTPBackendTests, DISABLED_Gemm_Dynamic_A_Static_B_Dynamic_Bias_U16) {
-#else
 TEST_F(QnnHTPBackendTests, Gemm_Dynamic_A_Static_B_Dynamic_Bias_U16) {
-#endif
+  QNN_SKIP_TEST_ON_LINUX_X86_64("Output value mismatch with QNN SDK 2.31");
   std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
   std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
   std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
@@ -455,11 +450,8 @@ TEST_F(QnnHTPBackendTests, Gemm_Static_B_And_Bias) {
 // qdq@CPU_EP val: 29.092588424682617 (err: 0.34218788146972656, err/output_range: 1.0885642766952515%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 2.7451016902923584%
 // Test 8-bit QDQ Gemm with transposed A/B and static B and Bias inputs.
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
-TEST_F(QnnHTPBackendTests, DISABLED_Gemm_TransAB_Static_B_And_Bias_U8) {
-#else
 TEST_F(QnnHTPBackendTests, Gemm_TransAB_Static_B_And_Bias_U8) {
-#endif
+  QNN_SKIP_TEST_ON_ARM64("QDQ accuracy below tolerance on v79 and v81 devices");
   std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
   std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
   std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);
@@ -494,11 +486,8 @@ TEST_F(QnnHTPBackendTests, Gemm_TransAB_Static_B_And_Bias_U16Act_U8Weight) {
 // qdq@CPU_EP val: 29.092588424682617 (err: 0.34218788146972656, err/output_range: 1.0885642766952515%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 2.7451016902923584%
 // Test QDQ Gemm with transposed A/B and dynamic (i.e., not initializer) B and Bias inputs.
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
-TEST_F(QnnHTPBackendTests, DISABLED_Gemm_TransAB_Dynamic_B_And_Bias) {
-#else
 TEST_F(QnnHTPBackendTests, Gemm_TransAB_Dynamic_B_And_Bias) {
-#endif
+  QNN_SKIP_TEST_ON_ARM64("QDQ accuracy below tolerance on v79 and v81 devices");
   std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
   std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 24);
   std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 4);

@@ -131,11 +131,8 @@ TEST_F(QnnCPUBackendTests, LRN_size_larger_than_channel) {
 // qdq@QNN_EP val: -9.3696985244750977 (err: 0.11790370941162109, err/output_range: 0.59216529130935669%)
 // qdq@CPU_EP val: -9.5258598327636719 (err: 0.038257598876953125, err/output_range: 0.19214680790901184%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 0.40001851320266724%
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
-TEST_F(QnnHTPBackendTests, DISABLED_LRNSize3) {
-#else
 TEST_F(QnnHTPBackendTests, LRNSize3) {
-#endif
+  QNN_SKIP_TEST_ON_ARM64("QDQ accuracy below tolerance on v79 and v81 devices");
   RunQDQLRNOpTest<uint8_t>(TestInputDef<float>({1, 128, 4, 5}, false, -10.0f, 10.0f),
                            3,  // Size
                            ExpectedEPNodeAssignment::All,
@@ -152,11 +149,8 @@ TEST_F(QnnHTPBackendTests, LRNSize3) {
 // qdq@QNN_EP val: -5.2317028045654297 (err: 0.11859703063964844, err/output_range: 0.59561461210250854%)
 // qdq@CPU_EP val: -5.3878731727600098 (err: 0.037573337554931641, err/output_range: 0.18869975209236145%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 0.40691488981246948%
-#if defined(__aarch64__)
-TEST_F(QnnHTPBackendTests, DISABLED_LRNSize5) {
-#else
 TEST_F(QnnHTPBackendTests, LRNSize5) {
-#endif
+  QNN_SKIP_TEST_ON_ARM64_LINUX_ANDROID("QDQ accuracy below tolerance on v79 device");
   RunQDQLRNOpTest<uint8_t>(TestInputDef<float>({1, 128, 4, 5}, false, -10.0f, 10.0f),
                            5,  // Size
                            ExpectedEPNodeAssignment::All,

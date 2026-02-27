@@ -1508,6 +1508,48 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
     }                                                                                                        \
   } while (0)
 
+// Skips the test on any ARM64 platform.
+// Matches: __aarch64__   (GCC/Clang — Linux/Android AArch64)
+//          _M_ARM64      (MSVC — Windows ARM64, native ABI)
+//          _M_ARM64EC    (MSVC — Windows ARM64EC, x64-compatible ABI on ARM64 hw)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
+#define QNN_SKIP_TEST_ON_ARM64(reason) \
+  do {                                 \
+    GTEST_SKIP() << (reason);          \
+  } while (0)
+#else
+#define QNN_SKIP_TEST_ON_ARM64(reason) \
+  do {                                 \
+  } while (0)
+#endif
+
+// Skips the test on Linux/Android AArch64 only (__aarch64__, GCC/Clang).
+// Does NOT match _M_ARM64 (MSVC Windows ARM64) or _M_ARM64EC (MSVC Windows ARM64EC).
+#if defined(__aarch64__)
+#define QNN_SKIP_TEST_ON_ARM64_LINUX_ANDROID(reason) \
+  do {                                               \
+    GTEST_SKIP() << (reason);                        \
+  } while (0)
+#else
+#define QNN_SKIP_TEST_ON_ARM64_LINUX_ANDROID(reason) \
+  do {                                               \
+  } while (0)
+#endif
+
+// Skips the test on Linux x86_64 only (__linux__ and NOT __aarch64__).
+// Targets the HTP simulator environment (x86_64 host running Linux).
+// Does NOT skip on Linux AArch64 (real HTP hardware) or Android.
+#if defined(__linux__) && !defined(__aarch64__)
+#define QNN_SKIP_TEST_ON_LINUX_X86_64(reason) \
+  do {                                        \
+    GTEST_SKIP() << (reason);                 \
+  } while (0)
+#else
+#define QNN_SKIP_TEST_ON_LINUX_X86_64(reason) \
+  do {                                        \
+  } while (0)
+#endif
+
 }  // namespace test
 }  // namespace onnxruntime
 
