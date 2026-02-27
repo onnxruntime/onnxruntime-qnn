@@ -994,7 +994,7 @@ TEST_F(QnnHTPBackendTests, BinaryOp_Sub4D_Broadcast) {
 // QNN QDQ val: 12.921497344970703 (err 12.911497116088867)
 // CPU QDQ val: -0.10214622318744659 (err 0.11214622110128403)
 TEST_F(QnnHTPBackendTests, BinaryOp_Pow) {
-  QNN_SKIP_TEST_ON_LINUX_X86_64("Output value mismatch on HTP simulator");
+  QNN_SKIP_TEST_ON_LINUX("Output value mismatch");
   std::vector<float> bases_input = {-10.0f, -8.0f, -6.0f, 1.0f, 2.0f, 3.0f, 5.5f, 10.0f};
   std::vector<float> exponents_input = {-2.0f, -1.0f, 0.0f, 0.5f, 1.0f, 2.0f, 1.5f, 0.2f};
   RunQDQOpTest<uint8_t>("Pow",

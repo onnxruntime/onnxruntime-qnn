@@ -150,7 +150,7 @@ TEST_F(QnnHTPBackendTests, LRNSize3) {
 // qdq@CPU_EP val: -5.3878731727600098 (err: 0.037573337554931641, err/output_range: 0.18869975209236145%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 0.40691488981246948%
 TEST_F(QnnHTPBackendTests, LRNSize5) {
-  QNN_SKIP_TEST_ON_ARM64_LINUX_ANDROID("QDQ accuracy below tolerance on v79 device");
+  QNN_SKIP_TEST_ON_AARCH64("QDQ accuracy below tolerance on v79 device");
   RunQDQLRNOpTest<uint8_t>(TestInputDef<float>({1, 128, 4, 5}, false, -10.0f, 10.0f),
                            5,  // Size
                            ExpectedEPNodeAssignment::All,

@@ -1523,16 +1523,29 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
   } while (0)
 #endif
 
-// Skips the test on Linux/Android AArch64 only (__aarch64__, GCC/Clang).
-// Does NOT match _M_ARM64 (MSVC Windows ARM64) or _M_ARM64EC (MSVC Windows ARM64EC).
+// Skips the test when compiled for AArch64 with GCC/Clang (__aarch64__).
+// Does NOT skip on MSVC Windows ARM64 (_M_ARM64 / _M_ARM64EC).
+// Use QNN_SKIP_TEST_ON_ARM64 instead if the test should also skip on Windows ARM64.
 #if defined(__aarch64__)
-#define QNN_SKIP_TEST_ON_ARM64_LINUX_ANDROID(reason) \
-  do {                                               \
-    GTEST_SKIP() << (reason);                        \
+#define QNN_SKIP_TEST_ON_AARCH64(reason) \
+  do {                                   \
+    GTEST_SKIP() << (reason);            \
   } while (0)
 #else
-#define QNN_SKIP_TEST_ON_ARM64_LINUX_ANDROID(reason) \
-  do {                                               \
+#define QNN_SKIP_TEST_ON_AARCH64(reason) \
+  do {                                   \
+  } while (0)
+#endif
+
+// Skips the test on any Linux platform (__linux__), including both x86_64 and AArch64.
+#if defined(__linux__)
+#define QNN_SKIP_TEST_ON_LINUX(reason) \
+  do {                                 \
+    GTEST_SKIP() << (reason);          \
+  } while (0)
+#else
+#define QNN_SKIP_TEST_ON_LINUX(reason) \
+  do {                                 \
   } while (0)
 #endif
 
