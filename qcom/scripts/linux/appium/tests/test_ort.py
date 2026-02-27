@@ -97,24 +97,6 @@ class TestOrt(TestBase):
 
         self.__assert_passes(self.__get_test_cmd(test_cmd, test_def.working_dir))
 
-    @pytest.mark.parametrize("test_def", MODEL_TEST_DEFINITIONS, ids=MODEL_TEST_IDS)
-    def test_onnx_models_legacy_runner(self, test_def: ModelTestDef) -> None:
-        runner_exe = Path(CONFIG.device_build_root) / "onnx_test_runner"
-        extra_log = Path(CONFIG.model_test_device_log(test_def.name))
-
-        # fmt: off
-        test_cmd = [
-            str(runner_exe),
-            "-j", "1",
-            "-e", "qnn",
-            "-i", f"'backend_type|{test_def.backend}'",
-            *test_def.extra_args,
-            str(test_def.model_root),
-        ]
-        # fmt: on
-
-        self.__assert_passes(self.__get_test_cmd(test_cmd, test_def.working_dir, extra_log))
-
     def __assert_passes(self, test_cmd: str) -> None:
         self.device.shell([test_cmd])
         with tempfile.TemporaryDirectory(prefix="TestRc-") as tmpdir:

@@ -55,35 +55,6 @@ function run_model_test() {
     fi
 }
 
-#
-# Run a model test with onnx_test_runner.
-#
-function run_legacy_model_test() {
-    local backend="${1}"
-    local suite="${2}"
-    local test_path="${3:-testdata/${suite}}"
-
-    log_info "-=-=-=- Running onnx/models ${suite} tests with the legacy ProviderBridge EP -=-=-=-=-"
-
-    # We don't use count_errors() because both sides of a piped command get run
-    # in subshells so ${errors} wouldn't get updated.
-    set +e
-    "${build_dir}/onnx_test_runner" \
-        -j 1 \
-        -e qnn \
-        -i "backend_type|${backend}" \
-        "${test_path}" 2>&1 | tee "${build_dir}/${suite}_legacy_model_tests.log"
-    rc=$?
-    set -e
-
-    "${python_exe}" "${REPO_ROOT}/qcom/scripts/all/model_test_log_to_junit_xml.py" \
-        "${build_dir}/${suite}_legacy_model_tests.log" > "${build_dir}/${suite}_legacy_model_tests.results.xml"
-
-    if [ ${rc} -ne 0 ]; then
-        errors=$(($errors+1))
-    fi
-}
-
 python_exe=python3
 
 for i in "$@"; do
