@@ -3,9 +3,12 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
+
 #include "core/graph/graph.h"
 #include "core/graph/node_attr_utils.h"
 
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
 #include "gtest/gtest.h"
@@ -65,12 +68,22 @@ ProviderOptions GetProviderOptions() {
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 TEST_F(QnnHTPBackendTests, ChannelShuffleFusion) {
+  const std::filesystem::path json_qnn_graph_dir = "ChannelShuffleFusion";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
   RunQnnModelTest(BuildTestCase(),
                   provider_options,
                   /*opset_version=*/10,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-2f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ChannelShuffle");
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

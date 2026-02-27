@@ -3,6 +3,7 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
 #include <string>
 #include <vector>
 #include <cmath>
@@ -14,6 +15,7 @@
 
 #include "core/graph/graph.h"
 #include "core/graph/node_attr_utils.h"
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
 #include "gtest/gtest.h"
@@ -112,7 +114,14 @@ TEST_F(QnnHTPBackendTests, DISABLED_LPBQMatMulFusion) {
 #else
 TEST_F(QnnHTPBackendTests, LPBQMatMulFusion) {
 #endif
+  const std::filesystem::path json_qnn_graph_dir = "LPBQMatMulFusion";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
   RunQnnModelTest(BuildLPBQMatMulTestCase(),
                   provider_options,
                   /*opset_version=*/21,
@@ -120,6 +129,8 @@ TEST_F(QnnHTPBackendTests, LPBQMatMulFusion) {
                   /*fp32_abs_err=*/1e-2f,
                   /*log_severity =*/logging::Severity::kERROR,
                   /*verify_outputs=*/false);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "MatMul");
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64)

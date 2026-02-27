@@ -3,12 +3,14 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
 #include <string>
 #include <vector>
 #include <numeric>
 
 #include "core/graph/graph.h"
 #include "core/graph/node_attr_utils.h"
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "gtest/gtest.h"
 
@@ -96,7 +98,14 @@ ProviderOptions GetProviderOptions() {
 // Transpose Perm: [0, 1, 2, 4, 3, 5] (swap d3 and idx0) -> [1, 1, 1, 8, 32, 8]
 // Reshape: [1, 8, 32, 8]
 TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_RowMajor) {
+  const std::filesystem::path json_qnn_graph_dir = "GatherTransposeReshape_Fusion_RowMajor";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   // Input dimensions
   int64_t d0 = 1, d1 = 1, d2 = 1, d3 = 32, d4 = 64;
@@ -116,12 +125,13 @@ TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_RowMajor) {
   // Final Reshape
   std::vector<int64_t> final_shape = {1, 8, 32, 8};
 
-  // Run Test
   RunQnnModelTest(BuildGatherTransposeReshapeTestCase(input_def, indices_shape, indices_data, transpose_perm, final_shape),
                   provider_options,
                   13,  // opset
                   ExpectedEPNodeAssignment::All,
                   1e-2f);  // fp32_abs_err: HTP uses fixed-point arithmetic, allow small numerical differences
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gather", 0);
 }
 
 // Test Case 2: Col-Major Indices
@@ -131,7 +141,14 @@ TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_RowMajor) {
 // Transpose Perm: [0, 1, 2, 5, 4, 3] (reverse last 3) -> [1, 1, 1, 10, 10, 16]
 // Reshape: [1, 100, 16]
 TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_ColMajor) {
+  const std::filesystem::path json_qnn_graph_dir = "GatherTransposeReshape_Fusion_ColMajor";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   // Input dimensions
   int64_t d0 = 1, d1 = 1, d2 = 1, d3 = 16, d4 = 100;
@@ -150,12 +167,13 @@ TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_ColMajor) {
   // Final Reshape
   std::vector<int64_t> final_shape = {1, 100, 16};
 
-  // Run Test
   RunQnnModelTest(BuildGatherTransposeReshapeTestCase(input_def, indices_shape, indices_data, transpose_perm, final_shape),
                   provider_options,
                   13,  // opset
                   ExpectedEPNodeAssignment::All,
                   1e-2f);  // fp32_abs_err: HTP uses fixed-point arithmetic, allow small numerical differences
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gather", 0);
 }
 
 // Asymmetric indices: idx0 != idx1 (6x8 split of d4=48), row-major.
@@ -163,7 +181,14 @@ TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_ColMajor) {
 // Transpose Perm: [0, 1, 2, 4, 3, 5] -> [1, 1, 1, 6, 8, 8]
 // Reshape: [1, 6, 8, 8]
 TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_AsymmetricIndices) {
+  const std::filesystem::path json_qnn_graph_dir = "GatherTransposeReshape_Fusion_AsymmetricIndices";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   auto input_def = TestInputDef<float>({1, 1, 1, 8, 48}, false, -1.0f, 1.0f);
   std::vector<int64_t> indices_data = CreateRowMajorIndices(6, 8);
@@ -171,6 +196,8 @@ TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_AsymmetricIndices) {
   RunQnnModelTest(
       BuildGatherTransposeReshapeTestCase(input_def, {6, 8}, indices_data, {0, 1, 2, 4, 3, 5}, {1, 6, 8, 8}),
       provider_options, 13, ExpectedEPNodeAssignment::All, 1e-2f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gather", 0);
 }
 
 // Merged batch dims > 1: d0*d1*d2 = 2*3*4 = 24, col-major indices.
@@ -178,7 +205,14 @@ TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_AsymmetricIndices) {
 // Transpose Perm: [0, 1, 2, 5, 4, 3] -> [2, 3, 4, 6, 6, 16]
 // Reshape: [24, 36, 16]
 TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_MergedBatchDims) {
+  const std::filesystem::path json_qnn_graph_dir = "GatherTransposeReshape_Fusion_MergedBatchDims";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   auto input_def = TestInputDef<float>({2, 3, 4, 16, 36}, false, -1.0f, 1.0f);
   std::vector<int64_t> indices_data = CreateColMajorIndices(6, 6);
@@ -186,6 +220,8 @@ TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_MergedBatchDims) {
   RunQnnModelTest(
       BuildGatherTransposeReshapeTestCase(input_def, {6, 6}, indices_data, {0, 1, 2, 5, 4, 3}, {24, 36, 16}),
       provider_options, 13, ExpectedEPNodeAssignment::All, 1e-2f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gather", 0);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
