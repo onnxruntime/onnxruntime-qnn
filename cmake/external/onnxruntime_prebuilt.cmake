@@ -61,6 +61,7 @@ else()
         --qnn_home "${onnxruntime_QNN_HOME}"
         --no_kleidiai
         --use_cache
+        --targets onnxruntime_perf_test onnxruntime_plugin_ep_onnx_test onnxruntime
         COMMAND ${CMAKE_COMMAND} -E echo "ONNX Runtime build completed successfully"
     )
     # Append "--${ORT_PLATFORM}" to ORT_BUILD_COMMAND if we are on arm64 or arm64ec
