@@ -65,8 +65,13 @@ else()
         --targets onnxruntime_perf_test onnxruntime_plugin_ep_onnx_test onnxruntime
         COMMAND ${CMAKE_COMMAND} -E echo "ONNX Runtime build completed successfully"
     )
-    # Append "--${ORT_PLATFORM}" to ORT_BUILD_COMMAND if we are on arm64 or arm64ec
-    if(ORT_PLATFORM STREQUAL "arm64" OR ORT_PLATFORM STREQUAL "arm64ec")
+    if (CMAKE_SYSTEM_NAME STREQUAL "Android")
+        list(APPEND ORT_BUILD_COMMAND --android)
+        list(APPEND ORT_BUILD_COMMAND --android_sdk_path ${ANDROID_SDK_PATH})
+        list(APPEND ORT_BUILD_COMMAND --android_ndk_path ${ANDROID_NDK_PATH})
+        list(APPEND ORT_BUILD_COMMAND --android_abi ${ANDROID_ABI})
+        list(APPEND ORT_BUILD_COMMAND --android_api ${ANDROID_MIN_SDK})
+    elseif(ORT_PLATFORM STREQUAL "arm64" OR ORT_PLATFORM STREQUAL "arm64ec")
         list(APPEND ORT_BUILD_COMMAND --${ORT_PLATFORM})
     endif()
 
