@@ -120,7 +120,6 @@ common_args=(--cmake_generator "${cmake_generator}" \
              --parallel \
              --build_dir "${build_dir}" \
              --wheel_name_suffix qcom-internal \
-             --no_kleidiai \
 )
 
 if [ -n "${qnn_arch_abi}" ]; then
@@ -183,9 +182,6 @@ case "${target_platform}" in
           # We need $toolchain_root from the toolchain.cmake, but the toolchain.cmake is sometimes
           # evaluated without the project's CMakeCache.txt entries. Pass it through the environment :-/
           export ORT_BUILD_LINUX_TOOLCHAIN_ROOT="${toolchain_root}"
-
-          # Disable SVE for the time being - https://github.com/microsoft/onnxruntime/issues/26131
-          platform_args+=(--no_sve)
 
           platform_args+=(--cmake_extra_defines
                           CMAKE_TOOLCHAIN_FILE:FILEPATH="${toolchain_cmake}"
@@ -271,6 +267,40 @@ else
     cp "${test_runner}" "${build_dir}/${config}/"
     cp "${cmake_bindir}/ctest" "${build_dir}/${config}/"
     cp "${REPO_ROOT}/qcom/scripts/all/python_test_files.txt" "${build_dir}/${config}/"
+
+    # Copy ONNX test binaries from onnx_test_binaries directory based on architecture
+    arch_subdir=""
+    case "${target_arch}" in
+      "x86_64") arch_subdir="x64" ;;
+      "aarch64"|"aarch64_oe_gcc11_2") arch_subdir="arm64" ;;
+      *) arch_subdir="x64" ;;
+    esac
+
+    onnx_test_binaries_dir="${REPO_ROOT}/onnx_test_binaries/linux/${arch_subdir}"
+    onnx_test_runner_path="${onnx_test_binaries_dir}/onnx_test_runner"
+    onnxruntime_perf_test_path="${onnx_test_binaries_dir}/onnxruntime_perf_test"
+    onnxruntime_plugin_ep_test_path="${onnx_test_binaries_dir}/onnxruntime_plugin_ep_onnx_test"
+
+    if [ -f "${onnx_test_runner_path}" ]; then
+      cp "${onnx_test_runner_path}" "${build_dir}/${config}/"
+      log_info "Copied onnx_test_runner (${arch_subdir}) to build directory"
+    else
+      log_debug "onnx_test_runner not found at ${onnx_test_runner_path}"
+    fi
+
+    if [ -f "${onnxruntime_perf_test_path}" ]; then
+      cp "${onnxruntime_perf_test_path}" "${build_dir}/${config}/"
+      log_info "Copied onnxruntime_perf_test (${arch_subdir}) to build directory"
+    else
+      log_debug "onnxruntime_perf_test not found at ${onnxruntime_perf_test_path}"
+    fi
+
+    if [ -f "${onnxruntime_plugin_ep_test_path}" ]; then
+      cp "${onnxruntime_plugin_ep_test_path}" "${build_dir}/${config}/"
+      log_info "Copied onnxruntime_plugin_ep_onnx_test (${arch_subdir}) to build directory"
+    else
+      log_debug "onnxruntime_plugin_ep_onnx_test not found at ${onnxruntime_plugin_ep_test_path}"
+    fi
   fi
 
   if [ "${#action_args[@]}" -gt 0 ]; then
