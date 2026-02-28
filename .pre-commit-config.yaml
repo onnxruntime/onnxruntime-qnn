@@ -1,0 +1,18 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+  - repo: local
+    hooks:
+      - id: qcom-lint-and-fix
+        name: lint_and_fix
+        entry: ./qcom/build_and_test.py lint_and_fix
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]
