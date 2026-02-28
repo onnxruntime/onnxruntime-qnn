@@ -1328,6 +1328,8 @@ Ort::Status QnnBackendManager::SetupBackend(
     bool enable_vtcm_backup_buffer_sharing,
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map) {
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
+  if (logger_ != &logger)
+    logger_ = &logger;
   if (backend_setup_completed_) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Backend setup already!");
 
