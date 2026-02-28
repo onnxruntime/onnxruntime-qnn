@@ -5,6 +5,8 @@
 
 import os
 
+from . import build_and_package_info  # noqa: F401
+
 EP_NAME = "QNNExecutionProvider"
 
 

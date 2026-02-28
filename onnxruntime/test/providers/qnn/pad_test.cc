@@ -459,6 +459,21 @@ TEST_F(QnnHTPBackendTests, PadNoConstantMixValue_FP32_as_FP16) {
                2e-3f);
 }
 
+TEST_F(QnnHTPBackendTests, Pad_Noop_FP32_as_FP16) {
+  bool has_constant_value_input = false;
+  bool enable_fp16_precision = true;
+  RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
+               TestInputDef<int64_t>({4}, true, {0, 0, 0, 0}),
+               TestInputDef<float>({1}, true, {0.0f}),
+               {utils::MakeAttribute("mode", "constant")},
+               ExpectedEPNodeAssignment::All,
+               "htp",
+               has_constant_value_input,
+               18,  // opset
+               enable_fp16_precision,
+               2e-3f);
+}
+
 //
 // QDQ Pad
 TEST_F(QnnHTPBackendTests, PadNoConstantValue) {
@@ -645,6 +660,16 @@ TEST_F(QnnHTPBackendTests, Pad5d) {
                            {utils::MakeAttribute("mode", "constant")},
                            ExpectedEPNodeAssignment::All,
                            true);
+}
+
+TEST_F(QnnHTPBackendTests, Pad_Noop_QDQ) {
+  bool has_constant_value_input = false;
+  RunQDQPadOpTest<uint8_t>(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
+                           TestInputDef<int64_t>({4}, true, {0, 0, 0, 0}),
+                           TestInputDef<float>({1}, true, {0.0f}),
+                           {utils::MakeAttribute("mode", "constant")},
+                           ExpectedEPNodeAssignment::All,
+                           has_constant_value_input);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

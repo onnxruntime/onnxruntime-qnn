@@ -13,6 +13,22 @@ namespace qnn {
 constexpr char kOpCast[] = "Cast";
 constexpr char kOpConvert[] = "Convert";
 
+static bool IsQnnConvertInputSupported(Qnn_DataType_t data_type) {
+  switch (data_type) {
+    case QNN_DATATYPE_FLOAT_16:
+    case QNN_DATATYPE_FLOAT_32:
+    case QNN_DATATYPE_BOOL_8:
+    case QNN_DATATYPE_UINT_8:
+    case QNN_DATATYPE_UFIXED_POINT_8:
+    case QNN_DATATYPE_SFIXED_POINT_8:
+    case QNN_DATATYPE_UFIXED_POINT_16:
+    case QNN_DATATYPE_SFIXED_POINT_16:
+      return true;
+    default:
+      return false;
+  }
+}
+
 Ort::Status CreateOrValidateOnQnn(QnnModelWrapper* qnn_model_wrapper,
                                   gsl::span<const OrtNodeUnit* const> node_units,
                                   [[maybe_unused]] const Ort::Logger& logger,
@@ -80,6 +96,14 @@ std::unique_ptr<IQnnNodeGroup> CastLoneQFusion::TryFusion(
 
   // Skip Constant cast
   if (qnn_model_wrapper.IsConstantInput(cast_node_unit.Inputs()[0].name)) {
+    return nullptr;
+  }
+
+  TensorInfo cast_input_info = {};
+  if (!qnn_model_wrapper.GetTensorInfo(cast_node_unit.Inputs()[0], cast_input_info).IsOK()) {
+    return nullptr;
+  }
+  if (!IsQnnConvertInputSupported(cast_input_info.qnn_data_type)) {
     return nullptr;
   }
   std::array<const OrtNodeUnit*, 2> node_unit_array{&cast_node_unit, quantize_linear};
