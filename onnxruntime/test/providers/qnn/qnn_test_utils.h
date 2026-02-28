@@ -17,6 +17,7 @@
 #include "core/optimizer/graph_transformer_level.h"
 #include "core/session/onnxruntime_session_options_config_keys.h"
 #include "core/util/qmath.h"
+#include "core/platform/env_var_utils.h"
 
 #include "test/unittest_util/qdq_test_utils.h"
 #include "test/util/include/test_utils.h"
@@ -1402,8 +1403,6 @@ enum class BackendSupport {
 // TODO: Remove once HTP can be emulated on Windows ARM64.
 class QnnHTPBackendTests : public ::testing::Test {
  public:
-  static void TearDownTestSuite();
-
   // Platform capability attributes queried from QNN.
   struct QnnPlatformAttributes {
     QnnHtpDevice_Arch_t htp_arch{QNN_HTP_DEVICE_ARCH_NONE};
@@ -1440,16 +1439,7 @@ class QnnHTPBackendTests : public ::testing::Test {
   }
 
   // Query QNN platform attributes by directly calling QNN APIs
-  Status QueryQnnPlatformAttributesDirectly(QnnPlatformAttributes& out, const onnxruntime::logging::Logger& logger);
-
-  // Returns true if the test should be skipped because HTP FP16 is not supported on this platform.
-  static bool ShouldSkipIfHtpFp16Unsupported() {
-#if defined(_WIN32)  // On Windows ARM64, FP16 is not supported if the HTP architecture is v68.
-    return ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68);
-#else
-    return false;
-#endif
-  }
+  static Status QueryQnnPlatformAttributesDirectly(QnnPlatformAttributes& out, const onnxruntime::logging::Logger& logger);
 
   // Returns true if the test should be skipped because AutoEP is not supported on this platform.
   static bool ShouldSkipIfAutoEpNpuUnsupported() {
@@ -1509,13 +1499,6 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
     if (!QnnHTPBackendTests::HasPlatformAttributes()) {                              \
       GTEST_SKIP() << "Test requires platform attributes, which are not available."; \
     }                                                                                \
-  } while (0)
-
-#define QNN_SKIP_TEST_IF_HTP_FP16_UNSUPPORTED()                                  \
-  do {                                                                           \
-    if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {                  \
-      GTEST_SKIP() << "Test requires HTP FP16 support, which is not available."; \
-    }                                                                            \
   } while (0)
 
 #define QNN_SKIP_TEST_IF_AUTOEP_NPU_UNSUPPORTED()                                                            \

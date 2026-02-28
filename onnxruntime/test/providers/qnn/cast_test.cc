@@ -58,6 +58,14 @@ static void RunCastOpTest(const std::vector<int64_t>& shape, ONNX_NAMESPACE::Ten
 
   if (backend_name == "htp") {
     if (enable_fp16_precision) {
+#if defined(_WIN32)
+      if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+        GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+      }
+#endif
+#if defined(__linux__) && !defined(__aarch64__)
+      provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
       provider_options["enable_htp_fp16_precision"] = "1";
     } else {
       provider_options["enable_htp_fp16_precision"] = "0";
@@ -74,6 +82,11 @@ static void RunCastOpTest(const std::vector<int64_t>& shape, ONNX_NAMESPACE::Ten
 static void RunCastFP16HTPTest(const std::vector<int64_t>& shape,
                                ONNX_NAMESPACE::TensorProto_DataType dst_type,
                                ExpectedEPNodeAssignment expected_ep_assignment) {
+#if defined(_WIN32)
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
   ProviderOptions provider_options;
 #if defined(_WIN32)
   provider_options["backend_path"] = "QnnHtp.dll";
@@ -163,7 +176,6 @@ TEST_F(QnnHTPBackendTests, TestCastFloatToBoolHTP) {
 
 // Cast float16 to bool on HTP.
 TEST_F(QnnHTPBackendTests, TestCastFloat16ToBoolHTP) {
-  QNN_SKIP_TEST_IF_HTP_FP16_UNSUPPORTED();
   RunCastFP16HTPTest({3, 3},
                      ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_BOOL,
                      ExpectedEPNodeAssignment::All);

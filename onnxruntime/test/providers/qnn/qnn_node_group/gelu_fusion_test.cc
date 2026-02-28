@@ -3,11 +3,13 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
 #include "core/graph/graph.h"
 #include "core/graph/node_attr_utils.h"
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
 #include "gtest/gtest.h"
@@ -274,6 +276,9 @@ ProviderOptions GetProviderOptions() {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
   return provider_options;
 }
 
@@ -281,7 +286,14 @@ ProviderOptions GetProviderOptions() {
 
 // Test GELU Pattern 1 with float32 model (for baseline comparison)
 TEST_F(QnnHTPBackendTests, GeluFusionPattern1_Float32) {
+  const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern1_Float32";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
   auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
 
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def),
@@ -289,11 +301,20 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_Float32) {
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-3f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 }
 
 // Test GELU Pattern 2 with float32 model (for baseline comparison)
 TEST_F(QnnHTPBackendTests, GeluFusionPattern2_Float32) {
+  const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern2_Float32";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
   auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
 
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def),
@@ -301,11 +322,20 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_Float32) {
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-3f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 }
 
 // Test GELU Pattern 1 with larger input shape
 TEST_F(QnnHTPBackendTests, GeluFusionPattern1_LargeInput) {
+  const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern1_LargeInput";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
   auto input_def = TestInputDef<float>({1, 128, 768}, false, -1.5f, 1.5f);
 
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def),
@@ -313,11 +343,20 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_LargeInput) {
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/2e-3f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 }
 
 // Test GELU Pattern 2 with larger input shape
 TEST_F(QnnHTPBackendTests, GeluFusionPattern2_LargeInput) {
+  const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern2_LargeInput";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
   auto input_def = TestInputDef<float>({1, 128, 768}, false, -1.5f, 1.5f);
 
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def),
@@ -325,11 +364,20 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_LargeInput) {
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/2e-3f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 }
 
 // Test GELU Pattern 1 with 3D input
 TEST_F(QnnHTPBackendTests, GeluFusionPattern1_3D) {
+  const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern1_3D";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
   auto input_def = TestInputDef<float>({1, 16, 32}, false, -1.0f, 1.0f);
 
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def),
@@ -337,11 +385,20 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_3D) {
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-3f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 }
 
 // Test GELU Pattern 2 with 3D input
 TEST_F(QnnHTPBackendTests, GeluFusionPattern2_3D) {
+  const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern2_3D";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
   auto input_def = TestInputDef<float>({1, 16, 32}, false, -1.0f, 1.0f);
 
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def),
@@ -349,11 +406,20 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_3D) {
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-3f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 }
 
 // Test GELU Pattern 1 with 2D input (typical for linear layers)
 TEST_F(QnnHTPBackendTests, GeluFusionPattern1_2D) {
+  const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern1_2D";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
   auto input_def = TestInputDef<float>({32, 512}, false, -1.5f, 1.5f);
 
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def),
@@ -361,11 +427,20 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_2D) {
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/2e-3f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 }
 
 // Test GELU Pattern 2 with 2D input (typical for linear layers)
 TEST_F(QnnHTPBackendTests, GeluFusionPattern2_2D) {
+  const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern2_2D";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
   auto input_def = TestInputDef<float>({32, 512}, false, -1.5f, 1.5f);
 
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def),
@@ -373,11 +448,20 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_2D) {
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/2e-3f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 }
 
 // Test GELU Pattern 1 with QDQ
 TEST_F(QnnHTPBackendTests, GeluFusionPattern1_QDQ_U8) {
+  const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern1_QDQ_U8";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
   auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
 
   TestQDQModelAccuracy(BuildGeluPattern1TestCase(input_def),
@@ -385,11 +469,20 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_QDQ_U8) {
                        provider_options,
                        /*opset_version=*/13,
                        /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 }
 
 // Test GELU Pattern 2 with QDQ
 TEST_F(QnnHTPBackendTests, GeluFusionPattern2_QDQ_U8) {
+  const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern2_QDQ_U8";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
   auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
 
   TestQDQModelAccuracy(BuildGeluPattern2TestCase(input_def),
@@ -397,6 +490,8 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_QDQ_U8) {
                        provider_options,
                        /*opset_version=*/13,
                        /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

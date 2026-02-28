@@ -474,14 +474,12 @@ void QnnHTPBackendTests::SetUp() {
   if (cached_htp_support_ == BackendSupport::SUPPORTED) {
     return;
   }
-
   const auto& logger = DefaultLoggingManager().DefaultLogger();
 
-  // Determine if HTP backend is supported only if we done so haven't before.
   if (cached_htp_support_ == BackendSupport::SUPPORT_UNKNOWN) {
     cached_htp_support_ = GetHTPSupport(logger);
   }
-
+  // Determine if HTP backend is supported only if we done so haven't before.
   if (cached_htp_support_ == BackendSupport::UNSUPPORTED) {
     LOGS(logger, WARNING) << "QNN HTP backend is not available! Skipping test.";
     GTEST_SKIP();
@@ -493,7 +491,6 @@ void QnnHTPBackendTests::SetUp() {
   // query the platform attributes if not already cached.
   if (!cached_platform_attrs_.has_value()) {
     QnnPlatformAttributes attrs;
-
     Status query_status = QueryQnnPlatformAttributesDirectly(attrs, logger);
     if (!query_status.IsOK()) {
       LOGS(logger, WARNING) << "QueryQnnPlatformAttributesDirectly failed: " << query_status.ErrorMessage();
@@ -507,72 +504,6 @@ void QnnHTPBackendTests::SetUp() {
       cached_platform_attrs_ = attrs;
     }
   }
-}
-
-// TODO
-// There is an unknown behavior that "soc_model" config somehow remains in HTP backend throughout different testcases
-// within the same process. Once the option "soc_model=60" is set, all following testcases would be implicitly applied
-// (which can be checked in verbose logging). This problem causes QnnHTPBackendTests.Inverse_2d/3d/4d on Linux failed
-// with accuracy issue 0.259040415 vs. 0.256103545. Although this precision mismatch may be expected as HTP fp16/fp32
-// behaviors could differ on different platforms, here adopts workaround to avoid modifying non-ABI parts. Concretely,
-// "soc_model=30", which is the default setting, is set to HTP backend again after QnnHTPBackendTests testsuite is
-// completed. Note that this is not an ABI-specific issue and exists in non-ABI UT as well but it is not observed
-// previously due to the execution order of testcases.
-void QnnHTPBackendTests::TearDownTestSuite() {
-#if !defined(__aarch64__) && !defined(_M_ARM64)
-  if (cached_htp_support_ != BackendSupport::SUPPORTED) {
-    return;
-  }
-
-  const auto& logger = DefaultLoggingManager().DefaultLogger();
-
-  // Build simple Relu graph.
-  onnxruntime::Model model("TearDown QnnHTPBackendTests", false, logger);
-  Graph& graph = model.MainGraph();
-  ModelTestBuilder helper(graph);
-
-  auto build_test_case = BuildOpTestCase<float, float>(
-      "Relu",
-      {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f)},
-      {},
-      {});
-
-  build_test_case(helper);
-  helper.SetGraphOutputs();
-  auto status = model.MainGraph().Resolve();
-  if (!status.IsOK()) {
-    LOGS(logger, WARNING) << "Failed to tear down QnnHTPBackendTests.";
-    return;
-  }
-
-  // Create QNN EP and call GetCapability().
-  onnxruntime::GraphViewer graph_viewer(graph);
-  std::unique_ptr<EpGraph> ep_graph = nullptr;
-  if (!EpGraph::Create(graph_viewer, ep_graph).IsOK()) {
-    LOGS(logger, WARNING) << "Failed to tear down QnnHTPBackendTests.";
-    return;
-  }
-
-  MockKernelLookup kernel_lookup;
-  OrtEpGraphSupportInfo graph_support_info(*ep_graph, kernel_lookup);
-
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string& registration_name = onnxruntime::kQnnExecutionProvider;
-  Ort::SessionOptions session_options;
-  ProviderOptions provider_options = {{"backend_type", "htp"}, {"soc_model", "30"}};
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
-
-  OrtEpFactory* qnn_ep_factory = registered_ep_device->GetMutableFactory();
-  OrtEp* qnn_ep = nullptr;
-  if (qnn_ep_factory->CreateEp(qnn_ep_factory, nullptr, nullptr, 0, session_options, logger.ToExternal(), &qnn_ep)) {
-    qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
-    LOGS(logger, WARNING) << "Failed to tear down QnnHTPBackendTests.";
-    return;
-  }
-
-  status = ToStatusAndRelease(qnn_ep->GetCapability(qnn_ep, ep_graph->ToExternal(), &graph_support_info));
-  qnn_ep_factory->ReleaseEp(qnn_ep_factory, qnn_ep);
-#endif  // !defined(__aarch64__) && !defined(_M_ARM64)
 }
 
 // Checks if Qnn Gpu backend can run a graph on the system.

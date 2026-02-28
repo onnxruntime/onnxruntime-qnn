@@ -1006,14 +1006,14 @@ TEST_F(QnnHTPBackendTests, HTPGraphFinalizationOptimizationModes) {
 
 // Test that models run with various SoC model values
 TEST_F(QnnHTPBackendTests, HTPSocModels) {
-  constexpr std::array<const char*, 3> soc_models = {"",   // No explicit SoC model specified
-                                                     "0",  // "Unknown"
+  const std::array<std::string, 3> soc_models = {"",  // No explicit SoC model specified
+                                                 std::to_string(QNN_SOC_MODEL_UNKNOWN),
 #if defined(_M_ARM64)
-                                                     "37"};  // SC8280X
+                                                 std::to_string(QNN_SOC_MODEL_SC8280X)};
 #elif defined(__linux__)
-                                                     "30"};  // SM8350
+                                                 std::to_string(QNN_SOC_MODEL_SM8350)};
 #else
-                                                     ""};
+                                                 ""};
 #endif
 
   for (auto soc_model : soc_models) {
@@ -1116,6 +1116,14 @@ TEST_F(QnnHTPBackendTests, ProfilingTest) {
 
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32)
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
   provider_options["enable_htp_fp16_precision"] = "1";
   provider_options["profiling_level"] = "detailed";
   provider_options["profiling_file_path"] = "detailed_profile.csv";
@@ -1143,6 +1151,14 @@ TEST_F(QnnHTPBackendTests, OptraceTest) {
 
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32)
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
   provider_options["enable_htp_fp16_precision"] = "1";
   provider_options["profiling_level"] = "optrace";
   provider_options["profiling_file_path"] = "optrace_profile.csv";
@@ -1219,12 +1235,19 @@ TEST_F(QnnHTPBackendTests, CastAddQDQS16) {
 
 // Test float32 model with FP16 precision
 TEST_F(QnnHTPBackendTests, Float32ModelWithFP16PrecisionTest) {
-  QNN_SKIP_TEST_IF_HTP_FP16_UNSUPPORTED();
   ProviderOptions provider_options;
 #if defined(_WIN32)
   provider_options["backend_path"] = "QnnHtp.dll";
 #else
   provider_options["backend_path"] = "libQnnHtp.so";
+#endif
+#if defined(_WIN32)
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
   provider_options["enable_htp_fp16_precision"] = "1";
 
@@ -1282,8 +1305,15 @@ TEST_F(QnnHTPBackendTests, EPRejectsDynamicShapesF32) {
   provider_options["backend_path"] = "libQnnHtp.so";
 #endif
   provider_options["offload_graph_io_quantization"] = "0";
-  provider_options["enable_htp_fp16_precision"] = "1";  // QNN EP will use fp16 precision.
-                                                        // CPU EP will use fp32, so we can relax accuracy requirements.
+#if defined(_WIN32)
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  provider_options["enable_htp_fp16_precision"] = "1";
 
   RunQnnModelTest(model_build_fn,
                   provider_options,
