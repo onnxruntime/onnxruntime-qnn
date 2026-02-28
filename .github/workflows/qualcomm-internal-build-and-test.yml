@@ -58,19 +58,18 @@ jobs:
         target_os: linux
         target_arch: aarch64_oe_gcc11_2
         target_py_vsn: None
-        upload_test_archive: false
+        upload_test_archive: true
         upload_wheel: false
         run_tests: false
 
-  # TODO: [AISW-167150] Cannot use HTP on QDC qcs6490
-  #test-linux-aarch64-oe-gcc11_2:
-  #  if: ${{ inputs.do_all }}
-  #  needs: [build-linux-aarch64-oe-gcc11_2]
-  #  uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
-  #  secrets: inherit
-  #  with:
-  #    target_os: linux
-  #    target_arch: aarch64_oe_gcc11_2
+  test-linux-aarch64-oe-gcc11_2:
+   if: ${{ inputs.do_all }}
+   needs: [build-linux-aarch64-oe-gcc11_2]
+   uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
+   secrets: inherit
+   with:
+     target_os: linux
+     target_arch: aarch64_oe_gcc11_2
 
   build-and-test-windows-arm64:
     if: ${{ inputs.do_all || inputs.do_windows_arm64 }}
