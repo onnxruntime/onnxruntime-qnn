@@ -142,7 +142,7 @@ elseif(UNIX AND NOT ANDROID)
             "${ORT_PREBUILT_SOURCE}/onnxruntime_plugin_ep_onnx_test"
             "${ORT_PREBUILT_DEST}"
     )
-else()
+elseif(ANDROID)
     list(APPEND ORT_INSTALL_COMMAND
         COMMAND ${CMAKE_COMMAND} -E echo "Copying Android ONNX Runtime files"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -150,6 +150,8 @@ else()
             "${ORT_PREBUILT_SOURCE}/onnxruntime_plugin_ep_onnx_test"
             "${ORT_PREBUILT_DEST}"
     )
+else()
+    message(FATAL_ERROR "Unknown platform")
 endif()
 
 # Add completion message

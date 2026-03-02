@@ -552,7 +552,7 @@ if(DEP_URL_ort_core MATCHES ".*refs/tags/v([0-9]+\\.[0-9]+\\.[0-9]+)\\.zip$")
   set(ORT_CORE_VER ${CMAKE_MATCH_1})
   message(STATUS "Extracted ORT_CORE_VER: ${ORT_CORE_VER}")
 else()
-  message(WARNING "Could not extract version from DEP_URL_ort_core: ${DEP_URL_ort_core}")
+  message(FATAL_ERROR "Could not extract version from DEP_URL_ort_core: ${DEP_URL_ort_core}")
   set(ORT_CORE_VER "unknown")
 endif()
 
