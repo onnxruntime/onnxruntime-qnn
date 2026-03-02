@@ -1508,6 +1508,61 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
     }                                                                                                        \
   } while (0)
 
+// Skips the test on any ARM64 platform.
+// Matches: __aarch64__   (GCC/Clang — Linux/Android AArch64)
+//          _M_ARM64      (MSVC — Windows ARM64, native ABI)
+//          _M_ARM64EC    (MSVC — Windows ARM64EC, x64-compatible ABI on ARM64 hw)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
+#define QNN_SKIP_TEST_ON_ARM64(reason) \
+  do {                                 \
+    GTEST_SKIP() << (reason);          \
+  } while (0)
+#else
+#define QNN_SKIP_TEST_ON_ARM64(reason) \
+  do {                                 \
+  } while (0)
+#endif
+
+// Skips the test when compiled for AArch64 with GCC/Clang (__aarch64__).
+// Does NOT skip on MSVC Windows ARM64 (_M_ARM64 / _M_ARM64EC).
+// Use QNN_SKIP_TEST_ON_ARM64 instead if the test should also skip on Windows ARM64.
+#if defined(__aarch64__)
+#define QNN_SKIP_TEST_ON_AARCH64(reason) \
+  do {                                   \
+    GTEST_SKIP() << (reason);            \
+  } while (0)
+#else
+#define QNN_SKIP_TEST_ON_AARCH64(reason) \
+  do {                                   \
+  } while (0)
+#endif
+
+// Skips the test on any Linux platform (__linux__), including both x86_64 and AArch64.
+#if defined(__linux__)
+#define QNN_SKIP_TEST_ON_LINUX(reason) \
+  do {                                 \
+    GTEST_SKIP() << (reason);          \
+  } while (0)
+#else
+#define QNN_SKIP_TEST_ON_LINUX(reason) \
+  do {                                 \
+  } while (0)
+#endif
+
+// Skips the test on Linux x86_64 only (__linux__ and NOT __aarch64__).
+// Targets the HTP simulator environment (x86_64 host running Linux).
+// Does NOT skip on Linux AArch64 (real HTP hardware) or Android.
+#if defined(__linux__) && !defined(__aarch64__)
+#define QNN_SKIP_TEST_ON_LINUX_X86_64(reason) \
+  do {                                        \
+    GTEST_SKIP() << (reason);                 \
+  } while (0)
+#else
+#define QNN_SKIP_TEST_ON_LINUX_X86_64(reason) \
+  do {                                        \
+  } while (0)
+#endif
+
 }  // namespace test
 }  // namespace onnxruntime
 
