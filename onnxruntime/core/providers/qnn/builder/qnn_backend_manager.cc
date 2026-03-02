@@ -706,10 +706,6 @@ Ort::Status QnnBackendManager::ReleaseDevice() {
 
 Ort::Status QnnBackendManager::InitializeProfiling() {
   profiling_level_merge_ = profiling_level_;
-  // use profiling level from ETW if ETW is enabled
-  if (profiling_level_etw_ != ProfilingLevel::INVALID) {
-    profiling_level_merge_ = profiling_level_etw_;
-  }
 
   if (ProfilingLevel::OFF == profiling_level_merge_ || ProfilingLevel::INVALID == profiling_level_merge_) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, "Profiling turned off.");
