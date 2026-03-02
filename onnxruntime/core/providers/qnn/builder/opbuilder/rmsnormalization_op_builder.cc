@@ -39,6 +39,12 @@ Ort::Status RMSNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   const auto& inputs = node_unit.Inputs();
   const auto& outputs = node_unit.Outputs();
 
+  // Reject if the optional inv_std_var output is requested (SimplifiedLayerNormalization).
+  // QNN RMSNorm only produces a single output (Y).
+  RETURN_IF(outputs.size() > 1,
+            "QNN RMSNorm only supports 1 output; "
+            "SimplifiedLayerNormalization inv_std_var output is not supported.");
+
   // Validate scale input is present
   constexpr size_t SCALE_IDX = 1;
   const bool has_scale_input = inputs.size() > SCALE_IDX && inputs[SCALE_IDX].Exists();
