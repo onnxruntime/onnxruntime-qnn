@@ -211,8 +211,8 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                     softmax_node_unit.Name(),
                                     QNN_OP_SOFTMAX_PARAM_AXIS,
                                     axis_scalar);
-      RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(param_wrapper)), "Failed to add axis param");
       param_tensor_names.push_back(param_wrapper.GetParamTensorName());
+      RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(param_wrapper)), "Failed to add axis param");
     }
   }
   {  // beta
@@ -226,8 +226,8 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                   softmax_node_unit.Name(),
                                   QNN_OP_SOFTMAX_PARAM_BETA,
                                   beta_scalar);
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(param_wrapper)), "Failed to add beta param");
     param_tensor_names.push_back(param_wrapper.GetParamTensorName());
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(param_wrapper)), "Failed to add beta param");
   }
 
   QnnTensorWrapper fused_softmax_input;
