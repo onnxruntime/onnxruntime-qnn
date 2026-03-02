@@ -2912,10 +2912,12 @@ Status InferenceSession::PartialRun(onnxruntime::RunOptions& run_options,
       session_state_->IncrementGraphExecutionCounter();
     }
 #endif
+
     ORT_CHECK_AND_SET_RETVAL(utils::ExecutePartialGraph(*session_state_, feeds_fetches_manager, feeds, fetches,
                                                         run_logger, state, cache, run_options.terminate,
                                                         partial_graph_index,
                                                         /*parent stream*/ nullptr));
+
   }
   ORT_CATCH(const std::exception& e) {
     ORT_HANDLE_EXCEPTION([&]() {
