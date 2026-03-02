@@ -6,8 +6,8 @@
 #include <string>
 #include <unordered_map>
 
-#include "core/graph/node_attr_utils.h"
 #include "test/providers/qnn/qnn_test_utils.h"
+#include "test/unittest_util/qdq_test_utils.h"
 
 #include "core/graph/onnx_protobuf.h"
 #include "gtest/gtest.h"
@@ -22,17 +22,20 @@ static GetTestQDQModelFn<QType> BuildQDQArgMxxTestCase(const std::string& op_typ
   return [op_type, input_def, attrs](ModelTestBuilder& builder,
                                      std::vector<QuantParams<QType>>& output_qparams) {
     ORT_UNUSED_PARAMETER(output_qparams);
+    MakeTestInput(builder, "X", input_def);
     QuantParams<QType> input_qparams = GetTestInputQuantParams<QType>(input_def);
+    std::string x_dq_name = AddQDQNodePair<QType>(builder, "qdq1", "X", input_qparams.scale, input_qparams.zero_point);
 
-    auto* input = MakeTestInput(builder, input_def);
+    // DQ -> ArgMax/ArgMin
+    builder.AddNode(
+        "argm",
+        op_type,
+        {x_dq_name.c_str()},
+        {"Y"},
+        "",
+        attrs);
 
-    // input -> Q -> DQ ->
-    auto* input_qdq = AddQDQNodePair<QType>(builder, input, input_qparams.scale, input_qparams.zero_point);
-    auto* argm_output = builder.MakeOutput();
-    Node& argm_node = builder.AddNode(op_type, {input_qdq}, {argm_output});
-    for (const auto& attr : attrs) {
-      argm_node.AddAttributeProto(attr);
-    }
+    builder.MakeOutput("Y");
   };
 }
 
@@ -46,7 +49,7 @@ static void RunArgMxxOpTest(const std::string& op_type, TestInputDef<float> inpu
 
   provider_options["backend_type"] = backend_name;
 
-  RunQnnModelTest(BuildOpTestCase<float>(op_type, {input_def}, {}, attrs),
+  RunQnnModelTest(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, attrs),
                   provider_options,
                   opset,
                   expected_ep_assignment);
@@ -64,8 +67,8 @@ static void RunQDQArgMxxOpTest(const std::string& op_type, TestInputDef<float> i
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type, {input_def}, {}, attrs),   // baseline float32 model
-                       BuildQDQArgMxxTestCase<QType>(op_type, input_def, attrs),  // QDQ model
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, attrs),  // baseline float32 model
+                       BuildQDQArgMxxTestCase<QType>(op_type, input_def, attrs),                    // QDQ model
                        provider_options,
                        opset,
                        expected_ep_assignment);
@@ -109,12 +112,12 @@ TEST_F(QnnHTPBackendTests, ArgMaxMinU8_DefaultAttrs) {
 // Compares output with CPU EP.
 TEST_F(QnnHTPBackendTests, ArgMaxMinU8_AxisLast) {
   RunQDQArgMxxOpTest<uint8_t>("ArgMax",
-                              TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),   // Random input.
-                              {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},  // axis is -1
+                              TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),  // Random input.
+                              {test::MakeAttribute("axis", static_cast<int64_t>(-1))},  // axis is -1
                               ExpectedEPNodeAssignment::All, 13);
   RunQDQArgMxxOpTest<uint8_t>("ArgMin",
-                              TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),   // Random input.
-                              {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},  // axis is -1
+                              TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),  // Random input.
+                              {test::MakeAttribute("axis", static_cast<int64_t>(-1))},  // axis is -1
                               ExpectedEPNodeAssignment::All, 13);
 }
 
@@ -123,12 +126,12 @@ TEST_F(QnnHTPBackendTests, ArgMaxMinU8_AxisLast) {
 TEST_F(QnnHTPBackendTests, ArgMaxMinU8_NotKeepDims) {
   RunQDQArgMxxOpTest<uint8_t>("ArgMax",
                               TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),  // Random input.
-                              {utils::MakeAttribute("axis", static_cast<int64_t>(-1)),
-                               utils::MakeAttribute("keepdims", static_cast<int64_t>(0))},
+                              {test::MakeAttribute("axis", static_cast<int64_t>(-1)),
+                               test::MakeAttribute("keepdims", static_cast<int64_t>(0))},
                               ExpectedEPNodeAssignment::All, 13);
   RunQDQArgMxxOpTest<uint8_t>("ArgMin",
                               TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),  // Random input.
-                              {utils::MakeAttribute("keepdims", static_cast<int64_t>(0))},
+                              {test::MakeAttribute("keepdims", static_cast<int64_t>(0))},
                               ExpectedEPNodeAssignment::All, 13);
 }
 
@@ -136,11 +139,11 @@ TEST_F(QnnHTPBackendTests, ArgMaxMinU8_NotKeepDims) {
 TEST_F(QnnHTPBackendTests, ArgMaxMinU8_SelectLastIndex_NonZero_Unsupported) {
   RunQDQArgMxxOpTest<uint8_t>("ArgMax",
                               TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),  // Random input.
-                              {utils::MakeAttribute("select_last_index", static_cast<int64_t>(1))},
+                              {test::MakeAttribute("select_last_index", static_cast<int64_t>(1))},
                               ExpectedEPNodeAssignment::None, 13);
   RunQDQArgMxxOpTest<uint8_t>("ArgMin",
                               TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),  // Random input.
-                              {utils::MakeAttribute("select_last_index", static_cast<int64_t>(1))},
+                              {test::MakeAttribute("select_last_index", static_cast<int64_t>(1))},
                               ExpectedEPNodeAssignment::None, 13);
 }
 
@@ -183,11 +186,11 @@ TEST_F(QnnGPUBackendTests, DISABLED_ArgMaxMin_DefaultAttrs) {
 TEST_F(QnnGPUBackendTests, DISABLED_ArgMaxMin_AxisAttr) {
   RunArgMxxOpTest("ArgMax",
                   TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),  // Random input.
-                  {utils::MakeAttribute("axis", static_cast<int64_t>(1))},  // axis is 1
+                  {test::MakeAttribute("axis", static_cast<int64_t>(1))},   // axis is 1
                   ExpectedEPNodeAssignment::All, "gpu", 13);
   RunArgMxxOpTest("ArgMin",
                   TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),  // Random input.
-                  {utils::MakeAttribute("axis", static_cast<int64_t>(1))},  // axis is 1
+                  {test::MakeAttribute("axis", static_cast<int64_t>(1))},   // axis is 1
                   ExpectedEPNodeAssignment::All, "gpu", 13);
 }
 

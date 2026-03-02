@@ -25,7 +25,7 @@ static void RunTileTestOnCPU(const TestInputDef<DataType>& input_def,
 
   provider_options["backend_type"] = "cpu";
 
-  RunQnnModelTest(BuildOpTestCase<DataType, int64_t>("Tile", {input_def}, {repeats_def}, {}),
+  RunQnnModelTest(BuildOpTestCase<DataType, int64_t>("Tile_node", "Tile", {input_def}, {repeats_def}, {}),
                   provider_options,
                   opset,
                   expected_ep_assignment);
@@ -58,24 +58,33 @@ GetTestQDQModelFn<QuantType> BuildQDQTileTestCase(const TestInputDef<float>& inp
                                                   bool use_contrib_qdq = false) {
   return [input_def, repeats_def, use_contrib_qdq](ModelTestBuilder& builder,
                                                    std::vector<QuantParams<QuantType>>& output_qparams) {
-    // input -> Q -> DQ ->
-    NodeArg* input = MakeTestInput(builder, input_def);
-    QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-    NodeArg* input_qdq = AddQDQNodePair<QuantType>(builder, input, input_qparams.scale, input_qparams.zero_point,
-                                                   use_contrib_qdq);
+    // input
+    MakeTestInput(builder, "input", input_def);
+
+    // input -> Q -> DQ -> input_qdq
+    const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
+    const std::string input_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_in", "input",
+                                  input_qparams.scale, input_qparams.zero_point, use_contrib_qdq);
 
     // repeats input
-    NodeArg* repeats_input = MakeTestInput(builder, repeats_def);
+    MakeTestInput(builder, "repeats", repeats_def);
 
     // Tile op
-    NodeArg* tile_output = builder.MakeIntermediate();
-    builder.AddNode("Tile", {input_qdq, repeats_input}, {tile_output});
+    builder.AddNode("Tile",
+                    "Tile",
+                    {input_qdq, "repeats"},
+                    {"tile_out"});
 
-    // op_output -> Q -> DQ -> output
+    // tile_out -> Q -> DQ -> graph output
     // NOTE: Input and output quantization parameters must be equal for Tile.
-    output_qparams[0] = input_qparams;  // Overwrite!
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, tile_output, input_qparams.scale,
-                                                     input_qparams.zero_point, use_contrib_qdq);
+    output_qparams[0] = input_qparams;
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder,
+                                                     "qdq_out",
+                                                     "tile_out",
+                                                     input_qparams.scale,
+                                                     input_qparams.zero_point,
+                                                     use_contrib_qdq);
   };
 }
 
@@ -92,7 +101,7 @@ static void RunQDQTileTestOnHTP(const TestInputDef<float>& input_def,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  auto f32_model_builder = BuildOpTestCase<float, int64_t>("Tile", {input_def}, {repeats_def}, {});
+  auto f32_model_builder = BuildOpTestCase<float, int64_t>("Tile_node", "Tile", {input_def}, {repeats_def}, {});
   auto qdq_model_builder = BuildQDQTileTestCase<QType>(input_def, repeats_def, use_contrib_qdq);
   TestQDQModelAccuracy(f32_model_builder,
                        qdq_model_builder,
