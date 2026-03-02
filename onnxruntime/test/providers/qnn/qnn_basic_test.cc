@@ -953,8 +953,6 @@ TEST_F(QnnHTPBackendTests, MultithreadSustainedHighPowerCfgFromEpOption) {
                                                    TestInputDef<float>(shape, false, input_data)),
                       "add3.qdq");
 
-
-  //InferenceSession session_obj{session_opts, GetEnvironment()};
   onnxruntime::ProviderOptions options;
 
 #if defined(_WIN32)
