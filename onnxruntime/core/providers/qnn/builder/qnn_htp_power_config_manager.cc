@@ -102,7 +102,7 @@ Ort::Status HtpPowerConfigManager::AddHtpPerformanceConfig(QnnHtpPerfInfrastruct
 }
 
 Ort::Status HtpPowerConfigManager::AddHtpPerformanceMode(HtpPerformanceMode htp_performance_mode,
-                                                    uint32_t htp_power_config_client_id) {
+                                                         uint32_t htp_power_config_client_id) {
   RETURN_IF(htp_performance_mode_set_, "There is already a pending HTP performance mode config");
   if (htp_performance_mode == last_set_htp_performance_mode_) {
     ORT_CXX_LOG(logger_,
