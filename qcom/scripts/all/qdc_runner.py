@@ -920,6 +920,8 @@ class RunnerCli:
         qli_archive = ORT_QLI_ARCHIVE
         windows_archive = ORT_TEST_WIN_ARM64
 
+        # If you change this temp dir's prefix, please also update the QDC CI job, which attempts to clean
+        # up after us if we're killed and don't do it outselves.
         with tempfile.TemporaryDirectory(prefix="QdcRunner-") as tmpdir:
             if android_archive.exists():
                 android_archive = self.__append_package(
