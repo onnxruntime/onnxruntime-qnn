@@ -3,9 +3,12 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
+
 #include "core/graph/graph.h"
 #include "core/graph/node_attr_utils.h"
 
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
 #include "gtest/gtest.h"
@@ -21,7 +24,7 @@ GetTestModelFn BuildTestCaseScalar(
     bool use_constant,
     bool reverse_input_order,
     std::optional<int64_t> softmax_axis = std::nullopt) {
-  return [&](ModelTestBuilder& builder) -> void {
+  return [=, &input_def](ModelTestBuilder& builder) -> void {
     NodeArg* input = MakeTestInput<float>(builder, input_def);
     NodeArg* scale{nullptr};
     if (use_constant) {
@@ -64,8 +67,15 @@ ProviderOptions GetProviderOptions() {
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
-TEST_F(QnnHTPBackendTests, DISABLED_ScaleSoftmaxFusionScalarInitializer) {
+TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializer) {
+  const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionScalarInitializer";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   auto input_def = TestInputDef<float>({1, 3, 5, 5}, false, -0.5f, 0.5f);
   RunQnnModelTest(BuildTestCaseScalar(input_def, 0.125f, /*use_constant=*/false, /*reverse_input_order=*/false),
@@ -73,10 +83,20 @@ TEST_F(QnnHTPBackendTests, DISABLED_ScaleSoftmaxFusionScalarInitializer) {
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-2f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 0);
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_ScaleSoftmaxFusionScalarConstant) {
+TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstant) {
+  const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionScalarConstant";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   auto input_def = TestInputDef<float>({1, 3, 5, 5}, false, -0.5f, 0.5f);
   RunQnnModelTest(BuildTestCaseScalar(input_def, 0.375f, /*use_constant=*/true, /*reverse_input_order=*/false),
@@ -84,30 +104,63 @@ TEST_F(QnnHTPBackendTests, DISABLED_ScaleSoftmaxFusionScalarConstant) {
                   /*opset_version=*/14,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-2f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 0);
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_ScaleSoftmaxFusionScalarInitializerReversed) {
+TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializerReversed) {
+  const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionScalarInitializerReversed";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
   auto input_def = TestInputDef<float>({1, 3, 5, 5}, false, -0.5f, 0.5f);
   RunQnnModelTest(BuildTestCaseScalar(input_def, 0.375f, /*use_constant=*/false, /*reverse_input_order=*/true),
                   provider_options,
                   /*opset_version=*/15,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-2f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 0);
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_ScaleSoftmaxFusionScalarConstantReversed) {
+TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstantReversed) {
+  const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionScalarConstantReversed";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
   auto input_def = TestInputDef<float>({1, 3, 5, 5}, false, -0.5f, 0.5f);
-  RunQnnModelTest(BuildTestCaseScalar(input_def, 0.125f, /*use_constant=*/true, /*reverse_input _order=*/true),
+  RunQnnModelTest(BuildTestCaseScalar(input_def, 0.125f, /*use_constant=*/true, /*reverse_input_order=*/true),
                   provider_options,
                   /*opset_version=*/16,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-2f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 0);
 }
 
-TEST_F(QnnHTPBackendTests, DISABLED_ScaleSoftmaxFusionSoftmaxNegativeAxis) {
+TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSoftmaxNegativeAxis) {
+  const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionSoftmaxNegativeAxis";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
   auto input_def = TestInputDef<float>({1, 3, 5, 5}, false, -0.5f, 0.5f);
   RunQnnModelTest(BuildTestCaseScalar(input_def, 0.125f,
                                       /*use_constant=*/true, /*reverse_input_order=*/true, /*softmax_axis=*/-1),
@@ -115,10 +168,21 @@ TEST_F(QnnHTPBackendTests, DISABLED_ScaleSoftmaxFusionSoftmaxNegativeAxis) {
                   /*opset_version=*/22,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-2f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 0);
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar4d) {
+  const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionSkipNoScalar4d";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
   auto input_def1 = TestInputDef<float>({1, 3, 5, 5}, false, -0.5f, 0.5f);
   auto input_def2 = TestInputDef<float>({1, 3, 5, 5}, false, -0.5f, 0.5f);
   RunQnnModelTest(BuildTestCaseNoScalar(input_def1, input_def2),
@@ -126,10 +190,21 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar4d) {
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-2f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 1);
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar1d) {
+  const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionSkipNoScalar1d";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
   ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
   auto input_def1 = TestInputDef<float>({1, 3, 5, 5}, false, -0.5f, 0.5f);
   auto input_def2 = TestInputDef<float>({1}, false, -0.5f, 0.5f);
   RunQnnModelTest(BuildTestCaseNoScalar(input_def1, input_def2),
@@ -137,6 +212,9 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar1d) {
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-2f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Softmax", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", 1);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
