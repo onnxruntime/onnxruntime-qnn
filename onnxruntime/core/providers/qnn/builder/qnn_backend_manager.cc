@@ -171,9 +171,9 @@ bool QnnBackendManager::IsTimerThreadRunning() {
 }
 
 Ort::Status QnnBackendManager::SetHtpPowerCustomConfigs(uint32_t htp_power_config_client_id,
-                                                   QnnHtpPerfInfrastructure_PowerConfig_t power_config,
-                                                   uint32_t rpc_polling_time,
-                                                   uint32_t rpc_control_latency) {
+                                                        QnnHtpPerfInfrastructure_PowerConfig_t power_config,
+                                                        uint32_t rpc_polling_time,
+                                                        uint32_t rpc_control_latency) {
   RETURN_IF_NOT(backend_setup_completed_, "Cannot set HTP power config ID if backend setup is not complete.");
 
   RETURN_IF_ERROR(htp_power_config_manager_.AddRpcPollingTime(rpc_polling_time));
