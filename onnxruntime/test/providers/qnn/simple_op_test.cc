@@ -1354,6 +1354,7 @@ TEST_F(QnnHTPBackendTests, ScatterElements_Float_Reduction_None) {
 #endif
 
   RunQnnModelTest(BuildOpTestCase<float, int64_t>(
+                      "ScatterElements_node",
                       "ScatterElements",
                       {
                           TestInputDef<float>({4}, false, std::move(data)),

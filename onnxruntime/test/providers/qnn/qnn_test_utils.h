@@ -1675,6 +1675,9 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
   } while (0)
 #endif
 
+#define QNN_ASSERT(cond, ...) \
+  if (!(cond)) ORT_CXX_API_THROW("Initialization failed.", OrtErrorCode::ORT_RUNTIME_EXCEPTION);
+
 }  // namespace test
 }  // namespace onnxruntime
 

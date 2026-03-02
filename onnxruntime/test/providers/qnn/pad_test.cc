@@ -453,7 +453,7 @@ TEST_F(QnnHTPBackendTests, Pad_Noop_FP32_as_FP16) {
   RunPadOpTest(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                TestInputDef<int64_t>({4}, true, {0, 0, 0, 0}),
                TestInputDef<float>({1}, true, {0.0f}),
-               {utils::MakeAttribute("mode", "constant")},
+               {test::MakeAttribute("mode", "constant")},
                ExpectedEPNodeAssignment::All,
                "htp",
                has_constant_value_input,
@@ -655,7 +655,7 @@ TEST_F(QnnHTPBackendTests, Pad_Noop_QDQ) {
   RunQDQPadOpTest<uint8_t>(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
                            TestInputDef<int64_t>({4}, true, {0, 0, 0, 0}),
                            TestInputDef<float>({1}, true, {0.0f}),
-                           {utils::MakeAttribute("mode", "constant")},
+                           {test::MakeAttribute("mode", "constant")},
                            ExpectedEPNodeAssignment::All,
                            has_constant_value_input);
 }

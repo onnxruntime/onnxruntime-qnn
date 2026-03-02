@@ -198,62 +198,36 @@ set(onnxruntime_test_common_libs
 set (onnxruntime_test_providers_dependencies ${onnxruntime_EXTERNAL_DEPENDENCIES})
 set(onnxruntime_test_framework_src_patterns)
 if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_REDUCED_OPS_BUILD)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_test_utils.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_test_utils.h)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/argmaxmin_op_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/average_pool_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/batch_norm_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/cast_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/clip_op_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/conv_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/cumsum_op_htp_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/einsum_op_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/flatten_op_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/gather_elems_op_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/gather_op_htp_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/gemm_op_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/instance_norm_htp_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/inverse_op_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/layer_norm_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/leakyrelu_op_htp_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/logical_comp_ops_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/lrn_op_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/lstm_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/matmul_test.cpp)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/max_min_op_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/mod_op_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/pad_op_test.cpp)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/pool_op_test.cpp)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/reduce_op_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/reshape_expand_op_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/resize_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/simple_op_htp_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/slice_htp_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/split_op_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/squeeze_unsqueeze_op_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/stft_op_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/thresholdedrelu_op_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/tile_op_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/topk_op_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/transpose_htp_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/upsample_op_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/where_htp_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/qnn_graph_checker.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/qnn_graph_checker.h)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/channel_shuffle_fusion_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/gelu_fusion_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/lpbqgemm_fusion_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/lpbqmatmul_fusion_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/reshape_transpose_rank5_test.cc)
-  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/scale_softmax_fusion_test.cc)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/*)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/qnn_node_group/*)
+  list(APPEND onnxruntime_test_framework_src_patterns ${TEST_SRC_DIR}/providers/qnn/optimizer/*)
+  list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn)
   if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
-    list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn)
+    list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_shared)
   endif()
 endif()
 
 file(GLOB onnxruntime_test_framework_src CONFIGURE_DEPENDS
   ${onnxruntime_test_framework_src_patterns}
   )
+
+# Exclude the simulation EP factory files from the build
+list(REMOVE_ITEM onnxruntime_test_framework_src
+     "${TEST_SRC_DIR}/providers/qnn/bf16_test.cc"
+     "${TEST_SRC_DIR}/providers/qnn/fusedmatmul_test.cc"
+     "${TEST_SRC_DIR}/providers/qnn/groupnormalization_test.cc"
+     "${TEST_SRC_DIR}/providers/qnn/matmulnbits_test.cc"
+     "${TEST_SRC_DIR}/providers/qnn/quickgelu_test.cc"
+     "${TEST_SRC_DIR}/providers/qnn/rmsnormalization_test.cc"
+     "${TEST_SRC_DIR}/providers/qnn/qnn_node_group/lpbqgemm_fusion_test.cc"
+     "${TEST_SRC_DIR}/providers/qnn/qnn_node_group/lpbqmatmul_fusion_test.cc"
+     "${TEST_SRC_DIR}/providers/qnn/qnn_node_group/lpbqgemm_fusion_without_ql_test.cc"
+     "${TEST_SRC_DIR}/providers/qnn/qnn_node_group/lpbqmatmul_fusion_without_ql_test.cc"
+     "${TEST_SRC_DIR}/providers/qnn/qnn_node_group/scale_softmax_fusion_test.cc"
+     "${TEST_SRC_DIR}/providers/qnn/qnn_node_group/gather_transpose_reshape_fusion_test.cc"
+     "${TEST_SRC_DIR}/providers/qnn/optimizer/transpose_optimizer_test.cc"
+     "${TEST_SRC_DIR}/providers/qnn/qnn_basic_test.cc"
+     "${TEST_SRC_DIR}/providers/qnn/qnn_ep_context_test.cc")
 
 #This is a small wrapper library that shouldn't use any onnxruntime internal symbols(except onnxruntime_common).
 #Because it could dynamically link to onnxruntime. Otherwise you will have two copies of onnxruntime in the same

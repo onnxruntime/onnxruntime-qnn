@@ -97,21 +97,32 @@ GetTestModelFn BuildTwoGatherSharedIndicesTestCase(const TestInputDef<float>& in
                                                    const TestInputDef<IndicesType>& indices_def,
                                                    const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs) {
   return [input_def0, input_def1, indices_def, attrs](ModelTestBuilder& builder) {
-    NodeArg* input0 = MakeTestInput(builder, input_def0);
-    NodeArg* input1 = MakeTestInput(builder, input_def1);
-    NodeArg* indices_input = MakeTestInput(builder, indices_def);
+    // Create inputs using string names
+    MakeTestInput(builder, "X0", input_def0);
+    MakeTestInput(builder, "X1", input_def1);
+    MakeTestInput(builder, "I", indices_def);
 
-    NodeArg* gather0_output = builder.MakeOutput();
-    Node& gather0_node = builder.AddNode("Gather", {input0, indices_input}, {gather0_output});
-    for (const auto& attr : attrs) {
-      gather0_node.AddAttributeProto(attr);
-    }
+    // First Gather op
+    builder.AddNode(
+        "gather0",
+        "Gather",
+        {"X0", "I"},
+        {"Y0"},
+        "",
+        attrs);
 
-    NodeArg* gather1_output = builder.MakeOutput();
-    Node& gather1_node = builder.AddNode("Gather", {input1, indices_input}, {gather1_output});
-    for (const auto& attr : attrs) {
-      gather1_node.AddAttributeProto(attr);
-    }
+    // Second Gather op
+    builder.AddNode(
+        "gather1",
+        "Gather",
+        {"X1", "I"},
+        {"Y1"},
+        "",
+        attrs);
+
+    // Make outputs
+    builder.MakeOutput("Y0");
+    builder.MakeOutput("Y1");
   };
 }
 
@@ -125,36 +136,54 @@ GetTestQDQModelFn<QuantType> BuildQDQTwoGatherSharedIndicesTestCase(
   return [input_def0, input_def1, indices_def, attrs, use_contrib_qdq](
              ModelTestBuilder& builder,
              std::vector<QuantParams<QuantType>>& output_qparams) {
-    NodeArg* input0 = MakeTestInput(builder, input_def0);
-    NodeArg* input1 = MakeTestInput(builder, input_def1);
+    builder.graph_->set_name("qdq_two_gather_shared_indices_graph");
 
+    // input0 (fp32) -> Q -> DQ ->
+    MakeTestInput(builder, "X0", input_def0);
     QuantParams<QuantType> input0_qparams = GetTestInputQuantParams<QuantType>(input_def0);
+    const std::string x0_qdq = AddQDQNodePair<QuantType>(builder, "qdq_x0", "X0",
+                                                         input0_qparams.scale, input0_qparams.zero_point, use_contrib_qdq);
+
+    // input1 (fp32) -> Q -> DQ ->
+    MakeTestInput(builder, "X1", input_def1);
     QuantParams<QuantType> input1_qparams = GetTestInputQuantParams<QuantType>(input_def1);
-    NodeArg* input0_qdq = AddQDQNodePair<QuantType>(builder, input0, input0_qparams.scale,
-                                                    input0_qparams.zero_point, use_contrib_qdq);
-    NodeArg* input1_qdq = AddQDQNodePair<QuantType>(builder, input1, input1_qparams.scale,
-                                                    input1_qparams.zero_point, use_contrib_qdq);
+    const std::string x1_qdq = AddQDQNodePair<QuantType>(builder, "qdq_x1", "X1",
+                                                         input1_qparams.scale, input1_qparams.zero_point, use_contrib_qdq);
 
-    NodeArg* indices_input = MakeTestInput(builder, indices_def);
+    // indices input
+    MakeTestInput(builder, "I", indices_def);
 
-    NodeArg* gather0_output = builder.MakeIntermediate();
-    Node& gather0_node = builder.AddNode("Gather", {input0_qdq, indices_input}, {gather0_output});
-    for (const auto& attr : attrs) {
-      gather0_node.AddAttributeProto(attr);
-    }
+    // First Gather op
+    builder.AddNode(
+        "gather0",
+        "Gather",
+        {x0_qdq, "I"},
+        {"Y0"},
+        "",
+        attrs);
 
-    NodeArg* gather1_output = builder.MakeIntermediate();
-    Node& gather1_node = builder.AddNode("Gather", {input1_qdq, indices_input}, {gather1_output});
-    for (const auto& attr : attrs) {
-      gather1_node.AddAttributeProto(attr);
-    }
+    // Second Gather op
+    builder.AddNode(
+        "gather1",
+        "Gather",
+        {x1_qdq, "I"},
+        {"Y1"},
+        "",
+        attrs);
 
-    output_qparams[0] = input0_qparams;
-    output_qparams[1] = input1_qparams;
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, gather0_output, input0_qparams.scale,
-                                                     input0_qparams.zero_point, use_contrib_qdq);
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, gather1_output, input1_qparams.scale,
-                                                     input1_qparams.zero_point, use_contrib_qdq);
+    // NOTE: Input and output quantization parameters must be equal for Gather.
+    output_qparams[0] = input0_qparams;  // Overwrite!
+    output_qparams[1] = input1_qparams;  // Overwrite!
+
+    // Y0 -> Q -> DQ -> output
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(
+        builder, "qdq_out0", "Y0", output_qparams[0].scale,
+        output_qparams[0].zero_point, use_contrib_qdq);
+
+    // Y1 -> Q -> DQ -> output
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(
+        builder, "qdq_out1", "Y1", output_qparams[1].scale,
+        output_qparams[1].zero_point, use_contrib_qdq);
   };
 }
 
@@ -270,7 +299,7 @@ TEST_F(QnnHTPBackendTests, GatherOp_SharedStaticNegIndices_TwoInputs_Axis0) {
       TestInputDef<float>(input0_shape, false, input0_data),
       TestInputDef<float>(input1_shape, false, input1_data),
       TestInputDef<int32_t>({2, 2}, true, {-1, 0, 1, 2}),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(0))},
       13,
       ExpectedEPNodeAssignment::All);
 }
