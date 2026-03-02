@@ -30,16 +30,16 @@ static void RunLayerNormCpuTest(const TestInputDef<float>& input_def,
                   expected_ep_assignment);
 }
 
-// Disabled all QNN CPU LayerNorm tests due to bug in 2.42 SDK
+// Some QNN CPU LayerNorm tests remain disabled due to a 2.42 SDK bug.
 
-TEST_F(QnnCPUBackendTests, DISABLED_LayerNorm) {
+TEST_F(QnnCPUBackendTests, LayerNorm) {
   RunLayerNormCpuTest(TestInputDef<float>({2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
                       TestInputDef<float>({2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
                       {test::MakeAttribute("axis", static_cast<int64_t>(0))},
                       ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnCPUBackendTests, DISABLED_LayerNorm1D_Axis0) {
+TEST_F(QnnCPUBackendTests, LayerNorm1D_Axis0) {
   RunLayerNormCpuTest(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
                       TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
                       {test::MakeAttribute("axis", static_cast<int64_t>(0))},
