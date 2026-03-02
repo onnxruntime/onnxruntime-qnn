@@ -266,11 +266,8 @@ TEST_F(QnnHTPBackendTests, DISABLED_MatMulOp) {
 // qdq@QNN_EP val: 0.0099215693771839142 (err: 7.8431330621242523e-05, err/output_range: 0.78431320190429688%)
 // qdq@CPU_EP val: 0.010000000707805157 (err: 0, err/output_range: 0%)
 // abs(qdq@QNN_EP - qdq@CPU_EP) / output_range = 0.78431320190429688%
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
-TEST_F(QnnHTPBackendTests, DISABLED_MatMulOp_QDQ) {
-#else
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ) {
-#endif
+  QNN_SKIP_TEST_ON_ARM64("QDQ accuracy below tolerance on v79 and v81 devices");
   // UINT8
   // RunQDQMatMulOpTest(shape_0, shape_1, is_initializer_0, is_initializer_1, expected_ep_assignment, opset,
   // use_contrib_qdq)

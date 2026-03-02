@@ -450,11 +450,8 @@ static void RunReduceOpQDQTest(const std::string& op_type,
 //
 // - Uses uint8 as the quantization type.
 // - Uses opset 13, which has "axes" as an input.
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
-TEST_F(QnnHTPBackendTests, DISABLED_ReduceSumU8Opset13) {
-#else
 TEST_F(QnnHTPBackendTests, ReduceSumU8Opset13) {
-#endif
+  QNN_SKIP_TEST_ON_ARM64("QDQ accuracy below tolerance on v79 and v81 devices");
   RunReduceOpQDQTest<uint8_t>("ReduceSum",
                               TestInputDef<float>({2, 2}, false, {-10.0f, 3.21289f, -5.9981f, 10.0f}),
                               {0, 1},  // axes
@@ -485,11 +482,8 @@ TEST_F(QnnHTPBackendTests, ReduceSumU8Opset13_LastAxis) {
 //
 // - Uses uint8 as the quantization type.
 // - Uses opset 11, which has "axes" as an attribute.
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
-TEST_F(QnnHTPBackendTests, DISABLED_ReduceSumU8Opset11) {
-#else
 TEST_F(QnnHTPBackendTests, ReduceSumU8Opset11) {
-#endif
+  QNN_SKIP_TEST_ON_ARM64("QDQ accuracy below tolerance on v79 and v81 devices");
   RunReduceOpQDQTest<uint8_t>("ReduceSum",
                               TestInputDef<float>({2, 2}, false, {-10.0f, 3.21289f, -5.9981f, 10.0f}),
                               {0, 1},  // axes
@@ -670,11 +664,8 @@ TEST_F(QnnHTPBackendTests, ReduceMinS8Opset18) {
 //
 // - Uses uint8 as the quantization type.
 // - Uses opset 18, which has "axes" as an input.
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
-TEST_F(QnnHTPBackendTests, DISABLED_ReduceMeanU8Opset18) {
-#else
 TEST_F(QnnHTPBackendTests, ReduceMeanU8Opset18) {
-#endif
+  QNN_SKIP_TEST_ON_ARM64("QDQ accuracy below tolerance on v79 and v81 devices");
   RunReduceOpQDQTest<uint8_t>("ReduceMean",
                               TestInputDef<float>({2, 2}, false, {-10.0f, 3.21289f, -5.9981f, 10.0f}),
                               {0, 1},  // axes
@@ -706,11 +697,8 @@ TEST_F(QnnHTPBackendTests, ReduceMeanU8Opset18_LastAxis) {
 //
 // - Uses uint8 as the quantization type.
 // - Uses opset 13, which has "axes" as an attribute.
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
-TEST_F(QnnHTPBackendTests, DISABLED_ReduceMeanU8Opset13) {
-#else
 TEST_F(QnnHTPBackendTests, ReduceMeanU8Opset13) {
-#endif
+  QNN_SKIP_TEST_ON_ARM64("QDQ accuracy below tolerance on v79 and v81 devices");
   RunReduceOpQDQTest<uint8_t>("ReduceMean",
                               TestInputDef<float>({2, 2}, false, {-10.0f, 3.21289f, -5.9981f, 10.0f}),
                               {0, 1},  // axes
