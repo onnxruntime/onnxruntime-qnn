@@ -74,7 +74,11 @@ void CreateMLValue(const OrtMemoryInfo* memory_info,
     for (auto dim : dims) {
       tensor_size *= static_cast<size_t>(dim);
     }
-    memset(dst, 0, tensor_size * sizeof(T));
+    // Use loop for proper value initialization instead of memset
+    // This works correctly for both trivial and non-trivial types
+    for (size_t i = 0; i < tensor_size; ++i) {
+      dst[i] = T{};
+    }
   }
 }
 

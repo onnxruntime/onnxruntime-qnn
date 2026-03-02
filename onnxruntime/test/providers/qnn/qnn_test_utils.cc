@@ -518,7 +518,7 @@ void QnnHTPBackendTests::SetUp() {
       std::cout << platform_info_str;
       // TODO: Fix the crash here with ORT_CXX_LOG
       // ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_INFO, platform_info_str.c_str());
-      
+
       cached_platform_attrs_ = attrs;
     }
   }

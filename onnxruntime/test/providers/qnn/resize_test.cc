@@ -215,7 +215,7 @@ static void RunQDQResizeOpTest(const TestInputDef<float>& input_def,
                        opset,
                        expected_ep_assignment,
                        tolerance,
-                       logging::Severity::kERROR,
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        "",
                        session_option_pairs,
                        graph_optimization_level);
@@ -440,36 +440,36 @@ TEST_F(QnnHTPBackendTests, ResizeU8_2xCubicHalfPixelFloor_scales) {
 
   // Create a QDQ model builder that uses scales instead of sizes
   GetTestQDQModelFn<uint8_t> qdq_builder =
-    [input_def, scales_data](ModelTestBuilder& builder,
-                             std::vector<QuantParams<uint8_t>>& output_qparams) {
-    MakeTestInput<float>(builder, "input", input_def);
-    const QuantParams<uint8_t> input_qparams = GetTestInputQuantParams<uint8_t>(input_def);
+      [input_def, scales_data](ModelTestBuilder& builder,
+                               std::vector<QuantParams<uint8_t>>& output_qparams) {
+        MakeTestInput<float>(builder, "input", input_def);
+        const QuantParams<uint8_t> input_qparams = GetTestInputQuantParams<uint8_t>(input_def);
 
-    // input -> Q -> DQ ->
-    const std::string input_qdq =
-        AddQDQNodePair<uint8_t>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
+        // input -> Q -> DQ ->
+        const std::string input_qdq =
+            AddQDQNodePair<uint8_t>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
 
-    builder.MakeInitializer<float>("roi", {0}, {});
-    builder.Make1DInitializer<float>("scales", scales_data);
+        builder.MakeInitializer<float>("roi", {0}, {});
+        builder.Make1DInitializer<float>("scales", scales_data);
 
-    std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
-    attrs.push_back(MakeAttribute("mode", "cubic"));
-    attrs.push_back(MakeAttribute("coordinate_transformation_mode", "half_pixel"));
-    attrs.push_back(MakeAttribute("nearest_mode", "floor"));
+        std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+        attrs.push_back(MakeAttribute("mode", "cubic"));
+        attrs.push_back(MakeAttribute("coordinate_transformation_mode", "half_pixel"));
+        attrs.push_back(MakeAttribute("nearest_mode", "floor"));
 
-    builder.AddNode("Resize",
-                    "Resize",
-                    {input_qdq, "roi", "scales"},
-                    {"resize_out"},
-                    kOnnxDomain,
-                    attrs);
+        builder.AddNode("Resize",
+                        "Resize",
+                        {input_qdq, "roi", "scales"},
+                        {"resize_out"},
+                        kOnnxDomain,
+                        attrs);
 
-    // Resize requires the output quantization parameters to match the input.
-    output_qparams[0] = input_qparams;
+        // Resize requires the output quantization parameters to match the input.
+        output_qparams[0] = input_qparams;
 
-    AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_out", "resize_out",
-                                                   output_qparams[0].scale, output_qparams[0].zero_point);
-  };
+        AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_out", "resize_out",
+                                                       output_qparams[0].scale, output_qparams[0].zero_point);
+      };
 
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -481,7 +481,7 @@ TEST_F(QnnHTPBackendTests, ResizeU8_2xCubicHalfPixelFloor_scales) {
                        19,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
-                       logging::Severity::kERROR,
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        "",
                        {},
                        GraphOptimizationLevel::ORT_DISABLE_ALL);
@@ -496,36 +496,36 @@ TEST_F(QnnHTPBackendTests, ResizeU8_2xCubicHalfPixel_scales_downsample) {
 
   // Create a QDQ model builder that uses scales instead of sizes
   GetTestQDQModelFn<uint8_t> qdq_builder =
-    [input_def, scales_data](ModelTestBuilder& builder,
-                             std::vector<QuantParams<uint8_t>>& output_qparams) {
-    MakeTestInput<float>(builder, "input", input_def);
-    const QuantParams<uint8_t> input_qparams = GetTestInputQuantParams<uint8_t>(input_def);
+      [input_def, scales_data](ModelTestBuilder& builder,
+                               std::vector<QuantParams<uint8_t>>& output_qparams) {
+        MakeTestInput<float>(builder, "input", input_def);
+        const QuantParams<uint8_t> input_qparams = GetTestInputQuantParams<uint8_t>(input_def);
 
-    // input -> Q -> DQ ->
-    const std::string input_qdq =
-        AddQDQNodePair<uint8_t>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
+        // input -> Q -> DQ ->
+        const std::string input_qdq =
+            AddQDQNodePair<uint8_t>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
 
-    builder.MakeInitializer<float>("roi", {0}, {});
-    builder.Make1DInitializer<float>("scales", scales_data);
+        builder.MakeInitializer<float>("roi", {0}, {});
+        builder.Make1DInitializer<float>("scales", scales_data);
 
-    std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
-    attrs.push_back(MakeAttribute("mode", "cubic"));
-    attrs.push_back(MakeAttribute("coordinate_transformation_mode", "half_pixel"));
-    attrs.push_back(MakeAttribute("nearest_mode", "floor"));
+        std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+        attrs.push_back(MakeAttribute("mode", "cubic"));
+        attrs.push_back(MakeAttribute("coordinate_transformation_mode", "half_pixel"));
+        attrs.push_back(MakeAttribute("nearest_mode", "floor"));
 
-    builder.AddNode("Resize",
-                    "Resize",
-                    {input_qdq, "roi", "scales"},
-                    {"resize_out"},
-                    kOnnxDomain,
-                    attrs);
+        builder.AddNode("Resize",
+                        "Resize",
+                        {input_qdq, "roi", "scales"},
+                        {"resize_out"},
+                        kOnnxDomain,
+                        attrs);
 
-    // Resize requires the output quantization parameters to match the input.
-    output_qparams[0] = input_qparams;
+        // Resize requires the output quantization parameters to match the input.
+        output_qparams[0] = input_qparams;
 
-    AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_out", "resize_out",
-                                                   output_qparams[0].scale, output_qparams[0].zero_point);
-  };
+        AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_out", "resize_out",
+                                                       output_qparams[0].scale, output_qparams[0].zero_point);
+      };
 
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -537,7 +537,7 @@ TEST_F(QnnHTPBackendTests, ResizeU8_2xCubicHalfPixel_scales_downsample) {
                        19,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
-                       logging::Severity::kERROR,
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        "",
                        {},
                        GraphOptimizationLevel::ORT_DISABLE_ALL);
