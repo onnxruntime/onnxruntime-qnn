@@ -96,7 +96,7 @@ static GetTestQDQModelFn<OutputQType> BuildQDQPerChannelMatMulTestCase(const Tes
                                                                        bool use_contrib_qdq = false) {
   return [input_def, weights_def, weight_quant_axis, use_contrib_qdq](
              ModelTestBuilder& builder, std::vector<QuantParams<OutputQType>>& output_qparams) {
-    assert(weights_def.IsInitializer() && weights_def.IsRawData());
+    QNN_ASSERT(weights_def.IsInitializer() && weights_def.IsRawData());
 
     // input
     MakeTestInput<float>(builder, "input", input_def);

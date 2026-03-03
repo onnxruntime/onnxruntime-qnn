@@ -38,6 +38,14 @@
 namespace onnxruntime {
 namespace test {
 
+// QNN_ASSERT macro that imitates ORT_ENFORCE pattern
+#define QNN_ASSERT(condition)                                             \
+  do {                                                                    \
+    if (!(condition)) {                                                   \
+      ORT_CXX_API_THROW(#condition, OrtErrorCode::ORT_RUNTIME_EXCEPTION); \
+    }                                                                     \
+  } while (false)
+
 // Signature for function that builds a float32 model.
 using GetTestModelFn = std::function<void(ModelTestBuilder& builder)>;
 
@@ -268,7 +276,7 @@ struct TestInputDef {
         range.second = std::max(range.second, val);
       }
     } else {
-      assert(which_type == 1);
+      QNN_ASSERT(which_type == 1);
       RandomData rand_info = std::get<RandomData>(data_info_);
       range.first = rand_info.min;
       range.second = rand_info.max;
@@ -288,7 +296,7 @@ struct TestInputDef {
     }
 
     // Raw data. Get min/max per axis dim val
-    assert(which_type == 0);
+    QNN_ASSERT(which_type == 0);
 
     const std::vector<T>& raw_data = std::get<RawData>(data_info_).data;
     std::pair<T, T> init_range(std::numeric_limits<T>::max(), std::numeric_limits<T>::lowest());
@@ -307,7 +315,7 @@ struct TestInputDef {
         }
       }
     }
-    assert(i == raw_data.size());
+    QNN_ASSERT(i == raw_data.size());
 
     return per_axis_ranges;
   }
@@ -381,8 +389,8 @@ static void QuantizeValues(gsl::span<const FloatType> input, gsl::span<QuantType
                            std::optional<int64_t> axis) {
   const size_t input_rank = shape.size();
   const size_t num_elems = SizeOfShape(shape);
-  assert(input.size() == num_elems);
-  assert(output.size() == num_elems);
+  QNN_ASSERT(input.size() == num_elems);
+  QNN_ASSERT(output.size() == num_elems);
 
   size_t block_count = 1;
   size_t broadcast_dim = 1;
@@ -395,8 +403,8 @@ static void QuantizeValues(gsl::span<const FloatType> input, gsl::span<QuantType
     block_size = SizeFromDimension(shape, axis_no_neg + 1);
   }
 
-  assert(scales.size() == broadcast_dim);
-  assert(zero_points.empty() || zero_points.size() == broadcast_dim);
+  QNN_ASSERT(scales.size() == broadcast_dim);
+  QNN_ASSERT(zero_points.empty() || zero_points.size() == broadcast_dim);
 
   size_t i = 0;
 
@@ -439,8 +447,8 @@ inline void QuantizeValues<float, Int4x2>(gsl::span<const float> input,
                                           std::optional<int64_t> axis) {
   const size_t input_rank = shape.size();
   const size_t num_int4_elems = SizeOfShape(shape);
-  assert(input.size() == num_int4_elems);
-  assert(output.size() == Int4x2::CalcNumInt4Pairs(num_int4_elems));
+  QNN_ASSERT(input.size() == num_int4_elems);
+  QNN_ASSERT(output.size() == Int4x2::CalcNumInt4Pairs(num_int4_elems));
 
   size_t block_count = 1;
   size_t broadcast_dim = 1;
@@ -453,8 +461,8 @@ inline void QuantizeValues<float, Int4x2>(gsl::span<const float> input,
     block_size = SizeFromDimension(shape, axis_no_neg + 1);
   }
 
-  assert(scales.size() == broadcast_dim);
-  assert(zero_points.empty() || zero_points.size() == Int4x2::CalcNumInt4Pairs(broadcast_dim));
+  QNN_ASSERT(scales.size() == broadcast_dim);
+  QNN_ASSERT(zero_points.empty() || zero_points.size() == Int4x2::CalcNumInt4Pairs(broadcast_dim));
 
   std::fill(output.begin(), output.end(), Int4x2{});
 
@@ -476,7 +484,7 @@ inline void QuantizeValues<float, Int4x2>(gsl::span<const float> input,
       }
     }
   }
-  assert(i == (block_count * broadcast_dim * block_size));
+  QNN_ASSERT(i == (block_count * broadcast_dim * block_size));
 }
 
 template <>
@@ -488,8 +496,8 @@ inline void QuantizeValues<float, UInt4x2>(gsl::span<const float> input,
                                            std::optional<int64_t> axis) {
   const size_t input_rank = shape.size();
   const size_t num_uint4_elems = SizeOfShape(shape);
-  assert(input.size() == num_uint4_elems);
-  assert(output.size() == UInt4x2::CalcNumInt4Pairs(num_uint4_elems));
+  QNN_ASSERT(input.size() == num_uint4_elems);
+  QNN_ASSERT(output.size() == UInt4x2::CalcNumInt4Pairs(num_uint4_elems));
 
   size_t block_count = 1;
   size_t broadcast_dim = 1;
@@ -502,8 +510,8 @@ inline void QuantizeValues<float, UInt4x2>(gsl::span<const float> input,
     block_size = SizeFromDimension(shape, axis_no_neg + 1);
   }
 
-  assert(scales.size() == broadcast_dim);
-  assert(zero_points.empty() || zero_points.size() == UInt4x2::CalcNumInt4Pairs(broadcast_dim));
+  QNN_ASSERT(scales.size() == broadcast_dim);
+  QNN_ASSERT(zero_points.empty() || zero_points.size() == UInt4x2::CalcNumInt4Pairs(broadcast_dim));
 
   std::fill(output.begin(), output.end(), UInt4x2{});
 
@@ -525,7 +533,7 @@ inline void QuantizeValues<float, UInt4x2>(gsl::span<const float> input,
       }
     }
   }
-  assert(i == (block_count * broadcast_dim * block_size));
+  QNN_ASSERT(i == (block_count * broadcast_dim * block_size));
 }
 
 // Refer to test_autoep_utils.h for leveraging unique pointer to unregister plugin EP.
@@ -1674,9 +1682,6 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
   do {                                        \
   } while (0)
 #endif
-
-#define QNN_ASSERT(cond, ...) \
-  if (!(cond)) ORT_CXX_API_THROW("Initialization failed.", OrtErrorCode::ORT_RUNTIME_EXCEPTION);
 
 }  // namespace test
 }  // namespace onnxruntime

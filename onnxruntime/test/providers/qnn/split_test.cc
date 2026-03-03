@@ -261,7 +261,7 @@ GetTestQDQModelFn<QuantType> BuildQDQSplitTestCase(const TestInputDef<float>& in
                     attrs);
 
     // outputs: each split_out{i} -> Q -> DQ -> graph output
-    assert(output_qparams.size() == actual_num_outputs);
+    QNN_ASSERT(output_qparams.size() == actual_num_outputs);
     for (size_t i = 0; i < actual_num_outputs; i++) {
       // NOTE: Input and output quantization parameters must be equal for Split.
       output_qparams[i] = input_qparams;

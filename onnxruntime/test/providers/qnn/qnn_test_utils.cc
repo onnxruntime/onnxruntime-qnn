@@ -160,7 +160,7 @@ size_t SizeHelper(std::vector<int64_t> shape, size_t start, size_t end) {
 }
 
 size_t SizeToDimension(std::vector<int64_t> shape, size_t dimension) {
-  assert(dimension <= shape.size() && "Invalid dimension of for SizeToDimension");
+  QNN_ASSERT(dimension <= shape.size());
 
   int64_t size = SizeHelper(shape, 0, dimension);
   return size;
@@ -168,7 +168,7 @@ size_t SizeToDimension(std::vector<int64_t> shape, size_t dimension) {
 
 size_t SizeFromDimension(std::vector<int64_t> shape, size_t dimension) {
   const size_t num_dims = shape.size();
-  assert(dimension <= num_dims && "Invalid dimension of for SizeFromDimension.");
+  QNN_ASSERT(dimension <= num_dims);
 
   int64_t size = SizeHelper(shape, dimension, num_dims);
   return size;
@@ -449,7 +449,7 @@ std::string MakeTestQDQBiasInput(ModelTestBuilder& builder,
                                          static_cast<int32_t>(rand_info.max / bias_scale));
     MakeTestInput(builder, name, bias_int32_def);
   } else {
-    assert(bias_def.IsRawData());
+    QNN_ASSERT(bias_def.IsRawData());
     // Create raw data initializer def that is quantized to int32
     const auto& bias_f32_raw = bias_def.GetRawData();
     const size_t num_elems = bias_f32_raw.size();

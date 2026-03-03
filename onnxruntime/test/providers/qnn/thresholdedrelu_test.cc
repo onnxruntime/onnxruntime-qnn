@@ -63,7 +63,7 @@ inline GetTestQDQModelFn<InputAQType> BuildQDQThresholdedReluTestCase(const std:
   return [input_defs, attrs, use_contrib_qdq](ModelTestBuilder& builder,
                                               std::vector<QuantParams<InputAQType>>& output_qparams) {
     const size_t num_inputs = input_defs.size();
-    QNN_ASSERT(num_inputs == 1, "ThresholdedRelu expects exactly 1 input for this test case.");
+    QNN_ASSERT(num_inputs == 1);
 
     // input
     MakeTestInput<float>(builder, "input0", input_defs[0]);

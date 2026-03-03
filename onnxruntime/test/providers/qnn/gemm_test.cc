@@ -234,7 +234,7 @@ inline GetTestQDQModelFn<InputAQType> BuildQDQGemmTestCase(const std::vector<Tes
   return [input_defs, attrs, use_contrib_qdq](ModelTestBuilder& builder,
                                               std::vector<QuantParams<InputAQType>>& output_qparams) {
     const size_t num_inputs = input_defs.size();
-    assert(num_inputs == 2 || num_inputs == 3);
+    QNN_ASSERT(num_inputs == 2 || num_inputs == 3);
 
     builder.graph_->set_name("qdq_gemm_graph");
 

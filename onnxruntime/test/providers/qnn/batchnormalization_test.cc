@@ -31,8 +31,8 @@ static void ComputeChannelMeanAndVar(const std::vector<FLOAT_TYPE>& input_data, 
   }
   const size_t channel_stride = batch_stride / num_channels;
 
-  assert(mean_vals.size() == num_channels);
-  assert(var_vals.size() == num_channels);
+  QNN_ASSERT(mean_vals.size() == num_channels);
+  QNN_ASSERT(var_vals.size() == num_channels);
   for (size_t i = 0; i < num_channels; i++) {
     mean_vals[i] = FLOAT_TYPE{};
     var_vals[i] = FLOAT_TYPE{};
@@ -89,7 +89,7 @@ template <typename FLOAT_TYPE>
 static GetTestModelFn BuildBatchNormTestCase(const TestInputDef<FLOAT_TYPE>& input_def,
                                              const TestInputDef<FLOAT_TYPE>& scale_def,
                                              const TestInputDef<FLOAT_TYPE>& bias_def) {
-  assert(input_def.IsRawData());  // Need raw data to compute mean and variance inputs.
+  QNN_ASSERT(input_def.IsRawData());  // Need raw data to compute mean and variance inputs.
 
   return [input_def, scale_def, bias_def](ModelTestBuilder& builder) {
     const auto& input_shape = input_def.GetShape();
@@ -128,7 +128,7 @@ template <typename InputQType, typename ScaleQType>
 GetTestQDQModelFn<InputQType> BuildQDQBatchNormTestCase(const TestInputDef<float>& input_def,
                                                         const TestInputDef<float>& scale_def,
                                                         const TestInputDef<float>& bias_def) {
-  assert(input_def.IsRawData());  // Need raw data to compute mean and variance inputs.
+  QNN_ASSERT(input_def.IsRawData());  // Need raw data to compute mean and variance inputs.
 
   return [input_def, scale_def, bias_def](ModelTestBuilder& builder,
                                           std::vector<QuantParams<InputQType>>& output_qparams) {

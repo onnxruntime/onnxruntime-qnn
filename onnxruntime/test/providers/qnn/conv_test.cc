@@ -198,7 +198,7 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvPerChannelBiasRequantTestC
                                         use_contrib_qdq));
 
     // Quantized(weights) -> DQ -> (per-channel quantization)
-    assert(weights_def.IsInitializer() && weights_def.IsRawData());
+    QNN_ASSERT(weights_def.IsInitializer() && weights_def.IsRawData());
     std::vector<float> weight_scales;
     std::vector<WeightQType> weight_zero_points;
 
@@ -240,7 +240,7 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQConvPerChannelBiasRequantTestC
     if (!bias_def.GetShape().empty()) {
       // Create INTENTIONALLY WRONG bias scales that don't match input_scale * weight_scale[i]
       // This should cause QDQ to fail against CPU, but our requantization should fix it
-      assert(bias_def.IsInitializer() && bias_def.IsRawData());
+      QNN_ASSERT(bias_def.IsInitializer() && bias_def.IsRawData());
       std::vector<float> wrong_bias_scales = weight_scales;
       std::vector<int32_t> bias_zero_points(weight_scales.size(), 0);
 
@@ -454,7 +454,7 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQPerChannelConvTestCase(
                                         use_contrib_qdq));
 
     // Quantized(weights) -> DQ ->
-    assert(weights_def.IsInitializer() && weights_def.IsRawData());
+    QNN_ASSERT(weights_def.IsInitializer() && weights_def.IsRawData());
     std::vector<float> weight_scales;
     std::vector<WeightQType> weight_zero_points;
 
@@ -494,7 +494,7 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQPerChannelConvTestCase(
 
     // Quantized(bias) -> DQ ->
     if (!bias_def.GetShape().empty()) {
-      assert(bias_def.IsInitializer() && bias_def.IsRawData());
+      QNN_ASSERT(bias_def.IsInitializer() && bias_def.IsRawData());
 
       // bias_scale = input_scale * weight_scale (per-channel)
       std::vector<float> bias_scales(weight_scales);
