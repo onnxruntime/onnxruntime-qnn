@@ -524,26 +524,6 @@ void QnnHTPBackendTests::SetUp() {
   }
 }
 
-// TODO
-// There is an unknown behavior that "soc_model" config somehow remains in HTP backend throughout different testcases
-// within the same process. Once the option "soc_model=60" is set, all following testcases would be implicitly applied
-// (which can be checked in verbose logging). This problem causes QnnHTPBackendTests.Inverse_2d/3d/4d on Linux failed
-// with accuracy issue 0.259040415 vs. 0.256103545. Although this precision mismatch may be expected as HTP fp16/fp32
-// behaviors could differ on different platforms, here adopts workaround to avoid modifying non-ABI parts. Concretely,
-// "soc_model=30", which is the default setting, is set to HTP backend again after QnnHTPBackendTests testsuite is
-// completed. Note that this is not an ABI-specific issue and exists in non-ABI UT as well but it is not observed
-// previously due to the execution order of testcases.
-void QnnHTPBackendTests::TearDownTestSuite() {
-#if !defined(__aarch64__) && !defined(_M_ARM64)
-  if (cached_htp_support_ != BackendSupport::SUPPORTED) {
-    return;
-  }
-  // TODO: Consider using public DeviceCompatibility API for this function
-  return;
-
-#endif  // !defined(__aarch64__) && !defined(_M_ARM64)
-}
-
 // Checks if Qnn Gpu backend can run a graph on the system.
 // Creates a one node graph with relu op,
 // to check if the GPU backend is available.

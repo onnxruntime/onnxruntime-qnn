@@ -197,12 +197,10 @@ if(WIN32)
     set_target_properties(onnxruntime_prebuilt PROPERTIES
         IMPORTED_LOCATION ${ORT_PREBUILT_DEST}/onnxruntime.dll
         IMPORTED_IMPLIB ${ORT_PREBUILT_DEST}/onnxruntime.lib
-        # INTERFACE_INCLUDE_DIRECTORIES ${onnxruntime_ORT_HOME}/include
     )
 else()
     # Linux: Use .so for IMPORTED_LOCATION
     set_target_properties(onnxruntime_prebuilt PROPERTIES
         IMPORTED_LOCATION ${ORT_PREBUILT_DEST}/libonnxruntime.so
-        # INTERFACE_INCLUDE_DIRECTORIES ${onnxruntime_ORT_HOME}/include
     )
 endif()
