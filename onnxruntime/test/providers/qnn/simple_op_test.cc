@@ -209,7 +209,7 @@ static void RunOpTest(const std::string& op_type,
     }
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
-    provider_options["soc_model"] = soc_model.has_value() ? soc_model : std::to_string(QNN_SOC_MODEL_SM8850);
+    provider_options["soc_model"] = soc_model.has_value() ? *soc_model : std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
     provider_options["enable_htp_fp16_precision"] = "1";
   }
