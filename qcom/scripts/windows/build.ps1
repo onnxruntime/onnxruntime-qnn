@@ -17,7 +17,7 @@ param (
 
     [Parameter(Mandatory = $false,
                HelpMessage = "Path to ORT Prebuilt.")]
-    [string]$OrtPrebuiltRoot,
+    [string]$OrtPrebuiltRoot = "",
 
     [Parameter(Mandatory = $false,
                HelpMessage = "Path to QAIRT SDK.")]
