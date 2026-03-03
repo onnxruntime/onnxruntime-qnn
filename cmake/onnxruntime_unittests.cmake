@@ -211,7 +211,7 @@ file(GLOB onnxruntime_test_framework_src CONFIGURE_DEPENDS
   ${onnxruntime_test_framework_src_patterns}
   )
 
-# Exclude the simulation EP factory files from the build
+# TODO: Re-enable the recent op testcases
 list(REMOVE_ITEM onnxruntime_test_framework_src
      "${TEST_SRC_DIR}/providers/qnn/bf16_test.cc"
      "${TEST_SRC_DIR}/providers/qnn/fusedmatmul_test.cc"

@@ -215,10 +215,10 @@ int real_main(int argc, char* argv[]) {
 #ifdef USE_QNN
         so.AppendExecutionProvider("QNN", provider_options);
 #else
-        throw std::string("QNN is not supported in this build\n");
+        throw std::runtime_error("QNN is not supported in this build\n");
 #endif
       } else if (!provider_name_.empty()) {
-        throw std::string("This execution provider is not included in this tool.\n");
+        throw std::runtime_error("This execution provider is not included in this tool.\n");
       }
 
       size_t total_file_count = test_config.model_file_paths.size();

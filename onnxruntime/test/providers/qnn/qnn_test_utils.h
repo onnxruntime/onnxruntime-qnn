@@ -1538,7 +1538,7 @@ class QnnHTPBackendTests : public ::testing::Test {
   // Cached platform attributes for HTP backend to avoid repeated queries.
   static const QnnPlatformAttributes& GetPlatformAttributes() {
     if (!cached_platform_attrs_.has_value()) {
-      throw std::string("QNN platform attributes are not available.");
+      throw std::runtime_error("QNN platform attributes are not available.");
     }
     return *cached_platform_attrs_;
   }

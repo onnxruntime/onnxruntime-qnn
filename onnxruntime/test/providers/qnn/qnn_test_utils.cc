@@ -141,11 +141,11 @@ TestInputDef<Ort::Float16_t> ConvertToFP16InputDef(const TestInputDef<float>& in
 class SafeIntExceptionHandler : public std::exception {
  public:
   [[noreturn]] static void SafeIntOnOverflow() {
-    throw std::string("Integer overflow");
+    throw std::runtime_error("Integer overflow");
   }
 
   [[noreturn]] static void SafeIntOnDivZero() {
-    throw std::string("Divide by zero");
+    throw std::runtime_error("Divide by zero");
   }
 };
 
