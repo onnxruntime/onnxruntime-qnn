@@ -1952,6 +1952,67 @@ TEST(QnnSaverBackendTests, DISABLED_QnnSaver_OutputFiles) {
   EXPECT_TRUE(std::filesystem::exists(qnn_saver_output_dir / "params.bin"));
 }
 
+// Reproduce bug that overlooks new input due to partition.
+TEST_F(QnnCPUBackendTests, GraphNewInputFromPartittionReproduce) {
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+  auto& logging_manager = DefaultLoggingManager();
+  logging_manager.SetDefaultLoggerSeverity(logging::Severity::kVERBOSE);
+  onnxruntime::Model model("GraphInputOutputOrderMatchesOnnx", false, ModelMetaData(), PathString(),
+                           IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
+                           logging_manager.DefaultLogger());
+  Graph& graph = model.MainGraph();
+
+  ONNX_NAMESPACE::TypeProto type;
+  type.mutable_tensor_type()->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  type.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(1);
+  type.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(3);
+  auto& input = graph.GetOrCreateNodeArg("input", &type);
+
+  const std::vector<float> data = {0.0, 0.0, 0.0};
+  gsl::span<const std::byte> raw_data = ReinterpretAsSpan<const std::byte, const float>(data);
+  const std::vector<int64_t> shape = {1, 3};
+
+  ONNX_NAMESPACE::TensorProto tensor_proto;
+  tensor_proto.set_name("constant");
+  tensor_proto.set_data_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  utils::SetRawDataInTensorProto(tensor_proto, raw_data.data(), raw_data.size());
+  for (auto& dim : shape) {
+    tensor_proto.add_dims(dim);
+  }
+  graph.AddInitializedTensor(tensor_proto);
+  auto& constant = graph.GetOrCreateNodeArg("constant", nullptr);
+
+  auto& rnl_output = graph.GetOrCreateNodeArg("rnl_output", nullptr);
+  graph.AddNode("rnl", "RandomNormalLike", "", {&constant}, {&rnl_output});
+
+  auto& add_output = graph.GetOrCreateNodeArg("add_output", nullptr);
+  graph.AddNode("add", "Add", "", {&input, &rnl_output}, {&add_output});
+
+  graph.SetInputs({&input});
+  graph.SetOutputs({&add_output});
+
+  auto status = graph.Resolve();
+  ASSERT_TRUE(status.IsOK()) << "Graph resolve failed: " << status.ErrorMessage();
+
+  std::string model_data;
+  model.ToProto().SerializeToString(&model_data);
+
+  Ort::SessionOptions so;
+  so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
+
+  onnxruntime::ProviderOptions options;
+#if defined(_WIN32)
+  options["backend_path"] = "QnnCpu.dll";
+#else
+  options["backend_path"] = "libQnnCpu.so";
+#endif
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+
+  Ort::Session session(*ort_env, model_data.data(), model_data.size(), so);
+}
+
 // Verifies QNN graph I/O order matches ONNX declaration order.
 TEST_F(QnnCPUBackendTests, GraphInputOutputOrderMatchesOnnx) {
   const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
