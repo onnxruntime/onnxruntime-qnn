@@ -293,6 +293,41 @@ TEST_F(QnnHTPBackendTests, MsGroupNorm_Float_MultipleGroups) {
                   false);
 }
 
+// Test com.microsoft.GroupNorm operator with channels_last = true
+TEST_F(QnnHTPBackendTests, MsGroupNorm_Float_ChannelsLast) {
+  std::vector<float> input_data = {
+      0.1f, 0.3f, 0.5f, 0.7f, 0.2f, 0.4f, 0.6f, 0.8f,
+      0.15f, 0.35f, 0.55f, 0.75f, 0.25f, 0.45f, 0.65f, 0.85f,
+      0.12f, 0.32f, 0.52f, 0.72f, 0.22f, 0.42f, 0.62f, 0.82f};
+  std::vector<float> gamma_data = {1.0f, 2.0f};
+  std::vector<float> beta_data = {0.1f, 0.2f};
+
+  auto build_test_case = [&](ModelTestBuilder& builder) {
+    auto* input = builder.MakeInput<float>({1, 4, 3, 2}, input_data);
+    auto* gamma = builder.MakeInitializer<float>({2}, gamma_data);
+    auto* beta = builder.MakeInitializer<float>({2}, beta_data);
+
+    auto* output = builder.MakeOutput<float>(std::vector<int64_t>{1, 4, 3, 2});
+    Node& group_norm_node = builder.AddNode("GroupNorm", {input, gamma, beta}, {output}, kMSDomain);
+    group_norm_node.AddAttribute("groups", static_cast<int64_t>(1));
+    group_norm_node.AddAttribute("epsilon", 1e-05f);
+    group_norm_node.AddAttribute("activation", static_cast<int64_t>(0));
+    group_norm_node.AddAttribute("channels_last", static_cast<int64_t>(1));
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+
+  RunQnnModelTest(build_test_case,
+                  provider_options,
+                  21,
+                  ExpectedEPNodeAssignment::All,
+                  0.01f,
+                  logging::Severity::kERROR,
+                  // Set verify_outputs to false since CPU backend doens't support contrib groupnorm
+                  false);
+}
+
 // Test com.microsoft.GroupNorm operator with 3D input
 TEST_F(QnnHTPBackendTests, MsGroupNorm_Float_3D) {
   std::vector<float> input_data = {
