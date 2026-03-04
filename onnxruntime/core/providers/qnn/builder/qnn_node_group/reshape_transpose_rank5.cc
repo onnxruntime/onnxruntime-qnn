@@ -297,36 +297,25 @@ Ort::Status CreateOrValidateOnQnn(
     gsl::span<const OrtNodeUnit* const> node_units,
     size_t unit_dim_index,
     bool validate,
-    [[maybe_unused]] const Ort::Logger& logger) {
-  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
+    const Ort::Logger& logger) {
   const OrtNodeUnit* reshape1 = node_units[0];
   const OrtNodeUnit* transpose = node_units[1];
   const OrtNodeUnit* reshape2 = node_units[2];
 
   // Get input and output definitions
   const OrtNodeUnitIODef& reshape1_input = reshape1->Inputs()[0];
+  const OrtNodeUnitIODef& reshape1_output = reshape1->Outputs()[0];
+  const OrtNodeUnitIODef& transpose_output = transpose->Outputs()[0];
   const OrtNodeUnitIODef& reshape2_output = reshape2->Outputs()[0];
 
   // Get original shapes
-  size_t num_reshape1_outputs = 0;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetNumOutputs(&reshape1->GetNode(), &num_reshape1_outputs));
-  std::vector<const OrtValueInfo*> reshape1_outputs(num_reshape1_outputs);
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetOutputs(&reshape1->GetNode(), reshape1_outputs.data(), reshape1_outputs.size()));
+  std::vector<uint32_t> t1_dims;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(reshape1_output.shape, t1_dims),
+                ("Cannot get shape for " + reshape1_output.name).c_str());
 
-  size_t num_transpose_outputs = 0;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetNumOutputs(&transpose->GetNode(), &num_transpose_outputs));
-  std::vector<const OrtValueInfo*> transpose_outputs(num_transpose_outputs);
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetOutputs(&transpose->GetNode(), transpose_outputs.data(), transpose_outputs.size()));
-
-  auto t1_shape = GetTensorShape(ort_api, reshape1_outputs[0]);
-  auto t2_shape = GetTensorShape(ort_api, transpose_outputs[0]);
-
-  if (!t1_shape.has_value() || !t2_shape.has_value()) {
-    return Ort::Status("Failed to get intermediate tensor shapes", OrtErrorCode::ORT_FAIL);
-  }
-
-  const auto& t1_dims = *t1_shape;
-  const auto& t2_dims = *t2_shape;
+  std::vector<uint32_t> t2_dims;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(transpose_output.shape, t2_dims),
+                ("Cannot get shape for " + transpose_output.name).c_str());
 
   // Create rank-5 shape for t1 (remove unit dimension at unit_dim_index)
   std::vector<uint32_t> t1_rank5_dims;
@@ -367,106 +356,93 @@ Ort::Status CreateOrValidateOnQnn(
     }
   }
 
-  // Use original tensor names from ONNX
-  const char* t1_name_cstr = nullptr;
-  const char* t2_name_cstr = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoName(reshape1_outputs[0], &t1_name_cstr));
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoName(transpose_outputs[0], &t2_name_cstr));
-  std::string t1_name(t1_name_cstr);
-  std::string t2_name(t2_name_cstr);
-
-  // Get data type from the NodeUnit's output (handles both quantized and float types)
-  const OrtNodeUnitIODef& reshape1_output = reshape1->Outputs()[0];
-  Qnn_DataType_t data_type;
-  RETURN_IF_ERROR(utils::GetQnnDataType(reshape1_output.quant_param.has_value(),
-                                        reshape1_output.type,
-                                        data_type));
-
-  // Get input shape for first Reshape
-  std::vector<uint32_t> reshape1_input_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(reshape1_input.shape, reshape1_input_shape),
-                "Failed to get first Reshape input shape");
-
-  // Create input tensor wrapper for Reshape1
-  QnnTensorWrapper reshape1_input_tensor;
-  RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(reshape1_input, reshape1_input_tensor));
-
-  // Create Reshape1 with rank-5 output using AddReshapeNode
-  RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(
-      reshape1_input.name,
-      t1_name,
-      reshape1_input_shape,
-      t1_rank5_dims,
-      data_type,
-      reshape1_input_tensor.GetQnnQuantParams(),
-      validate,
-      false,  // is_for_input
-      false   // is_for_output
-      ));
-
-  // Create Transpose with rank-5 input/output
-  {
-    // Get quantization params for transpose output
-    const OrtNodeUnitIODef& transpose_output = transpose->Outputs()[0];
-    QnnTensorWrapper transpose_output_tensor;
-    RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(transpose_output, transpose_output_tensor));
-
-    // Check if output tensor already exists
-    if (!qnn_model_wrapper.IsQnnTensorWrapperExist(t2_name)) {
-      // Create rank-5 output tensor for transpose with proper quantization params
-      QnnQuantParamsWrapper quant_params_copy = transpose_output_tensor.GetQnnQuantParams();
-      QnnTensorWrapper t2_tensor(t2_name, QNN_TENSOR_TYPE_NATIVE, data_type, std::move(quant_params_copy),
-                                 std::vector<uint32_t>(t2_rank5_dims));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(t2_tensor)), "Failed to add transpose output");
-    }
-
-    // Create perm parameter
-    std::vector<uint32_t> perm_shape = {static_cast<uint32_t>(perm_rank5.size())};
-    QnnParamWrapper perm_param(transpose->Index(), transpose->Name(), QNN_OP_TRANSPOSE_PARAM_PERM,
-                               std::move(perm_shape), std::move(perm_rank5));
-    std::vector<std::string> param_tensor_names = {perm_param.GetParamTensorName()};
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(perm_param)), "Failed to add perm param");
-
-    std::vector<std::string> transpose_input_names = {t1_name};
-    std::vector<std::string> transpose_output_names = {t2_name};
-
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::GetUniqueName(*transpose),
-                      QNN_OP_PACKAGE_NAME_QTI_AISW,
-                      QNN_OP_TRANSPOSE,
-                      std::move(transpose_input_names),
-                      std::move(transpose_output_names),
-                      std::move(param_tensor_names),
-                      validate),
-                  "Failed to create rank-5 Transpose node");
+  // Create Reshape1 input tensor wrapper.
+  if (qnn_model_wrapper.IsQnnTensorWrapperExist(reshape1_input.name)) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor already added, skip it: " + reshape1_input.name).c_str());
+  } else {
+    QnnTensorWrapper input_tensor_wrapper;
+    RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(reshape1_input, input_tensor_wrapper));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensor_wrapper)),
+                  "Failed to add the first Reshape's input tensor.");
   }
 
-  // Get output shape for reshape2
-  std::vector<uint32_t> reshape2_output_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(reshape2_output.shape, reshape2_output_shape),
-                "Failed to get reshape2 output shape");
+  // Create Reshape1 output tensor wrapper.
+  TensorInfo reshape1_output_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(reshape1_output, reshape1_output_info));
 
-  // Create output tensor wrapper for Reshape2
-  QnnTensorWrapper reshape2_output_tensor;
-  RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(reshape2_output, reshape2_output_tensor));
+  QnnTensorWrapper reshape1_output_tensor_wrapper(reshape1_output.name,
+                                                  QNN_TENSOR_TYPE_NATIVE,
+                                                  reshape1_output_info.qnn_data_type,
+                                                  std::move(reshape1_output_info.quant_param),
+                                                  std::move(t1_rank5_dims));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(reshape1_output_tensor_wrapper)),
+                "Failed to add the first Reshape's output tensor.");
 
-  // Get data type from the NodeUnit's output (handles both quantized and float types)
-  RETURN_IF_ERROR(utils::GetQnnDataType(reshape2_output.quant_param.has_value(),
-                                        reshape2_output.type,
-                                        data_type));
+  // Create Reshape1 node.
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(reshape1->Name()),
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                QNN_OP_RESHAPE,
+                                                {reshape1_input.name},
+                                                {reshape1_output.name},
+                                                {},
+                                                validate),
+                "Failed to add the first Reshape node.");
 
-  // Create Reshape2 with rank-5 input using AddReshapeNode
-  RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(
-      t2_name,
-      reshape2_output.name,
-      t2_rank5_dims,
-      reshape2_output_shape,
-      data_type,
-      reshape2_output_tensor.GetQnnQuantParams(),
-      validate,
-      false,  // is_for_input
-      false   // is_for_output
-      ));
+  // Create Transpose output tensor wrapper.
+  TensorInfo transpose_output_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(transpose_output, transpose_output_info));
+
+  QnnTensorWrapper transpose_output_tensor_wrapper(transpose_output.name,
+                                                   QNN_TENSOR_TYPE_NATIVE,
+                                                   transpose_output_info.qnn_data_type,
+                                                   std::move(transpose_output_info.quant_param),
+                                                   std::move(t2_rank5_dims));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(transpose_output_tensor_wrapper)),
+                "Failed to add Transpose's output tensor.");
+
+  // Create Transpose perm parameter wrapper.
+  QnnParamWrapper perm_param(transpose->Index(),
+                             transpose->Name(),
+                             QNN_OP_TRANSPOSE_PARAM_PERM,
+                             {static_cast<uint32_t>(perm_rank5.size())},
+                             std::move(perm_rank5));
+  const std::string param_tensor_name = perm_param.GetParamTensorName();
+  RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(perm_param)), "Failed to add Transpose perm param.");
+
+  // Create Transpose node.
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(transpose->Name()),
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                QNN_OP_TRANSPOSE,
+                                                {reshape1_output.name},
+                                                {transpose_output.name},
+                                                {param_tensor_name},
+                                                validate),
+                "Failed to add Transpose node.");
+
+  // Create Reshape2 output tensor wrapper.
+  TensorInfo reshape2_output_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(reshape2_output, reshape2_output_info));
+
+  Qnn_TensorType_t reshape2_output_tensor_type = qnn_model_wrapper.IsGraphOutput(reshape2_output.name)
+                                                     ? QNN_TENSOR_TYPE_APP_READ
+                                                     : QNN_TENSOR_TYPE_NATIVE;
+  QnnTensorWrapper reshape2_output_tensor_wrapper(reshape2_output.name,
+                                                  reshape2_output_tensor_type,
+                                                  reshape2_output_info.qnn_data_type,
+                                                  std::move(reshape2_output_info.quant_param),
+                                                  std::move(reshape2_output_info.shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(reshape2_output_tensor_wrapper)),
+                "Failed to add the second Reshape's output tensor.");
+
+  // Create Reshape2 node.
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(reshape2->Name()),
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                QNN_OP_RESHAPE,
+                                                {transpose_output.name},
+                                                {reshape2_output.name},
+                                                {},
+                                                validate),
+                "Failed to add the second Reshape node.");
 
   return Ort::Status();
 }
