@@ -3,6 +3,7 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <optional>
 #include <string>
 #include <filesystem>
 #include <variant>
@@ -196,7 +197,8 @@ static void RunOpTest(const std::string& op_type,
                       ExpectedEPNodeAssignment expected_ep_assignment,
                       const std::string& op_domain = kOnnxDomain,
                       float fp32_abs_err = 1e-5f,
-                      bool enable_htp_fp16_precision = false) {
+                      bool enable_htp_fp16_precision = false,
+                      std::optional<std::string> soc_model = std::nullopt) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
@@ -207,7 +209,7 @@ static void RunOpTest(const std::string& op_type,
     }
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
-    provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+    provider_options["soc_model"] = soc_model.has_value() ? *soc_model : std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
     provider_options["enable_htp_fp16_precision"] = "1";
   }
@@ -331,6 +333,20 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Tanh) {
                         {},
                         13,
                         ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, UnaryOp_Tan_fp) {
+  QNN_SKIP_TEST_ON_ARM64("Accuracy drop is high on ARM64/AARCH64");
+  RunOpTest<float>("Tan",
+                   {TestInputDef<float>({1, 2, 3}, false, {0.1f, 0.5f, 1.0f, -0.5f, 0.3f, -1.0f})},
+                   {},
+                   13,
+                   ExpectedEPNodeAssignment::All,
+                   kOnnxDomain,
+                   1E-05,
+                   true,
+                   std::to_string(QNN_SOC_MODEL_SM8350)  // This test fails with QNN_SOC_MODEL_SM8850 due to a known HTP issue
+  );
 }
 
 // disabled for QNN 2.28.0.241029 backendValidateOpConfig failed
