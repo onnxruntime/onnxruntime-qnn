@@ -132,7 +132,7 @@ TEST_F(QnnHTPBackendTests, LPBQGemmFusionWithoutQL) {
                   /*opset_version=*/21,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some,
                   /*fp32_abs_err=*/1e-2f,
-                  /*log_severity =*/OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*log_severity =*/logging::Severity::kERROR,
                   /*verify_outputs=*/false);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected");
