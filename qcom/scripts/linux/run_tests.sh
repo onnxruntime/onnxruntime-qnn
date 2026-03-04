@@ -47,6 +47,9 @@ function run_model_test() {
     rc=$?
     set -e
 
+    "${python_exe}" "${REPO_ROOT}/qcom/scripts/all/model_test_log_to_junit_xml.py" \
+        "${build_dir}/${suite}_model_tests.log" > "${build_dir}/${suite}_model_tests.results.xml"
+
     if [ ${rc} -ne 0 ]; then
         errors=$(($errors+1))
     fi

@@ -110,17 +110,21 @@ class TestOrt(TestBase):
         self,
         test_cmd: list[str],
         working_dir: Path | None = None,
+        extra_log: Path | None = None,
     ) -> str:
         if working_dir is None:
             working_dir = Path(CONFIG.device_build_root)
         test_str = " ".join(test_cmd)
-        return (
+        cmd = (
             f"cd {working_dir} && "
             f"echo -=-=-=-=-=-=-=-=-=-=- >> {CONFIG.test_results_device_log} && "
             f"echo Running test: {test_str} >> {CONFIG.test_results_device_log} && "
             f"(env ADSP_LIBRARY_PATH={CONFIG.device_adsp_library_path} LD_LIBRARY_PATH={CONFIG.device_ld_library_path} "
             f"{test_str}; echo $? > {self.__rc_device_path}) 2>&1 | tee -a {CONFIG.test_results_device_log}"
         )
+        if extra_log is not None:
+            cmd += f" | tee {extra_log}"
+        return cmd
 
     @property
     def __rc_device_path(self) -> Path:
