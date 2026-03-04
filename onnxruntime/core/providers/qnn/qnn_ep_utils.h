@@ -250,6 +250,17 @@ class OrtEinsumNodeGroupSelector : public OrtNodeGroupSelector {
   bool allow_4bit_;
 };
 
+class OrtLSTMNodeGroupSelector : public OrtNodeGroupSelector {
+ public:
+  OrtLSTMNodeGroupSelector() = default;
+
+ private:
+  bool Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
+             const OrtNode* redundant_clip_node,
+             const std::vector<const OrtNode*>& dq_nodes,
+             const std::vector<const OrtNode*>& q_nodes) const override;
+};
+
 class OrtReciprocalNodeGroupSelector : public OrtNodeGroupSelector {
  public:
   explicit OrtReciprocalNodeGroupSelector(bool allow_int8 = true, bool allow_16bit = true, bool allow_4bit = true)
