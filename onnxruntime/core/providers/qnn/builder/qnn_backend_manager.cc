@@ -874,6 +874,8 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   context_config_resource_sharing.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
   context_config_resource_sharing.customConfig = &resource_sharing_custom_config;
 
+  // Set share resource optimization type to SEQUENTIAL_WITHOUT_VA_OPTIMIZATION
+  // This is controlled by the share_resource_optimization option (or deprecated enable_vtcm_backup_buffer_sharing)
   QnnHtpContext_CustomConfig_t context_config_resource_sharing_opt_type;
   context_config_resource_sharing_opt_type.option = QNN_HTP_CONTEXT_CONFIG_OPTION_SHARE_RESOURCES_OPTIMIZATION_TYPE;
   context_config_resource_sharing_opt_type.shareResOptType = SEQUENTIAL_WITHOUT_VA_OPTIMIZATION;

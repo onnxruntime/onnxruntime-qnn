@@ -609,7 +609,26 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     }
   }
 
-  // VTCM backup buffer sharing
+  // Share resource optimization
+  std::string share_resource_optimization_str;
+  GetSessionConfigEntryOrDefault(ort_api,
+                                 session_options_,
+                                 FormatEPConfigKey("share_resource_optimization"),
+                                 "0",
+                                 share_resource_optimization_str);
+  if (share_resource_optimization_str == "1") {
+    share_resource_optimization_ = true;
+  } else if (share_resource_optimization_str != "0") {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING,
+                ("Invalid value entered for share_resource_optimization: " + share_resource_optimization_str + ", only 1 or 0 are allowed. Setting to 0.").c_str());
+  }
+
+  ORT_CXX_LOG(logger_,
+              ORT_LOGGING_LEVEL_VERBOSE,
+              ("User specified share_resource_optimization: " + share_resource_optimization_str).c_str());
+
+  // VTCM backup buffer sharing (DEPRECATED - use share_resource_optimization instead)
   std::string enable_vtcm_backup_buffer_sharing_str;
   GetSessionConfigEntryOrDefault(ort_api,
                                  session_options_,
@@ -618,6 +637,9 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                  enable_vtcm_backup_buffer_sharing_str);
   if (enable_vtcm_backup_buffer_sharing_str == "1") {
     enable_vtcm_backup_buffer_sharing_ = true;
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING,
+                "enable_vtcm_backup_buffer_sharing is deprecated and will be removed in a future release. Please use share_resource_optimization instead.");
   } else if (enable_vtcm_backup_buffer_sharing_str != "0") {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_WARNING,
@@ -626,13 +648,13 @@ QnnEp::QnnEp(QnnEpFactory& factory,
 
   ORT_CXX_LOG(logger_,
               ORT_LOGGING_LEVEL_VERBOSE,
-              ("User specified enable_vtcm_backup_buffer_sharing: " + enable_vtcm_backup_buffer_sharing_str).c_str());
+              ("User specified enable_vtcm_backup_buffer_sharing (DEPRECATED): " + enable_vtcm_backup_buffer_sharing_str).c_str());
 
 #if QNN_API_VERSION_MAJOR < 2 || ((QNN_API_VERSION_MAJOR) == 2 && (QNN_API_VERSION_MINOR < 26))
-  if (enable_vtcm_backup_buffer_sharing_) {
+  if (enable_vtcm_backup_buffer_sharing_ || share_resource_optimization_) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_WARNING,
-                "User specified enable_vtcm_backup_buffer_sharing but QNN API version is older than 2.26.");
+                "User specified enable_vtcm_backup_buffer_sharing or share_resource_optimization but QNN API version is older than 2.26.");
   }
 #endif
 
