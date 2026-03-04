@@ -115,7 +115,7 @@ static bool SetPluginEpSessionOptions(Ort::Env& env, Ort::SessionOptions& sessio
                                       const qnnctxgen::PluginEpConfig& config,
                                       PluginEpLibraryRegistrationHandle& plugin_ep_library_registration_handle) {
   auto lib_registration_handle = RegisterPluginEpLibrary(env, config.ep_library_registration_name,
-                                                         config.ep_library_path);
+                                                         qnnctxgen::ToPathString(config.ep_library_path));
 
   std::vector<Ort::ConstEpDevice> ep_devices = env.GetEpDevices();
   std::vector<Ort::ConstEpDevice> selected_ep_devices{};
