@@ -145,6 +145,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   const Ort::Logger logger_;
   bool context_cache_enabled_ = false;
   bool share_ep_contexts_ = false;
+  bool share_resource_optimization_ = false;
   bool enable_vtcm_backup_buffer_sharing_ = false;
   std::string context_node_name_prefix_ = "";
   std::string context_cache_path_cfg_ = "";
