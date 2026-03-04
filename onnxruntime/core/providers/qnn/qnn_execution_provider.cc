@@ -153,12 +153,20 @@ static void ParseQnnContextPriority(std::string context_priority_string,
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("QNN context priority: " + context_priority_string).c_str());
   if (context_priority_string == "low") {
     context_priority = qnn::ContextPriority::LOW;
+  } else if (context_priority_string == "normal_low") {
+    context_priority = qnn::ContextPriority::NORMAL_LOW;
   } else if (context_priority_string == "normal") {
     context_priority = qnn::ContextPriority::NORMAL;
   } else if (context_priority_string == "normal_high") {
     context_priority = qnn::ContextPriority::NORMAL_HIGH;
   } else if (context_priority_string == "high") {
     context_priority = qnn::ContextPriority::HIGH;
+  } else if (context_priority_string == "high_plus") {
+    context_priority = qnn::ContextPriority::HIGH_PLUS;
+  } else if (context_priority_string == "critical") {
+    context_priority = qnn::ContextPriority::CRITICAL;
+  } else if (context_priority_string == "critical_plus") {
+    context_priority = qnn::ContextPriority::CRITICAL_PLUS;
   } else {
     context_priority = qnn::ContextPriority::UNDEFINED;
     std::string msg = "QNN context priority: " + context_priority_string + " not valid, set to undefined.";
