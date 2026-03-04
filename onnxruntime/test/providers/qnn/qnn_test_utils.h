@@ -914,6 +914,8 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
     qnn_options["json_qnn_graph_dir"] = output_dir.string();
   }
 
+  // TODO: Enable QNN_VERBOSE to SetLogSeverityLevel
+
   TryEnableQNNSaver(qnn_options);
 
   // Run with QNN.
@@ -1156,6 +1158,8 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     qnn_options["dump_json_qnn_graph"] = "1";
     qnn_options["json_qnn_graph_dir"] = output_dir.string();
   }
+
+  // TODO: Enable QNN_VERBOSE to SetLogSeverityLevel
 
   TryEnableQNNSaver(qnn_options);
 

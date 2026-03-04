@@ -322,7 +322,6 @@ block()
   set(onnxruntime_provider_test_libs
     ${onnxruntime_test_providers_libs}
     ${onnxruntime_test_common_libs}
-    # onnx_test_data_proto
   )
 
   set(onnxruntime_provider_test_deps ${onnxruntime_test_providers_dependencies})
