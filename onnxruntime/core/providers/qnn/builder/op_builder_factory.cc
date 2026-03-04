@@ -65,8 +65,6 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
     CreateSimpleOpBuilder("GridSample", *this);
 
     CreateSimpleOpBuilder("LpNormalization", *this);
-
-    CreateSimpleOpBuilder("ScatterElements", *this);
   }
 
   {
@@ -255,6 +253,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
 
   {
     CreateRoiAlignOpBuilder("RoiAlign", *this);
+  }
+
+  {
+    CreateScatterElementsOpBuilder("ScatterElements", *this);
   }
 }
 
