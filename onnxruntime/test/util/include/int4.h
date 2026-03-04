@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+// QNN-EP COPY START
+// Below are Int4 dtype utilities copied from MS onnxruntime\core\framework\int4.h directly.
 #pragma once
 
 #include <cassert>
@@ -157,5 +159,7 @@ using Int4x2 = Int4x2Base<true>;
 using UInt4x2 = Int4x2Base<false>;
 static_assert(sizeof(Int4x2) == sizeof(std::byte));
 static_assert(sizeof(UInt4x2) == sizeof(std::byte));
+// QNN-EP COPY END
+
 }  // namespace test
 }  // namespace onnxruntime

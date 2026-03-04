@@ -37,15 +37,6 @@
 
 namespace onnxruntime {
 namespace test {
-
-// QNN_ASSERT macro that imitates ORT_ENFORCE pattern
-#define QNN_ASSERT(condition)                                             \
-  do {                                                                    \
-    if (!(condition)) {                                                   \
-      ORT_CXX_API_THROW(#condition, OrtErrorCode::ORT_RUNTIME_EXCEPTION); \
-    }                                                                     \
-  } while (false)
-
 // Signature for function that builds a float32 model.
 using GetTestModelFn = std::function<void(ModelTestBuilder& builder)>;
 

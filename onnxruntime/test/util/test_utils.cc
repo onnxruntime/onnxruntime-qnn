@@ -185,11 +185,11 @@ static gsl::span<const std::byte> GetModelBytes(ModelPathOrBytes model_path_or_b
   std::vector<std::byte> byte_buffer{};
   std::ifstream stream{std::basic_string<ORTCHAR_T>{model_path},
                        std::ios::in | std::ios::binary | std::ios::ate};
-  assert(stream && "Failed to open file.");
+  QNN_ASSERT(stream && "Failed to open file.");
   const auto num_bytes = narrow<size_t>(stream.tellg());
   byte_buffer.resize(num_bytes);
   stream.seekg(0);
-  assert(stream.read(reinterpret_cast<char*>(byte_buffer.data()), num_bytes) && "Failed to read file.");
+  QNN_ASSERT(stream.read(reinterpret_cast<char*>(byte_buffer.data()), num_bytes) && "Failed to read file.");
 
   byte_buffer_out = std::move(byte_buffer);
   return gsl::span<const std::byte>(byte_buffer_out);
@@ -326,6 +326,8 @@ void CheckShapeEquality(const ONNX_NAMESPACE::TensorShapeProto* shape1,
   }
 }
 
+// QNN-EP COPY START
+// Below are ONNX Attributes utilities copied from MS onnxruntime\core\graph\node_attr_utils.cc directly.
 static void SetNameAndType(std::string attr_name, ONNX_NAMESPACE::AttributeProto_AttributeType attr_type, ONNX_NAMESPACE::AttributeProto& a) {
   a.set_name(std::move(attr_name));
   a.set_type(attr_type);
@@ -367,6 +369,7 @@ MAKE_LIST_ATTR_IMPL(std::string, ONNX_NAMESPACE::AttributeProto_AttributeType::A
 #undef MAKE_BASIC_ATTR_IMPL
 #undef MAKE_ATTR_IMPL
 #undef MAKE_LIST_ATTR_IMPL
+// QNN-EP COPY END
 
 }  // namespace test
 }  // namespace onnxruntime

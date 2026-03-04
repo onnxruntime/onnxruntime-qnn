@@ -131,6 +131,8 @@ OrtValue CreateInputOrtValueOnCPU(gsl::span<const int64_t> dims, gsl::span<const
   return ort_value;
 }
 
+// QNN-EP COPY START
+// Below are ONNX Attributes utilities copied from MS onnxruntime\core\graph\node_attr_utils.h directly.
 // keep these signatures in sync with DECLARE_MAKE_ATTRIBUTE_FNS below
 /** Creates an AttributeProto with the specified name and value. */
 ONNX_NAMESPACE::AttributeProto MakeAttribute(std::string attr_name, int64_t value);
@@ -151,6 +153,15 @@ DECLARE_MAKE_ATTRIBUTE_FNS(ONNX_NAMESPACE::TypeProto);
 DECLARE_MAKE_ATTRIBUTE_FNS(ONNX_NAMESPACE::GraphProto);
 
 #undef DECLARE_MAKE_ATTRIBUTE_FNS
+// QNN-EP COPY END
+
+// QNN_ASSERT macro that imitates ORT_ENFORCE pattern
+#define QNN_ASSERT(condition)                                             \
+  do {                                                                    \
+    if (!(condition)) {                                                   \
+      ORT_CXX_API_THROW(#condition, OrtErrorCode::ORT_RUNTIME_EXCEPTION); \
+    }                                                                     \
+  } while (false)
 
 }  // namespace test
 }  // namespace onnxruntime
