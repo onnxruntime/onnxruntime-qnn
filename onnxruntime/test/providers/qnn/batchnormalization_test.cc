@@ -457,85 +457,85 @@ TEST_F(QnnHTPBackendTests, BatchNorm3D) {
 }
 
 // Tests BatchNorm with Q->DQ structure commonly seen in quantized models
-// template <typename InputQType, typename ParamQType>
-// GetTestQDQModelFn<InputQType> BuildBatchNormQdqParamsTestCase(const TestInputDef<float>& input_def,
-//                                                               const TestInputDef<float>& scale_def,
-//                                                               const TestInputDef<float>& bias_def) {
-//   ORT_ENFORCE(input_def.IsRawData());
-//   ORT_ENFORCE(scale_def.IsRawData());
+template <typename InputQType, typename ParamQType>
+GetTestQDQModelFn<InputQType> BuildBatchNormQdqParamsTestCase(const TestInputDef<float>& input_def,
+                                                              const TestInputDef<float>& scale_def,
+                                                              const TestInputDef<float>& bias_def) {
+  QNN_ASSERT(input_def.IsRawData());
+  QNN_ASSERT(scale_def.IsRawData());
 
-//   return [input_def, scale_def, bias_def](ModelTestBuilder& builder,
-//                                           std::vector<QuantParams<InputQType>>& output_qparams) {
-//     const auto& input_shape = input_def.GetShape();
-//     const auto& input_data = input_def.GetRawData();
-//     const int64_t num_channels = input_shape[1];
+  return [input_def, scale_def, bias_def](ModelTestBuilder& builder,
+                                          std::vector<QuantParams<InputQType>>& output_qparams) {
+    const auto& input_shape = input_def.GetShape();
+    const auto& input_data = input_def.GetRawData();
+    const int64_t num_channels = input_shape[1];
 
-//     // Input: float -> Q -> DQ
-//     bool symmetric = sizeof(InputQType) == sizeof(uint16_t);
-//     MakeTestInput<float>(builder, "input", input_def);
-//     QuantParams<InputQType> input_qparams = GetTestInputQuantParams<InputQType>(input_def, symmetric);
-//     std::string input_qdq = AddQDQNodePair<InputQType>(builder, "input_qdq", "input", input_qparams.scale, input_qparams.zero_point);
+    // Input: float -> Q -> DQ
+    bool symmetric = sizeof(InputQType) == sizeof(uint16_t);
+    MakeTestInput<float>(builder, "input", input_def);
+    QuantParams<InputQType> input_qparams = GetTestInputQuantParams<InputQType>(input_def, symmetric);
+    std::string input_qdq = AddQDQNodePair<InputQType>(builder, "input_qdq", "input", input_qparams.scale, input_qparams.zero_point);
 
-//     NodeAttributes axis_0_attrs;
-//     utils::SetNodeAttribute(utils::MakeAttribute("axis", static_cast<int64_t>(0)), axis_0_attrs);
+    // Create axis attribute for per-channel quantization
+    std::vector<ONNX_NAMESPACE::AttributeProto> axis_0_attrs;
+    axis_0_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
 
-//     // Scale: float_init -> Q -> DQ (per-channel with axis=0, symmetric)
-//     const auto& scale_data = scale_def.GetRawData();
-//     std::vector<float> scale_scales(num_channels);
-//     std::vector<ParamQType> scale_zero_points(num_channels, static_cast<ParamQType>(0));
-//     for (int64_t c = 0; c < num_channels; ++c) {
-//       float abs_max = std::abs(scale_data[c]);
-//       if (abs_max == 0.0f) abs_max = 1.0f;
-//       scale_scales[c] = abs_max / static_cast<float>(std::numeric_limits<ParamQType>::max());
-//     }
-//     std::vector<int64_t> param_shape = {num_channels};
-//     builder.MakeInitializer<float>("scale_float_init", param_shape, scale_data);
-//     std::string scale_qdq = AddQDQNodePair<ParamQType>(builder, "scale_qdq", "scale_float_init", scale_scales, scale_zero_points,
-//                                                        &axis_0_attrs, &axis_0_attrs);
+    // Scale: float_init -> Q -> DQ (per-channel with axis=0, symmetric)
+    const auto& scale_data = scale_def.GetRawData();
+    std::vector<float> scale_scales(num_channels);
+    std::vector<ParamQType> scale_zero_points(num_channels, static_cast<ParamQType>(0));
+    for (int64_t c = 0; c < num_channels; ++c) {
+      float abs_max = std::abs(scale_data[c]);
+      if (abs_max == 0.0f) abs_max = 1.0f;
+      scale_scales[c] = abs_max / static_cast<float>(std::numeric_limits<ParamQType>::max());
+    }
+    std::vector<int64_t> param_shape = {num_channels};
+    builder.MakeInitializer<float>("scale_float_init", param_shape, scale_data);
+    std::string scale_qdq = AddQDQNodePair<ParamQType>(builder, "scale_qdq", "scale_float_init", scale_scales, scale_zero_points,
+                                                       axis_0_attrs, axis_0_attrs);
 
-//     builder.MakeInitializer<float>("bias", bias_def.GetShape(), bias_def.GetRawData());
+    builder.MakeInitializer<float>("bias", bias_def.GetShape(), bias_def.GetRawData());
 
-//     // Compute mean and var from input data
-//     std::vector<float> mean_vals(num_channels);
-//     std::vector<float> var_vals(num_channels);
-//     ComputeChannelMeanAndVar(input_data, input_shape, mean_vals, var_vals);
+    // Compute mean and var from input data
+    std::vector<float> mean_vals(num_channels);
+    std::vector<float> var_vals(num_channels);
+    ComputeChannelMeanAndVar(input_data, input_shape, mean_vals, var_vals);
 
-//     // Mean: float_init -> Q -> DQ (per-channel with axis=0, symmetric)
-//     std::vector<float> mean_scales(num_channels);
-//     std::vector<ParamQType> mean_zero_points(num_channels, static_cast<ParamQType>(0));
-//     for (int64_t c = 0; c < num_channels; ++c) {
-//       float abs_max = std::abs(mean_vals[c]);
-//       if (abs_max == 0.0f) abs_max = 1.0f;
-//       mean_scales[c] = abs_max / static_cast<float>(std::numeric_limits<ParamQType>::max());
-//     }
-//     builder.MakeInitializer<float>("mean_float_init", param_shape, mean_vals);
-//     std::string mean_qdq = AddQDQNodePair<ParamQType>(builder, "mean_qdq", "mean_float_init", mean_scales, mean_zero_points,
-//                                                       &axis_0_attrs, &axis_0_attrs);
+    // Mean: float_init -> Q -> DQ (per-channel with axis=0, symmetric)
+    std::vector<float> mean_scales(num_channels);
+    std::vector<ParamQType> mean_zero_points(num_channels, static_cast<ParamQType>(0));
+    for (int64_t c = 0; c < num_channels; ++c) {
+      float abs_max = std::abs(mean_vals[c]);
+      if (abs_max == 0.0f) abs_max = 1.0f;
+      mean_scales[c] = abs_max / static_cast<float>(std::numeric_limits<ParamQType>::max());
+    }
+    builder.MakeInitializer<float>("mean_float_init", param_shape, mean_vals);
+    std::string mean_qdq = AddQDQNodePair<ParamQType>(builder, "mean_qdq", "mean_float_init", mean_scales, mean_zero_points,
+                                                      axis_0_attrs, axis_0_attrs);
 
-//     // Var: float_init -> Q -> DQ (per-channel with axis=0, symmetric)
-//     std::vector<float> var_scales(num_channels);
-//     std::vector<ParamQType> var_zero_points(num_channels, static_cast<ParamQType>(0));
-//     for (int64_t c = 0; c < num_channels; ++c) {
-//       float abs_max = std::abs(var_vals[c]);
-//       if (abs_max == 0.0f) abs_max = 1.0f;
-//       var_scales[c] = abs_max / static_cast<float>(std::numeric_limits<ParamQType>::max());
-//     }
-//     builder.MakeInitializer<float>("var_float_init", param_shape, var_vals);
-//     std::string var_qdq = AddQDQNodePair<ParamQType>(builder, "var_qdq", "var_float_init", var_scales, var_zero_points,
-//                                                      &axis_0_attrs, &axis_0_attrs);
+    // Var: float_init -> Q -> DQ (per-channel with axis=0, symmetric)
+    std::vector<float> var_scales(num_channels);
+    std::vector<ParamQType> var_zero_points(num_channels, static_cast<ParamQType>(0));
+    for (int64_t c = 0; c < num_channels; ++c) {
+      float abs_max = std::abs(var_vals[c]);
+      if (abs_max == 0.0f) abs_max = 1.0f;
+      var_scales[c] = abs_max / static_cast<float>(std::numeric_limits<ParamQType>::max());
+    }
+    builder.MakeInitializer<float>("var_float_init", param_shape, var_vals);
+    std::string var_qdq = AddQDQNodePair<ParamQType>(builder, "var_qdq", "var_float_init", var_scales, var_zero_points,
+                                                     axis_0_attrs, axis_0_attrs);
 
-//     std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
-//     builder.AddNode("batchnorm", "BatchNormalization", {input_qdq, scale_qdq, "bias", mean_qdq, var_qdq},
-//                     {"batchnorm_output"}, "", attributes);
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    builder.AddNode("batchnorm", "BatchNormalization", {input_qdq, scale_qdq, "bias", mean_qdq, var_qdq},
+                    {"batchnorm_output"}, "", attributes);
 
-//     AddQDQNodePairWithOutputAsGraphOutput<InputQType>(builder, "output_qdq", "batchnorm_output",
-//                                                       output_qparams[0].scale, output_qparams[0].zero_point);
-//   };
-// }
+    AddQDQNodePairWithOutputAsGraphOutput<InputQType>(builder, "output_qdq", "batchnorm_output",
+                                                      output_qparams[0].scale, output_qparams[0].zero_point);
+  };
+}
 
-// TODO: Re-enable the testcase once BuildBatchNormQdqParamsTestCase with public API is ready
 // Test BatchNorm with Q->DQ on input/scale/mean/var, float bias
-TEST_F(QnnHTPBackendTests, DISABLED_BatchNorm2dQdqParams) {
+TEST_F(QnnHTPBackendTests, BatchNorm2dQdqParams) {
   constexpr int64_t num_channels = 2;
   std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
                                    -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
@@ -548,11 +548,11 @@ TEST_F(QnnHTPBackendTests, DISABLED_BatchNorm2dQdqParams) {
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  // TestQDQModelAccuracy(BuildBatchNormTestCase(input_def, scale_def, bias_def),
-  //                      BuildBatchNormQdqParamsTestCase<uint16_t, int8_t>(input_def, scale_def, bias_def),
-  //                      provider_options,
-  //                      21,
-  //                      ExpectedEPNodeAssignment::All);
+  TestQDQModelAccuracy(BuildBatchNormTestCase(input_def, scale_def, bias_def),
+                       BuildBatchNormQdqParamsTestCase<uint16_t, int8_t>(input_def, scale_def, bias_def),
+                       provider_options,
+                       21,
+                       ExpectedEPNodeAssignment::All);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

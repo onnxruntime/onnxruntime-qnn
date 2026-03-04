@@ -40,6 +40,19 @@ AddQDQNodePairWithOutputAsGraphOutput(ModelTestBuilder& builder, std::string qdq
   return qdq_name + "_dq_out";
 }
 
+// Overload for per-channel quantization with vector scales and zero points
+template <typename T>
+std::string
+AddQDQNodePair(ModelTestBuilder& builder, std::string qdq_name, std::string inp_name,
+               const std::vector<float>& scales, const std::vector<T>& zps,
+               const std::vector<ONNX_NAMESPACE::AttributeProto>& q_attrs = {},
+               const std::vector<ONNX_NAMESPACE::AttributeProto>& dq_attrs = {},
+               bool use_ms_domain = false) {
+  builder.AddQuantizeLinearNode<T>(qdq_name + "_q", inp_name.c_str(), scales, zps, (qdq_name + "_q_out").c_str(), q_attrs, use_ms_domain);
+  builder.AddDequantizeLinearNode<T>(qdq_name + "_dq", (qdq_name + "_q_out").c_str(), scales, zps, (qdq_name + "_dq_out").c_str(), dq_attrs, use_ms_domain);
+  return qdq_name + "_dq_out";
+}
+
 GetQDQTestCaseFn BuildQDQReshapeTestCase(const std::vector<int64_t>& input_shape,
                                          const std::vector<int64_t>& reshape_shape);
 
