@@ -151,6 +151,19 @@ class LSTMOpBuilder : public BaseOpBuilder {
                                        bool do_op_validation,
                                        bool is_for_input,
                                        bool is_for_output) const;
+  Ort::Status AddSplit(QnnModelWrapper& qnn_model_wrapper,
+                       const OrtNodeUnit& node_unit,
+                       const std::string& input_name,
+                       const std::vector<std::string>& output_names,
+                       const std::vector<uint32_t>& input_shape,
+                       const std::vector<std::vector<uint32_t>>& output_shapes,
+                       const uint32_t& axis,
+                       const std::vector<uint32_t>& split_index,
+                       const Qnn_DataType_t& tensor_data_type,
+                       const QnnQuantParamsWrapper& quantize_param,
+                       bool do_op_validation,
+                       bool is_for_input,
+                       bool is_for_output) const;
 };
 
 Ort::Status LSTMOpBuilder::AddStridedSliceOrReshape(QnnModelWrapper& qnn_model_wrapper,
@@ -242,6 +255,65 @@ Ort::Status LSTMOpBuilder::AddStridedSliceOrReshape(QnnModelWrapper& qnn_model_w
                                                   {output_name}, std::move(param_names), do_op_validation),
                   "Failed to create manually inserted Qnn StridedSlice node.");
   }
+
+  return Ort::Status();
+}
+
+Ort::Status LSTMOpBuilder::AddSplit(QnnModelWrapper& qnn_model_wrapper,
+                                    const OrtNodeUnit& node_unit,
+                                    const std::string& input_name,
+                                    const std::vector<std::string>& output_names,
+                                    const std::vector<uint32_t>& input_shape,
+                                    const std::vector<std::vector<uint32_t>>& output_shapes,
+                                    const uint32_t& axis,
+                                    const std::vector<uint32_t>& split_index,
+                                    const Qnn_DataType_t& tensor_data_type,
+                                    const QnnQuantParamsWrapper& quantize_param,
+                                    bool do_op_validation,
+                                    bool is_for_input,
+                                    bool is_for_output) const {
+  // check before adding any param and tensor
+  for(size_t i = 0; i < output_names.size(); i++){
+    if (qnn_model_wrapper.IsQnnTensorWrapperExist(output_names[i])) {
+      return Ort::Status("QNN EP: Split output name already exist", ORT_EP_FAIL);
+    }
+  }
+
+  // inputs
+  QnnTensorWrapper input_tensorwrapper(input_name, is_for_input ? QNN_TENSOR_TYPE_APP_WRITE : QNN_TENSOR_TYPE_NATIVE,
+                                       tensor_data_type, quantize_param.Copy(),
+                                       std::vector<uint32_t>(input_shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)),
+                "Failed to add input tensor for inserted Split.");
+
+  // params
+  const std::string node_name = utils::GetUniqueName(node_unit, QNN_OP_SPLIT);
+
+  QnnParamWrapper split_index_param_wrapper(node_unit.Index(), node_name, QNN_OP_SPLIT_PARAM_SPLIT_INDEX,
+                                            {static_cast<uint32_t>(split_index.size())}, std::vector<uint32_t>(split_index));
+  std::vector<std::string> param_names = {
+      split_index_param_wrapper.GetParamTensorName(),
+  };
+  qnn_model_wrapper.AddParamWrapper(std::move(split_index_param_wrapper));
+  printf("\033[1;31m%s[%d] AddParamWrapper: %s \033[0m\n", __FILE__, __LINE__, split_index_param_wrapper.GetParamTensorName().c_str());
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, axis,
+                                         QNN_OP_SPLIT_PARAM_AXIS, param_names));
+
+  // outputs
+  for(size_t i = 0; i < output_names.size(); i++){
+    printf("\033[1;31m%s[%d] AddParamWrapper: %s \033[0m\n", __FILE__, __LINE__, split_index_param_wrapper.GetParamTensorName().c_str());
+    QnnTensorWrapper output_tensorwrapper(output_names[i],
+                                          is_for_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE,
+                                          tensor_data_type,
+                                          quantize_param.Copy(),
+                                          std::vector<uint32_t>(output_shapes[i]));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)),
+                  "Failed to add output tensor for inserted StridedSlice.");
+  }
+  // addNode
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_SPLIT, {input_name},
+                                                std::vector<std::string>(output_names), std::move(param_names), do_op_validation),
+                "Failed to create manually inserted Qnn StridedSlice node.");
 
   return Ort::Status();
 }
@@ -385,6 +457,10 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
   RETURN_IF_ERROR(AddQnnScalar<float>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), 0.0,
                                       QNN_OP_LSTM_PARAM_HIDDEN_STATE_QSCALE, param_names));
 
+  // hidden_size, a workaround to bypss the bug if we want to debug dlc in native tool
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), 0,
+                                      "hidden_size", param_names));
+
   // Common LSTM cell inputs
   const std::string null_tensor_name = "null_tensor";
   QnnTensorWrapper null_tensor_wrapper(null_tensor_name, QNN_TENSOR_TYPE_NULL, QNN_DATATYPE_FLOAT_32,
@@ -485,20 +561,16 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
     // QNN in[8] = ONNX in[3][direction, 3*hidden_size:4*hidden_size] + ONNX in[3][direction, 7*hidden_size:8*hidden_size]
     // QNN in[9] = ONNX in[3][direction, 1*hidden_size:2*hidden_size] + ONNX in[3][direction, 5*hidden_size:6*hidden_size]
     // QNN in[21] = ONNX in[3][direction, 0*hidden_size:1*hidden_size] + ONNX in[3][direction, 4*hidden_size:5*hidden_size]
-    uint32_t begin_mask = 0b00U;
-    uint32_t end_mask = 0b00U;
-    uint32_t shrink_axes = 0b01U;
-    uint32_t new_axes_mask = 0b00U;
-    std::vector<uint32_t> output_shape = {hidden_size};
-    std::vector<std::string> qnn_lstm_bias_name = {
+    std::vector<uint32_t> qnn_lstm_bias_shape = {hidden_size};
+    std::vector<std::string> qnn_lstm_bias_names = {
         utils::GetUniqueName(node_unit, "_forget_gate_bias_" + direction),
         utils::GetUniqueName(node_unit, "_cell_gate_bias_" + direction),
         utils::GetUniqueName(node_unit, "_output_gate_bias_" + direction),
-        utils::GetUniqueName(node_unit, "_input_gate_bias_" + direction)};
+        utils::GetUniqueName(node_unit, "_input_gate_bias_" + direction)
+    };
     std::vector<uint32_t> qnn_input_indices = {7, 8, 9, 21};
     if (onnx_inputs.size() > 3 && onnx_inputs[3].Exists()) {
-      std::vector<int32_t> begins = {2, 3, 1, 0, 6, 7, 5, 4};
-      std::vector<std::string> onnx_lstm_bias_name = {
+      std::vector<std::string> onnx_lstm_bias_names = {
           utils::GetUniqueName(input_names[3], "_input_to_forget_gate_bias_" + direction),
           utils::GetUniqueName(input_names[3], "_input_to_cell_gate_bias_" + direction),
           utils::GetUniqueName(input_names[3], "_input_to_output_gate_bias_" + direction),
@@ -506,43 +578,61 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
           utils::GetUniqueName(input_names[3], "_recurrent_to_forget_gate_bias_" + direction),
           utils::GetUniqueName(input_names[3], "_recurrent_to_cell_gate_bias_" + direction),
           utils::GetUniqueName(input_names[3], "_recurrent_to_output_gate_bias_" + direction),
-          utils::GetUniqueName(input_names[3], "_recurrent_to_input_gate_bias_" + direction)};
-      for (size_t i = 0; i < 8; i++) {
-        std::vector<std::vector<int32_t>> ranges = {{direction_idx, direction_idx + 1, 1},
-                                                    {begins[i] * hidden_size_sign, (begins[i] + 1) * hidden_size_sign, 1}};
-        RETURN_IF_ERROR(AddStridedSliceOrReshape(/*qnn_model_wrapper=*/qnn_model_wrapper,
-                                                 /*node_unit=*/node_unit,
-                                                 /*input_name=*/input_names[3],
-                                                 /*output_name=*/onnx_lstm_bias_name[i],
-                                                 /*input_shape=*/input_tensor_infos[3].shape,
-                                                 /*output_shape=*/output_shape,
-                                                 /*ranges=*/ranges,
-                                                 /*begin_mask=*/begin_mask,
-                                                 /*end_mask=*/end_mask,
-                                                 /*shrink_axes=*/shrink_axes,
-                                                 /*new_axes_mask=*/new_axes_mask,
-                                                 /*tensor_data_type=*/input_tensor_infos[3].qnn_data_type,
-                                                 /*QnnQuantParamsWrapper=*/input_tensor_infos[3].quant_param,
-                                                 /*do_op_validation=*/do_op_validation,
-                                                 /*is_for_input=*/false,
-                                                 /*is_for_output=*/false));
-      }
+          utils::GetUniqueName(input_names[3], "_recurrent_to_input_gate_bias_" + direction)
+      };
+      std::vector<uint32_t> split_index = {1, 2, 3, 4, 5, 6, 7};
+      std::vector<uint32_t> split_bias_input_shape = {1, hidden_size * 8};
+      std::vector<uint32_t> split_bias_output_shape = {1, hidden_size};
+      std::vector<std::vector<uint32_t>> split_bias_output_shapes(8, split_bias_output_shape);
+      RETURN_IF_ERROR(AddSplit(/*qnn_model_wrapper=*/qnn_model_wrapper,
+                               /*node_unit=*/node_unit,
+                               /*input_name=*/input_names[3],
+                               /*output_names=*/onnx_lstm_bias_names,
+                               /*input_shape=*/split_bias_input_shape,
+                               /*output_shapes=*/split_bias_output_shapes,
+                               /*axis=*/1,
+                               /*split_index=*/split_index,
+                               /*tensor_data_type=*/input_tensor_infos[3].qnn_data_type,
+                               /*QnnQuantParamsWrapper=*/input_tensor_infos[3].quant_param,
+                               /*do_op_validation=*/do_op_validation,
+                               /*is_for_input=*/false,
+                               /*is_for_output=*/false));
+
+      std::vector<std::string> qnn_lstm_bias_sum_names = {
+          utils::GetUniqueName(node_unit, "_forget_gate_bias_sum_" + direction),
+          utils::GetUniqueName(node_unit, "_cell_gate_bias_sum_" + direction),
+          utils::GetUniqueName(node_unit, "_output_gate_bias_sum_" + direction),
+          utils::GetUniqueName(node_unit, "_input_gate_bias_sum_" + direction)
+      };
       for (size_t i = 0; i < 4; i++) {
-        std::vector<std::string> add_input_names = {onnx_lstm_bias_name[i], onnx_lstm_bias_name[i + 4]};
-        // TODO: The quantize_param should not be used directly, we should calculate an approximate quant_param here.
-        QnnTensorWrapper add_output_tensorwrapper(qnn_lstm_bias_name[i], QNN_TENSOR_TYPE_NATIVE, input_tensor_infos[3].qnn_data_type,
-                                                  input_tensor_infos[3].quant_param.Copy(), std::vector<uint32_t>(output_shape));
+
+        QnnTensorWrapper add_output_tensorwrapper(
+          qnn_lstm_bias_sum_names[i],
+          QNN_TENSOR_TYPE_NATIVE,
+          input_tensor_infos[3].qnn_data_type,
+          input_tensor_infos[3].quant_param.Copy(),
+          std::vector<uint32_t>(split_bias_output_shape)
+        );
         RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(add_output_tensorwrapper)),
                       "QNN EP: Failed to add output tensor for inserted ElementWiseAdd node.");
         RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit, QNN_OP_ELEMENT_WISE_ADD),
                                                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                       QNN_OP_ELEMENT_WISE_ADD,
-                                                      std::move(add_input_names),
-                                                      {qnn_lstm_bias_name[i]},
+                                                      std::move(std::vector<std::string>{onnx_lstm_bias_names[i], onnx_lstm_bias_names[i + 4]}),
+                                                      {qnn_lstm_bias_sum_names[i]},
                                                       {},
                                                       do_op_validation),
                           "Failed to create manually inserted ElementWiseAdd node.");
-        qnn_lstm_input_names[qnn_input_indices[i]] = qnn_lstm_bias_name[i];
+      RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(/*input_name=*/qnn_lstm_bias_sum_names[i],
+                                                       /*output_name=*/qnn_lstm_bias_names[i],
+                                                       /*input_shape=*/split_bias_output_shape,
+                                                       /*output_shape=*/qnn_lstm_bias_shape,
+                                                       /*tensor_data_type=*/input_tensor_infos[3].qnn_data_type,
+                                                       /*quantize_param=*/input_tensor_infos[3].quant_param.Copy(),
+                                                       /*do_op_validation=*/do_op_validation,
+                                                       /*is_for_input=*/false,
+                                                       /*is_for_output=*/false));
+        qnn_lstm_input_names[qnn_input_indices[i]] = qnn_lstm_bias_names[i];
       }
     } else {
       // prepare zero bias
@@ -551,7 +641,7 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
                                                 QNN_TENSOR_TYPE_STATIC,
                                                 input_tensor_infos[0].qnn_data_type,
                                                 QnnQuantParamsWrapper(),
-                                                std::vector<uint32_t>(output_shape),
+                                                std::vector<uint32_t>(qnn_lstm_bias_shape),
                                                 std::vector<uint8_t>(
                                                     utils::GetElementSizeByType(input_tensor_infos[0].qnn_data_type) * hidden_size,
                                                     0));
@@ -667,11 +757,18 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
       utils::GetUniqueName(node_unit, "_QNN_LSTM_output_cell_state_" + direction),
       utils::GetUniqueName(node_unit, "_QNN_LSTM_output_hidden_state_" + direction)};
 
+  // QNN output order: all_hidden, last_cell, last_hidden
+  // ONNX output order: all_hidden, last_hidden, last_cell
+  std::map<int, int> output_position_map = {
+    {0, 0},
+    {1, 2},
+    {2, 1}
+  };
   for (size_t j = 0; j < 3; j++) {
     QnnTensorWrapper output_tensorwrapper(qnn_lstm_output_names[j],
                                           QNN_TENSOR_TYPE_NATIVE,
-                                          output_tensor_infos[j].qnn_data_type,
-                                          output_tensor_infos[j].quant_param.Copy(),
+                                          output_tensor_infos[output_position_map[j]].qnn_data_type,
+                                          output_tensor_infos[output_position_map[j]].quant_param.Copy(),
                                           std::vector<uint32_t>(qnn_lstm_output_shapes[j]));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)),
                     ("QNN EP: Failed to add " + std::to_string(j) + "th output tensor for QNN LSTM.").c_str());
@@ -686,17 +783,11 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
       {seq_length, 1, batch_size, hidden_size},
       {1, batch_size, hidden_size},
       {1, batch_size, hidden_size}};
-  // QNN output order: all_hidden, last_cell, last_hidden
-  // ONNX output order: all_hidden, last_hidden, last_cell
-  std::vector<std::string> reshape_input_names = {
-      qnn_lstm_output_names[0],
-      qnn_lstm_output_names[2],
-      qnn_lstm_output_names[1]};
   for (size_t i = 0; i < 3; i++) {
     // if bidirection, return output names for concat
     if (onnx_outputs.size() > i && onnx_outputs[i].Exists()) {
-      const std::string reshape_output_name = is_bidirection ? utils::GetUniqueName(qnn_lstm_output_names[i], "_unsqueeze_" + direction) : onnx_outputs[i].name;
-      RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(/*input_name=*/reshape_input_names[i],
+      const std::string reshape_output_name = is_bidirection ? utils::GetUniqueName(qnn_lstm_output_names[output_position_map[i]], "_unsqueeze_" + direction) : onnx_outputs[i].name;
+      RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(/*input_name=*/qnn_lstm_output_names[output_position_map[i]],
                                                        /*output_name=*/reshape_output_name,
                                                        /*input_shape=*/qnn_lstm_output_shapes[i],
                                                        /*output_shape=*/onnx_lstm_output_shapes[i],
@@ -718,8 +809,8 @@ Ort::Status LSTMOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                                        std::vector<std::string>&& input_names,
                                                        const Ort::Logger& logger,
                                                        bool do_op_validation) const {
+  // do_op_validation = true;
   printf("\033[1;31m%s[%d] ProcessAttributesAndOutputs \033[0m\n", __FILE__, __LINE__);
-  ORT_UNUSED_PARAMETER(do_op_validation);
   const auto& inputs = node_unit.Inputs();
 
   OrtNodeAttrHelper node_helper(node_unit);
@@ -728,8 +819,39 @@ Ort::Status LSTMOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
 
   if (direction == "bidirectional") {
     std::vector<std::string> uni_lstm_output_names_forward, uni_lstm_output_names_reverse;
+
+    const uint32_t hidden_size = node_helper.Get("hidden_size", 0);
+    RETURN_IF_NOT(hidden_size > 0, "hidden size is not set for LSTM");
+    const auto& onnx_inputs = node_unit.Inputs();
+    std::vector<std::string> onnx_lstm_split_bias_names = {
+        utils::GetUniqueName(node_unit, "_bias_forward"),
+        utils::GetUniqueName(node_unit, "_bias_reverse")
+    };
+    if (onnx_inputs.size() > 3 && onnx_inputs[3].Exists()) {
+      std::vector<uint32_t> output_shape = {1, 8 * hidden_size};
+      std::vector<uint32_t> split_index = {1};
+      std::vector<uint32_t> split_bias_input_shape = {2, hidden_size * 8};
+      std::vector<std::vector<uint32_t>> split_bias_output_shapes = std::vector<std::vector<uint32_t>>(2, {1, hidden_size * 8});
+      TensorInfo bias_tensor_infos;
+      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(onnx_inputs[3], bias_tensor_infos));
+      RETURN_IF_ERROR(AddSplit(/*qnn_model_wrapper=*/qnn_model_wrapper,
+                               /*node_unit=*/node_unit,
+                               /*input_name=*/input_names[3],
+                               /*output_names=*/onnx_lstm_split_bias_names,
+                               /*input_shape=*/split_bias_input_shape,
+                               /*output_shapes=*/split_bias_output_shapes,
+                               /*axis=*/1,
+                               /*split_index=*/split_index,
+                               /*tensor_data_type=*/bias_tensor_infos.qnn_data_type,
+                               /*QnnQuantParamsWrapper=*/bias_tensor_infos.quant_param,
+                               /*do_op_validation=*/do_op_validation,
+                               /*is_for_input=*/false,
+                               /*is_for_output=*/false));
+    }
+    input_names[3] = onnx_lstm_split_bias_names[0];
     RETURN_IF_ERROR(AddUnidirectionLSTM(qnn_model_wrapper, node_unit, "forward", input_names, logger, do_op_validation, true,
                                         uni_lstm_output_names_forward));
+    input_names[3] = onnx_lstm_split_bias_names[1];
     RETURN_IF_ERROR(AddUnidirectionLSTM(qnn_model_wrapper, node_unit, "reverse", input_names, logger, do_op_validation, true,
                                         uni_lstm_output_names_reverse));
 
@@ -765,6 +887,7 @@ Ort::Status LSTMOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
       }
     }
   } else {
+    // not used, just a placeholder
     std::vector<std::string> uni_lstm_output_names;
     RETURN_IF_ERROR(AddUnidirectionLSTM(qnn_model_wrapper, node_unit, direction, input_names, logger, do_op_validation, false,
                                         uni_lstm_output_names));

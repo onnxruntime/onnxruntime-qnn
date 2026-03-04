@@ -884,15 +884,17 @@ bool OrtLSTMNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
                                      const OrtNode* redundant_clip_node,
                                      const std::vector<const OrtNode*>& dq_nodes,
                                      const std::vector<const OrtNode*>& q_nodes) const {
+  return false;
   printf("\033[1;31m%s[%d] num_dq_nodes: %zu\033[0m\n", __FILE__, __LINE__, dq_nodes.size());
   printf("\033[1;31m%s[%d] num_q_nodes: %zu \033[0m\n", __FILE__, __LINE__, q_nodes.size());
 
   if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes, /*num_dq_inputs=*/dq_nodes.size(),
-                     /*is_empty_q_nodes_allowed=*/true)) {
+                     /*is_empty_q_nodes_allowed=*/false)) {
+    printf("\033[1;31m%s[%d] return here\033[0m\n", __FILE__, __LINE__);
     return false;
   }
   // QNN LSTM inputs/outputs:
-  // QNN in[0] = ONNX in[0]
+  // QNN in[0] = ONNX in[0], support QNN_DATATYPE_UFIXED_POINT_8
   // QNN in[1] = ONNX in[1][direction, 2*hidden_size:3*hidden_size, :], support QNN_DATATYPE_UFIXED_POINT_8
   // QNN in[2] = ONNX in[1][direction, 3*hidden_size:4*hidden_size, :], support QNN_DATATYPE_UFIXED_POINT_8
   // QNN in[3] = ONNX in[1][direction, 1*hidden_size:2*hidden_size, :], support QNN_DATATYPE_UFIXED_POINT_8
@@ -925,6 +927,7 @@ bool OrtLSTMNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16},
     {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16}
   };
+  printf("\033[1;31m%s[%d] return here\033[0m\n", __FILE__, __LINE__);
 
   // get map mapping from name to dq_nodes index
   std::map<std::string, size_t> name_to_index;

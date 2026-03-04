@@ -985,6 +985,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                                   logging::Severity log_severity = logging::Severity::kERROR,
                                   const std::string& qnn_ctx_model_path = "",
                                   const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
+  printf("\033[1;31m%s[%d] \033[0m\n", __FILE__, __LINE__);
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
       QNNTestEnvironment::GetInstance().dump_dlc() ||
@@ -1044,6 +1045,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     output_types[i] = elem_type;
   }
 
+  printf("\033[1;31m%s[%d] \033[0m\n", __FILE__, __LINE__);
   // Create FP16 model and serialize it to a string.
   onnxruntime::Model f16_model("fp16_model", false, ModelMetaData(), PathString(),
                                IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
@@ -1054,6 +1056,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
   f16_helper.SetGraphOutputs();
   ASSERT_STATUS_OK(f16_model.MainGraph().Resolve());
   f16_model.ToProto().SerializeToString(&f16_model_data);
+  printf("\033[1;31m%s[%d] \033[0m\n", __FILE__, __LINE__);
 
   if (QNNTestEnvironment::GetInstance().dump_onnx()) {
     auto dump_path = output_dir / ToPathString("dumped_f16_model.onnx");
