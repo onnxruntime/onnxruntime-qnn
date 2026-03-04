@@ -145,5 +145,7 @@ void CreateIsNanOpBuilder(const std::string& op_type, OpBuilderRegistrations& op
 
 void CreateGroupNormOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
+void CreateTanOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+
 }  // namespace qnn
 }  // namespace onnxruntime
