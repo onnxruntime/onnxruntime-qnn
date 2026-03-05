@@ -538,7 +538,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
     RETURN_IF_ERROR(qnn_backend_manager_->ExtractBackendProfilingInfo(profiling_info));
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "After ExtractBackendProfilingInfo");
   }
-  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "After SetPerThreadHtpPowerConfigs: end run");
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "ExercuteGraph 1");
   if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
     auto error_message = "NPU crashed. SSR detected. Caused QNN graph execute error. Error code: ";
     std::ostringstream oss;
