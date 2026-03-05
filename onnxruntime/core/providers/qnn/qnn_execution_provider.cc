@@ -636,6 +636,29 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 #endif
 
+  // Disable file mapping
+  std::string disable_file_mapped_weights_str;
+  GetSessionConfigEntryOrDefault(ort_api,
+                                 session_options_,
+                                 FormatEPConfigKey("disable_file_mapped_weights"),
+                                 "0",
+                                 disable_file_mapped_weights_str);
+  if (disable_file_mapped_weights_str == "1") {
+    enable_file_mapped_weights_ = false;
+  }
+
+  ORT_CXX_LOG(logger_,
+              ORT_LOGGING_LEVEL_VERBOSE,
+              ("User specified disable_file_mapped_weights: " + disable_file_mapped_weights_str).c_str());
+
+#ifndef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  enable_file_mapped_weights_ = false;
+  ORT_CXX_LOG(logger_,
+              ORT_LOGGING_LEVEL_WARNING,
+              "File mapped weights feature is only available on Windows arm64 devices for QNN API versions >= 2.32. "
+              "Feature will be disabled by default");
+#endif
+
   // Device ID
   std::string device_id_str;
   GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("device_id"), "0", device_id_str);
@@ -789,15 +812,31 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 
   static const std::string QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED = "enable_htp_shared_memory_allocator";
-  if (ParseBoolOption(ort_api,
-                      session_options_,
-                      FormatEPConfigKey(QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED),
-                      false,
-                      logger_)) {
+  enable_htp_shared_mem_allocator_ = ParseBoolOption(ort_api,
+                                                     session_options_,
+                                                     FormatEPConfigKey(QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED),
+                                                     false,
+                                                     logger_);
+  if (enable_htp_shared_mem_allocator_) {
     // Initialize rpcmem_library_.
     // This is necessary for HtpSharedMemoryAllocator to function and also indicates that the allocator is available.
     rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
-    model_settings_.htp_shared_memory = true;
+    model_settings_.htp_shared_memory = enable_htp_shared_mem_allocator_;
+  }
+
+  if (enable_file_mapped_weights_ && !rpcmem_library_) {
+    // Attempt to init rpcmem_library_ if needed. If this fails, then
+    // disable file mapped weights and proceed with normal operation
+    try {
+      rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
+    } catch (const std::exception& e) {
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_WARNING,
+                  ("Unable to load RPCMem library: " + std::string(e.what()) +
+                   " - Disabling file mapped weights.")
+                      .c_str());
+      enable_file_mapped_weights_ = false;
+    }
   }
 
   dump_json_qnn_graph_ = ParseBoolOption(ort_api,
@@ -1280,7 +1319,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   }
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> context_bin_map;
-  if (ep->enable_vtcm_backup_buffer_sharing_) {
+  if (ep->enable_vtcm_backup_buffer_sharing_ || ep->enable_file_mapped_weights_) {
     std::unordered_set<const OrtNode*> ep_ctx_nodes;
     GetMainEPCtxNodes(graph, ep->ort_api, ep_ctx_nodes, ep->logger_);
 
@@ -1320,6 +1359,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                           ep->context_cache_enabled_,
                                                           ep->share_ep_contexts_,
                                                           ep->enable_vtcm_backup_buffer_sharing_,
+                                                          ep->enable_file_mapped_weights_,
+                                                          ep->rpcmem_library_,
                                                           context_bin_map);
 
   context_bin_map.clear();
@@ -2085,7 +2126,7 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
   bool is_backend_setup = qnn_backend_manager_->IsBackendSetup();
   if (!is_backend_setup) {
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-    qnn_backend_manager_->SetupBackend(true, true, false, false, dummy_map);
+    qnn_backend_manager_->SetupBackend(true, true, false, false, false, nullptr, dummy_map);
   }
 
   Ort::Status status = qnn_cache_compatibility_manager_->ValidateCompatibilityInfo(info, *model_compatibility);
