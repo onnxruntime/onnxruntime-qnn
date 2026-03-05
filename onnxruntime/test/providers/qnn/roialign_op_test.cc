@@ -91,7 +91,7 @@ static void RunRoiAlignOpTest(const TestInputDef<float>& input_def,
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
-  provider_options["soc_model"] = "87";
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 
   RunQnnModelTest(BuildRoialignTestCase(input_def, roi_def, batch_indices_def, attrs),
                   provider_options,
@@ -157,7 +157,7 @@ TEST_F(QnnCPUBackendTests, TestRoialign_Unsupported_mode_max) {
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
                     TestInputDef<int64_t>({1}, true, {0}),
                     {utils::MakeAttribute("coordinate_transformation_mode", "output_half_pixel"),
-                     utils::MakeAttribute("mode", "max"),  //  mode = max will Unsupported
+                     utils::MakeAttribute("mode", "max"),  //  mode = max is not supported
                      utils::MakeAttribute("sampling_ratio", static_cast<int64_t>(1)),
                      utils::MakeAttribute("output_height", static_cast<int64_t>(1)),
                      utils::MakeAttribute("output_width", static_cast<int64_t>(1)),

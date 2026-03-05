@@ -38,6 +38,12 @@ class RoiAlignOpBuilder : public BaseOpBuilder {
 Ort::Status RoiAlignOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                              const OrtNodeUnit& node_unit,
                                              const Ort::Logger& logger) const {
+  // RoiAlignOp are sensitive with data layout, requires NHWC data layout.
+  // Continue RoiAlign if NHWC format.
+  if (node_unit.Domain() == kMSInternalNHWCDomain) {
+    return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
+  }
+
   OrtNodeAttrHelper node_helper(node_unit);
 
   // Sanity checks on RoiAlign onnx attrs
@@ -62,12 +68,6 @@ Ort::Status RoiAlignOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_NOT(output_height == static_cast<int>(output_info.shape[2]), "Expect output_height == output_tensor.shape[2]");
   int output_width = node_helper.Get("output_width", 1);
   RETURN_IF_NOT(output_width == static_cast<int>(output_info.shape[3]), "Expect output_width == output_tensor.shape[3]");
-
-  // RoiAlignOp are sensitive with data layout, requires NHWC data layout.
-  // Continue RoiAlign if NHWC format.
-  if (node_unit.Domain() == kMSInternalNHWCDomain) {
-    return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
-  }
 
   return Ort::Status();
 }
@@ -94,9 +94,6 @@ Ort::Status RoiAlignOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
                                                            const Ort::Logger& logger,
                                                            bool do_op_validation) const {
   ORT_UNUSED_PARAMETER(logger);
-
-  TensorInfo input_info = {};
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
 
   OrtNodeAttrHelper node_helper(node_unit);
   std::vector<std::string> param_tensor_names;
