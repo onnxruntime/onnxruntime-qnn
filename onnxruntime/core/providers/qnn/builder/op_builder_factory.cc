@@ -253,7 +253,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
     CreateTanOpBuilder("Tan", *this);
   }
 
-  {}
+  {
     CreateRoiAlignOpBuilder("RoiAlign", *this);
   }
 }
