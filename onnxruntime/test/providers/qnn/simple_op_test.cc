@@ -960,6 +960,42 @@ TEST_F(QnnHTPBackendTests, BinaryOp_Add4D_U16) {
                          true);  // Use com.microsoft Q/DQ ops
 }
 
+// Test double Add.
+TEST_F(QnnHTPBackendTests, BinaryOp_Add4D_FP64) {
+  // Wrap FP64 in between since QNN cannot handle model IO in FP64 currently.
+  GetTestModelFn builder = [](ModelTestBuilder& builder) {
+    NodeArg* input = MakeTestInput<float>(builder, TestInputDef<float>({1, 2, 2, 3}, false, -1.0, 1.0));
+
+    NodeArg* cast1_output = builder.MakeIntermediate();
+    Node& cast1_node = builder.AddNode("Cast", {input}, {cast1_output});
+    cast1_node.AddAttribute("to",
+                            static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_DOUBLE));
+
+    NodeArg* add_output = builder.MakeIntermediate();
+    NodeArg* add_const = MakeTestInput<double>(builder, TestInputDef<double>({3}, true, {1.0, 0.5, -0.3}));
+    builder.AddNode("Add", {cast1_output, add_const}, {add_output});
+
+    NodeArg* output = builder.MakeOutput();
+    Node& cast2_node = builder.AddNode("Cast", {add_output}, {output});
+    cast2_node.AddAttribute("to",
+                            static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT));
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+#if defined(_WIN32)
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  provider_options["enable_htp_fp16_precision"] = "1";
+
+  RunQnnModelTest(builder, provider_options, 17, ExpectedEPNodeAssignment::All, 1e-3);
+}
+
 // Test 8-bit QDQ Sub
 TEST_F(QnnHTPBackendTests, BinaryOp_Sub4D) {
   RunQDQOpTest<uint8_t>("Sub",
