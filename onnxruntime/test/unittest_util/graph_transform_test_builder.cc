@@ -4,6 +4,7 @@
 #include "test/unittest_util/graph_transform_test_builder.h"
 
 #include <functional>
+#include <stdexcept>
 #include <string>
 #include <vector>
 #include <memory>
@@ -52,7 +53,7 @@ static InlinedVector<std::byte> GetZeroPointBytes(int64_t zero_point, ONNX_NAMES
       return InlinedVector<std::byte>(span.begin(), span.end());
     }
     default:
-      throw std::string("Unhandled zero-point type " + std::to_string(type) + ".");
+      throw std::runtime_error("Unhandled zero-point type " + std::to_string(type) + ".");
   }
 }
 
@@ -76,11 +77,11 @@ const ONNX_NAMESPACE::TensorProto* ModelTestBuilder::MakeInitializer(std::string
 }
 
 const ONNX_NAMESPACE::NodeProto* ModelTestBuilder::AddQuantizeLinearNode(const std::string& node_name,
-                                                                         const std::string input_name,
+                                                                         const std::string& input_name,
                                                                          float input_scale,
                                                                          int64_t input_zero_point,
                                                                          ONNX_NAMESPACE::TensorProto_DataType zero_point_type,
-                                                                         const std::string output_name,
+                                                                         const std::string& output_name,
                                                                          bool use_ms_domain) {
   std::vector<std::string> input_names;
   input_names.push_back(input_name);
@@ -97,11 +98,11 @@ const ONNX_NAMESPACE::NodeProto* ModelTestBuilder::AddQuantizeLinearNode(const s
 }
 
 const ONNX_NAMESPACE::NodeProto* ModelTestBuilder::AddDequantizeLinearNode(const std::string& node_name,
-                                                                           const std::string input_name,
+                                                                           const std::string& input_name,
                                                                            float input_scale,
                                                                            int64_t input_zero_point,
                                                                            ONNX_NAMESPACE::TensorProto_DataType zero_point_type,
-                                                                           const std::string output_name,
+                                                                           const std::string& output_name,
                                                                            bool use_ms_domain) {
   std::vector<std::string> input_names;
   input_names.push_back(input_name);

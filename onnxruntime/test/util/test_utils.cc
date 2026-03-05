@@ -197,7 +197,7 @@ static gsl::span<const std::byte> GetModelBytes(ModelPathOrBytes model_path_or_b
 
 void RunWithEP(Ort::Session& ort_session,
                const Ort::RunOptions& ort_ro,
-               std::unordered_map<std::string, Ort::Value>& feeds,
+               const std::unordered_map<std::string, Ort::Value>& feeds,
                std::vector<Ort::Value>& output_vals) {
   // Fetch all input/output names using public API - store strings to ensure lifetime
   std::vector<std::string> ort_input_names = ort_session.GetInputNames();
@@ -236,7 +236,7 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
                                Ort::SessionOptions& ort_so,
                                const std::string& /* provider_type */,
                                std::string_view log_id,
-                               std::unordered_map<std::string, Ort::Value>& feeds,
+                               const std::unordered_map<std::string, Ort::Value>& feeds,
                                const EPVerificationParams& params,
                                bool verify_outputs) {
   std::vector<std::byte> model_data_buffer{};

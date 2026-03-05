@@ -70,13 +70,13 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
                                Ort::SessionOptions& ort_so,
                                const std::string& provider_type,
                                std::string_view log_id,
-                               std::unordered_map<std::string, Ort::Value>& feeds,
+                               const std::unordered_map<std::string, Ort::Value>& feeds,
                                const EPVerificationParams& params = EPVerificationParams(),
                                bool verify_outputs = true);
 
 void RunWithEP(Ort::Session& ort_session,
                const Ort::RunOptions& ort_ro,
-               std::unordered_map<std::string, Ort::Value>& feeds,
+               const std::unordered_map<std::string, Ort::Value>& feeds,
                std::vector<Ort::Value>& output_vals);
 
 // Tests model loading only.

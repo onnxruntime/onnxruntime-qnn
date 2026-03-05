@@ -553,7 +553,6 @@ if(DEP_URL_ort_core MATCHES ".*refs/tags/v([0-9]+\\.[0-9]+\\.[0-9]+)\\.zip$")
   message(STATUS "Extracted ORT_CORE_VER: ${ORT_CORE_VER}")
 else()
   message(FATAL_ERROR "Could not extract version from DEP_URL_ort_core: ${DEP_URL_ort_core}")
-  set(ORT_CORE_VER "unknown")
 endif()
 
 onnxruntime_fetchcontent_declare(

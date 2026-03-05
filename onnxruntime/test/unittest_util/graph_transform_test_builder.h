@@ -247,7 +247,7 @@ class ModelTestBuilder {
   }
 
   template <typename T>
-  const ONNX_NAMESPACE::ValueInfoProto* MakeInput(const std::string name,
+  const ONNX_NAMESPACE::ValueInfoProto* MakeInput(const std::string& name,
                                                   const std::vector<int64_t>& shape,
                                                   const std::vector<T>& data,
                                                   AllocatorPtr /* allocator */ = nullptr) {
@@ -273,13 +273,13 @@ class ModelTestBuilder {
   }
 
   template <typename T>
-  const ONNX_NAMESPACE::ValueInfoProto* MakeInput(const std::string name,
+  const ONNX_NAMESPACE::ValueInfoProto* MakeInput(const std::string& name,
                                                   const std::vector<int64_t>& shape, T min, T max,
                                                   AllocatorPtr allocator = nullptr) {
     return MakeInput<T>(name, shape, rand_gen_.Uniform<T>(shape, min, max), allocator);
   }
 
-  const ONNX_NAMESPACE::ValueInfoProto* MakeInputBool(const std::string name,
+  const ONNX_NAMESPACE::ValueInfoProto* MakeInputBool(const std::string& name,
                                                       const std::vector<int64_t>& shape, AllocatorPtr allocator = nullptr) {
     std::vector<uint8_t> data_uint8 = rand_gen_.Uniform<uint8_t>(shape, 0, 1);
     std::vector<bool> data;
@@ -289,14 +289,14 @@ class ModelTestBuilder {
     return MakeInput<bool>(name, shape, data, allocator);
   }
 
-  const ONNX_NAMESPACE::ValueInfoProto* MakeOutput(const std::string name) {
+  const ONNX_NAMESPACE::ValueInfoProto* MakeOutput(const std::string& name) {
     ONNX_NAMESPACE::ValueInfoProto* out = graph_->add_output();
     out->set_name(name);
     return out;
   }
 
   template <typename T>
-  const ONNX_NAMESPACE::ValueInfoProto* MakeOutput(const std::string name,
+  const ONNX_NAMESPACE::ValueInfoProto* MakeOutput(const std::string& name,
                                                    const std::optional<std::vector<int64_t>>& shape) {
     ONNX_NAMESPACE::ValueInfoProto* out = graph_->add_output();
     out->set_name(name);
@@ -455,10 +455,10 @@ class ModelTestBuilder {
   template <typename ZpType, typename ScaleType = float>
   typename std::enable_if<IsTypeQuantLinearCompatible<ZpType>::value, const ONNX_NAMESPACE::NodeProto*>::type
   AddQuantizeLinearNode(const std::string& node_name,
-                        const std::string input_name,
+                        const std::string& input_name,
                         ScaleType input_scale,
                         ZpType input_zero_point,
-                        const std::string output_name,
+                        const std::string& output_name,
                         bool use_ms_domain = false) {
     std::vector<std::string> input_names;
     input_names.push_back(input_name);
@@ -474,10 +474,10 @@ class ModelTestBuilder {
   template <typename T>
   typename std::enable_if<IsTypeQuantLinearCompatible<T>::value, const ONNX_NAMESPACE::NodeProto*>::type
   AddQuantizeLinearNode(const std::string& node_name,
-                        const std::string input_name,
+                        const std::string& input_name,
                         const std::vector<float>& input_scales,
                         const std::vector<T>& input_zero_points,
-                        const std::string output_name,
+                        const std::string& output_name,
                         std::vector<ONNX_NAMESPACE::AttributeProto> attributes = {},
                         bool use_ms_domain = false) {
     std::vector<std::string> input_names;
@@ -494,9 +494,9 @@ class ModelTestBuilder {
   }
 
   const ONNX_NAMESPACE::NodeProto* AddQuantizeLinearNode(const std::string& node_name,
-                                                         const std::string input_name,
+                                                         const std::string& input_name,
                                                          float input_scale,
-                                                         const std::string output_name,
+                                                         const std::string& output_name,
                                                          bool use_ms_domain = false) {
     std::vector<std::string> input_names;
     auto scale = MakeScalarInitializer<float>(
@@ -509,9 +509,9 @@ class ModelTestBuilder {
   }
 
   const ONNX_NAMESPACE::NodeProto* AddQuantizeLinearNode(const std::string& node_name,
-                                                         const std::string input_name,
+                                                         const std::string& input_name,
                                                          const std::vector<float>& input_scales,
-                                                         const std::string output_name,
+                                                         const std::string& output_name,
                                                          std::vector<ONNX_NAMESPACE::AttributeProto> attributes = {},
                                                          bool use_ms_domain = false) {
     std::vector<std::string> input_names;
@@ -535,20 +535,20 @@ class ModelTestBuilder {
   /// <param name="use_ms_domain">True to use the 'com.microsoft' domain</param>
   /// <returns>Reference to the new Q node</returns>
   const ONNX_NAMESPACE::NodeProto* AddQuantizeLinearNode(const std::string& node_name,
-                                                         const std::string input_name,
+                                                         const std::string& input_name,
                                                          float input_scale,
                                                          int64_t input_zero_point,
                                                          ONNX_NAMESPACE::TensorProto_DataType zero_point_type,
-                                                         const std::string output_name,
+                                                         const std::string& output_name,
                                                          bool use_ms_domain = false);
 
   template <typename ZpType, typename ScaleType = float>
   typename std::enable_if<IsTypeDequantLinearCompatible<ZpType>::value, const ONNX_NAMESPACE::NodeProto*>::type
   AddDequantizeLinearNode(const std::string& node_name,
-                          const std::string input_name,
+                          const std::string& input_name,
                           ScaleType input_scale,
                           ZpType input_zero_point,
-                          const std::string output_name,
+                          const std::string& output_name,
                           bool use_ms_domain = false) {
     std::vector<std::string> input_names;
     input_names.push_back(input_name);
@@ -564,10 +564,10 @@ class ModelTestBuilder {
   template <typename T>
   typename std::enable_if<IsTypeDequantLinearCompatible<T>::value, const ONNX_NAMESPACE::NodeProto*>::type
   AddDequantizeLinearNode(const std::string& node_name,
-                          const std::string input_name,
+                          const std::string& input_name,
                           const std::vector<float>& input_scales,
                           const std::vector<T>& input_zero_points,
-                          const std::string output_name,
+                          const std::string& output_name,
                           std::vector<ONNX_NAMESPACE::AttributeProto> attributes = {},
                           bool use_ms_domain = false) {
     std::vector<std::string> input_names;
@@ -584,9 +584,9 @@ class ModelTestBuilder {
   }
 
   const ONNX_NAMESPACE::NodeProto* AddDequantizeLinearNode(const std::string& node_name,
-                                                           const std::string input_name,
+                                                           const std::string& input_name,
                                                            float input_scale,
-                                                           const std::string output_name,
+                                                           const std::string& output_name,
                                                            bool use_ms_domain = false) {
     std::vector<std::string> input_names;
     auto scale = MakeScalarInitializer<float>(
@@ -599,9 +599,9 @@ class ModelTestBuilder {
   }
 
   const ONNX_NAMESPACE::NodeProto* AddDequantizeLinearNode(const std::string& node_name,
-                                                           const std::string input_name,
+                                                           const std::string& input_name,
                                                            const std::vector<float>& input_scales,
-                                                           const std::string output_name,
+                                                           const std::string& output_name,
                                                            std::vector<ONNX_NAMESPACE::AttributeProto> attributes = {},
                                                            bool use_ms_domain = false) {
     std::vector<std::string> input_names;
@@ -625,11 +625,11 @@ class ModelTestBuilder {
   /// <param name="use_ms_domain">True to use the 'com.microsoft' domain</param>
   /// <returns>Reference to the new DQ node</returns>
   const ONNX_NAMESPACE::NodeProto* AddDequantizeLinearNode(const std::string& node_name,
-                                                           const std::string input_name,
+                                                           const std::string& input_name,
                                                            float input_scale,
                                                            int64_t input_zero_point,
                                                            ONNX_NAMESPACE::TensorProto_DataType zero_point_type,
-                                                           const std::string output_name,
+                                                           const std::string& output_name,
                                                            bool use_ms_domain = false);
 
   ONNX_NAMESPACE::ModelProto model_;

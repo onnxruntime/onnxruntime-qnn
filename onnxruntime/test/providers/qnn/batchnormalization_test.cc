@@ -54,7 +54,6 @@ static void ComputeChannelMeanAndVar(const std::vector<FLOAT_TYPE>& input_data, 
   }
 
   // Divide sums by the number of elements in a channel to get the mean.
-  // Do the division in float to avoid requiring FLOAT_TYPE operator/ overloads (e.g., Ort::Float16_t on MSVC/ARM64).
   const float inv_count = 1.0f / static_cast<float>(num_batches * channel_stride);
   for (size_t c = 0; c < num_channels; c++) {
     mean_vals[c] = static_cast<FLOAT_TYPE>(static_cast<float>(mean_vals[c]) * inv_count);
@@ -68,10 +67,8 @@ static void ComputeChannelMeanAndVar(const std::vector<FLOAT_TYPE>& input_data, 
       const size_t chan_start = batch_start + (c * channel_stride);
 
       for (size_t i = chan_start; i < chan_start + channel_stride; i++) {
-        // Compute in float to avoid requiring FLOAT_TYPE operator- overloads (e.g., Ort::Float16_t on MSVC/ARM64).
         const FLOAT_TYPE deviation = static_cast<FLOAT_TYPE>(static_cast<float>(input_data[i]) -
                                                              static_cast<float>(mean_vals[c]));
-        // Accumulate in float to avoid mixed-type operator overload issues.
         var_vals[c] = static_cast<FLOAT_TYPE>(static_cast<float>(var_vals[c]) +
                                               static_cast<float>(deviation) * static_cast<float>(deviation));
       }
@@ -79,7 +76,6 @@ static void ComputeChannelMeanAndVar(const std::vector<FLOAT_TYPE>& input_data, 
   }
 
   // Divide sums by the number of elements in a channel to get the variance.
-  // Do the division in float to avoid requiring FLOAT_TYPE operator/ overloads (e.g., Ort::Float16_t on MSVC/ARM64).
   for (size_t c = 0; c < num_channels; c++) {
     var_vals[c] = static_cast<FLOAT_TYPE>(static_cast<float>(var_vals[c]) * inv_count);
   }
