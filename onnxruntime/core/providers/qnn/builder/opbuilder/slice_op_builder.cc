@@ -163,8 +163,8 @@ Ort::Status SliceOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, c
   if (input_count > 1) {
     // Skip the first input. All other input need to be initializer
     for (size_t i = 1; i < input_count; i++) {
-      const auto& next_input = node_unit.Inputs()[i].name;
-      if (!qnn_model_wrapper.IsConstantInput(next_input)) {
+      const auto& next_input = node_unit.Inputs()[i];
+      if (next_input.Exists() && !qnn_model_wrapper.IsConstantInput(next_input.name)) {
         return MAKE_EP_FAIL("QNN doesn't support dynamic slice.");
       }
     }

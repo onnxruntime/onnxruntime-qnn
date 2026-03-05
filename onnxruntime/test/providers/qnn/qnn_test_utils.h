@@ -179,6 +179,8 @@ struct TestInputDef {
 
   TestInputDef() = default;
 
+  TestInputDef(bool is_optional) : is_optional_(is_optional) {};
+
   // Creates a random input definition. Specify its shape, whether it's an initializer, and
   // the min/max range.
   TestInputDef(std::vector<int64_t> shape, bool is_initializer, T rand_min, T rand_max)
@@ -310,12 +312,17 @@ struct TestInputDef {
     return per_axis_ranges;
   }
 
+  bool IsOptional() const {
+    return is_optional_;
+  }
+
  private:
   std::vector<int64_t> shape_;
   std::variant<RawData, RandomData> data_info_;
   bool is_initializer_{false};
   bool has_range_override_{false};
   std::pair<T, T> range_override_;
+  bool is_optional_{false};
 };
 
 // Convert a float input definition to a float16 input definition.
@@ -1213,7 +1220,9 @@ inline GetTestModelFn BuildOpTestCase(const std::string& op_type,
     }
 
     for (const auto& input_def : input_defs_2) {
-      NodeArg* input = MakeTestInput<InputType2>(builder, input_def, input_allocator);
+      NodeArg* input = input_def.IsOptional()
+                           ? builder.MakeOptionalTensor()
+                           : MakeTestInput<InputType2>(builder, input_def, input_allocator);
       op_inputs.push_back(input);
     }
 
@@ -1300,7 +1309,9 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
 
     // Create non-QDQ inputs
     for (const auto& input_def : non_quant_input_defs) {
-      NodeArg* input = MakeTestInput<OtherInputType>(builder, input_def, input_allocator);
+      NodeArg* input = input_def.IsOptional()
+                           ? builder.MakeOptionalTensor()
+                           : MakeTestInput<OtherInputType>(builder, input_def, input_allocator);
       op_inputs.push_back(input);
     }
 
