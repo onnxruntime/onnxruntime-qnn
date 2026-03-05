@@ -52,9 +52,7 @@ Ort::Status GroupNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper
   const std::vector<uint32_t>& input_shape = input_info.shape;
   const size_t input_rank = input_shape.size();
 
-  if (input_rank <= 2) {
-    return MAKE_EP_FAIL("QNN GroupNorm only supports input ranks greater than 2.");
-  }
+  RETURN_IF(input_rank <= 2, "QNN GroupNorm only supports input ranks greater than 2.");
 
   OrtNodeAttrHelper node_helper(node_unit);
   uint32_t num_channels;
@@ -70,21 +68,17 @@ Ort::Status GroupNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper
   TensorInfo scale_info{};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], scale_info));
   const std::vector<uint32_t>& scale_shape = scale_info.shape;
-  if (scale_shape.size() != 1 || scale_shape[0] != num_channels) {
-    return MAKE_EP_FAIL(("QNN GroupNorm input 1 (scale/gamma) must have 1D shape [" + std::to_string(num_channels) + "].").c_str());
-  }
+  RETURN_IF(scale_shape.size() != 1 || scale_shape[0] != num_channels,
+            ("QNN GroupNorm input 1 (scale/gamma) must have 1D shape [" + std::to_string(num_channels) + "].").c_str());
 
   TensorInfo bias_info{};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[2], bias_info));
   const std::vector<uint32_t>& bias_shape = bias_info.shape;
-  if (bias_shape.size() != 1 || bias_shape[0] != num_channels) {
-    return MAKE_EP_FAIL(("QNN GroupNorm input 2 (bias/beta) must have 1D shape [" + std::to_string(num_channels) + "].").c_str());
-  }
+  RETURN_IF(bias_shape.size() != 1 || bias_shape[0] != num_channels,
+            ("QNN GroupNorm input 2 (bias/beta) must have 1D shape [" + std::to_string(num_channels) + "].").c_str());
 
   const float epsilon = node_helper.Get("epsilon", 1e-05f);
-  if (epsilon <= 0.0f) {
-    return MAKE_EP_FAIL("QNN GroupNorm epsilon must be greater than 0.0");
-  }
+  RETURN_IF(epsilon <= 0.0f, "QNN GroupNorm epsilon must be greater than 0.0");
 
   // Support both "num_groups" (ONNX GroupNormalization) and "groups" (com.microsoft.GroupNorm)
   // Note: we cannot use node_unit.Domain() because the op domain may have been transformed to kMSInternalNHWCDomain.
@@ -94,20 +88,16 @@ Ort::Status GroupNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper
   } else {
     num_groups = node_helper.Get("groups", static_cast<int64_t>(1));
   }
-  if (num_groups <= 0) {
-    return MAKE_EP_FAIL("QNN GroupNorm num_groups/groups must be greater than 0");
-  }
+  RETURN_IF(num_groups <= 0, "QNN GroupNorm num_groups/groups must be greater than 0");
 
-  if (num_channels % static_cast<uint32_t>(num_groups) != 0) {
-    return MAKE_EP_FAIL("QNN GroupNorm requires num_channels to be divisible by num_groups/groups");
-  }
+  RETURN_IF(num_channels % static_cast<uint32_t>(num_groups) != 0,
+            "QNN GroupNorm requires num_channels to be divisible by num_groups/groups");
 
   // Check activation attribute for com.microsoft.GroupNorm
   if (node_unit.OpType() == "GroupNorm") {
     const int64_t activation = node_helper.Get("activation", static_cast<int64_t>(0));
-    if (activation != 0 && activation != 1) {
-      return MAKE_EP_FAIL("QNN GroupNorm only supports activation=0 (None) or activation=1 (SiLU)");
-    }
+    RETURN_IF(activation != 0 && activation != 1,
+              "QNN GroupNorm only supports activation=0 (None) or activation=1 (SiLU)");
   }
 
   // Continue Op validation if it's NHWC transformed
