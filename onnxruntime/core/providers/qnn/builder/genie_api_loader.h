@@ -16,6 +16,9 @@ typedef void* GenieNodeConfig;
 typedef void* GenieNode;
 typedef void* GenieLog;
 
+typedef void* GenieDlcConfig;
+typedef void* GenieDlc;
+
 typedef int Genie_Status_t;
 
 typedef enum {
@@ -66,6 +69,7 @@ typedef void (*GenieLog_Callback_t)(GenieLog logHandle,
                                     uint64_t timestamp,
                                     va_list argp);
 
+typedef void (*Genie_AllocCallback_t)(const size_t size, const char** allocatedData);
 
 // Output CallBack
 typedef void (*GenieNode_IOCallback_t)(
@@ -76,6 +80,25 @@ typedef void (*GenieNode_IOCallback_t)(
 
 typedef Genie_Status_t (*TYPE_GenieNodeConfig_createFromJson)(
     const char* json,
+    GenieNodeConfig** out);
+
+typedef Genie_Status_t (*TYPE_GenieDlcConfig_create)(
+    const char* dlcSource,
+    GenieDlcConfig** out);
+
+typedef Genie_Status_t (*TYPE_GenieDlc_create)(
+    const GenieDlcConfig* dlcConfigHandle,
+    GenieDlc** dlcHandlePtr);
+
+typedef Genie_Status_t (*TYPE_GenieDlc_getUseCases)(
+    const GenieDlc* dlcHandle,
+    Genie_AllocCallback_t callback,
+    const char** useCases);
+
+typedef Genie_Status_t (*TYPE_GenieNodeConfig_createFromDlc)(
+    GenieDlc* dlcHandle,
+    const char* useCaseName,
+    const char* configStr,
     GenieNodeConfig** out);
 
 typedef Genie_Status_t (*TYPE_GenieNode_create)(
@@ -129,6 +152,10 @@ typedef Genie_Status_t (*TYPE_GenieNodeConfig_free)(
 // GenieApi: holds all resolved function pointers
 struct GenieApi {
     TYPE_GenieNodeConfig_createFromJson  NodeConfig_createFromJson;
+    TYPE_GenieDlcConfig_create           DlcConfig_create;
+    TYPE_GenieDlc_create                 Dlc_create;
+    TYPE_GenieDlc_getUseCases            Dlc_getUseCases;
+    TYPE_GenieNodeConfig_createFromDlc   NodeConfig_createFromDlc;
     TYPE_GenieNode_create                Node_create;
     TYPE_GenieNode_setData               Node_setData;
     TYPE_GenieNode_getData               Node_getData;
@@ -182,6 +209,7 @@ struct GenieNodeState {
 struct GenieNodeBuilder {
   const GenieApi* api;
   std::string json_config;
+  std::string dlc_path;
   std::vector<GenieNodeState::IODesc> inputs;
   std::vector<GenieNodeState::IODesc> outputs;
 };

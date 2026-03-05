@@ -58,6 +58,26 @@ Status GetEpContextZipPath(const std::vector<IExecutionProvider::FusedNodeAndGra
   return Status::OK();
 }
 
+Status GetEpContextDlcPath(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs,
+                            std::string& dlc_path) {
+  for (const auto& fused_node_graph : fused_nodes_and_graphs) {
+    const onnxruntime::GraphViewer& graph_viewer(fused_node_graph.filtered_graph);
+    if(GraphHasEpContextNode(graph_viewer, EP_CONTEXT_TYPE_DLC))
+    {
+      for (const auto& node : graph_viewer.Nodes()) {
+          if (EPCONTEXT_OP == node.OpType()) {
+            NodeAttrHelper node_helper(node);
+            dlc_path = node_helper.Get("ep_dlc_context", "");
+            if(dlc_path != "")
+              return Status::OK();
+          }
+        }
+    }
+  }
+  ORT_RETURN_IF(dlc_path == "", "Failed to extract dlc_path from EP_CONTEXT node");
+  return Status::OK();
+}
+
 bool GraphHasZipContextNode(const onnxruntime::GraphViewer& graph_viewer) {
   return GraphHasEpContextNode(graph_viewer, EP_CONTEXT_TYPE_ZIP);
 }

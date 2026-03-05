@@ -44,6 +44,18 @@ void GenieApiLoader::Init() {
         api_.NodeConfig_createFromJson =
             (TYPE_GenieNodeConfig_createFromJson)must_dlsym(handle_, "GenieNodeConfig_createFromJson");
 
+        api_.DlcConfig_create =
+            (TYPE_GenieDlcConfig_create)must_dlsym(handle_, "GenieDlcConfig_create");
+        
+        api_.Dlc_create =
+            (TYPE_GenieDlc_create)must_dlsym(handle_, "GenieDlc_create");
+
+        api_.Dlc_getUseCases =
+            (TYPE_GenieDlc_getUseCases)must_dlsym(handle_, "GenieDlc_getUseCases");
+        
+        api_.NodeConfig_createFromDlc =
+            (TYPE_GenieNodeConfig_createFromDlc)must_dlsym(handle_, "GenieNodeConfig_createFromDlc");
+
         api_.Node_create =
             (TYPE_GenieNode_create)must_dlsym(handle_, "GenieNode_create");
 
@@ -57,7 +69,7 @@ void GenieApiLoader::Init() {
             (TYPE_GenieNode_execute)must_dlsym(handle_, "GenieNode_execute");
 
         api_.Node_reset =
-            (TYPE_GenieNode_reset)must_dlsym(handle_, "GenieNode_reset");
+            (TYPE_GenieNode_reset)must_dlsym(handle_, "GenieNode_free"); // RESET IT BACK AS NEW DLL WONT HAVE THIS
 
         api_.Node_free =
             (TYPE_GenieNode_free)must_dlsym(handle_, "GenieNode_free");

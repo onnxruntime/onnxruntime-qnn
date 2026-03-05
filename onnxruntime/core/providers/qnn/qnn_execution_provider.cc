@@ -988,7 +988,7 @@ QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer
     return GetGenieCapability(graph_viewer);
   }
 
-  if (qnn::GraphHasZipContextNode(graph_viewer)) {
+  if (qnn::GraphHasZipContextNode(graph_viewer) || qnn::GraphHasDlcContextNode(graph_viewer)) {
     EnsureGenieBackendManagerCreated("");
     return GetGenieCapability(graph_viewer);
   }
@@ -1202,9 +1202,9 @@ QNNExecutionProvider::GetGenieCapability(const onnxruntime::GraphViewer& graph_v
   }
 
   // TODO - Need to change this to DLC
-  bool is_genie_model = qnn::GraphHasZipContextNode(graph_viewer);
+  bool is_genie_model = qnn::GraphHasZipContextNode(graph_viewer) || qnn::GraphHasDlcContextNode(graph_viewer);
   if (!is_genie_model) {
-    ORT_THROW("The Genie backend library requires a model-aware zip context node.");
+    ORT_THROW("The Genie backend library requires a model-aware zip or dlc context node.");
   }
 
   // TODO - Some validation of non-Genie support options would be prudent
@@ -1603,7 +1603,7 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
   const auto& logger = *GetLogger();
   bool is_qnn_ctx_model = qnn::IsFusedGraphHasCtxNode(fused_nodes_and_graphs);
   // TODO - May need to change this to DLC at some point in the future
-  bool is_genie_model = qnn::IsFusedGraphHasZipCtxNode(fused_nodes_and_graphs);
+  bool is_genie_model = qnn::IsFusedGraphHasZipCtxNode(fused_nodes_and_graphs) || qnn::IsFusedGraphHasDlcCtxNode(fused_nodes_and_graphs);
 
   bool is_ctx_file_exist = false;
   onnxruntime::PathString context_model_path;
@@ -1701,10 +1701,16 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
     return Status::OK();
   } else if (is_genie_model) {
 
-    std::filesystem::path zip_extracted_path;
-    auto st = genie_backend_manager_->GetZipContextPath(fused_nodes_and_graphs, context_model_path, zip_extracted_path);
-    std::string genieConfigJsonText;
-    st = genie_backend_manager_->GetGenieConfig(zip_extracted_path, genieConfigJsonText);
+    // std::filesystem::path zip_extracted_path;
+    // auto st = genie_backend_manager_->GetZipContextPath(fused_nodes_and_graphs, context_model_path, zip_extracted_path);
+    std::string genieConfigJsonText = "";
+    std::cout << "Context Model Path: " << ToUTF8String(context_model_path) << std::endl;
+    auto st = genie_backend_manager_->GetGenieConfig(context_model_path, genieConfigJsonText);
+    std::cout << genieConfigJsonText << std::endl;
+    std::filesystem::path dlc_extracted_path;
+    st = genie_backend_manager_->GetDlcContextPath(fused_nodes_and_graphs, context_model_path, dlc_extracted_path);
+    std::cout << "LOAD DLC FROM HERE: --------------------------------: " << dlc_extracted_path << std::endl;
+    
     const GenieApi& genie_api_ = genie_api_loader_->Get();
     for (auto fused_node_and_graph : fused_nodes_and_graphs) {
 
@@ -1718,6 +1724,7 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
       auto builder = std::make_shared<GenieNodeBuilder>();
       builder->api = &genie_api_;
       builder->json_config = genieConfigJsonText;
+      builder->dlc_path = dlc_extracted_path.string();
 
       BuildIONames(fused_node, *genieNodeState);
             
@@ -1737,12 +1744,46 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
           st->outputs = builder->outputs;
           st->owner = this;
 
+          GenieDlcConfig* dlcConfigHandle = nullptr;
+          if (st->api->DlcConfig_create(builder->dlc_path.c_str(), &dlcConfigHandle) != 0) {
+              std::cout << "Error creating DLC Config \n";
+          }
+
+          // Genie DLC Create
+          GenieDlc* genieDlcHandle;
+          if (st->api->Dlc_create(dlcConfigHandle, &genieDlcHandle) != 0) {
+              std::cout << "Error creating DLC \n";
+          }
+
+          // GenieDlc Get use case
+          // Genie_AllocCallback_t memAllocateCallback = [](const size_t size, const char** allocatedData) {
+          //   // Allocate writable buffer
+          //   char* buf = new (std::nothrow) char[size];
+          //   if (!buf) {
+          //       *allocatedData = nullptr;
+          //       return;
+          //   }
+          //   *allocatedData = buf;
+          // };
+          
+          // const char* useCasesString = nullptr;
+          // if (st->api->Dlc_getUseCases(genieDlcHandle, memAllocateCallback, &useCasesString) != 0) {
+          //     std::cout << "Error Getting use cases\n";
+          // }
+          // std::cout << useCasesString << std::endl;
+
           // 2) Create GenieNodeConfig
           GenieNodeConfig* cfg = nullptr;
-          if (st->api->NodeConfig_createFromJson(builder->json_config.c_str(), &cfg) != 0) {
+          // if (st->api->NodeConfig_createFromJson(builder->json_config.c_str(), &cfg) != 0) {
+          //     delete st;
+          // }
+          std::string useCs = "default";
+          std::cout << "Loading NodeConfigFromDlc" << std::endl;
+          if (st->api->NodeConfig_createFromDlc(genieDlcHandle, useCs.c_str(), nullptr, &cfg) != 0) {
               delete st;
           }
           st->config = cfg;
+          std::cout << "Created Node Config from DLC success: " << cfg << std::endl;
 
           
           GenieLog* gLogger = nullptr;
@@ -1766,13 +1807,16 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
               return -1;
             }
           }
+          std::cout << "Logger Added" << std::endl;
 
           // 3) Create GenieNode (node)
           GenieNode* dlg = nullptr;
           if (st->api->Node_create(cfg, &dlg) != 0) {
               st->api->NodeConfig_free(cfg);
+              std::cout << "FAILURE NODE CREATINGG" << std::endl;
               delete st;
           }
+          std::cout << "NOde CREATEDDDF" << std::endl;
           st->node = dlg;
 
           *state = reinterpret_cast<FunctionState>(st);

@@ -231,9 +231,27 @@ Status GenieBackendManager::GetZipContextPath(const std::vector<IExecutionProvid
     return Status::OK();
 }
 
+Status GenieBackendManager::GetDlcContextPath(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs,
+                                              onnxruntime::PathString context_model_path,
+                                              std::filesystem::path& dlc_extract_path) {
+    // Process the context zip from the model
+    namespace fs = std::filesystem;
+    const fs::path model_path{context_model_path};
+    const fs::path parent    = model_path.parent_path();
+    const std::wstring stem  = model_path.stem().wstring();
+    std::string dlc_path;
+    auto status = qnn::GetEpContextDlcPath(fused_nodes_and_graphs, dlc_path);
+    dlc_extract_path = parent / dlc_path;
+    if(!fs::exists(dlc_extract_path)) {
+      return ORT_MAKE_STATUS(ONNXRUNTIME, FAIL, "DLC Path Invalid");
+    }
+
+    return Status::OK();
+}
+
 Status GenieBackendManager::GetGenieConfig(std::filesystem::path zip_extracted_path, std::string& genieConfigJsonText) {
 
-  auto genie_cfg_path= ToUTF8String((zip_extracted_path / L"executor_config.json").wstring());
+  auto genie_cfg_path= ToUTF8String((zip_extracted_path.parent_path() / L"genie_config.json").wstring());
   std::ifstream ifs(genie_cfg_path, std::ios::in | std::ios::binary);
   if (!ifs) throw std::runtime_error("Cannot open config file: " + genie_cfg_path);
   std::ostringstream oss;

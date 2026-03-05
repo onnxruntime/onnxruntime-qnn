@@ -41,6 +41,8 @@ bool GraphHasDlcContextNode(const onnxruntime::GraphViewer& graph_viewer);
 
 Status GetEpContextZipPath(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs, std::string& zip_path);
 
+Status GetEpContextDlcPath(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs, std::string& dlc_path);
+
 bool IsFusedGraphHasCtxNode(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs,
                             const std::string& ep_context_type = EP_CONTEXT_TYPE_BIN);
 

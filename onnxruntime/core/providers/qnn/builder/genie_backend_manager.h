@@ -43,6 +43,11 @@ class GenieBackendManager : public std::enable_shared_from_this<GenieBackendMana
   Status GetZipContextPath(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs,
                           onnxruntime::PathString model_path,
                           std::filesystem::path& zip_extract_path);
+
+  Status GetDlcContextPath(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs,
+                          onnxruntime::PathString model_path,
+                          std::filesystem::path& dlc_extract_path);
+
   Status GetGenieConfig(std::filesystem::path zip_extracted_path, std::string& genieConfigJsonText);
  private:
   Status LoadBackend();
