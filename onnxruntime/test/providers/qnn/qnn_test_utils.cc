@@ -454,7 +454,9 @@ static BackendSupport GetHTPSupport(const onnxruntime::logging::Logger& logger) 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = onnxruntime::kQnnExecutionProvider;
   Ort::SessionOptions session_options;
-  ProviderOptions provider_options = {{"backend_type", "htp"}, {"offload_graph_io_quantization", "0"}};
+  ProviderOptions provider_options = {{"backend_type", "htp"},
+                                      {"offload_graph_io_quantization", "0"},
+                                      {"enable_htp_shared_memory_allocator", "1"}};
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
 
   OrtEpFactory* qnn_ep_factory = registered_ep_device->GetMutableFactory();
