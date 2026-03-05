@@ -510,8 +510,9 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
     auto profile_backend_handle = qnn_backend_manager_->GetQnnProfileHandle();
 
     auto thread_id = std::this_thread::get_id();
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Before SetPerThreadHtpPowerConfigs:");
     RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, true));
-
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "After SetPerThreadHtpPowerConfigs:");
     execute_status = qnn_interface.graphExecute(graph_info_->Graph(),
                                                 qnn_inputs.data(),
                                                 static_cast<uint32_t>(qnn_inputs.size()),
