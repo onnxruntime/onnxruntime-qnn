@@ -528,15 +528,17 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
       profiling_info.graph_name = graph_info_->Name();
     }
 #endif
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Before SetPerThreadHtpPowerConfigs: end run")
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Before SetPerThreadHtpPowerConfigs: end run");
     RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, false));
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "After SetPerThreadHtpPowerConfigs: end run")
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "After SetPerThreadHtpPowerConfigs: end run");
     // NOTE: This function returns immediately when profiling is disabled.
     // Extracting profiling data can be expensive, but it is typically only enabled for debugging purposes
     // and not in production. We can improve synchronization for event profiling if it becomes an issue.
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Before ExtractBackendProfilingInfo");
     RETURN_IF_ERROR(qnn_backend_manager_->ExtractBackendProfilingInfo(profiling_info));
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "After ExtractBackendProfilingInfo");
   }
-
+  ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "After SetPerThreadHtpPowerConfigs: end run");
   if (QNN_COMMON_ERROR_SYSTEM_COMMUNICATION == execute_status) {
     auto error_message = "NPU crashed. SSR detected. Caused QNN graph execute error. Error code: ";
     std::ostringstream oss;
