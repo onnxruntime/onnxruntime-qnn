@@ -136,6 +136,7 @@ Tensor copy_sort(const Tensor& src, const AllocatorPtr& allocator) {
 template <typename T>
 void sort_expected_and_actual_buffers(const Tensor& expected, Tensor& expected_sorted,
                                       const Tensor& actual, Tensor& actual_sorted) {
+  // TODO: Remove the unused function
   ORT_UNUSED_PARAMETER(expected);
   ORT_UNUSED_PARAMETER(expected_sorted);
   ORT_UNUSED_PARAMETER(actual);

@@ -128,6 +128,7 @@ if(WIN32)
             "${ORT_PREBUILT_SOURCE}/onnxruntime.dll"
             "${ORT_PREBUILT_SOURCE}/onnxruntime.lib"
             "${ORT_PREBUILT_SOURCE}/onnxruntime_plugin_ep_onnx_test.exe"
+            "${ORT_PREBUILT_SOURCE}/onnxruntime_perf_test.exe"
             "${ORT_PREBUILT_DEST}"
     )
 elseif(UNIX AND NOT ANDROID)
@@ -140,6 +141,7 @@ elseif(UNIX AND NOT ANDROID)
             "${ORT_PREBUILT_SOURCE}/libonnxruntime.so.1"
             "${ORT_PREBUILT_SOURCE}/libonnxruntime.so.${ORT_CORE_VER}"
             "${ORT_PREBUILT_SOURCE}/onnxruntime_plugin_ep_onnx_test"
+            "${ORT_PREBUILT_SOURCE}/onnxruntime_perf_test"
             "${ORT_PREBUILT_DEST}"
     )
 elseif(ANDROID)
@@ -148,6 +150,7 @@ elseif(ANDROID)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${ORT_PREBUILT_SOURCE}/libonnxruntime.so"
             "${ORT_PREBUILT_SOURCE}/onnxruntime_plugin_ep_onnx_test"
+            "${ORT_PREBUILT_SOURCE}/onnxruntime_perf_test"
             "${ORT_PREBUILT_DEST}"
     )
 else()
