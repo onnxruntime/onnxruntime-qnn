@@ -65,8 +65,6 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
     CreateSimpleOpBuilder("GridSample", *this);
 
     CreateSimpleOpBuilder("LpNormalization", *this);
-
-    CreateSimpleOpBuilder("ScatterElements", *this);
   }
 
   {
@@ -251,6 +249,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
 
   {
     CreateTanOpBuilder("Tan", *this);
+  }
+
+  {
+    CreateScatterElementsOpBuilder("ScatterElements", *this);
   }
 }
 
