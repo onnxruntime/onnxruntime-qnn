@@ -2197,8 +2197,9 @@ OrtStatus* QnnEp::QnnNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr,
   QnnEp& ep = node_compute_info->ep;
 
   qnn::QnnModel* model = reinterpret_cast<qnn::QnnModel*>(compute_state);
+  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Executegraph called");
   RETURN_IF_NOT_OK(model->ExecuteGraph(kernel_context, ep.logger_));
-
+  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Executegraph called done");
   return nullptr;
 }
 
