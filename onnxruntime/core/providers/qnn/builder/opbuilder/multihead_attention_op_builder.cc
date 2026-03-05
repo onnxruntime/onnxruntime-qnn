@@ -93,7 +93,7 @@ Ort::Status MultiHeadAttentionOpBuilder::IsOpSupported(QnnModelWrapper& qnn_mode
     is_seperated_qkv = !is_packed_kv;
   }
 
-  // Validate input size accroding to imput format
+  // Validate input size accroding to input format
   RETURN_IF(is_packed_qkv && inputs.size() > 1 && inputs[1].Exists(),
             "MultiHeadAttention only supports Packed QKV format with one input");
   RETURN_IF(is_packed_kv && inputs.size() > 2 && inputs[2].Exists(),
