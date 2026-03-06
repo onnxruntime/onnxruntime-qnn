@@ -19,18 +19,19 @@ namespace test {
 // Creates a graph with a single logical operator (e.g., Equal). Used for testing CPU backend.
 static GetTestModelFn BuildLogicalOpTestCase(const std::string& op_type, const std::vector<int64_t>& shape) {
   return [op_type, shape](ModelTestBuilder& builder) {
-    auto* input0 = builder.MakeInput<float>(shape, 0.0f, 20.0f);
-    auto* input1 = builder.MakeInput<float>(shape, 0.0f, 20.0f);
-    NodeArg* output = nullptr;
+    builder.graph_->set_name("logical_comp_graph");
+
+    builder.MakeInput<float>("input0", shape, 0.0f, 20.0f);
+    builder.MakeInput<float>("input1", shape, 0.0f, 20.0f);
 
     // Explicitly set output type/shape for logical comparison ops implemented as functions.
     if (op_type == "GreaterOrEqual" || op_type == "LessOrEqual") {
-      output = builder.MakeOutput<bool>(shape);
+      builder.MakeOutput<bool>("output", shape);
     } else {
-      output = builder.MakeOutput();
+      builder.MakeOutput("output");
     }
 
-    builder.AddNode(op_type, {input0, input1}, {output});
+    builder.AddNode("logical_op", op_type, {"input0", "input1"}, {"output"});
   };
 }
 
@@ -38,26 +39,27 @@ static GetTestModelFn BuildLogicalOpTestCase(const std::string& op_type, const s
 template <typename InputQType = uint8_t>
 static GetTestModelFn BuildQDQLogicalOpTestCase(const std::string& op_type, const std::vector<int64_t>& shape) {
   return [op_type, shape](ModelTestBuilder& builder) {
+    builder.graph_->set_name("qdq_logical_comp_graph");
+
     const InputQType zero_point = std::numeric_limits<InputQType>::max() / 2;
     constexpr float qdq_scale = 0.0038f;
 
-    auto* input0 = builder.MakeInput<float>(shape, -1.0f, 1.0f);
-    auto* input1 = builder.MakeInput<float>(shape, -1.0f, 1.0f);
-    NodeArg* output = nullptr;
+    builder.MakeInput<float>("input0", shape, -1.0f, 1.0f);
+    builder.MakeInput<float>("input1", shape, -1.0f, 1.0f);
 
     // Explicitly set output type/shape for logical comparison ops implemented as functions.
     if (op_type == "GreaterOrEqual" || op_type == "LessOrEqual") {
-      output = builder.MakeOutput<bool>(shape);
+      builder.MakeOutput<bool>("output", shape);
     } else {
-      output = builder.MakeOutput();
+      builder.MakeOutput("output");
     }
 
     // input -> Q -> DQ -> Op
-    auto* qdq0_output = AddQDQNodePair<InputQType>(builder, input0, qdq_scale, zero_point);
-    auto* qdq1_output = AddQDQNodePair<InputQType>(builder, input1, qdq_scale, zero_point);
+    std::string qdq0_output = AddQDQNodePair<InputQType>(builder, "qdq_0", "input0", qdq_scale, zero_point);
+    std::string qdq1_output = AddQDQNodePair<InputQType>(builder, "qdq_1", "input1", qdq_scale, zero_point);
 
     // Op -> output
-    builder.AddNode(op_type, {qdq0_output, qdq1_output}, {output});
+    builder.AddNode("logical_op", op_type, {qdq0_output, qdq1_output}, {"output"});
   };
 }
 
@@ -152,26 +154,28 @@ TEST_F(QnnHTPBackendTests, EqualToCast4D) {
   // Model building function that creates a QDQ graph with an Equal node followed by
   // a Cast to float32.
   auto build_qdq_equal_to_cast = [](ModelTestBuilder& builder) {
+    builder.graph_->set_name("qdq_equal_to_cast_graph");
+
     constexpr uint8_t zero_point = 0;
     constexpr float qdq_scale = 0.0038f;
     const std::vector<int64_t> input_shape = {1, 3, 8, 8};
 
-    auto* input0 = builder.MakeInput<float>(input_shape, -1.0f, 1.0f);
-    auto* input1 = builder.MakeInput<float>(input_shape, -1.0f, 1.0f);
-    auto* output = builder.MakeOutput();
+    builder.MakeInput<float>("input0", input_shape, -1.0f, 1.0f);
+    builder.MakeInput<float>("input1", input_shape, -1.0f, 1.0f);
+    builder.MakeOutput("output");
 
-    // input -> Q -> DQ -> Op
-    auto* qdq0_output = AddQDQNodePair<uint8_t>(builder, input0, qdq_scale, zero_point);
-    auto* qdq1_output = AddQDQNodePair<uint8_t>(builder, input1, qdq_scale, zero_point);
+    // input -> Q -> DQ -> Equal
+    std::string qdq0_output = AddQDQNodePair<uint8_t>(builder, "qdq_0", "input0", qdq_scale, zero_point);
+    std::string qdq1_output = AddQDQNodePair<uint8_t>(builder, "qdq_1", "input1", qdq_scale, zero_point);
 
-    // Equal ->
-    auto* equal_output = builder.MakeIntermediate();
-    builder.AddNode("Equal", {qdq0_output, qdq1_output}, {equal_output});
+    builder.AddNode("equal", "Equal", {qdq0_output, qdq1_output}, {"equal_out"});
 
-    // -> Cast -> output
-    Node& cast_node = builder.AddNode("Cast", {equal_output}, {output});
-    cast_node.AddAttribute("to",
-                           static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT));
+    // equal_out -> Cast -> output
+    std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+    attrs.push_back(builder.MakeScalarAttribute(
+        "to",
+        static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT)));
+    builder.AddNode("cast", "Cast", {"equal_out"}, {"output"}, "", attrs);
   };
 
   RunQnnModelTest(build_qdq_equal_to_cast,

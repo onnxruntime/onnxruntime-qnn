@@ -32,7 +32,7 @@ static void RunCumSumOpTest(const std::string& op_type,
 #endif
 
   // Runs model with a Q/DQ binary op and compares the outputs of the CPU and QNN EPs.
-  RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>(op_type, {input_def_1}, {input_def_2}, attrs),
+  RunQnnModelTest(BuildOpTestCase<InputType1, InputType2>("CumSum_node", op_type, {input_def_1}, {input_def_2}, attrs),
                   provider_options,
                   opset_version,
                   expected_ep_assignment,
@@ -44,8 +44,8 @@ TEST_F(QnnHTPBackendTests, CumSum_float_int32_e0_r0_axis_0) {
   RunCumSumOpTest<float, int32_t>("CumSum",
                                   TestInputDef<float>({3, 2}, false, {1.3f, 7.2f, 0.4f, 3.4f, 5.7f, 0.8f}),
                                   TestInputDef<int32_t>({}, true, {0}),
-                                  {utils::MakeAttribute("exclusive", static_cast<int64_t>(0)),
-                                   utils::MakeAttribute("reverse", static_cast<int64_t>(0))},
+                                  {test::MakeAttribute("exclusive", static_cast<int64_t>(0)),
+                                   test::MakeAttribute("reverse", static_cast<int64_t>(0))},
                                   17,
                                   ExpectedEPNodeAssignment::All);
 }
@@ -55,8 +55,8 @@ TEST_F(QnnHTPBackendTests, CumSum_float_int32_e0_r0_axis_neg1) {
   RunCumSumOpTest<float, int32_t>("CumSum",
                                   TestInputDef<float>({3, 2}, false, {1.3f, 7.2f, 0.4f, 3.4f, 5.7f, 0.8f}),
                                   TestInputDef<int32_t>({}, true, {-1}),
-                                  {utils::MakeAttribute("exclusive", static_cast<int64_t>(0)),
-                                   utils::MakeAttribute("reverse", static_cast<int64_t>(0))},
+                                  {test::MakeAttribute("exclusive", static_cast<int64_t>(0)),
+                                   test::MakeAttribute("reverse", static_cast<int64_t>(0))},
                                   17,
                                   ExpectedEPNodeAssignment::All);
 }
@@ -66,8 +66,8 @@ TEST_F(QnnHTPBackendTests, CumSum_float_int64_e0_r0_axis_1) {
   RunCumSumOpTest<float, int64_t>("CumSum",
                                   TestInputDef<float>({3, 2}, false, {1.3f, 7.2f, 0.4f, 3.4f, 5.7f, 0.8f}),
                                   TestInputDef<int64_t>({}, true, {1}),
-                                  {utils::MakeAttribute("exclusive", static_cast<int64_t>(0)),
-                                   utils::MakeAttribute("reverse", static_cast<int64_t>(0))},
+                                  {test::MakeAttribute("exclusive", static_cast<int64_t>(0)),
+                                   test::MakeAttribute("reverse", static_cast<int64_t>(0))},
                                   17,
                                   ExpectedEPNodeAssignment::All);
 }
@@ -80,26 +80,35 @@ GetTestQDQModelFn<QuantType> BuildQDQCumSumTestCase(const TestInputDef<float>& i
                                                     bool use_contrib_qdq = false) {
   return [input_def, axis_def, attrs, use_contrib_qdq](ModelTestBuilder& builder,
                                                        std::vector<QuantParams<QuantType>>& output_qparams) {
-    // input -> Q -> DQ ->
-    NodeArg* input = MakeTestInput(builder, input_def);
-    QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-    NodeArg* input_qdq = AddQDQNodePair<QuantType>(builder, input, input_qparams.scale, input_qparams.zero_point,
-                                                   use_contrib_qdq);
+    ORT_UNUSED_PARAMETER(use_contrib_qdq);  // Build using standard ONNX Q/DQ nodes.
 
-    // axis input
-    NodeArg* axis_input = MakeTestInput(builder, axis_def);
+    builder.graph_->set_name("qdq_cumsum_graph");
 
-    // CumSum op
-    NodeArg* op_output = builder.MakeIntermediate();
-    Node& cumsum_node = builder.AddNode("CumSum", {input_qdq, axis_input}, {op_output});
+    // Input (fp32).
+    MakeTestInput(builder, "X", input_def);
 
-    for (const auto& attr : attrs) {
-      cumsum_node.AddAttributeProto(attr);
-    }
+    // Input Q/DQ: X -> Q -> DQ -> X_qdq
+    const QuantParams<QuantType> input_qparam = GetTestInputQuantParams<QuantType>(input_def);
 
-    // op_output -> Q -> DQ -> output
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, op_output, output_qparams[0].scale,
-                                                     output_qparams[0].zero_point, use_contrib_qdq);
+    auto x_qdq = AddQDQNodePair<QuantType>(builder, "X_qdq", "X", input_qparam.scale, input_qparam.zero_point);
+
+    // Axis input.
+    MakeTestInput(builder, "axis", axis_def);
+
+    // CumSum op.
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes = attrs;
+    builder.AddNode(
+        "cumsum",
+        "CumSum",
+        {x_qdq, "axis"},
+        {"cumsum_out"},
+        "",
+        attributes);
+
+    // Output Q/DQ: cumsum_out -> Q -> DQ -> Y
+    auto qdq_out = AddQDQNodePair<QuantType>(builder, "cumsum_out_qdq", "cumsum_out", output_qparams[0].scale, output_qparams[0].zero_point);
+
+    builder.MakeOutput(qdq_out);
   };
 }
 
@@ -116,7 +125,7 @@ static void RunQDQCumSumOpTest(const TestInputDef<float>& input_def,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  auto f32_model_builder = BuildOpTestCase<float, AxisType>("CumSum", {input_def}, {axis_def}, attrs);
+  auto f32_model_builder = BuildOpTestCase<float, AxisType>("CumSum_node", "CumSum", {input_def}, {axis_def}, attrs);
   auto qdq_model_builder = BuildQDQCumSumTestCase<QuantType, AxisType>(input_def, axis_def, attrs,
                                                                        use_contrib_qdq);
 
@@ -134,8 +143,8 @@ static void RunQDQCumSumOpTest(const TestInputDef<float>& input_def,
 TEST_F(QnnHTPBackendTests, CumSum_uint8_int32_e0_r0) {
   RunQDQCumSumOpTest<uint8_t, int32_t>(TestInputDef<float>({3, 2}, false, {1.3f, 7.2f, 0.4f, 3.4f, 5.7f, 0.8f}),
                                        TestInputDef<int32_t>({}, true, {0}),
-                                       {utils::MakeAttribute("exclusive", static_cast<int64_t>(0)),
-                                        utils::MakeAttribute("reverse", static_cast<int64_t>(0))},
+                                       {test::MakeAttribute("exclusive", static_cast<int64_t>(0)),
+                                        test::MakeAttribute("reverse", static_cast<int64_t>(0))},
                                        17,
                                        ExpectedEPNodeAssignment::All);
 }

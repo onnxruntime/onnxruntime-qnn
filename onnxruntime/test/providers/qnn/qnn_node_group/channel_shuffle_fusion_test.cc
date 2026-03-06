@@ -16,43 +16,79 @@
 namespace onnxruntime {
 namespace test {
 
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+
 namespace {
 
 GetTestModelFn BuildTestCase() {
   return [](ModelTestBuilder& builder) -> void {
     const int64_t num_channels = 12;
     const std::vector<int64_t> input_shape{1, num_channels, 8, 8};
-    auto input_def = TestInputDef<float>(input_shape, false, -0.5f, 0.5f);
-    // Conv
-    NodeArg* output_conv1 = builder.MakeIntermediate();
-    NodeArg* input = MakeTestInput<float>(builder, input_def);
-    const std::vector<int64_t> conv_weight_shape = {num_channels, num_channels / 2, 1, 1};
-    NodeArg* conv_weight = builder.MakeInitializer<float>({conv_weight_shape}, -2.f, 2.f);
-    Node& conv1 = builder.AddNode("Conv", {input, conv_weight}, {output_conv1});
-    conv1.AddAttribute("group", static_cast<int64_t>(2));
-    // Reshape
-    NodeArg* shape1 = builder.Make1DInitializer<int64_t>({input_shape[0],
-                                                          2,
-                                                          num_channels / 2,
-                                                          input_shape[2],
-                                                          input_shape[3]});
-    NodeArg* output_reshape1 = builder.MakeIntermediate();
-    builder.AddNode("Reshape", {output_conv1, shape1}, {output_reshape1});
-    // Transpose
-    NodeArg* output_transpose = builder.MakeIntermediate();
-    Node& transpose = builder.AddNode("Transpose", {output_reshape1}, {output_transpose});
-    transpose.AddAttribute("perm", std::vector<int64_t>{0, 2, 1, 3, 4});
-    // Reshape
-    NodeArg* output_reshape2 = builder.MakeIntermediate();
-    NodeArg* shape2 = builder.Make1DInitializer<int64_t>(input_shape);
-    builder.AddNode("Reshape", {output_transpose, shape2}, {output_reshape2});
-    // Conv
-    NodeArg* output_conv2 = builder.MakeOutput();
-    const std::vector<int64_t> conv_weight_shape2 = {num_channels, 1, 3, 1};
-    NodeArg* conv_weight2 = builder.MakeInitializer<float>({conv_weight_shape2}, -2.f, 2.f);
-    Node& conv2 = builder.AddNode("Conv", {output_reshape2, conv_weight2}, {output_conv2});
-    conv2.AddAttribute("group", static_cast<int64_t>(num_channels));
-    conv2.AddAttribute("kernel_shape", std::vector<int64_t>{3, 1});
+    const auto input_def = TestInputDef<float>(input_shape, false, -0.5f, 0.5f);
+
+    // input
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // Conv1 weights
+    const std::vector<int64_t> conv1_weight_shape = {num_channels, num_channels / 2, 1, 1};
+    builder.MakeInitializer<float>("conv1_weight", conv1_weight_shape, -2.f, 2.f);
+
+    // Conv1: input + conv1_weight -> conv1_out
+    {
+      std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+      attrs.push_back(test::MakeAttribute("group", static_cast<int64_t>(2)));
+      builder.AddNode("Conv1",
+                      "Conv",
+                      {"input", "conv1_weight"},
+                      {"conv1_out"},
+                      kOnnxDomain,
+                      attrs);
+    }
+
+    // Reshape1: conv1_out + shape1 -> reshape1_out
+    builder.Make1DInitializer<int64_t>("shape1",
+                                       {input_shape[0], 2, num_channels / 2, input_shape[2], input_shape[3]});
+    builder.AddNode("Reshape1",
+                    "Reshape",
+                    {"conv1_out", "shape1"},
+                    {"reshape1_out"});
+
+    // Transpose: reshape1_out -> transpose_out
+    {
+      std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+      attrs.push_back(test::MakeAttribute("perm", std::vector<int64_t>{0, 2, 1, 3, 4}));
+      builder.AddNode("Transpose1",
+                      "Transpose",
+                      {"reshape1_out"},
+                      {"transpose_out"},
+                      kOnnxDomain,
+                      attrs);
+    }
+
+    // Reshape2: transpose_out + shape2 -> reshape2_out
+    builder.Make1DInitializer<int64_t>("shape2", input_shape);
+    builder.AddNode("Reshape2",
+                    "Reshape",
+                    {"transpose_out", "shape2"},
+                    {"reshape2_out"});
+
+    // Conv2 weights
+    const std::vector<int64_t> conv2_weight_shape = {num_channels, 1, 3, 1};
+    builder.MakeInitializer<float>("conv2_weight", conv2_weight_shape, -2.f, 2.f);
+
+    // Conv2: reshape2_out + conv2_weight -> Y
+    {
+      std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+      attrs.push_back(test::MakeAttribute("group", static_cast<int64_t>(num_channels)));
+      attrs.push_back(test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 1}));
+      builder.MakeOutput("Y");
+      builder.AddNode("Conv2",
+                      "Conv",
+                      {"reshape2_out", "conv2_weight"},
+                      {"Y"},
+                      kOnnxDomain,
+                      attrs);
+    }
   };
 }
 
@@ -64,8 +100,6 @@ ProviderOptions GetProviderOptions() {
 }
 
 }  // namespace
-
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 TEST_F(QnnHTPBackendTests, ChannelShuffleFusion) {
   const std::filesystem::path json_qnn_graph_dir = "ChannelShuffleFusion";

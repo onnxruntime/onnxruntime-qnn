@@ -826,6 +826,8 @@ def generate_build_tree(
             "-DANDROID_ABI=" + str(args.android_abi),
             "-DANDROID_MIN_SDK=" + str(args.android_api),
             "-DANDROID_USE_LEGACY_TOOLCHAIN_FILE=false",
+            "-DANDROID_NDK_PATH=" + str(args.android_ndk_path),
+            "-DANDROID_SDK_PATH=" + str(args.android_sdk_path),
         ]
         if args.disable_rtti:
             add_default_definition(cmake_extra_defines, "CMAKE_ANDROID_RTTI", "OFF")

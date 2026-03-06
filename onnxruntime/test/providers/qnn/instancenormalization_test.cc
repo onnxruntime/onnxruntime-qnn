@@ -26,33 +26,40 @@ static GetTestQDQModelFn<ActivationQType> BuildQDQInstanceNormTestCase(const Tes
   return [input_def, scale_def, bias_def, attrs,
           use_contrib_qdq](ModelTestBuilder& builder,
                            std::vector<QuantParams<ActivationQType>>& output_qparams) {
+    builder.graph_->set_name("qdq_instance_norm_graph");
+
     // input => Q => DQ =>
-    NodeArg* input = MakeTestInput(builder, input_def);
+    MakeTestInput(builder, "input", input_def);
     QuantParams<ActivationQType> input_qparams = GetTestInputQuantParams<ActivationQType>(input_def);
-    NodeArg* input_qdq = AddQDQNodePair(builder, input, input_qparams.scale, input_qparams.zero_point,
-                                        use_contrib_qdq);
+    std::string input_qdq = AddQDQNodePair<ActivationQType>(builder, "qdq_input", "input", input_qparams.scale,
+                                                            input_qparams.zero_point, use_contrib_qdq);
 
     // scale => Q => DQ =>
-    NodeArg* scale = MakeTestInput(builder, scale_def);
+    MakeTestInput(builder, "scale", scale_def);
     QuantParams<ScaleQType> scale_qparams = GetTestInputQuantParams<ScaleQType>(scale_def);
-    NodeArg* scale_qdq = AddQDQNodePair(builder, scale, scale_qparams.scale, scale_qparams.zero_point,
-                                        use_contrib_qdq);
+    std::string scale_qdq = AddQDQNodePair<ScaleQType>(builder, "qdq_scale", "scale", scale_qparams.scale,
+                                                       scale_qparams.zero_point, use_contrib_qdq);
 
     // bias (as int32) => DQ =>
-    NodeArg* bias_qdq = MakeTestQDQBiasInput(builder, bias_def, input_qparams.scale * scale_qparams.scale,
-                                             use_contrib_qdq);
+    std::string bias_dq = MakeTestQDQBiasInput(builder, "bias", bias_def, input_qparams.scale * scale_qparams.scale,
+                                               use_contrib_qdq);
 
     // InstanceNormalization operator.
-    auto* instance_norm_output = builder.MakeIntermediate();
-    Node& inst_norm_node = builder.AddNode("InstanceNormalization", {input_qdq, scale_qdq, bias_qdq},
-                                           {instance_norm_output});
-    for (const auto& attr : attrs) {
-      inst_norm_node.AddAttributeProto(attr);
-    }
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes = attrs;
+    builder.AddNode("instance_norm",
+                    "InstanceNormalization",
+                    {input_qdq, scale_qdq, bias_dq},
+                    {"Y"},
+                    "",
+                    attributes);
 
-    // Add instance_norm_output -> Q -> output_u8
-    AddQDQNodePairWithOutputAsGraphOutput<ActivationQType>(builder, instance_norm_output, output_qparams[0].scale,
-                                                           output_qparams[0].zero_point, use_contrib_qdq);
+    // Y -> Q -> DQ -> output
+    AddQDQNodePairWithOutputAsGraphOutput<ActivationQType>(builder,
+                                                           "qdq_out",
+                                                           "Y",
+                                                           output_qparams[0].scale,
+                                                           output_qparams[0].zero_point,
+                                                           use_contrib_qdq);
   };
 }
 
@@ -78,7 +85,7 @@ static void RunInstanceNormQDQTest(const TestInputDef<float>& input_def,
   provider_options["offload_graph_io_quantization"] = "0";
 
   // Runs model with DQ-> InstanceNorm -> Q and compares the outputs of the CPU and QNN EPs.
-  TestQDQModelAccuracy(BuildOpTestCase<float>("InstanceNormalization", {input_def, scale_def, bias_def}, {}, attrs),
+  TestQDQModelAccuracy(BuildOpTestCase<float>("InstanceNormalization_node", "InstanceNormalization", {input_def, scale_def, bias_def}, {}, attrs),
                        BuildQDQInstanceNormTestCase<ActivationQType, ScaleQType>(input_def, scale_def, bias_def, attrs, use_contrib_qdq),
                        provider_options,
                        18,

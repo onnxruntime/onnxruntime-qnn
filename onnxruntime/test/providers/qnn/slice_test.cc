@@ -20,26 +20,40 @@ namespace test {
 TEST_F(QnnCPUBackendTests, Slice_SharedInitializersBugFix) {
   // Model with an Add that processes a shared initializer before Slice is processed.
   GetTestModelFn model_fn = [](ModelTestBuilder& builder) {
-    NodeArg* input0 = builder.MakeInput<int32_t>({2, 2}, {1, 2, 3, 4});
+    builder.MakeInput<int32_t>("input0", {2, 2}, {1, 2, 3, 4});
 
     // Initializers
-    NodeArg* starts_input = builder.Make1DInitializer<int32_t>({1, 0});  // Shared by Add
-    NodeArg* ends_input = builder.Make1DInitializer<int32_t>({2, 2});
-    NodeArg* axes_input = builder.Make1DInitializer<int32_t>({0, 1});
-    NodeArg* steps_input = builder.Make1DInitializer<int32_t>({1, 1});
+    builder.Make1DInitializer<int32_t>("starts_input", {1, 0});  // Shared by Add
+    builder.Make1DInitializer<int32_t>("ends_input", {2, 2});
+    builder.Make1DInitializer<int32_t>("axes_input", {0, 1});
+    builder.Make1DInitializer<int32_t>("steps_input", {1, 1});
 
     // Add input0 with a shared initializer.
-    NodeArg* add_output = builder.MakeIntermediate();
-    builder.AddNode("Add", {input0, starts_input}, {add_output});
+    builder.AddNode("Add",
+                    "Add",
+                    {"input0", "starts_input"},
+                    {"add_output"});
 
     // Cast Add's output to float.
-    NodeArg* cast_output = builder.MakeIntermediate();
-    Node& cast_node = builder.AddNode("Cast", {add_output}, {cast_output});
-    cast_node.AddAttribute("to", static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT));
+    std::vector<ONNX_NAMESPACE::AttributeProto> cast_attrs;
+    cast_attrs.reserve(1);
+    cast_attrs.push_back(MakeAttribute(
+        "to",
+        static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT)));
+
+    builder.AddNode("Cast",
+                    "Cast",
+                    {"add_output"},
+                    {"cast_output"},
+                    kOnnxDomain,
+                    cast_attrs);
 
     // Slice Cast's output
-    NodeArg* slice0_out = builder.MakeOutput();
-    builder.AddNode("Slice", {cast_output, starts_input, ends_input, axes_input, steps_input}, {slice0_out});
+    builder.MakeOutput("Y");
+    builder.AddNode("Slice",
+                    "Slice",
+                    {"cast_output", "starts_input", "ends_input", "axes_input", "steps_input"},
+                    {"Y"});
   };
 
   ProviderOptions provider_options;
@@ -81,8 +95,8 @@ static void RunSliceQDQTest(const TestInputDef<float>& data_def,
   const std::vector<TestInputDef<float>> f32_inputs = {data_def};
   const std::vector<TestInputDef<int64_t>> int64_inputs = {starts_def, ends_def, axes_def, steps_def};
 
-  TestQDQModelAccuracy(BuildOpTestCase<float, int64_t>("Slice", f32_inputs, int64_inputs, {}),
-                       BuildQDQOpTestCase<QuantType, int64_t>("Slice", f32_inputs, int64_inputs, {}, kOnnxDomain,
+  TestQDQModelAccuracy(BuildOpTestCase<float, int64_t>("Slice_node", "Slice", f32_inputs, int64_inputs, {}),
+                       BuildQDQOpTestCase<QuantType, int64_t>("Slice_node", "Slice", f32_inputs, int64_inputs, {}, kOnnxDomain,
                                                               use_contrib_qdq),
                        provider_options,
                        18,
@@ -109,7 +123,7 @@ static void RunSliceNonQDQOnHTP(const TestInputDef<DataType>& data_def,
                                 ExpectedEPNodeAssignment expected_ep_assignment) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
-  auto f32_model_builder = BuildOpTestCase<DataType, int64_t>("Slice", {data_def},
+  auto f32_model_builder = BuildOpTestCase<DataType, int64_t>("Slice_node", "Slice", {data_def},
                                                               {starts_def, ends_def, axes_def, steps_def}, {});
   RunQnnModelTest(f32_model_builder,
                   provider_options,

@@ -1,0 +1,3158 @@
+diff --git a/cmake/CMakeLists.txt b/cmake/CMakeLists.txt
+index 6d0d39556e..00a303368f 100644
+--- a/cmake/CMakeLists.txt
++++ b/cmake/CMakeLists.txt
+@@ -1087,6 +1087,11 @@ function(onnxruntime_set_compile_flags target_name)
+       target_compile_options(${target_name} PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:-Xcudafe \"--diag_suppress=conversion_function_not_usable\">")
+       target_compile_definitions(${target_name} PRIVATE -DDISABLE_CUSPARSE_DEPRECATED)
+     endif()
++
++    if (onnxruntime_BUILD_SHARED_LIB)
++      target_compile_definitions(${target_name} PRIVATE BUILD_SHARED_LIB)
++    endif()
++
+     if (MSVC)
+       foreach(CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORY ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
+         target_compile_options(${target_name} PRIVATE "$<$<COMPILE_LANGUAGE:CXX,C>:/external:I${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORY}>")
+diff --git a/cmake/onnxruntime_unittests.cmake b/cmake/onnxruntime_unittests.cmake
+index ad6f6eb790..7ba7e3c0b1 100644
+--- a/cmake/onnxruntime_unittests.cmake
++++ b/cmake/onnxruntime_unittests.cmake
+@@ -356,6 +356,14 @@ file(GLOB onnxruntime_test_utils_src CONFIGURE_DEPENDS
+   "${TEST_SRC_DIR}/util/*.cc"
+ )
+ 
++file(GLOB onnxruntime_test_utils_public_values_src CMAKE_CONFIGURE_DEPENDS
++  "${TEST_SRC_DIR}/util/values/public_api/*.cc"
++)
++
++file(GLOB onnxruntime_test_utils_internal_values_src CMAKE_CONFIGURE_DEPENDS
++  "${TEST_SRC_DIR}/util/values/internal_api/*.cc"
++)
++
+ file(GLOB onnxruntime_test_common_src CONFIGURE_DEPENDS
+   "${TEST_SRC_DIR}/common/*.cc"
+   "${TEST_SRC_DIR}/common/*.h"
+@@ -620,6 +628,7 @@ set (onnxruntime_webgpu_delay_load_test_SRC
+ 
+ set(onnxruntime_test_common_libs
+   onnxruntime_unittest_utils
++  onnxruntime_test_utils_internal_values
+   onnxruntime_common
+ )
+ 
+@@ -842,6 +851,21 @@ target_include_directories(onnxruntime_test_utils PUBLIC "${TEST_SRC_DIR}/util/i
+ set_target_properties(onnxruntime_test_utils PROPERTIES FOLDER "ONNXRuntimeTest")
+ source_group(TREE ${TEST_SRC_DIR} FILES ${onnxruntime_test_utils_src})
+ 
++# This utility library uses onnxruntime c/c++ apis to provide capability of comparing two OrtValues with all supported data type.
++onnxruntime_add_static_library(onnxruntime_test_utils_public_values ${onnxruntime_test_utils_public_values_src})
++onnxruntime_add_include_to_target(onnxruntime_test_utils_public_values onnxruntime_common onnx onnx_proto Eigen3::Eigen)
++target_include_directories(onnxruntime_test_utils_public_values PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${ONNXRUNTIME_ROOT})
++add_dependencies(onnxruntime_test_utils_public_values ${onnxruntime_EXTERNAL_DEPENDENCIES})
++set_target_properties(onnxruntime_test_utils_public_values PROPERTIES FOLDER "ONNXRuntimeTest")
++
++# This utility library uses internal onnxruntime libraries, e.g. onnxruntime::Tensor, to provide capability of comparing two OrtValues with all supported data type.
++onnxruntime_add_static_library(onnxruntime_test_utils_internal_values ${onnxruntime_test_utils_internal_values_src})
++onnxruntime_add_include_to_target(onnxruntime_test_utils_internal_values onnxruntime_common onnx onnx_proto flatbuffers::flatbuffers Boost::mp11 Eigen3::Eigen)
++target_include_directories(onnxruntime_test_utils_internal_values PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${ONNXRUNTIME_ROOT} "${TEST_SRC_DIR}/util/include")
++add_dependencies(onnxruntime_test_utils_internal_values ${onnxruntime_EXTERNAL_DEPENDENCIES})
++set_target_properties(onnxruntime_test_utils_internal_values PROPERTIES FOLDER "ONNXRuntimeTest")
++
++
+ # onnxruntime_unittest_utils
+ # This is static library containing utilities that are specifically for unit tests.
+ # Unlike onnxruntime_test_utils, the source files here may have dependencies on internal onnxruntime code.
+@@ -898,9 +922,11 @@ if(NOT IOS)
+     set(onnx_test_runner_src_dir ${TEST_SRC_DIR}/onnx)
+     file(GLOB onnx_test_runner_common_srcs CONFIGURE_DEPENDS
+         ${onnx_test_runner_src_dir}/*.h
+-        ${onnx_test_runner_src_dir}/*.cc)
++        ${onnx_test_runner_src_dir}/*.cc
++        ${onnx_test_runner_src_dir}/utils/*.h
++        ${onnx_test_runner_src_dir}/utils/*.cc)
+ 
+-    list(REMOVE_ITEM onnx_test_runner_common_srcs ${onnx_test_runner_src_dir}/main.cc)
++        list(REMOVE_ITEM onnx_test_runner_common_srcs ${onnx_test_runner_src_dir}/main.cc)
+ 
+     onnxruntime_add_static_library(onnx_test_runner_common ${onnx_test_runner_common_srcs})
+     if(MSVC)
+@@ -951,7 +977,7 @@ if (onnxruntime_ENABLE_CUDA_EP_INTERNAL_TESTS)
+   onnxruntime_add_include_to_target(onnxruntime_providers_cuda_ut GTest::gtest GTest::gmock)
+   add_dependencies(onnxruntime_providers_cuda_ut onnxruntime_test_utils onnxruntime_common)
+   target_include_directories(onnxruntime_providers_cuda_ut PRIVATE ${ONNXRUNTIME_ROOT}/core/mickey)
+-  target_link_libraries(onnxruntime_providers_cuda_ut PRIVATE GTest::gtest GTest::gmock ${ONNXRUNTIME_MLAS_LIBS} onnxruntime_test_utils onnxruntime_common)
++  target_link_libraries(onnxruntime_providers_cuda_ut PRIVATE GTest::gtest GTest::gmock ${ONNXRUNTIME_MLAS_LIBS} onnxruntime_test_utils onnxruntime_test_utils_internal_values)
+   if (MSVC)
+     # Cutlass code has an issue with the following:
+     # warning C4100: 'magic': unreferenced formal parameter
+@@ -1233,7 +1259,7 @@ block()
+     DEPENDS ${onnxruntime_provider_test_deps}
+   )
+ 
+-  # Expose QNN SDK headers to unit tests via an interface target 
++  # Expose QNN SDK headers to unit tests via an interface target
+   if(onnxruntime_USE_QNN)
+     add_library(qnn_sdk_headers_include INTERFACE)
+     target_include_directories(qnn_sdk_headers_include INTERFACE
+@@ -1241,7 +1267,7 @@ block()
+       ${onnxruntime_QNN_HOME}/include/QNN)
+     target_link_libraries(onnxruntime_provider_test PRIVATE qnn_sdk_headers_include)
+   endif()
+-  
++
+   if (UNIX AND (onnxruntime_USE_TENSORRT OR onnxruntime_USE_NV))
+     # The test_main.cc includes NvInfer.h where it has many deprecated declarations
+     # simply ignore them for TensorRT EP build
+@@ -1298,6 +1324,7 @@ endif()
+ 
+ set(onnx_test_libs
+   onnxruntime_test_utils
++  onnxruntime_test_utils_internal_values
+   ${ONNXRUNTIME_TEST_LIBS}
+   onnx_test_data_proto
+   ${onnxruntime_EXTERNAL_LIBRARIES})
+@@ -1331,6 +1358,60 @@ if (NOT IOS)
+             RUNTIME  DESTINATION ${CMAKE_INSTALL_BINDIR})
+ endif()
+ 
++if (NOT IOS)
++    onnxruntime_add_executable(onnxruntime_plugin_ep_onnx_test
++                               ${onnx_test_runner_src_dir}/plugin_ep/main.cc
++                               ${onnx_test_runner_src_dir}/plugin_ep/command_args_parser.cc
++                               ${onnx_test_runner_src_dir}/plugin_ep/command_args_parser.h)
++    if(MSVC)
++      target_compile_options(onnxruntime_plugin_ep_onnx_test PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:--compiler-options /utf-8>"
++              "$<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:/utf-8>")
++    endif()
++    if (CMAKE_SYSTEM_NAME STREQUAL "Emscripten")
++      if (onnxruntime_ENABLE_WEBASSEMBLY_THREADS)
++        set_target_properties(onnxruntime_plugin_ep_onnx_test PROPERTIES LINK_FLAGS "-s NODERAWFS=1 -s ALLOW_MEMORY_GROWTH=1 -s PROXY_TO_PTHREAD=1 -s EXIT_RUNTIME=1")
++      else()
++        set_target_properties(onnxruntime_plugin_ep_onnx_test PROPERTIES LINK_FLAGS "-s NODERAWFS=1 -s ALLOW_MEMORY_GROWTH=1")
++      endif()
++    endif()
++
++    # ABSL_FLAGS_STRIP_NAMES is set to 1 by default to disable flag registration when building for Android, iPhone, and "embedded devices".
++    # See the issue: https://github.com/abseil/abseil-cpp/issues/1875
++    # We set it to 0 for all builds to be able to use ABSL flags for onnxruntime_plugin_ep_onnx_test.
++    target_compile_definitions(onnxruntime_plugin_ep_onnx_test PRIVATE ABSL_FLAGS_STRIP_NAMES=0)
++
++    if (onnxruntime_BUILD_SHARED_LIB)
++      set(onnx_test_runner_libs
++            onnx_test_runner_common onnxruntime_test_utils onnxruntime_test_utils_public_values onnxruntime_common
++            onnxruntime onnxruntime_flatbuffers onnx_test_data_proto
++            ${onnxruntime_EXTERNAL_LIBRARIES}
++            absl::flags absl::flags_parse ${SYS_PATH_LIB} ${CMAKE_DL_LIBS})
++
++      target_link_libraries(onnxruntime_plugin_ep_onnx_test PRIVATE ${onnx_test_runner_libs} nlohmann_json::nlohmann_json)
++
++      if(WIN32)
++        target_link_libraries(onnxruntime_plugin_ep_onnx_test PRIVATE debug dbghelp advapi32)
++      endif()
++    else()
++        target_link_libraries(onnxruntime_plugin_ep_onnx_test PRIVATE onnx_test_runner_common absl::flags absl::flags_parse ${onnx_test_libs} nlohmann_json::nlohmann_json)
++    endif()
++
++    target_include_directories(onnxruntime_plugin_ep_onnx_test PRIVATE ${ONNXRUNTIME_ROOT})
++    target_include_directories(onnxruntime_plugin_ep_onnx_test PRIVATE ${onnx_test_runner_src_dir})
++    target_include_directories(onnxruntime_plugin_ep_onnx_test PRIVATE ${TEST_SRC_DIR})
++
++    if (onnxruntime_ENABLE_TRAINING_TORCH_INTEROP)
++      target_link_libraries(onnxruntime_plugin_ep_onnx_test PRIVATE Python::Python)
++    endif()
++    set_target_properties(onnxruntime_plugin_ep_onnx_test PROPERTIES FOLDER "ONNXRuntimeTest")
++
++    install(TARGETS onnxruntime_plugin_ep_onnx_test
++            ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}
++            LIBRARY  DESTINATION ${CMAKE_INSTALL_LIBDIR}
++            BUNDLE   DESTINATION ${CMAKE_INSTALL_LIBDIR}
++            RUNTIME  DESTINATION ${CMAKE_INSTALL_BINDIR})
++endif()
++
+ if (NOT onnxruntime_ENABLE_TRAINING_TORCH_INTEROP)
+   if(onnxruntime_BUILD_BENCHMARKS)
+     SET(BENCHMARK_DIR ${TEST_SRC_DIR}/onnx/microbenchmark)
+diff --git a/onnxruntime/test/onnx/TestCase.cc b/onnxruntime/test/onnx/TestCase.cc
+index fbb9fb2797..ba733a3751 100644
+--- a/onnxruntime/test/onnx/TestCase.cc
++++ b/onnxruntime/test/onnx/TestCase.cc
+@@ -1462,6 +1462,26 @@ std::unique_ptr<std::set<BrokenTest>> GetBrokenTests(const std::string& provider
+     broken_tests->insert({"attention_4d_with_past_and_present_qk_matmul_bias_3d_mask_causal_expanded", "unknown version"});
+     broken_tests->insert({"attention_4d_with_past_and_present_qk_matmul_bias_4d_mask_causal_expanded", "unknown version"});
+     broken_tests->insert({"convinteger_with_padding", "unknown version"});
++    // TODO: [AISW-167042] [ORT ABI] Model test failures on ABI path
++    broken_tests->insert({"affine_grid_2d_align_corners_expanded", "ORT Tensor data size does not match QNN tensor data size"});
++    broken_tests->insert({"affine_grid_3d_align_corners_expanded", "ORT Tensor data size does not match QNN tensor data size"});
++    broken_tests->insert({"attention_4d_fp16", "output=Y:idx: 121, expected 0.459229, got 0.459717, diff: 0.000488281, tol=0.000469229"});
++    broken_tests->insert({"dft", "output=y:expected 7.10543e-15 (28000000), got 0.000160893 (3928b56c), diff: 0.000160893, tol=1e-05 idx=119. 20 of 200 differ"});
++    broken_tests->insert({"dft_axis", "output=y:expected 0 (0), got -0.000236511 (b9780000), diff: 0.000236511, tol=1e-05 idx=181. 20 of 200 differ"});
++    broken_tests->insert({"dft_axis_opset19", "output=y:expected 0 (0), got -0.000236511 (b9780000), diff: 0.000236511, tol=1e-05 idx=181. 20 of 200 differ"});
++    broken_tests->insert({"dft_inverse", "y:expected 0 (0), got -1.71661e-05 (b7900000), diff: 1.71661e-05, tol=1e-05 idx=19. 10 of 200 differ"});
++    broken_tests->insert({"dft_inverse_opset19", "y:expected 0 (0), got -1.71661e-05 (b7900000), diff: 1.71661e-05, tol=1e-05 idx=19. 10 of 200 differ"});
++    broken_tests->insert({"dft_opset19", "y:expected 7.10543e-15 (28000000), got 0.000160893 (3928b56c), diff: 0.000160893, tol=1e-05 idx=119. 20 of 200 differ"});
++    broken_tests->insert({"reduce_l2_default_axes_keepdims_example_expanded", "reduced:shape mismatch, expect {1,1,1} got {}"});
++    broken_tests->insert({"reduce_l2_default_axes_keepdims_random_expanded", "reduced:shape mismatch, expect {1,1,1} got {}"});
++    broken_tests->insert({"reduce_l2_do_not_keepdims_example_expanded", "ORT Tensor data size does not match QNN tensor data size"});
++    broken_tests->insert({"reduce_l2_do_not_keepdims_random_expanded", "ORT Tensor data size does not match QNN tensor data size"});
++    broken_tests->insert({"reduce_l2_keep_dims_example_expanded", "ORT Tensor data size does not match QNN tensor data size"});
++    broken_tests->insert({"reduce_l2_keep_dims_random_expanded", "ORT Tensor data size does not match QNN tensor data size"});
++    broken_tests->insert({"reduce_l2_negative_axes_keep_dims_example_expanded", "reduced:shape mismatch, expect {1,1,1} got {}"});
++    broken_tests->insert({"reduce_l2_negative_axes_keep_dims_random_expanded", "ORT Tensor data size does not match QNN tensor data size"});
++    broken_tests->insert({"stft", "expected 0 (0), got 8.39259e-05 (38b0015b), diff: 8.39259e-05, tol=1e-05 idx=269. 14 of 270 differ"});
++    broken_tests->insert({"stft_with_window", "expected 0 (0), got 4.19629e-05 (3830015b), diff: 4.19629e-05, tol=1e-05 idx=269. 12 of 270 differ"});
+   }
+ 
+ #ifdef DISABLE_CONTRIB_OPS
+diff --git a/onnxruntime/test/onnx/dataitem_request.cc b/onnxruntime/test/onnx/dataitem_request.cc
+index e391f8847c..769e972064 100644
+--- a/onnxruntime/test/onnx/dataitem_request.cc
++++ b/onnxruntime/test/onnx/dataitem_request.cc
+@@ -6,6 +6,7 @@
+ #include "heap_buffer.h"
+ #include "TestCase.h"
+ #include "test/compare_ortvalue.h"
++#include "utils/macros.h"
+ 
+ #include "core/common/logging/logging.h"
+ #include "core/common/common.h"
+@@ -29,7 +30,7 @@ std::pair<EXECUTE_RESULT, TIME_SPEC> DataTaskRequestContext::Run(const ITestCase
+   ORT_CATCH(const std::exception& ex) {
+     ORT_HANDLE_EXCEPTION([&]() {
+       result = std::make_pair(EXECUTE_RESULT::WITH_EXCEPTION, ctx.GetTimeSpent());
+-      LOGS_DEFAULT(ERROR) << ctx.test_case_.GetTestCaseName() << ":" << ex.what();
++      TEST_LOG_ERROR(ctx.test_case_.GetTestCaseName() + ":" + ex.what());
+     });
+   }
+   return result;
+@@ -54,7 +55,7 @@ void DataTaskRequestContext::RunAsync() {
+   ORT_CATCH(const std::exception& ex) {
+     ORT_HANDLE_EXCEPTION([&]() {
+       result = std::make_pair(EXECUTE_RESULT::WITH_EXCEPTION, spent_time_);
+-      LOGS_DEFAULT(ERROR) << test_case_.GetTestCaseName() << ":" << ex.what();
++      TEST_LOG_ERROR(test_case_.GetTestCaseName() + ":" + ex.what());
+     });
+   }
+ 
+@@ -145,7 +146,7 @@ std::pair<EXECUTE_RESULT, TIME_SPEC> DataTaskRequestContext::RunImpl() {
+     auto iter = name_fetch_output_map.find(output_name);
+     if (iter == name_fetch_output_map.end()) {
+       res = EXECUTE_RESULT::INVALID_GRAPH;
+-      LOGF_DEFAULT(ERROR, "cannot find %s in the outputs", output_name.c_str());
++      TEST_LOG_ERROR("cannot find " + output_name + " in the outputs");
+       break;
+     }
+     OrtValue* actual_output_value = iter->second;
+@@ -155,7 +156,7 @@ std::pair<EXECUTE_RESULT, TIME_SPEC> DataTaskRequestContext::RunImpl() {
+     // Expected output is not None
+     if (expected_output_value != nullptr) {
+       // Actual output is None
+-      if (!actual_output_value->IsAllocated()) {
++      if (!Ort::ConstValue(actual_output_value).HasValue()) {
+         ret = std::pair<COMPARE_RESULT, std::string>{
+             COMPARE_RESULT::RESULT_DIFFERS,
+             "Expected non-None output but received an OrtValue that is None"};
+@@ -165,7 +166,7 @@ std::pair<EXECUTE_RESULT, TIME_SPEC> DataTaskRequestContext::RunImpl() {
+                             relative_per_sample_tolerance, post_procesing);
+       }
+     } else {  // Expected output is None, ensure that the received output OrtValue is None as well
+-      if (actual_output_value->IsAllocated()) {
++      if (Ort::ConstValue(actual_output_value).HasValue()) {
+         ret = std::pair<COMPARE_RESULT, std::string>{
+             COMPARE_RESULT::RESULT_DIFFERS,
+             "Expected None output but received an OrtValue that is not None"};
+@@ -213,7 +214,7 @@ std::pair<EXECUTE_RESULT, TIME_SPEC> DataTaskRequestContext::RunImpl() {
+     }
+ 
+     if (compare_result != COMPARE_RESULT::SUCCESS && !ret.second.empty()) {
+-      LOGS_DEFAULT(ERROR) << test_case_.GetTestCaseName() << ":output=" << output_name << ":" << ret.second;
++      TEST_LOG_ERROR(test_case_.GetTestCaseName() + ":output=" + output_name + ":" + ret.second);
+     }
+     if (compare_result != COMPARE_RESULT::SUCCESS) {
+       break;
+diff --git a/onnxruntime/test/onnx/plugin_ep/command_args_parser.cc b/onnxruntime/test/onnx/plugin_ep/command_args_parser.cc
+new file mode 100644
+index 0000000000..aa8102cdfc
+--- /dev/null
++++ b/onnxruntime/test/onnx/plugin_ep/command_args_parser.cc
+@@ -0,0 +1,370 @@
++// Copyright (c) Microsoft Corporation. All rights reserved.
++// Copyright (c) 2023 NVIDIA Corporation.
++// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
++// Licensed under the MIT License.
++
++#include "command_args_parser.h"
++#include "perftest/utils.h"
++#include "test/onnx/utils/strings_helper.h"
++
++#include <string.h>
++#include <iostream>
++#include <sstream>
++#include <string_view>
++#include <unordered_map>
++
++#include <core/graph/constants.h>
++#include <core/optimizer/graph_transformer_level.h>
++
++#include "absl/flags/flag.h"
++#include "absl/flags/parse.h"
++#include "absl/flags/usage.h"
++#include "absl/flags/usage_config.h"
++#include "absl/flags/reflection.h"
++
++static const onnxruntime::test::TestConfig& DefaultTestConfig() {
++  static onnxruntime::test::TestConfig default_config{};
++  return default_config;
++}
++
++ABSL_FLAG(bool, A, DefaultTestConfig().enable_cpu_mem_arena, "Disables memory arena.");
++ABSL_FLAG(bool, v, DefaultTestConfig().verbose_logging_required, "Shows verbose information.");
++ABSL_FLAG(int, c, DefaultTestConfig().concurrent_session_runs, "Specifies the number of Session::Run() to invoke simultaneously for each model.");
++ABSL_FLAG(int, j, DefaultTestConfig().p_models, "Specifies the number of models to run simultaneously.");
++ABSL_FLAG(int, r, DefaultTestConfig().repeat_count, "Specifies the number of times to repeat.");
++ABSL_FLAG(bool, I, DefaultTestConfig().inference_mode, "Uses inference mode. Saves the inference result and skips the output value comparison.");
++ABSL_FLAG(bool, M, DefaultTestConfig().enable_mem_pattern, "Disables memory pattern.");
++ABSL_FLAG(std::string, n, "", "Specifies a single test case to run.");
++ABSL_FLAG(std::string, e, "cpu", "Specifies the provider 'cpu', 'cuda', 'dnnl', 'tensorrt', 'vsinpu', 'openvino', 'rocm', 'migraphx', 'acl', 'dml', 'armnn', 'xnnpack', 'webgpu', 'nnapi', 'qnn', 'snpe' or 'coreml'.");
++ABSL_FLAG(std::string, t, "1e-5", "Specifies custom relative tolerance values for output value comparison.");
++ABSL_FLAG(std::string, a, "1e-5", "Specifies custom absolute tolerance values for output value comparison.");
++ABSL_FLAG(bool, x, false, "Uses parallel executor, default (without -x): sequential executor.");
++ABSL_FLAG(bool, p, DefaultTestConfig().pause, "Pauses after launch, can attach debugger and continue.");
++ABSL_FLAG(int, o, DefaultTestConfig().graph_optimization_level, "Specifies graph optimization level. Default is 99 (all). Valid values are 0 (disable), 1 (basic), 2 (extended), 3 (layout), 99 (all).");
++ABSL_FLAG(int, d, DefaultTestConfig().device_id, "Specifies the device id for multi-device (e.g. GPU). The value should > 0.");
++ABSL_FLAG(std::string, C, "",
++          "Specifies session configuration entries as key-value pairs:\n -C \"<key1>|<value1> <key2>|<value2>\" \n"
++          "Refer to onnxruntime_session_options_config_keys.h for valid keys and values. \n"
++          "[Example] -C \"session.disable_cpu_ep_fallback|1 ep.context_enable|1\" \n");
++ABSL_FLAG(std::string, i, "",
++          "Specifies EP specific runtime options as key-value pairs.\n Different runtime options available are: \n"
++          "  [Usage]: -e <provider_name> -i '<key1>|<value1> <key2>|<value2>'\n"
++          "\n"
++          "  [QNN only] [backend_type]: QNN backend type. E.g., 'cpu', 'htp'. Mutually exclusive with 'backend_path'.\n"
++          "  [QNN only] [backend_path]: QNN backend path. E.g., '/folderpath/libQnnHtp.so', '/winfolderpath/QnnHtp.dll'. Mutually exclusive with 'backend_type'.\n"
++          "  [QNN only] [profiling_level]: QNN profiling level, options:  'basic', 'detailed', default 'off'.\n"
++          "  [QNN only] [profiling_file_path]: QNN profiling file path if ETW not enabled.\n"
++          "  [QNN only] [rpc_control_latency]: QNN rpc control latency. default to 10.\n"
++          "  [QNN only] [vtcm_mb]: QNN VTCM size in MB. default to 0(not set).\n"
++          "  [QNN only] [htp_performance_mode]: QNN performance mode, options: 'burst', 'balanced', 'default', 'high_performance', \n"
++          "  'high_power_saver', 'low_balanced', 'extreme_power_saver', 'low_power_saver', 'power_saver', 'sustained_high_performance'. Default to 'default'. \n"
++          "  [QNN only] [op_packages]: QNN UDO package, allowed format: \n"
++          "  op_packages|<op_type>:<op_package_path>:<interface_symbol_name>[:<target>],<op_type2>:<op_package_path2>:<interface_symbol_name2>[:<target2>]. \n"
++          "  [QNN only] [qnn_context_priority]: QNN context priority, options: 'low', 'normal', 'normal_high', 'high'. Default to 'normal'. \n"
++          "  0 means dump the QNN context binary into separate bin file and set the path in the Onnx skeleton model.\n"
++          "  [QNN only] [qnn_saver_path]: QNN Saver backend path. e.g '/folderpath/libQnnSaver.so'.\n"
++          "  [QNN only] [htp_graph_finalization_optimization_mode]: QNN graph finalization optimization mode, options: \n"
++          "  '0', '1', '2', '3', default is '0'.\n"
++          "  [QNN only] [soc_model]: The SoC Model number. Refer to QNN SDK documentation for specific values. Defaults to '0' (unknown). \n"
++          "  [QNN only] [htp_arch]: The minimum HTP architecture. The driver will use ops compatible with this architecture. \n"
++          "  Options are '0', '68', '69', '73', '75'. Defaults to '0' (none). \n"
++          "  [QNN only] [device_id]: The ID of the device to use when setting 'htp_arch'. Defaults to '0' (for single device). \n"
++          "  [QNN only] [enable_htp_fp16_precision]: Enable the HTP_FP16 precision so that the float32 model will be inferenced with fp16 precision. \n"
++          "  Otherwise, it will be fp32 precision. Works for float32 model for HTP backend. Defaults to '1' (with FP16 precision.). \n"
++          "  [QNN only] [offload_graph_io_quantization]: Offload graph input quantization and graph output dequantization to another EP (typically CPU EP). \n"
++          "  Defaults to '0' (QNN EP handles the graph I/O quantization and dequantization). \n"
++          "  [Example] [For QNN EP] -e qnn -i \"profiling_level|detailed backend_type|cpu\" \n"
++          "\n"
++          "  [SNPE only] [runtime]: SNPE runtime, options: 'CPU', 'GPU', 'GPU_FLOAT16', 'DSP', 'AIP_FIXED_TF'. \n"
++          "  [SNPE only] [priority]: execution priority, options: 'low', 'normal'. \n"
++          "  [SNPE only] [buffer_type]: options: 'TF8', 'TF16', 'UINT8', 'FLOAT', 'ITENSOR'. default: ITENSOR'. \n"
++          "  [SNPE only] [enable_init_cache]: enable SNPE init caching feature, set to 1 to enabled it. Disabled by default. \n"
++          "  [Example] [For SNPE EP] -e snpe -i \"runtime|CPU priority|low\" \n");
++ABSL_FLAG(bool, z, DefaultTestConfig().set_denormal_as_zero, "Sets denormal as zero.");
++ABSL_FLAG(bool, b, DefaultTestConfig().disable_ep_context_embed_mode, "Disables EP context embed mode.");
++ABSL_FLAG(bool, f, DefaultTestConfig().ep_context_enable, "Enables EP context cache generation.");
++ABSL_FLAG(std::string, plugin_ep_libs, "",
++          "Specifies a list of plugin execution provider (EP) registration names and their corresponding shared libraries to register.\n"
++          "[Usage]: --plugin_ep_libs \"plugin_ep_name_1|plugin_ep_1.dll plugin_ep_name_2|plugin_ep_2.dll ... \"");
++ABSL_FLAG(std::string, plugin_eps, "", "Specifies a semicolon-separated list of plugin execution providers (EPs) to use.");
++ABSL_FLAG(std::string, plugin_ep_options, "",
++          "Specifies provider options for each EP listed in --plugin_eps. Options (key-value pairs) for each EP are separated by space and EPs are separated by semicolons.\n"
++          "[Usage]: --plugin_ep_options \"ep_1_option_1_key|ep_1_option_1_value ...;ep_2_option_1_key|ep_2_option_1_value ...;... \" or \n"
++          "--plugin_ep_options \";ep_2_option_1_key|ep_2_option_1_value ...;... \" or \n"
++          "--plugin_ep_options \"ep_1_option_1_key|ep_1_option_1_value ...;;ep_3_option_1_key|ep_3_option_1_value ...;... \"");
++ABSL_FLAG(bool, list_ep_devices, false, "Prints all available device indices and their properties (including metadata). This option makes the program exit early without performing inference.\n");
++ABSL_FLAG(std::string, select_ep_devices, "", "Specifies a semicolon-separated list of device indices to add to the session and run with.");
++ABSL_FLAG(bool, h, false, "Print program usage.");
++
++namespace onnxruntime {
++namespace test {
++
++std::string CustomUsageMessage() {
++  std::ostringstream oss;
++  oss << "onnx_test_runner [options...] <data_root>\n\n";
++  oss << "Note: Options may be specified with either a single dash(-option) or a double dash(--option). Both forms are accepted and treated identically.\n\n";
++  oss << "Options:";
++
++  return oss.str();
++}
++
++bool CommandLineParser::ParseArguments(TestConfig& test_config, int argc, ORTCHAR_T* argv[]) {
++  // Following callback is to make sure all the ABSL flags defined above will be showed up when running with "--help".
++  // Note: By default abseil only wants flags in binary's main. It expects the main routine to reside in <program>.cc or <program>-main.cc or
++  // <program>_main.cc, where the <program> is the name of the binary (without .exe on Windows). See usage_config.cc in abseil for more details.
++  absl::FlagsUsageConfig config;
++  config.contains_help_flags = [](absl::string_view filename) {
++    return std::filesystem::path(filename).filename() == std::filesystem::path(__FILE__).filename();
++  };
++
++  config.normalize_filename = [](absl::string_view f) {
++    return std::string(f);
++  };
++  absl::SetFlagsUsageConfig(config);
++  absl::SetProgramUsageMessage(CustomUsageMessage());
++
++  auto utf8_argv_strings = test::utils::ConvertArgvToUtf8Strings(argc, argv);
++  auto utf8_argv = test::utils::CStringsFromStrings(utf8_argv_strings);
++  auto positional = absl::ParseCommandLine(static_cast<int>(utf8_argv.size()), utf8_argv.data());
++
++  // -A
++  test_config.enable_cpu_mem_arena = absl::GetFlag(FLAGS_A);
++
++  // -v
++  test_config.verbose_logging_required = absl::GetFlag(FLAGS_v);
++
++  // -c
++  if (absl::GetFlag(FLAGS_c) <= 0) return false;
++  test_config.concurrent_session_runs = absl::GetFlag(FLAGS_c);
++
++  // -j
++  if (absl::GetFlag(FLAGS_j) <= 0) return false;
++  test_config.p_models = absl::GetFlag(FLAGS_j);
++
++  // -r
++  if (absl::GetFlag(FLAGS_r) <= 0) return false;
++  test_config.repeat_count = absl::GetFlag(FLAGS_r);
++
++  // -I
++  test_config.inference_mode = absl::GetFlag(FLAGS_I);
++
++  // -M
++  test_config.enable_mem_pattern = absl::GetFlag(FLAGS_M);
++
++  // -n
++  {
++    const auto& whitelisted_test_case = absl::GetFlag(FLAGS_n);
++    if (!whitelisted_test_case.empty()) {
++      // Abseil doesn't support the same option being provided multiple times - only the last occurrence is applied.
++      // To preserve the previous usage of '-n', where users may specify it multiple times to provide whitelisted tests,
++      // we need to manually parse argv.
++      for (int i = 1; i < argc; ++i) {
++        auto utf8_arg = utf8_argv_strings[i];
++        if (utf8_arg == ("-n") || utf8_arg == ("--n")) {
++          auto value_idx = i + 1;
++          if (value_idx >= argc || utf8_argv_strings[value_idx][0] == '-') {
++            std::cerr << utf8_arg << " should be followed by a key-value pair." << std::endl;
++            return false;
++          }
++
++          // run only some whitelisted tests
++          // TODO: parse name str to an array
++          test_config.whitelisted_test_cases.emplace_back(ToPathString(utf8_argv_strings[value_idx]));
++        }
++      }
++    }
++  }
++
++  // -e
++  {
++    auto const& ep = absl::GetFlag(FLAGS_e);
++    if (!ep.empty()) {
++      test_config.provider_name = ep;
++      if (ep == "cpu") {
++        // do nothing
++      } else if (ep == "cuda") {
++        test_config.enable_cuda = true;
++      } else if (ep == "dnnl") {
++        test_config.enable_dnnl = true;
++      } else if (ep == "openvino") {
++        test_config.enable_openvino = true;
++      } else if (ep == "tensorrt") {
++        test_config.enable_tensorrt = true;
++      } else if (ep == "qnn") {
++        test_config.enable_qnn = true;
++      } else if (ep == "snpe") {
++        test_config.enable_snpe = true;
++      } else if (ep == "nnapi") {
++        test_config.enable_nnapi = true;
++      } else if (ep == "vsinpu") {
++        test_config.enable_vsinpu = true;
++      } else if (ep == "coreml") {
++        test_config.enable_coreml = true;
++      } else if (ep == "dml") {
++        test_config.enable_dml = true;
++      } else if (ep == "acl") {
++        test_config.enable_acl = true;
++      } else if (ep == "armnn") {
++        test_config.enable_armnn = true;
++      } else if (ep == "rocm") {
++        test_config.enable_rocm = true;
++      } else if (ep == "migraphx") {
++        test_config.enable_migraphx = true;
++      } else if (ep == "xnnpack") {
++        test_config.enable_xnnpack = true;
++      } else if (ep == "webgpu") {
++        test_config.enable_webgpu = true;
++      } else {
++        return false;
++      }
++    }
++  }
++
++  // Helper function to check if the option is explicitly specified.
++  // Abseil Flags does not provide this capability by default.
++  // It cannot distinguish between cases where:
++  //   - The user typed `-t 1e-5` (explicitly passing the default value), and
++  //   - The user omitted `-t` entirely.
++  // To determine this accurately, we must inspect argv directly.
++  auto is_option_specified = [&](std::string option) {
++    for (int i = 1; i < argc; ++i) {
++      auto utf8_arg = ToUTF8String(argv[i]);
++      if (utf8_arg == ("-" + option) || utf8_arg == ("--" + option)) {
++        return true;
++      }
++    }
++    return false;
++  };
++
++  // -t
++  {
++    if (is_option_specified("t")) {
++      test_config.override_tolerance = true;
++      test_config.rtol = OrtStrtod<char>(absl::GetFlag(FLAGS_t).c_str(), nullptr);
++    }
++  }
++
++  // -a
++  {
++    if (is_option_specified("a")) {
++      test_config.override_tolerance = true;
++      test_config.atol = OrtStrtod<char>(absl::GetFlag(FLAGS_a).c_str(), nullptr);
++    }
++  }
++
++  // -x
++  if (absl::GetFlag(FLAGS_x)) test_config.execution_mode = ExecutionMode::ORT_PARALLEL;
++
++  // -p
++  if (absl::GetFlag(FLAGS_p)) test_config.pause = true;
++
++  // -o
++  {
++    const auto optimization_level = absl::GetFlag(FLAGS_o);
++    if (optimization_level != test_config.graph_optimization_level) {
++      switch (optimization_level) {
++        case ORT_DISABLE_ALL:
++          test_config.graph_optimization_level = ORT_DISABLE_ALL;
++          break;
++        case ORT_ENABLE_BASIC:
++          test_config.graph_optimization_level = ORT_ENABLE_BASIC;
++          break;
++        case ORT_ENABLE_EXTENDED:
++          test_config.graph_optimization_level = ORT_ENABLE_EXTENDED;
++          break;
++        case ORT_ENABLE_LAYOUT:
++          test_config.graph_optimization_level = ORT_ENABLE_LAYOUT;
++          break;
++        case ORT_ENABLE_ALL:
++          test_config.graph_optimization_level = ORT_ENABLE_ALL;
++          break;
++        default: {
++          if (optimization_level > ORT_ENABLE_ALL) {  // relax constraint
++            test_config.graph_optimization_level = ORT_ENABLE_ALL;
++          } else {
++            return false;
++          }
++        }
++      }
++      test_config.user_graph_optimization_level_set = true;
++    }
++  }
++
++  // -d
++  test_config.device_id = absl::GetFlag(FLAGS_d);
++
++  // -C
++  {
++    const auto& session_configs = absl::GetFlag(FLAGS_C);
++    if (!session_configs.empty()) {
++      ORT_TRY {
++        test::utils::ParseSessionConfigs(session_configs, test_config.session_config_entries);
++      }
++      ORT_CATCH(const std::exception& ex) {
++        ORT_HANDLE_EXCEPTION([&]() {
++          fprintf(stderr, "Error parsing session configuration entries: %s\n", ex.what());
++        });
++        return false;
++      }
++    }
++  }
++
++  // -i
++  {
++    const auto& ep_options = absl::GetFlag(FLAGS_i);
++    if (!ep_options.empty()) test_config.ep_runtime_config_string = ToPathString(ep_options);
++  }
++
++  // -z
++  if (absl::GetFlag(FLAGS_z)) test_config.set_denormal_as_zero = true;
++
++  // -b
++  if (absl::GetFlag(FLAGS_b)) test_config.disable_ep_context_embed_mode = true;
++
++  // -f
++  if (absl::GetFlag(FLAGS_f)) test_config.ep_context_enable = true;
++
++  // --plugin_ep_libs
++  {
++    const auto& plugin_ep_names_and_libs = absl::GetFlag(FLAGS_plugin_ep_libs);
++    if (!plugin_ep_names_and_libs.empty()) test_config.plugin_ep_names_and_libs = ToPathString(plugin_ep_names_and_libs);
++  }
++
++  // --plugin_eps
++  {
++    const auto& plugin_eps = absl::GetFlag(FLAGS_plugin_eps);
++    if (!plugin_eps.empty()) test::utils::ParseEpList(plugin_eps, test_config.plugin_ep_list);
++  }
++
++  // --plugin_ep_options
++  {
++    const auto& plugin_ep_options = absl::GetFlag(FLAGS_plugin_ep_options);
++    if (!plugin_ep_options.empty()) test_config.ep_runtime_config_string = ToPathString(plugin_ep_options);
++  }
++
++  // --list_ep_devices
++  if (absl::GetFlag(FLAGS_list_ep_devices)) {
++    test_config.list_available_ep_devices = true;
++    return true;
++  }
++
++  // --select_ep_devices
++  {
++    const auto& select_ep_devices = absl::GetFlag(FLAGS_select_ep_devices);
++    if (!select_ep_devices.empty()) test_config.selected_ep_device_indices = select_ep_devices;
++  }
++
++  if (positional.size() > 1) {
++    for (size_t i = 1; i < positional.size(); ++i) {
++      test_config.data_dirs.emplace_back(ToPathString(positional[i]));
++    }
++  } else {
++    std::cerr << "Please specify a test data dir" << std::endl;
++    return false;
++  }
++
++  return true;
++}
++
++}  // namespace test
++}  // namespace onnxruntime
+diff --git a/onnxruntime/test/onnx/plugin_ep/command_args_parser.h b/onnxruntime/test/onnx/plugin_ep/command_args_parser.h
+new file mode 100644
+index 0000000000..60dfaba95d
+--- /dev/null
++++ b/onnxruntime/test/onnx/plugin_ep/command_args_parser.h
+@@ -0,0 +1,68 @@
++// Copyright (c) Microsoft Corporation. All rights reserved.
++// Licensed under the MIT License.
++
++#pragma once
++#include "core/session/onnxruntime_c_api.h"
++#include "core/platform/path_lib.h"
++#include "utils/utils.h"
++
++namespace onnxruntime {
++namespace test {
++struct TestConfig {
++  // if this var is not empty, only run the tests with name in this list
++  std::vector<std::basic_string<PATH_CHAR_TYPE>> whitelisted_test_cases;
++  int concurrent_session_runs = utils::GetNumCpuCores();
++  bool enable_cpu_mem_arena = true;
++  ExecutionMode execution_mode = ExecutionMode::ORT_SEQUENTIAL;
++  int repeat_count = 1;
++  bool inference_mode = false;
++  int p_models = utils::GetNumCpuCores();
++  bool enable_cuda = false;
++  bool enable_dnnl = false;
++  bool enable_openvino = false;
++  bool enable_tensorrt = false;
++  bool enable_mem_pattern = true;
++  bool enable_qnn = false;
++  bool enable_nnapi = false;
++  bool enable_vsinpu = false;
++  bool enable_coreml = false;
++  bool enable_snpe = false;
++  bool enable_dml = false;
++  bool enable_acl = false;
++  bool enable_armnn = false;
++  bool enable_rocm = false;
++  bool enable_migraphx = false;
++  bool enable_webgpu = false;
++  bool enable_xnnpack = false;
++  bool override_tolerance = false;
++  double atol = 1e-5;
++  double rtol = 1e-5;
++  int device_id = 0;
++  GraphOptimizationLevel graph_optimization_level = ORT_ENABLE_ALL;
++  bool user_graph_optimization_level_set = false;
++  bool set_denormal_as_zero = false;
++  std::basic_string<ORTCHAR_T> ep_runtime_config_string;
++  std::unordered_map<std::string, std::string> session_config_entries;
++  std::string provider_name = "cpu";
++
++  bool verbose_logging_required = false;
++  bool ep_context_enable = false;
++  bool disable_ep_context_embed_mode = false;
++  bool pause = false;
++
++  std::basic_string<ORTCHAR_T> plugin_ep_names_and_libs;
++  std::vector<std::string> registered_plugin_eps;
++  std::vector<std::string> plugin_ep_list;
++  std::string selected_ep_device_indices;
++  bool list_available_ep_devices = false;
++
++  std::vector<std::basic_string<PATH_CHAR_TYPE>> data_dirs;
++};
++
++class CommandLineParser {
++ public:
++  static bool ParseArguments(TestConfig& test_config, int argc, ORTCHAR_T* argv[]);
++};
++
++}  // namespace test
++}  // namespace onnxruntime
+diff --git a/onnxruntime/test/onnx/plugin_ep/main.cc b/onnxruntime/test/onnx/plugin_ep/main.cc
+new file mode 100644
+index 0000000000..4727e56596
+--- /dev/null
++++ b/onnxruntime/test/onnx/plugin_ep/main.cc
+@@ -0,0 +1,795 @@
++// Copyright (c) Microsoft Corporation. All rights reserved.
++// SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
++// Licensed under the MIT License.
++
++#include <set>
++#include <iostream>
++#include <fstream>
++#include <string>
++#include <unordered_map>
++// For memory leak detection on Windows with Visual Studio in Debug mode
++#ifdef _WIN32
++#define _CRTDBG_MAP_ALLOC
++#include <stdlib.h>
++#include <crtdbg.h>
++#endif
++
++#include "TestResultStat.h"
++#include "TestCase.h"
++#include "testenv.h"
++#include "test/util/include/providers.h"
++
++#include "command_args_parser.h"
++#include "utils/utils.h"
++#include "utils/strings_helper.h"
++
++#include <google/protobuf/stubs/common.h>
++#include "core/platform/path_lib.h"
++#include "core/session/onnxruntime_cxx_api.h"
++#include "core/optimizer/graph_transformer_level.h"
++#include "core/framework/session_options.h"
++#include "core/session/onnxruntime_session_options_config_keys.h"
++#include "nlohmann/json.hpp"
++
++#ifdef USE_CUDA
++#include "core/providers/cuda/cuda_provider_options.h"
++#endif
++
++using namespace onnxruntime;
++
++namespace {
++static TestTolerances LoadTestTolerances(bool enable_cuda, bool enable_openvino, bool useCustom, double atol, double rtol) {
++  TestTolerances::Map absolute_overrides;
++  TestTolerances::Map relative_overrides;
++  if (useCustom) {
++    return TestTolerances(atol, rtol, absolute_overrides, relative_overrides);
++  }
++  std::ifstream overrides_ifstream(ConcatPathComponent(
++      ORT_TSTR("testdata"), ORT_TSTR("onnx_backend_test_series_overrides.jsonc")));
++  if (!overrides_ifstream.good()) {
++    constexpr double absolute = 1e-3;
++    // when cuda is enabled, set it to a larger value for resolving random MNIST test failure
++    // when openvino is enabled, set it to a larger value for resolving MNIST accuracy mismatch
++    const double relative = enable_cuda ? 0.017 : enable_openvino ? 0.009
++                                                                  : 1e-3;
++    return TestTolerances(absolute, relative, absolute_overrides, relative_overrides);
++  }
++  const auto overrides_json = nlohmann::json::parse(
++      overrides_ifstream,
++      /*cb=*/nullptr, /*allow_exceptions=*/true
++// Comment support is added in 3.9.0 with breaking change to default behavior.
++#if NLOHMANN_JSON_VERSION_MAJOR * 1000 + NLOHMANN_JSON_VERSION_MINOR >= 3009
++      ,
++      /*ignore_comments=*/true
++#endif
++  );
++  overrides_json["atol_overrides"].get_to(absolute_overrides);
++  overrides_json["rtol_overrides"].get_to(relative_overrides);
++  return TestTolerances(
++      overrides_json["atol_default"], overrides_json["rtol_default"], absolute_overrides, relative_overrides);
++}
++}  // namespace
++
++#ifdef _WIN32
++int real_main(int argc, wchar_t* argv[], Ort::Env& env) {
++#else
++int real_main(int argc, char* argv[], Ort::Env& env) {
++#endif
++  test::TestConfig test_config;
++  OrtLoggingLevel logging_level = ORT_LOGGING_LEVEL_ERROR;
++
++  if (!test::CommandLineParser::ParseArguments(test_config, argc, argv)) {
++    std::cerr << "See 'onnx_test_runner --help'." << std::endl;
++    return -1;
++  }
++
++  // TODO: Support specifying all valid levels of logging
++  // Currently the logging level is ORT_LOGGING_LEVEL_ERROR by default and
++  // if the user adds -v, the logging level is ORT_LOGGING_LEVEL_VERBOSE
++  if (test_config.verbose_logging_required) {
++    logging_level = ORT_LOGGING_LEVEL_VERBOSE;
++  }
++
++  if (test_config.pause) {
++    printf("Enter to continue...\n");
++    fflush(stdout);
++    (void)getchar();
++  }
++
++  {
++    bool failed = false;
++    ORT_TRY {
++      env = Ort::Env{logging_level, "Default"};
++    }
++    ORT_CATCH(const std::exception& ex) {
++      ORT_HANDLE_EXCEPTION([&]() {
++        fprintf(stderr, "Error creating environment: %s \n", ex.what());
++        failed = true;
++      });
++    }
++
++    if (failed)
++      return -1;
++  }
++
++  if (!test_config.plugin_ep_names_and_libs.empty()) {
++    test::utils::RegisterExecutionProviderLibrary(env, test_config.plugin_ep_names_and_libs, test_config.registered_plugin_eps);
++  }
++
++  auto unregister_plugin_eps_at_scope_exit = gsl::finally([&]() {
++    if (!test_config.registered_plugin_eps.empty()) {
++      test::utils::UnregisterExecutionProviderLibrary(env, test_config.registered_plugin_eps);
++    }
++  });
++
++  TestResultStat stat;
++
++  std::vector<std::unique_ptr<ITestCase>> owned_tests;
++  {
++    Ort::SessionOptions sf;
++
++    // Add EP devices if any (created by plugin EP)
++    if (!test_config.registered_plugin_eps.empty()) {
++      std::vector<Ort::ConstEpDevice> ep_devices = env.GetEpDevices();
++      // EP -> associated EP devices (All OrtEpDevice instances must be from the same execution provider)
++      std::unordered_map<std::string, std::vector<Ort::ConstEpDevice>> added_ep_devices;
++      std::unordered_set<int> added_ep_device_index_set;
++
++      auto& ep_list = test_config.plugin_ep_list;
++      std::unordered_set<std::string> ep_set(ep_list.begin(), ep_list.end());
++
++      // Select EP devices by provided device index
++      if (!test_config.selected_ep_device_indices.empty()) {
++        std::vector<int> device_list;
++        device_list.reserve(test_config.selected_ep_device_indices.size());
++        test::utils::ParseEpDeviceIndexList(test_config.selected_ep_device_indices, device_list);
++        for (auto index : device_list) {
++          if (static_cast<size_t>(index) > (ep_devices.size() - 1)) {
++            fprintf(stderr, "%s", "The device index provided is not correct. Will skip this device id.");
++            continue;
++          }
++
++          Ort::ConstEpDevice& device = ep_devices[index];
++          if (ep_set.find(std::string(device.EpName())) != ep_set.end()) {
++            if (added_ep_device_index_set.find(index) == added_ep_device_index_set.end()) {
++              added_ep_devices[device.EpName()].push_back(device);
++              added_ep_device_index_set.insert(index);
++              fprintf(stdout, "[Plugin EP] EP Device [Index: %d, Name: %s] has been added to session.\n", index, device.EpName());
++            }
++          } else {
++            std::string ep_list_string;
++            for (size_t i = 0; i < ep_list.size(); ++i) {
++              ep_list_string += ep_list[i];
++              if (i + 1 < ep_list.size()) {
++                ep_list_string += ", ";
++              }
++            }
++            std::string err_msg = "[Plugin EP] [WARNING] : The EP device index and its corresponding OrtEpDevice is not created from " +
++                                  ep_list_string + ". Will skip adding this device.\n";
++            fprintf(stderr, "%s", err_msg.c_str());
++          }
++        }
++      } else {
++        // Find and select the OrtEpDevice associated with the EP in "--plugin_eps".
++        for (size_t index = 0; index < ep_devices.size(); ++index) {
++          Ort::ConstEpDevice& device = ep_devices[index];
++          if (ep_set.find(std::string(device.EpName())) != ep_set.end()) {
++            added_ep_devices[device.EpName()].push_back(device);
++            fprintf(stdout, "EP Device [Index: %d, Name: %s] has been added to session.\n", static_cast<int>(index), device.EpName());
++          }
++        }
++      }
++
++      if (added_ep_devices.empty()) {
++        ORT_THROW("[ERROR] [Plugin EP]: No matching EP devices found.");
++      }
++
++      std::string ep_option_string = ToUTF8String(test_config.ep_runtime_config_string);
++
++      // EP's associated provider option lists
++      std::vector<std::unordered_map<std::string, std::string>> ep_options_list;
++      test::utils::ParseEpOptions(ep_option_string, ep_options_list);
++
++      // If user only provide the EPs' provider option lists for the first several EPs,
++      // add empty provider option lists for the rest EPs.
++      if (ep_options_list.size() < ep_list.size()) {
++        for (size_t i = ep_options_list.size(); i < ep_list.size(); ++i) {
++          ep_options_list.emplace_back();  // Adds a new empty map
++        }
++      } else if (ep_options_list.size() > ep_list.size()) {
++        ORT_THROW("[ERROR] [Plugin EP]: Too many EP provider option lists provided.");
++      }
++
++      // EP -> associated provider options
++      std::unordered_map<std::string, std::unordered_map<std::string, std::string>> ep_options_map;
++      for (size_t i = 0; i < ep_list.size(); ++i) {
++        ep_options_map.emplace(ep_list[i], ep_options_list[i]);
++      }
++
++      for (auto& ep_and_devices : added_ep_devices) {
++        auto& ep = ep_and_devices.first;
++        auto& devices = ep_and_devices.second;
++        sf.AppendExecutionProvider_V2(env, devices, ep_options_map[ep]);
++      }
++    }
++
++    if (test_config.enable_cpu_mem_arena)
++      sf.EnableCpuMemArena();
++    else
++      sf.DisableCpuMemArena();
++    if (test_config.enable_mem_pattern)
++      sf.EnableMemPattern();
++    else
++      sf.DisableMemPattern();
++    sf.SetExecutionMode(test_config.execution_mode);
++    if (test_config.set_denormal_as_zero)
++      sf.AddConfigEntry(kOrtSessionOptionsConfigSetDenormalAsZero, "1");
++
++    if (test_config.ep_context_enable)
++      sf.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
++    if (test_config.disable_ep_context_embed_mode) {
++      sf.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "0");
++    } else {
++      sf.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "1");
++    }
++
++    for (auto& it : test_config.session_config_entries) {
++      sf.AddConfigEntry(it.first.c_str(), it.second.c_str());
++    }
++
++    if (test_config.enable_tensorrt) {
++#ifdef USE_TENSORRT
++      Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_Tensorrt(sf, test_config.device_id));
++#ifdef USE_CUDA
++      OrtCUDAProviderOptionsV2 cuda_options;
++      cuda_options.device_id = test_config.device_id;
++      cuda_options.do_copy_in_default_stream = true;
++      cuda_options.use_tf32 = false;
++      // TODO: Support arena configuration for users of test runner
++      sf.AppendExecutionProvider_CUDA_V2(cuda_options);
++#endif
++#else
++      fprintf(stderr, "TensorRT is not supported in this build");
++      return -1;
++#endif
++    }
++    if (test_config.enable_openvino) {
++#ifdef USE_OPENVINO
++      // Setting default optimization level for OpenVINO can be overridden with -o option
++      sf.SetGraphOptimizationLevel(ORT_DISABLE_ALL);
++      sf.AppendExecutionProvider_OpenVINO(OrtOpenVINOProviderOptions{});
++#else
++      fprintf(stderr, "OpenVINO is not supported in this build");
++      return -1;
++#endif
++    }
++    if (test_config.enable_cuda) {
++#ifdef USE_CUDA
++      OrtCUDAProviderOptionsV2 cuda_options;
++      cuda_options.device_id = test_config.device_id;
++      cuda_options.do_copy_in_default_stream = true;
++      cuda_options.use_tf32 = false;
++      // TODO: Support arena configuration for users of test runner
++      sf.AppendExecutionProvider_CUDA_V2(cuda_options);
++#else
++      fprintf(stderr, "CUDA is not supported in this build");
++      return -1;
++#endif
++    }
++    if (test_config.enable_dnnl) {
++#ifdef USE_DNNL
++      // Generate dnnl_options to optimize dnnl performance
++      OrtDnnlProviderOptions dnnl_options;
++      dnnl_options.use_arena = enable_cpu_mem_arena ? 1 : 0;
++      dnnl_options.threadpool_args = nullptr;
++#if defined(DNNL_ORT_THREAD)
++      dnnl_options.threadpool_args = static_cast<void*>(TestEnv::GetDefaultThreadPool(Env::Default()));
++#endif  // defined(DNNL_ORT_THREAD)
++      sf.AppendExecutionProvider_Dnnl(dnnl_options);
++#else
++      fprintf(stderr, "DNNL is not supported in this build");
++      return -1;
++#endif
++    }
++    if (test_config.enable_qnn) {
++#ifdef USE_QNN
++#ifdef _MSC_VER
++      std::string option_string = ToUTF8String(test_config.ep_runtime_config_string);
++#else
++      std::string option_string = test_config.ep_runtime_config_string;
++#endif
++      std::istringstream ss(option_string);
++      std::string token;
++      std::unordered_map<std::string, std::string> qnn_options;
++
++      while (ss >> token) {
++        if (token == "") {
++          continue;
++        }
++        auto pos = token.find("|");
++        if (pos == std::string::npos || pos == 0 || pos == token.length()) {
++          ORT_THROW("Use a '|' to separate the key and value for the run-time option you are trying to use.");
++        }
++
++        std::string key(token.substr(0, pos));
++        std::string value(token.substr(pos + 1));
++
++        if (key == "backend_path" || key == "profiling_file_path") {
++          if (value.empty()) {
++            ORT_THROW("Please provide the valid file path.");
++          }
++        } else if (key == "qnn_context_embed_mode") {
++          if (value != "0") {
++            ORT_THROW("Set to 0 to disable qnn_context_embed_mode.");
++          }
++        } else if (key == "profiling_level") {
++          std::set<std::string> supported_profiling_level = {"off", "basic", "detailed"};
++          if (supported_profiling_level.find(value) == supported_profiling_level.end()) {
++            ORT_THROW("Supported profiling_level: off, basic, detailed");
++          }
++        } else if (key == "backend_type" || key == "rpc_control_latency" || key == "vtcm_mb" || key == "soc_model" ||
++                   key == "device_id") {
++          // no validation
++        } else if (key == "htp_performance_mode") {
++          std::set<std::string> supported_htp_perf_mode = {"burst", "balanced", "default", "high_performance",
++                                                           "high_power_saver", "low_balanced", "extreme_power_saver", "low_power_saver",
++                                                           "power_saver", "sustained_high_performance"};
++          if (supported_htp_perf_mode.find(value) == supported_htp_perf_mode.end()) {
++            std::ostringstream str_stream;
++            std::copy(supported_htp_perf_mode.begin(), supported_htp_perf_mode.end(),
++                      std::ostream_iterator<std::string>(str_stream, ","));
++            std::string str = str_stream.str();
++            ORT_THROW("Wrong value for htp_performance_mode. select from: " + str);
++          }
++        } else if (key == "op_packages") {
++          if (value.empty()) {
++            ORT_THROW("Please provide the valid op_packages.");
++          }
++        } else if (key == "qnn_context_priority") {
++          std::set<std::string> supported_qnn_context_priority = {"low", "normal", "normal_high", "high"};
++          if (supported_qnn_context_priority.find(value) == supported_qnn_context_priority.end()) {
++            ORT_THROW("Supported qnn_context_priority: low, normal, normal_high, high");
++          }
++        } else if (key == "qnn_saver_path") {
++          // no validation
++        } else if (key == "htp_graph_finalization_optimization_mode") {
++          std::unordered_set<std::string> supported_htp_graph_final_opt_modes = {"0", "1", "2", "3"};
++          if (supported_htp_graph_final_opt_modes.find(value) == supported_htp_graph_final_opt_modes.end()) {
++            std::ostringstream str_stream;
++            std::copy(supported_htp_graph_final_opt_modes.begin(), supported_htp_graph_final_opt_modes.end(),
++                      std::ostream_iterator<std::string>(str_stream, ","));
++            std::string str = str_stream.str();
++            ORT_THROW("Wrong value for htp_graph_finalization_optimization_mode. select from: " + str);
++          }
++        } else if (key == "htp_arch") {
++          std::unordered_set<std::string> supported_htp_archs = {"0", "68", "69", "73", "75"};
++          if (supported_htp_archs.find(value) == supported_htp_archs.end()) {
++            std::ostringstream str_stream;
++            std::copy(supported_htp_archs.begin(), supported_htp_archs.end(),
++                      std::ostream_iterator<std::string>(str_stream, ","));
++            std::string str = str_stream.str();
++            ORT_THROW("Wrong value for htp_arch. select from: " + str);
++          }
++        } else if (key == "enable_htp_fp16_precision" || key == "offload_graph_io_quantization") {
++          std::unordered_set<std::string> supported_options = {"0", "1"};
++          if (supported_options.find(value) == supported_options.end()) {
++            std::ostringstream str_stream;
++            std::copy(supported_options.begin(), supported_options.end(),
++                      std::ostream_iterator<std::string>(str_stream, ","));
++            std::string str = str_stream.str();
++            ORT_THROW("Wrong value for ", key, ". select from: ", str);
++          }
++        } else {
++          ORT_THROW(
++              "Wrong key type entered. Choose from options: ['backend_type', 'backend_path', "
++              "'profiling_level', 'profiling_file_path', 'rpc_control_latency', 'vtcm_mb', 'htp_performance_mode', "
++              "'qnn_saver_path', 'htp_graph_finalization_optimization_mode', 'op_packages', 'qnn_context_priority', "
++              "'soc_model', 'htp_arch', 'device_id', 'enable_htp_fp16_precision', 'offload_graph_io_quantization']");
++        }
++
++        qnn_options[key] = value;
++      }
++      sf.AppendExecutionProvider("QNN", qnn_options);
++#else
++      fprintf(stderr, "QNN is not supported in this build");
++      return -1;
++#endif
++    }
++    if (test_config.enable_nnapi) {
++#ifdef USE_NNAPI
++      Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_Nnapi(sf, 0));
++#else
++      fprintf(stderr, "NNAPI is not supported in this build");
++      return -1;
++#endif
++    }
++    if (test_config.enable_vsinpu) {
++#ifdef USE_VSINPU
++      Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_VSINPU(sf));
++#else
++      fprintf(stderr, "VSINPU is not supported in this build");
++      return -1;
++#endif
++    }
++    if (test_config.enable_coreml) {
++#ifdef USE_COREML
++      sf.AppendExecutionProvider("CoreML", {});
++#else
++      fprintf(stderr, "CoreML is not supported in this build");
++      return -1;
++#endif
++    }
++    if (test_config.enable_snpe) {
++#ifdef USE_SNPE
++#ifdef _MSC_VER
++      std::string option_string = ToUTF8String(test_config.ep_runtime_config_string);
++#else
++      std::string option_string = test_config.ep_runtime_config_string;
++#endif
++      std::istringstream ss(option_string);
++      std::string token;
++      std::unordered_map<std::string, std::string> snpe_options;
++
++      while (ss >> token) {
++        if (token == "") {
++          continue;
++        }
++        auto pos = token.find("|");
++        if (pos == std::string::npos || pos == 0 || pos == token.length()) {
++          ORT_THROW(R"(Use a '|' to separate the key and value for
++the run-time option you are trying to use.\n)");
++        }
++
++        std::string key(token.substr(0, pos));
++        std::string value(token.substr(pos + 1));
++
++        if (key == "runtime") {
++          std::set<std::string> supported_runtime = {"CPU", "GPU_FP32", "GPU", "GPU_FLOAT16", "DSP", "AIP_FIXED_TF"};
++          if (supported_runtime.find(value) == supported_runtime.end()) {
++            ORT_THROW(R"(Wrong configuration value for the key 'runtime'.
++select from 'CPU', 'GPU_FP32', 'GPU', 'GPU_FLOAT16', 'DSP', 'AIP_FIXED_TF'. \n)");
++          }
++        } else if (key == "priority") {
++          // no validation
++        } else if (key == "buffer_type") {
++          std::set<std::string> supported_buffer_type = {"TF8", "TF16", "UINT8", "FLOAT", "ITENSOR"};
++          if (supported_buffer_type.find(value) == supported_buffer_type.end()) {
++            ORT_THROW(R"(Wrong configuration value for the key 'buffer_type'.
++select from 'TF8', 'TF16', 'UINT8', 'FLOAT', 'ITENSOR'. \n)");
++          }
++        } else if (key == "enable_init_cache") {
++          if (value != "1") {
++            ORT_THROW("Set to 1 to enable_init_cache.");
++          }
++        } else {
++          ORT_THROW("Wrong key type entered. Choose from options: ['runtime', 'priority', 'buffer_type', 'enable_init_cache'] \n");
++        }
++
++        snpe_options[key] = value;
++      }
++
++      sf.AppendExecutionProvider("SNPE", snpe_options);
++#else
++      fprintf(stderr, "SNPE is not supported in this build");
++      return -1;
++#endif
++    }
++    if (test_config.enable_dml) {
++#ifdef USE_DML
++      fprintf(stderr, "Disabling mem pattern and forcing single-threaded execution since DML is used");
++      sf.DisableMemPattern();
++      sf.SetExecutionMode(ExecutionMode::ORT_SEQUENTIAL);
++      test_config.p_models = 1;
++      test_config.concurrent_session_runs = 1;
++      Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_DML(sf, test_config.device_id));
++#else
++      fprintf(stderr, "DML is not supported in this build");
++      return -1;
++#endif
++    }
++    if (test_config.enable_acl) {
++#ifdef USE_ACL
++      Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_ACL(sf, false));
++#else
++      fprintf(stderr, "ACL is not supported in this build");
++      return -1;
++#endif
++    }
++    if (test_config.enable_armnn) {
++#ifdef USE_ARMNN
++      Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_ArmNN(sf, enable_cpu_mem_arena ? 1 : 0));
++#else
++      fprintf(stderr, "ArmNN is not supported in this build\n");
++      return -1;
++#endif
++    }
++    if (test_config.enable_rocm) {
++#ifdef USE_ROCM
++      OrtROCMProviderOptions rocm_options;
++      rocm_options.do_copy_in_default_stream = true;
++      // TODO: Support arena configuration for users of test runner
++      sf.AppendExecutionProvider_ROCM(rocm_options);
++#else
++      fprintf(stderr, "ROCM is not supported in this build");
++      return -1;
++#endif
++    }
++    if (test_config.enable_migraphx) {
++#ifdef USE_MIGRAPHX
++      Ort::ThrowOnError(OrtSessionOptionsAppendExecutionProvider_MIGraphX(sf, device_id));
++#else
++      fprintf(stderr, "MIGRAPHX is not supported in this build");
++      return -1;
++#endif
++    }
++
++    if (test_config.enable_xnnpack) {
++#ifdef USE_XNNPACK
++      sf.AppendExecutionProvider("XNNPACK", {});
++#else
++      fprintf(stderr, "XNNPACK is not supported in this build");
++      return -1;
++#endif
++    }
++
++    if (test_config.enable_webgpu) {
++#ifdef USE_WEBGPU
++      sf.AppendExecutionProvider("WebGPU", {});
++#else
++      fprintf(stderr, "WebGPU is not supported in this build");
++      return -1;
++#endif
++    }
++
++    if (test_config.user_graph_optimization_level_set) {
++      sf.SetGraphOptimizationLevel(test_config.graph_optimization_level);
++    }
++
++    // TODO: Get these from onnx_backend_test_series_filters.jsonc.
++    // Permanently exclude following tests because ORT support only opset staring from 7,
++    // Please make no more changes to the list
++    static const ORTCHAR_T* immutable_broken_tests[] =
++        {
++            ORT_TSTR("AvgPool1d"),
++            ORT_TSTR("AvgPool1d_stride"),
++            ORT_TSTR("AvgPool2d"),
++            ORT_TSTR("AvgPool2d_stride"),
++            ORT_TSTR("AvgPool3d"),
++            ORT_TSTR("AvgPool3d_stride"),
++            ORT_TSTR("AvgPool3d_stride1_pad0_gpu_input"),
++            ORT_TSTR("BatchNorm1d_3d_input_eval"),
++            ORT_TSTR("BatchNorm2d_eval"),
++            ORT_TSTR("BatchNorm2d_momentum_eval"),
++            ORT_TSTR("BatchNorm3d_eval"),
++            ORT_TSTR("BatchNorm3d_momentum_eval"),
++            ORT_TSTR("GLU"),
++            ORT_TSTR("GLU_dim"),
++            ORT_TSTR("Linear"),
++            ORT_TSTR("PReLU_1d"),
++            ORT_TSTR("PReLU_1d_multiparam"),
++            ORT_TSTR("PReLU_2d"),
++            ORT_TSTR("PReLU_2d_multiparam"),
++            ORT_TSTR("PReLU_3d"),
++            ORT_TSTR("PReLU_3d_multiparam"),
++            ORT_TSTR("PoissonNLLLLoss_no_reduce"),
++            ORT_TSTR("Softsign"),
++            ORT_TSTR("operator_add_broadcast"),
++            ORT_TSTR("operator_add_size1_broadcast"),
++            ORT_TSTR("operator_add_size1_right_broadcast"),
++            ORT_TSTR("operator_add_size1_singleton_broadcast"),
++            ORT_TSTR("operator_addconstant"),
++            ORT_TSTR("operator_addmm"),
++            ORT_TSTR("operator_basic"),
++            ORT_TSTR("operator_mm"),
++            ORT_TSTR("operator_non_float_params"),
++            ORT_TSTR("operator_params"),
++            ORT_TSTR("operator_pow"),
++            ORT_TSTR("bernoulli"),
++            ORT_TSTR("bernoulli_double"),
++            ORT_TSTR("bernoulli_seed")};
++
++    // float 8 types are not supported by any language.
++    static const ORTCHAR_T* float8_tests[] = {
++        ORT_TSTR("cast_FLOAT16_to_FLOAT8E4M3FN"),
++        ORT_TSTR("cast_FLOAT16_to_FLOAT8E4M3FNUZ"),
++        ORT_TSTR("cast_FLOAT16_to_FLOAT8E5M2"),
++        ORT_TSTR("cast_FLOAT16_to_FLOAT8E5M2FNUZ"),
++        ORT_TSTR("cast_FLOAT8E4M3FNUZ_to_FLOAT"),
++        ORT_TSTR("cast_FLOAT8E4M3FNUZ_to_FLOAT16"),
++        ORT_TSTR("cast_FLOAT8E4M3FN_to_FLOAT"),
++        ORT_TSTR("cast_FLOAT8E4M3FN_to_FLOAT16"),
++        ORT_TSTR("cast_FLOAT8E5M2FNUZ_to_FLOAT"),
++        ORT_TSTR("cast_FLOAT8E5M2FNUZ_to_FLOAT16"),
++        ORT_TSTR("cast_FLOAT8E5M2_to_FLOAT"),
++        ORT_TSTR("cast_FLOAT8E5M2_to_FLOAT16"),
++        ORT_TSTR("cast_FLOAT_to_FLOAT8E4M3FN"),
++        ORT_TSTR("cast_FLOAT_to_FLOAT8E4M3FNUZ"),
++        ORT_TSTR("cast_FLOAT_to_FLOAT8E5M2"),
++        ORT_TSTR("cast_FLOAT_to_FLOAT8E5M2FNUZ"),
++        ORT_TSTR("cast_no_saturate_FLOAT16_to_FLOAT8E4M3FN"),
++        ORT_TSTR("cast_no_saturate_FLOAT16_to_FLOAT8E4M3FNUZ"),
++        ORT_TSTR("cast_no_saturate_FLOAT16_to_FLOAT8E5M2"),
++        ORT_TSTR("cast_no_saturate_FLOAT16_to_FLOAT8E5M2FNUZ"),
++        ORT_TSTR("cast_no_saturate_FLOAT_to_FLOAT8E4M3FN"),
++        ORT_TSTR("cast_no_saturate_FLOAT_to_FLOAT8E4M3FNUZ"),
++        ORT_TSTR("cast_no_saturate_FLOAT_to_FLOAT8E5M2"),
++        ORT_TSTR("cast_no_saturate_FLOAT_to_FLOAT8E5M2FNUZ"),
++        ORT_TSTR("castlike_FLOAT8E4M3FNUZ_to_FLOAT"),
++        ORT_TSTR("castlike_FLOAT8E4M3FNUZ_to_FLOAT_expanded"),
++        ORT_TSTR("castlike_FLOAT8E4M3FN_to_FLOAT"),
++        ORT_TSTR("castlike_FLOAT8E4M3FN_to_FLOAT_expanded"),
++        ORT_TSTR("castlike_FLOAT8E5M2FNUZ_to_FLOAT"),
++        ORT_TSTR("castlike_FLOAT8E5M2FNUZ_to_FLOAT_expanded"),
++        ORT_TSTR("castlike_FLOAT8E5M2_to_FLOAT"),
++        ORT_TSTR("castlike_FLOAT8E5M2_to_FLOAT_expanded"),
++        ORT_TSTR("castlike_FLOAT_to_BFLOAT16"),
++        ORT_TSTR("castlike_FLOAT_to_BFLOAT16_expanded"),
++        ORT_TSTR("castlike_FLOAT_to_FLOAT8E4M3FN"),
++        ORT_TSTR("castlike_FLOAT_to_FLOAT8E4M3FNUZ"),
++        ORT_TSTR("castlike_FLOAT_to_FLOAT8E4M3FNUZ_expanded"),
++        ORT_TSTR("castlike_FLOAT_to_FLOAT8E4M3FN_expanded"),
++        ORT_TSTR("castlike_FLOAT_to_FLOAT8E5M2"),
++        ORT_TSTR("castlike_FLOAT_to_FLOAT8E5M2FNUZ"),
++        ORT_TSTR("castlike_FLOAT_to_FLOAT8E5M2FNUZ_expanded"),
++        ORT_TSTR("castlike_FLOAT_to_FLOAT8E5M2_expanded"),
++        ORT_TSTR("dequantizelinear_e4m3fn"),
++        ORT_TSTR("dequantizelinear_e5m2"),
++        ORT_TSTR("quantizelinear_e4m3fn"),
++        ORT_TSTR("quantizelinear_e5m2")};
++
++    static const ORTCHAR_T* cuda_flaky_tests[] = {
++        ORT_TSTR("fp16_inception_v1"),
++        ORT_TSTR("fp16_shufflenet"), ORT_TSTR("fp16_tiny_yolov2")};
++    static const ORTCHAR_T* dml_disabled_tests[] = {ORT_TSTR("mlperf_ssd_resnet34_1200"), ORT_TSTR("mlperf_ssd_mobilenet_300"), ORT_TSTR("mask_rcnn"), ORT_TSTR("faster_rcnn"), ORT_TSTR("tf_pnasnet_large"), ORT_TSTR("zfnet512"), ORT_TSTR("keras2coreml_Dense_ImageNet")};
++    static const ORTCHAR_T* dnnl_disabled_tests[] = {ORT_TSTR("test_densenet121"), ORT_TSTR("test_resnet18v2"), ORT_TSTR("test_resnet34v2"), ORT_TSTR("test_resnet50v2"), ORT_TSTR("test_resnet101v2"),
++                                                     ORT_TSTR("test_resnet101v2"), ORT_TSTR("test_vgg19"), ORT_TSTR("tf_inception_resnet_v2"), ORT_TSTR("tf_inception_v1"), ORT_TSTR("tf_inception_v3"), ORT_TSTR("tf_inception_v4"), ORT_TSTR("tf_mobilenet_v1_1.0_224"),
++                                                     ORT_TSTR("tf_mobilenet_v2_1.0_224"), ORT_TSTR("tf_mobilenet_v2_1.4_224"), ORT_TSTR("tf_nasnet_large"), ORT_TSTR("tf_pnasnet_large"), ORT_TSTR("tf_resnet_v1_50"), ORT_TSTR("tf_resnet_v1_101"), ORT_TSTR("tf_resnet_v1_101"),
++                                                     ORT_TSTR("tf_resnet_v2_101"), ORT_TSTR("tf_resnet_v2_152"), ORT_TSTR("batchnorm_example_training_mode"), ORT_TSTR("batchnorm_epsilon_training_mode")};
++    static const ORTCHAR_T* qnn_disabled_tests[] = {
++        ORT_TSTR("nllloss_NCd1d2d3_none_no_weight_negative_ii"),
++        ORT_TSTR("nllloss_NCd1d2d3_none_no_weight_negative_ii_expanded"),
++        ORT_TSTR("sce_NCd1d2d3_none_no_weight_negative_ii"),
++        ORT_TSTR("sce_NCd1d2d3_none_no_weight_negative_ii_expanded"),
++        ORT_TSTR("sce_NCd1d2d3_none_no_weight_negative_ii_log_prob"),
++        ORT_TSTR("sce_NCd1d2d3_none_no_weight_negative_ii_log_prob_expanded"),
++        ORT_TSTR("gather_negative_indices"),
++        ORT_TSTR("nllloss_NCd1d2_with_weight_reduction_sum"),
++        ORT_TSTR("nllloss_NCd1d2_with_weight_reduction_sum_ii_expanded"),
++        ORT_TSTR("nllloss_NCd1d2_with_weight"),
++        ORT_TSTR("nllloss_NCd1d2_with_weight_expanded"),
++        ORT_TSTR("nllloss_NCd1d2_with_weight_reduction_sum_expanded"),
++        ORT_TSTR("nllloss_NCd1d2_with_weight_reduction_sum_ii"),
++        ORT_TSTR("nllloss_NCd1_weight_ii_expanded"),
++        ORT_TSTR("nllloss_NCd1_ii_expanded"),
++        ORT_TSTR("nllloss_NCd1d2_no_weight_reduction_mean_ii_expanded"),
++        ORT_TSTR("sce_none_weights"),
++        ORT_TSTR("sce_none_weights_log_prob"),
++        ORT_TSTR("sce_NCd1d2d3_sum_weight_high_ii_log_prob"),
++        ORT_TSTR("sce_NCd1d2d3_sum_weight_high_ii_log_prob_expanded"),
++        ORT_TSTR("sce_NCd1d2d3_sum_weight_high_ii"),
++        ORT_TSTR("sce_NCd1d2d3_sum_weight_high_ii_expanded"),
++        ORT_TSTR("sce_none_weights_log_prob_expanded"),
++        ORT_TSTR("sce_none_weights_expanded"),
++        ORT_TSTR("convtranspose_3d"),
++        ORT_TSTR("gather_elements_negative_indices"),
++        ORT_TSTR("rotary_embedding_3d_input_expanded"),
++        ORT_TSTR("rotary_embedding_expanded"),
++        ORT_TSTR("rotary_embedding_interleaved_expanded"),
++        // QNN don't support fmod = 1
++        ORT_TSTR("mod_mixed_sign_float64"),
++        ORT_TSTR("mod_mixed_sign_float32"),
++        ORT_TSTR("mod_mixed_sign_float16"),
++        ORT_TSTR("mod_int64_fmod"),
++        // QNN lowers mod to cast -> a - b * floor(a/b) -> cast. Cast doesnt support these types
++        ORT_TSTR("mod_mixed_sign_int16"),
++        ORT_TSTR("mod_mixed_sign_int8"),
++        ORT_TSTR("mod_uint16"),
++        ORT_TSTR("mod_uint64")};
++
++    std::unordered_set<std::basic_string<ORTCHAR_T>> all_disabled_tests(std::begin(immutable_broken_tests), std::end(immutable_broken_tests));
++
++    if (test_config.enable_cuda) {
++      all_disabled_tests.insert(std::begin(cuda_flaky_tests), std::end(cuda_flaky_tests));
++    }
++    if (test_config.enable_dml) {
++      all_disabled_tests.insert(std::begin(dml_disabled_tests), std::end(dml_disabled_tests));
++    }
++    if (test_config.enable_dnnl) {
++      // these models run but disabled tests to keep memory utilization low
++      // This will be removed after LRU implementation
++      all_disabled_tests.insert(std::begin(dnnl_disabled_tests), std::end(dnnl_disabled_tests));
++      all_disabled_tests.insert(std::begin(float8_tests), std::end(float8_tests));
++    }
++    // Check if QNN is enabled either via -e qnn flag or --plugin_eps qnn parameter
++    bool qnn_enabled = test_config.enable_qnn;
++    if (!qnn_enabled && !test_config.plugin_ep_list.empty()) {
++      for (const auto& ep_name : test_config.plugin_ep_list) {
++        if (ep_name == "qnn") {
++          qnn_enabled = true;
++          break;
++        }
++      }
++    }
++
++    if (qnn_enabled) {
++      all_disabled_tests.insert(std::begin(qnn_disabled_tests), std::end(qnn_disabled_tests));
++      all_disabled_tests.insert(std::begin(float8_tests), std::end(float8_tests));
++    }
++#if !defined(__amd64__) && !defined(_M_AMD64)
++    // out of memory
++    static const ORTCHAR_T* x86_disabled_tests[] = {ORT_TSTR("mlperf_ssd_resnet34_1200"), ORT_TSTR("mask_rcnn_keras"), ORT_TSTR("mask_rcnn"), ORT_TSTR("faster_rcnn"), ORT_TSTR("vgg19"), ORT_TSTR("coreml_VGG16_ImageNet")};
++    all_disabled_tests.insert(std::begin(x86_disabled_tests), std::end(x86_disabled_tests));
++#endif
++
++    // Check if "qnn" exists in plugin_ep_list to apply QNN-specific broken tests
++    std::string provider_name_for_broken_tests = test_config.provider_name;
++    if (!test_config.plugin_ep_list.empty()) {
++      for (const auto& ep_name : test_config.plugin_ep_list) {
++        if (ep_name == "qnn") {
++          provider_name_for_broken_tests = "qnn";
++          break;
++        }
++      }
++    }
++
++    auto broken_tests = GetBrokenTests(provider_name_for_broken_tests);
++    auto broken_tests_keyword_set = GetBrokenTestsKeyWordSet(provider_name_for_broken_tests);
++    std::vector<ITestCase*> tests;
++    LoadTests(test_config.data_dirs, test_config.whitelisted_test_cases,
++              LoadTestTolerances(test_config.enable_cuda, test_config.enable_openvino, test_config.override_tolerance, test_config.atol, test_config.rtol),
++              all_disabled_tests,
++              std::move(broken_tests),
++              std::move(broken_tests_keyword_set),
++              [&owned_tests, &tests](std::unique_ptr<ITestCase> l) {
++                tests.push_back(l.get());
++                owned_tests.push_back(std::move(l));
++              });
++
++    auto tp = TestEnv::CreateThreadPool(Env::Default());
++    TestEnv test_env(env, sf, tp.get(), std::move(tests), stat, test_config.inference_mode);
++    Status st = test_env.Run(test_config.p_models, test_config.concurrent_session_runs, test_config.repeat_count);
++    if (!st.IsOK()) {
++      fprintf(stderr, "%s\n", st.ErrorMessage().c_str());
++      return -1;
++    }
++    std::string res = stat.ToString();
++    fwrite(res.c_str(), 1, res.size(), stdout);
++  }
++
++  int result = 0;
++  for (const auto& p : stat.GetFailedTest()) {
++    fprintf(stderr, "test %s failed, please fix it\n", p.first.c_str());
++    result = -1;
++  }
++  return result;
++}
++#ifdef _WIN32
++int wmain(int argc, wchar_t* argv[]) {
++#else
++int main(int argc, char* argv[]) {
++#endif
++#ifdef _WIN32
++#if defined(_DEBUG) && !defined(ONNXRUNTIME_ENABLE_MEMLEAK_CHECK)
++  int tmpFlag = _CrtSetDbgFlag(_CRTDBG_REPORT_FLAG);
++  tmpFlag |= _CRTDBG_LEAK_CHECK_DF;
++  tmpFlag |= _CRTDBG_ALLOC_MEM_DF;
++  _CrtSetDbgFlag(tmpFlag);
++  std::cout << "CRT Debug Memory Leak Detection Enabled." << std::endl;
++#endif
++#endif
++
++  Ort::Env env{nullptr};
++  int retval = -1;
++  ORT_TRY {
++    retval = real_main(argc, argv, env);
++  }
++  ORT_CATCH(const std::exception& ex) {
++    ORT_HANDLE_EXCEPTION([&]() {
++      fprintf(stderr, "%s\n", ex.what());
++      retval = -1;
++    });
++  }
++
++  ::google::protobuf::ShutdownProtobufLibrary();
++  return retval;
++}
+diff --git a/onnxruntime/test/onnx/testcase_driver.cc b/onnxruntime/test/onnx/testcase_driver.cc
+index 0e14a0dcb6..06b2872ccc 100644
+--- a/onnxruntime/test/onnx/testcase_driver.cc
++++ b/onnxruntime/test/onnx/testcase_driver.cc
+@@ -5,8 +5,10 @@
+ #include "testcase_driver.h"
+ #include "testcase_request.h"
+ #include "testenv.h"
++#include "utils/macros.h"
+ 
+ #include <core/common/logging/logging.h>
++#include <sstream>
+ 
+ namespace onnxruntime {
+ namespace test {
+@@ -37,7 +39,7 @@ std::vector<std::shared_ptr<TestCaseResult>> TestCaseDriver::RunParallel(const T
+                                                                          size_t concurrent_runs, bool inference_mode) {
+   assert(parallel_models > 1);
+   parallel_models = std::min(parallel_models, test_env.GetTests().size());
+-  LOGF_DEFAULT(ERROR, "Running tests in parallel: at most %u models at any time", static_cast<unsigned int>(parallel_models));
++  TEST_LOG_VERBOSE("Running tests in parallel: at most " << static_cast<unsigned int>(parallel_models) << " models at any time");
+   TestCaseDriver driver(test_env, concurrent_runs, inference_mode);
+   driver.RunModelsAsync(parallel_models);
+   auto results = driver.TakeResults();
+@@ -59,7 +61,7 @@ void TestCaseDriver::RunModelsAsync(size_t parallel_models) {
+   // This thread is not on a threadpool so we are not using it
+   // to run anything. Just wait.
+   Wait();
+-  LOGF_DEFAULT(ERROR, "Running tests finished. Generating report");
++  TEST_LOG_VERBOSE("Running tests finished. Generating report");
+ }
+ 
+ void TestCaseDriver::OnTestCaseComplete(size_t test_case_id, std::shared_ptr<TestCaseResult> result) {
+diff --git a/onnxruntime/test/onnx/testcase_request.cc b/onnxruntime/test/onnx/testcase_request.cc
+index 95c7c89056..3814be0637 100644
+--- a/onnxruntime/test/onnx/testcase_request.cc
++++ b/onnxruntime/test/onnx/testcase_request.cc
+@@ -4,10 +4,12 @@
+ #include "testcase_request.h"
+ #include "dataitem_request.h"
+ #include "TestCase.h"
++#include "utils/macros.h"
+ 
+ #include "core/common/logging/logging.h"
+ #include "core/common/logging/macros.h"
+ 
++#include <iostream>
+ #include <utility>
+ 
+ namespace onnxruntime {
+@@ -39,12 +41,13 @@ bool TestCaseRequestContext::SetupSession() {
+     session_opts_.SetLogId(test_case_name);
+     Ort::Session session{env_, test_case_.GetModelUrl().native().c_str(), session_opts_};
+     session_ = std::move(session);
+-    LOGF_DEFAULT(INFO, "Testing %s\n", test_case_name);
++    TEST_LOG_INFO("Testing " + std::string(test_case_name));
++
+     return true;
+   }
+   ORT_CATCH(const Ort::Exception& ex) {
+     ORT_HANDLE_EXCEPTION([&]() {
+-      LOGF_DEFAULT(ERROR, "Model %s failed to load:%s", test_case_.GetTestCaseName().c_str(), ex.what());
++      TEST_LOG_INFO("Model " + test_case_.GetTestCaseName() + " failed to load: " + ex.what());
+       result_ = std::make_shared<TestCaseResult>(test_case_.GetDataCount(), EXECUTE_RESULT::NOT_SUPPORT, "");
+     });
+   }
+@@ -194,19 +197,19 @@ void TestCaseRequestContext::CalculateAndLogStats() const {
+     std::string s = test_case_.GetDatasetDebugInfoString(i);
+     switch (r) {
+       case EXECUTE_RESULT::RESULT_DIFFERS:
+-        LOGF_DEFAULT(ERROR, "%s: result differs. Dataset:%s\n", test_case_name.c_str(), s.c_str());
++        TEST_LOG_ERROR(test_case_name + ": result differs. Dataset:" + s);
+         break;
+       case EXECUTE_RESULT::SHAPE_MISMATCH:
+-        LOGF_DEFAULT(ERROR, "%s: shape mismatch. Dataset:%s\n", test_case_name.c_str(), s.c_str());
++        TEST_LOG_ERROR(test_case_name + ": shape mismatch. Dataset:" + s);
+         break;
+       case EXECUTE_RESULT::TYPE_MISMATCH:
+-        LOGF_DEFAULT(ERROR, "%s: type mismatch. Dataset:%s\n", test_case_name.c_str(), s.c_str());
++        TEST_LOG_ERROR(test_case_name + ": type mismatch. Dataset:" + s);
+         break;
+       case EXECUTE_RESULT::MODEL_SHAPE_MISMATCH:
+-        LOGF_DEFAULT(ERROR, "%s: shape in model file mismatch. Dataset:%s\n", test_case_name.c_str(), s.c_str());
++        TEST_LOG_ERROR(test_case_name + ": shape in model file mismatch. Dataset:" + s);
+         break;
+       case EXECUTE_RESULT::MODEL_TYPE_MISMATCH:
+-        LOGF_DEFAULT(ERROR, "%s: type in model file mismatch. Dataset:%s\n", test_case_name.c_str(), s.c_str());
++        TEST_LOG_ERROR(test_case_name + ": type in model file mismatch. Dataset:" + s);
+         break;
+       default:
+         // nothing to do
+diff --git a/onnxruntime/test/onnx/utils/macros.h b/onnxruntime/test/onnx/utils/macros.h
+new file mode 100644
+index 0000000000..002a50385a
+--- /dev/null
++++ b/onnxruntime/test/onnx/utils/macros.h
+@@ -0,0 +1,18 @@
++// Copyright (c) Microsoft Corporation. All rights reserved.
++// Licensed under the MIT License.
++
++#pragma once
++
++#include <iostream>
++
++// When onnxruntime is built as a shared library, ORT env is created on the DLL side and same as default logger that comes with it.
++// Since the public API doesn't expose that logger to the host app, we print messages with std::cout instead.
++#ifdef BUILD_SHARED_LIB
++#define TEST_LOG_ERROR(...) std::cerr << __VA_ARGS__ << std::endl
++#define TEST_LOG_INFO(...) std::cout << __VA_ARGS__ << std::endl
++#define TEST_LOG_VERBOSE(...) std::cout << __VA_ARGS__ << std::endl
++#else
++#define TEST_LOG_ERROR(...) LOGS_DEFAULT(ERROR) << __VA_ARGS__
++#define TEST_LOG_INFO(...) LOGS_DEFAULT(INFO) << __VA_ARGS__
++#define TEST_LOG_VERBOSE(...) LOGS_DEFAULT(VERBOSE) << __VA_ARGS__
++#endif
+diff --git a/onnxruntime/test/perftest/strings_helper.cc b/onnxruntime/test/onnx/utils/strings_helper.cc
+similarity index 83%
+rename from onnxruntime/test/perftest/strings_helper.cc
+rename to onnxruntime/test/onnx/utils/strings_helper.cc
+index d9fd2a2a55..951f138890 100644
+--- a/onnxruntime/test/perftest/strings_helper.cc
++++ b/onnxruntime/test/onnx/utils/strings_helper.cc
+@@ -12,49 +12,8 @@
+ #include "core/common/string_utils.h"
+ 
+ namespace onnxruntime {
+-namespace perftest {
+-
+-void ParseSessionConfigs(const std::string& configs_string,
+-                         std::unordered_map<std::string, std::string>& session_configs,
+-                         const std::unordered_set<std::string>& available_keys) {
+-  std::istringstream ss(configs_string);
+-  std::string token;
+-
+-  while (ss >> token) {
+-    if (token == "") {
+-      continue;
+-    }
+-
+-    std::string_view token_sv(token);
+-
+-    auto pos = token_sv.find("|");
+-    if (pos == std::string_view::npos || pos == 0 || pos == token_sv.length()) {
+-      ORT_THROW("Use a '|' to separate the key and value for the run-time option you are trying to use.\n");
+-    }
+-
+-    std::string key(token_sv.substr(0, pos));
+-    std::string value(token_sv.substr(pos + 1));
+-
+-    if (available_keys.empty() == false && available_keys.count(key) == 0) {
+-      // Error: unknown option: {key}
+-      std::string available_keys_str;
+-      for (const auto& av_key : available_keys) {
+-        available_keys_str += av_key;
+-        available_keys_str += ", ";
+-      }
+-      ORT_THROW("[ERROR] wrong key type entered : `", key,
+-                "`. The following runtime key options are available: [", available_keys_str, "]");
+-    }
+-
+-    auto it = session_configs.find(key);
+-    if (it != session_configs.end()) {
+-      // Error: specified duplicate session configuration entry: {key}
+-      ORT_THROW("Specified duplicate session configuration entry: ", key);
+-    }
+-
+-    session_configs.insert(std::make_pair(std::move(key), std::move(value)));
+-  }
+-}
++namespace test {
++namespace utils {
+ 
+ bool ParseDimensionOverride(const std::string& input, std::map<std::string, int64_t>& free_dim_override_map) {
+   std::stringstream ss(input);
+@@ -103,13 +62,55 @@ bool ParseDimensionOverrideFromArgv(int argc, std::vector<std::string>& argv, st
+   return true;
+ }
+ 
++void ParseSessionConfigs(const std::string& configs_string,
++                         std::unordered_map<std::string, std::string>& session_configs,
++                         const std::unordered_set<std::string>& available_keys) {
++  std::istringstream ss(configs_string);
++  std::string token;
++
++  while (ss >> token) {
++    if (token == "") {
++      continue;
++    }
++
++    std::string_view token_sv(token);
++
++    auto pos = token_sv.find("|");
++    if (pos == std::string_view::npos || pos == 0 || pos == token_sv.length()) {
++      ORT_THROW("Use a '|' to separate the key and value for the run-time option you are trying to use.\n");
++    }
++
++    std::string key(token_sv.substr(0, pos));
++    std::string value(token_sv.substr(pos + 1));
++
++    if (available_keys.empty() == false && available_keys.count(key) == 0) {
++      // Error: unknown option: {key}
++      std::string available_keys_str;
++      for (const auto& av_key : available_keys) {
++        available_keys_str += av_key;
++        available_keys_str += ", ";
++      }
++      ORT_THROW("[ERROR] wrong key type entered : `", key,
++                "`. The following runtime key options are available: [", available_keys_str, "]");
++    }
++
++    auto it = session_configs.find(key);
++    if (it != session_configs.end()) {
++      // Error: specified duplicate session configuration entry: {key}
++      ORT_THROW("Specified duplicate session configuration entry: ", key);
++    }
++
++    session_configs.insert(std::make_pair(std::move(key), std::move(value)));
++  }
++}
++
+ void ParseEpOptions(const std::string& input, std::vector<std::unordered_map<std::string, std::string>>& result) {
+-  auto tokens = utils::SplitString(input, ";", true);
++  auto tokens = onnxruntime::utils::SplitString(input, ";", true);
+ 
+   for (const auto& token : tokens) {
+     result.emplace_back();  // Adds a new empty map
+     if (!token.empty()) {
+-      ParseSessionConfigs(std::string(token), result.back());  // only parse non-empty
++      test::utils::ParseSessionConfigs(std::string(token), result.back());  // only parse non-empty
+     }
+     // if token is empty, we still get an empty map in `result`
+   }
+@@ -154,5 +155,33 @@ void ParseEpDeviceFilterKeyValuePairs(const std::string& input, std::vector<std:
+     }
+   }
+ }
+-}  // namespace perftest
++
++std::vector<std::string> ConvertArgvToUtf8Strings(int argc, ORTCHAR_T* argv[]) {
++  std::vector<std::string> utf8_args;
++  utf8_args.reserve(argc);
++  for (int i = 0; i < argc; ++i) {
++    std::string utf8_string = ToUTF8String(argv[i]);
++
++    // Abseil flags doens't natively alias "-h" to "--help".
++    // We make "-h" alias to "--help" here.
++    if (utf8_string == "-h" || utf8_string == "--h") {
++      utf8_args.push_back("--help");
++    } else {
++      utf8_args.push_back(utf8_string);
++    }
++  }
++  return utf8_args;
++}
++
++std::vector<char*> CStringsFromStrings(std::vector<std::string>& utf8_args) {
++  std::vector<char*> utf8_argv;
++  utf8_argv.reserve(utf8_args.size());
++  for (auto& str : utf8_args) {
++    utf8_argv.push_back(&str[0]);
++  }
++  return utf8_argv;
++}
++
++}  // namespace utils
++}  // namespace test
+ }  // namespace onnxruntime
+diff --git a/onnxruntime/test/perftest/strings_helper.h b/onnxruntime/test/onnx/utils/strings_helper.h
+similarity index 81%
+rename from onnxruntime/test/perftest/strings_helper.h
+rename to onnxruntime/test/onnx/utils/strings_helper.h
+index d6c6f6112a..eea7474f22 100644
+--- a/onnxruntime/test/perftest/strings_helper.h
++++ b/onnxruntime/test/onnx/utils/strings_helper.h
+@@ -2,6 +2,8 @@
+ // Copyright (c) 2023 NVIDIA Corporation.
+ // SPDX-FileCopyrightText: Copyright 2024 Arm Limited and/or its affiliates <open-source-office@arm.com>
+ // Licensed under the MIT License.
++#pragma once
++#include "core/session/onnxruntime_cxx_api.h"
+ #include <string_view>
+ #include <map>
+ #include <unordered_map>
+@@ -9,16 +11,17 @@
+ #include <vector>
+ 
+ namespace onnxruntime {
+-namespace perftest {
+-
+-void ParseSessionConfigs(const std::string& configs_string,
+-                         std::unordered_map<std::string, std::string>& session_configs,
+-                         const std::unordered_set<std::string>& available_keys = {});
++namespace test {
++namespace utils {
+ 
+ bool ParseDimensionOverride(const std::string& input, std::map<std::string, int64_t>& free_dim_override_map);
+ 
+ bool ParseDimensionOverrideFromArgv(int argc, std::vector<std::string>& argv, std::string& option, std::map<std::string, int64_t>& free_dim_override_map);
+ 
++void ParseSessionConfigs(const std::string& configs_string,
++                         std::unordered_map<std::string, std::string>& session_configs,
++                         const std::unordered_set<std::string>& available_keys = {});
++
+ void ParseEpList(const std::string& input, std::vector<std::string>& result);
+ 
+ void ParseEpOptions(const std::string& input, std::vector<std::unordered_map<std::string, std::string>>& result);
+@@ -26,5 +29,11 @@ void ParseEpOptions(const std::string& input, std::vector<std::unordered_map<std
+ void ParseEpDeviceIndexList(const std::string& input, std::vector<int>& result);
+ 
+ void ParseEpDeviceFilterKeyValuePairs(const std::string& input, std::vector<std::pair<std::string, std::string>>& result);
+-}  // namespace perftest
++
++std::vector<std::string> ConvertArgvToUtf8Strings(int argc, ORTCHAR_T* argv[]);
++
++std::vector<char*> CStringsFromStrings(std::vector<std::string>& utf8_args);
++
++}  // namespace utils
++}  // namespace test
+ }  // namespace onnxruntime
+diff --git a/onnxruntime/test/onnx/utils/utils.cc b/onnxruntime/test/onnx/utils/utils.cc
+new file mode 100644
+index 0000000000..67d317f6d4
+--- /dev/null
++++ b/onnxruntime/test/onnx/utils/utils.cc
+@@ -0,0 +1,93 @@
++// Copyright (c) Microsoft Corporation. All rights reserved.
++// Licensed under the MIT License.
++#include "utils.h"
++#include "strings_helper.h"
++#include <core/platform/path_lib.h>
++
++#include <cstdint>
++#include <filesystem>
++
++#ifndef _WIN32
++#include <thread>
++#endif
++
++namespace onnxruntime {
++namespace test {
++namespace utils {
++void ListEpDevices(const Ort::Env& env) {
++  std::vector<Ort::ConstEpDevice> ep_devices = env.GetEpDevices();
++
++  for (size_t i = 0; i < ep_devices.size(); ++i) {
++    auto device = ep_devices[i];
++    std::string device_info_msg = "===== device id " + std::to_string(i) + " ======\n";
++    device_info_msg += "name: " + std::string(device.EpName()) + "\n";
++    device_info_msg += "vendor: " + std::string(device.EpVendor()) + "\n";
++
++    auto metadata = device.EpMetadata();
++    std::unordered_map<std::string, std::string> metadata_entries = metadata.GetKeyValuePairs();
++    if (!metadata_entries.empty()) {
++      device_info_msg += "metadata:\n";
++    }
++
++    for (auto& entry : metadata_entries) {
++      device_info_msg += "  " + entry.first + ": " + entry.second + "\n";
++    }
++    device_info_msg += "\n";
++    fprintf(stdout, "%s", device_info_msg.c_str());
++  }
++}
++
++void RegisterExecutionProviderLibrary(Ort::Env& env,
++                                      std::basic_string<ORTCHAR_T>& plugin_ep_names_and_libs,
++                                      std::vector<std::string>& registered_plugin_eps) {
++  if (!plugin_ep_names_and_libs.empty()) {
++    std::unordered_map<std::string, std::string> ep_names_to_libs;
++    ParseSessionConfigs(onnxruntime::ToUTF8String(plugin_ep_names_and_libs), ep_names_to_libs);
++    if (ep_names_to_libs.size() > 0) {
++      for (auto& pair : ep_names_to_libs) {
++        const std::filesystem::path library_path = pair.second;
++        const std::string registration_name = pair.first;
++        env.RegisterExecutionProviderLibrary(registration_name.c_str(), ToPathString(library_path.string()).c_str());
++        registered_plugin_eps.push_back(registration_name);
++      }
++    }
++  }
++}
++
++void UnregisterExecutionProviderLibrary(Ort::Env& env, std::vector<std::string>& registered_plugin_eps) {
++  for (auto& registration_name : registered_plugin_eps) {
++    env.UnregisterExecutionProviderLibrary(registration_name.c_str());
++  }
++}
++
++#ifdef _WIN32
++int GetNumCpuCores() {
++  SYSTEM_LOGICAL_PROCESSOR_INFORMATION buffer[256];
++  DWORD returnLength = sizeof(buffer);
++  if (GetLogicalProcessorInformation(buffer, &returnLength) == FALSE) {
++    // try GetSystemInfo
++    SYSTEM_INFO sysInfo;
++    GetSystemInfo(&sysInfo);
++    if (sysInfo.dwNumberOfProcessors <= 0) {
++      ORT_THROW("Fatal error: 0 count processors from GetSystemInfo");
++    }
++    // This is the number of logical processors in the current group
++    return sysInfo.dwNumberOfProcessors;
++  }
++  int processorCoreCount = 0;
++  int count = (int)(returnLength / sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION));
++  for (int i = 0; i != count; ++i) {
++    if (buffer[i].Relationship == RelationProcessorCore) {
++      ++processorCoreCount;
++    }
++  }
++  if (!processorCoreCount) ORT_THROW("Fatal error: 0 count processors from GetLogicalProcessorInformation");
++  return processorCoreCount;
++}
++#else
++int GetNumCpuCores() { return static_cast<int>(std::thread::hardware_concurrency()); }
++#endif
++
++}  // namespace utils
++}  // namespace test
++}  // namespace onnxruntime
+diff --git a/onnxruntime/test/onnx/utils/utils.h b/onnxruntime/test/onnx/utils/utils.h
+new file mode 100644
+index 0000000000..8642945153
+--- /dev/null
++++ b/onnxruntime/test/onnx/utils/utils.h
+@@ -0,0 +1,24 @@
++// Copyright (c) Microsoft Corporation. All rights reserved.
++// Licensed under the MIT License.
++
++#pragma once
++#include "core/session/onnxruntime_cxx_api.h"
++#include <memory>
++
++namespace onnxruntime {
++namespace test {
++namespace utils {
++
++void RegisterExecutionProviderLibrary(Ort::Env& env,
++                                      std::basic_string<ORTCHAR_T>& plugin_ep_names_and_libs,
++                                      std::vector<std::string>& registered_plugin_eps);
++
++void UnregisterExecutionProviderLibrary(Ort::Env& env, std::vector<std::string>& registered_plugin_eps);
++
++void ListEpDevices(const Ort::Env& env);
++
++int GetNumCpuCores();
++
++}  // namespace utils
++}  // namespace test
++}  // namespace onnxruntime
+diff --git a/onnxruntime/test/perftest/command_args_parser.cc b/onnxruntime/test/perftest/command_args_parser.cc
+index e21120e62e..cb583812e1 100644
+--- a/onnxruntime/test/perftest/command_args_parser.cc
++++ b/onnxruntime/test/perftest/command_args_parser.cc
+@@ -19,7 +19,7 @@
+ #include <core/session/onnxruntime_run_options_config_keys.h>
+ 
+ #include "test_configuration.h"
+-#include "strings_helper.h"
++#include "test/onnx/utils/strings_helper.h"
+ 
+ #ifdef _MSC_VER
+ #pragma warning(push)
+@@ -233,8 +233,8 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
+   absl::SetFlagsUsageConfig(config);
+   absl::SetProgramUsageMessage(CustomUsageMessage());
+ 
+-  auto utf8_argv_strings = utils::ConvertArgvToUtf8Strings(argc, argv);
+-  auto utf8_argv = utils::CStringsFromStrings(utf8_argv_strings);
++  auto utf8_argv_strings = test::utils::ConvertArgvToUtf8Strings(argc, argv);
++  auto utf8_argv = test::utils::CStringsFromStrings(utf8_argv_strings);
+   auto positional = absl::ParseCommandLine(static_cast<int>(utf8_argv.size()), utf8_argv.data());
+ 
+   // -f
+@@ -245,7 +245,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
+       // To preserve the previous usage of '-f', where users may specify it multiple times to override different dimension names,
+       // we need to manually parse argv.
+       std::string option = "f";
+-      if (!ParseDimensionOverrideFromArgv(argc, utf8_argv_strings, option, test_config.run_config.free_dim_name_overrides)) {
++      if (!test::utils::ParseDimensionOverrideFromArgv(argc, utf8_argv_strings, option, test_config.run_config.free_dim_name_overrides)) {
+         return false;
+       }
+     }
+@@ -257,7 +257,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
+     if (!dim_override_str.empty()) {
+       // Same reason as '-f' above to manully parse argv.
+       std::string option = "F";
+-      if (!ParseDimensionOverrideFromArgv(argc, utf8_argv_strings, option, test_config.run_config.free_dim_denotation_overrides)) {
++      if (!test::utils::ParseDimensionOverrideFromArgv(argc, utf8_argv_strings, option, test_config.run_config.free_dim_denotation_overrides)) {
+         return false;
+       }
+     }
+@@ -493,7 +493,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
+     const auto& session_configs = absl::GetFlag(FLAGS_C);
+     if (!session_configs.empty()) {
+       ORT_TRY {
+-        ParseSessionConfigs(session_configs, test_config.run_config.session_config_entries);
++        test::utils::ParseSessionConfigs(session_configs, test_config.run_config.session_config_entries);
+       }
+       ORT_CATCH(const std::exception& ex) {
+         ORT_HANDLE_EXCEPTION([&]() {
+@@ -537,7 +537,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
+   // --plugin_eps
+   {
+     const auto& plugin_eps = absl::GetFlag(FLAGS_plugin_eps);
+-    if (!plugin_eps.empty()) ParseEpList(plugin_eps, test_config.machine_config.plugin_provider_type_list);
++    if (!plugin_eps.empty()) test::utils::ParseEpList(plugin_eps, test_config.machine_config.plugin_provider_type_list);
+   }
+ 
+   // --plugin_ep_options
+@@ -563,7 +563,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
+     const auto& filter_ep_devices = absl::GetFlag(FLAGS_filter_ep_devices);
+     if (!filter_ep_devices.empty()) {
+       ORT_TRY {
+-        ParseEpDeviceFilterKeyValuePairs(filter_ep_devices, test_config.filter_ep_device_kv_pairs);
++        test::utils::ParseEpDeviceFilterKeyValuePairs(filter_ep_devices, test_config.filter_ep_device_kv_pairs);
+       }
+       ORT_CATCH(const std::exception& ex) {
+         ORT_HANDLE_EXCEPTION([&]() {
+diff --git a/onnxruntime/test/perftest/common_utils.cc b/onnxruntime/test/perftest/common_utils.cc
+index 63882c64c2..8b4ce43356 100644
+--- a/onnxruntime/test/perftest/common_utils.cc
++++ b/onnxruntime/test/perftest/common_utils.cc
+@@ -2,7 +2,7 @@
+ // Licensed under the MIT License.
+ 
+ #include "test/perftest/utils.h"
+-#include "test/perftest/strings_helper.h"
++#include "test/onnx/utils/strings_helper.h"
+ #include <core/platform/path_lib.h>
+ 
+ #include <cstdint>
+@@ -13,83 +13,6 @@ namespace onnxruntime {
+ namespace perftest {
+ namespace utils {
+ 
+-void ListEpDevices(const Ort::Env& env) {
+-  std::vector<Ort::ConstEpDevice> ep_devices = env.GetEpDevices();
+-
+-  for (size_t i = 0; i < ep_devices.size(); ++i) {
+-    auto device = ep_devices[i];
+-    std::string device_info_msg = "===== device id " + std::to_string(i) + " ======\n";
+-    device_info_msg += "name: " + std::string(device.EpName()) + "\n";
+-    device_info_msg += "vendor: " + std::string(device.EpVendor()) + "\n";
+-
+-    auto metadata = device.EpMetadata();
+-    std::unordered_map<std::string, std::string> metadata_entries = metadata.GetKeyValuePairs();
+-    if (!metadata_entries.empty()) {
+-      device_info_msg += "metadata:\n";
+-    }
+-
+-    for (auto& entry : metadata_entries) {
+-      device_info_msg += "  " + entry.first + ": " + entry.second + "\n";
+-    }
+-    device_info_msg += "\n";
+-    fprintf(stdout, "%s", device_info_msg.c_str());
+-  }
+-}
+-
+-void RegisterExecutionProviderLibrary(Ort::Env& env, PerformanceTestConfig& test_config) {
+-  if (!test_config.plugin_ep_names_and_libs.empty()) {
+-    std::unordered_map<std::string, std::string> ep_names_to_libs;
+-    ParseSessionConfigs(ToUTF8String(test_config.plugin_ep_names_and_libs), ep_names_to_libs);
+-    if (ep_names_to_libs.size() > 0) {
+-      for (auto& pair : ep_names_to_libs) {
+-        const std::filesystem::path library_path = pair.second;
+-        const std::string registration_name = pair.first;
+-        Ort::Status status(Ort::GetApi().RegisterExecutionProviderLibrary(env, registration_name.c_str(), ToPathString(library_path.string()).c_str()));
+-        if (status.IsOK()) {
+-          test_config.registered_plugin_eps.push_back(registration_name);
+-        } else {
+-          fprintf(stderr, "Can't register %s plugin library: %s\n", registration_name.c_str(), status.GetErrorMessage().c_str());
+-        }
+-      }
+-    }
+-  }
+-}
+-
+-void UnregisterExecutionProviderLibrary(Ort::Env& env, PerformanceTestConfig& test_config) {
+-  for (auto& registration_name : test_config.registered_plugin_eps) {
+-    Ort::Status status(Ort::GetApi().UnregisterExecutionProviderLibrary(env, registration_name.c_str()));
+-    if (!status.IsOK()) {
+-      fprintf(stderr, "%s", status.GetErrorMessage().c_str());
+-    }
+-  }
+-}
+-
+-std::vector<std::string> ConvertArgvToUtf8Strings(int argc, ORTCHAR_T* argv[]) {
+-  std::vector<std::string> utf8_args;
+-  utf8_args.reserve(argc);
+-  for (int i = 0; i < argc; ++i) {
+-    std::string utf8_string = ToUTF8String(argv[i]);
+-
+-    // Abseil flags doens't natively alias "-h" to "--help".
+-    // We make "-h" alias to "--help" here.
+-    if (utf8_string == "-h" || utf8_string == "--h") {
+-      utf8_args.push_back("--help");
+-    } else {
+-      utf8_args.push_back(utf8_string);
+-    }
+-  }
+-  return utf8_args;
+-}
+-
+-std::vector<char*> CStringsFromStrings(std::vector<std::string>& utf8_args) {
+-  std::vector<char*> utf8_argv;
+-  utf8_argv.reserve(utf8_args.size());
+-  for (auto& str : utf8_args) {
+-    utf8_argv.push_back(&str[0]);
+-  }
+-  return utf8_argv;
+-}
+-
+ void AppendPluginExecutionProviders(Ort::Env& env,
+                                     Ort::SessionOptions& session_options,
+                                     const PerformanceTestConfig& test_config) {
+@@ -109,7 +32,7 @@ void AppendPluginExecutionProviders(Ort::Env& env,
+   if (!test_config.selected_ep_device_indices.empty()) {
+     std::vector<int> device_list;
+     device_list.reserve(test_config.selected_ep_device_indices.size());
+-    ParseEpDeviceIndexList(test_config.selected_ep_device_indices, device_list);
++    test::utils::ParseEpDeviceIndexList(test_config.selected_ep_device_indices, device_list);
+     for (auto index : device_list) {
+       if (static_cast<size_t>(index) > (ep_devices.size() - 1)) {
+         fprintf(stderr, "%s", "The device index provided is not correct. Will skip this device id.");
+@@ -175,7 +98,7 @@ void AppendPluginExecutionProviders(Ort::Env& env,
+ 
+   // EP's associated provider option lists
+   std::vector<std::unordered_map<std::string, std::string>> ep_options_list;
+-  ParseEpOptions(ep_option_string, ep_options_list);
++  test::utils::ParseEpOptions(ep_option_string, ep_options_list);
+ 
+   // If user only provide the EPs' provider option lists for the first several EPs,
+   // add empty provider option lists for the rest EPs.
+diff --git a/onnxruntime/test/perftest/main.cc b/onnxruntime/test/perftest/main.cc
+index 512f217a77..c1fd4663be 100644
+--- a/onnxruntime/test/perftest/main.cc
++++ b/onnxruntime/test/perftest/main.cc
+@@ -6,8 +6,9 @@
+ #include <random>
+ #include "command_args_parser.h"
+ #include "performance_runner.h"
++#include "test/onnx/utils/utils.h"
++#include "test/onnx/utils/strings_helper.h"
+ #include "utils.h"
+-#include "strings_helper.h"
+ #include <google/protobuf/stubs/common.h>
+ 
+ using namespace onnxruntime;
+@@ -48,7 +49,7 @@ int real_main(int argc, char* argv[]) {
+   }
+ 
+   if (!test_config.plugin_ep_names_and_libs.empty()) {
+-    perftest::utils::RegisterExecutionProviderLibrary(env, test_config);
++    test::utils::RegisterExecutionProviderLibrary(env, test_config.plugin_ep_names_and_libs, test_config.registered_plugin_eps);
+   }
+ 
+   // Unregister all registered plugin EP libraries before program exits.
+@@ -58,12 +59,12 @@ int real_main(int argc, char* argv[]) {
+   // See "ep_device.ep_factory->ReleaseAllocator" in Environment::CreateSharedAllocatorImpl.
+   auto unregister_plugin_eps_at_scope_exit = gsl::finally([&]() {
+     if (!test_config.registered_plugin_eps.empty()) {
+-      perftest::utils::UnregisterExecutionProviderLibrary(env, test_config);  // this won't throw
++      test::utils::UnregisterExecutionProviderLibrary(env, test_config.registered_plugin_eps);  // this won't throw
+     }
+   });
+ 
+   if (test_config.list_available_ep_devices) {
+-    perftest::utils::ListEpDevices(env);
++    test::utils::ListEpDevices(env);
+     if (test_config.registered_plugin_eps.empty()) {
+       fprintf(stdout, "No plugin execution provider libraries are registered. Please specify them using \"--plugin_ep_libs\"; otherwise, only CPU may be available.\n");
+     }
+diff --git a/onnxruntime/test/perftest/ort_test_session.cc b/onnxruntime/test/perftest/ort_test_session.cc
+index 71f9050730..1e879bf5df 100644
+--- a/onnxruntime/test/perftest/ort_test_session.cc
++++ b/onnxruntime/test/perftest/ort_test_session.cc
+@@ -20,8 +20,8 @@
+ #include <assert.h>
+ #include "providers.h"
+ #include "TestCase.h"
+-#include "strings_helper.h"
+ #include "utils.h"
++#include "test/onnx/utils/strings_helper.h"
+ 
+ #ifdef USE_OPENVINO
+ #include "nlohmann/json.hpp"
+@@ -252,13 +252,13 @@ OnnxRuntimeTestSession::OnnxRuntimeTestSession(Ort::Env& env, std::random_device
+ #else
+     std::string option_string = performance_test_config.run_config.ep_runtime_config_string;
+ #endif
+-    ParseSessionConfigs(option_string, provider_options,
++    test::utils::ParseSessionConfigs(option_string, provider_options,
+                         {"backend_type", "backend_path", "profiling_file_path", "profiling_level",
+-                         "rpc_control_latency", "vtcm_mb", "soc_model", "device_id", "htp_performance_mode", "op_packages",
+-                         "qnn_saver_path", "htp_graph_finalization_optimization_mode", "qnn_context_priority",
+-                         "htp_arch", "enable_htp_fp16_precision", "offload_graph_io_quantization",
+-                         "enable_htp_spill_fill_buffer", "enable_htp_shared_memory_allocator", "dump_json_qnn_graph",
+-                         "json_qnn_graph_dir", "disable_file_mapped_weights", "htp_bf16_enable", "enable_vtcm_backup_buffer_sharing"});
++                              "rpc_control_latency", "vtcm_mb", "soc_model", "device_id", "htp_performance_mode", "op_packages",
++                             "qnn_saver_path", "htp_graph_finalization_optimization_mode", "qnn_context_priority",
++                             "htp_arch", "enable_htp_fp16_precision", "offload_graph_io_quantization",
++                             "enable_htp_spill_fill_buffer", "enable_htp_shared_memory_allocator", "dump_json_qnn_graph",
++                             "json_qnn_graph_dir", "disable_file_mapped_weights", "htp_bf16_enable", "enable_vtcm_backup_buffer_sharing"});
+     for (const auto& provider_option : provider_options) {
+       const std::string& key = provider_option.first;
+       const std::string& value = provider_option.second;
+@@ -427,7 +427,7 @@ select from 'TF8', 'TF16', 'UINT8', 'FLOAT', 'ITENSOR'. \n)");
+                                                                    kCoremlProviderOption_ProfileComputePlan,
+                                                                    kCoremlProviderOption_AllowLowPrecisionAccumulationOnGPU,
+                                                                    kCoremlProviderOption_ModelCacheDirectory};
+-    ParseSessionConfigs(ov_string, provider_options, available_keys);
++    test::utils::ParseSessionConfigs(ov_string, provider_options, available_keys);
+ 
+     std::unordered_map<std::string, std::string> available_options = {
+         {"CPUAndNeuralEngine", "1"},
+diff --git a/onnxruntime/test/perftest/utils.h b/onnxruntime/test/perftest/utils.h
+index c008273a3d..e630d1b098 100644
+--- a/onnxruntime/test/perftest/utils.h
++++ b/onnxruntime/test/perftest/utils.h
+@@ -23,16 +23,6 @@ class ICPUUsage {
+ 
+ std::unique_ptr<ICPUUsage> CreateICPUUsage();
+ 
+-std::vector<std::string> ConvertArgvToUtf8Strings(int argc, ORTCHAR_T* argv[]);
+-
+-std::vector<char*> CStringsFromStrings(std::vector<std::string>& utf8_args);
+-
+-void RegisterExecutionProviderLibrary(Ort::Env& env, PerformanceTestConfig& test_config);
+-
+-void UnregisterExecutionProviderLibrary(Ort::Env& env, PerformanceTestConfig& test_config);
+-
+-void ListEpDevices(const Ort::Env& env);
+-
+ void AppendPluginExecutionProviders(Ort::Env& env,
+                                     Ort::SessionOptions& session_options,
+                                     const PerformanceTestConfig& test_config);
+diff --git a/onnxruntime/test/util/compare_ortvalue.cc b/onnxruntime/test/util/values/internal_api/compare_ortvalue.cc
+similarity index 100%
+rename from onnxruntime/test/util/compare_ortvalue.cc
+rename to onnxruntime/test/util/values/internal_api/compare_ortvalue.cc
+diff --git a/onnxruntime/test/util/values/public_api/compare_ortvalue.cc b/onnxruntime/test/util/values/public_api/compare_ortvalue.cc
+new file mode 100644
+index 0000000000..dbd87da166
+--- /dev/null
++++ b/onnxruntime/test/util/values/public_api/compare_ortvalue.cc
+@@ -0,0 +1,849 @@
++// Copyright (c) Microsoft Corporation. All rights reserved.Collapse commentComment on line R1github-advanced-security[bot] commented on Sep 3, 2025 github-advanced-security[bot]on Sep 3, 2025ContributorMore actionsCLANGFORMAT/format
++// Copyright 2023 Amazon.com, Inc. or its affiliates. All Rights Reserved.
++// Licensed under the MIT License.
++
++#include "compare_ortvalue.h"
++
++#include <cmath>
++#include <sstream>
++#include <mutex>
++#include <thread>
++
++#ifdef __GNUC__
++#pragma GCC diagnostic push
++#pragma GCC diagnostic ignored "-Wignored-qualifiers"
++#pragma GCC diagnostic ignored "-Wunused-parameter"
++#pragma GCC diagnostic ignored "-Wunused-result"
++// cmake/external/eigen/Eigen/src/Core/arch/NEON/PacketMath.h:1633:9:
++// error: ‘void* memcpy(void*, const void*, size_t)’ copying an object of non-trivial type ‘Eigen::internal::Packet4c’
++// {aka ‘struct Eigen::internal::eigen_packet_wrapper<int, 2>’} from an array of ‘const int8_t’
++// {aka ‘const signed char’} [-Werror=class-memaccess]
++#ifdef HAS_CLASS_MEMACCESS
++#pragma GCC diagnostic ignored "-Wclass-memaccess"
++#endif
++#endif
++#include <google/protobuf/message_lite.h>
++#include <Eigen/Core>
++#include <Eigen/src/Core/arch/Default/Half.h>
++#ifdef __GNUC__
++#pragma GCC diagnostic pop
++#endif
++
++#include "core/graph/onnx_protobuf.h"
++#include <core/session/onnxruntime_cxx_api.h>
++#include "core/common/common.h"
++#include "core/common/float16.h"
++
++using namespace onnxruntime;
++
++#if (!EIGEN_VERSION_AT_LEAST(3, 3, 6))
++namespace Eigen {
++namespace half_impl {
++using __half_raw = ::Eigen::half_impl::__half;
++}
++}  // namespace Eigen
++#endif
++
++#define TEST_RETURN_IF_NOT(condition, compare_result, ...)                                                    \
++  if (!(condition)) {                                                                                         \
++    return std::make_pair(compare_result, ::onnxruntime::MakeString(ORT_WHERE.ToString(), " ", __VA_ARGS__)); \
++  }
++
++#define TEST_RETURN_IF_ERROR(stmt, ...)                                                                                \
++  {                                                                                                                    \
++    auto result_pair = (stmt);                                                                                         \
++    if (result_pair.first != COMPARE_RESULT::SUCCESS) {                                                                \
++      result_pair.second = ::onnxruntime::MakeString(ORT_WHERE.ToString(), " ", __VA_ARGS__, " ", result_pair.second); \
++      return result_pair;                                                                                              \
++    }                                                                                                                  \
++  }
++
++namespace {
++
++const char* TensorElementTypeToString(ONNXTensorElementDataType type) {
++  switch (type) {
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED:
++      return "undefined";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
++      return "float";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
++      return "uint8";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
++      return "int8";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16:
++      return "uint16";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16:
++      return "int16";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:
++      return "int32";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:
++      return "int64";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_STRING:
++      return "string";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL:
++      return "bool";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16:
++      return "float16";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE:
++      return "double";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32:
++      return "uint32";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64:
++      return "uint64";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX64:
++      return "complex64";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_COMPLEX128:
++      return "complex128";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16:
++      return "bfloat16";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E4M3FN:
++      return "float8e4m3fn";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E4M3FNUZ:
++      return "float8e4m3fnuz";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E5M2:
++      return "float8e5m2";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT8E5M2FNUZ:
++      return "float8e5m2fnuz";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4:
++      return "uint4";
++    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4:
++      return "int4";
++    default:
++      return "unknown";
++  }
++}
++
++std::string TensorShapeToString(std::vector<int64_t> shape) {
++  std::string result;
++
++  result.append("{");
++  bool first = true;
++  for (auto dim : shape) {
++    if (!first) {
++      result.append(",");
++    }
++
++    result.append(std::to_string(dim));
++    first = false;
++  }
++  result.append("}");
++
++  return result;
++}
++
++#define CASE_TYPE(X)                             \
++  case ONNX_NAMESPACE::TensorProto_DataType_##X: \
++    return ONNX_TENSOR_ELEMENT_DATA_TYPE_##X;
++
++ONNXTensorElementDataType CApiElementTypeFromProtoType(int type) {
++  switch (type) {
++    CASE_TYPE(FLOAT)
++    CASE_TYPE(UINT8)
++    CASE_TYPE(INT8)
++    CASE_TYPE(UINT16)
++    CASE_TYPE(INT16)
++    CASE_TYPE(INT32)
++    CASE_TYPE(INT64)
++    CASE_TYPE(STRING)
++    CASE_TYPE(BOOL)
++    CASE_TYPE(FLOAT16)
++    CASE_TYPE(DOUBLE)
++    CASE_TYPE(UINT32)
++    CASE_TYPE(UINT64)
++    CASE_TYPE(COMPLEX64)
++    CASE_TYPE(COMPLEX128)
++    CASE_TYPE(BFLOAT16)
++#if !defined(DISABLE_FLOAT8_TYPES)
++    CASE_TYPE(FLOAT8E4M3FN)
++    CASE_TYPE(FLOAT8E4M3FNUZ)
++    CASE_TYPE(FLOAT8E5M2)
++    CASE_TYPE(FLOAT8E5M2FNUZ)
++#endif
++    CASE_TYPE(UINT4)
++    CASE_TYPE(INT4)
++    default:
++      return ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
++  }
++}
++
++#if defined(__aarch64__) && defined(__linux__)
++template <typename T>
++std::pair<COMPARE_RESULT, std::string> CheckCosineSimilarity(const Ort::ConstValue& actual, const Ort::ConstValue& expected) {
++  const T* actual_output = actual.IsSparseTensor() ? actual.GetSparseTensorValues<T>() : actual.GetTensorData<T>();
++  const T* expected_output = expected.IsSparseTensor() ? expected.GetSparseTensorValues<T>() : expected.GetTensorData<T>();
++
++  size_t element_count = 0;
++  if (expected.IsSparseTensor()) {
++    auto values_shape = expected.GetSparseTensorValuesTypeAndShapeInfo().GetShape();
++    element_count = values_shape.size() > 0 ? values_shape[0] : 0;  // non-zeros
++  } else {
++    element_count = expected.GetTensorTypeAndShapeInfo().GetElementCount();
++  }
++
++  std::pair<COMPARE_RESULT, std::string> res = std::make_pair(COMPARE_RESULT::SUCCESS, "");
++  const T cosine_similarity_threshold = 0.99f;
++
++  T dot = 0.0f, denom_a = 0.0f, denom_b = 0.0f;
++  for (size_t i = 0u; i < element_count; ++i) {
++    if (isnan(expected_output[i]) && isnan(actual_output[i]))
++      continue;
++    if (isinf(expected_output[i]) && isinf(actual_output[i]))
++      continue;
++    dot += expected_output[i] * actual_output[i];
++    denom_a += expected_output[i] * expected_output[i];
++    denom_b += actual_output[i] * actual_output[i];
++  }
++
++  T cos_factor = abs(dot / (sqrt(denom_a) * sqrt(denom_b)));
++  if (cos_factor < cosine_similarity_threshold) {
++    res.first = COMPARE_RESULT::RESULT_DIFFERS;
++    std::ostringstream oss;
++    oss << std::hex << "results differed, cosine similarity factor is " << cos_factor << ".";
++    res.second = oss.str();
++  }
++  return res;
++}
++
++template <typename T>
++std::pair<COMPARE_RESULT, std::string> CheckCloseMatch(const Ort::ConstValue& actual, const Ort::ConstValue& expected) {
++  const T* actual_output = actual.IsSparseTensor() ? actual.GetSparseTensorValues<T>() : actual.GetTensorData<T>();
++  const T* expected_output = expected.IsSparseTensor() ? expected.GetSparseTensorValues<T>() : expected.GetTensorData<T>();
++
++  size_t element_count = 0;
++  if (expected.IsSparseTensor()) {
++    auto values_shape = expected.GetSparseTensorValuesTypeAndShapeInfo().GetShape();
++    element_count = values_shape.size() > 0 ? values_shape[0] : 0;  // non-zeros
++  } else {
++    element_count = expected.GetTensorTypeAndShapeInfo().GetElementCount();
++  }
++
++  const T close_match_threshold = 1.0;
++
++  for (size_t i = 0; i != element_count; ++i) {
++    const T diff = expected_output[i] - actual_output[i];
++    if (std::fabs(diff) > close_match_threshold) {
++      std::ostringstream oss;
++      oss << "expected " << expected_output[i] << ", got " << actual_output[i];
++      return std::make_pair(COMPARE_RESULT::RESULT_DIFFERS, oss.str());
++    }
++  }
++  return std::make_pair(COMPARE_RESULT::SUCCESS, "");
++}
++#endif
++/**
++ * @brief Check if two values are closely matched with given tolerance.
++
++ * Definition of closely match:
++ * > If any of actual_value and expected_value is nan, actual_value and expected_value must both be nan.
++ * > If any of actual_value and expected_value is inf, then actual_value and expected_value
++ *   must both be inf with same sign.
++ * > Otherwise, diff <= tol.
++
++ * @param actual_value The value to be checked.
++ * @param expected_value The baseline value used to check against.
++ * @param diff The absolute difference calculated by the caller from actual_value and expected_value.
++ * @param tol The absolute tolerance.
++ * @return True when closely matched; False otherwise.
++ */
++template <typename T>
++bool IsResultCloselyMatch(const T& actual_value, const T& expected_value, const double diff, const double tol) {
++  if (std::isnan(actual_value) || std::isnan(expected_value))
++    return std::isnan(actual_value) && std::isnan(expected_value);  // not possible both are not nan if diff is nan.
++
++  if (std::isinf(actual_value) || std::isinf(expected_value)) {
++    if (std::isinf(actual_value) && std::isinf(expected_value))
++      return (actual_value > 0 && expected_value > 0) || (actual_value < 0 && expected_value < 0);
++    else
++      return false;
++  }
++
++  return (diff <= tol);
++}
++
++template <typename FLOAT_TYPE>
++std::pair<COMPARE_RESULT, std::string> CompareFloatResult(const Ort::ConstValue& actual, const Ort::ConstValue& expected,
++                                                          double per_sample_tolerance,
++                                                          double relative_per_sample_tolerance, bool post_processing) {
++  const FLOAT_TYPE* actual_output = actual.IsSparseTensor() ? actual.GetSparseTensorValues<FLOAT_TYPE>() : actual.GetTensorData<FLOAT_TYPE>();
++
++  const FLOAT_TYPE* expected_output = expected.IsSparseTensor() ? expected.GetSparseTensorValues<FLOAT_TYPE>() : expected.GetTensorData<FLOAT_TYPE>();
++
++  size_t element_count = 0;
++  if (actual.IsSparseTensor()) {
++    auto values_shape = actual.GetSparseTensorValuesTypeAndShapeInfo().GetShape();
++    element_count = values_shape.size() > 0 ? static_cast<size_t>(values_shape[0]) : 0;  // non-zeros
++  } else {
++    element_count = expected.GetTensorTypeAndShapeInfo().GetElementCount();
++  }
++
++  std::pair<COMPARE_RESULT, std::string> res = std::make_pair(COMPARE_RESULT::SUCCESS, "");
++  double max_diff = 0;
++  size_t diff_count = 0;
++  for (size_t i = 0; i != element_count; ++i) {
++    const double real_value =
++        post_processing ? std::max<double>(0.0, std::min<double>(255.0, actual_output[i])) : actual_output[i];
++    const double diff = std::fabs(expected_output[i] - real_value);
++    const double tol = per_sample_tolerance + relative_per_sample_tolerance * std::fabs(expected_output[i]);
++    if (!IsResultCloselyMatch<double>(real_value, expected_output[i], diff, tol)) {
++      res.first = COMPARE_RESULT::RESULT_DIFFERS;
++      // update error message if this is a larger diff
++      if (diff > max_diff || (std::isnan(diff) && !std::isnan(max_diff))) {
++        int64_t expected_int = 0;
++        int64_t real_int = 0;
++        memcpy(&expected_int, &expected_output[i], sizeof(FLOAT_TYPE));
++        memcpy(&real_int, &actual_output[i], sizeof(FLOAT_TYPE));
++
++        std::ostringstream oss;
++        oss << std::hex << "expected " << expected_output[i] << " (" << expected_int << "), got " << real_value << " ("
++            << real_int << ")"
++            << ", diff: " << diff << ", tol=" << tol << std::dec << " idx=" << i << ".";
++        res.second = oss.str();
++        max_diff = diff;
++      }
++      ++diff_count;
++    }
++  }
++
++  if (res.first == COMPARE_RESULT::SUCCESS) return res;
++
++  std::ostringstream oss;
++  oss << res.second << " " << diff_count << " of " << element_count << " differ";
++  res.second = oss.str();
++  return res;
++}
++
++template <typename T>
++std::pair<COMPARE_RESULT, std::string> IsResultExactlyMatch(const Ort::ConstValue& outvalue, const Ort::ConstValue& expected_value) {
++  size_t element_count = expected_value.GetTensorTypeAndShapeInfo().GetElementCount();
++  const T* expected_output = expected_value.GetTensorData<T>();
++  const T* real_output = outvalue.GetTensorData<T>();
++  for (size_t i = 0; i != element_count; ++i) {
++    if (expected_output[i] != real_output[i]) {
++      std::ostringstream oss;
++      oss << "expected " << expected_output[i] << ", got " << real_output[i];
++      return std::make_pair(COMPARE_RESULT::RESULT_DIFFERS, oss.str());
++    }
++  }
++  return std::make_pair(COMPARE_RESULT::SUCCESS, "");
++}
++
++std::pair<COMPARE_RESULT, std::string> CompareFloat16Result(const Ort::ConstValue& outvalue, const Ort::ConstValue& expected_value,
++                                                            double per_sample_tolerance,
++                                                            double relative_per_sample_tolerance,
++                                                            bool post_processing) {
++  size_t element_count = expected_value.GetTensorTypeAndShapeInfo().GetElementCount();
++  const MLFloat16* expected_output = expected_value.GetTensorData<MLFloat16>();
++  const MLFloat16* real_output = outvalue.GetTensorData<MLFloat16>();
++  std::ostringstream oss;
++  COMPARE_RESULT result = COMPARE_RESULT::SUCCESS;
++  for (size_t i = 0; i != element_count; ++i) {
++    float expected = Eigen::half_impl::half_to_float(Eigen::half_impl::__half_raw(expected_output[i].val));
++    float real = Eigen::half_impl::half_to_float(Eigen::half_impl::__half_raw(real_output[i].val));
++    real = post_processing ? std::max(0.0f, std::min(255.0f, real)) : real;
++    const double diff = std::fabs(expected - real);
++    const double rtol = per_sample_tolerance + relative_per_sample_tolerance * std::fabs(expected);
++    if (!IsResultCloselyMatch<float>(real, expected, diff, rtol)) {
++      oss << "idx: " << i << ", expected " << expected << ", got " << real << ", diff: " << diff << ", tol=" << rtol << "\n";
++      result = COMPARE_RESULT::RESULT_DIFFERS;
++    }
++  }
++  return std::make_pair(result, oss.str());
++}
++
++std::pair<COMPARE_RESULT, std::string> CompareBFloat16Result(const Ort::ConstValue& outvalue, const Ort::ConstValue& expected_value,
++                                                             double per_sample_tolerance,
++                                                             double relative_per_sample_tolerance,
++                                                             bool post_processing) {
++  size_t element_count = expected_value.GetTensorTypeAndShapeInfo().GetElementCount();
++  const BFloat16* expected_output = expected_value.GetTensorData<BFloat16>();
++  const BFloat16* real_output = outvalue.GetTensorData<BFloat16>();
++  for (size_t i = 0; i != element_count; ++i) {
++    float expected = expected_output[i].ToFloat();
++    float real = real_output[i].ToFloat();
++    real = post_processing ? std::max(0.0f, std::min(255.0f, real)) : real;
++    const double diff = std::fabs(expected - real);
++    const double rtol = per_sample_tolerance + relative_per_sample_tolerance * std::fabs(expected);
++    if (!IsResultCloselyMatch<float>(real, expected, diff, rtol)) {
++      std::ostringstream oss;
++      oss << "idx: " << i << ", expected " << expected << ", got " << real << ", diff: " << diff << ", tol=" << rtol << "\n";
++
++      return std::make_pair(COMPARE_RESULT::RESULT_DIFFERS, oss.str());
++    }
++  }
++  return std::make_pair(COMPARE_RESULT::SUCCESS, "");
++}
++
++std::pair<COMPARE_RESULT, std::string> CompareSparseTensorIndices(const int64_t* real, const int64_t* expected, size_t num_element) {
++  for (size_t i = 0; i != num_element; ++i) {
++    if (real[i] != expected[i]) {
++      std::ostringstream oss;
++      oss << "expected " << expected[i] << ", got " << real[i];
++      return std::make_pair(COMPARE_RESULT::RESULT_DIFFERS, oss.str());
++    }
++  }
++  return std::make_pair(COMPARE_RESULT::SUCCESS, "");
++}
++
++std::pair<COMPARE_RESULT, std::string> CompareTwoTensors(const Ort::ConstValue& actual_value, const Ort::ConstValue& expected_value,
++                                                         double per_sample_tolerance,
++                                                         double relative_per_sample_tolerance, bool post_processing) {
++  Ort::TensorTypeAndShapeInfo type_shape_info = actual_value.GetTensorTypeAndShapeInfo();
++  ONNXTensorElementDataType element_type = type_shape_info.GetElementType();
++  auto shape = type_shape_info.GetShape();
++
++  auto expected_shape = expected_value.GetTensorTypeAndShapeInfo().GetShape();
++
++  if (shape != expected_shape) {
++    std::ostringstream oss;
++    oss << "shape mismatch, expect " << TensorShapeToString(expected_shape) << " got " << TensorShapeToString(shape);
++    return std::make_pair(COMPARE_RESULT::SHAPE_MISMATCH, oss.str());
++  }
++
++#if defined(__aarch64__) && defined(__linux__)
++  if (isnan(per_sample_tolerance) || isnan(per_sample_tolerance)) {
++    if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
++      return CheckCosineSimilarity<float>(actual_value, expected_value);
++    } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE) {
++      return CheckCosineSimilarity<double>(actual_value, expected_value);
++    } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8) {
++      return CheckCloseMatch<uint8_t>(actual_value, expected_value);
++    } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
++      return CheckCloseMatch<int8_t>(actual_value, expected_value);
++    } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16) {
++      return CheckCloseMatch<uint16_t>(actual_value, expected_value);
++    } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16) {
++      return CheckCloseMatch<int16_t>(actual_value, expected_value);
++    } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32) {
++      return CheckCloseMatch<uint32_t>(actual_value, expected_value);
++    } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32) {
++      return CheckCloseMatch<int32_t>(actual_value, expected_value);
++    } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64) {
++      return CheckCloseMatch<uint64_t>(actual_value, expected_value);
++    } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) {
++      return CheckCloseMatch<int64_t>(actual_value, expected_value);
++    } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL) {
++      return CheckCloseMatch<bool>(actual_value, expected_value);
++    } else {
++      return std::make_pair(COMPARE_RESULT::NOT_SUPPORT, "");
++    }
++  }
++#endif
++
++  if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
++    return CompareFloatResult<float>(actual_value, expected_value, per_sample_tolerance, relative_per_sample_tolerance,
++                                     post_processing);
++  } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE) {
++    return CompareFloatResult<double>(actual_value, expected_value, per_sample_tolerance, relative_per_sample_tolerance,
++                                      post_processing);
++  } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_STRING) {
++    return IsResultExactlyMatch<std::string>(actual_value, expected_value);
++  } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8) {
++    return IsResultExactlyMatch<uint8_t>(actual_value, expected_value);
++  } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
++    return IsResultExactlyMatch<int8_t>(actual_value, expected_value);
++  } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16) {
++    return IsResultExactlyMatch<uint16_t>(actual_value, expected_value);
++  } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16) {
++    return IsResultExactlyMatch<int16_t>(actual_value, expected_value);
++  } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32) {
++    return IsResultExactlyMatch<uint32_t>(actual_value, expected_value);
++  } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32) {
++    return IsResultExactlyMatch<int32_t>(actual_value, expected_value);
++  } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64) {
++    return IsResultExactlyMatch<uint64_t>(actual_value, expected_value);
++  } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) {
++    return IsResultExactlyMatch<int64_t>(actual_value, expected_value);
++  } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL) {
++    return IsResultExactlyMatch<bool>(actual_value, expected_value);
++  } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16) {
++    return CompareFloat16Result(actual_value, expected_value, per_sample_tolerance, relative_per_sample_tolerance,
++                                post_processing);
++  } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16) {
++    return CompareBFloat16Result(actual_value, expected_value, per_sample_tolerance, relative_per_sample_tolerance,
++                                 post_processing);
++  } else {
++    // Note: Int4x2 and UInt4x2 are not exposed as public type, so we don't support that types.
++    return std::make_pair(COMPARE_RESULT::NOT_SUPPORT, "");
++  }
++}
++
++#if !defined(DISABLE_ML_OPS)
++std::pair<COMPARE_RESULT, std::string> CompareMapToFloat(const Ort::ConstValue& actual, const Ort::ConstValue& expected,
++                                                         double per_sample_tolerance,
++                                                         double relative_per_sample_tolerance,
++                                                         bool post_processing) {
++  const Ort::Value keys = actual.GetValue(0, Ort::AllocatorWithDefaultOptions());
++  const Ort::Value values = actual.GetValue(1, Ort::AllocatorWithDefaultOptions());
++  size_t num_keys = keys.GetTensorTypeAndShapeInfo().GetElementCount();
++
++  const Ort::Value expected_keys = expected.GetValue(0, Ort::AllocatorWithDefaultOptions());
++  const Ort::Value expected_values = expected.GetValue(1, Ort::AllocatorWithDefaultOptions());
++  size_t expected_num_keys = expected_keys.GetTensorTypeAndShapeInfo().GetElementCount();
++
++  if (num_keys != expected_num_keys) {
++    std::ostringstream oss;
++    oss << "map size mismatch, expected " << expected_num_keys << ", got " << num_keys;
++    return std::make_pair(COMPARE_RESULT::RESULT_DIFFERS, oss.str());
++  }
++
++  // Check keys of the map
++  TEST_RETURN_IF_ERROR(CompareTwoTensors(keys.GetConst(), expected_keys.GetConst(),
++                                         per_sample_tolerance, relative_per_sample_tolerance, post_processing),
++                       "While comparing keys of the Map");
++
++  // Check values of the map
++  TEST_RETURN_IF_ERROR(CompareTwoTensors(values.GetConst(), expected_values.GetConst(),
++                                         per_sample_tolerance, relative_per_sample_tolerance, post_processing),
++                       "While comparing values of the Map");
++
++  return std::make_pair(COMPARE_RESULT::SUCCESS, "");
++}
++#endif
++
++#if !defined(DISABLE_SPARSE_TENSORS)
++std::pair<COMPARE_RESULT, std::string> CompareSparseTensors(const Ort::ConstValue& actual, const Ort::ConstValue& expected,
++                                                            double per_sample_tolerance, double relative_per_sample_tolerance,
++                                                            bool post_processing) {
++  // Check dense shape
++  Ort::TensorTypeAndShapeInfo type_shape_info = actual.GetTensorTypeAndShapeInfo();
++  auto shape = actual.GetTensorTypeAndShapeInfo().GetShape();
++  Ort::TensorTypeAndShapeInfo expected_type_shape_info = expected.GetTensorTypeAndShapeInfo();
++  auto expected_shape = expected.GetTensorTypeAndShapeInfo().GetShape();
++
++  if (shape != expected_shape) {
++    std::ostringstream oss;
++    oss << "dense shape mismatch, expect " << TensorShapeToString(expected_shape) << " got " << TensorShapeToString(shape);
++    return std::make_pair(COMPARE_RESULT::SHAPE_MISMATCH, oss.str());
++  }
++
++  // Check sparsity format
++  auto sparse_format = actual.GetSparseFormat();
++  auto expected_sparse_format = expected.GetSparseFormat();
++
++  TEST_RETURN_IF_NOT(sparse_format == expected_sparse_format, COMPARE_RESULT::TYPE_MISMATCH,
++                     "Expected sparse format: ", expected_sparse_format,
++                     " actual: ", sparse_format);
++
++  // Check non-zero element counts
++  auto vlaues_type_and_shape = actual.GetSparseTensorValuesTypeAndShapeInfo();
++  auto values_shape = vlaues_type_and_shape.GetShape();
++  auto expected_vlaues_type_and_shape = expected.GetSparseTensorValuesTypeAndShapeInfo();
++  auto expected_values_shape = expected_vlaues_type_and_shape.GetShape();
++  TEST_RETURN_IF_NOT(values_shape[0] == expected_values_shape[0], COMPARE_RESULT::TYPE_MISMATCH,
++                     "Expected number of non-zero values: ", expected_values_shape[0],
++                     " actual: ", values_shape[0]);
++
++  // Check element type
++  ONNXTensorElementDataType element_type = vlaues_type_and_shape.GetElementType();
++  ONNXTensorElementDataType expected_element_type = expected_vlaues_type_and_shape.GetElementType();
++  TEST_RETURN_IF_NOT(element_type == expected_element_type, COMPARE_RESULT::TYPE_MISMATCH,
++                     "Expected type: ", TensorElementTypeToString(expected_element_type),
++                     " actual: ", TensorElementTypeToString(element_type));
++
++  // Check non-zero values
++  TEST_RETURN_IF_ERROR(CompareTwoTensors(actual, expected,
++                                         per_sample_tolerance, relative_per_sample_tolerance, post_processing),
++                       "While comparing sparse values");
++
++  // Check indices
++  if (sparse_format == OrtSparseFormat::ORT_SPARSE_COO) {
++    size_t num_indices;
++    size_t expected_num_indices;
++
++    const int64_t* indices = actual.GetSparseTensorIndicesData<int64_t>(OrtSparseIndicesFormat::ORT_SPARSE_COO_INDICES, num_indices);
++    const int64_t* expected_indices = expected.GetSparseTensorIndicesData<int64_t>(OrtSparseIndicesFormat::ORT_SPARSE_COO_INDICES, expected_num_indices);
++
++    TEST_RETURN_IF_NOT(num_indices == expected_num_indices, COMPARE_RESULT::SHAPE_MISMATCH,
++                       "Expected number of index: ", expected_num_indices,
++                       " actual: ", num_indices);
++
++    TEST_RETURN_IF_ERROR(CompareSparseTensorIndices(indices, expected_indices, num_indices),
++                         "Comparing COO indices");
++
++  } else if (sparse_format == OrtSparseFormat::ORT_SPARSE_CSRC) {
++    // Innder indices
++    size_t num_inner_indices;
++    size_t expected_num_inner_indices;
++    const int64_t* inner_indices = actual.GetSparseTensorIndicesData<int64_t>(OrtSparseIndicesFormat::ORT_SPARSE_CSR_INNER_INDICES, num_inner_indices);
++    const int64_t* expected_inner_indices = expected.GetSparseTensorIndicesData<int64_t>(OrtSparseIndicesFormat::ORT_SPARSE_CSR_INNER_INDICES, expected_num_inner_indices);
++
++    TEST_RETURN_IF_NOT(num_inner_indices == expected_num_inner_indices, COMPARE_RESULT::SHAPE_MISMATCH,
++                       "Expected number of inner index: ", expected_num_inner_indices,
++                       " actual: ", num_inner_indices);
++
++    TEST_RETURN_IF_ERROR(CompareSparseTensorIndices(inner_indices, expected_inner_indices, num_inner_indices),
++                         "Comparing Csr(c) inner indices");
++
++    // Outer indices
++    size_t num_outer_indices;
++    size_t expected_num_outer_indices;
++    const int64_t* outer_indices = actual.GetSparseTensorIndicesData<int64_t>(OrtSparseIndicesFormat::ORT_SPARSE_CSR_OUTER_INDICES, num_outer_indices);
++    const int64_t* expected_outer_indices = expected.GetSparseTensorIndicesData<int64_t>(OrtSparseIndicesFormat::ORT_SPARSE_CSR_OUTER_INDICES, expected_num_outer_indices);
++
++    TEST_RETURN_IF_NOT(num_outer_indices == expected_num_outer_indices, COMPARE_RESULT::SHAPE_MISMATCH,
++                       "Expected number of outer index: ", expected_num_outer_indices,
++                       " actual: ", num_outer_indices);
++
++    TEST_RETURN_IF_ERROR(CompareSparseTensorIndices(outer_indices, expected_outer_indices, num_outer_indices),
++                         "Comparing Csr(c) outer indices");
++  }
++
++  return std::make_pair(COMPARE_RESULT::SUCCESS, "");
++}
++#endif  // !defined(DISABLE_SPARSE_TENSORS)
++
++// The expected_shape could contain unknown dimensions, but the real_shape cannot
++bool AreShapesEqual(const std::vector<int64_t>& real_shape, const ::ONNX_NAMESPACE::TensorShapeProto& expected_shape) {
++  const int len = expected_shape.dim_size();
++  if (len < 0) return false;
++  if (real_shape.size() != static_cast<size_t>(len)) return false;
++  for (int i = 0; i != len; ++i) {
++    const auto& dim = expected_shape.dim(i);
++    switch (dim.value_case()) {
++      case ONNX_NAMESPACE::TensorShapeProto::Dimension::kDimValue:
++        if (dim.dim_value() != real_shape[i]) return false;
++        break;
++      case ONNX_NAMESPACE::TensorShapeProto::Dimension::kDimParam:
++        // symbolic shape, cannot validate it right now, assume it matches every thing
++        // fall through
++      case ONNX_NAMESPACE::TensorShapeProto::Dimension::VALUE_NOT_SET:
++        // Value not set is treated as can not be validated
++        continue;
++        break;
++      // This is for unlikely case when we add new oneof value
++      default:
++        assert(false);
++        break;
++    }
++  }
++  return true;
++}
++
++template <typename T>
++std::ostringstream& VectorToString(const std::vector<T>& input, std::ostringstream& oss) {
++  size_t len = input.size();
++  oss << "[";
++  if (len > 0) {
++    oss << input[0];
++    for (size_t i = 1; i != len; ++i) {
++      oss << ", " << input[i];
++    }
++  }
++  oss << "]";
++  return oss;
++}
++
++}  // namespace
++
++namespace onnxruntime {
++std::pair<COMPARE_RESULT, std::string> CompareOrtValue(const OrtValue& actual_value, const OrtValue& expected_value,
++                                                       double per_sample_tolerance,
++                                                       double relative_per_sample_tolerance, bool post_processing) {
++  const Ort::ConstValue output_mlvalue{&actual_value};
++  const Ort::ConstValue expected_mlvalue{&expected_value};
++
++  // Only four ONNX types are supported:
++  // - Tensor
++  // - Sparse Tensor
++  // - Sequence of Tensors
++  // - Sequence of Maps (where map is either 'int64 to float' or 'string to float')
++
++  ONNXType output_mlvalue_type;
++  ONNXType expected_mlvalue_type;
++  Ort::ThrowOnError(Ort::GetApi().GetValueType(output_mlvalue, &output_mlvalue_type));
++  Ort::ThrowOnError(Ort::GetApi().GetValueType(expected_mlvalue, &expected_mlvalue_type));
++
++  if (output_mlvalue_type != expected_mlvalue_type) {
++    return std::make_pair(COMPARE_RESULT::TYPE_MISMATCH, "");
++  }
++
++  if (output_mlvalue_type == ONNX_TYPE_TENSOR) {  // Tensor
++    ONNXTensorElementDataType element_type = output_mlvalue.GetTensorTypeAndShapeInfo().GetElementType();
++    ONNXTensorElementDataType expected_element_type = expected_mlvalue.GetTensorTypeAndShapeInfo().GetElementType();
++
++    if (element_type != expected_element_type) {
++      std::ostringstream oss;
++      oss << "expect " << TensorElementTypeToString(expected_element_type) << " got "
++          << TensorElementTypeToString(element_type);
++      return std::make_pair(COMPARE_RESULT::TYPE_MISMATCH, oss.str());
++    }
++
++    return CompareTwoTensors(output_mlvalue, expected_mlvalue, per_sample_tolerance, relative_per_sample_tolerance,
++                             post_processing);
++
++  } else if (output_mlvalue_type == ONNX_TYPE_SPARSETENSOR) {  // Sparse tensor
++#if !defined(DISABLE_SPARSE_TENSORS)
++    TEST_RETURN_IF_NOT(expected_mlvalue.IsSparseTensor(), COMPARE_RESULT::TYPE_MISMATCH,
++                       "SparseTensor is not expected as output");
++    TEST_RETURN_IF_ERROR(CompareSparseTensors(output_mlvalue, expected_mlvalue,
++                                              per_sample_tolerance, relative_per_sample_tolerance,
++                                              post_processing),
++                         "while comaring sparse tensors");
++#endif
++    return std::make_pair(COMPARE_RESULT::SUCCESS, "");
++
++  } else if (output_mlvalue_type == ONNX_TYPE_SEQUENCE) {  // Sequence
++    size_t num_elements = output_mlvalue.GetCount();
++    size_t expected_num_elements = expected_mlvalue.GetCount();
++
++    if (num_elements != expected_num_elements) {
++      std::ostringstream oss;
++      oss << "expected tensor/element count in the sequence: " << expected_num_elements << " got "
++          << num_elements;
++      return std::make_pair(COMPARE_RESULT::RESULT_DIFFERS, oss.str());
++    }
++
++    for (int i = 0; i < static_cast<int>(expected_num_elements); ++i) {
++      const Ort::Value actual_ort_value = output_mlvalue.GetValue(i, Ort::AllocatorWithDefaultOptions());
++      const Ort::Value expect_ort_value = expected_mlvalue.GetValue(i, Ort::AllocatorWithDefaultOptions());
++
++      ONNXTensorElementDataType element_type = actual_ort_value.GetTensorTypeAndShapeInfo().GetElementType();
++      ONNXTensorElementDataType expected_element_type = expect_ort_value.GetTensorTypeAndShapeInfo().GetElementType();
++
++      if (element_type != expected_element_type) {
++        std::ostringstream oss;
++        oss << "expect " << TensorElementTypeToString(expected_element_type) << " got "
++            << TensorElementTypeToString(element_type);
++        return std::make_pair(COMPARE_RESULT::TYPE_MISMATCH, oss.str());
++      }
++
++      ONNXType onnx_type;
++      ONNXType expected_onnx_type;
++      Ort::ThrowOnError(Ort::GetApi().GetValueType(actual_ort_value, &onnx_type));
++      Ort::ThrowOnError(Ort::GetApi().GetValueType(expect_ort_value, &expected_onnx_type));
++
++      if (onnx_type != expected_onnx_type) {
++        return std::make_pair(COMPARE_RESULT::TYPE_MISMATCH, "");
++      }
++
++      if (onnx_type == ONNX_TYPE_TENSOR) {  // Tensor type. It means the original OrtValue is sequence of tensors.
++        auto res = CompareTwoTensors(actual_ort_value.GetConst(), expect_ort_value.GetConst(), per_sample_tolerance, relative_per_sample_tolerance,
++                                     post_processing);
++        if (res.first != COMPARE_RESULT::SUCCESS) {
++          return res;
++        }
++      } else if (onnx_type == ONNX_TYPE_MAP) {  // Map type. It means the original OrtValue is sequence of maps.
++#if !defined(DISABLE_ML_OPS)
++        const Ort::Value key = actual_ort_value.GetValue(0, Ort::AllocatorWithDefaultOptions());
++        const Ort::Value value = actual_ort_value.GetValue(1, Ort::AllocatorWithDefaultOptions());
++        ONNXTensorElementDataType key_element_type = key.GetTensorTypeAndShapeInfo().GetElementType();
++        ONNXTensorElementDataType value_element_type = value.GetTensorTypeAndShapeInfo().GetElementType();
++
++        if (key.IsTensor() &&
++            value.IsTensor() &&
++            (key_element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64 || key_element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_STRING) &&
++            value_element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
++          auto res = CompareMapToFloat(actual_ort_value.GetConst(), expect_ort_value.GetConst(),
++                                       per_sample_tolerance, relative_per_sample_tolerance, post_processing);
++          if (res.first != COMPARE_RESULT::SUCCESS) {
++            return res;
++          }
++        } else {
++          return std::make_pair(COMPARE_RESULT::NOT_SUPPORT, "Only sequence of maps ('int64 to float' or 'string to float') are supported.");
++        }
++
++#else
++        return std::make_pair(COMPARE_RESULT::NOT_SUPPORT, "Sequence of maps is not supported in this build.");
++#endif
++      } else {
++        return std::make_pair(COMPARE_RESULT::NOT_SUPPORT, "Only sequence of tensors/maps are supported.");
++      }
++    }
++
++    return std::make_pair(COMPARE_RESULT::SUCCESS, "");
++  } else {
++    return std::make_pair(COMPARE_RESULT::NOT_SUPPORT, "Only tensor, sparse tensor, sequnce of tensors/maps are supported.");
++  }
++}
++
++static std::pair<COMPARE_RESULT, std::string> CompareTensorOrtValueAndTensorTypeProto(const ONNX_NAMESPACE::TypeProto_Tensor& t,
++                                                                                      const OrtValue* v) {
++  Ort::ConstValue o(v);
++  auto info = o.GetTensorTypeAndShapeInfo();
++  ONNXTensorElementDataType real_type = info.GetElementType();
++  ONNXTensorElementDataType expected_type = CApiElementTypeFromProtoType(t.elem_type());
++  if (real_type != expected_type) {
++    std::ostringstream oss;
++    oss << "expect " << TensorElementTypeToString(expected_type) << " got "
++        << TensorElementTypeToString(real_type);
++
++    return std::make_pair(COMPARE_RESULT::TYPE_MISMATCH, oss.str());
++  }
++  std::vector<int64_t> shape = info.GetShape();
++  const auto& tensor_shape_proto = t.shape();
++  if (!AreShapesEqual(shape, tensor_shape_proto)) {
++    std::ostringstream oss;
++
++    // same as utils::GetTensorShapeFromTensorShapeProto
++    auto GetTensorShapeFromTensorShapeProto = [&](const ONNX_NAMESPACE::TensorShapeProto& tensor_shape_proto) {
++      const auto& dims = tensor_shape_proto.dim();
++      std::vector<int64_t> tensor_shape_vec(static_cast<size_t>(dims.size()));
++      for (int i = 0; i < dims.size(); ++i) {
++        bool has_dim_value = dims[i].value_case() == ONNX_NAMESPACE::TensorShapeProto_Dimension::kDimValue;
++        tensor_shape_vec[i] =
++            has_dim_value ? dims[i].dim_value() : -1; /* symbolic dimensions are represented as -1 in onnxruntime*/
++      }
++      return tensor_shape_vec;
++    };
++
++    oss << "Tensor shape mismatch, model file expects '";
++    if (tensor_shape_proto.dim_size() == 0) {
++      oss << "(unknown)";
++    } else {
++      std::vector<int64_t> expected_shape = GetTensorShapeFromTensorShapeProto(tensor_shape_proto);
++      VectorToString(expected_shape, oss);
++    }
++    oss << "', real output is ";
++    VectorToString(shape, oss);
++    return std::make_pair(COMPARE_RESULT::SHAPE_MISMATCH, oss.str());
++  }
++
++  return std::make_pair(COMPARE_RESULT::SUCCESS, "");
++}
++
++std::pair<COMPARE_RESULT, std::string> VerifyValueInfo(const ONNX_NAMESPACE::ValueInfoProto& v, const OrtValue* val_ptr) {
++  Ort::ConstValue o{val_ptr};
++  if (!v.has_type()) return std::make_pair(COMPARE_RESULT::SUCCESS, "");
++  if (v.type().has_tensor_type()) {  // tensor
++    if (!o.IsTensor()) {
++      return std::make_pair(COMPARE_RESULT::TYPE_MISMATCH, "");
++    }
++
++    ::ONNX_NAMESPACE::TypeProto_Tensor t = v.type().tensor_type();
++
++    return CompareTensorOrtValueAndTensorTypeProto(t, o);
++  } else if (v.type().has_sequence_type()) {  // sequence
++    // TODO: CXX API doesn't have IsTensorSequence() supported for Ort::Value
++    // TODO: Repeat whatever we did for Tensor above in a loop ?
++    return std::make_pair(COMPARE_RESULT::SUCCESS, "");
++  } else if (v.type().has_optional_type()) {  // optional
++    const auto& tp = v.type().optional_type().elem_type();
++
++    if (tp.has_tensor_type() && !o.IsTensor()) {
++      return std::make_pair(COMPARE_RESULT::TYPE_MISMATCH, "");
++    }
++
++    // For None, we do not have to validate anything against the ValueInfoProto.
++    // If we have reached this point and are in possession of a None, we have
++    // already ensured that the expected OrtValue is None as well.
++    if (!o.HasValue()) {
++      ::ONNX_NAMESPACE::TypeProto_Tensor t = tp.tensor_type();
++
++      return CompareTensorOrtValueAndTensorTypeProto(t, o);
++    }
++
++    // TODO: Deal with sequences the same way we choose to deal with it
++    // in the above else if()
++
++  } else if (v.type().has_sparse_tensor_type()) {  // sparse tensor
++    // TODO: Current OnnxTestCase::LoadTestData doesn't support sparse tensor type.
++    // Need to add support in the future.
++  } else {
++    std::ostringstream oss;
++    oss << "The value info is not one of the \"Tensor\", \"SparseTensor\", \"Sequence\" and \"Optional\" data types.";
++    oss << "Skip validating between output's value info and expected value info.";
++  }
++
++  return std::make_pair(COMPARE_RESULT::SUCCESS, "");
++}
++}  // namespace onnxruntime
+diff --git a/onnxruntime/test/util/values/public_api/compare_ortvalue.h b/onnxruntime/test/util/values/public_api/compare_ortvalue.h
+new file mode 100644
+index 0000000000..c85630b5b2
+--- /dev/null
++++ b/onnxruntime/test/util/values/public_api/compare_ortvalue.h
+@@ -0,0 +1,35 @@
++// Copyright (c) Microsoft Corporation. All rights reserved.
++// Licensed under the MIT License.
++
++#pragma once
++// TODO(): move compare_mlvalue.{h,cc} to test dir
++
++#include <core/session/onnxruntime_c_api.h>
++#include <string>
++
++namespace ONNX_NAMESPACE {
++class ValueInfoProto;
++}
++
++namespace Ort {
++struct Value;
++}
++
++namespace onnxruntime {
++
++enum class COMPARE_RESULT {
++  SUCCESS,
++  RESULT_DIFFERS,
++  TYPE_MISMATCH,
++  SHAPE_MISMATCH,
++  NOT_SUPPORT,
++};
++
++std::pair<COMPARE_RESULT, std::string> CompareOrtValue(const OrtValue& real, const OrtValue& expected,
++                                                       double per_sample_tolerance,
++                                                       double relative_per_sample_tolerance, bool post_processing);
++
++// verify if the 'value' matches the 'expected' ValueInfoProto. 'value' is a model output
++std::pair<COMPARE_RESULT, std::string> VerifyValueInfo(const ONNX_NAMESPACE::ValueInfoProto& expected,
++                                                       const OrtValue* value);
++}  // namespace onnxruntime

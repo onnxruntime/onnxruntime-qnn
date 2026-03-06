@@ -9,15 +9,8 @@
 #include "gtest/gtest-message.h"
 #include "gtest/internal/gtest-port.h"
 
-// Core test utilities (most frequently used in tests)
-#include "test/providers/provider_test_utils.h"
-
 // ONNX and Protocol Buffer headers
-#include "core/graph/onnx_protobuf.h"
 #include "onnx/defs/schema.h"
-
-// Data types and framework headers
-#include "core/framework/data_types.h"
 
 // Windows-specific headers (if applicable)
 #ifdef _WIN32

@@ -20,14 +20,18 @@ namespace test {
 static GetTestModelFn BuildLRNTestCase(const TestInputDef<float>& input_def, int64_t size,
                                        float alpha = 0.0001f, float beta = 0.75f, float bias = 1.0f) {
   return [input_def, size, alpha, beta, bias](ModelTestBuilder& builder) {
-    auto* input = MakeTestInput(builder, input_def);
-    auto* output = builder.MakeOutput();
+    builder.graph_->set_name("lrn_graph");
 
-    Node& lrn_node = builder.AddNode("LRN", {input}, {output});
-    lrn_node.AddAttribute("size", size);
-    lrn_node.AddAttribute("alpha", alpha);
-    lrn_node.AddAttribute("beta", beta);
-    lrn_node.AddAttribute("bias", bias);
+    MakeTestInput(builder, "X", input_def);
+    builder.MakeOutput("Y");
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+    attrs.push_back(builder.MakeScalarAttribute("size", size));
+    attrs.push_back(builder.MakeScalarAttribute("alpha", alpha));
+    attrs.push_back(builder.MakeScalarAttribute("beta", beta));
+    attrs.push_back(builder.MakeScalarAttribute("bias", bias));
+
+    builder.AddNode("lrn", "LRN", {"X"}, {"Y"}, "", attrs);
   };
 }
 
@@ -37,21 +41,28 @@ static GetTestQDQModelFn<InputQType> BuildQDQLRNTestCase(const TestInputDef<floa
                                                          float alpha = 0.0001f, float beta = 0.75f, float bias = 1.0f) {
   return [input_def, size, alpha, beta, bias](ModelTestBuilder& builder,
                                               std::vector<QuantParams<InputQType>>& output_qparams) {
+    builder.graph_->set_name("qdq_lrn_graph");
+
     // input -> Q -> DQ ->
-    NodeArg* input = MakeTestInput(builder, input_def);
+    MakeTestInput(builder, "X", input_def);
     QuantParams<InputQType> input_qparams = GetTestInputQuantParams<InputQType>(input_def);
-    NodeArg* input_qdq = AddQDQNodePair<InputQType>(builder, input, input_qparams.scale, input_qparams.zero_point);
+    std::string x_qdq = AddQDQNodePair<InputQType>(builder, "qdq_x", "X", input_qparams.scale,
+                                                   input_qparams.zero_point);
 
-    // LRN
-    NodeArg* lrn_output = builder.MakeIntermediate();
-    Node& lrn_node = builder.AddNode("LRN", {input_qdq}, {lrn_output});
-    lrn_node.AddAttribute("size", size);
-    lrn_node.AddAttribute("alpha", alpha);
-    lrn_node.AddAttribute("beta", beta);
-    lrn_node.AddAttribute("bias", bias);
+    // LRN -> Y
+    std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+    attrs.push_back(builder.MakeScalarAttribute("size", size));
+    attrs.push_back(builder.MakeScalarAttribute("alpha", alpha));
+    attrs.push_back(builder.MakeScalarAttribute("beta", beta));
+    attrs.push_back(builder.MakeScalarAttribute("bias", bias));
 
-    // LRN output -> Q -> DQ -> final output
-    AddQDQNodePairWithOutputAsGraphOutput<InputQType>(builder, lrn_output, output_qparams[0].scale,
+    builder.AddNode("lrn", "LRN", {x_qdq}, {"Y"}, "", attrs);
+
+    // Y -> Q -> DQ -> final output
+    AddQDQNodePairWithOutputAsGraphOutput<InputQType>(builder,
+                                                      "qdq_out",
+                                                      "Y",
+                                                      output_qparams[0].scale,
                                                       output_qparams[0].zero_point);
   };
 }

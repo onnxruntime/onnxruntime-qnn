@@ -627,29 +627,69 @@ TEST_F(QnnCPUBackendTests, MultithreadSessionRun) {
   options["backend_path"] = "libQnnCpu.so";
 #endif
 
-  RunOptions run_opts;
-  run_opts.run_tag = "logger0";
-
   Ort::SessionOptions session_opts;
   session_opts.SetLogId("logger0");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, session_opts, onnxruntime::kQnnExecutionProvider, options);
 
-  auto* ort_session_opts = static_cast<OrtSessionOptions*>(session_opts);
-  InferenceSession session_obj{ort_session_opts->value, GetEnvironment()};
-
-  auto status = session_obj.Load(model->model_data.data(), static_cast<int>(model->model_data.size()));
-  ASSERT_TRUE(status.IsOK());
-  ASSERT_EQ(InitializeSession(ort_session_opts, session_obj), nullptr);
+  // Use public API instead of internal InferenceSession
+  Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts);
 
   std::vector<std::thread> threads;
   constexpr int num_threads = 5;
   constexpr int loop_count = 10;
+
+  // Create a lambda function to run the session using public API
+  auto run_session_public_api = [&](int loop_count) {
+    for (int it = 0; it < loop_count; ++it) {
+      std::vector<Ort::Value> ort_inputs;
+      std::vector<const char*> input_names;
+
+      // Prepare inputs using public API
+      auto memory_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
+      for (auto it = model->builder.feeds_.begin(); it != model->builder.feeds_.end(); ++it) {
+        const auto& tensor = it->second.Get<Tensor>();
+
+        ort_inputs.emplace_back(Ort::Value::CreateTensor<float>(
+            memory_info,
+            const_cast<float*>(tensor.Data<float>()),
+            tensor.Shape().Size(),
+            shape.data(),
+            shape.size()));
+        input_names.push_back(it->first.c_str());
+      }
+
+      // Run inference
+      std::vector<const char*> output_names;
+      for (const auto& name : model->builder.output_names_) {
+        output_names.push_back(name.c_str());
+      }
+      std::vector<Ort::Value> outputs = session.Run(
+          Ort::RunOptions{nullptr},
+          input_names.data(),
+          ort_inputs.data(),
+          ort_inputs.size(),
+          output_names.data(),
+          output_names.size());
+
+      // Verify outputs
+      ASSERT_EQ(outputs.size(), output_shapes.size());
+      for (size_t i = 0; i < outputs.size(); i++) {
+        auto type_info = outputs[i].GetTensorTypeAndShapeInfo();
+        auto actual_shape = type_info.GetShape();
+        ASSERT_EQ(actual_shape, output_shapes[i]);
+
+        const float* output_data = outputs[i].GetTensorData<float>();
+        for (size_t j = 0; j < output_values[i].size(); j++) {
+          ASSERT_EQ(output_data[j], output_values[i][j]);
+        }
+      }
+    }
+  };
+
   for (int i = 0; i < num_threads; i++) {
-    threads.push_back(std::thread(RunSessionAndVerify, std::ref(session_obj), run_opts,
-                                  model->builder.feeds_, model->builder.output_names_,
-                                  output_shapes, output_values, loop_count));
+    threads.push_back(std::thread(run_session_public_api, loop_count));
   }
 
   for (auto& th : threads) {
@@ -708,31 +748,69 @@ TEST_F(QnnHTPBackendTests, MultithreadSessionRun) {
 #endif
   options["offload_graph_io_quantization"] = "0";
 
-  RunOptions run_opts;
-  run_opts.run_tag = "logger0";
-
   Ort::SessionOptions session_opts;
   session_opts.SetLogId("logger0");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, session_opts, onnxruntime::kQnnExecutionProvider, options);
 
-  auto* ort_session_opts = static_cast<OrtSessionOptions*>(session_opts);
-  InferenceSession session_obj{ort_session_opts->value, GetEnvironment()};
-
-  auto status = session_obj.Load(model->model_data.data(), static_cast<int>(model->model_data.size()));
-  ASSERT_TRUE(status.IsOK());
-  ASSERT_EQ(InitializeSession(ort_session_opts, session_obj), nullptr);
-  status = session_obj.Initialize();
-  ASSERT_TRUE(status.IsOK());
+  // Use public API instead of internal InferenceSession
+  Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts);
 
   std::vector<std::thread> threads;
   constexpr int num_threads = 5;
   constexpr int loop_count = 10;
+
+  // Create a lambda function to run the session using public API
+  auto run_session_public_api = [&](int loop_count) {
+    for (int it = 0; it < loop_count; ++it) {
+      std::vector<Ort::Value> ort_inputs;
+      std::vector<const char*> input_names;
+
+      // Prepare inputs using public API
+      auto memory_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
+      for (auto it = model->builder.feeds_.begin(); it != model->builder.feeds_.end(); ++it) {
+        const auto& tensor = it->second.Get<Tensor>();
+
+        ort_inputs.emplace_back(Ort::Value::CreateTensor<float>(
+            memory_info,
+            const_cast<float*>(tensor.Data<float>()),
+            tensor.Shape().Size(),
+            shape.data(),
+            shape.size()));
+        input_names.push_back(it->first.c_str());
+      }
+
+      // Run inference
+      std::vector<const char*> output_names;
+      for (const auto& name : model->builder.output_names_) {
+        output_names.push_back(name.c_str());
+      }
+      std::vector<Ort::Value> outputs = session.Run(
+          Ort::RunOptions{nullptr},
+          input_names.data(),
+          ort_inputs.data(),
+          ort_inputs.size(),
+          output_names.data(),
+          output_names.size());
+
+      // Verify outputs
+      ASSERT_EQ(outputs.size(), output_shapes.size());
+      for (size_t i = 0; i < outputs.size(); i++) {
+        auto type_info = outputs[i].GetTensorTypeAndShapeInfo();
+        auto actual_shape = type_info.GetShape();
+        ASSERT_EQ(actual_shape, output_shapes[i]);
+
+        const float* output_data = outputs[i].GetTensorData<float>();
+        for (size_t j = 0; j < output_values[i].size(); j++) {
+          ASSERT_EQ(output_data[j], output_values[i][j]);
+        }
+      }
+    }
+  };
+
   for (int i = 0; i < num_threads; i++) {
-    threads.push_back(std::thread(RunSessionAndVerify, std::ref(session_obj), run_opts,
-                                  model->builder.feeds_, model->builder.output_names_,
-                                  output_shapes, output_values, loop_count));
+    threads.push_back(std::thread(run_session_public_api, loop_count));
   }
 
   for (auto& th : threads) {

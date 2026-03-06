@@ -7,6 +7,7 @@
 
 #include "test/providers/qnn/qnn_test_utils.h"
 
+#include "core/graph/node_attr_utils.h"
 #include "core/graph/onnx_protobuf.h"
 #include "gtest/gtest.h"
 
@@ -25,7 +26,7 @@ static void RunSqueezeTestOnCPU(const std::string& op_type,  // Squeeze or Unsqu
 
   provider_options["backend_type"] = "cpu";
 
-  RunQnnModelTest(BuildOpTestCase<DataType, int64_t>(op_type, {input_def}, {axes_def}, {}),
+  RunQnnModelTest(BuildOpTestCase<DataType, int64_t>(op_type + "_node", op_type, {input_def}, {axes_def}, {}),
                   provider_options,
                   opset,
                   expected_ep_assignment);
@@ -97,24 +98,33 @@ GetTestQDQModelFn<QuantType> BuildQDQSqueezeTestCase(const std::string& op_type,
   return [op_type, input_def, axes_def,
           use_contrib_qdq](ModelTestBuilder& builder,
                            std::vector<QuantParams<QuantType>>& output_qparams) {
-    // input -> Q -> DQ ->
-    NodeArg* input = MakeTestInput(builder, input_def);
-    QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-    NodeArg* input_qdq = AddQDQNodePair<QuantType>(builder, input, input_qparams.scale, input_qparams.zero_point,
-                                                   use_contrib_qdq);
+    // input
+    MakeTestInput(builder, "input", input_def);
+
+    // input -> Q -> DQ -> input_qdq
+    const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
+    const std::string input_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_in", "input",
+                                  input_qparams.scale, input_qparams.zero_point, use_contrib_qdq);
 
     // axes input
-    NodeArg* axes_input = MakeTestInput(builder, axes_def);
+    MakeTestInput(builder, "axes", axes_def);
 
     // (Un)Squeeze op
-    NodeArg* op_output = builder.MakeIntermediate();
-    builder.AddNode(op_type, {input_qdq, axes_input}, {op_output});
+    builder.AddNode(op_type,
+                    op_type,
+                    {input_qdq, "axes"},
+                    {"op_out"});
 
-    // op_output -> Q -> DQ -> output
+    // op_out -> Q -> DQ -> graph output
     // NOTE: Input and output quantization parameters must be equal for (Un)Squeeze.
-    output_qparams[0] = input_qparams;  // Overwrite!
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, op_output, input_qparams.scale,
-                                                     input_qparams.zero_point, use_contrib_qdq);
+    output_qparams[0] = input_qparams;
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder,
+                                                     "qdq_out",
+                                                     "op_out",
+                                                     input_qparams.scale,
+                                                     input_qparams.zero_point,
+                                                     use_contrib_qdq);
   };
 }
 
@@ -130,7 +140,7 @@ static void RunSqueezeTestOnHTP(const std::string& op_type,  // Squeeze or Unsqu
 
   provider_options["backend_type"] = "htp";
 
-  RunQnnModelTest(BuildOpTestCase<DataType, int64_t>(op_type, {input_def}, {axes_def}, {}),
+  RunQnnModelTest(BuildOpTestCase<DataType, int64_t>(op_type + "_node", op_type, {input_def}, {axes_def}, {}),
                   provider_options,
                   opset,
                   expected_ep_assignment);
@@ -151,7 +161,7 @@ static void RunQDQSqueezeTestOnHTP(const std::string& op_type,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  auto f32_model_builder = BuildOpTestCase<float, int64_t>(op_type, {input_def}, {axes_def}, {});
+  auto f32_model_builder = BuildOpTestCase<float, int64_t>(op_type + "_node", op_type, {input_def}, {axes_def}, {});
   auto qdq_model_builder = BuildQDQSqueezeTestCase<QType>(op_type, input_def, axes_def, use_contrib_qdq);
 
   TestQDQModelAccuracy(f32_model_builder,
@@ -184,21 +194,22 @@ TEST_F(QnnHTPBackendTests, Squeeze_Rank5_Rank2_f32) {
   // support rank 5 tensors. Therefore, we have to create a test model that only instantiates the DQ -> Squeeze -> Q
   // QDQ node group, which gets lowered to a single QNN Reshape node.
   GetTestModelFn model_fn = [](ModelTestBuilder& builder) {
-    // input (u8) -> DQ ->
-    NodeArg* quant_input = builder.MakeInput<uint8_t>({1, 3, 1, 2, 4}, 0, 255);
-    NodeArg* input_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<uint8_t>(quant_input, 1.0f, 0, input_dq);  // scale = 1.0, zp = 0
+    // input (u8) -> DQ -> input_dq
+    builder.MakeInput<uint8_t>("quant_input", {1, 3, 1, 2, 4}, 0, 255);
+    builder.AddDequantizeLinearNode<uint8_t>("dq_in", "quant_input", 1.0f, 0, "input_dq");  // scale = 1.0, zp = 0
 
-    // axes_input ->
-    NodeArg* axes_input = builder.Make1DInitializer<int64_t>({0, 2});  // Squeeze axes 0 and 2 => (3, 2, 4)
+    // axes initializer
+    builder.Make1DInitializer<int64_t>("axes", {0, 2});  // Squeeze axes 0 and 2 => (3, 2, 4)
 
-    // Squeeze ->
-    NodeArg* squeeze_output = builder.MakeIntermediate();
-    builder.AddNode("Squeeze", {input_dq, axes_input}, {squeeze_output});
+    // Squeeze -> squeeze_out
+    builder.AddNode("Squeeze",
+                    "Squeeze",
+                    {"input_dq", "axes"},
+                    {"squeeze_out"});
 
     // Q -> output (u8)
-    NodeArg* output = builder.MakeOutput();
-    builder.AddQuantizeLinearNode<uint8_t>(squeeze_output, 1.0f, 0, output);  // scale = 1.0, zp = 0
+    builder.MakeOutput("Y");
+    builder.AddQuantizeLinearNode<uint8_t>("q_out", "squeeze_out", 1.0f, 0, "Y");  // scale = 1.0, zp = 0
   };
 
   ProviderOptions provider_options;
@@ -237,21 +248,22 @@ TEST_F(QnnHTPBackendTests, Unsqueeze_Rank3_Rank5_f32) {
   // support rank 5 tensors. Therefore, we have to create a test model that only instantiates the DQ -> Unsqueeze -> Q
   // QDQ node group, which gets lowered to a single QNN Reshape node.
   GetTestModelFn model_fn = [](ModelTestBuilder& builder) {
-    // input (u8) -> DQ ->
-    NodeArg* quant_input = builder.MakeInput<uint8_t>({3, 2, 4}, 0, 255);
-    NodeArg* input_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<uint8_t>(quant_input, 1.0f, 0, input_dq);  // scale = 1.0, zp = 0
+    // input (u8) -> DQ -> input_dq
+    builder.MakeInput<uint8_t>("quant_input", {3, 2, 4}, 0, 255);
+    builder.AddDequantizeLinearNode<uint8_t>("dq_in", "quant_input", 1.0f, 0, "input_dq");  // scale = 1.0, zp = 0
 
-    // axes_input ->
-    NodeArg* axes_input = builder.Make1DInitializer<int64_t>({0, 2});  // Add 1's => (1, 3, 1, 2, 4)
+    // axes initializer
+    builder.Make1DInitializer<int64_t>("axes", {0, 2});  // Add 1's => (1, 3, 1, 2, 4)
 
-    // Unsqueeze ->
-    NodeArg* unsqueeze_output = builder.MakeIntermediate();
-    builder.AddNode("Unsqueeze", {input_dq, axes_input}, {unsqueeze_output});
+    // Unsqueeze -> unsqueeze_out
+    builder.AddNode("Unsqueeze",
+                    "Unsqueeze",
+                    {"input_dq", "axes"},
+                    {"unsqueeze_out"});
 
     // Q -> output (u8)
-    NodeArg* output = builder.MakeOutput();
-    builder.AddQuantizeLinearNode<uint8_t>(unsqueeze_output, 1.0f, 0, output);  // scale = 1.0, zp = 0
+    builder.MakeOutput("Y");
+    builder.AddQuantizeLinearNode<uint8_t>("q_out", "unsqueeze_out", 1.0f, 0, "Y");  // scale = 1.0, zp = 0
   };
 
   ProviderOptions provider_options;

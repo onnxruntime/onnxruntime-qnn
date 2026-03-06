@@ -39,7 +39,6 @@ function run_model_test() {
     set +e
     "${build_dir}/onnxruntime_plugin_ep_onnx_test" \
         -j 1 \
-        -e qnn \
         --plugin_ep_libs "qnn|libonnxruntime_providers_qnn.so" \
         --plugin_eps qnn \
         -i "backend_type|${backend}" \

@@ -21,16 +21,18 @@ inline GetTestModelFn BuildTopKTestCase(const TestInputDef<DataType>& input_def,
                                         const TestInputDef<int64_t>& k_def,
                                         const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs) {
   return [input_def, k_def, attrs](ModelTestBuilder& builder) {
-    NodeArg* input = MakeTestInput<DataType>(builder, input_def);
-    NodeArg* k_input = MakeTestInput<int64_t>(builder, k_def);
+    MakeTestInput<DataType>(builder, "input", input_def);
+    MakeTestInput<int64_t>(builder, "k", k_def);
 
-    NodeArg* values_output = builder.MakeOutput();
-    NodeArg* indices_output = builder.MakeOutput();
-    Node& topk_node = builder.AddNode("TopK", {input, k_input}, {values_output, indices_output});
+    builder.MakeOutput("values");
+    builder.MakeOutput("indices");
 
-    for (const auto& attr : attrs) {
-      topk_node.AddAttributeProto(attr);
-    }
+    builder.AddNode("TopK",
+                    "TopK",
+                    {"input", "k"},
+                    {"values", "indices"},
+                    kOnnxDomain,
+                    attrs);
   };
 }
 
@@ -52,7 +54,7 @@ static void RunTopKTestOnCPU(const TestInputDef<DataType>& input_def,
                   opset,
                   expected_ep_assignment,
                   /*fp32_abs_err*/ 1e-5f,
-                  /*log_severity*/ logging::Severity::kERROR,
+                  /*log_severity*/ OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   /*verify_outputs*/ verify_outputs);
 }
 
@@ -72,7 +74,7 @@ TEST_F(QnnCPUBackendTests, TopK_DynamicK_Unsupported) {
 TEST_F(QnnCPUBackendTests, TopK_NonLastAxis) {
   RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                           TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
-                          {utils::MakeAttribute("axis", static_cast<int64_t>(1))},
+                          {test::MakeAttribute("axis", static_cast<int64_t>(1))},
                           ExpectedEPNodeAssignment::All);
 }
 
@@ -80,8 +82,8 @@ TEST_F(QnnCPUBackendTests, TopK_NonLastAxis) {
 TEST_F(QnnCPUBackendTests, TopK_NonLastAxis_Largest_0) {
   RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                           TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
-                          {utils::MakeAttribute("axis", static_cast<int64_t>(1)),
-                           utils::MakeAttribute("largest", static_cast<int64_t>(0))},
+                          {test::MakeAttribute("axis", static_cast<int64_t>(1)),
+                           test::MakeAttribute("largest", static_cast<int64_t>(0))},
                           ExpectedEPNodeAssignment::All);
 }
 
@@ -97,7 +99,7 @@ TEST_F(QnnCPUBackendTests, TopK_LargestFloats_LastAxis) {
 TEST_F(QnnCPUBackendTests, TopK_LargestFloats_LastAxis_Largest_0) {
   RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                           TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
-                          {utils::MakeAttribute("largest", static_cast<int64_t>(0))},  // Attributes
+                          {test::MakeAttribute("largest", static_cast<int64_t>(0))},  // Attributes
                           ExpectedEPNodeAssignment::All);
 }
 
@@ -105,8 +107,8 @@ TEST_F(QnnCPUBackendTests, TopK_LargestFloats_LastAxis_Largest_0) {
 TEST_F(QnnCPUBackendTests, TopK_LargestFloats_LastAxis_Largest_0_Sorted) {
   RunTopKTestOnCPU<float>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                           TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
-                          {utils::MakeAttribute("largest", static_cast<int64_t>(0)),
-                           utils::MakeAttribute("sorted", static_cast<int64_t>(0))},  // Attributes
+                          {test::MakeAttribute("largest", static_cast<int64_t>(0)),
+                           test::MakeAttribute("sorted", static_cast<int64_t>(0))},  // Attributes
                           ExpectedEPNodeAssignment::All,
                           /*opset*/ 19,
                           /*verify_outputs*/ false);  // Disable verify output. Unsorted doesn't guarantee output sequence
@@ -126,7 +128,7 @@ TEST_F(QnnCPUBackendTests, TopK_LargestInt32s_LastAxis_Largest_0) {
   std::vector<int32_t> input_data = {-6, -5, -4, -3, -2, 0, 1, 2, 3, 4, 5, 6};
   RunTopKTestOnCPU<int32_t>(TestInputDef<int32_t>({1, 2, 2, 3}, false, input_data),
                             TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
-                            {utils::MakeAttribute("largest", static_cast<int64_t>(0))},  // Attributes
+                            {test::MakeAttribute("largest", static_cast<int64_t>(0))},  // Attributes
                             ExpectedEPNodeAssignment::All);
 }
 
@@ -135,8 +137,8 @@ TEST_F(QnnCPUBackendTests, TopK_LargestInt32s_LastAxis_Largest_0_Sorted) {
   std::vector<int32_t> input_data = {-6, -5, -4, -3, -2, 0, 1, 2, 3, 4, 5, 6};
   RunTopKTestOnCPU<int32_t>(TestInputDef<int32_t>({1, 2, 2, 3}, false, input_data),
                             TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
-                            {utils::MakeAttribute("largest", static_cast<int64_t>(0)),
-                             utils::MakeAttribute("sorted", static_cast<int64_t>(0))},  // Attributes
+                            {test::MakeAttribute("largest", static_cast<int64_t>(0)),
+                             test::MakeAttribute("sorted", static_cast<int64_t>(0))},  // Attributes
                             ExpectedEPNodeAssignment::All,
                             /*opset*/ 19,
                             /*verify_outputs*/ false);  // Disable verify output. Unsorted doesn't guarantee output sequence
@@ -155,28 +157,34 @@ GetTestQDQModelFn<QuantType> BuildQDQTopKTestCase(const TestInputDef<float>& inp
                                                   bool use_contrib_qdq = false) {
   return [input_def, k_def, attrs, use_contrib_qdq](ModelTestBuilder& builder,
                                                     std::vector<QuantParams<QuantType>>& output_qparams) {
-    // input -> Q -> DQ ->
-    NodeArg* input = MakeTestInput(builder, input_def);
-    QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-    NodeArg* input_qdq = AddQDQNodePair<QuantType>(builder, input, input_qparams.scale, input_qparams.zero_point,
-                                                   use_contrib_qdq);
+    // input
+    MakeTestInput(builder, "input", input_def);
+
+    // input -> Q -> DQ -> input_qdq
+    const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
+    const std::string input_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_in", "input",
+                                  input_qparams.scale, input_qparams.zero_point, use_contrib_qdq);
 
     // K input
-    NodeArg* k_input = MakeTestInput(builder, k_def);
+    MakeTestInput(builder, "k", k_def);
 
-    // TopK_values_output -> Q -> DQ -> output
+    builder.AddNode("TopK",
+                    "TopK",
+                    {input_qdq, "k"},
+                    {"values", "indices"},
+                    kOnnxDomain,
+                    attrs);
+
     // NOTE: Create output QDQ nodes before the TopK node so that TopK's 'values' output is the graph's first output.
-    NodeArg* values_output = builder.MakeIntermediate();
     output_qparams[0] = input_qparams;  // Input and output qparams must be equal.
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, values_output, input_qparams.scale,
-                                                     input_qparams.zero_point, use_contrib_qdq);
-    // TopK node
-    NodeArg* indices_output = builder.MakeOutput();
-    Node& topk_node = builder.AddNode("TopK", {input_qdq, k_input}, {values_output, indices_output});
-
-    for (const auto& attr : attrs) {
-      topk_node.AddAttributeProto(attr);
-    }
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder,
+                                                     "qdq_values",
+                                                     "values",
+                                                     input_qparams.scale,
+                                                     input_qparams.zero_point,
+                                                     use_contrib_qdq);
+    builder.MakeOutput("indices");
   };
 }
 
@@ -215,7 +223,7 @@ TEST_F(QnnHTPBackendTests, TopK_LargestFloats_U8_LastAxis) {
 TEST_F(QnnHTPBackendTests, TopK_LargestFloats_U8_LastAxis_Largest_0) {
   RunQDQTopKTestOnHTP<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                                TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
-                               {utils::MakeAttribute("largest", static_cast<int64_t>(0))},  // Attributes
+                               {test::MakeAttribute("largest", static_cast<int64_t>(0))},  // Attributes
                                ExpectedEPNodeAssignment::All);
 }
 
@@ -223,7 +231,7 @@ TEST_F(QnnHTPBackendTests, TopK_LargestFloats_U8_LastAxis_Largest_0) {
 TEST_F(QnnHTPBackendTests, TopK_U8_NonLastAxis) {
   RunQDQTopKTestOnHTP<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                                TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
-                               {utils::MakeAttribute("axis", static_cast<int64_t>(1))},  // Attributes
+                               {test::MakeAttribute("axis", static_cast<int64_t>(1))},  // Attributes
                                ExpectedEPNodeAssignment::All);
 }
 
@@ -231,8 +239,8 @@ TEST_F(QnnHTPBackendTests, TopK_U8_NonLastAxis) {
 TEST_F(QnnHTPBackendTests, TopK_U8_NonLastAxis_Largest_0) {
   RunQDQTopKTestOnHTP<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                                TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
-                               {utils::MakeAttribute("axis", static_cast<int64_t>(1)),
-                                utils::MakeAttribute("largest", static_cast<int64_t>(0))},  // Attributes
+                               {test::MakeAttribute("axis", static_cast<int64_t>(1)),
+                                test::MakeAttribute("largest", static_cast<int64_t>(0))},  // Attributes
                                ExpectedEPNodeAssignment::All);
 }
 
@@ -249,7 +257,7 @@ TEST_F(QnnHTPBackendTests, TopK_LargestFloats_U16_LastAxis) {
 TEST_F(QnnHTPBackendTests, TopK_LargestFloats_U16_LastAxis_Largest_0) {
   RunQDQTopKTestOnHTP<uint16_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-20.0f, 20.0f, 48)),
                                 TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
-                                {utils::MakeAttribute("largest", static_cast<int64_t>(0))},  // Attributes
+                                {test::MakeAttribute("largest", static_cast<int64_t>(0))},  // Attributes
                                 ExpectedEPNodeAssignment::All,
                                 21);  // opset
 }
@@ -258,7 +266,7 @@ TEST_F(QnnHTPBackendTests, TopK_LargestFloats_U16_LastAxis_Largest_0) {
 TEST_F(QnnHTPBackendTests, TopK_U16_NonLastAxis) {
   RunQDQTopKTestOnHTP<uint16_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-20.0f, 20.0f, 48)),
                                 TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
-                                {utils::MakeAttribute("axis", static_cast<int64_t>(1))},  // Attributes
+                                {test::MakeAttribute("axis", static_cast<int64_t>(1))},  // Attributes
                                 ExpectedEPNodeAssignment::All,
                                 21);  // opset
 }
@@ -267,8 +275,8 @@ TEST_F(QnnHTPBackendTests, TopK_U16_NonLastAxis) {
 TEST_F(QnnHTPBackendTests, TopK_U16_NonLastAxis_Largest_0) {
   RunQDQTopKTestOnHTP<uint16_t>(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-20.0f, 20.0f, 48)),
                                 TestInputDef<int64_t>({1}, true /* is_initializer */, {2}),
-                                {utils::MakeAttribute("axis", static_cast<int64_t>(1)),
-                                 utils::MakeAttribute("largest", static_cast<int64_t>(0))},  // Attributes
+                                {test::MakeAttribute("axis", static_cast<int64_t>(1)),
+                                 test::MakeAttribute("largest", static_cast<int64_t>(0))},  // Attributes
                                 ExpectedEPNodeAssignment::All,
                                 21);  // opset
 }

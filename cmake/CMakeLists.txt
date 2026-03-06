@@ -1717,6 +1717,8 @@ if (onnxruntime_BUILD_OBJC)
   list(APPEND ONNXRUNTIME_CMAKE_FILES onnxruntime_objectivec)
 endif()
 
+include(external/onnxruntime_prebuilt.cmake)
+
 if (onnxruntime_BUILD_UNIT_TESTS)
   list(APPEND ONNXRUNTIME_CMAKE_FILES onnxruntime_unittests)
 endif()

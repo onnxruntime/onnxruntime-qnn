@@ -546,6 +546,24 @@ else()
   include(external/eigen.cmake)
 endif()
 
+# Extract version from ort_core URL
+# Expected URL format: https://github.com/microsoft/onnxruntime/archive/refs/tags/v1.24.1.zip
+if(DEP_URL_ort_core MATCHES ".*refs/tags/v([0-9]+\\.[0-9]+\\.[0-9]+)\\.zip$")
+  set(ORT_CORE_VER ${CMAKE_MATCH_1})
+  message(STATUS "Extracted ORT_CORE_VER: ${ORT_CORE_VER}")
+else()
+  message(FATAL_ERROR "Could not extract version from DEP_URL_ort_core: ${DEP_URL_ort_core}")
+endif()
+
+onnxruntime_fetchcontent_declare(
+  ort_core
+  URL ${DEP_URL_ort_core}
+  URL_HASH SHA1=${DEP_SHA1_ort_core}
+  PATCH_COMMAND
+    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_test_binaries.patch
+  EXCLUDE_FROM_ALL)
+FetchContent_Populate(ort_core)
+
 if(WIN32)
   if(onnxruntime_USE_VCPKG)
     find_package(wil CONFIG REQUIRED)

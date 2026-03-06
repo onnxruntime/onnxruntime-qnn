@@ -9,7 +9,6 @@
 
 #include "gtest/gtest.h"
 
-#include "core/common/float16.h"
 #include "core/graph/onnx_protobuf.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
@@ -30,11 +29,18 @@ static GetTestModelFn BuildCastTestCase(const std::vector<int64_t>& shape,
                                         ONNX_NAMESPACE::TensorProto_DataType dst_type) {
   return [shape, dst_type](ModelTestBuilder& builder) {
     // Random input data
-    auto input = builder.MakeInput<InputType>(shape, static_cast<InputType>(0), static_cast<InputType>(20));
-
-    auto* output = builder.MakeOutput();
-    Node& cast_node = builder.AddNode("Cast", {input}, {output});
-    cast_node.AddAttribute("to", static_cast<int64_t>(dst_type));
+    builder.MakeInput<InputType>("X", shape, static_cast<InputType>(0), static_cast<InputType>(20));
+    // Create attributes
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("to", static_cast<int64_t>(dst_type)));
+    builder.AddNode(
+        "cast",
+        "Cast",
+        {"X"},
+        {"Y"},
+        "",
+        attributes);
+    builder.MakeOutput("Y");
   };
 }
 
@@ -97,11 +103,19 @@ static void RunCastFP16HTPTest(const std::vector<int64_t>& shape,
   auto testcase = [shape, dst_type](ModelTestBuilder& builder) {
     auto input_def_fp = TestInputDef(shape, false, static_cast<float>(0), static_cast<float>(20));
     auto input_def = ConvertToFP16InputDef(input_def_fp);
-    auto input = MakeTestInput<MLFloat16>(builder, input_def);
+    MakeTestInput<Ort::Float16_t>(builder, "X", input_def);
 
-    auto* output = builder.MakeOutput();
-    Node& cast_node = builder.AddNode("Cast", {input}, {output});
-    cast_node.AddAttribute("to", static_cast<int64_t>(dst_type));
+    // Create attributes
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("to", static_cast<int64_t>(dst_type)));
+    builder.AddNode(
+        "cast",
+        "Cast",
+        {"X"},
+        {"Y"},
+        "",
+        attributes);
+    builder.MakeOutput("Y");
   };
 
   RunQnnModelTest(testcase, provider_options, /* opset */ 13, expected_ep_assignment);

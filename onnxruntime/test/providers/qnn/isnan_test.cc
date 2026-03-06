@@ -28,7 +28,7 @@ static void RunIsNanTest(const std::vector<TestInputDef<DataType>>& input_defs,
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<DataType>("IsNaN", input_defs, {}, {}, kOnnxDomain),
+  RunQnnModelTest(BuildOpTestCase<DataType>("isnan_node", "IsNaN", input_defs, {}, {}, kOnnxDomain),
                   provider_options,
                   opset,
                   expected_ep_assignment,

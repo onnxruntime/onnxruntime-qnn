@@ -29,14 +29,14 @@ static void RunUpsampleTestOnCPU(const TestInputDef<DataType>& input_def,
 
   if (opset <= 7) {
     const std::vector<float>& scales = scales_def.GetRawData();
-    attrs.push_back(utils::MakeAttribute("scales", scales));
+    attrs.push_back(test::MakeAttribute("scales", scales));
 
-    RunQnnModelTest(BuildOpTestCase<DataType>("Upsample", {input_def}, {}, attrs),
+    RunQnnModelTest(BuildOpTestCase<DataType>("Upsample_node", "Upsample", {input_def}, {}, attrs),
                     provider_options,
                     opset,
                     expected_ep_assignment);
   } else {
-    RunQnnModelTest(BuildOpTestCase<DataType, float>("Upsample", {input_def}, {scales_def}, attrs),
+    RunQnnModelTest(BuildOpTestCase<DataType, float>("Upsample_node", "Upsample", {input_def}, {scales_def}, attrs),
                     provider_options,
                     opset,
                     expected_ep_assignment);
@@ -51,16 +51,16 @@ static void RunUpsampleTestOnCPU(const TestInputDef<DataType>& input_def,
 TEST_F(QnnCPUBackendTests, Upsample_DynamicScales_Unsupported) {
   RunUpsampleTestOnCPU(TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
                        TestInputDef<float>({4}, false /* is_initializer */, {1.0f, 1.0f, 1.5f, 1.5f}),
-                       {utils::MakeAttribute("mode", "nearest")},  // Attributes
-                       ExpectedEPNodeAssignment::None,             // Should not be assigned to QNN EP.
-                       9);                                         // Opset
+                       {test::MakeAttribute("mode", "nearest")},  // Attributes
+                       ExpectedEPNodeAssignment::None,            // Should not be assigned to QNN EP.
+                       9);                                        // Opset
 }
 
 // Test Upsample with opset-9, mode `nearest`
 TEST_F(QnnCPUBackendTests, Upsample_4D_Nearest_opset9) {
   RunUpsampleTestOnCPU(TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
                        TestInputDef<float>({4}, true, {1.0f, 1.0f, 1.5f, 1.5f}),
-                       {utils::MakeAttribute("mode", "nearest")},  // Attributes
+                       {test::MakeAttribute("mode", "nearest")},  // Attributes
                        ExpectedEPNodeAssignment::All,
                        9);  // Opset
 }
@@ -69,7 +69,7 @@ TEST_F(QnnCPUBackendTests, Upsample_4D_Nearest_opset9) {
 TEST_F(QnnCPUBackendTests, Upsample_4D_Linear_opset9) {
   RunUpsampleTestOnCPU(TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
                        TestInputDef<float>({4}, true, {1.0f, 1.0f, 1.5f, 1.5f}),
-                       {utils::MakeAttribute("mode", "linear")},  // Attributes
+                       {test::MakeAttribute("mode", "linear")},  // Attributes
                        ExpectedEPNodeAssignment::All,
                        9);  // Opset
 }
@@ -78,7 +78,7 @@ TEST_F(QnnCPUBackendTests, Upsample_4D_Linear_opset9) {
 TEST_F(QnnCPUBackendTests, Upsample_4D_Nearest_opset7) {
   RunUpsampleTestOnCPU(TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
                        TestInputDef<float>({4}, true, {1.0f, 1.0f, 1.5f, 1.5f}),
-                       {utils::MakeAttribute("mode", "nearest")},  // Attributes
+                       {test::MakeAttribute("mode", "nearest")},  // Attributes
                        ExpectedEPNodeAssignment::All,
                        7);  // Opset
 }
@@ -87,7 +87,7 @@ TEST_F(QnnCPUBackendTests, Upsample_4D_Nearest_opset7) {
 TEST_F(QnnCPUBackendTests, Upsample_4D_Linear_opset7) {
   RunUpsampleTestOnCPU(TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
                        TestInputDef<float>({4}, true, {1.0f, 1.0f, 1.5f, 1.5f}),
-                       {utils::MakeAttribute("mode", "linear")},  // Attributes
+                       {test::MakeAttribute("mode", "linear")},  // Attributes
                        ExpectedEPNodeAssignment::All,
                        7);  // Opset
 }
@@ -96,7 +96,7 @@ TEST_F(QnnCPUBackendTests, Upsample_4D_Linear_opset7) {
 TEST_F(QnnCPUBackendTests, Upsample_5D) {
   RunUpsampleTestOnCPU(TestInputDef<float>({1, 3, 4, 4, 4}, false, -10.0f, 10.0f),
                        TestInputDef<float>({5}, true, {1.0f, 1.0f, 1.5f, 1.5f, 1.5f}),
-                       {utils::MakeAttribute("mode", "nearest")},  // Attributes
+                       {test::MakeAttribute("mode", "nearest")},  // Attributes
                        ExpectedEPNodeAssignment::All,
                        9);  // Opset
 }

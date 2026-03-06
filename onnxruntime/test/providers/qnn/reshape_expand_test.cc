@@ -6,7 +6,6 @@
 #include <string>
 
 #include "test/providers/qnn/qnn_test_utils.h"
-#include "core/graph/node_attr_utils.h"
 
 #include "core/graph/onnx_protobuf.h"
 #include "gtest/gtest.h"
@@ -29,7 +28,7 @@ static void RunReshapeExpandTest(const std::string& op_type,
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<DataType, int64_t>(op_type, {input_def}, {shape_def}, attrs),
+  RunQnnModelTest(BuildOpTestCase<DataType, int64_t>(op_type + "_node", op_type, {input_def}, {shape_def}, attrs),
                   provider_options,
                   opset,
                   expected_ep_assignment);
@@ -127,7 +126,7 @@ TEST_F(QnnGPUBackendTests, Expand_IniShape) {
 
 // Test Expand with FP16 data
 TEST_F(QnnGPUBackendTests, Expand_IniShape_Float16) {
-  RunReshapeExpandTest("Expand", TestInputDef<MLFloat16>({1}, false, {MLFloat16(1.0f)}),
+  RunReshapeExpandTest("Expand", TestInputDef<Ort::Float16_t>({1}, false, {Ort::Float16_t(1.0f)}),
                        TestInputDef<int64_t>({2}, true, {2, 3}),
                        {},  // Attributes
                        ExpectedEPNodeAssignment::All,
@@ -147,7 +146,7 @@ TEST_F(QnnGPUBackendTests, Expand_6D) {
 
 // Test Expand with 6D output with FP16 data.
 TEST_F(QnnGPUBackendTests, Expand_6D_Float16) {
-  RunReshapeExpandTest("Expand", TestInputDef<MLFloat16>({3}, false, {MLFloat16(1.0f), MLFloat16(2.0f), MLFloat16(3.0f)}),
+  RunReshapeExpandTest("Expand", TestInputDef<Ort::Float16_t>({3}, false, {Ort::Float16_t(1.0f), Ort::Float16_t(2.0f), Ort::Float16_t(3.0f)}),
                        TestInputDef<int64_t>({6}, true, {1, 2, 3, 4, 5, 3}),
                        {},  // Attributes
                        ExpectedEPNodeAssignment::All,
@@ -157,7 +156,7 @@ TEST_F(QnnGPUBackendTests, Expand_6D_Float16) {
 
 // Test Expand with 4D output with FP16 data.
 TEST_F(QnnGPUBackendTests, Expand_4D_Float16) {
-  RunReshapeExpandTest("Expand", TestInputDef<MLFloat16>({1, 2, 1, 1}, false, {MLFloat16(1.0f), MLFloat16(2.0f)}),
+  RunReshapeExpandTest("Expand", TestInputDef<Ort::Float16_t>({1, 2, 1, 1}, false, {Ort::Float16_t(1.0f), Ort::Float16_t(2.0f)}),
                        TestInputDef<int64_t>({4}, true, {1, 2, 128, 128}),
                        {},  // Attributes
                        ExpectedEPNodeAssignment::All,
@@ -183,27 +182,23 @@ GetTestQDQModelFn<QuantType> BuildQDQReshapeExpandTestCase(const std::string& op
           use_contrib_qdq, op_type](ModelTestBuilder& builder,
                                     std::vector<QuantParams<QuantType>>& output_qparams) {
     // input -> Q -> DQ ->
-    NodeArg* input = MakeTestInput(builder, input_def);
-    QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-    NodeArg* input_qdq = AddQDQNodePair<QuantType>(builder, input, input_qparams.scale, input_qparams.zero_point,
-                                                   use_contrib_qdq);
+    MakeTestInput(builder, "input", input_def);
+    const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
+    const std::string input_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point, use_contrib_qdq);
 
-    // shape input
-    NodeArg* shape_input = MakeTestInput(builder, shape_def);
+    // shape input (typically initializer)
+    MakeTestInput(builder, "shape", shape_def);
 
-    // Reshape op
-    NodeArg* reshape_output = builder.MakeIntermediate();
-    Node& reshape_node = builder.AddNode(op_type, {input_qdq, shape_input}, {reshape_output});
-
-    for (const auto& attr : attrs) {
-      reshape_node.AddAttributeProto(attr);
-    }
+    // Reshape/Expand op
+    const std::string op_out = "op_out";
+    builder.AddNode(op_type, op_type, {input_qdq, "shape"}, {op_out}, "", attrs);
 
     // op_output -> Q -> DQ -> output
-    // NOTE: Input and output quantization parameters must be equal for Reshape.
+    // NOTE: Input and output quantization parameters must be equal for Reshape/Expand.
     output_qparams[0] = input_qparams;  // Overwrite!
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, reshape_output, input_qparams.scale,
-                                                     input_qparams.zero_point, use_contrib_qdq);
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(
+        builder, "qdq_out", op_out, input_qparams.scale, input_qparams.zero_point, use_contrib_qdq);
   };
 }
 
@@ -221,7 +216,7 @@ static void RunReshapeExpandTestOnHTP(const std::string& op_type,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<DataType, int64_t>(op_type, {input_def}, {shape_def}, attrs),
+  RunQnnModelTest(BuildOpTestCase<DataType, int64_t>(op_type + "_node", op_type, {input_def}, {shape_def}, attrs),
                   provider_options,
                   opset,
                   expected_ep_assignment);
@@ -242,7 +237,7 @@ static void RunQDQReshapeExpandTestOnHTP(const std::string& op_type,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  auto f32_model_builder = BuildOpTestCase<float, int64_t>(op_type, {input_def}, {shape_def}, attrs);
+  auto f32_model_builder = BuildOpTestCase<float, int64_t>(op_type + "_node", op_type, {input_def}, {shape_def}, attrs);
   auto qdq_model_builder = BuildQDQReshapeExpandTestCase<QType>(op_type, input_def, shape_def, attrs, use_contrib_qdq);
   TestQDQModelAccuracy(f32_model_builder,
                        qdq_model_builder,
@@ -266,7 +261,7 @@ TEST_F(QnnHTPBackendTests, Reshape_AllowZeroAttr_WithZeros_Unsupported) {
   RunReshapeExpandTestOnHTP<float>("Reshape",
                                    TestInputDef<float>({2, 0, 3}, false, {}),
                                    TestInputDef<int64_t>({2}, true, {6, 0}),
-                                   {utils::MakeAttribute("allowzero", static_cast<int64_t>(1))},
+                                   {test::MakeAttribute("allowzero", static_cast<int64_t>(1))},
                                    ExpectedEPNodeAssignment::None,
                                    19);
 }
@@ -276,7 +271,7 @@ TEST_F(QnnHTPBackendTests, Reshape_AllowZeroAttr_NoZeros_Supported) {
   RunQDQReshapeExpandTestOnHTP<uint8_t>("Reshape",
                                         TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48)),
                                         TestInputDef<int64_t>({2}, true, {1, 48}),  // concrete shape with no zeros
-                                        {utils::MakeAttribute("allowzero", static_cast<int64_t>(1))},
+                                        {test::MakeAttribute("allowzero", static_cast<int64_t>(1))},
                                         ExpectedEPNodeAssignment::All,
                                         19);
 }
