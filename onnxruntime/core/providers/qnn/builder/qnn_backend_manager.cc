@@ -796,6 +796,10 @@ Ort::Status SetQnnContextConfig(ContextPriority context_priority, QnnContext_Con
       qnn_context_config.priority = QNN_PRIORITY_LOW;
       break;
     }
+    case ContextPriority::NORMAL_LOW: {
+      qnn_context_config.priority = QNN_PRIORITY_NORMAL_LOW;
+      break;
+    }
     case ContextPriority::NORMAL: {
       qnn_context_config.priority = QNN_PRIORITY_NORMAL;
       break;
@@ -806,6 +810,18 @@ Ort::Status SetQnnContextConfig(ContextPriority context_priority, QnnContext_Con
     }
     case ContextPriority::HIGH: {
       qnn_context_config.priority = QNN_PRIORITY_HIGH;
+      break;
+    }
+    case ContextPriority::HIGH_PLUS: {
+      qnn_context_config.priority = QNN_PRIORITY_HIGH_PLUS;
+      break;
+    }
+    case ContextPriority::CRITICAL: {
+      qnn_context_config.priority = QNN_PRIORITY_CRITICAL;
+      break;
+    }
+    case ContextPriority::CRITICAL_PLUS: {
+      qnn_context_config.priority = QNN_PRIORITY_CRITICAL_PLUS;
       break;
     }
     case ContextPriority::UNDEFINED: {
