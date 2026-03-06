@@ -76,7 +76,7 @@ namespace onnxruntime {
   } while (0)
 
 // Helper to release OrtStatus and report an error.
-inline bool ReleaseStatusIfError(const OrtApi& ort_api, OrtStatus* status) {
+inline bool ReleaseStatusIfError(OrtStatus* status, const OrtApi& ort_api) {
   if (status != nullptr) {
     ort_api.ReleaseStatus(status);
     return true;
@@ -86,7 +86,7 @@ inline bool ReleaseStatusIfError(const OrtApi& ort_api, OrtStatus* status) {
 
 #define ORT_RETURN_DEFAULT_ON_ERROR(ort_api_fn_call, ort_api, ret_val) \
   do {                                                                 \
-    if (ReleaseStatusIfError((ort_api), (ort_api_fn_call))) {          \
+    if (ReleaseStatusIfError((ort_api_fn_call), (ort_api))) {          \
       return (ret_val);                                                \
     }                                                                  \
   } while (0)
@@ -99,7 +99,7 @@ inline bool ReleaseStatusIfError(const OrtApi& ort_api, OrtStatus* status) {
 
 #define ORT_CONTINUE_ON_ERROR(ort_api_fn_call, ort_api)       \
   do {                                                        \
-    if (ReleaseStatusIfError((ort_api), (ort_api_fn_call))) { \
+    if (ReleaseStatusIfError((ort_api_fn_call), (ort_api))) { \
       continue;                                               \
     }                                                         \
   } while (0)
