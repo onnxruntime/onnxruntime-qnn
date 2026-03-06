@@ -55,6 +55,7 @@ else()
     endif()
 
     # Build ONNX Runtime from source using the provided build.py command
+    file(TO_CMAKE_PATH ${onnxruntime_QNN_HOME} normalized_onnxruntime_QNN_HOME)
     set(ORT_BUILD_COMMAND
         ${CMAKE_COMMAND} -E echo "Building ONNX Runtime from source..."
         COMMAND ${Python3_EXECUTABLE} ${ORT_SOURCE_DIR}/tools/ci_build/build.py
@@ -65,7 +66,7 @@ else()
         --skip_tests
         --cmake_generator "${CMAKE_GENERATOR}"
         --use_qnn "${QNN_LIBRARY_KIND}"
-        --qnn_home "${onnxruntime_QNN_HOME}"
+        --qnn_home "${normalized_onnxruntime_QNN_HOME}"
         --no_kleidiai
         --use_cache
     )
