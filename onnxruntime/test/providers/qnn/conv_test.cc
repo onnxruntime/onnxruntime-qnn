@@ -1351,7 +1351,7 @@ TEST_F(QnnHTPBackendTests, ConvU8U8S32_ReluClipFusion) {
                                      weight_def,
                                      bias_def,
                                      {1, 1},        // Strides
-                                     {0, 0, 0, 0},  // Pads
+                                     {0, 0, 0, 0},  // Clip Pads
                                      {1, 1},        // Dilations
                                      1,             // default group
                                      "NOTSET",
@@ -1377,6 +1377,97 @@ TEST_F(QnnHTPBackendTests, ConvU8U8S32_ReluClipFusion) {
                                       21,     // opset
                                       QDQTolerance(),
                                       clip_info_2);
+}
+
+// Redundant Clip between Conv and Q in a QDQ model should be accepted on HTP.
+TEST_F(QnnHTPBackendTests, ConvU8U8S32_RedundantClipQDQ) {
+  std::vector<int64_t> input_shape = {1, 2, 4, 4};
+  std::vector<int64_t> weight_shape = {3, 2, 2, 2};
+  std::vector<int64_t> bias_shape = {3};
+
+  TestInputDef<float> input_def(input_shape, false,
+                                GetFloatDataInRange(0.0f, 1.0f, TensorShape(input_shape).Size()));
+  TestInputDef<float> weight_def(weight_shape, true,
+                                 GetFloatDataInRange(-1.0f, 5.0f, TensorShape(weight_shape).Size()));
+  TestInputDef<float> bias_def(bias_shape, true,
+                               GetFloatDataInRange(-1.0f, 1.0f, TensorShape(bias_shape).Size()));
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  OutputActivationInfo clip_info = {"Clip", {-2.0f, 2.0f}};
+  auto f32_fn = BuildF32ConvTestCase("Conv",
+                                     input_def,
+                                     weight_def,
+                                     bias_def,
+                                     {1, 1},        // Strides
+                                     {0, 0, 0, 0},  // Pads
+                                     {1, 1},        // Dilations
+                                     1,             // default group
+                                     "NOTSET",
+                                     clip_info);
+
+  auto qdq_fn = [input_def, weight_def, bias_def](ModelTestBuilder& builder,
+                                                  std::vector<QuantParams<uint8_t>>& output_qparams) {
+    std::vector<NodeArg*> conv_inputs;
+
+    // input -> Q/DQ ->
+    auto* input = MakeTestInput(builder, input_def);
+    QuantParams<uint8_t> input_qparams = GetTestInputQuantParams<uint8_t>(input_def);
+    auto* input_qdq = AddQDQNodePair<uint8_t>(builder, input, input_qparams.scale, input_qparams.zero_point,
+                                              /*use_contrib_qdq=*/true);
+    conv_inputs.push_back(input_qdq);
+
+    // weights -> Q/DQ ->
+    auto* weights = MakeTestInput(builder, weight_def);
+    QuantParams<uint8_t> weights_qparams = GetTestInputQuantParams<uint8_t>(weight_def);
+    auto* weights_qdq = AddQDQNodePair<uint8_t>(builder, weights, weights_qparams.scale,
+                                                weights_qparams.zero_point, /*use_contrib_qdq=*/true);
+    conv_inputs.push_back(weights_qdq);
+
+    // bias ->
+    if (!bias_def.GetShape().empty()) {
+      const float bias_scale = input_qparams.scale * weights_qparams.scale;
+      conv_inputs.push_back(MakeTestQDQBiasInput(builder, bias_def, bias_scale, /*use_contrib_qdq=*/true));
+    }
+
+    auto* conv_output = builder.MakeIntermediate();
+    Node& conv_node = builder.AddNode("Conv", conv_inputs, {conv_output});
+    conv_node.AddAttribute("auto_pad", "NOTSET");
+    conv_node.AddAttribute("pads", std::vector<int64_t>{0, 0, 0, 0});
+    conv_node.AddAttribute("strides", std::vector<int64_t>{1, 1});
+    conv_node.AddAttribute("dilations", std::vector<int64_t>{1, 1});
+    conv_node.AddAttribute("group", static_cast<int64_t>(1));
+
+    // Clip float min/max initializers -> Q -> DQ ->
+    NodeArg* min_f = builder.MakeScalarInitializer(-2.0f);
+    NodeArg* max_f = builder.MakeScalarInitializer(2.0f);
+    NodeArg* min_q = builder.MakeIntermediate();
+    NodeArg* max_q = builder.MakeIntermediate();
+    builder.AddQuantizeLinearNode<uint8_t>(min_f, input_qparams.scale, input_qparams.zero_point, min_q);
+    builder.AddQuantizeLinearNode<uint8_t>(max_f, input_qparams.scale, input_qparams.zero_point, max_q);
+
+    NodeArg* min_dq = builder.MakeIntermediate();
+    NodeArg* max_dq = builder.MakeIntermediate();
+    builder.AddDequantizeLinearNode<uint8_t>(min_q, input_qparams.scale, input_qparams.zero_point, min_dq);
+    builder.AddDequantizeLinearNode<uint8_t>(max_q, input_qparams.scale, input_qparams.zero_point, max_dq);
+
+    // Clip ->
+    NodeArg* clip_output = builder.MakeIntermediate();
+    builder.AddNode("Clip", {conv_output, min_dq, max_dq}, {clip_output});
+
+    // Q -> output
+    AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, clip_output, output_qparams[0].scale,
+                                                   output_qparams[0].zero_point, /*use_contrib_qdq=*/true);
+  };
+
+  TestQDQModelAccuracy<uint8_t>(f32_fn,
+                       qdq_fn,
+                       provider_options,
+                       13,  // opset
+                       ExpectedEPNodeAssignment::All,
+                       QDQTolerance());
 }
 
 // Test fusion of DQs -> Conv -> Relu/Clip -> Q.
