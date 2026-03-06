@@ -118,6 +118,7 @@ nuget_windows_x86_64:
   version: 7.0.1
   url: https://dist.nuget.org/win-x86-commandline/v{version}/nuget.exe
   md5: c51179f8b404bbf7f7b8e457240cc09d
+  is_installer: False
 onnx_models:
   version: 2025-10-02
   url: http://ort-ep-win-01.na.qualcomm.com:8000/onnx-models/onnx-models-{version}.tar.gz
@@ -138,6 +139,10 @@ python_313_windows_x86_64:
   <<: *py_x86_64_common
   version: 3.13.7
   md5: 1da92e43c79f3d1539dd23a3c14bf3f0
+python_314_windows_x86_64:
+  <<: *py_x86_64_common
+  version: 3.14.3
+  md5: 897f5296196cddf98ea8c0409c299753
 python_311_windows_arm64: &py_arm64_common
   <<: *py_x86_64_common
   version: 3.11.9
@@ -151,6 +156,10 @@ python_313_windows_arm64:
   <<: *py_arm64_common
   version: 3.13.7
   md5: 66c0ba98b20b7d4ea0904223d484d369
+python_314_windows_arm64:
+  <<: *py_arm64_common
+  version: 3.14.3
+  md5: 1183951d055ef6c0ae1fb686b3342a6f
 qairt:
   version: 2.42.0.251225
   url: https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/{version}/v{version}.zip

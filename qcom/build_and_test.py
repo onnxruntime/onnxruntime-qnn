@@ -144,7 +144,7 @@ Environment variables
     parser.add_argument("--skip", metavar="TASK_RE", type=str, nargs="+", help="List of tasks to skip.")
     parser.add_argument(
         "--target-py-version",
-        choices=["3.10", "3.11", "3.12", "3.13", "None"],
+        choices=["3.10", "3.11", "3.12", "3.13", "3.14", "None"],
         default="3.10" if is_host_linux() else "3.12",
         help="[Windows only] Build a wheel for this version of Python",
     )
@@ -158,6 +158,11 @@ Environment variables
         "--build-nuget",
         action="store_true",
         help="Enable building NuGet packages for .NET bindings.",
+    )
+    parser.add_argument(
+        "--build-zip",
+        action="store_true",
+        help="Enable building Zip archive.",
     )
 
     args = parser.parse_args()
@@ -181,6 +186,7 @@ class TaskLibrary:
         qairt_sdk_root: Path | None,
         docker_ccache_root: Path | None,
         build_nuget: bool,
+        build_zip: bool,
     ) -> None:
         self.__python_executable = python_executable
         self.__venv_path = venv_path
@@ -190,6 +196,7 @@ class TaskLibrary:
         self.__qairt_sdk_root = qairt_sdk_root
         self.__docker_ccache_root = docker_ccache_root
         self.__build_nuget = build_nuget
+        self.__build_zip = build_zip
 
     @staticmethod
     def to_dot(highlight: list[str] | None = None) -> str:
@@ -498,6 +505,7 @@ class TaskLibrary:
                     "build",
                     False,
                     self.__build_nuget,
+                    self.__build_zip,
                 )
             )
 
@@ -1041,6 +1049,7 @@ def plan_from_dependencies(
     qairt_sdk_root: Path | None,
     docker_ccache_root: Path | None,
     build_nuget: bool,
+    build_zip: bool,
 ) -> Plan:
     """
     Uses a work list algorithm to create a Plan to build the given tasks and their
@@ -1054,6 +1063,7 @@ def plan_from_dependencies(
         qairt_sdk_root,
         docker_ccache_root,
         build_nuget,
+        build_zip,
     )
     plan = Plan()
 
@@ -1105,6 +1115,7 @@ def plan_from_task_list(
     qairt_sdk_root: Path | None,
     docker_ccache_root: Path | None,
     build_nuget: bool,
+    build_zip: bool,
 ) -> Plan:
     """
     Planner that just instantiates the given tasks with no attempt made to satisfy dependencies.
@@ -1118,6 +1129,7 @@ def plan_from_task_list(
         qairt_sdk_root,
         docker_ccache_root,
         build_nuget,
+        build_zip,
     )
     plan = Plan()
     for task_name in tasks:
@@ -1152,6 +1164,7 @@ def build_and_test():
             qairt_sdk_root,
             docker_ccache_root,
             args.build_nuget,
+            args.build_zip,
         )
 
     if args.skip is not None:

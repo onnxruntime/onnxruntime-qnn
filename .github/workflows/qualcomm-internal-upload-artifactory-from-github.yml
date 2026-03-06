@@ -1,0 +1,182 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Publish ONNX Runtime Execution Provider wheel, nuget and zip from GitHub workflow
+
+permissions:
+  checks: write
+  contents: read
+  id-token: write
+
+on:
+  workflow_call:
+    inputs:
+      nightly_build:
+        description: "If true, include a verbose version string in file names."
+        type: boolean
+        default: true
+      version_suffix:
+        description: "Version suffix for released package. If set, the specified suffix will be appended to the version string."
+        type: string
+        default: ""
+      skip_publish:
+        type: boolean
+        default: false
+
+jobs:
+  build-artifacts:
+    uses: ./.github/workflows/qualcomm-internal-build-wheels-nugets-zips.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+
+  upload-wheel-workflow:
+    name: "Upload python wheel artifatcs to Artifactory"
+    runs-on: [Linux, self-hosted, Build]
+    needs: [build-artifacts]
+
+    steps:
+      - uses: actions/checkout@v4.1.1
+
+      - name: Install Dependencies
+        run: |
+          ./qcom/scripts/upleveling/create_uplevel_venv.sh
+
+      # Upload Python wheel to Artifactory
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ORT windows arm64 Python 3.11 Wheel
+          path: ${{ github.workspace }}/build/dist
+
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ORT windows arm64ec Python 3.11 Wheel
+          path: ${{ github.workspace }}/build/dist
+  
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ORT windows arm64 Python 3.12 Wheel
+          path: ${{ github.workspace }}/build/dist
+  
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ORT windows arm64ec Python 3.12 Wheel
+          path: ${{ github.workspace }}/build/dist
+  
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ORT windows arm64 Python 3.13 Wheel
+          path: ${{ github.workspace }}/build/dist
+  
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ORT windows arm64ec Python 3.13 Wheel
+          path: ${{ github.workspace }}/build/dist
+
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ORT windows arm64 Python 3.14 Wheel
+          path: ${{ github.workspace }}/build/dist
+
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ORT windows arm64ec Python 3.14 Wheel
+          path: ${{ github.workspace }}/build/dist
+
+      - name: Check wheel
+        run: |
+          source uplevel_venv/bin/activate
+          twine check ${{ github.workspace }}/build/dist/*
+
+      - name: Publish
+        if: ${{ !inputs.skip_publish }}
+        env:
+          TWINE_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          TWINE_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+        run: |
+          source uplevel_venv/bin/activate
+          twine upload -r re-artifactory-pypi-test-project \
+            --cert ./qcom/scripts/upleveling/certs/artifactory-ca.pem \
+            --config-file ./qcom/scripts/upleveling/.pypirc \
+            ${{ github.workspace }}/build/dist/*
+
+  upload-nuget-workflow:
+    name: "Upload nuget artifatcs to Artifactory"
+    runs-on: [Windows, self-hosted, Build, X64]
+    needs: [build-artifacts]
+
+    steps:
+      - uses: actions/checkout@v4.1.1
+
+      # Upload Nuget package to Artifactory
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ORT windows arm64 Python 3.12 QNN NuGet Package
+          path: ${{ github.workspace }}/build/nuget
+
+      - name: Publish
+        if: ${{ !inputs.skip_publish }}
+        shell: powershell
+        env:
+          ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+        run: |
+          py -m venv uplevel_venv
+          .\uplevel_venv\Scripts\activate
+
+          # Install required packages for package_manager.py
+          # Use the Python from the activated virtual environment instead of the system Python.
+          python -m pip install uv
+          uv pip install pip --upgrade
+          uv pip install -r .\qcom\requirements.txt
+
+          . ".\qcom\scripts\upleveling\upload_nupkg_to_artifactory.ps1" `
+            -InputDir "${{ github.workspace }}\build\nuget"
+
+  upload-zip-workflow:
+    name: "Upload zip artifatcs to Artifactory"
+    runs-on: [Linux, self-hosted, Build]
+    needs: [build-artifacts]
+
+    steps:
+      - uses: actions/checkout@v4.1.1
+
+      # Upload Zip package to Artifactory
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ORT windows arm64 Python 3.12 Zip Asset
+          path: ${{ github.workspace }}/build/zip
+
+      - name: Publish
+        if: ${{ !inputs.skip_publish }}
+        run: |
+          # Create temporary .netrc file with credentials
+          # Try /tmp first, then $HOME, then workspace as fallback
+          NETRC_FILE=$(mktemp -p /tmp 2>/dev/null || \
+                       mktemp -p "$HOME" 2>/dev/null || \
+                       mktemp -p "${{ github.workspace }}")
+          chmod 600 "$NETRC_FILE"
+          cat > "$NETRC_FILE" << EOF
+          machine re-artifactory.qualcomm.com
+          login ${{ secrets.ARTIFACTORY_USERNAME }}
+          password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          EOF
+
+          # Upload files using the upload script
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/zip" \
+            "$NETRC_FILE"
+
+          # Clean up the temporary .netrc file
+          rm -f "$NETRC_FILE"

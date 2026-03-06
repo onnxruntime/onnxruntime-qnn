@@ -110,6 +110,7 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
         mode: str,
         build_as_x: bool = False,
         build_nuget: bool = False,
+        build_zip: bool = False,
     ) -> None:
         cmd = [
             str(REPO_ROOT / "qcom" / "scripts" / "windows" / "build.ps1"),
@@ -134,6 +135,9 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
 
         if build_nuget:
             cmd.extend(["-BuildNuget", "1"])
+
+        if build_zip:
+            cmd.extend(["-BuildZip", "1"])
 
         super().__init__(group_name, [cmd], env=ort_build_env_vars())
 
@@ -245,4 +249,6 @@ def ort_build_env_vars(old_env: Mapping[str, str] | None = None) -> dict[str, st
     if env.get("ORT_NIGHTLY_BUILD", "0") == "1":
         env["NIGHTLY_BUILD"] = "1"
         env["Build_SourceVersion"] = git_head_sha()
+    elif env.get("ORT_NIGHTLY_BUILD", "0") == "0":
+        env["NIGHTLY_BUILD"] = "0"
     return env
