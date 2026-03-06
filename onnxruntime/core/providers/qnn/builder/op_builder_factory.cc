@@ -247,6 +247,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
 
   {
     CreateGroupNormOpBuilder("GroupNormalization", *this);
+    CreateGroupNormOpBuilder("GroupNorm", *this);
   }
 
   {
