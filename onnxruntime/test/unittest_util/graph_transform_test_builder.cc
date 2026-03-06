@@ -57,7 +57,7 @@ static InlinedVector<std::byte> GetZeroPointBytes(int64_t zero_point, ONNX_NAMES
   }
 }
 
-const ONNX_NAMESPACE::TensorProto* ModelTestBuilder::MakeInitializer(std::string name,
+const ONNX_NAMESPACE::TensorProto* ModelTestBuilder::MakeInitializer(const std::string& name,
                                                                      gsl::span<const int64_t> shape,
                                                                      ONNX_NAMESPACE::TensorProto_DataType elem_type,
                                                                      gsl::span<const std::byte> raw_data) {

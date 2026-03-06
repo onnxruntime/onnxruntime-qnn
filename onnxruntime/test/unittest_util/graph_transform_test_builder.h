@@ -323,13 +323,13 @@ class ModelTestBuilder {
   /// <param name="elem_type">ONNX tensor element data type</param>
   /// <param name="raw_data">Raw data bytes</param>
   /// <returns>ValueInfo pointer for the initializer</returns>
-  const ONNX_NAMESPACE::TensorProto* MakeInitializer(std::string name,
+  const ONNX_NAMESPACE::TensorProto* MakeInitializer(const std::string& name,
                                                      gsl::span<const int64_t> shape,
                                                      ONNX_NAMESPACE::TensorProto_DataType elem_type,
                                                      gsl::span<const std::byte> raw_data);
 
   template <typename T>
-  const ONNX_NAMESPACE::TensorProto* MakeInitializer(std::string name,
+  const ONNX_NAMESPACE::TensorProto* MakeInitializer(const std::string& name,
                                                      const std::vector<int64_t>& shape,
                                                      const std::vector<T>& data) {
     gsl::span<const std::byte> raw_data = ReinterpretAsSpan<const std::byte, const T>(data);
@@ -337,7 +337,7 @@ class ModelTestBuilder {
   }
 
   // Special handle for std::vector<bool>.
-  const ONNX_NAMESPACE::TensorProto* MakeInitializerBool(std::string name,
+  const ONNX_NAMESPACE::TensorProto* MakeInitializerBool(const std::string& name,
                                                          const std::vector<int64_t>& shape, const std::vector<bool>& data) {
     ONNX_NAMESPACE::TensorProto* tensor_proto = graph_->add_initializer();
     tensor_proto->set_name(name);
@@ -356,7 +356,7 @@ class ModelTestBuilder {
     return tensor_proto;
   }
 
-  const ONNX_NAMESPACE::TensorProto* MakeRandInitializerBool(std::string name, const std::vector<int64_t>& shape) {
+  const ONNX_NAMESPACE::TensorProto* MakeRandInitializerBool(const std::string& name, const std::vector<int64_t>& shape) {
     std::vector<uint8_t> data_uint8 = rand_gen_.Uniform<uint8_t>(shape, 0, 1);
     std::vector<bool> data;
     for (uint8_t x : data_uint8) {
@@ -366,18 +366,18 @@ class ModelTestBuilder {
   }
 
   template <typename T>
-  const ONNX_NAMESPACE::TensorProto* MakeInitializer(std::string name,
+  const ONNX_NAMESPACE::TensorProto* MakeInitializer(const std::string& name,
                                                      const std::vector<int64_t>& shape, T min, T max) {
     return MakeInitializer<T>(name, shape, rand_gen_.Uniform<T>(shape, min, max));
   }
 
   template <typename T>
-  const ONNX_NAMESPACE::TensorProto* MakeScalarInitializer(std::string name, T data) {
+  const ONNX_NAMESPACE::TensorProto* MakeScalarInitializer(const std::string& name, T data) {
     return MakeInitializer(name, {}, std::vector<T>{data});
   }
 
   template <typename T>
-  const ONNX_NAMESPACE::TensorProto* Make1DInitializer(std::string name, const std::vector<T>& data) {
+  const ONNX_NAMESPACE::TensorProto* Make1DInitializer(const std::string& name, const std::vector<T>& data) {
     return MakeInitializer(name, {static_cast<int64_t>(data.size())}, data);
   }
 
@@ -386,7 +386,7 @@ class ModelTestBuilder {
                                            const std::vector<std::string>& input_names,
                                            const std::vector<std::string>& output_names,
                                            const std::string& domain = "",
-                                           std::vector<ONNX_NAMESPACE::AttributeProto> node_attributes = {}) {
+                                           const std::vector<ONNX_NAMESPACE::AttributeProto>& node_attributes = {}) {
     ONNX_NAMESPACE::NodeProto* node = graph_->add_node();
     node->set_op_type(op_type);
     node->set_name(node_name);
@@ -478,7 +478,7 @@ class ModelTestBuilder {
                         const std::vector<float>& input_scales,
                         const std::vector<T>& input_zero_points,
                         const std::string& output_name,
-                        std::vector<ONNX_NAMESPACE::AttributeProto> attributes = {},
+                        const std::vector<ONNX_NAMESPACE::AttributeProto>& attributes = {},
                         bool use_ms_domain = false) {
     std::vector<std::string> input_names;
     input_names.push_back(input_name);
@@ -512,7 +512,7 @@ class ModelTestBuilder {
                                                          const std::string& input_name,
                                                          const std::vector<float>& input_scales,
                                                          const std::string& output_name,
-                                                         std::vector<ONNX_NAMESPACE::AttributeProto> attributes = {},
+                                                         const std::vector<ONNX_NAMESPACE::AttributeProto>& attributes = {},
                                                          bool use_ms_domain = false) {
     std::vector<std::string> input_names;
     auto scale = Make1DInitializer<float>(node_name + "_inp_scale", input_scales);
@@ -568,7 +568,7 @@ class ModelTestBuilder {
                           const std::vector<float>& input_scales,
                           const std::vector<T>& input_zero_points,
                           const std::string& output_name,
-                          std::vector<ONNX_NAMESPACE::AttributeProto> attributes = {},
+                          const std::vector<ONNX_NAMESPACE::AttributeProto>& attributes = {},
                           bool use_ms_domain = false) {
     std::vector<std::string> input_names;
     input_names.push_back(input_name);
@@ -602,7 +602,7 @@ class ModelTestBuilder {
                                                            const std::string& input_name,
                                                            const std::vector<float>& input_scales,
                                                            const std::string& output_name,
-                                                           std::vector<ONNX_NAMESPACE::AttributeProto> attributes = {},
+                                                           const std::vector<ONNX_NAMESPACE::AttributeProto>& attributes = {},
                                                            bool use_ms_domain = false) {
     std::vector<std::string> input_names;
     input_names.push_back(input_name);
