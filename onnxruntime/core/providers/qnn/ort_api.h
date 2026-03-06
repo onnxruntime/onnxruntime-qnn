@@ -75,6 +75,35 @@ namespace onnxruntime {
     }                                                                 \
   } while (0)
 
+// Helper to release OrtStatus and report an error.
+inline bool ReleaseStatusIfError(const OrtApi& ort_api, OrtStatus* status) {
+  if (status != nullptr) {
+    ort_api.ReleaseStatus(status);
+    return true;
+  }
+  return false;
+}
+
+#define ORT_RETURN_DEFAULT_ON_ERROR(ort_api_fn_call, ort_api, ret_val) \
+  do {                                                                 \
+    if (ReleaseStatusIfError((ort_api), (ort_api_fn_call))) {          \
+      return (ret_val);                                                \
+    }                                                                  \
+  } while (0)
+
+#define ORT_RETURN_FALSE_ON_ERROR(ort_api_fn_call, ort_api) \
+  ORT_RETURN_DEFAULT_ON_ERROR((ort_api_fn_call), (ort_api), false)
+
+#define ORT_RETURN_NULLPTR_ON_ERROR(ort_api_fn_call, ort_api) \
+  ORT_RETURN_DEFAULT_ON_ERROR((ort_api_fn_call), (ort_api), nullptr)
+
+#define ORT_CONTINUE_ON_ERROR(ort_api_fn_call, ort_api)       \
+  do {                                                        \
+    if (ReleaseStatusIfError((ort_api), (ort_api_fn_call))) { \
+      continue;                                               \
+    }                                                         \
+  } while (0)
+
 // QNN-EP COPY START
 // Below are macors copied from core/common/common.h directly.
 #ifdef _WIN32
