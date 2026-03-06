@@ -138,9 +138,6 @@ TEST_F(QnnCPUBackendTests, Gemm_Broadcast_Bias_DynamicInputs) {
                      ExpectedEPNodeAssignment::All);
 }
 
-// TODO: When this is fixed, enable GemmOpTypedTests/0.TestGemmBroadcast test in cpu/math/gemm_test.cc
-// This began failing in QNN SDK 2.17 for the CPU backend.
-// Log: the value pair (11, 10) at index #0 don't match, which is -1 from 11
 TEST_F(QnnCPUBackendTests, Gemm_Broadcast_Bias_DynamicA_StaticB_DynamicC) {
   std::vector<float> input_a_data = {1.0f, 2.0f, 3.0f, 4.0f, -1.0f, -2.0f, -3.0f, -4.0f};
   std::vector<float> input_b_data(12, 1.0f);
