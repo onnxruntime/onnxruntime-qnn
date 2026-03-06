@@ -1943,6 +1943,7 @@ def build_python_wheel(
     configs,
     qnn_home,
     wheel_name_suffix,
+    version_suffix,
     nightly_build=False,
     use_ninja=False,
 ):
@@ -1958,6 +1959,8 @@ def build_python_wheel(
             args.append("--nightly_build")
         if wheel_name_suffix:
             args.append(f"--wheel_name_suffix={wheel_name_suffix}")
+        if version_suffix:
+            args.append(f"--version_suffix={version_suffix}")
 
         qnn_version = parse_qnn_version_from_sdk_yaml(qnn_home)
         if qnn_version:
@@ -1992,6 +1995,8 @@ def build_nuget_package(
     use_qnn,
     msbuild_extra_options,
     target_arch_name,
+    version_suffix,
+    use_ninja=False,
 ):
     if not (is_windows() or is_linux()):
         raise BuildError(
@@ -2037,6 +2042,9 @@ def build_nuget_package(
     # expand extra_options to add prefix
     extra_options = ["/p:" + option for option in msbuild_extra_options]
 
+    if version_suffix:
+        extra_options.append("/p:VersionSuffix=" + version_suffix)
+
     # explicitly exclude mobile targets in this case
     if sln != "OnnxRuntime.CSharp.sln" and have_exclude_mobile_targets_option is False:
         extra_options.append("/p:IncludeMobileTargets=false")
@@ -2048,6 +2056,11 @@ def build_nuget_package(
     for config in configs:
         configuration = "/p:Configuration=" + config
         extra_options += [configuration, "/p:Platform=Any CPU"]
+        if use_ninja:
+            extra_options.append("/p:UseNinja=true")
+        if config == "Release" and version_suffix and version_suffix.startswith(("rc", "rel")):
+            extra_options.append("/p:IsReleaseBuild=true")
+
         if use_dotnet:
             cmd_args = ["dotnet", "restore", sln, "--configfile", "NuGet.CSharp.config", *extra_options]
         else:
@@ -2540,6 +2553,7 @@ def main():
                 configs,
                 args.qnn_home,
                 args.wheel_name_suffix,
+                args.version_suffix,
                 nightly_build=nightly_build,
                 use_ninja=(args.cmake_generator == "Ninja"),
             )
@@ -2564,6 +2578,8 @@ def main():
                 args.use_qnn,
                 args.msbuild_extra_options,
                 target_arch_name,
+                args.version_suffix,
+                use_ninja=(args.cmake_generator == "Ninja"),
             )
 
         if args.build_zip_asset:
@@ -2572,6 +2588,7 @@ def main():
                 build_dir,
                 configs,
                 args.zip_asset_name_suffix,
+                args.version_suffix,
                 use_ninja=(args.cmake_generator == "Ninja"),
             )
 

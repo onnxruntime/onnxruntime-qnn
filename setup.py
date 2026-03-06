@@ -49,6 +49,7 @@ if parse_arg_remove_boolean(sys.argv, "--nightly_build"):
     nightly_build = True
 
 wheel_name_suffix = parse_arg_remove_string(sys.argv, "--wheel_name_suffix=")
+version_suffix = parse_arg_remove_string(sys.argv, "--version_suffix=")
 
 is_qnn = True
 package_name = "onnxruntime-qnn"
@@ -206,7 +207,6 @@ with open(README, encoding="utf-8") as fdesc:
 data_files = []
 requirements_file = "requirements.txt"
 
-local_version = None
 disable_auditwheel_repair = parse_arg_remove_boolean(sys.argv, "--disable_auditwheel_repair")
 
 classifiers = [
@@ -285,8 +285,8 @@ if nightly_build:
 
     version_number = version_number + ".dev" + build_suffix
 
-if local_version:
-    version_number = version_number + local_version
+elif not nightly_build and version_suffix:
+    version_number += "." + version_suffix
 
 if wheel_name_suffix:
     package_name = f"{package_name}-{wheel_name_suffix}"

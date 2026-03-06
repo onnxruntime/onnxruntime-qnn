@@ -17,11 +17,13 @@ CMake creates a target to this project
     <TargetArchitecture Condition=" '$(TargetArchitecture)' == '' ">x64</TargetArchitecture>
     <IsReleaseBuild Condition=" '$(IsReleaseBuild)' == '' ">false</IsReleaseBuild>
     <ReleaseVersionSuffix></ReleaseVersionSuffix>
+    <VersionSuffix></VersionSuffix>
     <IsWindowsBuild Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Windows)))' == 'true'">true</IsWindowsBuild>
     <IsLinuxBuild Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true'">true</IsLinuxBuild>
     <ExecutionProvider Condition=" '$(ExecutionProvider)' == '' ">None</ExecutionProvider>
     <IsPlatformSpecificSubPackage Condition=" '$(IsPlatformSpecificSubPackage)' == '' ">false</IsPlatformSpecificSubPackage>
     <NuSpecName Condition=" '$(NuSpecName)' == '' ">NativeNuget.nuspec</NuSpecName>
+    <UseNinja Condition=" '$(UseNinja)' == '' ">false</UseNinja>
 
     <!-- include MAUI Android and iOS target frameworks? Command line property overrides this value. -->
     <IncludeMobileTargets>true</IncludeMobileTargets>
@@ -43,7 +45,8 @@ CMake creates a target to this project
     <!--internal build related properties for Windows -->
     <OnnxRuntimeBuildDirectory Condition="'$(OnnxRuntimeBuildDirectory)'==''">..\build\Windows</OnnxRuntimeBuildDirectory>
     <OnnxRuntimePackagesDirectory Condition="'$(OnnxRuntimePackagesDirectory)'==''">$(OnnxRuntimeBuildDirectory)\packages</OnnxRuntimePackagesDirectory>
-    <NativeBuildOutputDir>$(OnnxRuntimeBuildDirectory)\$(Configuration)\$(Configuration)</NativeBuildOutputDir>
+    <NativeBuildOutputDir>$(OnnxRuntimeBuildDirectory)\$(Configuration)</NativeBuildOutputDir>
+    <NativeBuildOutputDir Condition="'$(UseNinja)' != 'true'">$(NativeBuildOutputDir)\$(Configuration)</NativeBuildOutputDir>
     <PythonExe>python</PythonExe>
   </PropertyGroup>
 
@@ -91,6 +94,7 @@ CMake creates a target to this project
       <PackageVersion>$(PackageVersion)$(ReleaseVersionSuffix)</PackageVersion>
       <Version>$(PackageVersion)</Version>
       <PackageVersion Condition="'$(IsReleaseBuild)'!='True'">$(PackageVersion)-dev-$(CurrentDate)-$(CurrentTime)-$(GitCommitHashShort)</PackageVersion>
+      <PackageVersion Condition="'$(VersionSuffix)'!=''">$(PackageVersion)-$(VersionSuffix)</PackageVersion>
     </PropertyGroup>
     <Message Importance="High" Text="PackageVersion=$(PackageVersion)" />
   </Target>

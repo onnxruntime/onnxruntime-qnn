@@ -23,6 +23,10 @@ on:
         description: "If true, include a verbose version string in wheel file names."
         type: boolean
         default: true
+      version_suffix:
+        description: "Version suffix. If set, the specified suffix will be appended to the version string."
+        type: string
+        default: ""
       build_runner_arch:
         description: "The architecture of the build machine to use. X64 Windows are faster, but ARM64 can produce ARM64 wheels."
         default: "X64"
@@ -46,7 +50,13 @@ on:
       upload_wheel:
         default: true
         type: boolean
+      build_nuget:
+        default: false
+        type: boolean
       upload_nuget:
+        default: false
+        type: boolean
+      build_zip:
         default: false
         type: boolean
       upload_zip:
@@ -108,6 +118,8 @@ env:
   # Cross compilation on Windows adds a folder to the build directory.
   BUILD_CONFIG_DIR: "${{ (inputs.target_os == 'windows' && ((inputs.build_runner_arch == 'X64' && inputs.target_arch != 'x86_64') || (inputs.build_runner_arch == 'ARM64' && inputs.target_arch != 'arm64'))) && 'Release/Release' || 'Release' }}"
 
+  ORT_VERSION_SUFFIX: "${{ inputs.version_suffix != '' && inputs.version_suffix || '' }}"
+
 jobs:
   build:
     name: "build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
@@ -125,6 +137,8 @@ jobs:
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
           --target-py-version ${{inputs.target_py_vsn}}
+          ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
+          ${{ inputs.build_zip == true && '--build-zip' || '' }}
           ${{inputs.upload_test_archive == true && 'archive' || 'build'}}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}
 
       - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
