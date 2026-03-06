@@ -1351,7 +1351,7 @@ TEST_F(QnnHTPBackendTests, ConvU8U8S32_ReluClipFusion) {
                                      weight_def,
                                      bias_def,
                                      {1, 1},        // Strides
-                                     {0, 0, 0, 0},  // Clip Pads
+                                     {0, 0, 0, 0},  // Pads
                                      {1, 1},        // Dilations
                                      1,             // default group
                                      "NOTSET",
@@ -1463,11 +1463,11 @@ TEST_F(QnnHTPBackendTests, ConvU8U8S32_RedundantClipQDQ) {
   };
 
   TestQDQModelAccuracy<uint8_t>(f32_fn,
-                       qdq_fn,
-                       provider_options,
-                       13,  // opset
-                       ExpectedEPNodeAssignment::All,
-                       QDQTolerance());
+                                qdq_fn,
+                                provider_options,
+                                13,  // opset
+                                ExpectedEPNodeAssignment::All,
+                                QDQTolerance());
 }
 
 // Test fusion of DQs -> Conv -> Relu/Clip -> Q.
