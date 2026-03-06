@@ -853,6 +853,12 @@ def add_other_feature_args(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="Build ORT shared lib with compatible bridge for primary EPs (TRT, OV, QNN, VitisAI), excludes tests.",
     )
+    parser.add_argument(
+        "--version_suffix",
+        type=str,
+        default="",
+        help="Version suffix for Python Wheel, NuGet and Zip archive.",
+    )
 
 
 def is_cross_compiling(args: argparse.Namespace) -> bool:

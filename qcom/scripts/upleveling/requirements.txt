@@ -1,0 +1,7 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+# Python packages required by the upleveling script
+requests == 2.32.3
+twine == 6.0.1
+wheel == 0.45.1

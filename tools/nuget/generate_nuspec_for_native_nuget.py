@@ -450,6 +450,16 @@ def generate_files(line_list, args):
                 "src",
                 "Qualcomm.ML.OnnxRuntime.QNN",
                 "bin",
+                args.build_config,
+                "netstandard2.0",
+                "Qualcomm.ML.OnnxRuntime.QNN.dll",
+            )
+            helper_dll_arch_path = os.path.join(
+                args.sources_path,
+                "csharp",
+                "src",
+                "Qualcomm.ML.OnnxRuntime.QNN",
+                "bin",
                 args.target_architecture,
                 args.build_config,
                 "netstandard2.0",
@@ -458,6 +468,8 @@ def generate_files(line_list, args):
 
             if os.path.exists(helper_dll_path):
                 files_list.append("<file src=" + '"' + helper_dll_path + '" target="lib\\netstandard2.0"  />')
+            elif os.path.exists(helper_dll_arch_path):
+                files_list.append("<file src=" + '"' + helper_dll_arch_path + '" target="lib\\netstandard2.0"  />')
 
         # Process props file
         if is_qnn_package:

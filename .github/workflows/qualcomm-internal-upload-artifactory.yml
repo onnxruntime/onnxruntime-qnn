@@ -1,0 +1,228 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Publish ONNX Runtime Execution Provider wheel, nuget and zip
+
+permissions:
+  checks: write
+  contents: read
+  id-token: write
+
+on:
+  workflow_call:
+    inputs:
+      product_name:
+        type: string
+        default: "onnxruntime-qnn"
+      artifact_format:
+        description: "The format of artifact. Choose one of [wheel, nuget, zip, all]."
+        type: string
+        default: "wheel"
+      version_from:
+        description: |
+          Source version of artifact.
+          For python wheel, the format should be <version>.<version>.<version><.><suffix>.
+            And the suffix should be <letters><numbers>.
+          For nuget package, the format should be <version>.<version>.<version>-<suffix>.
+            Please note that underscore (_) is not allowed in the version format.
+        type: string
+        default: "0.1.0test"
+      version_to:
+        description: |
+          Target version of artifact.
+          For python wheel, the format should be <version>.<version>.<version><.><suffix>.
+            And the suffix should be <letters><numbers>.
+          For nuget package, the format should be <version>.<version>.<version>-<suffix>.
+            Please note that underscore (_) is not allowed in the version format.
+        type: string
+        default: "0.1.0rctest"
+      index_server_from:
+        description: |
+          From which server the artifact is located. Choose one of
+          ["pypi, testpypi, nuget, testnuget, test-users, test-project, project, public]
+        type: string
+        default: "test-users"
+      index_server_to:
+        description: |
+          To which server to store the artifact. Choose one of
+          ["pypi, testpypi, nuget, testnuget, test-users, test-project, project, public]
+        type: string
+        default: "test-users"
+
+  workflow_dispatch:
+    inputs:
+      product_name:
+        type: string
+        default: "onnxruntime-qnn"
+      artifact_format:
+        description: "The format of artifact. Choose one of [wheel, nuget, zip, all]."
+        type: string
+        default: "wheel"
+      version_from:
+        description: |
+          Source version of artifact.
+          For python wheel, the format should be <version>.<version>.<version><.><suffix>.
+            And the suffix should be <letters><numbers>.
+          For nuget package, the format should be <version>.<version>.<version>-<suffix>.
+            Please note that underscore (_) is not allowed in the version format.
+        type: string
+        default: "0.1.0test"
+      version_to:
+        description: |
+          Target version of artifact.
+          For python wheel, the format should be <version>.<version>.<version><.><suffix>.
+            And the suffix should be <letters><numbers>.
+          For nuget package, the format should be <version>.<version>.<version>-<suffix>.
+            Please note that underscore (_) is not allowed in the version format.
+        type: string
+        default: "0.1.0rctest"
+      index_server_from:
+        description: |
+          From which server the artifact is located. Choose one of
+          [pypi, testpypi, nuget, testnuget, test-users, test-project, project, public]
+        type: string
+        default: "test-users"
+      index_server_to:
+        description: |
+          To which server to store the artifact. Choose one of
+          [pypi, testpypi, nuget, testnuget, test-users, test-project, project, public]
+        type: string
+        default: "test-users"
+
+jobs:
+  check-admin-permission:
+    name: Check if user is admin
+    runs-on: ["self-hosted", "Linux", "X64"]
+    steps:
+      - name: Verify admin permission
+        uses: actions/github-script@v7
+        with:
+          script: |
+            try {
+              const { data: permission } = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                username: context.actor
+              });
+
+              console.log(`User: ${context.actor}`);
+              console.log(`Permission level: ${permission.permission}`);
+
+              if (permission.permission !== 'admin') {
+                core.setFailed(
+                  `Access denied. Only repository administrators can trigger this workflow. Your permission level: ${permission.permission}`
+                );
+              } else {
+                console.log('Admin permission verified');
+              }
+            } catch (error) {
+              core.setFailed(`Failed to check permissions: ${error.message}`);
+            }
+
+  publish-wheel-workflow:
+    if: ${{ inputs.artifact_format == 'wheel' || inputs.artifact_format == 'all' }}
+    name: "Publish artifatcs to Artifactory or PyPI"
+    runs-on: [Linux, self-hosted]
+    needs: check-admin-permission
+
+    steps:
+      - uses: actions/checkout@v4.1.1
+
+      - name: Install Dependencies
+        run: |
+          ./qcom/scripts/upleveling/create_uplevel_venv.sh
+
+      - name: Publish
+        env:
+          ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          PYPI_API_KEY: ${{ secrets.PYPI_UPLOADER_PASSWORD }}
+          TEST_PYPI_API_KEY: ${{ secrets.TEST_PYPI_UPLOADER_PASSWORD }}
+        run: |
+          source uplevel_venv/bin/activate
+          python ./qcom/scripts/upleveling/qnn_ep_uplevel.py \
+            --product_name ${{ inputs.product_name }} \
+            --artifact_format "wheel" \
+            --version_from ${{ inputs.version_from }} \
+            --version_to ${{ inputs.version_to }} \
+            --index_server_from ${{ inputs.index_server_from }} \
+            --index_server_to ${{ inputs.index_server_to }}
+
+  publish-nuget-workflow:
+    if: ${{ inputs.artifact_format == 'nuget' || inputs.artifact_format == 'all' }}
+    name: "Publish artifatcs to Artifactory or NuGet"
+    runs-on: [Windows, self-hosted, X64]
+    needs: check-admin-permission
+
+    steps:
+      - uses: actions/checkout@v4.1.1
+
+      - name: Publish
+        shell: powershell
+        env:
+          ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          NUGET_API_KEY: ${{ secrets.NUGET_UPLOADER_PASSWORD }}
+          TEST_NUGET_API_KEY: ${{ secrets.TEST_NUGET_UPLOADER_PASSWORD }}
+        run: |
+          py -m venv uplevel_venv
+          .\uplevel_venv\Scripts\activate
+
+          # Install required packages for package_manager.py
+          # Use the Python from the activated virtual environment instead of the system Python.
+          python -m pip install uv
+          uv pip install pip --upgrade
+          uv pip install -r .\qcom\requirements.txt
+
+          . ".\qcom\scripts\upleveling\qnn_ep_uplevel_nuget.ps1" `
+            -ProductName ${{ inputs.product_name }} `
+            -ArtifactFormat "nuget" `
+            -VersionFrom ${{ inputs.version_from }} `
+            -VersionTo ${{ inputs.version_to }} `
+            -IndexServerFrom ${{ inputs.index_server_from }} `
+            -IndexServerTo ${{ inputs.index_server_to }}
+
+  publish-zip-workflow:
+    if: ${{ inputs.artifact_format == 'zip' || inputs.artifact_format == 'all' }}
+    name: "Publish artifatcs to Artifactory or GitHub"
+    runs-on: [Linux, self-hosted]
+    needs: check-admin-permission
+
+    steps:
+      - uses: actions/checkout@v4.1.1
+
+      - name: Install Dependencies
+        run: |
+          ./qcom/scripts/upleveling/create_uplevel_venv.sh
+
+      - name: Publish
+        env:
+          ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+        run: |
+          source uplevel_venv/bin/activate
+
+          # Create temporary .netrc file with credentials
+          # Try /tmp first, then $HOME, then workspace as fallback
+          NETRC_FILE=$(mktemp -p /tmp 2>/dev/null || \
+                       mktemp -p "$HOME" 2>/dev/null || \
+                       mktemp -p "${{ github.workspace }}")
+          chmod 600 "$NETRC_FILE"
+          cat > "$NETRC_FILE" << EOF
+          machine re-artifactory.qualcomm.com
+          login ${{ secrets.ARTIFACTORY_USERNAME }}
+          password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          EOF
+
+          # Run the upleveling script with netrc file
+          python ./qcom/scripts/upleveling/qnn_ep_uplevel.py \
+            --product_name ${{ inputs.product_name }} \
+            --artifact_format "zip" \
+            --version_from ${{ inputs.version_from }} \
+            --version_to ${{ inputs.version_to }} \
+            --index_server_from ${{ inputs.index_server_from }} \
+            --index_server_to ${{ inputs.index_server_to }} \
+            --netrc_file "$NETRC_FILE"
+
+          # Clean up the temporary .netrc file
+          rm -f "$NETRC_FILE"
