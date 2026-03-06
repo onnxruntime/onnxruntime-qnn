@@ -147,5 +147,7 @@ void CreateGroupNormOpBuilder(const std::string& op_type, OpBuilderRegistrations
 
 void CreateTanOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
+void CreateMultiHeadAttentionOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+
 }  // namespace qnn
 }  // namespace onnxruntime
