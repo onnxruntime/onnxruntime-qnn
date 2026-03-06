@@ -627,29 +627,69 @@ TEST_F(QnnCPUBackendTests, MultithreadSessionRun) {
   options["backend_path"] = "libQnnCpu.so";
 #endif
 
-  RunOptions run_opts;
-  run_opts.run_tag = "logger0";
-
   Ort::SessionOptions session_opts;
   session_opts.SetLogId("logger0");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, session_opts, onnxruntime::kQnnExecutionProvider, options);
 
-  auto* ort_session_opts = static_cast<OrtSessionOptions*>(session_opts);
-  InferenceSession session_obj{ort_session_opts->value, GetEnvironment()};
-
-  auto status = session_obj.Load(model->model_data.data(), static_cast<int>(model->model_data.size()));
-  ASSERT_TRUE(status.IsOK());
-  ASSERT_EQ(InitializeSession(ort_session_opts, session_obj), nullptr);
+  // Use public API instead of internal InferenceSession
+  Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts);
 
   std::vector<std::thread> threads;
   constexpr int num_threads = 5;
   constexpr int loop_count = 10;
+
+  // Create a lambda function to run the session using public API
+  auto run_session_public_api = [&](int loop_count) {
+    for (int it = 0; it < loop_count; ++it) {
+      std::vector<Ort::Value> ort_inputs;
+      std::vector<const char*> input_names;
+
+      // Prepare inputs using public API
+      auto memory_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
+      for (auto it = model->builder.feeds_.begin(); it != model->builder.feeds_.end(); ++it) {
+        const auto& tensor = it->second.Get<Tensor>();
+
+        ort_inputs.emplace_back(Ort::Value::CreateTensor<float>(
+            memory_info,
+            const_cast<float*>(tensor.Data<float>()),
+            tensor.Shape().Size(),
+            shape.data(),
+            shape.size()));
+        input_names.push_back(it->first.c_str());
+      }
+
+      // Run inference
+      std::vector<const char*> output_names;
+      for (const auto& name : model->builder.output_names_) {
+        output_names.push_back(name.c_str());
+      }
+      std::vector<Ort::Value> outputs = session.Run(
+          Ort::RunOptions{nullptr},
+          input_names.data(),
+          ort_inputs.data(),
+          ort_inputs.size(),
+          output_names.data(),
+          output_names.size());
+
+      // Verify outputs
+      ASSERT_EQ(outputs.size(), output_shapes.size());
+      for (size_t i = 0; i < outputs.size(); i++) {
+        auto type_info = outputs[i].GetTensorTypeAndShapeInfo();
+        auto actual_shape = type_info.GetShape();
+        ASSERT_EQ(actual_shape, output_shapes[i]);
+
+        const float* output_data = outputs[i].GetTensorData<float>();
+        for (size_t j = 0; j < output_values[i].size(); j++) {
+          ASSERT_EQ(output_data[j], output_values[i][j]);
+        }
+      }
+    }
+  };
+
   for (int i = 0; i < num_threads; i++) {
-    threads.push_back(std::thread(RunSessionAndVerify, std::ref(session_obj), run_opts,
-                                  model->builder.feeds_, model->builder.output_names_,
-                                  output_shapes, output_values, loop_count));
+    threads.push_back(std::thread(run_session_public_api, loop_count));
   }
 
   for (auto& th : threads) {
@@ -708,31 +748,69 @@ TEST_F(QnnHTPBackendTests, MultithreadSessionRun) {
 #endif
   options["offload_graph_io_quantization"] = "0";
 
-  RunOptions run_opts;
-  run_opts.run_tag = "logger0";
-
   Ort::SessionOptions session_opts;
   session_opts.SetLogId("logger0");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, session_opts, onnxruntime::kQnnExecutionProvider, options);
 
-  auto* ort_session_opts = static_cast<OrtSessionOptions*>(session_opts);
-  InferenceSession session_obj{ort_session_opts->value, GetEnvironment()};
-
-  auto status = session_obj.Load(model->model_data.data(), static_cast<int>(model->model_data.size()));
-  ASSERT_TRUE(status.IsOK());
-  ASSERT_EQ(InitializeSession(ort_session_opts, session_obj), nullptr);
-  status = session_obj.Initialize();
-  ASSERT_TRUE(status.IsOK());
+  // Use public API instead of internal InferenceSession
+  Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts);
 
   std::vector<std::thread> threads;
   constexpr int num_threads = 5;
   constexpr int loop_count = 10;
+
+  // Create a lambda function to run the session using public API
+  auto run_session_public_api = [&](int loop_count) {
+    for (int it = 0; it < loop_count; ++it) {
+      std::vector<Ort::Value> ort_inputs;
+      std::vector<const char*> input_names;
+
+      // Prepare inputs using public API
+      auto memory_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
+      for (auto it = model->builder.feeds_.begin(); it != model->builder.feeds_.end(); ++it) {
+        const auto& tensor = it->second.Get<Tensor>();
+
+        ort_inputs.emplace_back(Ort::Value::CreateTensor<float>(
+            memory_info,
+            const_cast<float*>(tensor.Data<float>()),
+            tensor.Shape().Size(),
+            shape.data(),
+            shape.size()));
+        input_names.push_back(it->first.c_str());
+      }
+
+      // Run inference
+      std::vector<const char*> output_names;
+      for (const auto& name : model->builder.output_names_) {
+        output_names.push_back(name.c_str());
+      }
+      std::vector<Ort::Value> outputs = session.Run(
+          Ort::RunOptions{nullptr},
+          input_names.data(),
+          ort_inputs.data(),
+          ort_inputs.size(),
+          output_names.data(),
+          output_names.size());
+
+      // Verify outputs
+      ASSERT_EQ(outputs.size(), output_shapes.size());
+      for (size_t i = 0; i < outputs.size(); i++) {
+        auto type_info = outputs[i].GetTensorTypeAndShapeInfo();
+        auto actual_shape = type_info.GetShape();
+        ASSERT_EQ(actual_shape, output_shapes[i]);
+
+        const float* output_data = outputs[i].GetTensorData<float>();
+        for (size_t j = 0; j < output_values[i].size(); j++) {
+          ASSERT_EQ(output_data[j], output_values[i][j]);
+        }
+      }
+    }
+  };
+
   for (int i = 0; i < num_threads; i++) {
-    threads.push_back(std::thread(RunSessionAndVerify, std::ref(session_obj), run_opts,
-                                  model->builder.feeds_, model->builder.output_names_,
-                                  output_shapes, output_values, loop_count));
+    threads.push_back(std::thread(run_session_public_api, loop_count));
   }
 
   for (auto& th : threads) {
@@ -1950,6 +2028,243 @@ TEST(QnnSaverBackendTests, DISABLED_QnnSaver_OutputFiles) {
   // Check that QNN Saver output files exist.
   EXPECT_TRUE(std::filesystem::exists(qnn_saver_output_dir / "saver_output.c"));
   EXPECT_TRUE(std::filesystem::exists(qnn_saver_output_dir / "params.bin"));
+}
+
+// Verifies that a partition-added input (produced by a CPU-only op) is registered as
+// QNN_TENSOR_TYPE_APP_WRITE, not dropped from the fused subgraph's input list.
+TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInput) {
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+  auto& logging_manager = DefaultLoggingManager();
+  onnxruntime::Model model("PartitionAddedInputRegisteredAsGraphInput", false, ModelMetaData(), PathString(),
+                           IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
+                           logging_manager.DefaultLogger());
+  Graph& graph = model.MainGraph();
+
+  ONNX_NAMESPACE::TypeProto type;
+  type.mutable_tensor_type()->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  type.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(1);
+  type.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(3);
+  auto& input = graph.GetOrCreateNodeArg("input", &type);
+
+  const std::vector<float> data = {0.0f, 0.0f, 0.0f};
+  gsl::span<const std::byte> raw_data = ReinterpretAsSpan<const std::byte, const float>(data);
+  const std::vector<int64_t> shape = {1, 3};
+
+  ONNX_NAMESPACE::TensorProto tensor_proto;
+  tensor_proto.set_name("constant");
+  tensor_proto.set_data_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  utils::SetRawDataInTensorProto(tensor_proto, raw_data.data(), raw_data.size());
+  for (const auto dim : shape) {
+    tensor_proto.add_dims(dim);
+  }
+  graph.AddInitializedTensor(tensor_proto);
+  auto& constant = graph.GetOrCreateNodeArg("constant", nullptr);
+  auto& rnl_output = graph.GetOrCreateNodeArg("rnl_output", nullptr);
+  graph.AddNode("rnl", "RandomNormalLike", "", {&constant}, {&rnl_output});
+  auto& add_output = graph.GetOrCreateNodeArg("add_output", nullptr);
+  graph.AddNode("add", "Add", "", {&input, &rnl_output}, {&add_output});
+  graph.SetInputs({&input});
+  graph.SetOutputs({&add_output});
+
+  auto status = graph.Resolve();
+  ASSERT_TRUE(status.IsOK()) << "Graph resolve failed: " << status.ErrorMessage();
+
+  std::string model_data;
+  model.ToProto().SerializeToString(&model_data);
+
+  Ort::SessionOptions so;
+  so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
+
+  onnxruntime::ProviderOptions options;
+#if defined(_WIN32)
+  options["backend_path"] = "QnnCpu.dll";
+#else
+  options["backend_path"] = "libQnnCpu.so";
+#endif
+
+  const std::filesystem::path tmp_dir = "qnn_partition_input_test";
+  std::filesystem::remove_all(tmp_dir);
+  std::filesystem::create_directory(tmp_dir);
+  auto cleanup = gsl::finally([&tmp_dir]() { std::filesystem::remove_all(tmp_dir); });
+
+  options["json_qnn_graph_dir"] = tmp_dir.string();
+  options["dump_json_qnn_graph"] = "1";
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  Ort::Session session(*ort_env, model_data.data(), model_data.size(), so);
+
+  std::filesystem::path json_path;
+  for (const auto& entry : std::filesystem::directory_iterator{tmp_dir}) {
+    if (entry.is_regular_file() && entry.path().extension() == ".json" &&
+        entry.path().filename().string().find("_tensor_log") == std::string::npos) {
+      json_path = entry.path();
+      break;
+    }
+  }
+  ASSERT_FALSE(json_path.empty()) << "No JSON file found in " << tmp_dir;
+
+  std::vector<std::pair<std::string, int>> inputs_with_id;
+  {
+    std::ifstream json_file(json_path);
+    ASSERT_TRUE(json_file.is_open());
+    nlohmann::json root;
+    json_file >> root;
+    for (const auto& [name, tensor] : root["graph"]["tensors"].items()) {
+      if (tensor.value("type", -1) == 0) {  // QNN_TENSOR_TYPE_APP_WRITE
+        inputs_with_id.emplace_back(name, tensor.value("id", -1));
+      }
+    }
+  }
+  std::sort(inputs_with_id.begin(), inputs_with_id.end(),
+            [](const auto& a, const auto& b) { return a.second < b.second; });
+
+  // ONNX-declared input first, partition-added input second.
+  ASSERT_EQ(inputs_with_id.size(), 2u);
+  EXPECT_EQ(inputs_with_id[0].first, "input");
+  EXPECT_EQ(inputs_with_id[1].first, "rnl_output");
+}
+
+// Verifies the same as PartitionAddedInputRegisteredAsGraphInput but via the
+// tensor_name_overrides code path: with offload_graph_io_quantization=1,
+// QuantizeLinear stays on CPU and causes a tensor name remap (q_input <-> input).
+TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInputOffloadGraphIoQuantization) {
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+  auto& logging_manager = DefaultLoggingManager();
+  onnxruntime::Model model("PartitionAddedInputRegisteredAsGraphInputOffloadGraphIoQuantization", false, ModelMetaData(),
+                           PathString(), IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
+                           logging_manager.DefaultLogger());
+  Graph& graph = model.MainGraph();
+
+  // Graph input: float32 [1, 3].
+  ONNX_NAMESPACE::TypeProto float_type;
+  float_type.mutable_tensor_type()->set_elem_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+  float_type.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(1);
+  float_type.mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(3);
+  auto& input = graph.GetOrCreateNodeArg("input", &float_type);
+
+  // Initializer: float32 [1, 3] zeros — seed for RandomNormalLike.
+  {
+    const std::vector<float> data = {0.0f, 0.0f, 0.0f};
+    gsl::span<const std::byte> raw = ReinterpretAsSpan<const std::byte, const float>(data);
+    ONNX_NAMESPACE::TensorProto tp;
+    tp.set_name("constant");
+    tp.set_data_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+    utils::SetRawDataInTensorProto(tp, raw.data(), raw.size());
+    tp.add_dims(1);
+    tp.add_dims(3);
+    graph.AddInitializedTensor(tp);
+  }
+
+  // Initializer: float32 scalar scale = 1/255 for QuantizeLinear / DequantizeLinear.
+  {
+    const std::vector<float> data = {1.0f / 255.0f};
+    gsl::span<const std::byte> raw = ReinterpretAsSpan<const std::byte, const float>(data);
+    ONNX_NAMESPACE::TensorProto tp;
+    tp.set_name("scale");
+    tp.set_data_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
+    utils::SetRawDataInTensorProto(tp, raw.data(), raw.size());
+    graph.AddInitializedTensor(tp);
+  }
+
+  // Initializer: uint8 scalar zero_point = 0 for QuantizeLinear / DequantizeLinear.
+  {
+    const std::vector<uint8_t> data = {0};
+    gsl::span<const std::byte> raw = ReinterpretAsSpan<const std::byte, const uint8_t>(data);
+    ONNX_NAMESPACE::TensorProto tp;
+    tp.set_name("zero_point");
+    tp.set_data_type(ONNX_NAMESPACE::TensorProto_DataType_UINT8);
+    utils::SetRawDataInTensorProto(tp, raw.data(), raw.size());
+    graph.AddInitializedTensor(tp);
+  }
+
+  auto& constant = graph.GetOrCreateNodeArg("constant", nullptr);
+  auto& scale = graph.GetOrCreateNodeArg("scale", nullptr);
+  auto& zero_point = graph.GetOrCreateNodeArg("zero_point", nullptr);
+
+  // QuantizeLinear: input -> q_input.
+  // With offload_graph_io_quantization=1 this stays on CPU (consumes a graph input)
+  // and records the name override: q_input -> input.
+  auto& q_input = graph.GetOrCreateNodeArg("q_input", nullptr);
+  graph.AddNode("quantize", "QuantizeLinear", "", {&input, &scale, &zero_point}, {&q_input});
+
+  // DequantizeLinear: q_input -> dq_input.
+  // This is NOT a graph-output DQ so it is accepted by QNN and goes into the fused subgraph.
+  auto& dq_input = graph.GetOrCreateNodeArg("dq_input", nullptr);
+  graph.AddNode("dequantize", "DequantizeLinear", "", {&q_input, &scale, &zero_point}, {&dq_input});
+
+  // RandomNormalLike: constant -> rnl_output.
+  // Stochastic op — not supported by QNN, stays on CPU and creates a partition-added input.
+  auto& rnl_output = graph.GetOrCreateNodeArg("rnl_output", nullptr);
+  graph.AddNode("rnl", "RandomNormalLike", "", {&constant}, {&rnl_output});
+
+  // Add: dq_input + rnl_output -> add_output.  Goes to QNN.
+  auto& add_output = graph.GetOrCreateNodeArg("add_output", nullptr);
+  graph.AddNode("add", "Add", "", {&dq_input, &rnl_output}, {&add_output});
+
+  graph.SetInputs({&input});
+  graph.SetOutputs({&add_output});
+
+  auto status = graph.Resolve();
+  ASSERT_TRUE(status.IsOK()) << "Graph resolve failed: " << status.ErrorMessage();
+
+  std::string model_data;
+  model.ToProto().SerializeToString(&model_data);
+
+  Ort::SessionOptions so;
+  so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
+
+  onnxruntime::ProviderOptions options;
+#if defined(_WIN32)
+  options["backend_path"] = "QnnCpu.dll";
+#else
+  options["backend_path"] = "libQnnCpu.so";
+#endif
+  options["offload_graph_io_quantization"] = "1";
+
+  const std::filesystem::path tmp_dir = "qnn_partition_input_offload_test";
+  std::filesystem::remove_all(tmp_dir);
+  std::filesystem::create_directory(tmp_dir);
+  auto cleanup = gsl::finally([&tmp_dir]() { std::filesystem::remove_all(tmp_dir); });
+
+  options["json_qnn_graph_dir"] = tmp_dir.string();
+  options["dump_json_qnn_graph"] = "1";
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+
+  Ort::Session session(*ort_env, model_data.data(), model_data.size(), so);
+
+  std::filesystem::path json_path;
+  for (const auto& entry : std::filesystem::directory_iterator{tmp_dir}) {
+    if (entry.is_regular_file() && entry.path().extension() == ".json" &&
+        entry.path().filename().string().find("_tensor_log") == std::string::npos) {
+      json_path = entry.path();
+      break;
+    }
+  }
+  ASSERT_FALSE(json_path.empty()) << "No JSON file found in " << tmp_dir;
+
+  std::vector<std::pair<std::string, int>> inputs_with_id;
+  {
+    std::ifstream json_file(json_path);
+    ASSERT_TRUE(json_file.is_open());
+    nlohmann::json root;
+    json_file >> root;
+    for (const auto& [name, tensor] : root["graph"]["tensors"].items()) {
+      if (tensor.value("type", -1) == 0) {  // QNN_TENSOR_TYPE_APP_WRITE
+        inputs_with_id.emplace_back(name, tensor.value("id", -1));
+      }
+    }
+  }
+  std::sort(inputs_with_id.begin(), inputs_with_id.end(),
+            [](const auto& a, const auto& b) { return a.second < b.second; });
+
+  // ONNX-declared input first (registered under its external name "input" via tensor_name_overrides),
+  // partition-added input second.
+  ASSERT_EQ(inputs_with_id.size(), 2u);
+  EXPECT_EQ(inputs_with_id[0].first, "input");
+  EXPECT_EQ(inputs_with_id[1].first, "rnl_output");
 }
 
 // Verifies QNN graph I/O order matches ONNX declaration order.

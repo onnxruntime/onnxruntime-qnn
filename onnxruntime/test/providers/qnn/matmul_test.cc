@@ -1,6 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include "qnn_test_utils.h"
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <string>
@@ -19,10 +20,16 @@ namespace test {
 static GetTestModelFn BuildMatMulOpTestCase(const TestInputDef<float>& input1_def,
                                             const TestInputDef<float>& input2_def) {
   return [input1_def, input2_def](ModelTestBuilder& builder) {
-    NodeArg* input1 = MakeTestInput(builder, input1_def);
-    NodeArg* input2 = MakeTestInput(builder, input2_def);
-    NodeArg* output = builder.MakeOutput();
-    builder.AddNode("MatMul", {input1, input2}, {output});
+    MakeTestInput<float>(builder, "input0", input1_def);
+    MakeTestInput<float>(builder, "input1", input2_def);
+
+    builder.MakeOutput("Y");
+
+    builder.AddNode("MatMul",
+                    "MatMul",
+                    {"input0", "input1"},
+                    {"Y"},
+                    kOnnxDomain);
   };
 }
 
@@ -48,27 +55,40 @@ static GetTestQDQModelFn<OutputQType> BuildMatMulOpQDQTestCase(const TestInputDe
                                                                bool use_contrib_qdq) {
   return [input0_def, input1_def, use_contrib_qdq](ModelTestBuilder& builder,
                                                    std::vector<QuantParams<OutputQType>>& output_qparams) {
-    // input1 -> Q -> DQ ->
-    NodeArg* input0 = MakeTestInput(builder, input0_def);
-    QuantParams<Input0QType> input0_qparams = GetTestInputQuantParams<Input0QType>(input0_def);
-    auto* input0_qdq =
-        AddQDQNodePair<Input0QType>(builder, input0, input0_qparams.scale, input0_qparams.zero_point, use_contrib_qdq);
-    // input1 -> Q -> DQ ->
-    NodeArg* input1 = MakeTestInput(builder, input1_def);
-    QuantParams<Input1QType> input1_qparams = GetTestInputQuantParams<Input1QType>(input1_def);
-    auto* input1_qdq =
-        AddQDQNodePair<Input1QType>(builder, input1, input1_qparams.scale, input1_qparams.zero_point, use_contrib_qdq);
+    // inputs
+    MakeTestInput<float>(builder, "input0", input0_def);
+    MakeTestInput<float>(builder, "input1", input1_def);
 
-    // MatMul
-    auto* op_output = builder.MakeIntermediate();
-    builder.AddNode("MatMul", {input0_qdq, input1_qdq}, {op_output});
+    // input0 -> Q -> DQ -> input0_qdq
+    const QuantParams<Input0QType> input0_qparams = GetTestInputQuantParams<Input0QType>(input0_def);
+    const std::string input0_qdq =
+        AddQDQNodePair<Input0QType>(builder, "qdq_in0", "input0",
+                                    input0_qparams.scale, input0_qparams.zero_point, use_contrib_qdq);
 
-    // op_output -> Q -> DQ -> output
-    AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(builder, op_output, output_qparams[0].scale,
-                                                       output_qparams[0].zero_point, use_contrib_qdq);
+    // input1 -> Q -> DQ -> input1_qdq
+    const QuantParams<Input1QType> input1_qparams = GetTestInputQuantParams<Input1QType>(input1_def);
+    const std::string input1_qdq =
+        AddQDQNodePair<Input1QType>(builder, "qdq_in1", "input1",
+                                    input1_qparams.scale, input1_qparams.zero_point, use_contrib_qdq);
+
+    // MatMul -> Y
+    builder.AddNode("MatMul",
+                    "MatMul",
+                    {input0_qdq, input1_qdq},
+                    {"Y"},
+                    kOnnxDomain);
+
+    // Y -> Q -> DQ -> (graph output)
+    AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(builder,
+                                                       "qdq_out",
+                                                       "Y",
+                                                       output_qparams[0].scale,
+                                                       output_qparams[0].zero_point,
+                                                       use_contrib_qdq);
   };
 }
 
+/// Returns a function that creates a graph with a per-channel (weights) QDQ MatMul operator.
 template <typename Input0QType, typename WeightQType, typename OutputQType>
 static GetTestQDQModelFn<OutputQType> BuildQDQPerChannelMatMulTestCase(const TestInputDef<float>& input_def,
                                                                        const TestInputDef<float>& weights_def,
@@ -76,48 +96,65 @@ static GetTestQDQModelFn<OutputQType> BuildQDQPerChannelMatMulTestCase(const Tes
                                                                        bool use_contrib_qdq = false) {
   return [input_def, weights_def, weight_quant_axis, use_contrib_qdq](
              ModelTestBuilder& builder, std::vector<QuantParams<OutputQType>>& output_qparams) {
-    std::vector<NodeArg*> matmul_inputs;
+    QNN_ASSERT(weights_def.IsInitializer() && weights_def.IsRawData());
 
-    // input -> Q/DQ ->
-    auto* input = MakeTestInput(builder, input_def);
-    QuantParams<Input0QType> input_qparams = GetTestInputQuantParams<Input0QType>(input_def);
-    auto* input_qdq =
-        AddQDQNodePair<Input0QType>(builder, input, input_qparams.scale, input_qparams.zero_point, use_contrib_qdq);
-    matmul_inputs.push_back(input_qdq);
+    // input
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // input -> Q/DQ -> input_qdq
+    const QuantParams<Input0QType> input_qparams = GetTestInputQuantParams<Input0QType>(input_def);
+    const std::string input_qdq =
+        AddQDQNodePair<Input0QType>(builder, "qdq_in", "input",
+                                    input_qparams.scale, input_qparams.zero_point, use_contrib_qdq);
 
     // Quantized(weights) -> DQ ->
-    ORT_ENFORCE(weights_def.IsInitializer() && weights_def.IsRawData());
+    auto weight_shape = weights_def.GetShape();
     std::vector<float> weight_scales;
     std::vector<WeightQType> weight_zero_points;
-    TensorShape weights_shape = weights_def.GetTensorShape();
     int64_t pos_weight_quant_axis = weight_quant_axis;
     if (pos_weight_quant_axis < 0) {
-      pos_weight_quant_axis += static_cast<int64_t>(weights_shape.NumDimensions());
+      pos_weight_quant_axis += static_cast<int64_t>(weight_shape.size());
     }
+
     GetTestInputQuantParamsPerChannel<WeightQType>(weights_def, weight_scales, weight_zero_points,
                                                    static_cast<size_t>(pos_weight_quant_axis), true);
 
     std::vector<WeightQType> quantized_weights;
-    size_t num_weight_storage_elems = weights_shape.Size();
+    size_t num_weight_storage_elems = SizeOfShape(weight_shape);
     if constexpr (std::is_same_v<WeightQType, Int4x2> || std::is_same_v<WeightQType, UInt4x2>) {
-      num_weight_storage_elems = Int4x2::CalcNumInt4Pairs(weights_shape.Size());
+      num_weight_storage_elems = Int4x2::CalcNumInt4Pairs(SizeOfShape(weight_shape));
     }
     quantized_weights.resize(num_weight_storage_elems);
-    QuantizeValues<float, WeightQType>(weights_def.GetRawData(), quantized_weights, weights_shape, weight_scales,
+
+    QuantizeValues<float, WeightQType>(weights_def.GetRawData(), quantized_weights, weight_shape, weight_scales,
                                        weight_zero_points, pos_weight_quant_axis);
 
-    NodeArg* weights_initializer = builder.MakeInitializer<WeightQType>(weights_def.GetShape(), quantized_weights);
-    NodeArg* weights_dq = builder.MakeIntermediate();
-    Node& weights_dq_node = builder.AddDequantizeLinearNode<WeightQType>(
-        weights_initializer, weight_scales, weight_zero_points, weights_dq, nullptr, use_contrib_qdq);
-    weights_dq_node.AddAttribute("axis", weight_quant_axis);
-    matmul_inputs.push_back(weights_dq);
+    builder.MakeInitializer<WeightQType>("weights", weights_def.GetShape(), quantized_weights);
 
-    auto* matmul_output = builder.MakeIntermediate();
-    builder.AddNode("MatMul", matmul_inputs, {matmul_output});
+    // weights -> DQ -> weights_dq
+    builder.AddDequantizeLinearNode<WeightQType>(
+        "weights_dq",
+        "weights",
+        weight_scales,
+        weight_zero_points,
+        "weights_dq",
+        {builder.MakeScalarAttribute("axis", static_cast<int64_t>(weight_quant_axis))},
+        use_contrib_qdq);
 
-    AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(builder, matmul_output, output_qparams[0].scale,
-                                                       output_qparams[0].zero_point, use_contrib_qdq);
+    // MatMul(input_qdq, weights_dq) -> Y
+    builder.AddNode("MatMul",
+                    "MatMul",
+                    {input_qdq, "weights_dq"},
+                    {"Y"},
+                    kOnnxDomain);
+
+    // Y -> Q -> DQ -> (graph output)
+    AddQDQNodePairWithOutputAsGraphOutput<OutputQType>(builder,
+                                                       "qdq_out",
+                                                       "Y",
+                                                       output_qparams[0].scale,
+                                                       output_qparams[0].zero_point,
+                                                       use_contrib_qdq);
   };
 }
 

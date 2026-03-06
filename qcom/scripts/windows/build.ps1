@@ -16,8 +16,12 @@ param (
     [bool]$BuildNuget = $false,
 
     [Parameter(Mandatory = $false,
+               HelpMessage = "If true, build Zip archive.")]
+    [bool]$BuildZip = $false,
+
+    [Parameter(Mandatory = $false,
                HelpMessage = "Path to ORT Prebuilt.")]
-    [string]$OrtPrebuiltRoot,
+    [string]$OrtPrebuiltRoot = "",
 
     [Parameter(Mandatory = $false,
                HelpMessage = "Path to QAIRT SDK.")]
@@ -39,7 +43,7 @@ param (
 
     [Parameter(Mandatory = $false,
                HelpMessage = "Build a wheel targeting this Python version.")]
-    [ValidateSet("", "3.11", "3.12", "3.13")]
+    [ValidateSet("", "3.11", "3.12", "3.13", "3.14")]
     [string]$TargetPyVersion = "",
 
     [Parameter(Mandatory = $true,
@@ -74,21 +78,6 @@ if (-not (Test-Path $BuildDir)) {
 }
 
 Enter-PyVenv $PyVEnv
-
-if ($OrtPrebuiltRoot -eq "") {
-    if ($Arch -eq "x86_64") {
-        $OrtPrebuiltRoot = (Get-OrtX64PrebuiltRoot)
-    }
-    elseif ($Arch -eq "aarch64" -or $Arch -eq "arm64" -or $Arch -eq "arm64ec") {
-        $OrtPrebuiltRoot = (Get-OrtARM64PrebuiltRoot)
-    }
-    else {
-        Write-Warning "No prebuilt ORT available for architecture '$Arch'. Please provide OrtPrebuiltRoot parameter."
-    }
-}
-else {
-    $OrtPrebuiltRoot = Resolve-Path -Path $OrtPrebuiltRoot
-}
 
 if ($QairtSdkRoot -eq "") {
     $QairtSdkRoot = (Get-QairtRoot)
@@ -136,11 +125,14 @@ $CommonArgs = `
     "--config", $Config, `
     "--parallel"
 
-$QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot", "--ort_home", "$OrtPrebuiltRoot"
+$QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot"
+if ($OrtPrebuiltRoot -ne "") {
+    $OrtPrebuiltRoot = Resolve-Path -Path $OrtPrebuiltRoot
+    $QnnArgs += "--ort_home $OrtPrebuiltRoot"
+}
 $GenerateBuild = $false
 $DoBuild = $false
 $BuildWheel = $false
-$BuildZip = $true
 $MakeTestArchive = $false
 $RunTests = $false
 $TestRunner = "$RepoRoot\qcom\scripts\windows\run_tests.ps1"
@@ -200,6 +192,11 @@ if ($BuildNuget) {
 if ($CMakeGenerator -eq "Ninja") {
     # The default somehow gives us paths that are too long in CI
     $PlatformArgs += "--cmake_extra_defines", "CMAKE_OBJECT_PATH_MAX=240"
+}
+
+$VersionSuffixArg = @()
+if ($env:ORT_VERSION_SUFFIX) {
+    $VersionSuffixArg += "--version_suffix", "$env:ORT_VERSION_SUFFIX"
 }
 
 switch ($Mode) {
@@ -274,7 +271,7 @@ else {
                     Assert-Success { python.exe -m pip install uv }
                     Assert-Success { uv.exe pip install -r "$RepoRoot\tools\ci_build\github\windows\python\requirements.txt" --native-tls }
                     Assert-Success -ErrorMessage "Failed to generate build" {
-                        .\build.bat --update $ArchArgs $CommonArgs $QnnArgs $PlatformArgs
+                        .\build.bat --update $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg
                     }
                 }
             }
@@ -290,17 +287,25 @@ else {
                 }
 
                 if ($BuildWheel) {
-                    if ($env:ORT_NIGHTLY_BUILD) {
+                    $PyNightlyArg = ""
+                    $WheelNameSuffix = ""
+                    if ($env:ORT_NIGHTLY_BUILD -eq "1") {
                         $PyNightlyArg = "--nightly_build"
+                        $WheelNameSuffix = "--wheel_name_suffix=qcom_internal"
+                    }
+                    $PyVersionSuffixArg = ""
+                    if ($env:ORT_VERSION_SUFFIX) {
+                        $PyVersionSuffixArg = "--version_suffix=$env:ORT_VERSION_SUFFIX"
                     }
                     Use-PyVenv -PyVenv $BuildVEnv {
                         Use-WorkingDir -Path $BuildOutputDir {
                             Assert-Success -ErrorMessage "Failed to build wheel" {
                                 python.exe (Join-Path $RepoRoot "setup.py") `
                                     bdist_wheel `
-                                    --wheel_name_suffix=qcom_internal `
+                                    $WheelNameSuffix `
                                     --qnn_version=$QairtSdkVersion `
-                                    $PyNightlyArg
+                                    $PyNightlyArg `
+                                    $PyVersionSuffixArg
                             }
                         }
                     }
@@ -311,7 +316,7 @@ else {
                         Use-WorkingDir -Path $BuildOutputDir {
                             $BuildBatPath = (Join-Path $RepoRoot "build.bat")
                             Assert-Success -ErrorMessage "Failed to build nuget" {
-                                & $BuildBatPath --skip_tests $ArchArgs $CommonArgs $QnnArgs $PlatformArgs
+                                & $BuildBatPath --skip_tests $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg
                             }
                         }
                     }
@@ -329,7 +334,7 @@ else {
                                 $PkgAssetsArgs += "--use_ninja"
                             }
                             Assert-Success -ErrorMessage "Failed to build zip" {
-                                python.exe (Join-Path $RepoRoot "tools\ci_build\pkg_assets.py") @PkgAssetsArgs
+                                python.exe (Join-Path $RepoRoot "tools\ci_build\pkg_assets.py") @PkgAssetsArgs $VersionSuffixArg
                             }
                         }
                     }

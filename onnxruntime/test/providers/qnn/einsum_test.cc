@@ -7,31 +7,13 @@
 #include <vector>
 
 #include "test/providers/qnn/qnn_test_utils.h"
-#include "core/graph/node_attr_utils.h"
 #include "test/util/include/test_utils.h"
 
 #include "core/graph/onnx_protobuf.h"
 #include "gtest/gtest.h"
 
-namespace {
-
-using onnxruntime::Node;
-using onnxruntime::NodeArg;
-using onnxruntime::ProviderOptions;
-using onnxruntime::test::AddQDQNodePair;
-using onnxruntime::test::AddQDQNodePairWithOutputAsGraphOutput;
-using onnxruntime::test::BuildOpTestCase;
-using onnxruntime::test::ExpectedEPNodeAssignment;
-using onnxruntime::test::GetTestInputQuantParams;
-using onnxruntime::test::GetTestQDQModelFn;
-using onnxruntime::test::MakeTestInput;
-using onnxruntime::test::ModelTestBuilder;
-using onnxruntime::test::QDQTolerance;
-using onnxruntime::test::QuantParams;
-using onnxruntime::test::RunQnnModelTest;
-using onnxruntime::test::TestInputDef;
-using onnxruntime::test::TestQDQModelAccuracy;
-using onnxruntime::utils::MakeAttribute;
+namespace onnxruntime {
+namespace test {
 
 constexpr char kEinsumOp[] = "Einsum";
 constexpr char kEinsumEquation[] = "equation";
@@ -56,10 +38,11 @@ static void RunQnnEinsum(
   provider_options[kOffloadGraphIoQuantization] = kOffloadGraphIoQuantizationDisable;
   RunQnnModelTest(
       /*build_test_case=*/BuildOpTestCase<DataType, DataType>(
+          /*node_name=*/"Einsum_node",
           /*op_type=*/kEinsumOp,
           /*input_defs_1=*/{in0, in1},
           /*input_defs_2=*/{},
-          /*attrs=*/{MakeAttribute(kEinsumEquation, equation)}),
+          /*attrs=*/{test::MakeAttribute(kEinsumEquation, equation)}),
       /*provider_options=*/provider_options,
       /*opset_version=*/12,
       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
@@ -72,35 +55,29 @@ GetTestQDQModelFn<InputAQType> BuildTestCaseQdq(const std::vector<TestInputDef<f
                                                 bool use_contrib_qdq = false) {
   return [input_defs, attrs, use_contrib_qdq](ModelTestBuilder& builder,
                                               std::vector<QuantParams<InputAQType>>& output_qparams) {
-    const size_t num_inputs = input_defs.size();
+    ORT_UNUSED_PARAMETER(use_contrib_qdq);  // Build using standard ONNX Q/DQ nodes.
 
-    std::vector<NodeArg*> op_inputs;
-    op_inputs.reserve(num_inputs);
+    builder.graph_->set_name("qdq_einsum_graph");
 
-    // Process input 0
-    NodeArg* input0 = MakeTestInput<float>(builder, input_defs[0]);
-    QuantParams<InputAQType> input0_qparams = GetTestInputQuantParams<InputAQType>(input_defs[0]);
-    NodeArg* input0_after_qdq = AddQDQNodePair<InputAQType>(builder, input0, input0_qparams.scale,
-                                                            input0_qparams.zero_point, use_contrib_qdq);
-    op_inputs.push_back(input0_after_qdq);
+    // Input 0 (fp32) -> Q -> DQ
+    MakeTestInput<float>(builder, "A", input_defs[0]);
+    const QuantParams<InputAQType> a_qparams = GetTestInputQuantParams<InputAQType>(input_defs[0]);
+    const std::string a_qdq = AddQDQNodePair<InputAQType>(builder, "A_qdq", "A", a_qparams.scale, a_qparams.zero_point);
 
-    // Process input 1
-    NodeArg* input1 = MakeTestInput<float>(builder, input_defs[1]);
-    QuantParams<InputBQType> input1_qparams = GetTestInputQuantParams<InputBQType>(input_defs[1]);
-    NodeArg* input1_after_qdq = AddQDQNodePair<InputBQType>(builder, input1, input1_qparams.scale,
-                                                            input1_qparams.zero_point, use_contrib_qdq);
-    op_inputs.push_back(input1_after_qdq);
+    // Input 1 (fp32) -> Q -> DQ
+    MakeTestInput<float>(builder, "B", input_defs[1]);
+    const QuantParams<InputBQType> b_qparams = GetTestInputQuantParams<InputBQType>(input_defs[1]);
+    const std::string b_qdq = AddQDQNodePair<InputBQType>(builder, "B_qdq", "B", b_qparams.scale, b_qparams.zero_point);
 
-    // Op -> op_output
-    auto* output = builder.MakeIntermediate();
-    Node& node = builder.AddNode(kEinsumOp, op_inputs, {output});
-    for (const auto& attr : attrs) {
-      node.AddAttributeProto(attr);
-    }
+    // Einsum
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes = attrs;
+    builder.AddNode("einsum", kEinsumOp, {a_qdq, b_qdq}, {"einsum_out"}, "", attributes);
 
-    // op_output -> Q -> DQ -> output
-    AddQDQNodePairWithOutputAsGraphOutput<InputAQType>(builder, output, output_qparams[0].scale,
-                                                       output_qparams[0].zero_point, use_contrib_qdq);
+    // Output Q/DQ: einsum_out -> Q -> DQ -> output
+    const std::string out_qdq = AddQDQNodePair<InputAQType>(
+        builder, "einsum_out_qdq", "einsum_out", output_qparams[0].scale, output_qparams[0].zero_point);
+
+    builder.MakeOutput(out_qdq);
   };
 }
 
@@ -112,8 +89,9 @@ static void RunQnnHtpQdqEinsum(const TestInputDef<float>& in0,
   ProviderOptions provider_options;
   provider_options[kQnnBackendType] = kQnnBackendTypeHtp;
   provider_options[kOffloadGraphIoQuantization] = kOffloadGraphIoQuantizationDisable;
-  std::vector<ONNX_NAMESPACE::AttributeProto> attrs{MakeAttribute(kEinsumEquation, equation)};
+  std::vector<ONNX_NAMESPACE::AttributeProto> attrs{test::MakeAttribute(kEinsumEquation, equation)};
   auto f32_model_builder = BuildOpTestCase<float, float>(
+      /*node_name*/ "Einsum_node",
       /*op_type=*/kEinsumOp,
       /*input_defs_1=*/{in0, in1},
       /*input_defs_2=*/{},
@@ -127,11 +105,6 @@ static void RunQnnHtpQdqEinsum(const TestInputDef<float>& in0,
                                     /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                                     /*tolerance=*/tolerance);
 }
-
-}  // namespace
-
-namespace onnxruntime {
-namespace test {
 
 //
 // QNN CPU

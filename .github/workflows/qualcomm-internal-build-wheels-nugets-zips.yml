@@ -1,0 +1,138 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Qualcomm Internal Build Wheels, NuGet Packages and Zip Archives
+on:
+  workflow_call:
+    inputs:
+      nightly_build:
+        description: "If true, include a verbose version string in file names."
+        type: boolean
+        default: true
+      version_suffix:
+        description: "Version suffix for python wheel, nuget and zip. If set, the specified suffix will be appended to the version string."
+        type: string
+        default: ""
+
+jobs:
+  build-windows-arm64_311:
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: windows
+      target_arch: arm64
+      target_py_vsn: "3.11"
+      build_runner_arch: ARM64
+      test_runner_arch: ARM64
+      run_tests: false
+      upload_test_archive: false
+      upload_wheel: true
+
+  build-windows-arm64_312:
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: windows
+      target_arch: arm64
+      target_py_vsn: "3.12"
+      build_runner_arch: ARM64
+      test_runner_arch: ARM64
+      run_tests: false
+      upload_test_archive: false
+      upload_wheel: true
+      # We only need to build the NuGet package and zip archive in one job
+      # since they do not depend on the Python version.
+      build_nuget: true
+      upload_nuget: true
+      build_zip: true
+      upload_zip: true
+
+  build-windows-arm64_313:
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: windows
+      target_arch: arm64
+      target_py_vsn: "3.13"
+      build_runner_arch: ARM64
+      test_runner_arch: ARM64
+      run_tests: false
+      upload_test_archive: false
+      upload_wheel: true
+
+  build-windows-arm64_314:
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: windows
+      target_arch: arm64
+      target_py_vsn: "3.14"
+      build_runner_arch: ARM64
+      test_runner_arch: ARM64
+      run_tests: false
+      upload_test_archive: false
+      upload_wheel: true
+
+  build-windows-arm64ec_311:
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: windows
+      target_arch: arm64ec
+      target_py_vsn: "3.11"
+      test_runner_arch: arm64
+      run_tests: false  # ARM64ec unit tests are horribly broken (though model tests seem fine).
+      upload_test_archive: false
+      upload_wheel: true
+
+  build-windows-arm64ec_312:
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: windows
+      target_arch: arm64ec
+      target_py_vsn: "3.12"
+      test_runner_arch: arm64
+      run_tests: false  # ARM64ec unit tests are horribly broken (though model tests seem fine).
+      upload_test_archive: false
+      upload_wheel: true
+
+  build-windows-arm64ec_313:
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: windows
+      target_arch: arm64ec
+      target_py_vsn: "3.13"
+      test_runner_arch: arm64
+      run_tests: false  # ARM64ec unit tests are horribly broken (though model tests seem fine).
+      upload_test_archive: false
+      upload_wheel: true
+
+  build-windows-arm64ec_314:
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: windows
+      target_arch: arm64ec
+      target_py_vsn: "3.14"
+      test_runner_arch: arm64
+      run_tests: false  # ARM64ec unit tests are horribly broken (though model tests seem fine).
+      upload_test_archive: false
+      upload_wheel: true

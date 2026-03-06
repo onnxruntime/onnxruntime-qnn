@@ -29,7 +29,7 @@ static void RunThresholdedReluTest(const std::vector<TestInputDef<DataType>>& in
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<DataType>("ThresholdedRelu", input_defs, {}, attrs),
+  RunQnnModelTest(BuildOpTestCase<DataType>("ThresholdedRelu_node", "ThresholdedRelu", input_defs, {}, attrs),
                   provider_options,
                   opset,
                   expected_ep_assignment,
@@ -46,7 +46,7 @@ TEST_F(QnnCPUBackendTests, ThresholdedRelu) {
   auto input = rand_gen_.Uniform<float>(dividend_shape, -100.0f, 100.0f);
 
   RunThresholdedReluTest<float>({TestInputDef<float>({1, 4, 5}, false, input)},
-                                {utils::MakeAttribute("alpha", 4.5f)},
+                                {test::MakeAttribute("alpha", 4.5f)},
                                 ExpectedEPNodeAssignment::All);
 }
 
@@ -63,27 +63,32 @@ inline GetTestQDQModelFn<InputAQType> BuildQDQThresholdedReluTestCase(const std:
   return [input_defs, attrs, use_contrib_qdq](ModelTestBuilder& builder,
                                               std::vector<QuantParams<InputAQType>>& output_qparams) {
     const size_t num_inputs = input_defs.size();
-    std::vector<NodeArg*> op_inputs;
-    op_inputs.reserve(num_inputs);
+    QNN_ASSERT(num_inputs == 1);
 
-    // Process input 0
-    NodeArg* input0 = MakeTestInput<float>(builder, input_defs[0]);
-    QuantParams<InputAQType> input0_qparams = GetTestInputQuantParams<InputAQType>(input_defs[0]);
-    NodeArg* input0_after_qdq = AddQDQNodePair<InputAQType>(builder, input0, input0_qparams.scale,
-                                                            input0_qparams.zero_point, use_contrib_qdq);
-    op_inputs.push_back(input0_after_qdq);
+    // input
+    MakeTestInput<float>(builder, "input0", input_defs[0]);
 
-    // Op -> op_output
-    auto* ThresholdedRelu_output = builder.MakeIntermediate();
-    Node& ThresholdedRelu_node = builder.AddNode("ThresholdedRelu", op_inputs, {ThresholdedRelu_output});
+    // input0 -> Q -> DQ -> input0_qdq
+    const QuantParams<InputAQType> input0_qparams = GetTestInputQuantParams<InputAQType>(input_defs[0]);
+    const std::string input0_qdq =
+        AddQDQNodePair<InputAQType>(builder, "qdq_in", "input0",
+                                    input0_qparams.scale, input0_qparams.zero_point, use_contrib_qdq);
 
-    for (const auto& attr : attrs) {
-      ThresholdedRelu_node.AddAttributeProto(attr);
-    }
+    // ThresholdedRelu -> op_out
+    builder.AddNode("ThresholdedRelu",
+                    "ThresholdedRelu",
+                    {input0_qdq},
+                    {"op_out"},
+                    kOnnxDomain,
+                    attrs);
 
-    // op_output -> Q -> DQ -> output
-    AddQDQNodePairWithOutputAsGraphOutput<InputAQType>(builder, ThresholdedRelu_output, output_qparams[0].scale,
-                                                       output_qparams[0].zero_point, use_contrib_qdq);
+    // op_out -> Q -> DQ -> output
+    AddQDQNodePairWithOutputAsGraphOutput<InputAQType>(builder,
+                                                       "qdq_out",
+                                                       "op_out",
+                                                       output_qparams[0].scale,
+                                                       output_qparams[0].zero_point,
+                                                       use_contrib_qdq);
   };
 }
 
@@ -99,7 +104,7 @@ static void RunQDQThresholdedReluTestOnHTP(const std::vector<TestInputDef<float>
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  auto f32_model_builder = BuildOpTestCase<float>("ThresholdedRelu", input_defs, {}, attrs);
+  auto f32_model_builder = BuildOpTestCase<float>("ThresholdedRelu_node", "ThresholdedRelu", input_defs, {}, attrs);
   auto qdq_model_builder = BuildQDQThresholdedReluTestCase<InputAQType, InputBQType>(input_defs, attrs, use_contrib_qdq);
   TestQDQModelAccuracy<InputAQType>(f32_model_builder,
                                     qdq_model_builder,
@@ -113,7 +118,7 @@ static void RunQDQThresholdedReluTestOnHTP(const std::vector<TestInputDef<float>
 TEST_F(QnnHTPBackendTests, ThresholdedRelu_qdq) {
   std::vector<float> input = GetFloatDataInRange(-10.0f, 10.0f, 20);
   RunQDQThresholdedReluTestOnHTP<uint8_t, uint8_t>({TestInputDef<float>({1, 4, 5}, false, input)},
-                                                   {utils::MakeAttribute("alpha", 4.5f)},
+                                                   {test::MakeAttribute("alpha", 4.5f)},
                                                    ExpectedEPNodeAssignment::All);
 }
 
@@ -124,7 +129,7 @@ TEST_F(QnnHTPBackendTests, ThresholdedRelu_fp32) {
   auto input = rand_gen_.Uniform<float>(dividend_shape, -10.0f, 10.0f);
 
   RunThresholdedReluTest<float>({TestInputDef<float>({1, 4, 5}, false, input)},
-                                {utils::MakeAttribute("alpha", 4.5f)},
+                                {test::MakeAttribute("alpha", 4.5f)},
                                 ExpectedEPNodeAssignment::All,
                                 "htp",
                                 0.004f);  // Tolerance. Comparing fp16 (QNN) with fp32 (CPU EP), so expect to need larger tolerance.);

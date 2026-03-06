@@ -34,34 +34,41 @@ static void RunStftOpTest(const TestInputDef<SignalType>& signal_def,
 
   // Create a model builder function
   auto build_test_case = [signal_def, frame_step_def, window_def, frame_length_def, attrs](ModelTestBuilder& builder) {
-    // Add signal input
-    NodeArg* signal = MakeTestInput(builder, signal_def);
+    // signal input
+    MakeTestInput<SignalType>(builder, "signal", signal_def);
 
-    // Add frame_step input
-    NodeArg* frame_step_input = MakeTestInput(builder, frame_step_def);
+    // frame_step input
+    MakeTestInput<StepType>(builder, "frame_step", frame_step_def);
 
-    // Prepare inputs for STFT op
-    std::vector<NodeArg*> stft_inputs = {signal, frame_step_input};
-
-    // Add optional window input if provided
+    // optional window input
     if (window_def.has_value()) {
-      NodeArg* window = MakeTestInput(builder, window_def.value());
-      stft_inputs.push_back(window);
+      MakeTestInput<SignalType>(builder, "window", window_def.value());
     }
 
-    // Add optional frame_length input if provided
+    // optional frame_length input
     if (frame_length_def.has_value()) {
-      NodeArg* frame_length_input = MakeTestInput(builder, frame_length_def.value());
-      stft_inputs.push_back(frame_length_input);
+      MakeTestInput<StepType>(builder, "frame_length", frame_length_def.value());
     }
 
-    // STFT op
-    NodeArg* output = builder.MakeOutput();
-    Node& stft_node = builder.AddNode("STFT", stft_inputs, {output});
-
-    for (const auto& attr : attrs) {
-      stft_node.AddAttributeProto(attr);
+    // inputs for STFT op
+    std::vector<std::string> stft_inputs;
+    stft_inputs.reserve(4);
+    stft_inputs.push_back("signal");
+    stft_inputs.push_back("frame_step");
+    if (window_def.has_value()) {
+      stft_inputs.push_back("window");
     }
+    if (frame_length_def.has_value()) {
+      stft_inputs.push_back("frame_length");
+    }
+
+    builder.MakeOutput("Y");
+    builder.AddNode("STFT",
+                    "STFT",
+                    stft_inputs,
+                    {"Y"},
+                    kOnnxDomain,
+                    attrs);
   };
 
   // Run the model test
@@ -81,7 +88,7 @@ TEST_F(QnnHTPBackendTests, StftOp_Float_WithWindowOnly) {
       TestInputDef<int32_t>({}, true, {8}),                  // frame_step
       TestInputDef<float>({16}, true, window_data),          // window
       std::nullopt,                                          // no frame_length
-      {utils::MakeAttribute("onesided", static_cast<int64_t>(1))},
+      {test::MakeAttribute("onesided", static_cast<int64_t>(1))},
       17,
       ExpectedEPNodeAssignment::All);
 }
@@ -91,11 +98,11 @@ TEST_F(QnnHTPBackendTests, StftOp_Float_WithOnesidedFalse) {
   std::vector<float> window_data(16, 1.0f);   // Window: shape [16]
 
   RunStftOpTest<float, int32_t>(
-      TestInputDef<float>({1, 128, 1}, false, signal_data),         // signal
-      TestInputDef<int32_t>({}, true, {8}),                         // frame_step
-      TestInputDef<float>({16}, true, window_data),                 // window
-      TestInputDef<int32_t>({}, true, {16}),                        // frame_length
-      {utils::MakeAttribute("onesided", static_cast<int64_t>(0))},  // full spectrum
+      TestInputDef<float>({1, 128, 1}, false, signal_data),        // signal
+      TestInputDef<int32_t>({}, true, {8}),                        // frame_step
+      TestInputDef<float>({16}, true, window_data),                // window
+      TestInputDef<int32_t>({}, true, {16}),                       // frame_length
+      {test::MakeAttribute("onesided", static_cast<int64_t>(0))},  // full spectrum
       17,
       ExpectedEPNodeAssignment::All);
 }
@@ -109,7 +116,7 @@ TEST_F(QnnHTPBackendTests, StftOp_Float_SimpleExample) {
       TestInputDef<int32_t>({}, true, {8}),                  // frame_step
       TestInputDef<float>({16}, true, window_data),          // window
       TestInputDef<int32_t>({}, true, {16}),                 // frame_length
-      {utils::MakeAttribute("onesided", static_cast<int64_t>(1))},
+      {test::MakeAttribute("onesided", static_cast<int64_t>(1))},
       17,
       ExpectedEPNodeAssignment::All);
 }
@@ -123,7 +130,7 @@ TEST_F(QnnHTPBackendTests, StftOp_Float_Rank2Signal) {
       TestInputDef<int32_t>({}, true, {8}),               // frame_step
       TestInputDef<float>({16}, true, window_data),       // window
       TestInputDef<int32_t>({}, true, {16}),              // frame_length
-      {utils::MakeAttribute("onesided", static_cast<int64_t>(1))},
+      {test::MakeAttribute("onesided", static_cast<int64_t>(1))},
       17,
       ExpectedEPNodeAssignment::All);
 }

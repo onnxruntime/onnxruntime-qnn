@@ -36,26 +36,33 @@ static GetTestModelFn BuildReduceOpTestCase(const std::string& reduce_op_type,
                                             bool noop_with_empty_axes) {
   return [reduce_op_type, input_def, axes_as_input, axes, keepdims,
           noop_with_empty_axes](ModelTestBuilder& builder) {
-    std::vector<NodeArg*> input_args;
+    // Inputs
+    MakeTestInput<DataType>(builder, "input", input_def);
 
-    // Input data arg
-    input_args.push_back(MakeTestInput(builder, input_def));
+    std::vector<std::string> input_names;
+    input_names.push_back("input");
 
     // Axes input (initializer) for newer opsets.
     if (axes_as_input) {
-      input_args.push_back(builder.MakeInitializer({static_cast<int64_t>(axes.size())}, axes));
+      const std::string axes_name = "axes";
+      builder.MakeInitializer<int64_t>(axes_name, {static_cast<int64_t>(axes.size())}, axes);
+      input_names.push_back(axes_name);
     }
 
-    auto* reduce_sum_output = builder.MakeOutput();
-    Node& reduce_sum_node = builder.AddNode(reduce_op_type, input_args, {reduce_sum_output});
-    reduce_sum_node.AddAttribute("keepdims", static_cast<int64_t>(keepdims));
+    // Attributes
+    std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+    attrs.push_back(test::MakeAttribute("keepdims", static_cast<int64_t>(keepdims)));
 
-    // Older opsets have "axes" as a node attribute.
     if (!axes_as_input) {
-      reduce_sum_node.AddAttribute("axes", axes);
+      // Older opsets have "axes" as a node attribute.
+      attrs.push_back(test::MakeAttribute("axes", axes));
     } else {
-      reduce_sum_node.AddAttribute("noop_with_empty_axes", static_cast<int64_t>(noop_with_empty_axes));
+      attrs.push_back(test::MakeAttribute("noop_with_empty_axes", static_cast<int64_t>(noop_with_empty_axes)));
     }
+
+    // Node
+    builder.MakeOutput("output");
+    builder.AddNode("reduce", reduce_op_type, input_names, {"output"}, "", attrs);
   };
 }
 
@@ -372,30 +379,37 @@ GetTestQDQModelFn<QuantType> BuildQDQReduceOpTestCase(const std::string& reduce_
           noop_with_empty_axes](ModelTestBuilder& builder,
                                 std::vector<QuantParams<QuantType>>& output_qparams) {
     // input -> Q -> DQ ->
-    NodeArg* input = MakeTestInput(builder, input_def);
-    QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-    auto* input_qdq = AddQDQNodePair<QuantType>(builder, input, input_qparams.scale, input_qparams.zero_point);
+    MakeTestInput<float>(builder, "input", input_def);
+    const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
+    const std::string input_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
 
     // -> ReduceOp (e.g., ReduceSum) ->
-    std::vector<NodeArg*> reduce_op_inputs;
-    reduce_op_inputs.push_back(input_qdq);
+    std::vector<std::string> input_names;
+    input_names.push_back(input_qdq);
 
     if (axes_as_input) {
-      reduce_op_inputs.push_back(builder.MakeInitializer({static_cast<int64_t>(axes.size())}, axes));
+      const std::string axes_name = "axes";
+      builder.MakeInitializer<int64_t>(axes_name, {static_cast<int64_t>(axes.size())}, axes);
+      input_names.push_back(axes_name);
     }
 
-    auto* op_output = builder.MakeIntermediate();
-    Node& reduce_sum_node = builder.AddNode(reduce_op_type, reduce_op_inputs, {op_output});
-    reduce_sum_node.AddAttribute("keepdims", static_cast<int64_t>(keepdims));
+    // Attributes
+    std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+    attrs.push_back(test::MakeAttribute("keepdims", static_cast<int64_t>(keepdims)));
 
     if (axes_as_input) {
-      reduce_sum_node.AddAttribute("noop_with_empty_axes", static_cast<int64_t>(noop_with_empty_axes));
+      attrs.push_back(test::MakeAttribute("noop_with_empty_axes", static_cast<int64_t>(noop_with_empty_axes)));
     } else {
-      reduce_sum_node.AddAttribute("axes", axes);
+      attrs.push_back(test::MakeAttribute("axes", axes));
     }
+
+    const std::string reduce_out = "reduce_out";
+    builder.AddNode("reduce", reduce_op_type, input_names, {reduce_out}, "", attrs);
 
     // -> Q -> DQ -> final output
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, op_output, output_qparams[0].scale, output_qparams[0].zero_point);
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(
+        builder, "qdq_out", reduce_out, output_qparams[0].scale, output_qparams[0].zero_point);
   };
 }
 

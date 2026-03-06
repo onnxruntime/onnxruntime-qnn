@@ -96,6 +96,7 @@ def build_zip_asset(
     build_dir,
     configs,
     zip_name_suffix=None,
+    version_suffix="",
     use_ninja=False,
 ):
     """
@@ -106,6 +107,7 @@ def build_zip_asset(
         build_dir: Path to build directory
         configs: List of build configurations (e.g., ['RelWithDebInfo'])
         zip_name_suffix: Optional suffix for zip filename
+        version_suffix: Optional version suffix for zip filename
         use_ninja: Whether Ninja generator was used
 
     Returns:
@@ -144,12 +146,14 @@ def build_zip_asset(
         # Parse version from VERSION_NUMBER file
         version = parse_version_number(source_dir)
 
-        zip_name = f"onnxruntime-qnn-{platform_name}-{arch}"
-        if zip_name_suffix:
-            zip_name += f"-{zip_name_suffix}"
+        zip_name = "onnxruntime-qnn"
         if version:
             zip_name += f"-{version}"
-        zip_name += f"-{config}.zip"
+        if version_suffix:
+            zip_name += f"{version_suffix}"
+        if zip_name_suffix:
+            zip_name += f"-{zip_name_suffix}"
+        zip_name += f"-{platform_name}-{arch}-{config}.zip"
 
         zip_path = Path(dist_dir) / zip_name
 
@@ -218,6 +222,8 @@ Examples:
 
     parser.add_argument("--suffix", help="Optional suffix for zip filename")
 
+    parser.add_argument("--version_suffix", type=str, default="", help="Optional version suffix for zip filename")
+
     parser.add_argument("--use_ninja", action="store_true", help="Whether Ninja generator was used for build")
 
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
@@ -238,6 +244,7 @@ Examples:
             build_dir=args.build_dir,
             configs=args.config,
             zip_name_suffix=args.suffix,
+            version_suffix=args.version_suffix,
             use_ninja=args.use_ninja,
         )
 
