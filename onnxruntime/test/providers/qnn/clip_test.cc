@@ -130,7 +130,7 @@ TEST_F(QnnHTPBackendTests, Clip_U8_DefaultMinMax_Rank4) {
 }
 
 // Test 16-bit QDQ Clip with default min/max.
-// NOTE: The Clip operator is *opt with QDQ Mninimized* away during L1 optimizations, so QNN EP does not get a graph with a Clip op.
+// NOTE: The Clip operator is *optimized* away during L1 optimizations, so QNN EP does not get a graph with a Clip op.
 // Instead, QNN EP will get a graph with a Q -> DQ.
 // - Original sequence: Q1 -> DQ1 -> Clip -> Q2 -> DQ2
 // - ClipQuantFusion: Fuses Clip -> QuantizeLinear resulting in Q1 -> DQ1 -> Q2' -> DQ2
