@@ -155,10 +155,7 @@ bool IsQOrDQScalePositiveConstantScalar(const OrtGraph* graph, const OrtApi& ort
   // Get the scale input (index 1) of the Q/DQ node
   size_t num_inputs = 0;
   OrtStatus* status = ort_api.Node_GetNumInputs(q_node, &num_inputs);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
   if (num_inputs < 2) {
     return false;
   }
@@ -166,20 +163,14 @@ bool IsQOrDQScalePositiveConstantScalar(const OrtGraph* graph, const OrtApi& ort
   std::vector<const OrtValueInfo*> inputs(num_inputs);
   status = ort_api.Node_GetInputs(q_node, inputs.data(), inputs.size());
 
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
 
   // Get the scale input name
   const OrtValueInfo* scale_value_info = inputs[1];
   const char* scale_name = nullptr;
   // Use the correct API function to get the name of a value info
   status = ort_api.GetValueInfoName(scale_value_info, &scale_name);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
 
   // Get the scale initializer
   const OrtValue* scale_initializer = GetConstantInitializer(graph, ort_api, scale_name);
@@ -190,17 +181,11 @@ bool IsQOrDQScalePositiveConstantScalar(const OrtGraph* graph, const OrtApi& ort
   // Check if the scale is a scalar
   OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
   status = ort_api.GetTensorTypeAndShape(scale_initializer, &tensor_info);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
 
   size_t num_dims = 0;
   status = ort_api.GetDimensionsCount(tensor_info, &num_dims);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
   if (num_dims != 0) {  // Scalar has 0 dimensions
     return false;
   }
@@ -220,18 +205,12 @@ bool IsQOrDQScalePositiveConstantScalar(const OrtGraph* graph, const OrtApi& ort
   if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
     float* scale_data = nullptr;
     status = ort_api.GetTensorMutableData(const_cast<OrtValue*>(scale_initializer), (void**)&scale_data);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return false;
-    }
+    ORT_RETURN_FALSE_ON_ERROR(status);
     return *scale_data > 0.0f;
   } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE) {
     double* scale_data = nullptr;
     status = ort_api.GetTensorMutableData(const_cast<OrtValue*>(scale_initializer), (void**)&scale_data);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return false;
-    }
+    ORT_RETURN_FALSE_ON_ERROR(status);
     return *scale_data > 0.0;
   }
 
@@ -271,17 +250,11 @@ bool CanCreateNodeGroup(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
   // Get the outputs as OrtValueInfo instances
   size_t num_outputs_actual = 0;
   OrtStatus* status = ort_api.Node_GetNumOutputs(node, &num_outputs_actual);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
 
   std::vector<const OrtValueInfo*> outputs(num_outputs_actual);
   status = ort_api.Node_GetOutputs(node, outputs.data(), outputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
 
   // Check if any of the outputs are graph outputs
   bool produces_graph_output = false;
@@ -331,10 +304,7 @@ bool IsQDQPairSupported(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
 
   std::vector<const OrtValueInfo*> q_inputs(q_num_inputs);
   status = ort_api.Node_GetInputs(q_node, q_inputs.data(), q_inputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
 
   size_t dq_num_inputs = 0;
   status = ort_api.Node_GetNumInputs(dq_node, &dq_num_inputs);
@@ -345,10 +315,7 @@ bool IsQDQPairSupported(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
 
   std::vector<const OrtValueInfo*> dq_inputs(dq_num_inputs);
   status = ort_api.Node_GetInputs(dq_node, dq_inputs.data(), dq_inputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
 
   // Get the scale input names
   const OrtValueInfo* q_scale_value_info = q_inputs[1];
@@ -356,17 +323,11 @@ bool IsQDQPairSupported(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
 
   const char* q_scale_name = nullptr;
   status = ort_api.GetValueInfoName(q_scale_value_info, &q_scale_name);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
 
   const char* dq_scale_name = nullptr;
   status = ort_api.GetValueInfoName(dq_scale_value_info, &dq_scale_name);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
 
   // Check if the scale names are the same (indicating they're the same initializer)
   bool same_scale = (strcmp(q_scale_name, dq_scale_name) == 0);
@@ -383,10 +344,7 @@ bool IsQDQPairSupported(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
     // Check if both scales have the same data type and shape
     OrtTensorTypeAndShapeInfo* q_tensor_info = nullptr;
     status = ort_api.GetTensorTypeAndShape(q_scale_initializer, &q_tensor_info);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return false;
-    }
+    ORT_RETURN_FALSE_ON_ERROR(status);
 
     OrtTensorTypeAndShapeInfo* dq_tensor_info = nullptr;
     status = ort_api.GetTensorTypeAndShape(dq_scale_initializer, &dq_tensor_info);
@@ -495,17 +453,11 @@ bool OrtNodeGroupSelector::CheckQDQNodes(const OrtGraph* /*graph*/, const OrtApi
   // Get the outputs as OrtValueInfo instances
   size_t num_outputs_actual = 0;
   OrtStatus* status = ort_api.Node_GetNumOutputs(node, &num_outputs_actual);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
 
   std::vector<const OrtValueInfo*> outputs(num_outputs_actual);
   status = ort_api.Node_GetOutputs(node, outputs.data(), outputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
 
   // Check if any of the outputs are graph outputs
   bool produces_graph_output = false;
@@ -663,6 +615,32 @@ bool OrtClipNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
 
   if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes, static_cast<int>(num_dq_nodes))) {
     return false;
+  }
+
+  // If Clip feeds a Q node, require the data input[0] to come from a DQ node.
+  // DQ -> Clip -> Q can form Clip ORT Unit, but DQ -> Op -> Clip -> Q is not allowed as Clip here is redundant.
+  if (!q_nodes.empty()) {
+    // 1. get num of inputs
+    size_t clip_input_count = 0;
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(node, &clip_input_count));
+
+    // 2. get inputs as OrtValueInfo instances
+    std::vector<const OrtValueInfo*> clip_inputs(clip_input_count);
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(node, clip_inputs.data(), clip_inputs.size()));
+
+    // 3. get the producer/parent of the Clip first input
+    const OrtNode* data_producer = nullptr;
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.ValueInfo_GetValueProducer(clip_inputs[0], &data_producer, nullptr));
+
+    // 4. check if the Clip first input producer is a DQ node
+    if (data_producer == nullptr || Ort::ConstNode(data_producer).GetOperatorType() != "DequantizeLinear") {
+      return false;
+    }
+
+    // 5. check if DQ node in the same group
+    if (std::find(dq_nodes.begin(), dq_nodes.end(), data_producer) == dq_nodes.end()) {
+      return false;
+    }
   }
 
   int32_t dt_input = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
@@ -985,20 +963,14 @@ bool OrtDQMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& or
 
   std::vector<const OrtValueInfo*> dq_outputs(num_dq_outputs);
   status = ort_api.Node_GetOutputs(dq_nodes[0], dq_outputs.data(), dq_outputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
 
   const OrtValueInfo* dq_output_value_info = dq_outputs[0];
 
   // Check if DQ output is a graph output
   bool is_graph_output = false;
   status = ort_api.ValueInfo_IsGraphOutput(dq_output_value_info, &is_graph_output);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
 
   if (is_graph_output) {
     return false;
@@ -1023,10 +995,7 @@ bool OrtDQMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& or
 
   std::vector<const OrtValueInfo*> node_inputs(num_inputs);
   status = ort_api.Node_GetInputs(node, node_inputs.data(), node_inputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
 
   const OrtValueInfo* second_input_value_info = node_inputs[1];
 
@@ -1048,10 +1017,7 @@ bool OrtDQMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& or
 
   std::vector<const OrtValueInfo*> dq_inputs(num_dq_inputs);
   status = ort_api.Node_GetInputs(dq_nodes[0], dq_inputs.data(), dq_inputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
 
   // Get weight and scale data types
   const OrtValueInfo* weight_value_info = dq_inputs[0];
@@ -1095,17 +1061,11 @@ bool OrtDQMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& or
   // Get names of weight, scale, and zero point
   const char* weight_name = nullptr;
   status = ort_api.GetValueInfoName(weight_value_info, &weight_name);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
 
   const char* scale_name = nullptr;
   status = ort_api.GetValueInfoName(scale_value_info, &scale_name);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
 
   // Check for zero point (optional)
   const OrtValueInfo* zero_point_value_info = nullptr;
@@ -1113,10 +1073,7 @@ bool OrtDQMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& or
   if (num_dq_inputs > 2) {
     zero_point_value_info = dq_inputs[2];
     status = ort_api.GetValueInfoName(zero_point_value_info, &zero_point_name);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return false;
-    }
+    ORT_RETURN_FALSE_ON_ERROR(status);
   }
 
   // Check if weight, scale, and zero point are constants
@@ -1135,10 +1092,7 @@ bool OrtDQMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& or
   // Check tensor shapes
   OrtTensorTypeAndShapeInfo* weight_tensor_info = nullptr;
   status = ort_api.GetTensorTypeAndShape(weight_initializer, &weight_tensor_info);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(status);
 
   OrtTensorTypeAndShapeInfo* scale_tensor_info = nullptr;
   status = ort_api.GetTensorTypeAndShape(scale_initializer, &scale_tensor_info);
