@@ -72,109 +72,115 @@ void _BuildLSTMTestCase(ModelTestBuilder& builder,
                         const int64_t hidden_size,
                         const int64_t layout,
                         const std::vector<QuantParams<InputType>>& output_qparams) {
-  auto convert_input = [](ModelTestBuilder& builder, const TestInputDef<float>& def) {
-    if (std::is_same<InputType, MLFloat16>::value) {
-      TestInputDef<MLFloat16> Fp16_def = ConvertToFP16InputDef(def);
-      return MakeTestInput(builder, Fp16_def);
-    } else if (std::is_same<InputType, uint8_t>::value) {
-      NodeArg* input = MakeTestInput(builder, def);
+  static constexpr bool kIsFp16 = std::is_same<InputType, Ort::Float16_t>::value;
+  static constexpr bool kIsU8 = std::is_same<InputType, uint8_t>::value;
+
+  auto add_input = [&](const char* name, const TestInputDef<float>& def) -> std::string {
+    if constexpr (kIsFp16) {
+      TestInputDef<Ort::Float16_t> fp16_def = ConvertToFP16InputDef(def);
+      MakeTestInput(builder, name, fp16_def);
+      return name;
+    } else if constexpr (kIsU8) {
+      MakeTestInput(builder, name, def);
       QuantParams<uint8_t> qparams = GetTestInputQuantParams<uint8_t>(def);
-      return AddQDQNodePair<uint8_t>(builder, input, qparams.scale, qparams.zero_point);
+      return AddQDQNodePair<uint8_t>(builder, std::string("qdq_") + name, name, qparams.scale, qparams.zero_point);
     } else {
-      return MakeTestInput(builder, def);
+      MakeTestInput(builder, name, def);
+      return name;
     }
   };
 
-  NodeArg* inputX = convert_input(builder, X_def);
-  NodeArg* inputW = convert_input(builder, W_def);
-  NodeArg* inputR = convert_input(builder, R_def);
-  std::vector<NodeArg*> input_args = {inputX, inputW, inputR};
+  // Required inputs
+  const std::string x_name = add_input("X", X_def);
+  const std::string w_name = add_input("W", W_def);
+  const std::string r_name = add_input("R", R_def);
 
-  // optional inputs
+  // Optional inputs are positional for LSTM; represent missing values with empty string.
+  std::vector<std::string> input_names;
+  input_names.reserve(8);
+  input_names.push_back(x_name);
+  input_names.push_back(w_name);
+  input_names.push_back(r_name);
+
   // B
   if (B_def) {
-    input_args.push_back(convert_input(builder, B_def->get()));
+    input_names.push_back(add_input("B", B_def->get()));
   } else {
-    input_args.push_back(builder.MakeOptionalTensor());
+    input_names.push_back("");
   }
 
-  // sequence length
-  input_args.push_back(builder.MakeOptionalTensor());
+  // sequence_lens (not used)
+  input_names.push_back("");
 
-  // H
+  // initial_h
   if (H_def) {
-    input_args.push_back(convert_input(builder, H_def->get()));
+    input_names.push_back(add_input("initial_h", H_def->get()));
   } else {
-    input_args.push_back(builder.MakeOptionalTensor());
+    input_names.push_back("");
   }
 
-  // C
+  // initial_c
   if (C_def) {
-    input_args.push_back(convert_input(builder, C_def->get()));
+    input_names.push_back(add_input("initial_c", C_def->get()));
   } else {
-    input_args.push_back(builder.MakeOptionalTensor());
+    input_names.push_back("");
   }
 
   // P
   if (P_def) {
-    input_args.push_back(convert_input(builder, P_def->get()));
+    input_names.push_back(add_input("P", P_def->get()));
   } else {
-    input_args.push_back(builder.MakeOptionalTensor());
+    input_names.push_back("");
   }
 
-  NodeArg *lstm_output_Y, *lstm_output_Y_h, *lstm_output_Y_c;
-  if (has_Y) {
-    if (std::is_same<InputType, MLFloat16>::value || std::is_same<InputType, float>::value) {
-      lstm_output_Y = builder.MakeOutput();
-    } else {
-      lstm_output_Y = builder.MakeIntermediate();
-    }
-  } else {
-    lstm_output_Y = builder.MakeOptionalTensor();
-  }
+  // Outputs
+  std::vector<std::string> output_names;
+  output_names.reserve(3);
 
-  if (has_Y_h) {
-    if (std::is_same<InputType, MLFloat16>::value || std::is_same<InputType, float>::value) {
-      lstm_output_Y_h = builder.MakeOutput();
+  auto make_output = [&](const char* name) -> std::string {
+    if (name == nullptr || name[0] == '\0') return "";
+    if constexpr (kIsU8) {
+      // For QDQ, create an intermediate and apply Q->DQ after.
+      return std::string("lstm_") + name;
     } else {
-      lstm_output_Y_h = builder.MakeIntermediate();
+      builder.MakeOutput(name);
+      return name;
     }
-  } else {
-    lstm_output_Y_h = builder.MakeOptionalTensor();
-  }
-  if (has_Y_c) {
-    if (std::is_same<InputType, MLFloat16>::value || std::is_same<InputType, float>::value) {
-      lstm_output_Y_c = builder.MakeOutput();
-    } else {
-      lstm_output_Y_c = builder.MakeIntermediate();
-    }
-  } else {
-    lstm_output_Y_c = builder.MakeOptionalTensor();
-  }
+  };
 
-  Node& lstm_node = builder.AddNode("LSTM",
-                                    input_args,
-                                    {lstm_output_Y, lstm_output_Y_h, lstm_output_Y_c});
-  lstm_node.AddAttribute("direction", direction);
-  lstm_node.AddAttribute("hidden_size", hidden_size);
-  lstm_node.AddAttribute("layout", layout);
+  const std::string y_out = has_Y ? make_output("Y") : std::string("");
+  const std::string y_h_out = has_Y_h ? make_output("Y_h") : std::string("");
+  const std::string y_c_out = has_Y_c ? make_output("Y_c") : std::string("");
+
+  output_names.push_back(y_out);
+  output_names.push_back(y_h_out);
+  output_names.push_back(y_c_out);
+
+  // Attributes (no Node& mutation)
+  std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+  attrs.push_back(builder.MakeStringAttribute("direction", direction));
+  attrs.push_back(builder.MakeScalarAttribute("hidden_size", hidden_size));
+  attrs.push_back(builder.MakeScalarAttribute("layout", layout));
+
+  builder.AddNode("lstm", "LSTM", input_names, output_names, "", attrs);
+
   ORT_UNUSED_PARAMETER(output_qparams);
-  if constexpr (std::is_same<InputType, uint8_t>::value) {
+  if constexpr (kIsU8) {
     size_t i = 0;
     if (has_Y) {
-      AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, lstm_output_Y, output_qparams[i].scale,
+      AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_Y", y_out, output_qparams[i].scale,
                                                      output_qparams[i].zero_point);
-      i++;
+      ++i;
     }
     if (has_Y_h) {
-      AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, lstm_output_Y_h, output_qparams[i].scale,
+      AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_Y_h", y_h_out, output_qparams[i].scale,
                                                      output_qparams[i].zero_point);
-      i++;
+      ++i;
     }
     if (has_Y_c) {
-      AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, lstm_output_Y_c, output_qparams[i].scale,
+      AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_Y_c", y_c_out, output_qparams[i].scale,
                                                      output_qparams[i].zero_point);
-      i++;
+      ++i;
     }
   }
 }
@@ -279,7 +285,7 @@ static void RunHtpFp16LSTMOpTest(const TestInputDef<float>& X_def,
   provider_options["backend_type"] = "htp";
 
   TestFp16ModelAccuracy(BuildLSTMTestCase<float>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
-                        BuildLSTMTestCase<MLFloat16>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
+                        BuildLSTMTestCase<Ort::Float16_t>(X_def, W_def, R_def, B_def, H_def, C_def, P_def, has_Y, has_Y_h, has_Y_c, direction, hidden_size, layout),
                         provider_options,
                         opset,
                         expected_ep_assignment,

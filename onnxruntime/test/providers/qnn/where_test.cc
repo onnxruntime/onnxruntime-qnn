@@ -21,12 +21,17 @@ GetTestModelFn BuildWhereTestCase(const TestInputDef<bool>& condition_def,
                                   const TestInputDef<float>& x_def,
                                   const TestInputDef<float>& y_def) {
   return [condition_def, x_def, y_def](ModelTestBuilder& builder) {
-    NodeArg* condition = MakeTestInput(builder, condition_def);
-    NodeArg* x = MakeTestInput(builder, x_def);
-    NodeArg* y = MakeTestInput(builder, y_def);
+    MakeTestInput<bool>(builder, "condition", condition_def);
+    MakeTestInput<float>(builder, "x", x_def);
+    MakeTestInput<float>(builder, "y", y_def);
 
-    NodeArg* output = builder.MakeOutput();
-    builder.AddNode("Where", {condition, x, y}, {output});
+    builder.MakeOutput("Y");
+
+    builder.AddNode("Where",
+                    "Where",
+                    {"condition", "x", "y"},
+                    {"Y"},
+                    kOnnxDomain);
   };
 }
 
@@ -38,24 +43,33 @@ static GetTestQDQModelFn<QuantType> BuildQDQWhereTestCase(const TestInputDef<boo
   return [condition_def, x_def, y_def](ModelTestBuilder& builder,
                                        std::vector<QuantParams<QuantType>>& output_qparams) {
     // condition
-    NodeArg* condition = MakeTestInput(builder, condition_def);
+    MakeTestInput<bool>(builder, "condition", condition_def);
 
-    // x => Q => DQ =>
-    NodeArg* x = MakeTestInput(builder, x_def);
-    QuantParams<QuantType> x_qparams = GetTestInputQuantParams<QuantType>(x_def);
-    NodeArg* x_qdq = AddQDQNodePair(builder, x, x_qparams.scale, x_qparams.zero_point);
+    // x => Q => DQ => x_qdq
+    MakeTestInput<float>(builder, "x", x_def);
+    const QuantParams<QuantType> x_qparams = GetTestInputQuantParams<QuantType>(x_def);
+    const std::string x_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_x", "x", x_qparams.scale, x_qparams.zero_point);
 
-    // y => Q => DQ =>
-    NodeArg* y = MakeTestInput(builder, y_def);
-    QuantParams<QuantType> y_qparams = GetTestInputQuantParams<QuantType>(y_def);
-    NodeArg* y_qdq = AddQDQNodePair(builder, y, y_qparams.scale, y_qparams.zero_point);
+    // y => Q => DQ => y_qdq
+    MakeTestInput<float>(builder, "y", y_def);
+    const QuantParams<QuantType> y_qparams = GetTestInputQuantParams<QuantType>(y_def);
+    const std::string y_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_y", "y", y_qparams.scale, y_qparams.zero_point);
 
     // Where operator.
-    auto* where_output = builder.MakeIntermediate();
-    builder.AddNode("Where", {condition, x_qdq, y_qdq}, {where_output});
+    builder.AddNode("Where",
+                    "Where",
+                    {"condition", x_qdq, y_qdq},
+                    {"Y"},
+                    kOnnxDomain);
 
-    // Add output -> Q -> output_u8
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, where_output, output_qparams[0].scale, output_qparams[0].zero_point);
+    // Output QDQ as graph output first (to match existing test harness expectations for output ordering).
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder,
+                                                     "qdq_out",
+                                                     "Y",
+                                                     output_qparams[0].scale,
+                                                     output_qparams[0].zero_point);
   };
 }
 

@@ -4,8 +4,6 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <string>
-#include "core/graph/graph.h"
-#include "core/graph/node_attr_utils.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
@@ -26,7 +24,7 @@ static void RunLayerNormCpuTest(const TestInputDef<float>& input_def,
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  RunQnnModelTest(BuildOpTestCase<float>("LayerNormalization", {input_def, scale_def}, {}, attrs),
+  RunQnnModelTest(BuildOpTestCase<float>("layer_norm_node", "LayerNormalization", {input_def, scale_def}, {}, attrs),
                   provider_options,
                   17,
                   expected_ep_assignment);
@@ -37,35 +35,35 @@ static void RunLayerNormCpuTest(const TestInputDef<float>& input_def,
 TEST_F(QnnCPUBackendTests, DISABLED_LayerNorm) {
   RunLayerNormCpuTest(TestInputDef<float>({2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
                       TestInputDef<float>({2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                      {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
+                      {test::MakeAttribute("axis", static_cast<int64_t>(0))},
                       ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnCPUBackendTests, DISABLED_LayerNorm1D_Axis0) {
   RunLayerNormCpuTest(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
                       TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-                      {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
+                      {test::MakeAttribute("axis", static_cast<int64_t>(0))},
                       ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnCPUBackendTests, DISABLED_LayerNorm1D_AxisLast) {
   RunLayerNormCpuTest(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
                       TestInputDef<float>({3}, false, GetFloatDataInRange(0.0f, 10.0f, 3)),
-                      {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
+                      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
                       ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnCPUBackendTests, DISABLED_LayerNorm2D) {
   RunLayerNormCpuTest(TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 18)),
                       TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 18)),
-                      {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
+                      {test::MakeAttribute("axis", static_cast<int64_t>(0))},
                       ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnCPUBackendTests, DISABLED_LayerNorm3D) {
   RunLayerNormCpuTest(TestInputDef<float>({1, 2, 3, 3, 4}, false, GetFloatDataInRange(0.0f, 10.0f, 72)),
                       TestInputDef<float>({1, 2, 3, 3, 4}, false, GetFloatDataInRange(0.0f, 10.0f, 72)),
-                      {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
+                      {test::MakeAttribute("axis", static_cast<int64_t>(0))},
                       ExpectedEPNodeAssignment::All);
 }
 
@@ -78,54 +76,55 @@ GetTestQDQModelFn<InputQType> BuildQDQLayerNormTestCase(const TestInputDef<float
   return [input_def, scale_def, bias_def, attrs,
           use_contrib_qdq_ops](ModelTestBuilder& builder,
                                std::vector<QuantParams<InputQType>>& output_qparams) {
-    std::vector<NodeArg*> layer_norm_inputs;
+    std::vector<std::string> layer_norm_inputs;
 
-    // input -> Q -> DQ ->
-    NodeArg* input = MakeTestInput(builder, input_def);
+    // X -> Q -> DQ ->
+    MakeTestInput(builder, "X", input_def);
     QuantParams<InputQType> input_qparams = GetTestInputQuantParams<InputQType>(input_def);
-    NodeArg* input_qdq = AddQDQNodePair<InputQType>(builder, input, input_qparams.scale, input_qparams.zero_point,
-                                                    use_contrib_qdq_ops);
-    layer_norm_inputs.push_back(input_qdq);
+    std::string x_qdq_name = AddQDQNodePair<InputQType>(builder, "qdq0", "X", input_qparams.scale, input_qparams.zero_point,
+                                                        use_contrib_qdq_ops);
+    layer_norm_inputs.push_back(x_qdq_name);
 
-    NodeArg* scale_qdq = nullptr;
     QuantParams<ScaleQType> scale_qparams = GetTestInputQuantParams<ScaleQType>(scale_def);
 
     if (scale_def.IsInitializer() && scale_def.IsRawData()) {
       // Quantized(scale weights) -> DQ ->
       std::vector<float> scale_scales = {scale_qparams.scale};
       std::vector<ScaleQType> scale_zps = {scale_qparams.zero_point};
-      TensorShape scale_shape = scale_def.GetTensorShape();
-      std::vector<ScaleQType> quantized_scales(scale_shape.Size());
+      std::vector<int64_t> scale_shape = scale_def.GetShape();
+      std::vector<ScaleQType> quantized_scales(SizeOfShape(scale_shape));
       QuantizeValues<float, ScaleQType>(scale_def.GetRawData(), quantized_scales, scale_shape,
                                         scale_scales, scale_zps, std::nullopt);
 
-      NodeArg* scale_initzer = builder.MakeInitializer<ScaleQType>(scale_def.GetShape(), quantized_scales);
-      scale_qdq = builder.MakeIntermediate();
-      builder.AddDequantizeLinearNode<ScaleQType>(scale_initzer, scale_scales, scale_zps, scale_qdq,
-                                                  nullptr, use_contrib_qdq_ops);
+      builder.MakeInitializer<ScaleQType>("scale", scale_shape, quantized_scales);
+      const std::string scale_qdq = "scale_dq_out";
+      builder.AddDequantizeLinearNode<ScaleQType>("scale_dq", "scale", scale_qparams.scale, scale_qparams.zero_point,
+                                                  scale_qdq, use_contrib_qdq_ops);
+      layer_norm_inputs.push_back(scale_qdq);
     } else {
       // scale input -> Q -> DQ ->
-      NodeArg* scale = MakeTestInput(builder, scale_def);
-      scale_qdq = AddQDQNodePair<ScaleQType>(builder, scale, scale_qparams.scale, scale_qparams.zero_point,
-                                             use_contrib_qdq_ops);
+      MakeTestInput(builder, "scale", scale_def);
+      auto scale_qdq = AddQDQNodePair<ScaleQType>(builder, "scale_qdq", "scale", scale_qparams.scale, scale_qparams.zero_point,
+                                                  use_contrib_qdq_ops);
+      layer_norm_inputs.push_back(scale_qdq);
     }
-    layer_norm_inputs.push_back(scale_qdq);
 
     if (!bias_def.GetShape().empty()) {
       const float bias_scale = input_qparams.scale * scale_qparams.scale;
-      layer_norm_inputs.push_back(MakeTestQDQBiasInput(builder, bias_def, bias_scale, use_contrib_qdq_ops));
+      layer_norm_inputs.push_back(MakeTestQDQBiasInput(builder, "bias", bias_def, bias_scale, use_contrib_qdq_ops));
     }
 
     // LayerNormalization
-    NodeArg* layer_norm_output = builder.MakeIntermediate();
-    Node& layer_norm_node = builder.AddNode("LayerNormalization", layer_norm_inputs, {layer_norm_output});
-
-    for (const auto& attr : attrs) {
-      layer_norm_node.AddAttributeProto(attr);
-    }
+    builder.AddNode(
+        "ln_node",
+        "LayerNormalization",
+        layer_norm_inputs,
+        {"Y"},
+        "",
+        attrs);
 
     // layer_norm_output -> Q -> DQ -> output
-    AddQDQNodePairWithOutputAsGraphOutput<InputQType>(builder, layer_norm_output, output_qparams[0].scale,
+    AddQDQNodePairWithOutputAsGraphOutput<InputQType>(builder, "final_qdq", "Y", output_qparams[0].scale,
                                                       output_qparams[0].zero_point, use_contrib_qdq_ops);
   };
 }
@@ -143,7 +142,7 @@ static void RunLayerNormQDQTest(const TestInputDef<float>& input_def,
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
-  TestQDQModelAccuracy(BuildOpTestCase<float>("LayerNormalization", {input_def, scale_def}, {}, attrs),
+  TestQDQModelAccuracy(BuildOpTestCase<float>("layer_norm_node", "LayerNormalization", {input_def, scale_def}, {}, attrs),
                        BuildQDQLayerNormTestCase<InputQType, ScaleQType>(input_def, scale_def, bias_def, attrs,
                                                                          use_contrib_qdq_ops),
                        provider_options,
@@ -156,7 +155,7 @@ TEST_F(QnnHTPBackendTests, LayerNorm1D_Axis0_Unsupported) {
   RunLayerNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, 0.0f, 10.0f),
                                         TestInputDef<float>({1, 2, 3}, true, 0.0f, 10.0f),
                                         TestInputDef<float>(),
-                                        {utils::MakeAttribute("axis", static_cast<int64_t>(0))},  // Unsupported axis
+                                        {test::MakeAttribute("axis", static_cast<int64_t>(0))},  // Unsupported axis
                                         ExpectedEPNodeAssignment::None);
 }
 
@@ -165,7 +164,7 @@ TEST_F(QnnHTPBackendTests, LayerNorm1D_LastAxis_StaticScale_AU8_WU8) {
   RunLayerNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
                                         TestInputDef<float>({3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),
                                         TestInputDef<float>(),  // Implicit bias input
-                                        {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
+                                        {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
                                         ExpectedEPNodeAssignment::All);
 }
 
@@ -174,7 +173,7 @@ TEST_F(QnnHTPBackendTests, LayerNorm1D_LastAxis_StaticScale_StaticBias_AU8_WU8_B
   RunLayerNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
                                         TestInputDef<float>({3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),
                                         TestInputDef<float>({3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),
-                                        {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
+                                        {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
                                         ExpectedEPNodeAssignment::All);
 }
 
@@ -187,7 +186,7 @@ TEST_F(QnnHTPBackendTests, LayerNorm1D_QNN2_24_ImplicitBias_ValidationBug) {
     RunLayerNormQDQTest<uint16_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 1.0f, 6)),
                                            TestInputDef<float>({3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),
                                            TestInputDef<float>(),  // Implicit bias input
-                                           {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
+                                           {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
                                            ExpectedEPNodeAssignment::All,
                                            true);
   }
@@ -199,7 +198,7 @@ TEST_F(QnnHTPBackendTests, LayerNorm1D_LastAxis_StaticScale_AU16_WU8) {
   RunLayerNormQDQTest<uint16_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
                                          TestInputDef<float>({3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),  // Static
                                          TestInputDef<float>(),
-                                         {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},  // Last axis
+                                         {test::MakeAttribute("axis", static_cast<int64_t>(-1))},  // Last axis
                                          ExpectedEPNodeAssignment::All,
                                          true);  // Use 'com.microsoft' Q/DQ ops
 }
@@ -222,7 +221,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_LayerNorm1D_LastAxis_DynamicScale) {
   RunLayerNormQDQTest<uint8_t, uint8_t>(TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
                                         TestInputDef<float>({3}, false, GetFloatDataInRange(0.0f, 1.0f, 3)),  // Dynamic
                                         TestInputDef<float>(),
-                                        {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},  // Last axis
+                                        {test::MakeAttribute("axis", static_cast<int64_t>(-1))},  // Last axis
                                         ExpectedEPNodeAssignment::All);
 }
 
