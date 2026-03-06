@@ -17,6 +17,23 @@ struct OrtNode;
 // Forward declaration
 namespace onnxruntime {
 
+// Helper to release OrtStatus and report an error.
+inline bool ReleaseStatusIfError(const OrtApi& ort_api, OrtStatus* status) {
+  if (status != nullptr) {
+    ort_api.ReleaseStatus(status);  // free the status object
+    return true;
+  }
+  return false;
+}
+
+#define ORT_RETURN_FALSE_ON_ERROR(expr)                \
+  do {                                                 \
+    OrtStatus* ort_status__ = (expr);                  \
+    if (ReleaseStatusIfError(ort_api, ort_status__)) { \
+      return false;                                    \
+    }                                                  \
+  } while (0)
+
 namespace QDQ {
 
 // Forward declaration
