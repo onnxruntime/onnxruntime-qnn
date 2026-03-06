@@ -130,7 +130,7 @@ TEST_F(QnnHTPBackendTests, Clip_U8_DefaultMinMax_Rank4) {
 }
 
 // Test 16-bit QDQ Clip with default min/max.
-// NOTE: The Clip operator is *optimized* away during L1 optimizations, so QNN EP does not get a graph with a Clip op.
+// NOTE: The Clip operator is *opt with QDQ Mninimized* away during L1 optimizations, so QNN EP does not get a graph with a Clip op.
 // Instead, QNN EP will get a graph with a Q -> DQ.
 // - Original sequence: Q1 -> DQ1 -> Clip -> Q2 -> DQ2
 // - ClipQuantFusion: Fuses Clip -> QuantizeLinear resulting in Q1 -> DQ1 -> Q2' -> DQ2
@@ -159,6 +159,53 @@ TEST_F(QnnHTPBackendTests, Clip_U16_Rank4) {
                                 ExpectedEPNodeAssignment::All,
                                 13,     // opset
                                 true);  // Use com.microsoft Q/DQ ops
+}
+
+// Clip with QDQ Min/Max: DQ(data) + DQ(min) + DQ(max) -> Clip -> Q(output).
+TEST_F(QnnHTPBackendTests, Clip_U8_IndependentQDQ_MinMaxQDQ) {
+  GetTestModelFn model_fn = [](ModelTestBuilder& builder) {
+    std::vector<uint8_t> input_data(48);
+    for (size_t i = 0; i < input_data.size(); ++i) {
+      input_data[i] = static_cast<uint8_t>(i);
+    }
+
+    // input (u8) -> DQ ->
+    NodeArg* quant_input = builder.MakeInput<uint8_t>({1, 3, 4, 4}, input_data);
+    NodeArg* input_dq = builder.MakeIntermediate();
+    const float scale = 0.1f;
+    const uint8_t zp = 128;
+    builder.AddDequantizeLinearNode<uint8_t>(quant_input, scale, zp, input_dq);
+
+    // Quantized min/max -> DQ ->
+    const float min_value = -1.0f;
+    const float max_value = 1.0f;
+    const uint8_t min_q = static_cast<uint8_t>(std::round(min_value / scale) + zp);
+    const uint8_t max_q = static_cast<uint8_t>(std::round(max_value / scale) + zp);
+
+    NodeArg* min_quant = builder.MakeInitializer<uint8_t>({}, {min_q});
+    NodeArg* max_quant = builder.MakeInitializer<uint8_t>({}, {max_q});
+    NodeArg* min_dq = builder.MakeIntermediate();
+    NodeArg* max_dq = builder.MakeIntermediate();
+    builder.AddDequantizeLinearNode<uint8_t>(min_quant, scale, zp, min_dq);
+    builder.AddDequantizeLinearNode<uint8_t>(max_quant, scale, zp, max_dq);
+
+    // Clip ->
+    NodeArg* clip_output = builder.MakeIntermediate();
+    builder.AddNode("Clip", {input_dq, min_dq, max_dq}, {clip_output});
+
+    // Q -> output (u8)
+    NodeArg* output = builder.MakeOutput();
+    builder.AddQuantizeLinearNode<uint8_t>(clip_output, scale, zp, output);
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(model_fn,
+                  provider_options,
+                  13,  // opset
+                  ExpectedEPNodeAssignment::All);
 }
 
 // Test QDQ Clip of rank 5.
