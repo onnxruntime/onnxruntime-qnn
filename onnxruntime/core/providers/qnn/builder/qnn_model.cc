@@ -24,9 +24,10 @@ namespace qnn {
 
 namespace {
 
-// Resolves the correct I/O order, preferring ONNX declaration order when available.
-// When names don't match directly (e.g., with offload_graph_io_quantization), uses
-// tensor_name_overrides_reversed to translate ONNX names to internal tensor names.
+// Resolves the correct I/O order for a QNN fused subgraph, preferring ONNX declaration order.
+// For each ONNX-declared name, tries `tensor_name_overrides_reversed` first (handles renames),
+// then a direct match. Fallback to fused_order if any name is unresolvable. Appends partition-
+// boundary entries not in the ONNX declaration.
 std::vector<std::string> ResolveGraphInputOutputOrder(
     const std::vector<std::string>* onnx_names,
     const std::unordered_set<std::string>& fused_names,
@@ -36,26 +37,28 @@ std::vector<std::string> ResolveGraphInputOutputOrder(
     return fused_order;
   }
 
-  bool names_match = std::all_of(onnx_names->begin(), onnx_names->end(),
-                                 [&](const std::string& n) { return fused_names.count(n) > 0; });
-  if (names_match) {
-    return *onnx_names;
-  }
+  std::vector<std::string> resolved_onnx_order;
+  resolved_onnx_order.reserve(onnx_names->size());
 
-  if (!tensor_name_overrides_reversed.empty()) {
-    std::vector<std::string> mapped_order;
-    for (const auto& onnx_name : *onnx_names) {
-      auto it = tensor_name_overrides_reversed.find(onnx_name);
-      if (it != tensor_name_overrides_reversed.end() && fused_names.count(it->second)) {
-        mapped_order.push_back(it->second);
-      }
-    }
-    if (mapped_order.size() == onnx_names->size()) {
-      return mapped_order;
+  for (const auto& onnx_name : *onnx_names) {
+    auto it = tensor_name_overrides_reversed.find(onnx_name);
+    if (it != tensor_name_overrides_reversed.end() && fused_names.count(it->second)) {
+      resolved_onnx_order.push_back(it->second);
+    } else if (fused_names.count(onnx_name)) {
+      resolved_onnx_order.push_back(onnx_name);
+    } else {
+      return fused_order;  // Unresolvable; fall back to complete fused order.
     }
   }
 
-  return fused_order;
+  // Append partition-boundary entries absent from ONNX-declared names.
+  std::unordered_set<std::string> already_added(resolved_onnx_order.begin(), resolved_onnx_order.end());
+  for (const auto& name : fused_order) {
+    if (!already_added.count(name)) {
+      resolved_onnx_order.push_back(name);
+    }
+  }
+  return resolved_onnx_order;
 }
 
 }  // namespace
