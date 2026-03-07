@@ -417,6 +417,8 @@ std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
     const std::string& ep_type,
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map);
 
+std::string MakeSharedLibraryPath(std::string_view name);
+
 }  // namespace utils
 
 // Function to get QDQ node units from OrtGraph
