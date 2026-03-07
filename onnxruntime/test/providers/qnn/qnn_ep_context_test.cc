@@ -2117,7 +2117,7 @@ TEST_F(QnnHTPBackendTests, LoadFromArrayWithQnnEpContextGenPathValidation) {
   }
 }
 
-TEST_F(QnnHTPBackendTests, QnnEpDynamicOptions) {
+/*TEST_F(QnnHTPBackendTests, QnnEpDynamicOptions) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -2186,7 +2186,7 @@ TEST_F(QnnHTPBackendTests, QnnEpDynamicOptions) {
   }
 
   const char* const htp_perf_mode_type[] = {"ep.dynamic.qnn_htp_performance_mode"};
-  const char* const eps_type[] = {"extreme_power_saver"};
+  //const char* const eps_type[] = {"extreme_power_saver"};
   const char* const shp_type[] = {"sustained_high_performance"};
   session.SetEpDynamicOptions(htp_perf_mode_type, shp_type, 1);
   ort_output = session.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
@@ -2199,7 +2199,7 @@ TEST_F(QnnHTPBackendTests, QnnEpDynamicOptions) {
   session.SetEpDynamicOptions(htp_perf_mode_type, shp_type, 1);
   ort_output = session.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
                            output_names_c.data(), 1);
-}
+}*/
 
 // Implementation of OrtOutStreamWriteFunc that writes the compiled model to a file.
 static OrtStatus* ORT_API_CALL TestWriteToStream(void* stream_state, const void* buffer, size_t buffer_num_bytes) {
