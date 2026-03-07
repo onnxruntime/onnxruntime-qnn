@@ -75,33 +75,18 @@ namespace onnxruntime {
     }                                                                 \
   } while (0)
 
-// Helper to release OrtStatus and report an error.
-inline bool ReleaseStatusIfError(OrtStatus* status, const OrtApi& ort_api) {
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return true;
-  }
-  return false;
-}
-
-#define ORT_RETURN_DEFAULT_ON_ERROR(ort_api_fn_call, ort_api, ret_val) \
-  do {                                                                 \
-    if (ReleaseStatusIfError((ort_api_fn_call), (ort_api))) {          \
-      return (ret_val);                                                \
-    }                                                                  \
-  } while (0)
-
 #define ORT_RETURN_FALSE_ON_ERROR(ort_api_fn_call, ort_api) \
-  ORT_RETURN_DEFAULT_ON_ERROR((ort_api_fn_call), (ort_api), false)
+  RETURN_DEFAULT_IF_API_FAIL((ort_api_fn_call), (ort_api), false)
 
 #define ORT_RETURN_NULLPTR_ON_ERROR(ort_api_fn_call, ort_api) \
-  ORT_RETURN_DEFAULT_ON_ERROR((ort_api_fn_call), (ort_api), nullptr)
+  RETURN_DEFAULT_IF_API_FAIL((ort_api_fn_call), (ort_api), nullptr)
 
-#define ORT_CONTINUE_ON_ERROR(ort_api_fn_call, ort_api)       \
-  do {                                                        \
-    if (ReleaseStatusIfError((ort_api_fn_call), (ort_api))) { \
-      continue;                                               \
-    }                                                         \
+#define ORT_CONTINUE_ON_ERROR(ort_api_fn_call, ort_api) \
+  do {                                                  \
+    if (OrtStatus* _status = (ort_api_fn_call)) {       \
+      (ort_api).ReleaseStatus(_status);                 \
+      continue;                                         \
+    }                                                   \
   } while (0)
 
 // QNN-EP COPY START
