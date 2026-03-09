@@ -560,8 +560,8 @@ onnxruntime_fetchcontent_declare(
   URL ${DEP_URL_ort_core}
   URL_HASH SHA1=${DEP_SHA1_ort_core}
   PATCH_COMMAND
-    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_test_binaries.patch &&
-    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/0001-Add-Roialign-Op-to-HTP.patch
+    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0001-cpp-model-test-runner-uses-plugin-EP.patch &&
+    ${Patch_EXECUTABLE} --binary --ignore-whitespace -p1 < ${CMAKE_CURRENT_SOURCE_DIR}/patches/ort_core/0002-Add-Roialign-Op-to-HTP.patch
   EXCLUDE_FROM_ALL)
 FetchContent_Populate(ort_core)
 
