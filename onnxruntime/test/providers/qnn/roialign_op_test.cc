@@ -26,19 +26,18 @@ static GetTestModelFn BuildRoialignTestCase(const TestInputDef<float>& input_def
                                             const TestInputDef<int64_t>& batch_indices_def,
                                             const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs) {
   return [input_def, roi_def, batch_indices_def, attrs](ModelTestBuilder& builder) {
-    MakeTestInput<float>(builder, "X", input_def);
-    MakeTestInput<float>(builder, "rois", roi_def);
-    MakeTestInput<int64_t>(builder, "batch_indices", batch_indices_def);
+    NodeArg* input = MakeTestInput(builder, input_def);
+    NodeArg* roi = MakeTestInput(builder, roi_def);
+    NodeArg* batch_indices = MakeTestInput(builder, batch_indices_def);
 
-    builder.AddNode(
-        "roialign_node",
-        "RoiAlign",
-        {"X", "rois", "batch_indices"},
-        {"Y"},
-        "",
-        attrs);
+    std::vector<NodeArg*> inputs{input, roi, batch_indices};
 
-    builder.MakeOutput("Y");
+    NodeArg* output = builder.MakeOutput();
+    Node& roialign_node = builder.AddNode("RoiAlign", inputs, {output});
+
+    for (const auto& attr : attrs) {
+      roialign_node.AddAttributeProto(attr);
+    }
   };
 }
 
@@ -50,30 +49,32 @@ GetTestQDQModelFn<QuantType> BuildRoialignQDQTestCase(const TestInputDef<float>&
                                                       const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs) {
   return [input_def, roi_def, batch_indices_def, attrs](ModelTestBuilder& builder,
                                                         std::vector<QuantParams<QuantType>>& output_qparams) {
+    std::vector<NodeArg*> inputs;
     // input -> Q -> DQ ->
-    MakeTestInput<float>(builder, "X", input_def);
+    NodeArg* input = MakeTestInput(builder, input_def);
     QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-    std::string input_qdq = AddQDQNodePair<QuantType>(builder, "qdq1", "X", input_qparams.scale, input_qparams.zero_point);
+    NodeArg* input_qdq = AddQDQNodePair<QuantType>(builder, input, input_qparams.scale, input_qparams.zero_point);
+    inputs.push_back(input_qdq);
 
     // roi -> Q -> DQ ->
-    MakeTestInput<float>(builder, "rois", roi_def);
+    NodeArg* roi = MakeTestInput(builder, roi_def);
     QuantParams<QuantType> roi_qparams = GetTestInputQuantParams<QuantType>(roi_def);
-    std::string roi_qdq = AddQDQNodePair<QuantType>(builder, "qdq2", "rois", roi_qparams.scale, roi_qparams.zero_point);
+    NodeArg* roi_qdq = AddQDQNodePair<QuantType>(builder, roi, roi_qparams.scale, roi_qparams.zero_point);
+    inputs.push_back(roi_qdq);
 
-    MakeTestInput<int64_t>(builder, "batch_indices", batch_indices_def);
+    NodeArg* batch_indices = MakeTestInput(builder, batch_indices_def);
+    inputs.push_back(batch_indices);
 
-    builder.AddNode(
-        "roialign_node",
-        "RoiAlign",
-        {input_qdq, roi_qdq, "batch_indices"},
-        {"roialign_output"},
-        "",
-        attrs);
+    NodeArg* output = builder.MakeIntermediate();
+    Node& roialign_node = builder.AddNode("RoiAlign", inputs, {output});
+
+    for (const auto& attr : attrs) {
+      roialign_node.AddAttributeProto(attr);
+    }
 
     // op_output -> Q -> DQ -> output
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(
-        builder, "qdq_out", "roialign_output",
-        output_qparams[0].scale, output_qparams[0].zero_point);
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, output, output_qparams[0].scale,
+                                                     output_qparams[0].zero_point);
   };
 }
 
@@ -127,12 +128,12 @@ TEST_F(QnnCPUBackendTests, TestRoialign) {
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
                     TestInputDef<int64_t>({1}, true, {0}),
-                    {test::MakeAttribute("coordinate_transformation_mode", "output_half_pixel"),
-                     test::MakeAttribute("mode", "avg"),
-                     test::MakeAttribute("sampling_ratio", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_height", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_width", static_cast<int64_t>(1)),
-                     test::MakeAttribute("spatial_scale", 1.0f)},
+                    {utils::MakeAttribute("coordinate_transformation_mode", "output_half_pixel"),
+                     utils::MakeAttribute("mode", "avg"),
+                     utils::MakeAttribute("sampling_ratio", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("output_height", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("output_width", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("spatial_scale", 1.0f)},
                     ExpectedEPNodeAssignment::All);
 }
 
@@ -141,12 +142,12 @@ TEST_F(QnnCPUBackendTests, TestRoialign_Unsupported_output_half) {
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
                     TestInputDef<int64_t>({1}, true, {0}),
-                    {test::MakeAttribute("coordinate_transformation_mode", "output_half"),
-                     test::MakeAttribute("mode", "avg"),
-                     test::MakeAttribute("sampling_ratio", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_height", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_width", static_cast<int64_t>(1)),
-                     test::MakeAttribute("spatial_scale", 1.0f)},
+                    {utils::MakeAttribute("coordinate_transformation_mode", "output_half"),
+                     utils::MakeAttribute("mode", "avg"),
+                     utils::MakeAttribute("sampling_ratio", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("output_height", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("output_width", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("spatial_scale", 1.0f)},
                     ExpectedEPNodeAssignment::None);
 }
 
@@ -155,12 +156,12 @@ TEST_F(QnnCPUBackendTests, TestRoialign_Unsupported_mode_max) {
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
                     TestInputDef<int64_t>({1}, true, {0}),
-                    {test::MakeAttribute("coordinate_transformation_mode", "output_half_pixel"),
-                     test::MakeAttribute("mode", "max"),  //  mode = max is not supported
-                     test::MakeAttribute("sampling_ratio", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_height", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_width", static_cast<int64_t>(1)),
-                     test::MakeAttribute("spatial_scale", 1.0f)},
+                    {utils::MakeAttribute("coordinate_transformation_mode", "output_half_pixel"),
+                     utils::MakeAttribute("mode", "max"),  //  mode = max is not supported
+                     utils::MakeAttribute("sampling_ratio", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("output_height", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("output_width", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("spatial_scale", 1.0f)},
                     ExpectedEPNodeAssignment::None);
 }
 
@@ -169,12 +170,12 @@ TEST_F(QnnCPUBackendTests, TestRoialign_Unsupported_sampling_ratio) {
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
                     TestInputDef<int64_t>({1}, true, {0}),
-                    {test::MakeAttribute("coordinate_transformation_mode", "output_half_pixel"),
-                     test::MakeAttribute("mode", "avg"),
-                     test::MakeAttribute("sampling_ratio", static_cast<int64_t>(0)),
-                     test::MakeAttribute("output_height", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_width", static_cast<int64_t>(1)),
-                     test::MakeAttribute("spatial_scale", 1.0f)},
+                    {utils::MakeAttribute("coordinate_transformation_mode", "output_half_pixel"),
+                     utils::MakeAttribute("mode", "avg"),
+                     utils::MakeAttribute("sampling_ratio", static_cast<int64_t>(0)),
+                     utils::MakeAttribute("output_height", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("output_width", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("spatial_scale", 1.0f)},
                     ExpectedEPNodeAssignment::None);
 }
 
@@ -187,12 +188,12 @@ TEST_F(QnnHTPBackendTests, TestRoialign) {
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
                     TestInputDef<int64_t>({1}, true, {0}),
-                    {test::MakeAttribute("coordinate_transformation_mode", "output_half_pixel"),
-                     test::MakeAttribute("mode", "avg"),
-                     test::MakeAttribute("sampling_ratio", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_height", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_width", static_cast<int64_t>(1)),
-                     test::MakeAttribute("spatial_scale", 1.0f)},
+                    {utils::MakeAttribute("coordinate_transformation_mode", "output_half_pixel"),
+                     utils::MakeAttribute("mode", "avg"),
+                     utils::MakeAttribute("sampling_ratio", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("output_height", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("output_width", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("spatial_scale", 1.0f)},
                     ExpectedEPNodeAssignment::All,
                     "htp");
 }
@@ -202,12 +203,12 @@ TEST_F(QnnHTPBackendTests, TestRoialign_Unsupported_output_half) {
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
                     TestInputDef<int64_t>({1}, true, {0}),
-                    {test::MakeAttribute("coordinate_transformation_mode", "output_half"),
-                     test::MakeAttribute("mode", "avg"),
-                     test::MakeAttribute("sampling_ratio", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_height", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_width", static_cast<int64_t>(1)),
-                     test::MakeAttribute("spatial_scale", 1.0f)},
+                    {utils::MakeAttribute("coordinate_transformation_mode", "output_half"),
+                     utils::MakeAttribute("mode", "avg"),
+                     utils::MakeAttribute("sampling_ratio", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("output_height", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("output_width", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("spatial_scale", 1.0f)},
                     ExpectedEPNodeAssignment::None,
                     "htp");
 }
@@ -217,12 +218,12 @@ TEST_F(QnnHTPBackendTests, TestRoialign_Unsupported_mode_max) {
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
                     TestInputDef<int64_t>({1}, true, {0}),
-                    {test::MakeAttribute("coordinate_transformation_mode", "output_half_pixel"),
-                     test::MakeAttribute("mode", "max"),  //  mode = max will Unsupported
-                     test::MakeAttribute("sampling_ratio", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_height", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_width", static_cast<int64_t>(1)),
-                     test::MakeAttribute("spatial_scale", 1.0f)},
+                    {utils::MakeAttribute("coordinate_transformation_mode", "output_half_pixel"),
+                     utils::MakeAttribute("mode", "max"),  //  mode = max will Unsupported
+                     utils::MakeAttribute("sampling_ratio", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("output_height", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("output_width", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("spatial_scale", 1.0f)},
                     ExpectedEPNodeAssignment::None,
                     "htp");
 }
@@ -232,12 +233,12 @@ TEST_F(QnnHTPBackendTests, TestRoialign_Unsupported_sampling_ratio) {
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
                     TestInputDef<int64_t>({1}, true, {0}),
-                    {test::MakeAttribute("coordinate_transformation_mode", "output_half_pixel"),
-                     test::MakeAttribute("mode", "avg"),
-                     test::MakeAttribute("sampling_ratio", static_cast<int64_t>(0)),
-                     test::MakeAttribute("output_height", static_cast<int64_t>(1)),
-                     test::MakeAttribute("output_width", static_cast<int64_t>(1)),
-                     test::MakeAttribute("spatial_scale", 1.0f)},
+                    {utils::MakeAttribute("coordinate_transformation_mode", "output_half_pixel"),
+                     utils::MakeAttribute("mode", "avg"),
+                     utils::MakeAttribute("sampling_ratio", static_cast<int64_t>(0)),
+                     utils::MakeAttribute("output_height", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("output_width", static_cast<int64_t>(1)),
+                     utils::MakeAttribute("spatial_scale", 1.0f)},
                     ExpectedEPNodeAssignment::None,
                     "htp");
 }
@@ -248,12 +249,12 @@ TEST_F(QnnHTPBackendTests, TestRoialignQdq) {
   RunQDQRoiAlignOpTest<uint8_t>(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                                 TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
                                 TestInputDef<int64_t>({1}, true, {0}),
-                                {test::MakeAttribute("coordinate_transformation_mode", "output_half_pixel"),
-                                 test::MakeAttribute("mode", "avg"),
-                                 test::MakeAttribute("sampling_ratio", static_cast<int64_t>(1)),
-                                 test::MakeAttribute("output_height", static_cast<int64_t>(1)),
-                                 test::MakeAttribute("output_width", static_cast<int64_t>(1)),
-                                 test::MakeAttribute("spatial_scale", 1.0f)},
+                                {utils::MakeAttribute("coordinate_transformation_mode", "output_half_pixel"),
+                                 utils::MakeAttribute("mode", "avg"),
+                                 utils::MakeAttribute("sampling_ratio", static_cast<int64_t>(1)),
+                                 utils::MakeAttribute("output_height", static_cast<int64_t>(1)),
+                                 utils::MakeAttribute("output_width", static_cast<int64_t>(1)),
+                                 utils::MakeAttribute("spatial_scale", 1.0f)},
                                 ExpectedEPNodeAssignment::All);
 }
 
