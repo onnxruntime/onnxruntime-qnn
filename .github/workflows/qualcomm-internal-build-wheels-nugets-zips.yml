@@ -136,3 +136,51 @@ jobs:
       run_tests: false  # ARM64ec unit tests are horribly broken (though model tests seem fine).
       upload_test_archive: false
       upload_wheel: true
+
+  build-windows-x86_64_311:
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: windows
+      target_arch: x86_64
+      target_py_vsn: "3.11"
+      upload_test_archive: false
+      upload_wheel: true
+
+  build-windows-x86_64_312:
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: windows
+      target_arch: x86_64
+      target_py_vsn: "3.12"
+      upload_test_archive: false
+      upload_wheel: true
+
+  build-windows-x86_64_313:
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: windows
+      target_arch: x86_64
+      target_py_vsn: "3.13"
+      upload_test_archive: false
+      upload_wheel: true
+
+  build-windows-x86_64_314:
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: windows
+      target_arch: x86_64
+      target_py_vsn: "3.14"
+      upload_test_archive: false
+      upload_wheel: true
