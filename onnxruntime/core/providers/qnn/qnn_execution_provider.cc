@@ -1838,11 +1838,6 @@ OrtStatus* ORT_API_CALL QnnEp::ShouldConvertDataLayoutForOpImpl(_In_ OrtEp* this
     *should_convert = 1;
   }
 
-  if (std::string(domain) == kOnnxDomain && std::string(op_type) == "RoiAlign") {
-    // RoiAlign is translated to QNN's RoiAlign, which requires the NHWC layout for processing.
-    *should_convert = 1;
-  }
-
   return nullptr;
 }
 

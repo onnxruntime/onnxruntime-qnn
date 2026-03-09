@@ -915,12 +915,7 @@ select from 'TF8', 'TF16', 'UINT8', 'FLOAT', 'ITENSOR'. \n)");
         ORT_TSTR("mod_mixed_sign_int16"),
         ORT_TSTR("mod_mixed_sign_int8"),
         ORT_TSTR("mod_uint16"),
-        ORT_TSTR("mod_uint64"),
-        // QNN only support aligned = False and op version 16.
-        // [ONNXRuntimeError] : 9 : NOT_IMPLEMENTED : Could not find an implementation for RoiAlign(22) node with name ''
-        ORT_TSTR("roialign_aligned_false"),
-        ORT_TSTR("roialign_aligned_true"),
-        ORT_TSTR("roialign_mode_max")};
+        ORT_TSTR("mod_uint64")};
 
     std::unordered_set<std::basic_string<ORTCHAR_T>> all_disabled_tests(std::begin(immutable_broken_tests), std::end(immutable_broken_tests));
 

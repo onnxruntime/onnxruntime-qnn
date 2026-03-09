@@ -252,10 +252,6 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   {
     CreateTanOpBuilder("Tan", *this);
   }
-
-  {
-    CreateRoiAlignOpBuilder("RoiAlign", *this);
-  }
 }
 
 const IOpBuilder* GetOpBuilder(const std::string& onnx_op_type) {
