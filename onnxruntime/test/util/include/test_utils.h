@@ -53,8 +53,9 @@ void VerifyOutput(const std::string& output_name,
                   const Ort::Value& actual_value,
                   float fp32_abs_err);
 
-// TODO: Implement the function once MS release public API about graph partition in 1.24
-// int CountAssignedNodes(const Graph& current_graph, const std::string& ep_type);
+size_t CountNodes(const Ort::Session& current_session);
+
+size_t CountAssignedNodes(const Ort::Session& current_session, const std::string& ep_type);
 
 // Verify the assignment of nodes to the EP specified by `provider_type`.
 void VerifyEPNodeAssignment(const Graph& graph, const std::string& provider_type,

@@ -139,23 +139,31 @@ static void VerifyOutputs(const std::vector<std::string>& output_names,
 
 // TODO: Implement the CountAssignedNodes and VerifyEPNodeAssignment once public API support get ep graph partitioning info
 
-// int CountAssignedNodes(const Graph& current_graph, const std::string& ep_type) {
-//   int count = 0;
+size_t CountNodes(const Ort::Session& current_session) {
+  size_t count = 0;
+  std::vector<Ort::ConstEpAssignedSubgraph> ep_assigned_subgraphs = current_session.GetEpGraphAssignmentInfo();
+  for (const auto& ep_assigned_subgraph : ep_assigned_subgraphs) {
+    count += ep_assigned_subgraph.GetNodes().size();
+  }
+  return count;
+}
 
-//   for (const auto& node : current_graph.Nodes()) {
-//     if (node.GetExecutionProviderType() == ep_type) {
-//       ++count;
-//     }
+size_t CountAssignedNodes(const Ort::Session& current_session, const std::string& ep_type) {
+  size_t count = 0;
+  std::vector<Ort::ConstEpAssignedSubgraph> ep_assigned_subgraphs = current_session.GetEpGraphAssignmentInfo();
 
-//     if (node.ContainsSubgraph()) {
-//       for (const auto& entry : node.GetSubgraphs()) {
-//         count += CountAssignedNodes(*entry, ep_type);
-//       }
-//     }
-//   }
+  for (const auto& ep_assigned_subgraph : ep_assigned_subgraphs) {
+    std::cout << "[CountAssignedNodes] " << ep_assigned_subgraph.GetEpName() << std::endl;
+    for (const auto& node : ep_assigned_subgraph.GetNodes()) {
+      std::cout << "[CountAssignedNodes] " << node.GetName() << " " << node.GetOperatorType() << std::endl;
+    }
+    if (ep_assigned_subgraph.GetEpName() == ep_type) {
+      count += ep_assigned_subgraph.GetNodes().size();
+    }
+  }
 
-//   return count;
-// }
+  return count;
+}
 
 // void VerifyEPNodeAssignment(const Graph& graph, const std::string& provider_type,
 //                             ExpectedEPNodeAssignment assignment) {
