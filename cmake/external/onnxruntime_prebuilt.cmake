@@ -67,8 +67,10 @@ else()
         --use_qnn "${QNN_LIBRARY_KIND}"
         --qnn_home "${onnxruntime_QNN_HOME}"
         --no_kleidiai
-        --use_cache
     )
+    if(onnxruntime_BUILD_CACHE)
+        list(APPEND ORT_BUILD_COMMAND "--use_cache")
+    endif()
     if (${CMAKE_SYSTEM_NAME} STREQUAL "Android")
         list(APPEND ORT_BUILD_COMMAND --android)
         list(APPEND ORT_BUILD_COMMAND --android_sdk_path)
@@ -180,6 +182,9 @@ ExternalProject_Add(
     LOG_INSTALL ON
     LOG_OUTPUT_ON_FAILURE ON
     LOG_MERGED_STDOUTERR ON
+
+    # Don't run more than one Ninja build at a time
+    USES_TERMINAL_BUILD ON
 )
 
 # TODO: In long-term, we aim to remove the dependency of QNN-EP plugin library on ORT Core
