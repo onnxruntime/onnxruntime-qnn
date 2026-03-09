@@ -1411,6 +1411,8 @@ std::unique_ptr<std::set<BrokenTest>> GetBrokenTests(const std::string& provider
     broken_tests->insert({"rotary_embedding_no_position_ids_rotary_dim", "unknown version"});
     broken_tests->insert({"rotary_embedding_with_interleaved_rotary_dim", "unknown version"});
     broken_tests->insert({"rotary_embedding_with_rotary_dim", "unknown version"});
+    broken_tests->insert({"roialign_aligned_false", "unknown version"});  // roialign test uses opset 22, currently supports up to 16
+
     // Fails since QNN SDK 2.17.0:
     // expected 7.70947 (40f6b3f3), got 7.84096 (40fae920), diff: 0.131491, tol=0.00870947 idx=419. 100 of 1715 differ
     broken_tests->insert({"facedetection_op8_qdq", "result differs"});
