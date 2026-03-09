@@ -175,14 +175,15 @@ static void RunQDQOpTest(const std::string& op_type,
                          ExpectedEPNodeAssignment expected_ep_assignment,
                          const std::string& op_domain = kOnnxDomain,
                          bool use_contrib_qdq = false,
-                         QDQTolerance tolerance = QDQTolerance()) {
+                         QDQTolerance tolerance = QDQTolerance(),
+                         bool combine_quant_inputs_qparams = false) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracy(BuildOpTestCase<float, InputType2>(op_type + "_node", op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
                        BuildQDQOpTestCase<InputQType, InputType2>(op_type + "_node", op_type, input_defs_1, input_defs_2, input_defs_3, attrs,
-                                                                  op_domain, use_contrib_qdq),
+                                                                  op_domain, use_contrib_qdq, nullptr, combine_quant_inputs_qparams),
                        provider_options,
                        opset_version,
                        expected_ep_assignment,
@@ -1373,8 +1374,9 @@ TEST_F(QnnHTPBackendTests, ScatterElements_Float_Reduction_None) {
 }
 
 // Test ScatterElements with default attributes on HTP
-// Disable this due to an accuracy issue with selected data range
-TEST_F(QnnHTPBackendTests, DISABLED_ScatterElements_Int8_Reduction_None) {
+// HTP implicitly expects that data and updates tensors share the same encoding,
+// Therefore, we need to combine their quantization parameters.
+TEST_F(QnnHTPBackendTests, ScatterElements_Int8_Reduction_None) {
   std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
   std::vector<int64_t> indices = {1};
   std::vector<float> updates = {10.0f};
@@ -1390,12 +1392,17 @@ TEST_F(QnnHTPBackendTests, DISABLED_ScatterElements_Int8_Reduction_None) {
                                  },
                                  {},
                                  17,
-                                 ExpectedEPNodeAssignment::All);
+                                 ExpectedEPNodeAssignment::All,
+                                 kOnnxDomain,
+                                 false,
+                                 QDQTolerance(),
+                                 true);
 }
 
 // Test ScatterElements with reduction ADD on HTP
-// Disable this due to an accuracy issue with selected data range
-TEST_F(QnnHTPBackendTests, DISABLED_ScatterElements_Int8_Reduction_Add) {
+// HTP implicitly expects that data and updates tensors share the same encoding,
+// Therefore, we need to combine their quantization parameters.
+TEST_F(QnnHTPBackendTests, ScatterElements_Int8_Reduction_Add) {
   std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
   std::vector<int64_t> indices = {1};
   std::vector<float> updates = {10.0f};
@@ -1413,7 +1420,11 @@ TEST_F(QnnHTPBackendTests, DISABLED_ScatterElements_Int8_Reduction_Add) {
                                      test::MakeAttribute("reduction", "add"),
                                  },
                                  17,
-                                 ExpectedEPNodeAssignment::All);
+                                 ExpectedEPNodeAssignment::All,
+                                 kOnnxDomain,
+                                 false,
+                                 QDQTolerance(),
+                                 true);
 }
 
 // Test ScatterElements with reduction Max on HTP
@@ -1435,7 +1446,11 @@ TEST_F(QnnHTPBackendTests, ScatterElements_Int8_Reduction_Max) {
                                      test::MakeAttribute("reduction", "max"),
                                  },
                                  17,
-                                 ExpectedEPNodeAssignment::All);
+                                 ExpectedEPNodeAssignment::All,
+                                 kOnnxDomain,
+                                 false,
+                                 QDQTolerance(),
+                                 true);
 }
 
 // Test ScatterElements with reduction Mul on HTP
@@ -1457,7 +1472,11 @@ TEST_F(QnnHTPBackendTests, ScatterElements_int8_reduction_mul) {
                                      test::MakeAttribute("reduction", "mul"),
                                  },
                                  17,
-                                 ExpectedEPNodeAssignment::All);
+                                 ExpectedEPNodeAssignment::All,
+                                 kOnnxDomain,
+                                 false,
+                                 QDQTolerance(),
+                                 true);
 }
 
 // Test 8-bit QDQ GridSample with bilinear
