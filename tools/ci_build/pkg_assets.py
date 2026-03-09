@@ -64,6 +64,7 @@ def get_qnn_asset_file_list():
             "QnnSaver.dll",
             "QnnSystem.dll",
             "QnnHtpPrepare.dll",
+            "HtpPrepare.dll",
             "QnnHtpV81Stub.dll",
             "libQnnHtpV81Skel.so",
             "libqnnhtpv81.cat",
@@ -153,7 +154,7 @@ def build_zip_asset(
             zip_name += f"{version_suffix}"
         if zip_name_suffix:
             zip_name += f"-{zip_name_suffix}"
-        zip_name += f"-{platform_name}-{arch}-{config}.zip"
+        zip_name += f"-{platform_name}-{arch}.zip"
 
         zip_path = Path(dist_dir) / zip_name
 

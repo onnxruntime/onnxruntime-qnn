@@ -54,7 +54,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ORT windows arm64ec Python 3.11 Wheel
-          path: ${{ github.workspace }}/build/dist
+          path: ${{ github.workspace }}/build/dist/arm64ec
+
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ORT windows x86_64 Python 3.11 Wheel
+          path: ${{ github.workspace }}/build/dist/x64
   
       - name: Download Artifact
         uses: actions/download-artifact@v4
@@ -66,7 +72,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ORT windows arm64ec Python 3.12 Wheel
-          path: ${{ github.workspace }}/build/dist
+          path: ${{ github.workspace }}/build/dist/arm64ec
+
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ORT windows x86_64 Python 3.12 Wheel
+          path: ${{ github.workspace }}/build/dist/x64
   
       - name: Download Artifact
         uses: actions/download-artifact@v4
@@ -78,7 +90,13 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ORT windows arm64ec Python 3.13 Wheel
-          path: ${{ github.workspace }}/build/dist
+          path: ${{ github.workspace }}/build/dist/arm64ec
+
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ORT windows x86_64 Python 3.13 Wheel
+          path: ${{ github.workspace }}/build/dist/x64
 
       - name: Download Artifact
         uses: actions/download-artifact@v4
@@ -90,12 +108,27 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ORT windows arm64ec Python 3.14 Wheel
-          path: ${{ github.workspace }}/build/dist
+          path: ${{ github.workspace }}/build/dist/arm64ec
+
+      - name: Download Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: ORT windows x86_64 Python 3.14 Wheel
+          path: ${{ github.workspace }}/build/dist/x64
+
+      - name: Merge AMD wheel
+        run: |
+          # Merge AMD wheels using the merge script
+          source uplevel_venv/bin/activate
+          ./qcom/scripts/upleveling/merge_wheels.sh \
+            "${{ github.workspace }}/build/dist/x64" \
+            "${{ github.workspace }}/build/dist/arm64ec" \
+            "${{ github.workspace }}/build/dist"
 
       - name: Check wheel
         run: |
           source uplevel_venv/bin/activate
-          twine check ${{ github.workspace }}/build/dist/*
+          twine check ${{ github.workspace }}/build/dist/*.whl
 
       - name: Publish
         if: ${{ !inputs.skip_publish }}
@@ -107,7 +140,7 @@ jobs:
           twine upload -r re-artifactory-pypi-test-project \
             --cert ./qcom/scripts/upleveling/certs/artifactory-ca.pem \
             --config-file ./qcom/scripts/upleveling/.pypirc \
-            ${{ github.workspace }}/build/dist/*
+            ${{ github.workspace }}/build/dist/*.whl
 
   upload-nuget-workflow:
     name: "Upload nuget artifatcs to Artifactory"
