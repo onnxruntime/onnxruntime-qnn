@@ -4,7 +4,6 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <string>
-#include "core/graph/graph.h"
 #include "core/graph/node_attr_utils.h"
 
 #include "gtest/gtest.h"
@@ -26,7 +25,7 @@ static void RunSimplifiedLayerNormCpuTest(const TestInputDef<float>& input_def,
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(
-      BuildOpTestCase<float>("SimplifiedLayerNormalization", {input_def, scale_def}, {}, attrs),
+      BuildOpTestCase<float>("simplified_layernorm", "SimplifiedLayerNormalization", {input_def, scale_def}, {}, attrs),
       provider_options,
       17,  // opset version
       expected_ep_assignment);
@@ -42,47 +41,42 @@ GetTestQDQModelFn<InputQType> BuildQDQSimplifiedLayerNormTestCase(
   return [input_def, scale_def, attrs,
           use_contrib_qdq_ops](ModelTestBuilder& builder,
                                std::vector<QuantParams<InputQType>>& output_qparams) {
-    std::vector<NodeArg*> node_inputs;
-
     // input -> Q -> DQ
-    NodeArg* input = MakeTestInput(builder, input_def);
+    MakeTestInput<float>(builder, "input", input_def);
     QuantParams<InputQType> input_qparams = GetTestInputQuantParams<InputQType>(input_def);
-    NodeArg* input_qdq = AddQDQNodePair<InputQType>(builder, input, input_qparams.scale,
-                                                    input_qparams.zero_point, use_contrib_qdq_ops);
-    node_inputs.push_back(input_qdq);
+    std::string input_qdq = AddQDQNodePair<InputQType>(builder, "qdq_input", "input",
+                                                       input_qparams.scale,
+                                                       input_qparams.zero_point, use_contrib_qdq_ops);
 
     // scale: static initializer -> DQ, or dynamic -> Q -> DQ
-    NodeArg* scale_qdq = nullptr;
+    std::string scale_qdq;
     QuantParams<ScaleQType> scale_qparams = GetTestInputQuantParams<ScaleQType>(scale_def);
 
     if (scale_def.IsInitializer() && scale_def.IsRawData()) {
       std::vector<float> scale_scales = {scale_qparams.scale};
       std::vector<ScaleQType> scale_zps = {scale_qparams.zero_point};
-      TensorShape scale_shape = scale_def.GetTensorShape();
-      std::vector<ScaleQType> quantized_scales(scale_shape.Size());
+      const std::vector<int64_t>& scale_shape = scale_def.GetShape();
+      std::vector<ScaleQType> quantized_scales(SizeOfShape(scale_shape));
       QuantizeValues<float, ScaleQType>(scale_def.GetRawData(), quantized_scales, scale_shape,
                                         scale_scales, scale_zps, std::nullopt);
 
-      NodeArg* scale_initzer = builder.MakeInitializer<ScaleQType>(scale_def.GetShape(), quantized_scales);
-      scale_qdq = builder.MakeIntermediate();
-      builder.AddDequantizeLinearNode<ScaleQType>(scale_initzer, scale_scales, scale_zps, scale_qdq,
-                                                  nullptr, use_contrib_qdq_ops);
+      builder.MakeInitializer<ScaleQType>("scale_initializer", scale_shape, quantized_scales);
+      scale_qdq = "scale_qdq_output";
+      builder.AddDequantizeLinearNode<ScaleQType>("scale_dq", "scale_initializer", scale_scales, scale_zps,
+                                                  scale_qdq, {}, use_contrib_qdq_ops);
     } else {
-      NodeArg* scale = MakeTestInput(builder, scale_def);
-      scale_qdq = AddQDQNodePair<ScaleQType>(builder, scale, scale_qparams.scale,
+      MakeTestInput<float>(builder, "scale", scale_def);
+      scale_qdq = AddQDQNodePair<ScaleQType>(builder, "qdq_scale", "scale", scale_qparams.scale,
                                              scale_qparams.zero_point, use_contrib_qdq_ops);
     }
-    node_inputs.push_back(scale_qdq);
 
     // SimplifiedLayerNormalization (single output Y)
-    NodeArg* output = builder.MakeIntermediate();
-    Node& node = builder.AddNode("SimplifiedLayerNormalization", node_inputs, {output});
-    for (const auto& attr : attrs) {
-      node.AddAttributeProto(attr);
-    }
+    builder.AddNode("sln_node", "SimplifiedLayerNormalization", {input_qdq, scale_qdq},
+                    {"sln_output"}, "", attrs);
 
     // output -> Q -> DQ -> graph output
-    AddQDQNodePairWithOutputAsGraphOutput<InputQType>(builder, output, output_qparams[0].scale,
+    AddQDQNodePairWithOutputAsGraphOutput<InputQType>(builder, "qdq_output", "sln_output",
+                                                      output_qparams[0].scale,
                                                       output_qparams[0].zero_point, use_contrib_qdq_ops);
   };
 }
@@ -110,7 +104,7 @@ static void RunSimplifiedLayerNormQDQTest(const TestInputDef<float>& input_def,
   };
 
   RunQnnModelTest(model_fn, provider_options, 17, expected_ep_assignment,
-                  1e-5f, logging::Severity::kERROR, false);
+                  1e-5f, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, false);
 }
 
 // Basic 2D input, axis=0.
@@ -118,7 +112,7 @@ TEST_F(QnnCPUBackendTests, SimplifiedLayerNorm_2D_Axis0) {
   RunSimplifiedLayerNormCpuTest(
       TestInputDef<float>({2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
       TestInputDef<float>({2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(0))},
       ExpectedEPNodeAssignment::All);
 }
 
@@ -127,7 +121,7 @@ TEST_F(QnnCPUBackendTests, SimplifiedLayerNorm_3D_Axis0) {
   RunSimplifiedLayerNormCpuTest(
       TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
       TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(0))},
       ExpectedEPNodeAssignment::All);
 }
 
@@ -136,7 +130,7 @@ TEST_F(QnnCPUBackendTests, SimplifiedLayerNorm_4D_Axis0) {
   RunSimplifiedLayerNormCpuTest(
       TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 18)),
       TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 18)),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(0))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(0))},
       ExpectedEPNodeAssignment::All);
 }
 
@@ -146,8 +140,8 @@ TEST_F(QnnCPUBackendTests, SimplifiedLayerNorm_CustomEpsilon) {
   RunSimplifiedLayerNormCpuTest(
       TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
       TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(0)),
-       utils::MakeAttribute("epsilon", 1e-3f)},
+      {test::MakeAttribute("axis", static_cast<int64_t>(0)),
+       test::MakeAttribute("epsilon", 1e-3f)},
       ExpectedEPNodeAssignment::All);
 }
 
@@ -160,21 +154,22 @@ TEST_F(QnnCPUBackendTests, SimplifiedLayerNorm_InvStdVar_Unsupported) {
 
   // Build a model with 2 outputs: Y and inv_std_var.
   auto build_model_with_inv_std_var = [](ModelTestBuilder& builder) {
-    NodeArg* input = builder.MakeInput<float>({1, 2, 3}, 0.0f, 10.0f);
-    NodeArg* scale = builder.MakeInitializer<float>({3}, 0.0f, 1.0f);
-    NodeArg* output_y = builder.MakeOutput();
-    NodeArg* output_inv_std_var = builder.MakeOutput();
-    Node& node = builder.AddNode("SimplifiedLayerNormalization",
-                                 {input, scale},
-                                 {output_y, output_inv_std_var});
-    node.AddAttribute("axis", static_cast<int64_t>(-1));
+    builder.MakeInput<float>("input", {1, 2, 3}, 0.0f, 10.0f);
+    builder.MakeInitializer<float>("scale", {3}, 0.0f, 1.0f);
+    builder.MakeOutput("output_y");
+    builder.MakeOutput("output_inv_std_var");
+    builder.AddNode("sln_node", "SimplifiedLayerNormalization",
+                    {"input", "scale"},
+                    {"output_y", "output_inv_std_var"},
+                    "",
+                    {builder.MakeScalarAttribute("axis", static_cast<int64_t>(-1))});
   };
 
   // QNN EP should reject this node because inv_std_var is not supported.
   // The node falls back to CPU EP.
   RunQnnModelTest(build_model_with_inv_std_var, provider_options, 17,
                   ExpectedEPNodeAssignment::None,
-                  1e-5f, logging::Severity::kERROR,
+                  1e-5f, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   false /* verify_outputs */);
 }
 
@@ -186,11 +181,12 @@ TEST_F(QnnHTPBackendTests, SimplifiedLayerNorm_Axis0_Unsupported) {
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(
-      BuildOpTestCase<float>("SimplifiedLayerNormalization",
+      BuildOpTestCase<float>("simplified_layernorm",
+                             "SimplifiedLayerNormalization",
                              {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
                               TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6))},
                              {},
-                             {utils::MakeAttribute("axis", static_cast<int64_t>(0))}),
+                             {test::MakeAttribute("axis", static_cast<int64_t>(0))}),
       provider_options,
       17,
       ExpectedEPNodeAssignment::None);
@@ -204,11 +200,12 @@ TEST_F(QnnHTPBackendTests, SimplifiedLayerNorm_Rank5_Unsupported) {
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(
-      BuildOpTestCase<float>("SimplifiedLayerNormalization",
+      BuildOpTestCase<float>("simplified_layernorm",
+                             "SimplifiedLayerNormalization",
                              {TestInputDef<float>({1, 2, 3, 3, 4}, false, GetFloatDataInRange(0.0f, 10.0f, 72)),
                               TestInputDef<float>({4}, false, GetFloatDataInRange(0.0f, 1.0f, 4))},
                              {},
-                             {utils::MakeAttribute("axis", static_cast<int64_t>(-1))}),
+                             {test::MakeAttribute("axis", static_cast<int64_t>(-1))}),
       provider_options,
       17,
       ExpectedEPNodeAssignment::None);
@@ -219,7 +216,7 @@ TEST_F(QnnHTPBackendTests, SimplifiedLayerNorm_LastAxis_StaticScale_AU8_WU8) {
   RunSimplifiedLayerNormQDQTest<uint8_t, uint8_t>(
       TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
       TestInputDef<float>({3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
       ExpectedEPNodeAssignment::All);
 }
 
@@ -228,7 +225,7 @@ TEST_F(QnnHTPBackendTests, SimplifiedLayerNorm_LastAxis_StaticScale_AU16_WU8) {
   RunSimplifiedLayerNormQDQTest<uint16_t, uint8_t>(
       TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
       TestInputDef<float>({3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
       ExpectedEPNodeAssignment::All,
       true /* use_contrib_qdq_ops */);
 }
@@ -238,7 +235,7 @@ TEST_F(QnnHTPBackendTests, SimplifiedLayerNorm_LastAxis_DynamicScale_AU8_WU8) {
   RunSimplifiedLayerNormQDQTest<uint8_t, uint8_t>(
       TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
       TestInputDef<float>({3}, false, GetFloatDataInRange(0.0f, 1.0f, 3)),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
       ExpectedEPNodeAssignment::All);
 }
 
@@ -247,7 +244,7 @@ TEST_F(QnnHTPBackendTests, SimplifiedLayerNorm_4D_LastAxis_AU8_WU8) {
   RunSimplifiedLayerNormQDQTest<uint8_t, uint8_t>(
       TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 18)),
       TestInputDef<float>({3}, true, GetFloatDataInRange(-2.0f, 2.0f, 3)),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
       ExpectedEPNodeAssignment::All);
 }
 
@@ -256,8 +253,8 @@ TEST_F(QnnHTPBackendTests, SimplifiedLayerNorm_LastAxis_CustomEpsilon_AU8_WU8) {
   RunSimplifiedLayerNormQDQTest<uint8_t, uint8_t>(
       TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
       TestInputDef<float>({3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(-1)),
-       utils::MakeAttribute("epsilon", 1e-3f)},
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1)),
+       test::MakeAttribute("epsilon", 1e-3f)},
       ExpectedEPNodeAssignment::All);
 }
 
@@ -266,7 +263,7 @@ TEST_F(QnnHTPBackendTests, SimplifiedLayerNorm_2D_LastAxis_AU8_WU8) {
   RunSimplifiedLayerNormQDQTest<uint8_t, uint8_t>(
       TestInputDef<float>({4, 8}, false, GetFloatDataInRange(0.0f, 10.0f, 32)),
       TestInputDef<float>({8}, true, GetFloatDataInRange(0.0f, 1.0f, 8)),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
       ExpectedEPNodeAssignment::All);
 }
 
@@ -275,7 +272,7 @@ TEST_F(QnnHTPBackendTests, SimplifiedLayerNorm_4D_LastAxis_AU16_WU8) {
   RunSimplifiedLayerNormQDQTest<uint16_t, uint8_t>(
       TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 18)),
       TestInputDef<float>({3}, true, GetFloatDataInRange(-2.0f, 2.0f, 3)),
-      {utils::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
       ExpectedEPNodeAssignment::All,
       true /* use_contrib_qdq_ops */);
 }
