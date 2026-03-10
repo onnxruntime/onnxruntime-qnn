@@ -800,7 +800,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     if (!context_cache_enabled_) {
       rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
     }
-    model_settings_.htp_shared_memory = enable_htp_shared_mem_allocator_;
+    model_settings_.htp_shared_memory = true;
   }
 
   dump_json_qnn_graph_ = ParseBoolOption(ort_api,
