@@ -2,7 +2,7 @@
 
 **ONNX Runtime QNN is an ONNX Runtime execution provider optimized for Qualcomm's hardware**.
 
-**ONNX Runtime QNN** provides high-performance inference for machine learning models on Qualcomm platforms. ONNX Runtime QNN leverages Qualcomm's AI Runtime (QAIRT) to deliver optimal performance on Qualcomm hardware accelerators. [Learn more &rarr;](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html)
+**ONNX Runtime QNN** provides high-performance inference for machine learning models on Qualcomm platforms. ONNX Runtime QNN leverages Qualcomm's AI Runtime (QAIRT) to deliver optimal performance on Qualcomm hardware accelerators. [Learn more &rarr;](docs/execution_providers/QNN-ExecutionProvider.md)
 
 This repository is maintained by Qualcomm and contains the QNN-specific execution provider for ONNX Runtime. For the general ONNX Runtime project, please visit [microsoft/onnxruntime](https://github.com/microsoft/onnxruntime).
 
@@ -10,16 +10,10 @@ This repository is maintained by Qualcomm and contains the QNN-specific executio
 
 * **General Information**:
   - [onnxruntime.ai](https://onnxruntime.ai)
-  - [QNN Execution Provider](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html)
+  - [QNN Execution Provider](docs/execution_providers/QNN-ExecutionProvider.md)
 
-* **Usage documentation and tutorials**: [onnxruntime.ai/docs](https://onnxruntime.ai/docs)
-
-* **YouTube video tutorials**: [youtube.com/@ONNXRuntime](https://www.youtube.com/@ONNXRuntime)
-
-* [**Upcoming Release Roadmap**](https://onnxruntime.ai/roadmap)
-
-* **Companion sample repositories**:
-  - ONNX Runtime QNN Inferencing: [microsoft/onnxruntime-inference-examples](https://github.com/microsoft/onnxruntime-inference-examples)
+* **Build tutorials**: [Build Guidance](docs/execution_providers/build.md)
+* **Development tutorials**: [Development Guidance](docs/execution_providers/development.md)
 
 ## Releases
 
