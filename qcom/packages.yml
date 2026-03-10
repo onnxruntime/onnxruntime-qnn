@@ -124,6 +124,22 @@ onnx_models:
   url: http://ort-ep-win-01.na.qualcomm.com:8000/onnx-models/onnx-models-{version}.tar.gz
   sha256: 5c877a633970248e181018ccdabb280cec22e1b113f3068b6585d3f55cac3fb2
   content_root: onnx-models-{version}
+ort_prebuilt_windows_x64: &ort_prebuilt_common
+  version: 1.24.1
+  url: https://github.com/microsoft/onnxruntime/releases/download/v{version}/onnxruntime-win-x64-{version}.zip
+  content_root: onnxruntime-win-x64-{version}
+ort_prebuilt_windows_arm64:
+  <<: *ort_prebuilt_common
+  url: https://github.com/microsoft/onnxruntime/releases/download/v{version}/onnxruntime-win-arm64-{version}.zip
+  content_root: onnxruntime-win-arm64-{version}
+ort_prebuilt_linux_x64:
+  <<: *ort_prebuilt_common
+  url: https://github.com/microsoft/onnxruntime/releases/download/v{version}/onnxruntime-linux-x64-{version}.tgz
+  content_root: onnxruntime-linux-x64-{version}
+ort_prebuilt_linux_aarch64:
+  <<: *ort_prebuilt_common
+  url: https://github.com/microsoft/onnxruntime/releases/download/v{version}/onnxruntime-linux-aarch64-{version}.tgz
+  content_root: onnxruntime-linux-aarch64-{version}
 python_311_windows_x86_64: &py_x86_64_common
   version: 3.11.9
   url: https://www.python.org/ftp/python/{version}/python-{version}-amd64.exe
@@ -161,23 +177,7 @@ python_314_windows_arm64:
   version: 3.14.3
   md5: 1183951d055ef6c0ae1fb686b3342a6f
 qairt:
-  version: 2.42.0.251225
+  version: 2.44.0.260225
   url: https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/{version}/v{version}.zip
   content_root: qairt/{version}
   bindir: bin
-ort_prebuilt_windows_x64:
-  version: 1.24.1
-  url: https://github.com/microsoft/onnxruntime/releases/download/v{version}/onnxruntime-win-x64-{version}.zip
-  content_root: onnxruntime-win-x64-{version}
-ort_prebuilt_windows_arm64:
-  version: 1.24.1
-  url: https://github.com/microsoft/onnxruntime/releases/download/v{version}/onnxruntime-win-arm64-{version}.zip
-  content_root: onnxruntime-win-arm64-{version}
-ort_prebuilt_linux_x64:
-  version: 1.24.1
-  url: https://github.com/microsoft/onnxruntime/releases/download/v{version}/onnxruntime-linux-x64-{version}.tgz
-  content_root: onnxruntime-linux-x64-{version}
-ort_prebuilt_linux_aarch64:
-  version: 1.24.1
-  url: https://github.com/microsoft/onnxruntime/releases/download/v{version}/onnxruntime-linux-aarch64-{version}.tgz
-  content_root: onnxruntime-linux-aarch64-{version}
