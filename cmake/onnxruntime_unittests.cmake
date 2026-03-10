@@ -213,7 +213,6 @@ file(GLOB onnxruntime_test_framework_src CONFIGURE_DEPENDS
 
 # TODO: Re-enable the recent op testcases
 list(REMOVE_ITEM onnxruntime_test_framework_src
-     "${TEST_SRC_DIR}/providers/qnn/bf16_test.cc"
      "${TEST_SRC_DIR}/providers/qnn/fusedmatmul_test.cc"
      "${TEST_SRC_DIR}/providers/qnn/groupnormalization_test.cc"
      "${TEST_SRC_DIR}/providers/qnn/matmulnbits_test.cc"

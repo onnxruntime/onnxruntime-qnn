@@ -18,10 +18,12 @@ namespace test {
 [[maybe_unused]] static GetTestModelFn BuildBF16AddTestCase(const TestInputDef<float>& input1_def,
                                                             const TestInputDef<float>& input2_def) {
   return [input1_def, input2_def](ModelTestBuilder& builder) {
-    NodeArg* input1 = MakeTestInput(builder, input1_def);
-    NodeArg* input2 = MakeTestInput(builder, input2_def);
-    NodeArg* output = builder.MakeOutput();
-    builder.AddNode("Add", {input1, input2}, {output});
+    MakeTestInput<float>(builder, "input1", input1_def);
+    MakeTestInput<float>(builder, "input2", input2_def);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    builder.AddNode("add_node", "Add", {"input1", "input2"}, {"output"}, "", attributes);
+    builder.MakeOutput("output");
   };
 }
 
@@ -29,10 +31,12 @@ namespace test {
 [[maybe_unused]] static GetTestModelFn BuildBF16MatMulTestCase(const TestInputDef<float>& input1_def,
                                                                const TestInputDef<float>& input2_def) {
   return [input1_def, input2_def](ModelTestBuilder& builder) {
-    NodeArg* input1 = MakeTestInput(builder, input1_def);
-    NodeArg* input2 = MakeTestInput(builder, input2_def);
-    NodeArg* output = builder.MakeOutput();
-    builder.AddNode("MatMul", {input1, input2}, {output});
+    MakeTestInput<float>(builder, "input1", input1_def);
+    MakeTestInput<float>(builder, "input2", input2_def);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    builder.AddNode("matmul_node", "MatMul", {"input1", "input2"}, {"output"}, "", attributes);
+    builder.MakeOutput("output");
   };
 }
 
@@ -40,10 +44,12 @@ namespace test {
 [[maybe_unused]] static GetTestModelFn BuildBF16ConvTestCase(const TestInputDef<float>& input_def,
                                                              const TestInputDef<float>& weights_def) {
   return [input_def, weights_def](ModelTestBuilder& builder) {
-    NodeArg* input = MakeTestInput(builder, input_def);
-    NodeArg* weights = MakeTestInput(builder, weights_def);
-    NodeArg* output = builder.MakeOutput();
-    builder.AddNode("Conv", {input, weights}, {output});
+    MakeTestInput<float>(builder, "input", input_def);
+    MakeTestInput<float>(builder, "weights", weights_def);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    builder.AddNode("conv_node", "Conv", {"input", "weights"}, {"output"}, "", attributes);
+    builder.MakeOutput("output");
   };
 }
 
@@ -160,17 +166,18 @@ static GetTestModelFn BuildBF16MultiOpTestCase() {
     std::vector<int64_t> shape = {2, 3, 4};
 
     // Create inputs
-    NodeArg* input1 = MakeTestInput(builder, TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.0f, 0.1f)));
-    NodeArg* input2 = MakeTestInput(builder, TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.1f, 0.1f)));
-    NodeArg* input3 = MakeTestInput(builder, TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.2f, 0.1f)));
+    MakeTestInput<float>(builder, "input1", TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.0f, 0.1f)));
+    MakeTestInput<float>(builder, "input2", TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.1f, 0.1f)));
+    MakeTestInput<float>(builder, "input3", TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.2f, 0.1f)));
 
     // Add1: input1 + input2
-    NodeArg* add1_output = builder.MakeIntermediate();
-    builder.AddNode("Add", {input1, input2}, {add1_output});
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes1;
+    builder.AddNode("add1_node", "Add", {"input1", "input2"}, {"add1_output"}, "", attributes1);
 
     // Add2: add1_output + input3
-    NodeArg* output = builder.MakeOutput();
-    builder.AddNode("Add", {add1_output, input3}, {output});
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes2;
+    builder.AddNode("add2_node", "Add", {"add1_output", "input3"}, {"output"}, "", attributes2);
+    builder.MakeOutput("output");
   };
 }
 
@@ -185,16 +192,18 @@ static GetTestModelFn BuildBF16MultiOutputTestCase() {
     std::vector<int64_t> shape = {2, 3, 4};
 
     // Create inputs
-    NodeArg* input1 = MakeTestInput(builder, TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.0f, 0.1f)));
-    NodeArg* input2 = MakeTestInput(builder, TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.1f, 0.1f)));
+    MakeTestInput<float>(builder, "input1", TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.0f, 0.1f)));
+    MakeTestInput<float>(builder, "input2", TestInputDef<float>(shape, false, GetSequentialFloatData(shape, 0.1f, 0.1f)));
 
     // Add: input1 + input2 -> output1
-    NodeArg* output1 = builder.MakeOutput();
-    builder.AddNode("Add", {input1, input2}, {output1});
+    std::vector<ONNX_NAMESPACE::AttributeProto> add_attributes;
+    builder.AddNode("add_node", "Add", {"input1", "input2"}, {"output1"}, "", add_attributes);
+    builder.MakeOutput("output1");
 
     // Mul: input1 * input2 -> output2
-    NodeArg* output2 = builder.MakeOutput();
-    builder.AddNode("Mul", {input1, input2}, {output2});
+    std::vector<ONNX_NAMESPACE::AttributeProto> mul_attributes;
+    builder.AddNode("mul_node", "Mul", {"input1", "input2"}, {"output2"}, "", mul_attributes);
+    builder.MakeOutput("output2");
   };
 }
 
@@ -206,9 +215,11 @@ TEST_F(QnnHTPBackendTests, DISABLED_BF16_MultipleOutputs) {
 // Test BF16 handling with Relu activation
 static GetTestModelFn BuildBF16ReluTestCase(const TestInputDef<float>& input_def) {
   return [input_def](ModelTestBuilder& builder) {
-    NodeArg* input = MakeTestInput(builder, input_def);
-    NodeArg* output = builder.MakeOutput();
-    builder.AddNode("Relu", {input}, {output});
+    MakeTestInput<float>(builder, "input", input_def);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    builder.AddNode("relu_node", "Relu", {"input"}, {"output"}, "", attributes);
+    builder.MakeOutput("output");
   };
 }
 
@@ -223,9 +234,11 @@ TEST_F(QnnHTPBackendTests, DISABLED_BF16_Relu) {
 // Test BF16 handling with Sigmoid activation
 static GetTestModelFn BuildBF16SigmoidTestCase(const TestInputDef<float>& input_def) {
   return [input_def](ModelTestBuilder& builder) {
-    NodeArg* input = MakeTestInput(builder, input_def);
-    NodeArg* output = builder.MakeOutput();
-    builder.AddNode("Sigmoid", {input}, {output});
+    MakeTestInput<float>(builder, "input", input_def);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    builder.AddNode("sigmoid_node", "Sigmoid", {"input"}, {"output"}, "", attributes);
+    builder.MakeOutput("output");
   };
 }
 
@@ -240,10 +253,12 @@ TEST_F(QnnHTPBackendTests, DISABLED_BF16_Sigmoid) {
 // Test BF16 handling with Softmax
 static GetTestModelFn BuildBF16SoftmaxTestCase(const TestInputDef<float>& input_def, int64_t axis) {
   return [input_def, axis](ModelTestBuilder& builder) {
-    NodeArg* input = MakeTestInput(builder, input_def);
-    NodeArg* output = builder.MakeOutput();
-    Node& node = builder.AddNode("Softmax", {input}, {output});
-    node.AddAttribute("axis", axis);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("axis", axis));
+    builder.AddNode("softmax_node", "Softmax", {"input"}, {"output"}, "", attributes);
+    builder.MakeOutput("output");
   };
 }
 
@@ -260,10 +275,12 @@ TEST_F(QnnHTPBackendTests, DISABLED_BF16_Softmax) {
 static GetTestModelFn BuildBF16TransposeTestCase(const TestInputDef<float>& input_def,
                                                  const std::vector<int64_t>& perm) {
   return [input_def, perm](ModelTestBuilder& builder) {
-    NodeArg* input = MakeTestInput(builder, input_def);
-    NodeArg* output = builder.MakeOutput();
-    Node& node = builder.AddNode("Transpose", {input}, {output});
-    node.AddAttribute("perm", perm);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeIntsAttribute("perm", perm));
+    builder.AddNode("transpose_node", "Transpose", {"input"}, {"output"}, "", attributes);
+    builder.MakeOutput("output");
   };
 }
 
@@ -281,10 +298,12 @@ TEST_F(QnnHTPBackendTests, DISABLED_BF16_Transpose) {
 static GetTestModelFn BuildBF16ReshapeTestCase(const TestInputDef<float>& input_def,
                                                const std::vector<int64_t>& new_shape) {
   return [input_def, new_shape](ModelTestBuilder& builder) {
-    NodeArg* input = MakeTestInput(builder, input_def);
-    NodeArg* shape_input = builder.MakeInitializer<int64_t>({static_cast<int64_t>(new_shape.size())}, new_shape);
-    NodeArg* output = builder.MakeOutput();
-    builder.AddNode("Reshape", {input, shape_input}, {output});
+    MakeTestInput<float>(builder, "input", input_def);
+    builder.MakeInitializer<int64_t>("shape", {static_cast<int64_t>(new_shape.size())}, new_shape);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    builder.AddNode("reshape_node", "Reshape", {"input", "shape"}, {"output"}, "", attributes);
+    builder.MakeOutput("output");
   };
 }
 
@@ -301,13 +320,17 @@ TEST_F(QnnHTPBackendTests, DISABLED_BF16_Reshape) {
 // Test BF16 handling with Concat
 static GetTestModelFn BuildBF16ConcatTestCase(const std::vector<TestInputDef<float>>& input_defs, int64_t axis) {
   return [input_defs, axis](ModelTestBuilder& builder) {
-    std::vector<NodeArg*> inputs;
-    for (const auto& input_def : input_defs) {
-      inputs.push_back(MakeTestInput(builder, input_def));
+    std::vector<std::string> input_names;
+    for (size_t i = 0; i < input_defs.size(); i++) {
+      std::string input_name = "input" + std::to_string(i);
+      MakeTestInput<float>(builder, input_name, input_defs[i]);
+      input_names.push_back(input_name);
     }
-    NodeArg* output = builder.MakeOutput();
-    Node& node = builder.AddNode("Concat", inputs, {output});
-    node.AddAttribute("axis", axis);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("axis", axis));
+    builder.AddNode("concat_node", "Concat", input_names, {"output"}, "", attributes);
+    builder.MakeOutput("output");
   };
 }
 
@@ -323,13 +346,21 @@ TEST_F(QnnHTPBackendTests, DISABLED_BF16_Concat) {
 // Test BF16 handling with Split
 static GetTestModelFn BuildBF16SplitTestCase(const TestInputDef<float>& input_def, int64_t axis, int64_t num_outputs) {
   return [input_def, axis, num_outputs](ModelTestBuilder& builder) {
-    NodeArg* input = MakeTestInput(builder, input_def);
-    std::vector<NodeArg*> outputs;
+    MakeTestInput<float>(builder, "input", input_def);
+
+    std::vector<std::string> output_names;
     for (int64_t i = 0; i < num_outputs; i++) {
-      outputs.push_back(builder.MakeOutput());
+      std::string output_name = "output" + std::to_string(i);
+      output_names.push_back(output_name);
     }
-    Node& node = builder.AddNode("Split", {input}, outputs);
-    node.AddAttribute("axis", axis);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("axis", axis));
+    builder.AddNode("split_node", "Split", {"input"}, output_names, "", attributes);
+
+    for (const auto& output_name : output_names) {
+      builder.MakeOutput(output_name);
+    }
   };
 }
 
