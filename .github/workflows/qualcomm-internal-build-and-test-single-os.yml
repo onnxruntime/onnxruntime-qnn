@@ -137,6 +137,7 @@ jobs:
         env:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+          NODE_EXTRA_CA_CERTS: ${{ github.workspace }}/qcom/scripts/upleveling/certs/artifactory-ca.pem
 
       - name: Ping artifactory
         run: |
