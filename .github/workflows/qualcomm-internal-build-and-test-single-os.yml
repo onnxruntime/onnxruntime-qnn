@@ -132,6 +132,16 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v3
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Ping artifactory
+        run: |
+          jf rt ping
+
       - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
