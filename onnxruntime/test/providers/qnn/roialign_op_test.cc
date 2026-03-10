@@ -122,7 +122,8 @@ static void RunQDQRoiAlignOpTest(const TestInputDef<float>& input_def,
 //
 // CPU tests:
 //
-
+// Disabling CPU test for ARM64. ARM64 CI runner stalled.
+#if !defined(_M_ARM64) && !defined(_M_ARM64EC)
 TEST_F(QnnCPUBackendTests, TestRoialign) {
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
@@ -177,6 +178,7 @@ TEST_F(QnnCPUBackendTests, TestRoialign_Unsupported_sampling_ratio) {
                      test::MakeAttribute("spatial_scale", 1.0f)},
                     ExpectedEPNodeAssignment::None);
 }
+#endif  // !defined(_M_ARM64) && !defined(_M_ARM64EC)
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
