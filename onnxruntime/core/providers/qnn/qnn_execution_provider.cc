@@ -1558,6 +1558,8 @@ Status GenieCompute(void* state, OrtKernelContext* ctx, const OrtApi* ort_api)
         while (std::getline(ss, dim, ',')) {
           outDatInfo->outputShape.push_back((int64_t)std::stoi(dim));
         }
+        // [batch_size, 1, output_size]
+        outDatInfo->outputShape.insert(outDatInfo->outputShape.begin()+1, 1);
 
         // Set appropriate datasize for output buffer
         outDatInfo->outputData.clear();
@@ -1704,11 +1706,10 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
     // std::filesystem::path zip_extracted_path;
     // auto st = genie_backend_manager_->GetZipContextPath(fused_nodes_and_graphs, context_model_path, zip_extracted_path);
     std::string genieConfigJsonText = "";
-    std::cout << "Context Model Path: " << ToUTF8String(context_model_path) << std::endl;
-    auto st = genie_backend_manager_->GetGenieConfig(context_model_path, genieConfigJsonText);
-    std::cout << genieConfigJsonText << std::endl;
+    // std::cout << "Context Model Path: " << ToUTF8String(context_model_path) << std::endl;
+    // auto st = genie_backend_manager_->GetGenieConfig(context_model_path, genieConfigJsonText);
     std::filesystem::path dlc_extracted_path;
-    st = genie_backend_manager_->GetDlcContextPath(fused_nodes_and_graphs, context_model_path, dlc_extracted_path);
+    auto st = genie_backend_manager_->GetDlcContextPath(fused_nodes_and_graphs, context_model_path, dlc_extracted_path);
     std::cout << "LOAD DLC FROM HERE: --------------------------------: " << dlc_extracted_path << std::endl;
     
     const GenieApi& genie_api_ = genie_api_loader_->Get();
@@ -1744,12 +1745,14 @@ Status QNNExecutionProvider::Compile(const std::vector<FusedNodeAndGraph>& fused
           st->outputs = builder->outputs;
           st->owner = this;
 
+          std::cout << "Loading DlcConfig_create" << std::endl;
           GenieDlcConfig* dlcConfigHandle = nullptr;
-          if (st->api->DlcConfig_create(builder->dlc_path.c_str(), &dlcConfigHandle) != 0) {
+          if (st->api->DlcConfig_create(builder->dlc_path.c_str(), nullptr, &dlcConfigHandle) != 0) {
               std::cout << "Error creating DLC Config \n";
           }
 
           // Genie DLC Create
+          std::cout << "Loading Dlc_create" << std::endl;
           GenieDlc* genieDlcHandle;
           if (st->api->Dlc_create(dlcConfigHandle, &genieDlcHandle) != 0) {
               std::cout << "Error creating DLC \n";

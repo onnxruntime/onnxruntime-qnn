@@ -69,7 +69,7 @@ void GenieApiLoader::Init() {
             (TYPE_GenieNode_execute)must_dlsym(handle_, "GenieNode_execute");
 
         api_.Node_reset =
-            (TYPE_GenieNode_reset)must_dlsym(handle_, "GenieNode_free"); // RESET IT BACK AS NEW DLL WONT HAVE THIS
+            (TYPE_GenieNode_reset)must_dlsym(handle_, "GenieNode_reset");
 
         api_.Node_free =
             (TYPE_GenieNode_free)must_dlsym(handle_, "GenieNode_free");

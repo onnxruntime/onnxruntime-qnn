@@ -84,6 +84,7 @@ typedef Genie_Status_t (*TYPE_GenieNodeConfig_createFromJson)(
 
 typedef Genie_Status_t (*TYPE_GenieDlcConfig_create)(
     const char* dlcSource,
+    const char* jsonStr,
     GenieDlcConfig** out);
 
 typedef Genie_Status_t (*TYPE_GenieDlc_create)(

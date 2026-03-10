@@ -395,7 +395,7 @@ static const char* const kOrtEpDynamicOptionsWorkloadType = "ep.dynamic.workload
 // THIS OPTION IS NOT A REGULAR SESSION OPTION SINCE IT CAN BE MODIFIED AT ANY TIME
 // Meant to be used with SetEpDynamicOptions
 // Specify the amount of kvcache rewind.
-static const char* const kOrtEpDynamicOptionsRewindKVCache = "ep.dynamic.rewind_kvcache";
+static const char* const kOrtEpDynamicOptionsRewindKVCache = "kvcache_rewind";
 
 
 // Disables model compilation during session initialization.
