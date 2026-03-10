@@ -33,6 +33,7 @@ on:
 env:
   # The QDC results folder is a bit odd
   QDC_RESULTS_ARCH: "${{ (inputs.target_os == 'linux' && inputs.target_arch == 'aarch64_oe_gcc11_2') && 'qualcomm_linux' || 'android' }}"
+  BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
 
 jobs:
   test:
@@ -46,11 +47,19 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: actions/download-artifact@v4
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
         with:
-          name: ORT ${{inputs.target_os}} ${{inputs.target_arch}} pynone Tests
-          path: |
-            ${{ github.workspace }}/build
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Download Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-pyNone-tests"
 
       - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} pynone
         env:
