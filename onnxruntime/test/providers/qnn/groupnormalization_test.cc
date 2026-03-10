@@ -25,14 +25,17 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_Default) {
   std::vector<float> bias_data = {0.1f, 0.2f};
 
   auto build_test_case = [&](ModelTestBuilder& builder) {
-    auto* input = builder.MakeInput<float>({1, 2, 3, 4}, input_data);
-    auto* scale = builder.MakeInitializer<float>({2}, scale_data);
-    auto* bias = builder.MakeInitializer<float>({2}, bias_data);
+    MakeTestInput<float>(builder, "X", TestInputDef<float>({1, 2, 3, 4}, false, input_data));
+    MakeTestInput<float>(builder, "scale", TestInputDef<float>({2}, true, scale_data));
+    MakeTestInput<float>(builder, "bias", TestInputDef<float>({2}, true, bias_data));
 
-    auto* output = builder.MakeOutput<float>(std::vector<int64_t>{1, 2, 3, 4});
-    Node& group_norm_node = builder.AddNode("GroupNormalization", {input, scale, bias}, {output});
-    group_norm_node.AddAttribute("num_groups", static_cast<int64_t>(1));
-    group_norm_node.AddAttribute("epsilon", 1e-05f);
+    // Create attributes
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("num_groups", static_cast<int64_t>(1)));
+    attributes.push_back(builder.MakeScalarAttribute("epsilon", 1e-05f));
+
+    builder.AddNode("group_norm", "GroupNormalization", {"X", "scale", "bias"}, {"Y"}, "", attributes);
+    builder.MakeOutput<float>("Y", std::vector<int64_t>{1, 2, 3, 4});
   };
 
   ProviderOptions provider_options;
@@ -58,14 +61,17 @@ TEST_F(QnnCPUBackendTests, GroupNorm_Float_CPU) {
   std::vector<float> bias_data = {0.1f, 0.2f};
 
   auto build_test_case = [&](ModelTestBuilder& builder) {
-    auto* input = builder.MakeInput<float>({1, 2, 3, 4}, input_data);
-    auto* scale = builder.MakeInitializer<float>({2}, scale_data);
-    auto* bias = builder.MakeInitializer<float>({2}, bias_data);
+    MakeTestInput<float>(builder, "X", TestInputDef<float>({1, 2, 3, 4}, false, input_data));
+    MakeTestInput<float>(builder, "scale", TestInputDef<float>({2}, true, scale_data));
+    MakeTestInput<float>(builder, "bias", TestInputDef<float>({2}, true, bias_data));
 
-    auto* output = builder.MakeOutput<float>(std::vector<int64_t>{1, 2, 3, 4});
-    Node& group_norm_node = builder.AddNode("GroupNormalization", {input, scale, bias}, {output});
-    group_norm_node.AddAttribute("num_groups", static_cast<int64_t>(1));
-    group_norm_node.AddAttribute("epsilon", 1e-05f);
+    // Create attributes
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("num_groups", static_cast<int64_t>(1)));
+    attributes.push_back(builder.MakeScalarAttribute("epsilon", 1e-05f));
+
+    builder.AddNode("group_norm", "GroupNormalization", {"X", "scale", "bias"}, {"Y"}, "", attributes);
+    builder.MakeOutput<float>("Y", std::vector<int64_t>{1, 2, 3, 4});
   };
 
   ProviderOptions provider_options;
@@ -93,14 +99,17 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_MultipleGroups) {
   std::vector<float> bias_data = {0.1f, 0.2f, 0.3f, 0.4f};
 
   auto build_test_case = [&](ModelTestBuilder& builder) {
-    auto* input = builder.MakeInput<float>({1, 4, 3, 4}, input_data);
-    auto* scale = builder.MakeInitializer<float>({4}, scale_data);
-    auto* bias = builder.MakeInitializer<float>({4}, bias_data);
+    MakeTestInput<float>(builder, "X", TestInputDef<float>({1, 4, 3, 4}, false, input_data));
+    MakeTestInput<float>(builder, "scale", TestInputDef<float>({4}, true, scale_data));
+    MakeTestInput<float>(builder, "bias", TestInputDef<float>({4}, true, bias_data));
 
-    auto* output = builder.MakeOutput<float>(std::vector<int64_t>{1, 4, 3, 4});
-    Node& group_norm_node = builder.AddNode("GroupNormalization", {input, scale, bias}, {output});
-    group_norm_node.AddAttribute("num_groups", static_cast<int64_t>(2));  // 4 channels / 2 groups = 2 channels per group
-    group_norm_node.AddAttribute("epsilon", 1e-05f);
+    // Create attributes
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("num_groups", static_cast<int64_t>(2)));  // 4 channels / 2 groups = 2 channels per group
+    attributes.push_back(builder.MakeScalarAttribute("epsilon", 1e-05f));
+
+    builder.AddNode("group_norm", "GroupNormalization", {"X", "scale", "bias"}, {"Y"}, "", attributes);
+    builder.MakeOutput<float>("Y", std::vector<int64_t>{1, 4, 3, 4});
   };
 
   ProviderOptions provider_options;
@@ -126,14 +135,17 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_LargeEpsilon) {
   std::vector<float> bias_data = {0.1f, 0.2f};
 
   auto build_test_case = [&](ModelTestBuilder& builder) {
-    auto* input = builder.MakeInput<float>({1, 2, 3, 4}, input_data);
-    auto* scale = builder.MakeInitializer<float>({2}, scale_data);
-    auto* bias = builder.MakeInitializer<float>({2}, bias_data);
+    MakeTestInput<float>(builder, "X", TestInputDef<float>({1, 2, 3, 4}, false, input_data));
+    MakeTestInput<float>(builder, "scale", TestInputDef<float>({2}, true, scale_data));
+    MakeTestInput<float>(builder, "bias", TestInputDef<float>({2}, true, bias_data));
 
-    auto* output = builder.MakeOutput<float>(std::vector<int64_t>{1, 2, 3, 4});
-    Node& group_norm_node = builder.AddNode("GroupNormalization", {input, scale, bias}, {output});
-    group_norm_node.AddAttribute("num_groups", static_cast<int64_t>(1));
-    group_norm_node.AddAttribute("epsilon", 0.1f);  // Larger epsilon value
+    // Create attributes
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("num_groups", static_cast<int64_t>(1)));
+    attributes.push_back(builder.MakeScalarAttribute("epsilon", 0.1f));  // Larger epsilon value
+
+    builder.AddNode("group_norm", "GroupNormalization", {"X", "scale", "bias"}, {"Y"}, "", attributes);
+    builder.MakeOutput<float>("Y", std::vector<int64_t>{1, 2, 3, 4});
   };
 
   ProviderOptions provider_options;
@@ -160,14 +172,17 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_3D) {
   std::vector<float> bias_data = {0.1f, 0.2f, 0.3f, 0.4f};
 
   auto build_test_case = [&](ModelTestBuilder& builder) {
-    auto* input = builder.MakeInput<float>({1, 4, 4}, input_data);
-    auto* scale = builder.MakeInitializer<float>({4}, scale_data);
-    auto* bias = builder.MakeInitializer<float>({4}, bias_data);
+    MakeTestInput<float>(builder, "X", TestInputDef<float>({1, 4, 4}, false, input_data));
+    MakeTestInput<float>(builder, "scale", TestInputDef<float>({4}, true, scale_data));
+    MakeTestInput<float>(builder, "bias", TestInputDef<float>({4}, true, bias_data));
 
-    auto* output = builder.MakeOutput<float>(std::vector<int64_t>{1, 4, 4});
-    Node& group_norm_node = builder.AddNode("GroupNormalization", {input, scale, bias}, {output});
-    group_norm_node.AddAttribute("num_groups", static_cast<int64_t>(2));  // 4 channels / 2 groups = 2 channels per group
-    group_norm_node.AddAttribute("epsilon", 1e-05f);
+    // Create attributes
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("num_groups", static_cast<int64_t>(2)));  // 4 channels / 2 groups = 2 channels per group
+    attributes.push_back(builder.MakeScalarAttribute("epsilon", 1e-05f));
+
+    builder.AddNode("group_norm", "GroupNormalization", {"X", "scale", "bias"}, {"Y"}, "", attributes);
+    builder.MakeOutput<float>("Y", std::vector<int64_t>{1, 4, 4});
   };
 
   ProviderOptions provider_options;
