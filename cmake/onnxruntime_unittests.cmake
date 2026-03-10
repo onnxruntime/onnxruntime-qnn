@@ -219,7 +219,6 @@ list(REMOVE_ITEM onnxruntime_test_framework_src
      "${TEST_SRC_DIR}/providers/qnn/matmulnbits_test.cc"
      "${TEST_SRC_DIR}/providers/qnn/quickgelu_test.cc"
      "${TEST_SRC_DIR}/providers/qnn/rmsnormalization_test.cc"
-     "${TEST_SRC_DIR}/providers/qnn/simplifiedlayernormalization_test.cc"
      "${TEST_SRC_DIR}/providers/qnn/qnn_node_group/lpbqgemm_fusion_test.cc"
      "${TEST_SRC_DIR}/providers/qnn/qnn_node_group/lpbqmatmul_fusion_test.cc"
      "${TEST_SRC_DIR}/providers/qnn/qnn_node_group/lpbqgemm_fusion_without_ql_test.cc"
