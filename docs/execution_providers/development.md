@@ -86,7 +86,7 @@ The build process involves:
 3. Building the QNN EP as an ABI-compatible plugin library
 
 After building, you'll have:
-- **ABI EP Plugin Library**: `onnxruntime_provider_qnn.dll`
+- **ABI EP Plugin Library**: `onnxruntime_providers_qnn.dll`
 - **Python Wheel** (optional): `onnxruntime_qnn-[version]-py3-none-[platform].whl`
 
 ### 3. Development Workflow

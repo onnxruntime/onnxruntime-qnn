@@ -21,7 +21,7 @@ See more information on the QNN execution provider [here](./QNN-ExecutionProvide
   * **Note**: Windows on Arm supports x86-64 Python via emulation. Ensure the Arm64 Python environment is activated for native Arm64 builds.
 
 * **Pre-built ONNX Runtime Release**: Download from [Microsoft ONNX Runtime Releases](https://github.com/microsoft/onnxruntime/releases)
-  * Extract the release package and set `ORT_HOME` to the root directory
+  * Extract the release package
   * Example: `onnxruntime-win-arm64-1.24.1`
 
 ### Get the Source Code
@@ -47,9 +47,6 @@ pip install -r requirements.txt
 * `--use_qnn`: Enable QNN Execution Provider
 * `--qnn_home QNN_SDK_PATH`: Path to the Qualcomm AI Engine Direct SDK
   * Example: `--qnn_home "C:\Qualcomm\AIStack\QAIRT\2.42.0.251225"`
-* `--ort_home ORT_SDK_PATH`: Path to the pre-built ONNX Runtime SDK
-  * Example: `--ort_home "C:\onnxruntime-win-arm64-1.24.1"`
-  * **Note**: `--ort_home` is not supported on `rel-2.0.0` branch
 
 ### Optional Options
 
@@ -68,17 +65,17 @@ Run `python tools/ci_build/build.py --help` for a complete list of build options
 ### Windows (native x86-64 or native Arm64)
 
 ```batch
-.\build.bat --build_shared_lib --parallel --cmake_generator "Visual Studio 17 2022" --use_qnn --config Release --qnn_home [QNN_SDK_PATH] --ort_home [ORT_SDK_PATH] --build_dir .\build
+.\build.bat --build_shared_lib --parallel --cmake_generator "Visual Studio 17 2022" --use_qnn --config Release --qnn_home [QNN_SDK_PATH] --build_dir .\build
 ```
 
 **Notes:**
 * Not all Qualcomm backends (e.g., HTP) support model execution on x86-64. Refer to the [Qualcomm SDK backend documentation](https://docs.qualcomm.com/doc/80-63442-10/topic/backend.html) for details.
-* Even if a backend doesn't support x86-64 execution, the QNN EP can still [generate compiled models](../execution-providers/QNN-ExecutionProvider.md#qnn-context-binary-cache-feature) for that backend.
+* Even if a backend doesn't support x86-64 execution, the QNN EP can still [generate compiled models](../execution_providers/QNN-ExecutionProvider.md#qnn-context-binary-cache-feature) for that backend.
 
 ### Windows (Arm64 cross-compile target)
 
 ```batch
-.\build.bat --arm64 --build_shared_lib --parallel --cmake_generator "Visual Studio 17 2022" --use_qnn --build_wheel --skip_tests --config Release --qnn_home [QNN_SDK_PATH] --ort_home [ORT_SDK_PATH] --build_dir .\build
+.\build.bat --arm64 --build_shared_lib --parallel --cmake_generator "Visual Studio 17 2022" --use_qnn --build_wheel --skip_tests --config Release --qnn_home [QNN_SDK_PATH] --build_dir .\build
 ```
 
 ## Build Artifacts
@@ -87,7 +84,7 @@ After a successful build, the artifacts will be located in the build directory:
 
 ### ABI EP Plugin Library
 
-* **Release**: `$BUILD_DIR\Release\Release\onnxruntime_provider_qnn.dll`
+* **Release**: `$BUILD_DIR\Release\Release\onnxruntime_providers_qnn.dll`
 
 ### Python Wheel (if `--build_wheel` was used)
 
@@ -100,9 +97,6 @@ Example filenames:
 ## Troubleshooting
 
 ### Common Build Issues
-
-**Issue**: CMake cannot find ONNX Runtime headers
-* **Solution**: Verify that `ORT_HOME` points to the correct directory containing the `include` folder
 
 **Issue**: CMake cannot find QNN SDK
 * **Solution**: Verify that `QNN_HOME` points to the correct QAIRT SDK directory
