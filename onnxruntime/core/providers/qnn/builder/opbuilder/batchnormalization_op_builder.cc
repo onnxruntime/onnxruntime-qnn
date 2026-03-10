@@ -466,6 +466,11 @@ void OverrideParamTypeForRequantize(Qnn_DataType_t x_dtype,
     scale_dtype = is_scale_has_negative_values ? QNN_DATATYPE_SFIXED_POINT_16 : QNN_DATATYPE_UFIXED_POINT_8;
   }
 
+  // QNN HTP with UFIXED_POINT_8 input doesn't support SFIXED_POINT_8 scale
+  if (x_dtype == QNN_DATATYPE_UFIXED_POINT_8 && scale_dtype == QNN_DATATYPE_SFIXED_POINT_8) {
+    scale_dtype = QNN_DATATYPE_UFIXED_POINT_8;
+  }
+
   // QNN HTP requires quantized bias for quantized ops
   bool is_quantized = (x_dtype == QNN_DATATYPE_UFIXED_POINT_8 || x_dtype == QNN_DATATYPE_SFIXED_POINT_8 ||
                        x_dtype == QNN_DATATYPE_UFIXED_POINT_16 || x_dtype == QNN_DATATYPE_SFIXED_POINT_16);
