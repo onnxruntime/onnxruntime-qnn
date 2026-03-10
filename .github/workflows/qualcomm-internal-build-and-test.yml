@@ -26,13 +26,14 @@ on:
       # Cross-compiling from X64 to ARM64 is faster with our runners, but cannot produce a wheel.
       windows_arm64_runner_arch:
         type: string
-        default: "ARM64"
+        default: X64
       target_py_vsn:
         default: "3.12"
         type: string
 
 env:
   ORT_NIGHTLY_BUILD: "${{ inputs.nightly_build == true && '1' || '0' }}"
+  BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
 
 jobs:
 
@@ -76,12 +77,14 @@ jobs:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
-      nightly_build: ${{ inputs.nightly_build }}
-      build_runner_arch: ${{ inputs.windows_arm64_runner_arch }}
       target_arch: arm64
-      upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' }}
-      target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
+      build_runner_arch: ${{ inputs.windows_arm64_runner_arch }}
       test_runner_arch: arm64
+      upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn }}
+      upload_test_archive: ${{ inputs.windows_arm64_runner_arch != 'ARM64' }}
+      build_test_same_runner: ${{ inputs.windows_arm64_runner_arch == 'ARM64' }}
+      target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
+      nightly_build: ${{ inputs.nightly_build }}
 
   build-and-test-windows-arm64ec:
     if: ${{ inputs.do_all }}
@@ -125,15 +128,24 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
       - name: Build Android
         run: |
           python3 qcom/build_and_test.py archive_ort_android_aarch64
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload Test Archive to Artifactory
+        uses: ./.github/actions/upload-ci-artifact
         with:
-          name: ORT android aarch64 pynone Tests
-          path: |
-            ${{ github.workspace }}/build/onnxruntime-tests-android-aarch64.zip
+          name: "android-aarch64-pyNone-tests"
+          src_pattern: onnxruntime-tests-android-aarch64.zip
 
  # Intentionally not "test-android-aarch64" to avoid breaking required PR checks
   test-android:
