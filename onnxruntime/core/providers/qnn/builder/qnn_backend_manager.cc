@@ -174,7 +174,7 @@ Ort::Status QnnBackendManager::SetHtpPowerCustomConfigs(uint32_t htp_power_confi
                                                         QnnHtpPerfInfrastructure_PowerConfig_t power_config,
                                                         uint32_t rpc_polling_time,
                                                         uint32_t rpc_control_latency) {
-  RETURN_IF_NOT(backend_setup_completed_, "Cannot set HTP power config ID if backend setup is not complete.");                                                    
+  RETURN_IF_NOT(backend_setup_completed_, "Cannot set HTP power config ID if backend setup is not complete.");
   RETURN_IF_ERROR(htp_power_config_manager_.AddRpcPollingTime(rpc_polling_time));
   RETURN_IF_ERROR(htp_power_config_manager_.AddRpcControlLatency(rpc_control_latency));
   RETURN_IF_ERROR(htp_power_config_manager_.AddHtpPerformanceConfig(power_config));
