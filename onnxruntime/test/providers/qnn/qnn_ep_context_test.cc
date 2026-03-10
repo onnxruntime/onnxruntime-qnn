@@ -12,6 +12,7 @@
 #include "core/session/inference_session.h"
 #include "core/graph/model_saving_options.h"
 #include "core/session/utils.h"
+#include "core/session/abi_devices.h"
 #include "core/session/abi_session_options_impl.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
@@ -26,7 +27,6 @@
 #define ORT_MODEL_FOLDER ORT_TSTR("testdata/")
 
 using namespace ONNX_NAMESPACE;
-using namespace onnxruntime::logging;
 
 // in test_main.cc
 extern std::unique_ptr<Ort::Env> ort_env;
@@ -99,15 +99,18 @@ void CleanUpCtxFile(std::string context_file_path) {
 //        input2 -> Q -> DQ -> FusedGemm -> Q -> DQ -> output
 static GetTestModelFn BuildGraphWithQAndNonQ(bool single_ep_node = true) {
   return [single_ep_node](ModelTestBuilder& builder) {
-    // Create non-quantized FusedMatMul node1
+    // Create non-quantized FusedGemm node1
     std::vector<float> data(200 * 200, 1.0f);
     MakeTestInput(builder, "input1", TestInputDef<float>({200, 200}, false, data));
     MakeTestInput(builder, "add1_ini_input2", TestInputDef<float>({200, 200}, true, data));
-    builder.AddNode("FusedMatMul_node0",
-                    "FusedMatMul",
+    std::vector<ONNX_NAMESPACE::AttributeProto> fusedgemm_attrs;
+    fusedgemm_attrs.push_back(builder.MakeStringAttribute("activation", "Relu"));
+    builder.AddNode("FusedGemm_node0",
+                    "FusedGemm",
                     {"input1", "add1_ini_input2"},
                     {"add1_out"},
-                    kMSDomain);
+                    kMSDomain,
+                    fusedgemm_attrs);
 
     // Create quantized Add node2
     std::vector<float> add_data(12, 1.0f);
@@ -134,11 +137,14 @@ static GetTestModelFn BuildGraphWithQAndNonQ(bool single_ep_node = true) {
 
       MakeTestInput(builder, "add3_ini_input2", TestInputDef<float>({200, 200}, true, data));
 
-      builder.AddNode("FusedMatMul_node1",
-                      "FusedMatMul",
+      std::vector<ONNX_NAMESPACE::AttributeProto> fusedgemm_attrs2;
+      fusedgemm_attrs2.push_back(builder.MakeStringAttribute("activation", "Relu"));
+      builder.AddNode("FusedGemm_node1",
+                      "FusedGemm",
                       {add3_input1_qdq, "add3_ini_input2"},
                       {"add3_out"},
-                      kMSDomain);
+                      kMSDomain,
+                      fusedgemm_attrs2);
 
       // Create quantized Add node4
       std::string add4_input1_qdq =
@@ -1831,7 +1837,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphName
   const std::string context_model_file = "./qnn_context_cache_non_embed.onnx";
   std::filesystem::path context_bin = "qnn_context_cache_non_embed_qnn.bin";
   std::remove(context_model_file.c_str());
-  std::remove(context_bin.c_str());
+  std::remove(context_bin.string().c_str());
 
   std::unordered_map<std::string, std::string> session_option_pairs;
   session_option_pairs.emplace(kOrtSessionOptionEpContextEnable, "1");
@@ -2994,7 +3000,7 @@ static void TestModelCompatibilityApiValidate(const CompatibilityTestInfo& test_
 
   OrtEpFactory* ep_factory = registered_ep_device->GetMutableFactory();
   OrtEp* ep = nullptr;
-  ep_factory->CreateEp(ep_factory, nullptr, nullptr, 0, so, DefaultLoggingManager().DefaultLogger().ToExternal(), &ep);
+  ep_factory->CreateEp(ep_factory, nullptr, nullptr, 0, so, nullptr, &ep);
 
   const OrtEpDevice* ep_device = registered_ep_device.get();
   OrtCompiledModelCompatibility out_status;
@@ -3004,14 +3010,16 @@ static void TestModelCompatibilityApiValidate(const CompatibilityTestInfo& test_
   ep_factory->ReleaseEp(ep_factory, ep);
 }
 
-TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate) {
+// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
+TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate) {
   CompatibilityTestInfo test_info;
   test_info.htp_arch = static_cast<uint32_t>(QnnHTPBackendTests::GetPlatformAttributes().htp_arch);
 
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_SUPPORTED_OPTIMAL);
 }
 
-TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_NoEp) {
+// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
+TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_NoEp) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, {{"backend_type", "htp"}});
@@ -3023,14 +3031,16 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_NoEp) {
   ASSERT_TRUE(message.find("Unable to validate model compatibility without EP created.") != std::string::npos);
 }
 
-TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_DiffBackend) {
+// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
+TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_DiffBackend) {
   CompatibilityTestInfo test_info;
   test_info.backend_id = QNN_BACKEND_ID_CPU;
 
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }
 
-TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewApiVersion) {
+// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
+TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewApiVersion) {
   CompatibilityTestInfo test_info;
   test_info.backend_api_version_major = 9999;
   test_info.backend_api_version_minor = 9999;
@@ -3039,7 +3049,8 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewApiV
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }
 
-TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewBlobVersion) {
+// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
+TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewBlobVersion) {
   CompatibilityTestInfo test_info;
   test_info.context_blob_version_major = 9999;
   test_info.context_blob_version_minor = 9999;
@@ -3106,14 +3117,16 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbHnrdRtHnrd_
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }
 
-TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbOldHtpArch) {
+// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
+TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbOldHtpArch) {
   CompatibilityTestInfo test_info;
   test_info.htp_arch = 0;
 
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_SUPPORTED_PREFER_RECOMPILATION);
 }
 
-TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbNewHtpArch) {
+// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
+TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbNewHtpArch) {
   CompatibilityTestInfo test_info;
   test_info.htp_arch = 9999;
 
