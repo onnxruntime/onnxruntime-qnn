@@ -47,24 +47,6 @@ static void LoadOnnxModelFromFile(const std::string& path, onnx::ModelProto& out
   return;
 }
 
-static int64_t GetNodeAttr(const Node& node, const std::string& attr_name, int64_t default_val) {
-  const auto& attributes = node.GetAttributes();
-  if (auto entry = attributes.find(attr_name); entry != attributes.end()) {
-    return entry->second.i();
-  }
-
-  return default_val;
-}
-
-static const std::string& GetNodeAttr(const Node& node, const std::string& attr_name, const std::string& default_val) {
-  const auto& attributes = node.GetAttributes();
-  if (auto entry = attributes.find(attr_name); entry != attributes.end()) {
-    return entry->second.s();
-  }
-
-  return default_val;
-}
-
 // from the context cache Onnx model, find the EPContext node with main_context=1,
 // and get the QNN context binary file name
 static void GetContextBinaryFileName(const std::string onnx_ctx_file,
@@ -280,8 +262,9 @@ struct TestModel {
 // ModelProto for feeding into Ort::Session / Ort::Compile_extractor.
 static void CreateTestModel(test::GetTestModelFn graph_builder,
                             int onnx_opset_version,
-                            logging::Severity log_severity,
+                            OrtLoggingLevel log_severity,
                             TestModel& test_model) {
+  ORT_UNUSED_PARAMETER(log_severity);
   const std::unordered_map<std::string, int> domain_to_version = {{"", onnx_opset_version}, {kMSDomain, 1}};
 
   test_model.builder = std::make_unique<ModelTestBuilder>();
@@ -357,7 +340,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_DisableEpCompile_ThenCompileExplicitly) {
 
   // Create a test model and save it to a file.
   TestModel test_model;
-  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, logging::Severity::kERROR, test_model);
+  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
   ASSERT_TRUE(test_model.Save(input_model_file));
 
   ProviderOptions provider_options;
@@ -416,7 +399,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelFromPath) {
 
   // Create a test model and save it to a file.
   TestModel test_model;
-  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, logging::Severity::kERROR, test_model);
+  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
   ASSERT_TRUE(test_model.Save(input_model_file));
 
   ProviderOptions provider_options;
@@ -453,7 +436,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelFromPath) {
 TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelAsBuffer_Embedded) {
   // Create a test model and serialize it to a buffer.
   TestModel test_model;
-  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, logging::Severity::kERROR, test_model);
+  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
   std::string model_data = test_model.Serialize();
 
   const ORTCHAR_T* output_model_file = ORT_TSTR("./qnn_context_binary_multi_partition_test.onnx");
@@ -496,7 +479,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer) {
 
   // Create a test model and save it to a file.
   TestModel test_model;
-  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, logging::Severity::kERROR, test_model);
+  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
   ASSERT_TRUE(test_model.Save(input_model_file));
 
   ProviderOptions provider_options;
@@ -541,7 +524,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer) {
 TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputAndOutputModelsInBuffers) {
   // Create a test model and serialize it to a buffer.
   TestModel test_model;
-  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, logging::Severity::kERROR, test_model);
+  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
   std::string model_data = test_model.Serialize();
 
   ProviderOptions provider_options;
@@ -645,7 +628,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer_Outpu
 
   // Create a test model and save it to a file.
   TestModel test_model;
-  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, logging::Severity::kERROR, test_model);
+  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
   ASSERT_TRUE(test_model.Save(input_model_file));
 
   ProviderOptions provider_options;
@@ -1477,7 +1460,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheEmbedModeTest) {
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
-                       logging::Severity::kERROR,
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        "",  // context model file path, not required for this inference
                        session_option_pairs);
 
@@ -1493,7 +1476,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheEmbedModeTest) {
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
-                       logging::Severity::kERROR,
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        context_model_file,
                        session_option_pairs2);
   // Clean up
@@ -1529,7 +1512,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
-                       logging::Severity::kERROR,
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        "",  // context model file path, not required for this inference
                        session_option_pairs);
 
@@ -1548,7 +1531,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
-                       logging::Severity::kERROR,
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        context_binary_file,
                        session_option_pairs2);
 
@@ -1607,7 +1590,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_InvalidGraph) {
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
-                       logging::Severity::kERROR,
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        "",  // context model file path, not required for this inference
                        session_option_pairs);
 
@@ -1813,7 +1796,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary2InputsTest) {
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
-                       logging::Severity::kERROR,
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        "",  // context model file path, not required for this inference
                        session_option_pairs);
 
@@ -1829,7 +1812,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary2InputsTest) {
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
-                       logging::Severity::kERROR,
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        context_model_file,
                        session_option_pairs2);
   // Clean up
@@ -1846,7 +1829,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphName
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
   const std::string context_model_file = "./qnn_context_cache_non_embed.onnx";
-  const std::string context_bin = "qnn_context_cache_non_embed_qnn.bin";
+  std::filesystem::path context_bin = "qnn_context_cache_non_embed_qnn.bin";
   std::remove(context_model_file.c_str());
   std::remove(context_bin.c_str());
 
@@ -1866,7 +1849,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphName
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
-                       logging::Severity::kERROR,
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        "",  // context model file path, not required for this inference
                        session_option_pairs);
 
@@ -2457,7 +2440,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_InputFile_WriteOutputModelBytes) {
 
   // Create a test model and save it to a file.
   TestModel test_model;
-  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, logging::Severity::kERROR, test_model);
+  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
   ASSERT_TRUE(test_model.Save(input_model_file));
 
   // Initialize session options with QNN EP
@@ -2499,7 +2482,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_InputFile_WriteOutputModelBytes) {
 TEST_F(QnnHTPBackendTests, CompileApi_OutputStream_ReturnStatus) {
   // Create a test model (in memory).
   TestModel test_model;
-  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, logging::Severity::kERROR, test_model);
+  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
   std::string model_data = test_model.Serialize();
 
   // Initialize session options with QNN EP
@@ -2594,7 +2577,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_InputFile_OutputFile_InitializerHandler) {
 
   // Create a test model and save it to a file.
   TestModel test_model;
-  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, logging::Severity::kERROR, test_model);
+  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
   ASSERT_TRUE(test_model.Save(input_model_file));
 
   // Initialize session options with QNN EP
