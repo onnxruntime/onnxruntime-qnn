@@ -1440,6 +1440,61 @@ Ort::Status QnnBackendManager::SetupBackend(
   return status;
 }
 
+void QnnBackendManager::TimerCallback(void* user_data) {
+  TimerCallbackArg* args = static_cast<TimerCallbackArg*>(user_data);
+  QnnBackendManager* instance = args->instance_;
+  //auto rt = instance->SetState(GraphState::TIMEOUT, args->power_config_id_, qnn::HtpPerformanceMode::kHtpSustainedHighPerformance, 0, 0);
+  //if (!rt.IsOK()) {
+    ORT_CXX_LOG(instance->logger_, ORT_LOGGING_LEVEL_VERBOSE, ("State update failed " + std::to_string(args->power_config_id_)).c_str());
+  //}
+}
+
+void QnnBackendManager::CreateTimerThread(uint32_t htp_power_config_client_id) {
+  std::lock_guard<std::mutex> lk(state_mutex_);
+  if (timer_ == nullptr) {
+    std::unique_ptr<Timer> temp(new Timer());
+    if (temp != nullptr) {
+      timer_ = std::move(temp);
+      timer_callback_arg_ = std::make_unique<TimerCallbackArg>(htp_power_config_client_id, this);
+      if (timer_callback_arg_ == nullptr) {
+        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Failed to create Timer argument");
+        timer_.reset();
+        return;
+      }
+      if (!timer_->Initialize(TimerCallback, timer_callback_arg_.get())) {
+        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Failed to create timer to set performance");
+        timer_callback_arg_.reset();
+        timer_.reset();
+      }
+    } else {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Failed: Timer is nullptr");
+    }
+  } else {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Timer already created");
+  }
+}
+
+void QnnBackendManager::ReleaseTimerThread(uint32_t htp_power_config_client_id) {
+  std::lock_guard<std::mutex> lk(state_mutex_);
+  if (timer_ != nullptr) {
+    timer_->DeInitialize();
+    //graph_state_ = GraphState::NONE;
+    timer_resource_.caller_busy_ = false;
+  }
+
+  timer_callback_arg_.reset();
+  timer_.reset();
+  /*Ort::Status status = Ort::Status();
+  QnnHtpPerfInfrastructure_PowerConfig_t htp_performance_cfg{};
+  htp_power_config_manager_.SetReleasedPerfPowerConfig(htp_performance_cfg, htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+  status = SetHtpPowerCustomConfigs(htp_power_config_client_id, htp_performance_cfg, 0, 0);
+  if (status != Ort::Status()) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Not able to set Power config to release");
+  }*/
+  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Not able to set Power config to release " + std::to_string(htp_power_config_client_id)).c_str());
+}
+
+
 Ort::Status QnnBackendManager::CreateHtpPowerCfgId(uint32_t device_id,
                                                    uint32_t core_id,
                                                    uint32_t& htp_power_config_id) {
@@ -1459,6 +1514,18 @@ Ort::Status QnnBackendManager::CreateHtpPowerCfgId(uint32_t device_id,
   status = htp_perf_infra.createPowerConfigId(device_id, core_id, &htp_power_config_id);
   RETURN_IF(QNN_SUCCESS != status, "createPowerConfigId failed.");
 
+  return Ort::Status();
+}
+
+Ort::Status QnnBackendManager::InitializePowerCfgId(uint32_t device_id, uint32_t core_id, uint32_t& htp_power_config_id) {
+  RETURN_IF_ERROR(CreateHtpPowerCfgId(device_id, core_id, htp_power_config_id));
+  CreateTimerThread(htp_power_config_id);
+  return Ort::Status();
+}
+
+Ort::Status QnnBackendManager::DeInitializePowerCfgId(uint32_t htp_power_config_id) {
+  ReleaseTimerThread(htp_power_config_id);
+  RETURN_IF_ERROR(DestroyHTPPowerConfigID(htp_power_config_id));
   return Ort::Status();
 }
 

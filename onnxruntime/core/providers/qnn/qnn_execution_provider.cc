@@ -922,7 +922,7 @@ QnnEp::~QnnEp() {
 
     std::lock_guard<std::mutex> lock(config_id_mutex_);
     if (htp_power_config_id_.has_value()) {
-      qnn_backend_manager_->DestroyHTPPowerConfigID(*htp_power_config_id_);
+      qnn_backend_manager_->DeInitializePowerCfgId(*htp_power_config_id_);
     }
   }
 
@@ -2124,7 +2124,7 @@ void QnnEp::CreateHtpPowerConfigId() const {
   constexpr uint32_t core_id = 0;
   uint32_t htp_power_config_id;
 
-  Ort::Status rt = qnn_backend_manager_->CreateHtpPowerCfgId(device_id_, core_id, htp_power_config_id);
+  Ort::Status rt = qnn_backend_manager_->InitializePowerCfgId(device_id_, core_id, htp_power_config_id);
 
   if (rt.IsOK()) {
     htp_power_config_id_ = htp_power_config_id;
