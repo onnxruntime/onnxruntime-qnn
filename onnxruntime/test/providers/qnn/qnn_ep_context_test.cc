@@ -49,7 +49,7 @@ static void LoadOnnxModelFromFile(const std::string& path, onnx::ModelProto& out
 
 // from the context cache Onnx model, find the EPContext node with main_context=1,
 // and get the QNN context binary file name
-static void GetContextBinaryFileName(const std::string onnx_ctx_file,
+static void GetContextBinaryFileName(const std::string& onnx_ctx_file,
                                      std::string& last_ctx_bin_file) {
   // Load model using ONNX protobuf API (avoid onnxruntime::Model).
   ONNX_NAMESPACE::ModelProto ctx_model_proto;
@@ -181,7 +181,7 @@ void QnnContextBinaryMultiPartitionTestBody(bool single_ep_node = true) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
@@ -258,8 +258,7 @@ struct TestModel {
 
   bool Save(const ORTCHAR_T* path) const {
     std::ofstream ofs(PathString(path), std::ios::binary);
-    builder->model_.SerializeToOstream(&ofs);
-    return true;
+    return builder->model_.SerializeToOstream(&ofs);
   }
 };
 
@@ -284,11 +283,10 @@ static void CreateTestModel(test::GetTestModelFn graph_builder,
   }
 
   // Keep IR version consistent with other QNN ABI tests.
-  test_model.builder->model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  test_model.builder->model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 }
 
 // Helper that checks that a compiled model has the expected number of EPContext nodes.
-// Uses public ONNX protobuf API instead of internal ORT APIs.
 static void CheckEpContextNodeCounts(const ONNX_NAMESPACE::ModelProto& model_proto,
                                      int expected_ep_context_node_count,
                                      int expected_other_node_count) {
@@ -961,7 +959,7 @@ void EpCtxCpuNodeWithExternalIniFileTestBody(bool expect_external_ini_file, bool
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   // Keep ONNX model + external initializer file in testdata folder so it can be resolved via
   // kOrtSessionOptionsModelExternalInitializersFileFolderPath.
@@ -1006,11 +1004,11 @@ void EpCtxCpuNodeWithExternalIniFileTestBody(bool expect_external_ini_file, bool
     {
       std::ifstream file(model_with_ext, std::ios::binary | std::ios::ate);
       if (!file)
-        throw std::string("Error reading model");
+        throw std::runtime_error("Error reading model");
       buffer.resize(narrow<size_t>(file.tellg()));
       file.seekg(0, std::ios::beg);
       if (!file.read(buffer.data(), buffer.size()))
-        throw std::string("Error reading model");
+        throw std::runtime_error("Error reading model");
     }
     so.AddConfigEntry(kOrtSessionOptionsModelExternalInitializersFileFolderPath, ext_folder.c_str());
     Ort::Session session(*ort_env, buffer.data(), buffer.size(), so);
@@ -1073,7 +1071,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGenerationFolderPathNotExpected) {
     opset_id_proto->set_version(version);
   }
   // TODO: Upgrade the ONNX IR VERSION to 12 when using ORT 1.24 prebuilt
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   // Serialize the model to a string.
   std::string model_data;
@@ -1119,7 +1117,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGenerationFolderPathNotExpected2) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   // Serialize the model to a string.
   std::string model_data;
@@ -1167,7 +1165,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGenerationNoOverWrite) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   // Serialize the model to a string.
   std::string model_data;
@@ -1293,7 +1291,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGeneration2InputTypes) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   // Serialize the model to a string.
   std::string model_data;
@@ -1346,7 +1344,7 @@ TEST_F(QnnHTPBackendTests, QnnContextGeneration2InputsOrderIssue) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
@@ -1406,7 +1404,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_QnnContextGenerationNodeNamePrefix) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
@@ -1666,7 +1664,7 @@ std::string CreateQnnCtxModelWithNonEmbedMode(std::string external_bin_path) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   std::string model_data;
   builder.model_.SerializeToString(&model_data);
@@ -1865,7 +1863,6 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphName
   EXPECT_TRUE(std::filesystem::exists(context_bin));
 
   // Create another model that references the context bin but uses a different EPContext node name.
-  // Use ModelProto-building helpers (no onnxruntime::Model / Graph::Resolve / NodeArg / Node).
   ModelTestBuilder builder;
   std::vector<int64_t> shape = {1, 2, 3};
 
@@ -1892,7 +1889,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphName
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   std::string model_data;
   builder.model_.SerializeToString(&model_data);
@@ -1950,7 +1947,7 @@ static void CreateQdqModel(const std::string& model_file_name) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   // Serialize to file
 #if defined(_WIN32)
