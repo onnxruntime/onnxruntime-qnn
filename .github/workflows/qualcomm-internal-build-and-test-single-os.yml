@@ -194,7 +194,7 @@ jobs:
       - name: Upload Wheel to Artifactory
         if: ${{ inputs.upload_wheel }}
         run: >
-          jf rt u
+          jf rt u  --insecure-tls=true
           ${{ github.workspace }}/build/${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl
           aisw-ortqnnep-generic-virtual/ci/
 
