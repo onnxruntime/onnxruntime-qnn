@@ -130,7 +130,6 @@ bool IsQOrDQScalePositiveConstantScalar(const OrtGraph* graph, const OrtApi& ort
   size_t num_inputs = 0;
   OrtStatus* status = nullptr;
   ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(q_node, &num_inputs), ort_api);
-
   if (num_inputs < 2) {
     return false;
   }
@@ -543,7 +542,7 @@ bool OrtClipNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
                                      const std::vector<const OrtNode*>& q_nodes) const {
   // Clip can have 1, 2, or 3 DQ inputs:
   // - 1 DQ: only data input is quantized
-  // - 2 DQ: data or (min and max) are quantized
+  // - 2 DQ: data and min or max are quantized
   // - 3 DQ: data, min, and max are all quantized
   const size_t num_dq_nodes = dq_nodes.size();
   if (num_dq_nodes < 1 || num_dq_nodes > 3) {
@@ -555,35 +554,19 @@ bool OrtClipNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
   }
 
   // If Clip feeds a Q node, require the data input[0] to come from a DQ node.
-  // DQ -> Clip -> Q is allowed, but DQ -> Op -> Clip -> Q is not allowed.
+  // DQ -> Clip -> Q can form Clip ORT Unit, but DQ -> Op -> Clip -> Q is not allowed as Clip here is redundant.
   if (!q_nodes.empty()) {
     // 1. get num of inputs
     size_t clip_input_count = 0;
-    OrtStatus* status = ort_api.Node_GetNumInputs(node, &clip_input_count);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return false;
-    }
-
-    if (clip_input_count == 0) {
-      return false;
-    }
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(node, &clip_input_count), ort_api);
 
     // 2. get inputs as OrtValueInfo instances
     std::vector<const OrtValueInfo*> clip_inputs(clip_input_count);
-    status = ort_api.Node_GetInputs(node, clip_inputs.data(), clip_inputs.size());
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return false;
-    }
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(node, clip_inputs.data(), clip_inputs.size()), ort_api);
 
     // 3. get the producer/parent of the Clip first input
     const OrtNode* data_producer = nullptr;
-    status = ort_api.ValueInfo_GetValueProducer(clip_inputs[0], &data_producer, nullptr);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return false;
-    }
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.ValueInfo_GetValueProducer(clip_inputs[0], &data_producer, nullptr), ort_api);
 
     // 4. check if the Clip first input producer is a DQ node
     if (data_producer == nullptr || Ort::ConstNode(data_producer).GetOperatorType() != "DequantizeLinear") {
@@ -1009,7 +992,6 @@ bool OrtDQMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& or
 
   const char* scale_name = nullptr;
   ORT_RETURN_FALSE_ON_ERROR(ort_api.GetValueInfoName(scale_value_info, &scale_name), ort_api);
-
 
   // Check for zero point (optional)
   const OrtValueInfo* zero_point_value_info = nullptr;
