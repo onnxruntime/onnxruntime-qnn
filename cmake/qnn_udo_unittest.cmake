@@ -79,6 +79,7 @@ if(UNIX)
         add_custom_target(QnnUDO_MyAdd
             DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/libMyAddOpPackage_cpu.so
         )
+        list(APPEND onnxruntime_test_providers_dependencies QnnUDO_MyAdd)
 
         # Linux HTP
         get_filename_component(HEXAGON_SDK_ROOT
@@ -126,7 +127,8 @@ if(UNIX)
           DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/libMyAddOpPackage_htp.so
         )
     endif()
-elseif(WIN32)
+elseif(WIN32 AND CMAKE_HOST_SYSTEM_PROCESSOR STREQUAL "X86")
+    # skip aarch64 since there is no qnn-op-package-generator in aarch64-windows-msvc
     add_custom_target(remove_cpu_udo_lib
         # add this target to ensure udo is always delete before rebuild
         COMMAND ${CMAKE_COMMAND} -E rm -rf ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/cpu
@@ -161,5 +163,5 @@ elseif(WIN32)
     add_custom_target(QnnUDO_MyAdd
         DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_BUILD_TYPE}/MyAddOpPackage_cpu.dll
     )
+    list(APPEND onnxruntime_test_providers_dependencies QnnUDO_MyAdd)
 endif()
-list(APPEND onnxruntime_test_providers_dependencies QnnUDO_MyAdd)

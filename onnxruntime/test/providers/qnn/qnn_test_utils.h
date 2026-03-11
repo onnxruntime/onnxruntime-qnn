@@ -851,7 +851,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
   InferenceModelCPU(f32_model_data,
                     "f32_model_logger",
                     ExpectedEPNodeAssignment::All,
-                    session_options
+                    session_options,
                     f32_helper.feeds_,
                     cpu_f32_outputs,
                     graph_optimization_level);
@@ -1520,8 +1520,6 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
                      OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                      bool verify_outputs = true,
                      std::function<void(const Graph&)>* ep_graph_checker = nullptr);
-void RunQnnEpTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options, Ort::SessionOptions& session_options,
-                  int opset_version, std::vector<Ort::Value>& fetches, OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
 enum class BackendSupport {
   SUPPORT_UNKNOWN,
   UNSUPPORTED,
