@@ -213,8 +213,7 @@ file(GLOB onnxruntime_test_framework_src CONFIGURE_DEPENDS
 
 # TODO: Re-enable the recent op testcases
 list(REMOVE_ITEM onnxruntime_test_framework_src
-     "${TEST_SRC_DIR}/providers/qnn/matmulnbits_test.cc"g
-     "${TEST_SRC_DIR}/providers/qnn/qnn_node_group/scale_softmax_fusion_test.cc"
+     "${TEST_SRC_DIR}/providers/qnn/matmulnbits_test.cc"
      "${TEST_SRC_DIR}/providers/qnn/optimizer/transpose_optimizer_test.cc")
 
 #This is a small wrapper library that shouldn't use any onnxruntime internal symbols(except onnxruntime_common).
