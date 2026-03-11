@@ -48,6 +48,7 @@ jobs:
       # wheel distribution story is yet. For now, this is just so that all of the job and artifact names reflect the
       # version of cpython that's installed on our Linux build machines.
       target_py_vsn: "3.10"
+      run_tests: false
 
   # build-linux-aarch64-oe-gcc11_2:
   #     if: ${{ inputs.do_all }}
