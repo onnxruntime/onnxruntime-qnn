@@ -1790,7 +1790,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
           (fs::path(ep->json_qnn_graph_dir_) / fs::path(fused_node_name + ".json")).string();
     }
 
-    RETURN_IF_ERROR(qnn_model->ComposeGraph(context));
+    RETURN_IF_NOT_OK(qnn_model->ComposeGraph(context));
 
     uint32_t htp_power_config_id = 0;
 
@@ -1808,7 +1808,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
       return finalize_status.release();
     }
 
-    RETURN_IF_ERROR(qnn_model->SetupQnnInputOutput(ep->logger_));
+    RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(ep->logger_));
 
     ep->qnn_models_.emplace(fused_node_name, std::move(qnn_model));
 
