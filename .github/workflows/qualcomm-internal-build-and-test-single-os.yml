@@ -136,7 +136,10 @@ jobs:
           submodules: recursive
 
       - name: Setup JFrog CLI
-        uses: jfrog/setup-jfrog-cli@v3
+        uses: jfrog/setup-jfrog-cli@v4
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
         env:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
@@ -144,15 +147,17 @@ jobs:
       - name: Ping artifactory
         run: |
           jf rt ping --insecure-tls=true
+          jf --version
+          env
 
-      - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
-        run: >
-          "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
-          qcom/build_and_test.py
-          --target-py-version ${{inputs.target_py_vsn}}
-          ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
-          ${{ inputs.build_zip == true && '--build-zip' || '' }}
-          ${{inputs.upload_test_archive == true && 'archive' || 'build'}}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}
+      # - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
+      #   run: >
+      #     "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
+      #     qcom/build_and_test.py
+      #     --target-py-version ${{inputs.target_py_vsn}}
+      #     ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
+      #     ${{ inputs.build_zip == true && '--build-zip' || '' }}
+      #     ${{inputs.upload_test_archive == true && 'archive' || 'build'}}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}
 
       - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         if: ${{ inputs.run_tests && inputs.build_test_same_runner }}
