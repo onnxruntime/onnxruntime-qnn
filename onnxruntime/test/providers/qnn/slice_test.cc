@@ -245,11 +245,11 @@ TEST_F(QnnHTPBackendTests, SliceU8_NegativeStep) {
 // Test int32 Slice on a partial subset of axes for a 3D tensor on HTP.
 TEST_F(QnnHTPBackendTests, SliceInt32_PartialAxes_3D) {
   RunSliceNonQDQOnHTP<int32_t>(TestInputDef<int32_t>({2, 4, 3}, false, -50, 50),
-                                TestInputDef<int64_t>({1}, true, {1}),  // starts
-                                TestInputDef<int64_t>({1}, true, {3}),  // ends
-                                TestInputDef<int64_t>({1}, true, {1}),  // axes: only axis 1
-                                TestInputDef<int64_t>({1}, true, {1}),  // steps
-                                ExpectedEPNodeAssignment::All);
+                               TestInputDef<int64_t>({1}, true, {1}),  // starts
+                               TestInputDef<int64_t>({1}, true, {3}),  // ends
+                               TestInputDef<int64_t>({1}, true, {1}),  // axes: only axis 1
+                               TestInputDef<int64_t>({1}, true, {1}),  // steps
+                               ExpectedEPNodeAssignment::All);
 }
 
 // Verify that begin_mask and end_mask scalar params are present on the QNN StridedSlice node
