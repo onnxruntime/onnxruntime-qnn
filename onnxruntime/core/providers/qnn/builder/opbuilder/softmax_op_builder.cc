@@ -164,6 +164,14 @@ Ort::Status SoftmaxOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
   Qnn_Scalar_t axis_qnn_scalar = QNN_SCALAR_INIT;
   RETURN_IF_ERROR(ProcessAxisAttribute(qnn_model_wrapper, node_unit, axis_qnn_scalar, axis));
 
+  // Beta is a QNN-specific extension supported only for LogSoftmax (not standard ONNX Softmax).
+  const bool is_log_softmax = (op_type == "LogSoftmax");
+  OrtNodeAttrHelper node_helper(node_unit);
+  const float beta = is_log_softmax ? node_helper.Get("beta", 1.0f) : 1.0f;
+  Qnn_Scalar_t beta_qnn_scalar = QNN_SCALAR_INIT;
+  beta_qnn_scalar.dataType = QNN_DATATYPE_FLOAT_32;
+  beta_qnn_scalar.floatValue = beta;
+
   TensorInfo output_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], output_info));
   size_t output_rank = output_info.shape.size();
@@ -181,6 +189,12 @@ Ort::Status SoftmaxOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
     std::vector<std::string> param_tensor_names;
     param_tensor_names.push_back(axis_param.GetParamTensorName());
     qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
+
+    if (is_log_softmax) {
+      QnnParamWrapper beta_param(node_unit.Index(), node_unit.Name(), QNN_OP_LOG_SOFTMAX_PARAM_BETA, beta_qnn_scalar);
+      param_tensor_names.push_back(beta_param.GetParamTensorName());
+      qnn_model_wrapper.AddParamWrapper(std::move(beta_param));
+    }
 
     QnnTensorWrapper output_tensorwrapper(reshape_input_name, QNN_TENSOR_TYPE_NATIVE, output_info.qnn_data_type,
                                           output_info.quant_param.Copy(), std::vector<uint32_t>(reshape_input_shape));
@@ -218,6 +232,12 @@ Ort::Status SoftmaxOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
     param_tensor_names.push_back(axis_param.GetParamTensorName());
     qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
 
+    if (is_log_softmax) {
+      QnnParamWrapper beta_param(node_unit.Index(), node_unit.Name(), QNN_OP_LOG_SOFTMAX_PARAM_BETA, beta_qnn_scalar);
+      param_tensor_names.push_back(beta_param.GetParamTensorName());
+      qnn_model_wrapper.AddParamWrapper(std::move(beta_param));
+    }
+
     QnnTensorWrapper output_tensorwrapper(transpose_input_name, QNN_TENSOR_TYPE_NATIVE, output_info.qnn_data_type,
                                           output_info.quant_param.Copy(), std::vector<uint32_t>(transpose_input_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
@@ -251,6 +271,12 @@ Ort::Status SoftmaxOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
     std::vector<std::string> param_tensor_names;
     param_tensor_names.push_back(axis_param.GetParamTensorName());
     qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
+
+    if (is_log_softmax) {
+      QnnParamWrapper beta_param(node_unit.Index(), node_unit.Name(), QNN_OP_LOG_SOFTMAX_PARAM_BETA, beta_qnn_scalar);
+      param_tensor_names.push_back(beta_param.GetParamTensorName());
+      qnn_model_wrapper.AddParamWrapper(std::move(beta_param));
+    }
 
     return ProcessOutputs(qnn_model_wrapper, node_unit,
                           std::move(input_names),
