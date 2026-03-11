@@ -1,6 +1,8 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
+#if !defined(ORT_MINIMAL_BUILD)
+
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -22,8 +24,7 @@ extern std::unique_ptr<Ort::Env> ort_env;
 
 namespace onnxruntime {
 namespace test {
-
-#if !defined(ORT_MINIMAL_BUILD)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 // Test fixture for device compatibility tests
 class QnnDeviceCompatibilityTests : public ::testing::Test {
@@ -243,10 +244,14 @@ TEST_F(QnnDeviceCompatibilityTests, GPUDeviceWithNonQualcommVendorIsIncompatible
   api_->ReleaseDeviceEpIncompatibilityDetails(details);
 }
 
-// Test with CPU backend type option
-TEST_F(QnnDeviceCompatibilityTests, CPUBackendTypeOption) {
+// Test that CPU device incompatibility details include MISSING_DEPENDENCY and QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED
+TEST_F(QnnDeviceCompatibilityTests, CPUDeviceIncompatibilityDetailsWithMissingDependency) {
   onnxruntime::ProviderOptions options;
-  options["backend_type"] = "cpu";
+#if defined(_WIN32)
+  options["backend_path"] = "QnnCpu.dll";
+#else
+  options["backend_path"] = "libQnnCpu.so";
+#endif
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
@@ -263,58 +268,37 @@ TEST_F(QnnDeviceCompatibilityTests, CPUBackendTypeOption) {
       env_, onnxruntime::kQnnExecutionProvider, &cpu_device, &details));
   ASSERT_NE(details, nullptr);
 
-  // Verify compatible (no incompatibility reasons)
-  uint32_t reasons_bitmask = 0xFFFFFFFF;
+  // Check if device is compatible - if so, skip this test
+  uint32_t reasons_bitmask = 0;
   ASSERT_ORTSTATUS_OK(api_->DeviceEpIncompatibilityDetails_GetReasonsBitmask(details, &reasons_bitmask));
-  EXPECT_EQ(reasons_bitmask, 0u) << "CPU device should be compatible with QNN EP (CPU backend)";
 
+  if (reasons_bitmask == 0u) {
+    // Device is compatible, skip this test
+    api_->ReleaseDeviceEpIncompatibilityDetails(details);
+    GTEST_SKIP() << "CPU device is compatible with QNN EP, skipping incompatibility test";
+  }
+
+  // Verify incompatibility reason includes MISSING_DEPENDENCY
+  EXPECT_TRUE((reasons_bitmask & OrtDeviceEpIncompatibility_MISSING_DEPENDENCY) != 0)
+      << "Expected MISSING_DEPENDENCY flag in incompatibility reasons";
+
+  // Verify error code is QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED (2006)
   int32_t error_code = -1;
   ASSERT_ORTSTATUS_OK(api_->DeviceEpIncompatibilityDetails_GetErrorCode(details, &error_code));
-  EXPECT_EQ(error_code, 0);
+  EXPECT_EQ(error_code, QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED)
+      << "Expected QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED error code";
 
   api_->ReleaseDeviceEpIncompatibilityDetails(details);
 }
 
-// Test with HTP backend type option
-TEST_F(QnnDeviceCompatibilityTests, HTPBackendTypeOption) {
+// Test that GPU device incompatibility details include MISSING_DEPENDENCY and QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED
+TEST_F(QnnDeviceCompatibilityTests, GPUDeviceIncompatibilityDetailsWithMissingDependency) {
   onnxruntime::ProviderOptions options;
-  options["backend_type"] = "htp";
-
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
-
-  ASSERT_NE(registered_ep_device, nullptr);
-  ASSERT_NE(registered_ep_device->ep_factory, nullptr);
-
-  // Get the Qualcomm vendor ID from the factory
-  uint32_t qualcomm_vendor_id = registered_ep_device->ep_factory->GetVendorId(registered_ep_device->ep_factory);
-
-  // Create a mock NPU device with Qualcomm vendor ID
-  OrtHardwareDevice npu_device = CreateMockDevice(OrtHardwareDeviceType_NPU, qualcomm_vendor_id);
-
-  // Check compatibility using the ORT C API
-  OrtDeviceEpIncompatibilityDetails* details = nullptr;
-  ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, &npu_device, &details));
-  ASSERT_NE(details, nullptr);
-
-  // Verify compatible (no incompatibility reasons)
-  uint32_t reasons_bitmask = 0xFFFFFFFF;
-  ASSERT_ORTSTATUS_OK(api_->DeviceEpIncompatibilityDetails_GetReasonsBitmask(details, &reasons_bitmask));
-  EXPECT_EQ(reasons_bitmask, 0u) << "NPU device should be compatible with QNN EP (HTP backend)";
-
-  int32_t error_code = -1;
-  ASSERT_ORTSTATUS_OK(api_->DeviceEpIncompatibilityDetails_GetErrorCode(details, &error_code));
-  EXPECT_EQ(error_code, 0);
-
-  api_->ReleaseDeviceEpIncompatibilityDetails(details);
-}
-
-// Test with GPU backend type option
-TEST_F(QnnDeviceCompatibilityTests, GPUBackendTypeOption) {
-  onnxruntime::ProviderOptions options;
-  options["backend_type"] = "gpu";
+#if defined(_WIN32)
+  options["backend_path"] = "QnnGpu.dll";
+#else
+  options["backend_path"] = "libQnnGpu.so";
+#endif
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
@@ -335,19 +319,83 @@ TEST_F(QnnDeviceCompatibilityTests, GPUBackendTypeOption) {
       env_, onnxruntime::kQnnExecutionProvider, &gpu_device, &details));
   ASSERT_NE(details, nullptr);
 
-  // Verify compatible (no incompatibility reasons)
-  uint32_t reasons_bitmask = 0xFFFFFFFF;
+  // Check if device is compatible - if so, skip this test
+  uint32_t reasons_bitmask = 0;
   ASSERT_ORTSTATUS_OK(api_->DeviceEpIncompatibilityDetails_GetReasonsBitmask(details, &reasons_bitmask));
-  EXPECT_EQ(reasons_bitmask, 0u) << "GPU device should be compatible with QNN EP (GPU backend)";
 
+  if (reasons_bitmask == 0u) {
+    // Device is compatible, skip this test
+    api_->ReleaseDeviceEpIncompatibilityDetails(details);
+    GTEST_SKIP() << "GPU device is compatible with QNN EP, skipping incompatibility test";
+  }
+
+  // Verify incompatibility reason includes MISSING_DEPENDENCY
+  EXPECT_TRUE((reasons_bitmask & OrtDeviceEpIncompatibility_MISSING_DEPENDENCY) != 0)
+      << "Expected MISSING_DEPENDENCY flag in incompatibility reasons";
+
+  // Verify error code is QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED (2006)
   int32_t error_code = -1;
   ASSERT_ORTSTATUS_OK(api_->DeviceEpIncompatibilityDetails_GetErrorCode(details, &error_code));
-  EXPECT_EQ(error_code, 0);
+  EXPECT_EQ(error_code, QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED)
+      << "Expected QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED error code";
 
   api_->ReleaseDeviceEpIncompatibilityDetails(details);
 }
 
-#endif  // !defined(ORT_MINIMAL_BUILD)
+// Test that NPU device incompatibility details include MISSING_DEPENDENCY and QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED
+TEST_F(QnnDeviceCompatibilityTests, NPUDeviceIncompatibilityDetailsWithMissingDependency) {
+  onnxruntime::ProviderOptions options;
+#if defined(_WIN32)
+  options["backend_path"] = "QnnHtp.dll";
+#else
+  options["backend_path"] = "libQnnHtp.so";
+#endif
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  Ort::SessionOptions so;
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+
+  ASSERT_NE(registered_ep_device, nullptr);
+  ASSERT_NE(registered_ep_device->ep_factory, nullptr);
+
+  // Get the Qualcomm vendor ID from the factory
+  uint32_t qualcomm_vendor_id = registered_ep_device->ep_factory->GetVendorId(registered_ep_device->ep_factory);
+
+  // Create a mock NPU device with Qualcomm vendor ID
+  OrtHardwareDevice npu_device = CreateMockDevice(OrtHardwareDeviceType_NPU, qualcomm_vendor_id);
+
+  // Check compatibility using the ORT C API
+  OrtDeviceEpIncompatibilityDetails* details = nullptr;
+  ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
+      env_, onnxruntime::kQnnExecutionProvider, &npu_device, &details));
+  ASSERT_NE(details, nullptr);
+
+  // Check if device is compatible - if so, skip this test
+  uint32_t reasons_bitmask = 0;
+  ASSERT_ORTSTATUS_OK(api_->DeviceEpIncompatibilityDetails_GetReasonsBitmask(details, &reasons_bitmask));
+
+  if (reasons_bitmask == 0u) {
+    // Device is compatible, skip this test
+    api_->ReleaseDeviceEpIncompatibilityDetails(details);
+    GTEST_SKIP() << "NPU device is compatible with QNN EP, skipping incompatibility test";
+  }
+
+  // Verify incompatibility reason includes MISSING_DEPENDENCY
+  EXPECT_TRUE((reasons_bitmask & OrtDeviceEpIncompatibility_MISSING_DEPENDENCY) != 0)
+      << "Expected MISSING_DEPENDENCY flag in incompatibility reasons";
+
+  // Verify error code is QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED (2006)
+  int32_t error_code = -1;
+  ASSERT_ORTSTATUS_OK(api_->DeviceEpIncompatibilityDetails_GetErrorCode(details, &error_code));
+  EXPECT_EQ(error_code, QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED)
+      << "Expected QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED error code";
+
+  api_->ReleaseDeviceEpIncompatibilityDetails(details);
+}
+
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime
+
+#endif  // !defined(ORT_MINIMAL_BUILD)

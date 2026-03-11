@@ -2111,23 +2111,27 @@ OrtStatus* QnnEp::GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevic
   if (!status.IsOK()) {
     uint32_t reasons = static_cast<uint32_t>(OrtDeviceEpIncompatibility_UNKNOWN);
     const std::string error_message = status.GetErrorMessage();
-    if (error_message.find("LoadBackend") != std::string::npos) {
+    if (error_message.find("Unable to load backend") != std::string::npos || error_message.find("Failed to get QNN providers")) {
       reasons = static_cast<uint32_t>(OrtDeviceEpIncompatibility_MISSING_DEPENDENCY);
-    } else if (error_message.find("InitializeBackend") != std::string::npos || error_message.find("CreateDevice") != std::string::npos) {
+    } else if (error_message.find("Failed to initialize backend") != std::string::npos || error_message.find("Failed to create device") != std::string::npos) {
       reasons = static_cast<uint32_t>(OrtDeviceEpIncompatibility_DRIVER_INCOMPATIBLE);
     }
 
-    status = Ort::Status(ep_api.DeviceEpIncompatibilityDetails_SetDetails(
+    return ep_api.DeviceEpIncompatibilityDetails_SetDetails(
         details,
         reasons,
         QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED,
-        error_message.c_str()));
+        error_message.c_str());
   } else {
     // Release backend to avoid interfering later usage.
+    uint32_t reasons = static_cast<uint32_t>(OrtDeviceEpIncompatibility_NONE);
     qnn_backend_manager_->ReleaseResources();
+    return ep_api.DeviceEpIncompatibilityDetails_SetDetails(
+        details,
+        reasons,
+        QNN_SUCCESS,
+        "Device is compatible with QNN EP");
   }
-
-  return status.release();
 }
 
 bool QnnEp::GetHtpPowerConfigId(uint32_t& htp_power_config_id) {

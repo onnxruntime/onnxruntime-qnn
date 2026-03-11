@@ -348,9 +348,16 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
 
   // Try to create a temporary QNN EP to test backend setup
   std::unique_ptr<QnnEp> temp_qnn_ep;
+  OrtDeviceEpIncompatibilityDetails compat_details;
   try {
     temp_qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *temp_session_options, logger);
-    RETURN_IF_NOT_NULL(temp_qnn_ep->GetHardwareDeviceIncompatibilityDetails(hw, details));
+    RETURN_IF_NOT_NULL(temp_qnn_ep->GetHardwareDeviceIncompatibilityDetails(hw, &compat_details));
+    factory->ort_api.ReleaseSessionOptions(temp_session_options);
+    return factory->ep_api.DeviceEpIncompatibilityDetails_SetDetails(
+        details,
+        compat_details.reasons_bitmask,
+        compat_details.error_code,
+        compat_details.notes.c_str());
   } catch (...) {
     uint32_t reasons = static_cast<uint32_t>(OrtDeviceEpIncompatibility_UNKNOWN);
     return factory->ep_api.DeviceEpIncompatibilityDetails_SetDetails(
@@ -359,17 +366,6 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
         QNN_COMMON_ERROR_UNDEFINED,
         "Unknown exception occurred while creating QNN EP for compatibility check");
   }
-
-  // TODO: May need to clean up in other scenario
-  factory->ort_api.ReleaseSessionOptions(temp_session_options);
-
-  // If we got here, the device is compatible
-  uint32_t reasons = static_cast<uint32_t>(OrtDeviceEpIncompatibility_NONE);
-  return factory->ep_api.DeviceEpIncompatibilityDetails_SetDetails(
-      details,
-      reasons,
-      QNN_SUCCESS,
-      "Device is compatible with QNN EP");
 }
 
 }  // namespace onnxruntime
