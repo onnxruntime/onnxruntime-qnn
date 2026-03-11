@@ -256,7 +256,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                                      : backend_path.parent_path().string();
   }
 
-  Ort::Status DeInitializePowerCfgId(uint32_t htp_power_config_id);
+  Ort::Status DeInitializePowerCfgId(uint32_t htp_power_config_id, bool power_config_id_set);
 
   Ort::Status GetMaxSpillFillBufferSize(unsigned char* buffer,
                                         uint64_t buffer_length,

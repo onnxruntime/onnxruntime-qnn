@@ -921,9 +921,9 @@ QnnEp::~QnnEp() {
     qnn_backend_manager_->RemovePerThreadHtpPowerConfigMapping(thread_id);
 
     std::lock_guard<std::mutex> lock(config_id_mutex_);
-    if (htp_power_config_id_.has_value()) {
-      qnn_backend_manager_->DeInitializePowerCfgId(*htp_power_config_id_);
-    }
+    //if (htp_power_config_id_.has_value()) {
+      qnn_backend_manager_->DeInitializePowerCfgId(*htp_power_config_id_, htp_power_config_id_.has_value());
+    //}
   }
 
   // Explicitly clear the QNN models map to ensure proper cleanup
