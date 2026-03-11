@@ -170,11 +170,10 @@ TEST_F(QnnHTPBackendTests, Clip_U8_IndependentQDQ_MinMaxQDQ) {
     }
 
     // input (u8) -> DQ ->
-    NodeArg* quant_input = builder.MakeInput<uint8_t>({1, 3, 4, 4}, input_data);
-    NodeArg* input_dq = builder.MakeIntermediate();
     const float scale = 0.1f;
     const uint8_t zp = 128;
-    builder.AddDequantizeLinearNode<uint8_t>(quant_input, scale, zp, input_dq);
+    builder.MakeInput<uint8_t>("quant_input", {1, 3, 4, 4}, input_data);
+    builder.AddDequantizeLinearNode<uint8_t>("input_dq", "quant_input", scale, zp, "input_dq_out");
 
     // Quantized min/max -> DQ ->
     const float min_value = -1.0f;
@@ -182,20 +181,17 @@ TEST_F(QnnHTPBackendTests, Clip_U8_IndependentQDQ_MinMaxQDQ) {
     const uint8_t min_q = static_cast<uint8_t>(std::round(min_value / scale) + zp);
     const uint8_t max_q = static_cast<uint8_t>(std::round(max_value / scale) + zp);
 
-    NodeArg* min_quant = builder.MakeInitializer<uint8_t>({}, {min_q});
-    NodeArg* max_quant = builder.MakeInitializer<uint8_t>({}, {max_q});
-    NodeArg* min_dq = builder.MakeIntermediate();
-    NodeArg* max_dq = builder.MakeIntermediate();
-    builder.AddDequantizeLinearNode<uint8_t>(min_quant, scale, zp, min_dq);
-    builder.AddDequantizeLinearNode<uint8_t>(max_quant, scale, zp, max_dq);
+    builder.MakeInitializer<uint8_t>("min_quant", {}, {min_q});
+    builder.MakeInitializer<uint8_t>("max_quant", {}, {max_q});
+    builder.AddDequantizeLinearNode<uint8_t>("min_dq", "min_quant", scale, zp, "min_dq_out");
+    builder.AddDequantizeLinearNode<uint8_t>("max_dq", "max_quant", scale, zp, "max_dq_out");
 
     // Clip ->
-    NodeArg* clip_output = builder.MakeIntermediate();
-    builder.AddNode("Clip", {input_dq, min_dq, max_dq}, {clip_output});
+    builder.AddNode("Clip", "Clip", {"input_dq_out", "min_dq_out", "max_dq_out"}, {"clip_out"});
 
     // Q -> output (u8)
-    NodeArg* output = builder.MakeOutput();
-    builder.AddQuantizeLinearNode<uint8_t>(clip_output, scale, zp, output);
+    builder.AddQuantizeLinearNode<uint8_t>("output_q", "clip_out", scale, zp, "Y");
+    builder.MakeOutput("Y");
   };
 
   ProviderOptions provider_options;
