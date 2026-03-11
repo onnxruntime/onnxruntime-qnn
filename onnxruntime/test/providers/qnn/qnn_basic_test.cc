@@ -659,7 +659,6 @@ TEST_F(QnnCPUBackendTests, MultithreadSessionRun) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, session_opts, onnxruntime::kQnnExecutionProvider, options);
 
-  // Use public API instead of internal InferenceSession
   Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts);
 
   std::vector<std::thread> threads;
@@ -687,7 +686,6 @@ static GetTestModelFn QDQBuildAdd3Tensors(const TestInputDef<float>& input0_def,
   return [input0_def, input1_def, input2_def](ModelTestBuilder& builder) {
     builder.graph_->set_name("add3_qdq_graph");
 
-    // Use named-tensor style for graph I/O and intermediate values.
     MakeTestInput<float>(builder, "input0", input0_def);
     auto qdq0_out = AddQDQNodePair<QuantType>(builder, "qdq0", "input0", 1.0f, 0);
 
@@ -737,7 +735,6 @@ TEST_F(QnnHTPBackendTests, MultithreadSessionRun) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, session_opts, onnxruntime::kQnnExecutionProvider, options);
 
-  // Use public API instead of internal InferenceSession
   Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts);
 
   std::vector<std::thread> threads;
@@ -786,7 +783,6 @@ TEST_F(QnnHTPBackendTests, MultithreadHtpPowerCfgSessionRunOption) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, session_opts, onnxruntime::kQnnExecutionProvider, options);
 
-  // Use public API instead of internal InferenceSession
   Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts);
 
   std::vector<std::thread> threads;
@@ -838,7 +834,6 @@ TEST_F(QnnHTPBackendTests, MultithreadDefaultHtpPowerCfgFromEpOption) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, session_opts, onnxruntime::kQnnExecutionProvider, options);
 
-  // Use public API instead of internal InferenceSession
   Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts);
 
   std::vector<std::thread> threads;
@@ -888,7 +883,6 @@ TEST_F(QnnHTPBackendTests, MultithreadHtpPowerCfgDefaultAndRunOption) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, session_opts, onnxruntime::kQnnExecutionProvider, options);
 
-  // Use public API instead of internal InferenceSession
   Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts);
 
   std::vector<std::thread> threads;
@@ -1041,7 +1035,6 @@ static GetTestQDQModelFn<QuantType> BuildCastAddQDQTestCase() {
   return [](ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
     builder.graph_->set_name("cast_add_qdq_graph");
 
-    // Named-tensor style.
     MakeTestInput<InputType>(builder, "cast_input", TestInputDef<InputType>({2, 3}, false, {0, 1, 0, 1, 0, 1}));
 
     const std::vector<float> add_input2_data = {0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f};
@@ -1075,7 +1068,6 @@ static GetTestModelFn BuildCastAddTestCase() {
   return [](ModelTestBuilder& builder) {
     builder.graph_->set_name("cast_add_graph");
 
-    // Named-tensor style.
     MakeTestInput<InputType>(builder, "cast_input", TestInputDef<InputType>({2, 3}, false, {0, 1, 0, 1, 0, 1}));
     MakeTestInput<float>(builder, "add_input2", TestInputDef<float>({2, 3}, false, {0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f}));
 
@@ -1255,7 +1247,6 @@ TEST_F(QnnHTPBackendTests, Float32ModelWithFP16PrecisionTest) {
 TEST_F(QnnHTPBackendTests, EPRejectsDynamicShapesF32) {
   // Local function that builds a model in which the last two nodes use dynamic shapes.
   auto model_build_fn = [](ModelTestBuilder& builder) {
-    // Named-tensor style for test model building.
     builder.graph_->set_name("ep_rejects_dynamic_shapes_f32_graph");
 
     builder.MakeInput<float>("input1",
@@ -1444,7 +1435,6 @@ static GetTestModelFn QDQBuildSigmoidForTensorNameTest(const TestInputDef<float>
   return [input_def](ModelTestBuilder& builder) {
     builder.graph_->set_name("sigmoid_qdq_graph");
 
-    // Use named-tensor style for graph I/O.
     MakeTestInput<float>(builder, "input", input_def);
 
     float scale = 1.0f / 255.0f;
