@@ -298,7 +298,12 @@ bool IsQDQPairSupported(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
     ORT_RETURN_FALSE_ON_ERROR(ort_api.GetTensorTypeAndShape(q_scale_initializer, &q_tensor_info), ort_api);
 
     OrtTensorTypeAndShapeInfo* dq_tensor_info = nullptr;
-    ORT_RETURN_FALSE_ON_ERROR(ort_api.GetTensorTypeAndShape(dq_scale_initializer, &dq_tensor_info), ort_api);
+    status = ort_api.GetTensorTypeAndShape(dq_scale_initializer, &dq_tensor_info);
+    if (status != nullptr) {
+      ort_api.ReleaseStatus(status);
+      ort_api.ReleaseTensorTypeAndShapeInfo(q_tensor_info);
+      return false;
+    }
 
     ONNXTensorElementDataType q_element_type, dq_element_type;
     status = ort_api.GetTensorElementType(q_tensor_info, &q_element_type);
