@@ -8,7 +8,6 @@
 #include <vector>
 #include <numeric>
 
-#include "core/graph/graph.h"
 #include "core/graph/node_attr_utils.h"
 #include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
@@ -56,30 +55,26 @@ GetTestModelFn BuildGatherTransposeReshapeTestCase(
     const std::vector<int64_t>& final_reshape_shape) {
   return [input_def, indices_shape, indices_data, transpose_perm, final_reshape_shape](ModelTestBuilder& builder) {
     // Input: rank-5 [d0, d1, d2, d3, d4]
-    NodeArg* input = MakeTestInput<float>(builder, input_def);
+    MakeTestInput<float>(builder, "input", input_def);
 
     // Constant Indices: rank-2 [idx0, idx1]
-    NodeArg* indices = builder.MakeInitializer<int64_t>(indices_shape, indices_data);
+    builder.MakeInitializer<int64_t>("indices", indices_shape, indices_data);
 
     // Gather(axis=4)
     // Output shape: [d0, d1, d2, d3, idx0, idx1] (Rank 6)
-    NodeArg* gather_out = builder.MakeIntermediate();
-    NodeAttributes gather_attrs;
-    gather_attrs["axis"] = utils::MakeAttribute("axis", int64_t(4));
-    builder.AddNode("Gather", {input, indices}, {gather_out}, "", &gather_attrs);
+    builder.AddNode("gather", "Gather", {"input", "indices"}, {"gather_out"}, "",
+                    {test::MakeAttribute("axis", int64_t(4))});
 
     // Transpose
     // Output shape: Rank 6 (permuted)
-    NodeArg* transpose_out = builder.MakeIntermediate();
-    NodeAttributes transpose_attrs;
-    transpose_attrs["perm"] = utils::MakeAttribute("perm", transpose_perm);
-    builder.AddNode("Transpose", {gather_out}, {transpose_out}, "", &transpose_attrs);
+    builder.AddNode("transpose", "Transpose", {"gather_out"}, {"transpose_out"}, "",
+                    {test::MakeAttribute("perm", transpose_perm)});
 
     // Reshape -> Final Output
     // Output shape: final_reshape_shape (Rank < 6)
-    NodeArg* shape_const = builder.Make1DInitializer<int64_t>(final_reshape_shape);
-    NodeArg* output = builder.MakeOutput();
-    builder.AddNode("Reshape", {transpose_out, shape_const}, {output});
+    builder.Make1DInitializer<int64_t>("shape_const", final_reshape_shape);
+    builder.MakeOutput("output");
+    builder.AddNode("reshape", "Reshape", {"transpose_out", "shape_const"}, {"output"});
   };
 }
 
