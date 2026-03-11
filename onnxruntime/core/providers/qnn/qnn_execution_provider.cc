@@ -921,8 +921,13 @@ QnnEp::~QnnEp() {
     qnn_backend_manager_->RemovePerThreadHtpPowerConfigMapping(thread_id);
 
     std::lock_guard<std::mutex> lock(config_id_mutex_);
+    /*if (htp_power_config_id_.has_value()) {
+      qnn_backend_manager_->DeInitializePowerCfgId(*htp_power_config_id_, htp_power_config_id_.has_value());
+    }*/
+
+    qnn_backend_manager_->ReleaseTimerThread();
     if (htp_power_config_id_.has_value()) {
-      qnn_backend_manager_->DestroyHTPPowerConfigID(*htp_power_config_id_);
+      ORT_IGNORE_RETURN_VALUE(qnn_backend_manager_->DeInitializePowerCfgId(*htp_power_config_id_));
     }
   }
 
@@ -1985,7 +1990,9 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
       }
       qnn::HtpPerformanceMode htp_performance_mode = qnn::HtpPerformanceMode::kHtpDefault;
       ParseHtpPerformanceMode(value, htp_performance_mode, ep->logger_);
-
+      if (htp_performance_mode != qnn::HtpPerformanceMode::kHtpDefault) {
+        ep->dynamic_htp_performance_mode_ = htp_performance_mode;
+      }
       uint32_t rpc_polling_time = 0;
       if (htp_performance_mode == qnn::HtpPerformanceMode::kHtpBurst) {
         rpc_polling_time = 9999;
@@ -2122,7 +2129,7 @@ void QnnEp::CreateHtpPowerConfigId() const {
   constexpr uint32_t core_id = 0;
   uint32_t htp_power_config_id;
 
-  Ort::Status rt = qnn_backend_manager_->CreateHtpPowerCfgId(device_id_, core_id, htp_power_config_id);
+  Ort::Status rt = qnn_backend_manager_->InitializePowerCfgId(device_id_, core_id, htp_power_config_id);
 
   if (rt.IsOK()) {
     htp_power_config_id_ = htp_power_config_id;

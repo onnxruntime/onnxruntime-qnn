@@ -33,6 +33,8 @@
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/builder/timer.h"
+#include <HTP/QnnHtpPerfInfrastructure.h>
 
 namespace onnxruntime {
 namespace qnn {
@@ -179,7 +181,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       bool enable_vtcm_backup_buffer_sharing,
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map);
 
-  Ort::Status CreateHtpPowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
+  Ort::Status InitializePowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
 
   Ort::Status SetHtpPowerConfigs(uint32_t htp_power_config_client_id,
                                  HtpPerformanceMode htp_performance_mode,
@@ -254,7 +256,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                                      : backend_path.parent_path().string();
   }
 
-  Ort::Status DestroyHTPPowerConfigID(uint32_t htp_power_config_id);
+  void ReleaseTimerThread();
+
+  Ort::Status DeInitializePowerCfgId(uint32_t htp_power_config_id);
 
   Ort::Status GetMaxSpillFillBufferSize(unsigned char* buffer,
                                         uint64_t buffer_length,
@@ -380,6 +384,14 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                          PerThreadHtpPowerConfigs_t& htp_power_configs);
 
   Ort::Status GetPlatformInfo();
+
+  static void TimerCallback(void* user_data);
+
+  void CreateTimerThread(uint32_t htp_power_config_client_id);
+
+  Ort::Status CreateHtpPowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
+
+  Ort::Status DestroyHTPPowerConfigID(uint32_t htp_power_config_id);
 
  private:
   // assume Qnn_ContextHandle_t is a pointer and able to be wrapped with std::unique_ptr
@@ -537,6 +549,24 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   const ApiPtrs api_ptrs_;
   const Ort::Logger& logger_;
+
+  //  std::mutex perf_mutex_;
+  std::mutex state_mutex_;
+  std::unique_ptr<Timer> timer_;
+  struct TimerResource {
+    static const uint64_t sustained_timer_duration_ = kDefaultTimerTimeoutUs;  // in microseconds
+    std::atomic<bool> caller_busy_ = false;
+  };
+  TimerResource timer_resource_;
+  //std::atomic<GraphState> graph_state_ = GraphState::NONE;
+  struct TimerCallbackArg {
+    uint32_t power_config_id_;
+    QnnBackendManager* instance_;
+
+    TimerCallbackArg(uint32_t id, QnnBackendManager* manager)
+        : power_config_id_(id), instance_(manager) {}
+  };
+  std::unique_ptr<TimerCallbackArg> timer_callback_arg_;
 };
 
 }  // namespace qnn

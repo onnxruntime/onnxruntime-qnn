@@ -169,6 +169,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // Configurations for HTP backend.
   uint32_t device_id_{0};
   qnn::HtpPerformanceMode default_htp_performance_mode_{qnn::HtpPerformanceMode::kHtpDefault};
+  qnn::HtpPerformanceMode dynamic_htp_performance_mode_{qnn::HtpPerformanceMode::kHtpDefault};
   uint32_t default_rpc_control_latency_ = 0;
   uint32_t default_rpc_polling_time_ = 0;
   qnn::ModelSettings model_settings_ = {};

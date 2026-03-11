@@ -131,6 +131,8 @@ constexpr const uint32_t kDisableRpcPolling = 0;
 constexpr const uint32_t kDisableRpcControlLatency = 0;
 constexpr const uint32_t kMaxRpcPolling = 9999;
 
+static constexpr uint64_t kDefaultTimerTimeoutUs = 300000;
+
 struct OnnxTensorInfo {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(OnnxTensorInfo);
   OnnxTensorInfo(size_t index, int32_t data_type, std::vector<int64_t>&& shape) : index_(index), data_type_(data_type), shape_(std::move(shape)) {}
