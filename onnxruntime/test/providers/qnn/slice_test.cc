@@ -3,11 +3,13 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
 #include <string>
 #include "core/graph/graph.h"
 #include "core/graph/node_attr_utils.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/unittest_util/qdq_test_utils.h"
 
 #include "gtest/gtest.h"
@@ -203,6 +205,86 @@ TEST_F(QnnHTPBackendTests, SliceU8_MultAxes_LargeEnd) {
                            TestInputDef<int64_t>({2}, true, {0, 1}),      // axes
                            TestInputDef<int64_t>({2}, true, {1, 1}),      // steps
                            ExpectedEPNodeAssignment::All);
+}
+
+// Test 8-bit QDQ Slice on a partial subset of axes for a 3D tensor.
+// Slices only axis 1 of a [2,4,3] tensor, leaving axes 0 and 2 unsliced.
+// This exercises the begin_mask/end_mask parameters for unspecified axes.
+TEST_F(QnnHTPBackendTests, SliceU8_PartialAxes_3D) {
+  RunSliceQDQTest<uint8_t>(TestInputDef<float>({2, 4, 3}, false, 0.0f, 1.0f),
+                           TestInputDef<int64_t>({1}, true, {1}),  // starts: axis 1 from index 1
+                           TestInputDef<int64_t>({1}, true, {3}),  // ends: axis 1 to index 3
+                           TestInputDef<int64_t>({1}, true, {1}),  // axes: only axis 1
+                           TestInputDef<int64_t>({1}, true, {1}),  // steps: step 1
+                           ExpectedEPNodeAssignment::All);
+}
+
+// Test 8-bit QDQ Slice on a single axis of a 4D tensor.
+// Slices only axis 2 of a [1,3,4,2] tensor, leaving axes 0, 1, and 3 unsliced.
+// This exercises begin_mask/end_mask with multiple unspecified axes.
+TEST_F(QnnHTPBackendTests, SliceU8_PartialAxes_4D) {
+  RunSliceQDQTest<uint8_t>(TestInputDef<float>({1, 3, 4, 2}, false, 0.0f, 1.0f),
+                           TestInputDef<int64_t>({1}, true, {0}),  // starts: axis 2 from index 0
+                           TestInputDef<int64_t>({1}, true, {2}),  // ends: axis 2 to index 2
+                           TestInputDef<int64_t>({1}, true, {2}),  // axes: only axis 2
+                           TestInputDef<int64_t>({1}, true, {1}),  // steps: step 1
+                           ExpectedEPNodeAssignment::All);
+}
+
+// Test 8-bit QDQ Slice with negative step (backward slicing).
+// Slices axis 0 of a [4,3] tensor in reverse.
+TEST_F(QnnHTPBackendTests, SliceU8_NegativeStep) {
+  RunSliceQDQTest<uint8_t>(TestInputDef<float>({4, 3}, false, 0.0f, 1.0f),
+                           TestInputDef<int64_t>({1}, true, {3}),   // starts: axis 0 from index 3
+                           TestInputDef<int64_t>({1}, true, {0}),   // ends: axis 0 to index 0 (exclusive)
+                           TestInputDef<int64_t>({1}, true, {0}),   // axes: only axis 0
+                           TestInputDef<int64_t>({1}, true, {-1}),  // steps: step -1 (reverse)
+                           ExpectedEPNodeAssignment::All);
+}
+
+// Test int32 Slice on a partial subset of axes for a 3D tensor on HTP.
+TEST_F(QnnHTPBackendTests, SliceInt32_PartialAxes_3D) {
+  RunSliceNonQDQOnHTP<int32_t>(TestInputDef<int32_t>({2, 4, 3}, false, -50, 50),
+                                TestInputDef<int64_t>({1}, true, {1}),  // starts
+                                TestInputDef<int64_t>({1}, true, {3}),  // ends
+                                TestInputDef<int64_t>({1}, true, {1}),  // axes: only axis 1
+                                TestInputDef<int64_t>({1}, true, {1}),  // steps
+                                ExpectedEPNodeAssignment::All);
+}
+
+// Verify that begin_mask and end_mask scalar params are present on the QNN StridedSlice node
+// when slicing a partial subset of axes. Dumps the QNN graph to JSON and inspects it.
+// Uses a non-QDQ int32 model to directly test the op builder's parameter generation.
+TEST_F(QnnHTPBackendTests, SliceInt32_PartialAxes_VerifyMaskParams) {
+  const std::filesystem::path json_qnn_graph_dir = "SliceInt32_PartialAxes_VerifyMaskParams";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  // Slice only axis 1 of a [2,4,3] int32 tensor. Axes 0 and 2 are unspecified,
+  // so begin_mask and end_mask should have bits 0 and 2 set.
+  auto model_builder = BuildOpTestCase<int32_t, int64_t>(
+      "Slice_node", "Slice",
+      {TestInputDef<int32_t>({2, 4, 3}, false, -50, 50)},
+      {TestInputDef<int64_t>({1}, true, {1}),   // starts
+       TestInputDef<int64_t>({1}, true, {3}),   // ends
+       TestInputDef<int64_t>({1}, true, {1}),   // axes: only axis 1
+       TestInputDef<int64_t>({1}, true, {1})},  // steps
+      {});
+
+  RunQnnModelTest(model_builder,
+                  provider_options,
+                  13,
+                  ExpectedEPNodeAssignment::All);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "StridedSlice");
+  AssertOpHasScalarParam(json_qnn_graph_dir, "StridedSlice", "begin_mask");
+  AssertOpHasScalarParam(json_qnn_graph_dir, "StridedSlice", "end_mask");
 }
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 

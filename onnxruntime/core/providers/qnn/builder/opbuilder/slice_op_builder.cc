@@ -282,14 +282,34 @@ Ort::Status SliceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
   RETURN_IF_ERROR(PrepareForComputeHelper(raw_starts, raw_ends, raw_axes, raw_steps, compute_metadata));
 
   const size_t input_rank = input_dimensions.size();
+
+  // Determine which axes were explicitly specified by the ONNX Slice op.
+  // Unspecified axes use default ranges (start=0, end=dim, step=1) and will have
+  // their begin_mask/end_mask bits set so QNN uses the full range for those dimensions.
+  InlinedHashSet<size_t> specified_axes;
+  if (raw_axes.empty()) {
+    // When axes are omitted, ONNX Slice implicitly specifies axes [0, ..., len(starts)-1].
+    for (size_t i = 0; i < raw_starts.size(); i++) {
+      specified_axes.insert(i);
+    }
+  } else {
+    for (const auto& axis : raw_axes) {
+      auto resolved = axis < 0 ? axis + static_cast<int64_t>(input_rank) : axis;
+      specified_axes.insert(static_cast<size_t>(resolved));
+    }
+  }
+
+  // Build the ranges parameter [rank, 3] with (begin, end, stride) per axis.
+  // Cast through int32_t first to correctly preserve the sign bit for negative values
+  // (e.g., end=-1 for backward slicing), since QNN interprets this data as INT_32.
   std::vector<uint32_t> ranges_dims{static_cast<uint32_t>(input_rank), 3};
   std::vector<uint32_t> ranges_data;
-  ranges_data.reserve(input_rank);
+  ranges_data.reserve(input_rank * 3);
 
   for (size_t i = 0; i < input_rank; i++) {
-    ranges_data.push_back(static_cast<uint32_t>(compute_metadata.starts_[i]));
-    ranges_data.push_back(static_cast<uint32_t>(compute_metadata.ends_[i]));
-    ranges_data.push_back(static_cast<uint32_t>(compute_metadata.steps_[i]));
+    ranges_data.push_back(static_cast<uint32_t>(static_cast<int32_t>(compute_metadata.starts_[i])));
+    ranges_data.push_back(static_cast<uint32_t>(static_cast<int32_t>(compute_metadata.ends_[i])));
+    ranges_data.push_back(static_cast<uint32_t>(static_cast<int32_t>(compute_metadata.steps_[i])));
   }
 
   QnnParamWrapper ranges_paramwrapper(node_unit.Index(),
@@ -297,13 +317,38 @@ Ort::Status SliceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
                                       QNN_OP_STRIDED_SLICE_PARAM_RANGES,
                                       std::move(ranges_dims),
                                       std::move(ranges_data),
-                                      true);
-  std::string param_tensor_name(ranges_paramwrapper.GetParamTensorName());
+                                      /*is_signed=*/true);
+  std::vector<std::string> param_tensor_names;
+  param_tensor_names.push_back(ranges_paramwrapper.GetParamTensorName());
   qnn_model_wrapper.AddParamWrapper(std::move(ranges_paramwrapper));
+
+  // Compute begin_mask and end_mask bitmasks. For axes not explicitly specified by the
+  // ONNX Slice op, set the corresponding bits so QNN uses the full range for those dimensions.
+  uint32_t begin_mask = 0;
+  uint32_t end_mask = 0;
+  for (size_t i = 0; i < input_rank; i++) {
+    if (specified_axes.find(i) == specified_axes.end()) {
+      begin_mask |= (1U << static_cast<uint32_t>(i));
+      end_mask |= (1U << static_cast<uint32_t>(i));
+    }
+  }
+
+  if (begin_mask != 0) {
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                           begin_mask, QNN_OP_STRIDED_SLICE_PARAM_BEGIN_MASK,
+                                           param_tensor_names));
+  }
+
+  if (end_mask != 0) {
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                           end_mask, QNN_OP_STRIDED_SLICE_PARAM_END_MASK,
+                                           param_tensor_names));
+  }
+
   RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper,
                                  node_unit,
                                  std::move(input_names),
-                                 {param_tensor_name},
+                                 std::move(param_tensor_names),
                                  logger,
                                  do_op_validation, GetQnnOpType(node_unit.OpType())));
   return Ort::Status();
