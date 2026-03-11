@@ -304,6 +304,14 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
 
+  if (QNNTestEnvironment::GetInstance().dump_onnx()) {
+    // TODO: Use public logger
+    // LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx model at: " << dump_path;
+    auto dump_path = output_dir / "dumped_f32_model.onnx";
+    std::ofstream ofs(dump_path, std::ios::binary);
+    ofs.write(model_data.data(), static_cast<std::streamsize>(model_data.size()));
+  }
+
   if (QNNTestEnvironment::GetInstance().dump_dlc()) {
     provider_options["dump_qnn_ir_dlc"] = "1";
     provider_options["dump_qnn_ir_dlc_dir"] = output_dir.string();
@@ -392,6 +400,7 @@ void InferenceModel(const std::string& model_data,
                     ExpectedEPNodeAssignment expected_ep_assignment,
                     std::unordered_map<std::string, Ort::Value>& feeds,
                     std::vector<Ort::Value>& output_vals,
+                    OrtLoggingLevel log_severity,
                     const std::unordered_map<std::string, std::string>& session_option_pairs,
                     std::optional<GraphOptimizationLevel> graph_optimization_level,
                     std::function<void(const Graph&)>* graph_checker [[maybe_unused]]) {
@@ -404,9 +413,7 @@ void InferenceModel(const std::string& model_data,
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
 
   session_options.SetLogId(log_id);
-
-  // Uncomment to dump verbose output to stdout.
-  // session_options.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+  session_options.SetLogSeverityLevel(log_severity);
 
   for (auto key_value : session_option_pairs) {
     session_options.AddConfigEntry(key_value.first.c_str(), key_value.second.c_str());
