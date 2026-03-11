@@ -6,6 +6,7 @@
 #include <vector>
 #include <iostream>
 
+#include "core/session/abi_devices.h"
 #include "core/session/onnxruntime_cxx_api.h"
 #include "core/session/onnxruntime_session_options_config_keys.h"
 

@@ -2117,11 +2117,11 @@ OrtStatus* QnnEp::GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevic
       reasons = static_cast<uint32_t>(OrtDeviceEpIncompatibility_DRIVER_INCOMPATIBLE);
     }
 
-    ep_api.DeviceEpIncompatibilityDetails_SetDetails(
+    status = Ort::Status(ep_api.DeviceEpIncompatibilityDetails_SetDetails(
         details,
         reasons,
         QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED,
-        error_message.c_str());
+        error_message.c_str()));
   } else {
     // Release backend to avoid interfering later usage.
     qnn_backend_manager_->ReleaseResources();
