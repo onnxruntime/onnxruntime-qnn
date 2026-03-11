@@ -256,7 +256,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                                      : backend_path.parent_path().string();
   }
 
-  Ort::Status DeInitializePowerCfgId(uint32_t htp_power_config_id, bool power_config_id_set);
+  void ReleaseTimerThread();
+
+  Ort::Status DeInitializePowerCfgId(uint32_t htp_power_config_id);
 
   Ort::Status GetMaxSpillFillBufferSize(unsigned char* buffer,
                                         uint64_t buffer_length,
@@ -386,8 +388,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   static void TimerCallback(void* user_data);
 
   void CreateTimerThread(uint32_t htp_power_config_client_id);
-
-  void ReleaseTimerThread(uint32_t htp_power_config_client_id);
 
   Ort::Status CreateHtpPowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
 

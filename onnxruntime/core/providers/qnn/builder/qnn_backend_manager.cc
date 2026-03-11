@@ -1474,7 +1474,7 @@ void QnnBackendManager::CreateTimerThread(uint32_t htp_power_config_client_id) {
   }
 }
 
-void QnnBackendManager::ReleaseTimerThread(uint32_t htp_power_config_client_id) {
+void QnnBackendManager::ReleaseTimerThread() {
   std::lock_guard<std::mutex> lk(state_mutex_);
   if (timer_ != nullptr) {
     timer_->DeInitialize();
@@ -1491,7 +1491,7 @@ void QnnBackendManager::ReleaseTimerThread(uint32_t htp_power_config_client_id) 
   if (status != Ort::Status()) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Not able to set Power config to release");
   }*/
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Not able to set Power config to release " + std::to_string(htp_power_config_client_id)).c_str());
+  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Not able to set Power config to release ");
 }
 
 
@@ -1523,11 +1523,9 @@ Ort::Status QnnBackendManager::InitializePowerCfgId(uint32_t device_id, uint32_t
   return Ort::Status();
 }
 
-Ort::Status QnnBackendManager::DeInitializePowerCfgId(uint32_t htp_power_config_id, bool power_config_id_set) {
-  ReleaseTimerThread(htp_power_config_id);
-  if (power_config_id_set) {
-    RETURN_IF_ERROR(DestroyHTPPowerConfigID(htp_power_config_id));
-  }
+Ort::Status QnnBackendManager::DeInitializePowerCfgId(uint32_t htp_power_config_id) {
+  //ReleaseTimerThread(htp_power_config_id);
+  RETURN_IF_ERROR(DestroyHTPPowerConfigID(htp_power_config_id));
   return Ort::Status();
 }
 
