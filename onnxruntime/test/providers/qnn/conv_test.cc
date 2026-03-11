@@ -1379,6 +1379,98 @@ TEST_F(QnnHTPBackendTests, ConvU8U8S32_ReluClipFusion) {
                                       clip_info_2);
 }
 
+// Redundant Clip between Conv and Q in a QDQ model should be accepted on HTP.
+TEST_F(QnnHTPBackendTests, ConvU8U8S32_RedundantClipQDQ) {
+  std::vector<int64_t> input_shape = {1, 2, 4, 4};
+  std::vector<int64_t> weight_shape = {3, 2, 2, 2};
+  std::vector<int64_t> bias_shape = {3};
+
+  TestInputDef<float> input_def(input_shape, false,
+                                GetFloatDataInRange(0.0f, 1.0f, SizeOfShape(input_shape)));
+  TestInputDef<float> weight_def(weight_shape, true,
+                                 GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape(weight_shape)));
+  TestInputDef<float> bias_def(bias_shape, true,
+                               GetFloatDataInRange(-1.0f, 1.0f, SizeOfShape(bias_shape)));
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  OutputActivationInfo clip_info = {"Clip", {-2.0f, 2.0f}};
+  auto f32_fn = BuildF32ConvTestCase("Conv",
+                                     input_def,
+                                     weight_def,
+                                     bias_def,
+                                     {1, 1},        // Strides
+                                     {0, 0, 0, 0},  // Pads
+                                     {1, 1},        // Dilations
+                                     1,             // default group
+                                     "NOTSET",
+                                     clip_info);
+
+  auto qdq_fn = [input_def, weight_def, bias_def](ModelTestBuilder& builder,
+                                                  std::vector<QuantParams<uint8_t>>& output_qparams) {
+    std::vector<std::string> conv_inputs;
+
+    // input -> Q/DQ ->
+    MakeTestInput<float>(builder, "input", input_def);
+    QuantParams<uint8_t> input_qparams = GetTestInputQuantParams<uint8_t>(input_def);
+    conv_inputs.push_back(AddQDQNodePair<uint8_t>(builder, "input_qdq", "input", input_qparams.scale,
+                                                  input_qparams.zero_point, /*use_contrib_qdq=*/true));
+
+    // weights -> Q/DQ ->
+    MakeTestInput<float>(builder, "weights", weight_def);
+    QuantParams<uint8_t> weights_qparams = GetTestInputQuantParams<uint8_t>(weight_def);
+    conv_inputs.push_back(AddQDQNodePair<uint8_t>(builder, "weights_qdq", "weights", weights_qparams.scale,
+                                                  weights_qparams.zero_point, /*use_contrib_qdq=*/true));
+
+    // bias ->
+    if (!bias_def.GetShape().empty()) {
+      const float bias_scale = input_qparams.scale * weights_qparams.scale;
+      conv_inputs.push_back(MakeTestQDQBiasInput(builder, "bias", bias_def, bias_scale,
+                                                 /*use_contrib_qdq=*/true));
+    }
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
+    conv_attrs.push_back(builder.MakeIntsAttribute("pads", {0, 0, 0, 0}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("strides", {1, 1}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", {1, 1}));
+    conv_attrs.push_back(builder.MakeScalarAttribute("group", static_cast<int64_t>(1)));
+
+    const std::string conv_output = "conv_output";
+    builder.AddNode("Conv", "Conv", conv_inputs, {conv_output}, "", conv_attrs);
+
+    // Clip float min/max initializers -> Q -> DQ ->
+    builder.MakeScalarInitializer<float>("clip_min_f", -2.0f);
+    builder.MakeScalarInitializer<float>("clip_max_f", 2.0f);
+    builder.AddQuantizeLinearNode<uint8_t>("clip_min_q", "clip_min_f", input_qparams.scale,
+                                           input_qparams.zero_point, "clip_min_q_out");
+    builder.AddQuantizeLinearNode<uint8_t>("clip_max_q", "clip_max_f", input_qparams.scale,
+                                           input_qparams.zero_point, "clip_max_q_out");
+
+    builder.AddDequantizeLinearNode<uint8_t>("clip_min_dq", "clip_min_q_out", input_qparams.scale,
+                                             input_qparams.zero_point, "clip_min_dq_out");
+    builder.AddDequantizeLinearNode<uint8_t>("clip_max_dq", "clip_max_q_out", input_qparams.scale,
+                                             input_qparams.zero_point, "clip_max_dq_out");
+
+    // Clip ->
+    const std::string clip_output = "clip_output";
+    builder.AddNode("Clip", "Clip", {conv_output, "clip_min_dq_out", "clip_max_dq_out"}, {clip_output});
+
+    // Q -> output
+    AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "output_qdq", clip_output, output_qparams[0].scale,
+                                                   output_qparams[0].zero_point, /*use_contrib_qdq=*/true);
+  };
+
+  TestQDQModelAccuracy<uint8_t>(f32_fn,
+                                qdq_fn,
+                                provider_options,
+                                13,  // opset
+                                ExpectedEPNodeAssignment::All,
+                                QDQTolerance());
+}
+
 // Test fusion of DQs -> Conv -> Relu/Clip -> Q.
 // User per-channel quantization.
 TEST_F(QnnHTPBackendTests, ConvS8S8S32_PerChannel_ReluClipFusion) {
