@@ -43,18 +43,14 @@ namespace test {
 // TODO: When we need QNN in a minimal build we should add an ORT format version of the model
 #if !defined(ORT_MINIMAL_BUILD)
 
-// TODO: Enable SessionHasEp with better practice
 static bool SessionHasEp(Ort::Session& session, const char* ep_name) {
-  bool has_ep = false;
-  // Iterate the input ep devices.
-  auto input_ep_devices = session.GetEpDeviceForInputs();
-  for (auto input_ep_device : input_ep_devices) {
-    if (std::strcmp(input_ep_device.EpName(), ep_name) == 0) {
-      has_ep = true;
-      break;
+  std::vector<Ort::ConstEpAssignedSubgraph> ep_subgraphs = session.GetEpGraphAssignmentInfo();
+  for (const auto& ep_subgraph : ep_subgraphs) {
+    if (std::strcmp(ep_subgraph.GetEpName().c_str(), ep_name) == 0) {
+      return true;
     }
   }
-  return has_ep;
+  return false;
 }
 
 // Tests the `session.disable_cpu_ep_fallback` configuration option when the backend cannot be loaded.
@@ -133,7 +129,7 @@ TEST(QnnEP, TestDisableCPUFallback_TryingToRunOnQnnCPU) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   // Serialize the model to a string.
   std::string model_data;
@@ -199,6 +195,8 @@ TEST(QnnEP, TestDisableCPUFallback_ConflictingConfig) {
 
 TEST(QnnEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
   Ort::SessionOptions so{};
+  // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
+  so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
 
   onnxruntime::ProviderOptions options;
   options["backend_type"] = "cpu";
@@ -241,6 +239,8 @@ TEST_F(QnnHTPBackendTests, TestAddEpUsingPublicApi) {
 
   {
     Ort::SessionOptions so;
+    // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
+    so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
 
     // TODO: Remove #ifdef when Windows Arm64 machines support the CPU backend.
 #if defined(__linux__)
@@ -553,7 +553,7 @@ static void CreateModelInMemory(std::unique_ptr<ModelAndBuilder>& result,
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  result->builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  result->builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
   result->builder.model_.SerializeToString(&result->model_data);
 }
 
@@ -921,14 +921,11 @@ TEST_F(QnnHTPBackendTests, TestNHWCResizeShapeInference_qdq_sizes_opset18) {
 // Test that QNN Ir generates the expected file for a model meant to run on the QNN HTP backend.
 
 TEST_F(QnnHTPBackendTests, QnnIr_OutputFiles) {
-  Ort::Logger logger = Ort::Logger();
-  if (IsIRBackendSupported() == BackendSupport::UNSUPPORTED) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "QNN IR backend is not available! Skipping test.");
-    GTEST_SKIP();
-  } else if (IsIRBackendSupported() == BackendSupport::SUPPORT_ERROR) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, "Failed to check if QNN IR backend is available.");
-    FAIL();
+  BackendSupport ir_backend_support = IsIRBackendSupported();
+  if (ir_backend_support == BackendSupport::UNSUPPORTED) {
+    GTEST_SKIP() << "QNN IR backend is not available! Skipping test.";
   }
+  ASSERT_NE(ir_backend_support, BackendSupport::SUPPORT_ERROR) << "Failed to check if QNN IR backend is available.";
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
@@ -1576,12 +1573,13 @@ TEST_F(QnnHTPBackendTests, AutoEp_PreferNpu) {
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
 
   Ort::SessionOptions so;
+  // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
+  so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
   so.SetEpSelectionPolicy(OrtExecutionProviderDevicePolicy_PREFER_NPU);
 
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
   Ort::Session session(*ort_env, ort_model_path, so);
-  // TODO: Currently, SessionHasEp can only iterate input nodes, so QDQ model is not supported.
-  // EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
+  EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
 
   ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
@@ -1591,6 +1589,8 @@ TEST_F(QnnGPUBackendTests, AutoEp_PreferGpu) {
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
 
   Ort::SessionOptions so;
+  // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
+  so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
   so.SetEpSelectionPolicy(OrtExecutionProviderDevicePolicy_PREFER_GPU);
 
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx";
@@ -1605,6 +1605,8 @@ TEST_F(QnnHTPBackendTests, AutoEp_AllDevices) {
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
 
   Ort::SessionOptions so;
+  // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
+  so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
   auto devices = ort_env->GetEpDevices();
   std::vector<Ort::ConstEpDevice> selected_devices;
 
@@ -1619,8 +1621,7 @@ TEST_F(QnnHTPBackendTests, AutoEp_AllDevices) {
 
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
   Ort::Session session(*ort_env, ort_model_path, so);
-  // TODO: Currently, SessionHasEp can only iterate input nodes, so QDQ model is not supported.
-  // EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
+  EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
 
   ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
@@ -1630,6 +1631,8 @@ TEST_F(QnnHTPBackendTests, AutoEp_NpuOnly) {
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
 
   Ort::SessionOptions so;
+  // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
+  so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
   auto devices = ort_env->GetEpDevices();
   std::vector<Ort::ConstEpDevice> selected_devices;
 
@@ -1646,8 +1649,7 @@ TEST_F(QnnHTPBackendTests, AutoEp_NpuOnly) {
 
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
   Ort::Session session(*ort_env, ort_model_path, so);
-  // TODO: Currently, SessionHasEp can only iterate input nodes, so QDQ model is not supported.
-  // EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
+  EXPECT_TRUE(SessionHasEp(session, kQnnExecutionProvider));
 
   ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
@@ -1657,6 +1659,8 @@ TEST_F(QnnGPUBackendTests, AutoEp_GpuOnly) {
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
 
   Ort::SessionOptions so;
+  // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
+  so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
   auto devices = ort_env->GetEpDevices();
   std::vector<Ort::ConstEpDevice> selected_devices;
 
