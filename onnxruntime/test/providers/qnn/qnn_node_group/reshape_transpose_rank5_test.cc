@@ -71,6 +71,38 @@ GetTestModelFn BuildRank6ToRank5FloatTestCase() {
   };
 }
 
+// Build float test: Input -> Reshape(rank-6) -> Transpose -> Reshape
+//                         -> Add
+GetTestModelFn BuildRank6ToRank5FloatMultiConsumerTestCase() {
+  return [](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("rank6_to_rank5_fusion_float_multi_consumer_graph");
+
+    auto input_def = TestInputDef<float>({256, 64}, false, -10.0f, 10.0f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    builder.MakeScalarInitializer<float>("add_const", 1.0f);
+    builder.AddNode("add", "Add", {"input", "add_const"}, {"add_out"}, kOnnxDomain);
+    builder.MakeOutput("add_out");
+
+    // Reshape: (256, 64) -> (1, 4, 4, 4, 4, 64)
+    builder.Make1DInitializer<int64_t>("reshape1_shape", {1, 4, 4, 4, 4, 64});
+    builder.AddNode("reshape1", "Reshape", {"input", "reshape1_shape"}, {"reshape1_out"});
+
+    // Transpose: perm [0, 2, 1, 3, 4, 5]
+    builder.AddNode("transpose",
+                    "Transpose",
+                    {"reshape1_out"},
+                    {"transpose_out"},
+                    kOnnxDomain,
+                    {builder.MakeIntsAttribute("perm", {0, 2, 1, 3, 4, 5})});
+
+    // Reshape: (1, 4, 4, 4, 4, 64) -> (1, 256, 64)
+    builder.Make1DInitializer<int64_t>("reshape2_shape", {1, 256, 64});
+    builder.AddNode("reshape2", "Reshape", {"transpose_out", "reshape2_shape"}, {"reshape2_out"}, kOnnxDomain);
+    builder.MakeOutput("reshape2_out");
+  };
+}
+
 ProviderOptions GetProviderOptions() {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -82,6 +114,15 @@ ProviderOptions GetProviderOptions() {
 TEST_F(QnnHTPBackendTests, Rank6ToRank5Fusion_Float) {
   ProviderOptions provider_options = GetProviderOptions();
   RunQnnModelTest(BuildRank6ToRank5FloatTestCase(),
+                  provider_options,
+                  /*opset_version=*/13,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+TEST_F(QnnHTPBackendTests, Rank6ToRank5Fusion_Float_MultiConsumer) {
+  ProviderOptions provider_options = GetProviderOptions();
+  RunQnnModelTest(BuildRank6ToRank5FloatMultiConsumerTestCase(),
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
