@@ -93,6 +93,15 @@ java_windows_x86_64:
   sha256: 6cce98ce38b86737c63912fd1df9ecfee1fe209ab08c0e1e16500f054e67de48
   content_root: jdk-{version}
   bindir: bin
+jfrog_linux_x86_64: &jfrog_common
+  major_version: v2-jf
+  version: 2.95.0
+  url: https://releases.jfrog.io/artifactory/jfrog-cli/{major_version}/{version}/jfrog-cli-{os_arch}/jf
+  is_installer: false
+  os_arch: linux-amd64
+jfrog_macos:
+  <<: *jfrog_common
+  os_arch: mac-arm64
 model_zoo:
   version: 2026-01-13
   url: http://ort-ep-win-01.na.qualcomm.com:8000/model-zoo/model-zoo-{version}.zip
@@ -118,7 +127,7 @@ nuget_windows_x86_64:
   version: 7.0.1
   url: https://dist.nuget.org/win-x86-commandline/v{version}/nuget.exe
   md5: c51179f8b404bbf7f7b8e457240cc09d
-  is_installer: False
+  is_installer: false
 onnx_models:
   version: 2025-10-02
   url: http://ort-ep-win-01.na.qualcomm.com:8000/onnx-models/onnx-models-{version}.tar.gz
