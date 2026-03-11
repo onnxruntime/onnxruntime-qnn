@@ -921,6 +921,7 @@ QnnEp::~QnnEp() {
     qnn_backend_manager_->RemovePerThreadHtpPowerConfigMapping(thread_id);
 
     std::lock_guard<std::mutex> lock(config_id_mutex_);
+    qnn_backend_manager_->ReleaseTimerThread();
     if (htp_power_config_id_.has_value()) {
       ORT_IGNORE_RETURN_VALUE(qnn_backend_manager_->DeInitializePowerCfgId(*htp_power_config_id_));
     }

@@ -343,7 +343,7 @@ void QnnBackendManager::CreateTimerThread(uint32_t htp_power_config_client_id) {
   }
 }
 
-void QnnBackendManager::ReleaseTimerThread(uint32_t htp_power_config_client_id) {
+void QnnBackendManager::ReleaseTimerThread() {
   std::lock_guard<std::mutex> lk(state_mutex_);
   if (timer_ != nullptr) {
     timer_->DeInitialize();
@@ -353,13 +353,6 @@ void QnnBackendManager::ReleaseTimerThread(uint32_t htp_power_config_client_id) 
 
   timer_callback_arg_.reset();
   timer_.reset();
-  Ort::Status status = Ort::Status();
-  QnnHtpPerfInfrastructure_PowerConfig_t htp_performance_cfg{};
-  htp_power_config_manager_.SetReleasedPerfPowerConfig(htp_performance_cfg, htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
-  status = SetHtpPowerCustomConfigs(htp_power_config_client_id, htp_performance_cfg, 0, 0);
-  if (status != Ort::Status()) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Not able to set Power config to release");
-  }
 }
 
 Ort::Status QnnBackendManager::ParseLoraConfig(std::string lora_config_path) {
@@ -1547,6 +1540,8 @@ Ort::Status QnnBackendManager::SetupBackend(
         auto context_bin_filepath = it.first;
         auto ep_node_names = *(it.second);
 
+
+
         auto context = ep_context_handle_map_.at(context_bin_filepath);
         for (auto node_name : ep_node_names) {
           ep_context_handle_map_.emplace(node_name, context);
@@ -1647,7 +1642,13 @@ Ort::Status QnnBackendManager::InitializePowerCfgId(uint32_t device_id, uint32_t
 }
 
 Ort::Status QnnBackendManager::DeInitializePowerCfgId(uint32_t htp_power_config_id) {
-  ReleaseTimerThread(htp_power_config_id);
+  Ort::Status status = Ort::Status();
+  QnnHtpPerfInfrastructure_PowerConfig_t htp_performance_cfg{};
+  htp_power_config_manager_.SetReleasedPerfPowerConfig(htp_performance_cfg, htp_power_config_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
+  status = SetHtpPowerCustomConfigs(htp_power_config_id, htp_performance_cfg, 0, 0);
+  if (status != Ort::Status()) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Not able to set Power config to release");
+  }
   RETURN_IF_ERROR(DestroyHTPPowerConfigID(htp_power_config_id));
   return Ort::Status();
 }

@@ -195,6 +195,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status DeInitializePowerCfgId(uint32_t htp_power_config_id);
 
+  void ReleaseTimerThread();
+
   Ort::Status SetPerThreadHtpPowerConfigs(const std::thread::id& thread_id, bool pre_run);
 
   Ort::Status AddPerThreadHtpPowerConfigMapping(const std::thread::id& thread_id,
@@ -350,11 +352,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status CreateHtpPowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
 
-  Ort::Status DestroyHTPPowerConfigID(uint32_t htp_power_config_id);
-
   void CreateTimerThread(uint32_t htp_power_config_client_id);
 
-  void ReleaseTimerThread(uint32_t htp_power_config_client_id);
+  Ort::Status DestroyHTPPowerConfigID(uint32_t htp_power_config_id);
 
   Ort::Status SetHtpPowerConfigs(uint32_t htp_power_config_client_id,
                                  HtpPerformanceMode htp_performance_mode,
