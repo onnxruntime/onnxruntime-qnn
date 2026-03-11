@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Qualcomm. All rights reserved.
 // Licensed under the MIT License.
 
 #if !defined(ORT_MINIMAL_BUILD)
@@ -17,20 +17,6 @@ namespace test {
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 constexpr float kDefaultRopeOpToleranceFp32 = 1e-4f;
-
-namespace {
-
-// Build an int64 AttributeProto without relying on onnxruntime::utils::MakeAttribute.
-// This avoids link-time dependency on node_attr_utils.cc.
-inline ONNX_NAMESPACE::AttributeProto MakeIntAttr(std::string name, int64_t value) {
-  ONNX_NAMESPACE::AttributeProto a;
-  a.set_name(std::move(name));
-  a.set_type(ONNX_NAMESPACE::AttributeProto::INT);
-  a.set_i(value);
-  return a;
-}
-
-}  // namespace
 
 template <typename DataType = float>
 static void RunRopeOpTest(const TestInputDef<DataType>& input_def,
@@ -56,7 +42,7 @@ static void RunRopeOpTest(const TestInputDef<DataType>& input_def,
     builder.MakeOutput("output");
 
     // Add RotaryEmbedding node with all 4 inputs
-    builder.AddNode("",
+    builder.AddNode("RotaryEmbedding_node",
                     "RotaryEmbedding",
                     {"input", "position_ids", "cos_cache", "sin_cache"},
                     {"output"},
@@ -92,9 +78,9 @@ TEST_F(QnnHTPBackendTests, RotaryEmbedding_Basic) {
       TestInputDef<int64_t>({batch_size, seq_len}, false, position_ids),
       TestInputDef<float>({seq_len, rotary_dim / 2}, false, cos_cache),
       TestInputDef<float>({seq_len, rotary_dim / 2}, false, sin_cache),
-      {MakeIntAttr("interleaved", 0),
-       MakeIntAttr("num_heads", num_heads),
-       MakeIntAttr("rotary_embedding_dim", rotary_dim)},
+      {test::MakeAttribute("interleaved", static_cast<int64_t>(0)),
+       test::MakeAttribute("num_heads", num_heads),
+       test::MakeAttribute("rotary_embedding_dim", rotary_dim)},
       1,
       ExpectedEPNodeAssignment::All);
 }
