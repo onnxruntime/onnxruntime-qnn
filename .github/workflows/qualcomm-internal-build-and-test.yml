@@ -36,31 +36,31 @@ env:
 
 jobs:
 
-  # build-and-test-linux-x86_64:
-  #   if: ${{ inputs.do_all }}
-  #   uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
-  #   secrets: inherit
-  #   with:
-  #     nightly_build: ${{ inputs.nightly_build }}
-  #     target_os: linux
-  #     target_arch: x86_64
-  #     # Specifying a python version here doesn't actually do anything at this point since we don't know what the Linux
-  #     # wheel distribution story is yet. For now, this is just so that all of the job and artifact names reflect the
-  #     # version of cpython that's installed on our Linux build machines.
-  #     target_py_vsn: "3.10"
+  build-and-test-linux-x86_64:
+    if: ${{ inputs.do_all }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      target_os: linux
+      target_arch: x86_64
+      # Specifying a python version here doesn't actually do anything at this point since we don't know what the Linux
+      # wheel distribution story is yet. For now, this is just so that all of the job and artifact names reflect the
+      # version of cpython that's installed on our Linux build machines.
+      target_py_vsn: "3.10"
 
-  build-linux-aarch64-oe-gcc11_2:
-      if: ${{ inputs.do_all }}
-      uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
-      secrets: inherit
-      with:
-        nightly_build: ${{ inputs.nightly_build }}
-        target_os: linux
-        target_arch: aarch64_oe_gcc11_2
-        target_py_vsn: None
-        upload_test_archive: true
-        upload_wheel: false
-        run_tests: false
+  # build-linux-aarch64-oe-gcc11_2:
+  #     if: ${{ inputs.do_all }}
+  #     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+  #     secrets: inherit
+  #     with:
+  #       nightly_build: ${{ inputs.nightly_build }}
+  #       target_os: linux
+  #       target_arch: aarch64_oe_gcc11_2
+  #       target_py_vsn: None
+  #       upload_test_archive: true
+  #       upload_wheel: false
+  #       run_tests: false
 
 #   test-linux-aarch64-oe-gcc11_2:
 #    if: ${{ inputs.do_all }}

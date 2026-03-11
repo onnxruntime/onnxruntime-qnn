@@ -150,14 +150,14 @@ jobs:
           jf --version
           env
 
-      # - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
-      #   run: >
-      #     "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
-      #     qcom/build_and_test.py
-      #     --target-py-version ${{inputs.target_py_vsn}}
-      #     ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
-      #     ${{ inputs.build_zip == true && '--build-zip' || '' }}
-      #     ${{inputs.upload_test_archive == true && 'archive' || 'build'}}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}
+      - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
+        run: >
+          "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
+          qcom/build_and_test.py
+          --target-py-version ${{inputs.target_py_vsn}}
+          ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
+          ${{ inputs.build_zip == true && '--build-zip' || '' }}
+          ${{inputs.upload_test_archive == true && 'archive' || 'build'}}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}
 
       - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         if: ${{ inputs.run_tests && inputs.build_test_same_runner }}
@@ -190,6 +190,14 @@ jobs:
           retention-days: 7
           path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl
+
+      - name: Upload Wheel to Artifactory
+        if: ${{ inputs.upload_wheel }}
+        run: >
+          jf rt u
+          ${{ github.workspace }}/build/${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl
+          aisw-ortqnnep-generic-virtual/ci/
+
 
       - uses: actions/upload-artifact@v4
         if: ${{ inputs.upload_nuget }}
