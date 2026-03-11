@@ -48,7 +48,7 @@ jobs:
       # wheel distribution story is yet. For now, this is just so that all of the job and artifact names reflect the
       # version of cpython that's installed on our Linux build machines.
       target_py_vsn: "3.10"
-      run_tests: false
+      upload_wheel: false
 
   # build-linux-aarch64-oe-gcc11_2:
   #     if: ${{ inputs.do_all }}
@@ -84,18 +84,18 @@ jobs:
 #       target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
 #       test_runner_arch: arm64
 
-#   build-and-test-windows-arm64ec:
-#     if: ${{ inputs.do_all }}
-#     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
-#     secrets: inherit
-#     with:
-#       nightly_build: ${{ inputs.nightly_build }}
-#       target_arch: arm64ec
-#       upload_wheel: true
-#       test_wheel: true
-#       target_py_vsn: ${{ inputs.target_py_vsn }}
-#       run_tests: false  # ARM64ec unit tests are horribly broken (though model tests seem fine).
-#       test_runner_arch: arm64
+  build-and-test-windows-arm64ec:
+    if: ${{ inputs.do_all }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      target_arch: arm64ec
+      upload_wheel: true
+      test_wheel: true
+      target_py_vsn: ${{ inputs.target_py_vsn }}
+      run_tests: false  # ARM64ec unit tests are horribly broken (though model tests seem fine).
+      test_runner_arch: arm64
 
 #   build-and-test-windows-x86_64:
 #     if: ${{ inputs.do_all }}

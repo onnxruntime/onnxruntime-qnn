@@ -146,12 +146,6 @@ jobs:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
-      - name: Ping artifactory
-        run: |
-          jf rt ping --insecure-tls=true
-          jf --version
-          env
-
       - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
@@ -184,14 +178,6 @@ jobs:
           retention-days: 7
           path: |
             ${{ github.workspace }}/build/onnxruntime-tests-${{inputs.target_os}}-${{ inputs.target_arch }}.*
-
-      - uses: actions/upload-artifact@v4
-        if: ${{ inputs.upload_wheel }}
-        with:
-          name: ORT ${{inputs.target_os}} ${{ inputs.target_arch }} Python ${{ inputs.target_py_vsn }} Wheel
-          retention-days: 7
-          path: |
-            ${{ github.workspace }}/build/${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl
 
       - name: Upload Wheel to Artifactory
         if: ${{ inputs.upload_wheel }}
@@ -273,11 +259,11 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: actions/download-artifact@v4
-        with:
-          name: ORT ${{inputs.target_os}} ${{ inputs.target_arch }} Python ${{ inputs.target_py_vsn }} Wheel
-          path: |
-            ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{env.BUILD_CONFIG_DIR}}/dist
+      - name: Download Wheel from Artifactory
+        run: >
+          "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
+          qcom/scripts/artifactory/download_ci.py
+          --name "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
 
       - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Wheel
         run: >
