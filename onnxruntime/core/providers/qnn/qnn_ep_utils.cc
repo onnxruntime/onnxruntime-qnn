@@ -558,6 +558,32 @@ bool OrtClipNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     return false;
   }
 
+  // If Clip feeds a Q node, require the data input[0] to come from a DQ node.
+  // DQ -> Clip -> Q can form Clip ORT Unit, but DQ -> Op -> Clip -> Q is not allowed as Clip here is redundant.
+  if (!q_nodes.empty()) {
+    // 1. get num of inputs
+    size_t clip_input_count = 0;
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(node, &clip_input_count), ort_api);
+
+    // 2. get inputs as OrtValueInfo instances
+    std::vector<const OrtValueInfo*> clip_inputs(clip_input_count);
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(node, clip_inputs.data(), clip_inputs.size()), ort_api);
+
+    // 3. get the producer/parent of the Clip first input
+    const OrtNode* data_producer = nullptr;
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.ValueInfo_GetValueProducer(clip_inputs[0], &data_producer, nullptr), ort_api);
+
+    // 4. check if the Clip first input producer is a DQ node
+    if (data_producer == nullptr || Ort::ConstNode(data_producer).GetOperatorType() != "DequantizeLinear") {
+      return false;
+    }
+
+    // 5. check if DQ node in the same group
+    if (std::find(dq_nodes.begin(), dq_nodes.end(), data_producer) == dq_nodes.end()) {
+      return false;
+    }
+  }
+
   int32_t dt_input = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
   int32_t dt_output = GetNodeIODataType(q_nodes[0], ort_api, false, 0);
 
