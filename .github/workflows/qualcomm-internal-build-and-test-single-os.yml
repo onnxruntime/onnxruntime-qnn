@@ -198,8 +198,7 @@ jobs:
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/scripts/artifactory/publish_ci.py
-          --src-root "${{ github.workspace }}/build/${{ inputs.target_os }}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist"
-          --src-pattern "onnxruntime_qnn*.whl"
+          --src-pattern "${{ inputs.target_os }}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl"
           --name "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
 
       - uses: actions/upload-artifact@v4

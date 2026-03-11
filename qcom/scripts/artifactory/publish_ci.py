@@ -10,6 +10,8 @@ import subprocess
 from collections.abc import Iterable
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).parent.parent.parent.parent.absolute()
+
 
 class Artifactory:
     def __init__(self) -> None:
@@ -79,8 +81,13 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", type=valid_artifact_name, required=True, help="Artifact name")
-    parser.add_argument("--src-root", type=Path, required=True, help="Root directory of artifacts")
-    parser.add_argument("--src-pattern", type=str, required=True, help="Artifact file pattern")
+    parser.add_argument(
+        "--src-root",
+        type=Path,
+        default=REPO_ROOT / "build",
+        help="Root directory of artifacts"
+    )
+    parser.add_argument("--src-pattern", type=str, required=True, help="Artifact file pattern, relative to SRC_ROOT.")
 
     args = parser.parse_args()
 
