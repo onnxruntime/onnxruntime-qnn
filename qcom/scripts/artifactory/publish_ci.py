@@ -37,6 +37,7 @@ class Artifactory:
 class CiArtifactory(Artifactory):
     def __init__(self) -> None:
         super().__init__()
+        self.__commit_hash = os.environ["GITHUB_SHA"]
         actor = os.environ["GITHUB_ACTOR"] if os.environ["GITHUB_ACTOR"] != "" else "main"
         run_id = os.environ["GITHUB_RUN_ID"]
         self.__run_attempt = os.environ["GITHUB_RUN_ATTEMPT"]
@@ -44,7 +45,7 @@ class CiArtifactory(Artifactory):
 
     @property
     def artifact_root(self) -> str:
-        return f"{super().repo_path}/ci/{self.__ref}/{self.__run_attempt}"
+        return f"{super().repo_path}/ci/{self.__ref}/{self.__commit_hash[:10]}-{self.__run_attempt}"
 
 
 class PublishCiArtifact:
