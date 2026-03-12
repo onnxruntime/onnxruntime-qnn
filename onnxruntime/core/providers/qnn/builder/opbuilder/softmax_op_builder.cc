@@ -176,6 +176,20 @@ Ort::Status SoftmaxOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], output_info));
   size_t output_rank = output_info.shape.size();
 
+  // Builds the axis param and, for LogSoftmax, the beta param, into param_tensor_names.
+  auto AddAxisAndBetaParams = [&](std::vector<std::string>& param_tensor_names,
+                                  Qnn_Scalar_t effective_axis_scalar) {
+    QnnParamWrapper axis_param(node_unit.Index(), node_unit.Name(), QNN_OP_SOFTMAX_PARAM_AXIS, effective_axis_scalar);
+    param_tensor_names.push_back(axis_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
+
+    if (is_log_softmax) {
+      QnnParamWrapper beta_param(node_unit.Index(), node_unit.Name(), QNN_OP_LOG_SOFTMAX_PARAM_BETA, beta_qnn_scalar);
+      param_tensor_names.push_back(beta_param.GetParamTensorName());
+      qnn_model_wrapper.AddParamWrapper(std::move(beta_param));
+    }
+  };
+
   if (opset_version < 13) {
     std::string reshape_input_name = utils::GetUniqueName(orig_output_name, "_reshape");
 
@@ -185,16 +199,8 @@ Ort::Status SoftmaxOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
       axis_qnn_scalar.uint32Value = 1;
     }
 
-    QnnParamWrapper axis_param(node_unit.Index(), node_unit.Name(), QNN_OP_SOFTMAX_PARAM_AXIS, axis_qnn_scalar);
     std::vector<std::string> param_tensor_names;
-    param_tensor_names.push_back(axis_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
-
-    if (is_log_softmax) {
-      QnnParamWrapper beta_param(node_unit.Index(), node_unit.Name(), QNN_OP_LOG_SOFTMAX_PARAM_BETA, beta_qnn_scalar);
-      param_tensor_names.push_back(beta_param.GetParamTensorName());
-      qnn_model_wrapper.AddParamWrapper(std::move(beta_param));
-    }
+    AddAxisAndBetaParams(param_tensor_names, axis_qnn_scalar);
 
     QnnTensorWrapper output_tensorwrapper(reshape_input_name, QNN_TENSOR_TYPE_NATIVE, output_info.qnn_data_type,
                                           output_info.quant_param.Copy(), std::vector<uint32_t>(reshape_input_shape));
@@ -227,16 +233,8 @@ Ort::Status SoftmaxOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
     // Override axis due to the actual shape after the inserted transpose node
     axis_qnn_scalar.uint32Value = static_cast<uint32_t>(output_rank) - 1;
 
-    QnnParamWrapper axis_param(node_unit.Index(), node_unit.Name(), QNN_OP_SOFTMAX_PARAM_AXIS, axis_qnn_scalar);
     std::vector<std::string> param_tensor_names;
-    param_tensor_names.push_back(axis_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
-
-    if (is_log_softmax) {
-      QnnParamWrapper beta_param(node_unit.Index(), node_unit.Name(), QNN_OP_LOG_SOFTMAX_PARAM_BETA, beta_qnn_scalar);
-      param_tensor_names.push_back(beta_param.GetParamTensorName());
-      qnn_model_wrapper.AddParamWrapper(std::move(beta_param));
-    }
+    AddAxisAndBetaParams(param_tensor_names, axis_qnn_scalar);
 
     QnnTensorWrapper output_tensorwrapper(transpose_input_name, QNN_TENSOR_TYPE_NATIVE, output_info.qnn_data_type,
                                           output_info.quant_param.Copy(), std::vector<uint32_t>(transpose_input_shape));
@@ -267,16 +265,8 @@ Ort::Status SoftmaxOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
                                                        false,
                                                        is_graph_output));
   } else {
-    QnnParamWrapper axis_param(node_unit.Index(), node_unit.Name(), QNN_OP_SOFTMAX_PARAM_AXIS, axis_qnn_scalar);
     std::vector<std::string> param_tensor_names;
-    param_tensor_names.push_back(axis_param.GetParamTensorName());
-    qnn_model_wrapper.AddParamWrapper(std::move(axis_param));
-
-    if (is_log_softmax) {
-      QnnParamWrapper beta_param(node_unit.Index(), node_unit.Name(), QNN_OP_LOG_SOFTMAX_PARAM_BETA, beta_qnn_scalar);
-      param_tensor_names.push_back(beta_param.GetParamTensorName());
-      qnn_model_wrapper.AddParamWrapper(std::move(beta_param));
-    }
+    AddAxisAndBetaParams(param_tensor_names, axis_qnn_scalar);
 
     return ProcessOutputs(qnn_model_wrapper, node_unit,
                           std::move(input_names),
