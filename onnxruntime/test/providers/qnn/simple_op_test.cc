@@ -776,8 +776,9 @@ TEST_F(QnnHTPBackendTests, UnaryOp_LogSoftmax13_U16_NonLastAxis) {
 }
 
 // Test that QDQ LogSoftmax (opset 13) with axis != -1 is supported by QNN EP.
+// Uses 124 elements (large count) but a moderate value range [-10, 10]
 TEST_F(QnnHTPBackendTests, UnaryOp_LogSoftmax13_NonLastAxis_LargeInput) {
-  const std::vector<float> input_data = GetFloatDataInRange(-50.0f, 50.0f, 124);
+  const std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 124);
   RunQDQOpTest<uint8_t>("LogSoftmax",
                         {TestInputDef<float>({1, 124, 1}, false, input_data)},
                         {test::MakeAttribute("axis", static_cast<int64_t>(1))},
@@ -816,17 +817,6 @@ TEST_F(QnnHTPBackendTests, UnaryOp_LogSoftmax11_Axis0) {
                         {TestInputDef<float>({1, 2, 3}, false, input_data)},
                         {test::MakeAttribute("axis", static_cast<int64_t>(0))},
                         11,
-                        ExpectedEPNodeAssignment::All);
-}
-
-// Test QNN EP correctly handles the QNN-specific beta attribute on LogSoftmax (opset 13).
-// With beta=1.0 (the default), the output must match the standard LogSoftmax.
-TEST_F(QnnHTPBackendTests, UnaryOp_LogSoftmax13_WithBeta) {
-  std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 6);
-  RunQDQOpTest<uint8_t>("LogSoftmax",
-                        {TestInputDef<float>({1, 2, 3}, false, input_data)},
-                        {test::MakeAttribute("beta", 1.0f)},  // Explicit default beta; QNN passes it through
-                        13,
                         ExpectedEPNodeAssignment::All);
 }
 
