@@ -1540,8 +1540,6 @@ Ort::Status QnnBackendManager::SetupBackend(
         auto context_bin_filepath = it.first;
         auto ep_node_names = *(it.second);
 
-
-
         auto context = ep_context_handle_map_.at(context_bin_filepath);
         for (auto node_name : ep_node_names) {
           ep_context_handle_map_.emplace(node_name, context);
