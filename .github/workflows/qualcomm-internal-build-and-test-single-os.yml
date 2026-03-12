@@ -120,6 +120,8 @@ env:
 
   ORT_VERSION_SUFFIX: "${{ inputs.version_suffix != '' && inputs.version_suffix || '' }}"
 
+  BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
+
 jobs:
   build:
     name: "build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
@@ -131,6 +133,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
       - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         run: >
@@ -165,13 +176,13 @@ jobs:
           path: |
             ${{ github.workspace }}/build/onnxruntime-tests-${{inputs.target_os}}-${{ inputs.target_arch }}.*
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload Wheel to Artifactory
         if: ${{ inputs.upload_wheel }}
-        with:
-          name: ORT ${{inputs.target_os}} ${{ inputs.target_arch }} Python ${{ inputs.target_py_vsn }} Wheel
-          retention-days: 7
-          path: |
-            ${{ github.workspace }}/build/${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl
+        run: >
+          "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
+          qcom/scripts/artifactory/publish_ci.py
+          --src-pattern "${{ inputs.target_os }}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl"
+          --name "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
 
       - uses: actions/upload-artifact@v4
         if: ${{ inputs.upload_nuget }}
@@ -245,11 +256,20 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: actions/download-artifact@v4
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
         with:
-          name: ORT ${{inputs.target_os}} ${{ inputs.target_arch }} Python ${{ inputs.target_py_vsn }} Wheel
-          path: |
-            ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{env.BUILD_CONFIG_DIR}}/dist
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Download Wheel from Artifactory
+        run: >
+          "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
+          qcom/scripts/artifactory/download_ci.py
+          --name "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
 
       - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Wheel
         run: >
