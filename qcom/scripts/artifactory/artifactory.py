@@ -30,6 +30,8 @@ class Artifactory:
                 src_pattern,
                 f"{tmpdir}/",
             ], cwd=None)
+            for f in Path(tmpdir).glob("**/*"):
+                logging.info(f"Found file {f}")
             relpath = "/".join(src_pattern.split("/")[1:])
             shutil.copytree(Path(tmpdir) / relpath, destination, dirs_exist_ok=True)
 
