@@ -1,5 +1,5 @@
 <table align="center" border="0" cellspacing="0" cellpadding="8"><tr valign="middle">
-  <td><img width="100px" src="docs/images/ONNX_Runtime_icon.png" /></td>
+  <td><img width="100px" src="docs/images/Q-icon-rgb-blue.png" /></td>
   <td><h1><big>ONNX RUNTIME QNN Plugin EP</big></h1></td>
 </tr></table>
 
@@ -13,27 +13,26 @@ This repository is maintained by Qualcomm. For the general ONNX Runtime project,
 
 ONNX Runtime supports hardware acceleration through **Execution Providers (EPs)**. The QNN EP is a *plugin* EP — a separately distributed shared library that plugs into a standard ONNX Runtime installation at runtime, without requiring a custom ORT build. [Learn more about Plugin EPs →](https://onnxruntime.ai/docs/execution-providers/plugin-ep-libraries/)
 
-<p align="center"><img width="80%" src="docs/images/ORT-EP-flow.png" /></p>
+<p align="center"><img width="80%" src="docs/images/PluginEP-final.png" /></p>
 
-| | Built-in EP | Plugin EP (QNN) |
+| | Provider Bridge EP (QNN) | Plugin EP (QNN) |
 |---|---|---|
 | Distribution | Bundled with ORT | Separate package |
 | ORT build required | Yes | No |
-| Hardware target | CPU / CUDA / etc. | Qualcomm NPU / GPU |
-| Install | `pip install onnxruntime` | `pip install onnxruntime-qnn` |
+| Install | `pip install onnxruntime-qnn` | `pip install onnxruntime-qnn==`**`2.0.0`** |
 
 ---
 
 ## Install
 
 ```bash
+pip install onnxruntime
 pip install onnxruntime-qnn
 ```
 
 **Requirements:**
 - Windows ARM64 (for on-device inference with Qualcomm NPU)
-- Windows X64 (for model quantization only)
-- Python 3.11.x, NumPy 1.25.2 or ≥ 1.26.4
+- Windows X64 (for model quantization and AOT compilation)
 
 For NuGet: [`Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) (Windows ARM64 only)
 
