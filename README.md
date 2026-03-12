@@ -1,8 +1,7 @@
-<p align="center">
-  <img width="80px" src="docs/images/ONNX_Runtime_icon.png" style="vertical-align:middle;" />
-  &nbsp;&nbsp;
-  <span style="font-size:2em; font-weight:300; letter-spacing:0.12em; color:#888; vertical-align:middle;">ONNX RUNTIME QNN Plugin EP</span>
-</p>
+<table align="center"><tr valign="middle">
+  <td><img width="100px" src="docs/images/ONNX_Runtime_icon.png" /></td>
+  <td><h1><big>ONNX RUNTIME QNN Plugin EP</big></h1></td>
+</tr></table>
 
 **ONNX Runtime QNN** is a plugin execution provider that brings Qualcomm hardware acceleration to ONNX Runtime — enabling high-performance AI inference on Qualcomm Snapdragon SoCs via the [Qualcomm AI Runtime SDK (QAIRT)](https://qpm.qualcomm.com/#/main/tools/details/Qualcomm_AI_Runtime_SDK).
 
