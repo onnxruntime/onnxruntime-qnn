@@ -1,4 +1,4 @@
-<table align="center"><tr valign="middle">
+<table align="center" border="0" cellspacing="0" cellpadding="8"><tr valign="middle">
   <td><img width="100px" src="docs/images/ONNX_Runtime_icon.png" /></td>
   <td><h1><big>ONNX RUNTIME QNN Plugin EP</big></h1></td>
 </tr></table>
