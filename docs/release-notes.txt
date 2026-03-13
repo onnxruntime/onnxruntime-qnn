@@ -1,0 +1,34 @@
+# ONNX Runtime QNN Execution Provider v2.0.0
+
+This is a major release for ONNX Runtime QNN Execution Provider, introducing the QNN Plugin EP architecture based on the Execution Provider ABI.
+
+1. What's New
+   1.1 QNN Plugin EP (ABI-Based Architecture)
+       This release introduces the QNN Plugin EP (`onnxruntime_providers_qnn.dll`), which is built as a standalone shared library using the Execution Provider ABI introduced in ONNX Runtime. The plugin implements the required ORT EP interfaces (OrtEpFactory, OrtEp) and only links against the ONNX Runtime shared library (`onnxruntime.dll`).
+
+   * Key improvements:
+     - Enhanced HTP (Hexagon Tensor Processor) support with improved memory management.
+     - Refined graph builder with better operator support and error handling.
+     - Comprehensive test infrastructure for operations, optimizations, and node grouping.
+
+   * For more details on the EP ABI architecture, please refer to:
+     - ONNX Runtime EP ABI documentation: https://onnxruntime.ai/docs/execution-providers/plugin-ep-libraries/
+
+2. Migration Notes
+   2.1 ABI Compatibility
+       - Core ONNX Runtime APIs remain unchanged.
+       - The QNN EP is loaded as `onnxruntime_providers_qnn.dll` in the release package.
+       - Execution provider selection may need to be updated to use the new plugin mechanism.
+
+3. Dependencies
+   3.1 Build Configuration
+       - QAIRT SDK: This release package was generated using QAIRT SDK version 2.42.0. However, developers can use other QAIRT SDK versions as needed.
+       - ONNX Runtime: This release is based on ONNX Runtime 1.24.1. However, it is compatible with other ONNX Runtime versions that support the EP ABI (since 1.24.1).
+
+   3.2 Platform Support
+       - Python Wheel: Supports Windows x64 and Windows ARM64
+       - NuGet Package: Supports Windows ARM64
+       - ZIP Package: Supports Windows ARM64
+
+4. Contributors
+This release includes contributions from the Qualcomm engineering teams.
