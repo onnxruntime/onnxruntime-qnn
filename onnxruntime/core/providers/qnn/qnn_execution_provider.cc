@@ -609,7 +609,26 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     }
   }
 
-  // VTCM backup buffer sharing
+  // Share resource optimization
+  std::string share_resource_optimization_str;
+  GetSessionConfigEntryOrDefault(ort_api,
+                                 session_options_,
+                                 FormatEPConfigKey("share_resource_optimization"),
+                                 "0",
+                                 share_resource_optimization_str);
+  if (share_resource_optimization_str == "1") {
+    share_resource_optimization_ = true;
+  } else if (share_resource_optimization_str != "0") {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING,
+                ("Invalid value entered for share_resource_optimization: " + share_resource_optimization_str + ", only 1 or 0 are allowed. Setting to 0.").c_str());
+  }
+
+  ORT_CXX_LOG(logger_,
+              ORT_LOGGING_LEVEL_VERBOSE,
+              ("User specified share_resource_optimization: " + share_resource_optimization_str).c_str());
+
+  // VTCM backup buffer sharing (DEPRECATED - use share_resource_optimization instead)
   std::string enable_vtcm_backup_buffer_sharing_str;
   GetSessionConfigEntryOrDefault(ort_api,
                                  session_options_,
@@ -617,22 +636,21 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                  "0",
                                  enable_vtcm_backup_buffer_sharing_str);
   if (enable_vtcm_backup_buffer_sharing_str == "1") {
-    enable_vtcm_backup_buffer_sharing_ = true;
+    share_resource_optimization_ = true;
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING,
+                "enable_vtcm_backup_buffer_sharing is deprecated and will be removed in a future release. Please use share_resource_optimization instead.");
   } else if (enable_vtcm_backup_buffer_sharing_str != "0") {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_WARNING,
                 ("Invalid value entered for enable_vtcm_backup_buffer_sharing: " + enable_vtcm_backup_buffer_sharing_str + ", only 1 or 0 are allowed. Setting to 0.").c_str());
   }
 
-  ORT_CXX_LOG(logger_,
-              ORT_LOGGING_LEVEL_VERBOSE,
-              ("User specified enable_vtcm_backup_buffer_sharing: " + enable_vtcm_backup_buffer_sharing_str).c_str());
-
 #if QNN_API_VERSION_MAJOR < 2 || ((QNN_API_VERSION_MAJOR) == 2 && (QNN_API_VERSION_MINOR < 26))
-  if (enable_vtcm_backup_buffer_sharing_) {
+  if (share_resource_optimization_) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_WARNING,
-                "User specified enable_vtcm_backup_buffer_sharing but QNN API version is older than 2.26.");
+                "User specified share_resource_optimization but QNN API version is older than 2.26.");
   }
 #endif
 
@@ -720,10 +738,10 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                 "Inference will not work as expected!");
   }
 
-  if (qnn_context_embed_mode_ && enable_vtcm_backup_buffer_sharing_) {
+  if (qnn_context_embed_mode_ && share_resource_optimization_) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_ERROR,
-                "[EP context generation:] VTCM backup buffer sharing enabled conflict with EP context embed mode. "
+                "[EP context generation:] Share resource optimization enabled conflict with EP context embed mode. "
                 "Inference will not work as expected!");
   }
 
@@ -836,7 +854,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   // For context binary generation with weight sharing enabled, use the QnnBackendManager from the shared context if it exits
   // So that all graphs from later sessions will be compiled into the same QNN context
   if (
-      ((context_cache_enabled_ && share_ep_contexts_) || enable_vtcm_backup_buffer_sharing_) &&
+      ((context_cache_enabled_ && share_ep_contexts_) || share_resource_optimization_) &&
       SharedContext::GetInstance().GetSharedQnnBackendManager()) {
     qnn_backend_manager_ = SharedContext::GetInstance().GetSharedQnnBackendManager();
     // Clear the QnnBackendManager from singleton to stop the resource share
@@ -857,7 +875,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                      op_packages,
                                      skip_qnn_version_check},
         ApiPtrs{ort_api, ep_api, model_editor_api}, logger_);
-    if (enable_vtcm_backup_buffer_sharing_) {
+    if (share_resource_optimization_) {
       SharedContext::GetInstance().SetSharedQnnBackendManager(qnn_backend_manager_);
     }
   }
@@ -1280,7 +1298,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   }
 
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> context_bin_map;
-  if (ep->enable_vtcm_backup_buffer_sharing_) {
+  if (ep->share_resource_optimization_) {
     std::unordered_set<const OrtNode*> ep_ctx_nodes;
     GetMainEPCtxNodes(graph, ep->ort_api, ep_ctx_nodes, ep->logger_);
 
@@ -1319,7 +1337,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   Ort::Status rt = ep->qnn_backend_manager_->SetupBackend(is_qnn_ctx_model,
                                                           ep->context_cache_enabled_,
                                                           ep->share_ep_contexts_,
-                                                          ep->enable_vtcm_backup_buffer_sharing_,
+                                                          ep->share_resource_optimization_,
                                                           context_bin_map);
 
   context_bin_map.clear();

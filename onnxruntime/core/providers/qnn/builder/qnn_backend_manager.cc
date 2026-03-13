@@ -874,6 +874,8 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   context_config_resource_sharing.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
   context_config_resource_sharing.customConfig = &resource_sharing_custom_config;
 
+  // Set share resource optimization type to SEQUENTIAL_WITHOUT_VA_OPTIMIZATION
+  // This is controlled by the share_resource_optimization option (or deprecated enable_vtcm_backup_buffer_sharing)
   QnnHtpContext_CustomConfig_t context_config_resource_sharing_opt_type;
   context_config_resource_sharing_opt_type.option = QNN_HTP_CONTEXT_CONFIG_OPTION_SHARE_RESOURCES_OPTIMIZATION_TYPE;
   context_config_resource_sharing_opt_type.shareResOptType = SEQUENTIAL_WITHOUT_VA_OPTIMIZATION;
@@ -1325,7 +1327,7 @@ Ort::Status QnnBackendManager::SetupBackend(
     bool load_from_cached_context,
     bool need_load_system_lib,
     bool share_ep_contexts,
-    bool enable_vtcm_backup_buffer_sharing,
+    bool share_resource_optimization,
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map) {
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
   if (backend_setup_completed_) {
@@ -1355,7 +1357,7 @@ Ort::Status QnnBackendManager::SetupBackend(
     return Ort::Status();
   }
 
-  vtcm_backup_buffer_sharing_enabled_ = enable_vtcm_backup_buffer_sharing;
+  share_resource_optimization_enabled_ = share_resource_optimization;
 
   auto status = Ort::Status();
   if (!qnn_serializer_config_) {
@@ -1420,9 +1422,9 @@ Ort::Status QnnBackendManager::SetupBackend(
 #endif
   }
 
-  if (status.IsOK() && (vtcm_backup_buffer_sharing_enabled_ || !load_from_cached_context)) {
-    status = vtcm_backup_buffer_sharing_enabled_ ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map)
-                                                 : CreateContext(enable_htp_weight_sharing);
+  if (status.IsOK() && (share_resource_optimization_enabled_ || !load_from_cached_context)) {
+    status = share_resource_optimization_enabled_ ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map)
+                                                  : CreateContext(enable_htp_weight_sharing);
 
     if (status.IsOK()) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "CreateContext succeed.");
