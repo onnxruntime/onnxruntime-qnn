@@ -1367,6 +1367,27 @@ Ort::Status QnnBackendManager::SetupBackend(
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "LoadBackend succeed.");
   }
 
+  if (status.IsOK() && GetQnnBackendType() == QnnBackendType::GPU) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Configuring GPU backend-level options.");
+
+    bool enable_gpu_weight_sharing = false;
+    if (share_ep_contexts && !load_from_cached_context) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+      enable_gpu_weight_sharing = true;
+#endif
+    }
+    gpu_backend_custom_config_.option = QNN_GPU_BACKEND_CONFIG_OPTION_WEIGHT_SHARING_ENABLED;
+    gpu_backend_custom_config_.weightSharingEnabled = enable_gpu_weight_sharing ? 1 : 0;
+
+    backend_config_wrapper_.option = QNN_BACKEND_CONFIG_OPTION_CUSTOM;
+    backend_config_wrapper_.customConfig = &gpu_backend_custom_config_;
+
+    backend_configs_ptr_[0] = &backend_config_wrapper_;
+    backend_configs_ptr_[1] = nullptr;
+
+    backend_config_ = backend_configs_ptr_;
+  }
+
   if (status.IsOK() && (load_from_cached_context || need_load_system_lib)) {
     status = LoadQnnSystemLib();
   }

@@ -22,6 +22,7 @@
 
 #include "CPU/QnnCpuCommon.h"
 #include "HTP/QnnHtpDevice.h"
+#include "GPU/QnnGpuBackend.h"
 #include "QnnLog.h"
 #include "QnnTypes.h"
 #include "System/QnnSystemInterface.h"
@@ -527,6 +528,13 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool skip_qnn_version_check_ = false;
 
   power::HtpPowerConfigManager htp_power_config_manager_;
+
+  // Holds the actual GPU custom config data
+  QnnGpuBackend_CustomConfig_t gpu_backend_custom_config_;
+  // Wraps the custom config in a generic backend config struct
+  QnnBackend_Config_t backend_config_wrapper_;
+  // Null-terminated array of pointers to backend configs (for the backendCreate API)
+  QnnBackend_Config_t* backend_configs_ptr_[2];
 
   // Mapping of thread id to on-run-start/end power configs
   std::mutex per_thread_power_configs_mutex_;
