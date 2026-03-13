@@ -873,8 +873,8 @@ TEST_F(QnnHTPBackendTests, MultithreadSustainedHighPowerCfgFromEpOption) {
   options["offload_graph_io_quantization"] = "0";
   options["htp_performance_mode"] = "sustained_high_performance";
 
-  RunOptions run_opts;
-  run_opts.run_tag = "logger0";
+  Ort::RunOptions run_opts;
+  run_opts.SetRunTag("logger0");
 
   Ort::SessionOptions session_opts;
   session_opts.SetLogId("logger0");
@@ -882,23 +882,15 @@ TEST_F(QnnHTPBackendTests, MultithreadSustainedHighPowerCfgFromEpOption) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, session_opts, onnxruntime::kQnnExecutionProvider, options);
 
-  auto* ort_session_opts = static_cast<OrtSessionOptions*>(session_opts);
-  InferenceSession session_obj{ort_session_opts->value, GetEnvironment()};
-
-  auto status = session_obj.Load(model->model_data.data(), static_cast<int>(model->model_data.size()));
-  ASSERT_TRUE(status.IsOK());
-  ASSERT_EQ(InitializeSession(ort_session_opts, session_obj), nullptr);
-  status = session_obj.Initialize();
-  ASSERT_TRUE(status.IsOK());
+  Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts);
 
   std::vector<std::thread> threads;
   constexpr int num_threads = 5;
   constexpr int loop_count = 10;
 
   for (int i = 0; i < num_threads; i++) {
-    threads.push_back(std::thread(RunSessionAndVerify, std::ref(session_obj), run_opts,
-                                  model->builder.feeds_, model->builder.output_names_,
-                                  output_shapes, output_values, loop_count));
+    threads.push_back(std::thread(RunSessionAndVerify, std::ref(session_obj), std::move(run_opts),
+                                  std::ref(model->builder.feeds_), output_shapes, output_values, loop_count));
   }
 
   for (auto& th : threads) {

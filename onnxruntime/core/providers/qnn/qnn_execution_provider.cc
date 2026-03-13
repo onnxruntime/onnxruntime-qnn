@@ -923,7 +923,7 @@ QnnEp::~QnnEp() {
     std::lock_guard<std::mutex> lock(config_id_mutex_);
     qnn_backend_manager_->ReleaseTimerThread();
     if (htp_power_config_id_.has_value()) {
-      ORT_IGNORE_RETURN_VALUE(qnn_backend_manager_->DeInitializePowerCfgId(*htp_power_config_id_));
+      qnn_backend_manager_->DeInitializePowerCfgId(*htp_power_config_id_);
     }
   }
 
@@ -1707,11 +1707,11 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   if (qnn::IsOrtGraphHasCtxNode(graphs, count, ep->ort_api)) {
     uint32_t htp_power_config_id = 0;
     if (ep->GetHtpPowerConfigId(htp_power_config_id)) {
-      RETURN_IF_ERROR(ep->qnn_backend_manager_->SetState(onnxruntime::qnn::GraphState::INIT_START, htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_));
+      RETURN_IF_NOT_OK(ep->qnn_backend_manager_->SetState(onnxruntime::qnn::GraphState::INIT_START, htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_));
     }
     auto status = ep->CompileContextModel(graphs, fused_nodes, count, node_compute_infos);
     if (ep->GetHtpPowerConfigId(htp_power_config_id)) {
-      RETURN_IF_ERROR(ep->qnn_backend_manager_->SetState(onnxruntime::qnn::GraphState::INIT_DONE, htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_));
+      RETURN_IF_NOT_OK(ep->qnn_backend_manager_->SetState(onnxruntime::qnn::GraphState::INIT_DONE, htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_));
     }
     return status;
   }
@@ -1795,13 +1795,13 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     uint32_t htp_power_config_id = 0;
 
     if (ep->GetHtpPowerConfigId(htp_power_config_id)) {
-      RETURN_IF_ERROR(ep->qnn_backend_manager_->SetState(onnxruntime::qnn::GraphState::INIT_START, htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_));
+      RETURN_IF_NOT_OK(ep->qnn_backend_manager_->SetState(onnxruntime::qnn::GraphState::INIT_START, htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_));
     }
 
     auto finalize_status = qnn_model->FinalizeGraphs(ep->logger_);
 
     if (ep->GetHtpPowerConfigId(htp_power_config_id)) {
-      RETURN_IF_ERROR(ep->qnn_backend_manager_->SetState(onnxruntime::qnn::GraphState::INIT_DONE, htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_));
+      RETURN_IF_NOT_OK(ep->qnn_backend_manager_->SetState(onnxruntime::qnn::GraphState::INIT_DONE, htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_));
     }
 
     if (!finalize_status.IsOK()) {
