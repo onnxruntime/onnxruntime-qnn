@@ -19,12 +19,21 @@ from ..task import (
     RunInTempDirectoryTask,
     Task,
 )
-from ..tools import PythonExecutableArchT, get_model_zoo_root, get_onnx_models_root, get_python_executable
+from ..tools import PythonExecutableArchT, get_model_zoo_root, get_onnx_models_root, get_package_content_dir, get_python_executable
 from ..util import (
     MSFT_CI_REQUIREMENTS_RELPATH,
     REPO_ROOT,
 )
 from .build import BuildConfigT, TargetPyVersionT, get_ort_version
+
+
+def _get_qdc_sdk_wheel() -> Path:
+    """Return the path to the QDC SDK wheel, downloading and extracting it if necessary."""
+    sdk_dir = get_package_content_dir(None, "qualcomm_device_cloud_sdk")
+    wheels = list(sdk_dir.glob("qualcomm_device_cloud_sdk-*.whl"))
+    if not wheels:
+        raise FileNotFoundError(f"Could not find Qualcomm Device Cloud SDK wheel in {sdk_dir}")
+    return wheels[0]
 
 
 def uv_pip_install_cmd(
@@ -59,19 +68,32 @@ class PipInstallTask(RunExecutablesWithVenvTask):
         )
 
 
-class PipInstallQcomDevRequirements(PipInstallTask):
+class PipInstallQcomDevRequirements(RunExecutablesWithVenvTask):
     def __init__(
         self,
         group_name: str | None,
         venv_path: Path,
         qdc: bool,
     ) -> None:
-        requirements: str = "requirements.txt"
-        index_url: str | None = None
+        requirements: str = "requirements-qdc.txt" if qdc else "requirements.txt"
+        req_path = REPO_ROOT / "qcom" / requirements
         if qdc:
-            requirements = "requirements-qdc.txt"
-            index_url = "http://ort-ep-win-01.na.qualcomm.com:8080"
-        super().__init__(group_name, venv_path, requirements=[REPO_ROOT / "qcom" / requirements], index_url=index_url)
+            super().__init__(
+                group_name,
+                venv=venv_path,
+                executables_and_args=lambda: [
+                    uv_pip_install_cmd(
+                        requirements=[req_path],
+                        packages=[_get_qdc_sdk_wheel()],
+                    )
+                ],
+            )
+        else:
+            super().__init__(
+                group_name,
+                venv=venv_path,
+                executables_and_args=[uv_pip_install_cmd(requirements=[req_path])],
+            )
 
 
 class CreateOrtVenvTask(CompositeTask):
@@ -121,13 +143,15 @@ class CreateQdcVenvTask(CompositeTask):
             group_name=None,
             tasks=[
                 CreateVenvTask(python_executable=python_executable, venv_path=venv_path),
-                PipInstallTask(
+                RunExecutablesWithVenvTask(
                     f"Installing QDC build requirements into {venv_path}",
-                    venv_path,
-                    requirements=[
-                        REPO_ROOT / "qcom" / "requirements-qdc.txt",
+                    venv=venv_path,
+                    executables_and_args=lambda: [
+                        uv_pip_install_cmd(
+                            requirements=[REPO_ROOT / "qcom" / "requirements-qdc.txt"],
+                            packages=[_get_qdc_sdk_wheel()],
+                        )
                     ],
-                    index_url="http://ort-ep-win-01.na.qualcomm.com:8080",
                 ),
             ],
         )
