@@ -297,7 +297,6 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  // TODO: Upgrade the ONNX IR VERSION to 12 when using ORT 1.24 prebuilt
   helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   // Serialize the model to a string.

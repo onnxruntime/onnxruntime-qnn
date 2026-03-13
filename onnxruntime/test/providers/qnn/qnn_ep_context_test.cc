@@ -1070,7 +1070,6 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGenerationFolderPathNotExpected) {
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  // TODO: Upgrade the ONNX IR VERSION to 12 when using ORT 1.24 prebuilt
   helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   // Serialize the model to a string.
@@ -1544,11 +1543,11 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
   {
     std::ifstream file(context_binary_file, std::ios::binary | std::ios::ate);
     if (!file)
-      throw std::string("Error reading model");
+      throw std::runtime_error("Error reading model");
     buffer.resize(narrow<size_t>(file.tellg()));
     file.seekg(0, std::ios::beg);
     if (!file.read(buffer.data(), buffer.size()))
-      throw std::string("Error reading model");
+      throw std::runtime_error("Error reading model");
   }
 
   Ort::SessionOptions so;  // No need to set the context file path in so since it's load from file
