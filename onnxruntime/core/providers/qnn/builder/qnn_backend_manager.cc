@@ -1424,7 +1424,7 @@ Ort::Status QnnBackendManager::SetupBackend(
 
   if (status.IsOK() && (share_resource_optimization_enabled_ || !load_from_cached_context)) {
     status = share_resource_optimization_enabled_ ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map)
-                                                 : CreateContext(enable_htp_weight_sharing);
+                                                  : CreateContext(enable_htp_weight_sharing);
 
     if (status.IsOK()) {
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "CreateContext succeed.");
