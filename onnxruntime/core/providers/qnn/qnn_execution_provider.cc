@@ -636,7 +636,20 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 #endif
 
-  // Device ID
+  std::string disable_file_mapped_weights_str;
+  GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("disabl_file_mapped_weights"), "0", disable_file_mapped_weights_str);
+  if (disable_file_mapped_weights_str == "1") {
+    enable_file_mapped_weights_ = false;
+    LOGS_DEFAULT(VERBOSE) << "User specified disable_file_mapped_weights: " << enable_file_mapped_weights_;
+  }
+
+
+#ifndef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  enable_file_mapped_weights_ = false;
+  LOGS_DEFAULT(WARNING) << "File mapped weights feature is only available on Windows arm64 devices for QNN API versions >= 2.32. "
+                        << "Feature will be disabled by default";
+#endif
+
   std::string device_id_str;
   GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("device_id"), "0", device_id_str);
   if (!device_id_str.empty()) {
@@ -797,7 +810,19 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     // Initialize rpcmem_library_.
     // This is necessary for HtpSharedMemoryAllocator to function and also indicates that the allocator is available.
     rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
-    model_settings_.htp_shared_memory = true;
+    model_settings_.htp_shared_memory = enable_htp_shared_mem_allocator_;
+  }
+
+  if (enable_file_mapped_weights_ && !rpcmem_library_) {
+    // Attempt to init rpcmem_library_ if needed. If this fails, then
+    // disable file mapped weights and proceed with normal operation
+    try {
+      rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
+    } catch (const std::exception& e) {
+      LOGS_DEFAULT(WARNING) << "Unable to load RPCMem library: " << e.what()
+                            << " - Disabling file mapped weights.";
+      enable_file_mapped_weights_ = false;
+    }
   }
 
   dump_json_qnn_graph_ = ParseBoolOption(ort_api,
@@ -1052,6 +1077,381 @@ OrtStatus* QnnEp::GetSupportedNodes(const OrtGraph* graph,
     }
   }
   return nullptr;
+}
+
+static bool EpSharedContextsHasAllGraphs(const onnxruntime::GraphViewer& graph_viewer,
+                                         const logging::Logger& logger) {
+  for (const auto& node : graph_viewer.Nodes()) {
+    NodeAttrHelper node_helper(node);
+    std::string cache_source = node_helper.Get(qnn::SOURCE, "");
+
+    std::transform(cache_source.begin(),
+                   cache_source.end(),
+                   cache_source.begin(),
+                   [](unsigned char c) { return static_cast<unsigned char>(std::tolower(c)); });
+
+    if (qnn::EPCONTEXT_OP == node.OpType() && (cache_source == "qnnexecutionprovider" || cache_source == "qnn")) {
+      const std::string& graph_name = node.Name();
+      bool has_shared_qnn_model = SharedContext::GetInstance().HasQnnModel(graph_name);
+      if (!has_shared_qnn_model) {
+        LOGS(logger, VERBOSE) << "Graph: " << graph_name << " from EpContext node not found from shared EP contexts.";
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
+static bool EpSharedContextsHasAllGraphs(const std::vector<IExecutionProvider::FusedNodeAndGraph>& fused_nodes_and_graphs,
+                                         const logging::Logger& logger) {
+  for (auto fused_node_and_graph : fused_nodes_and_graphs) {
+    const onnxruntime::GraphViewer& graph_viewer(fused_node_and_graph.filtered_graph);
+    const Node& ep_context_node = *graph_viewer.Nodes().begin();
+    NodeAttrHelper node_helper(ep_context_node);
+    std::string cache_source = node_helper.Get(qnn::SOURCE, "");
+
+    const std::string& graph_name = ep_context_node.Name();
+    bool has_shared_qnn_model = SharedContext::GetInstance().HasQnnModel(graph_name);
+    if (!has_shared_qnn_model) {
+      LOGS(logger, VERBOSE) << "Graph: " << graph_name << " from EpContext node not found from shared EP contexts.";
+      return false;
+    }
+  }
+
+  return true;
+}
+
+static void GetMainEPCtxNodes(const onnxruntime::GraphViewer& graph_viewer,
+                              std::unordered_set<const Node*>& ep_context_nodes,
+                              const logging::Logger& logger) {
+  for (const auto& node : graph_viewer.Nodes()) {
+    NodeAttrHelper node_helper(node);
+    bool is_main_context = node_helper.Get(qnn::MAIN_CONTEXT, static_cast<int64_t>(0));
+    std::string cache_source = node_helper.Get(qnn::SOURCE, "");
+
+    std::transform(cache_source.begin(),
+                   cache_source.end(),
+                   cache_source.begin(),
+                   [](unsigned char c) { return static_cast<unsigned char>(std::tolower(c)); });
+
+    if (is_main_context && qnn::EPCONTEXT_OP == node.OpType() && (cache_source == "qnnexecutionprovider" || cache_source == "qnn")) {
+      LOGS(logger, VERBOSE) << "EPContext Node found: [1] index: [" << node.Index()
+                            << "] name: [" << node.Name();
+      ep_context_nodes.insert(&node);
+    }
+  }
+}
+
+// For model with EPContext, filter in EPContext nodes only, and make sure each partition only has one single EPContext node
+static void PartitionCtxModel(const onnxruntime::GraphViewer& graph_viewer,
+                              const size_t num_nodes_in_graph,
+                              std::vector<std::unique_ptr<ComputeCapability>>& result,
+                              const std::function<std::string()>& gen_metadef_name,
+                              const logging::Logger& logger) {
+  std::unordered_set<const Node*> supported_nodes{};
+  std::vector<std::vector<const Node*>> supported_groups{};
+
+  for (const auto& node : graph_viewer.Nodes()) {
+    NodeAttrHelper node_helper(node);
+    std::string cache_source = node_helper.Get(qnn::SOURCE, "");
+
+    std::transform(cache_source.begin(),
+                   cache_source.end(),
+                   cache_source.begin(),
+                   [](unsigned char c) { return static_cast<unsigned char>(std::tolower(c)); });
+
+    if (qnn::EPCONTEXT_OP == node.OpType() && (cache_source == "qnnexecutionprovider" || cache_source == "qnn")) {
+      LOGS(logger, VERBOSE) << "Node supported: [1] index: [" << node.Index()
+                            << "] name: [" << node.Name()
+                            << "] Operator type: [EPContext"
+                            << "] index: [" << node.Index() << "]";
+      supported_nodes.insert(&node);
+
+      std::vector<const Node*> supported_group{&node};
+      supported_groups.emplace_back(std::move(supported_group));
+    }
+  }
+
+  result.reserve(supported_groups.size());
+
+  std::transform(
+      supported_groups.begin(), supported_groups.end(),
+      std::back_inserter(result),
+      [&](const auto& supported_partition) {
+        return utils::MakeComputeCapability(graph_viewer, supported_partition, gen_metadef_name, QNN,
+                                            /*drop_constant_initializers*/ false);  // TODO: could this be set to true?
+      });
+
+  const size_t num_of_partitions = result.size();
+  const auto summary_msg = MakeString("Number of partitions supported by QNN EP: ", num_of_partitions,
+                                      ", number of nodes in the graph: ", num_nodes_in_graph,
+                                      ", number of nodes supported by QNN: ", num_of_partitions);
+  LOGS(logger, INFO) << summary_msg;
+
+  return;
+}
+
+// Figure out the context cache Onnx file path to decide the folder location
+static void GetContextOnnxModelFilePath(const std::string& user_context_cache_path,
+                                        const onnxruntime::PathString& model_path_string,
+                                        onnxruntime::PathString& context_model_path) {
+  // always try the path set by user first, it's the only way to set it if load model from memory
+  if (!user_context_cache_path.empty()) {
+    context_model_path = ToPathString(user_context_cache_path);
+  } else if (!model_path_string.empty()) {  // model loaded from file
+    context_model_path = model_path_string;
+  }
+}
+
+std::vector<std::unique_ptr<ComputeCapability>>
+QNNExecutionProvider::GetCapability(const onnxruntime::GraphViewer& graph_viewer,
+                                    const IKernelLookup& /*kernel_lookup*/,
+                                    const GraphOptimizerRegistry& /* graph_optimizer_registry */,
+                                    IResourceAccountant* /* resource_accountant */) const {
+  std::vector<std::unique_ptr<ComputeCapability>> result;
+
+  if (graph_viewer.IsSubgraph()) {
+    return result;
+  }
+  const size_t num_nodes_in_graph = static_cast<size_t>(graph_viewer.NumberOfNodes());
+
+  const auto& logger = *GetLogger();
+
+  // Check BF16 compatibility early
+  if (model_settings_.htp_bf16_enable) {
+    // Check SoC model
+    uint32_t soc_model = qnn_backend_manager_->GetSocModel();
+    if (soc_model == QNN_SOC_MODEL_UNKNOWN) {
+      LOGS(logger, WARNING) << "BF16 mode is enabled but soc_model is not specified. "
+                            << "Both parameters must be set together for BF16 support. "
+                            << "QNN EP will not handle any nodes.";
+      return result;  // Empty result means QNN EP won't handle any nodes
+    } else if (soc_model < 88) {
+      LOGS(logger, WARNING) << "BF16 mode is enabled but SoC model is " << soc_model
+                            << " (expected 88 and above). QNN EP will not handle any nodes.";
+      return result;  // Empty result means QNN EP won't handle any nodes
+    }
+
+    LOGS(logger, INFO) << "BF16 mode enabled with compatible hardware: SoC " << soc_model;
+  }
+
+  bool is_qnn_ctx_model = qnn::GraphHasEpContextNode(graph_viewer);
+
+  const auto gen_metadef_name = [&]() {
+    uint64_t model_hash;
+    int metadef_id = metadef_id_generator_->GenerateId(graph_viewer, model_hash);
+    return MakeString(QNN, context_node_name_prefix_, "_", model_hash, "_", metadef_id);
+  };
+
+  // share ep contexts is enabled
+  // check the ep_shared_contexts to see if it contains all the graphs in the context model
+  // directly use the resource from ep_shared_contexts if it has all the graphs needed by the current session
+  // no need to setup QNN backend
+  if (is_qnn_ctx_model && share_ep_contexts_ && SharedContext::GetInstance().HasSharedQnnModels()) {
+    if (EpSharedContextsHasAllGraphs(graph_viewer, logger)) {
+      PartitionCtxModel(graph_viewer, num_nodes_in_graph, result, gen_metadef_name, logger);
+      return result;
+    }
+  }
+
+  std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> context_bin_map;
+  if (enable_vtcm_backup_buffer_sharing_ || enable_file_mapped_weights_) {
+    std::unordered_set<const Node*> ep_ctx_nodes;
+    GetMainEPCtxNodes(graph_viewer, ep_ctx_nodes, logger);
+
+    onnxruntime::PathString context_model_path;
+    GetContextOnnxModelFilePath(context_cache_path_cfg_, graph_viewer.ModelPath().native(), context_model_path);
+
+    std::filesystem::path parent_path = std::filesystem::path(context_model_path).parent_path();
+
+    for (auto& ep_ctx_node : ep_ctx_nodes) {
+      NodeAttrHelper node_helper(*ep_ctx_node);
+      std::string context_bin_filepath(parent_path.string());
+      context_bin_filepath.append("/").append(node_helper.Get(qnn::EP_CACHE_CONTEXT, ""));
+      if (context_bin_map.find(context_bin_filepath) == context_bin_map.end()) {
+        context_bin_map.emplace(context_bin_filepath, std::make_unique<std::vector<std::string>>());
+        // Push context bin filepath for lookup between sessions
+        context_bin_map.at(context_bin_filepath)->push_back(context_bin_filepath);
+      }
+      context_bin_map.at(context_bin_filepath)->push_back(ep_ctx_node->Name());
+    }
+  }
+
+  // It will load the QnnSystem lib if is_qnn_ctx_model=true, and
+  // delay the Qnn context creation to Compile() using the cached context binary
+  // or generate context cache enable, need to use use QnnSystem lib to parse the binary to get the max spill fill buffer size
+  auto rt = qnn_backend_manager_->SetupBackend(logger, is_qnn_ctx_model,
+                                               context_cache_enabled_ && enable_spill_fill_buffer_,
+                                               share_ep_contexts_,
+                                               enable_vtcm_backup_buffer_sharing_,
+                                               enable_file_mapped_weights_,
+                                               rpcmem_library_,
+                                               context_bin_map);
+
+  context_bin_map.clear();
+
+  if (Status::OK() != rt) {
+    LOGS(logger, ERROR) << "QNN SetupBackend failed " << rt.ErrorMessage();
+    return result;
+  }
+
+  if (IsNpuBackend(qnn_backend_manager_->GetQnnBackendType())) {
+    // Set the power config id and the default power mode from provider option for main thread,
+    // otherwise it will mess up the power mode if user just create session without run it.
+    CreateHtpPowerConfigId();
+  }
+
+  // Report error if QNN CPU backend is loaded while CPU fallback is disabled
+  if (disable_cpu_ep_fallback_ && qnn_backend_manager_->GetQnnBackendType() == qnn::QnnBackendType::CPU) {
+    LOGS(logger, ERROR) << "Qnn CPU backend is loaded while CPU fallback is disabled.";
+    return result;
+  }
+
+  if ((context_cache_enabled_ || is_qnn_ctx_model) && !IsQpuBackend(qnn_backend_manager_->GetQnnBackendType())) {
+    LOGS(logger, ERROR) << "Qnn context cache only works for HTP/DSP/GPU backend.";
+    return result;
+  }
+
+  // For model with EPContext, make sure each partition only has one single EPContext node
+  if (is_qnn_ctx_model) {
+    PartitionCtxModel(graph_viewer, num_nodes_in_graph, result, gen_metadef_name, logger);
+    return result;
+  }
+
+  // Get all the NodeUnits in the graph_viewer
+  std::vector<std::unique_ptr<NodeUnit>> node_unit_holder;
+  std::unordered_map<const Node*, const NodeUnit*> node_unit_map;
+
+  std::tie(node_unit_holder, node_unit_map) = GetQDQNodeUnits(graph_viewer, logger);
+
+  // remove is_qnn_ctx_model related code
+  const auto supported_nodes = GetSupportedNodes(graph_viewer, node_unit_map,
+                                                 node_unit_holder.size(), logger);
+
+  // Helper function that returns a string that lists all unsupported nodes.
+  // Ex: { name: mul_123, type: Mul }, {}, ...
+  auto get_unsupported_node_names = [&node_unit_holder, &supported_nodes]() -> std::string {
+    std::stringstream ss;
+    const size_t num_node_units = node_unit_holder.size();
+
+    for (size_t i = 0; i < num_node_units; ++i) {
+      const auto& node_unit = node_unit_holder[i];
+
+      if (supported_nodes.find(&node_unit->GetNode()) == supported_nodes.end()) {
+        ss << "{ name: " << node_unit->Name() << ", type: " << node_unit->OpType() << " }";
+        if (i == num_node_units - 1) {
+          ss << ", ";
+        }
+      }
+    }
+
+    return ss.str();
+  };
+
+  if (supported_nodes.empty()) {
+    LOGS(logger, INFO) << "Number of partitions supported by QNN EP: 0";
+    return result;
+  }
+
+  size_t num_of_supported_nodes = 0;
+
+  // Create partitions from supported nodes.
+  std::vector<std::unique_ptr<ComputeCapability>> partitions = utils::CreateSupportedPartitions(
+      graph_viewer, supported_nodes, {}, gen_metadef_name, QNN, kQnnExecutionProvider, &node_unit_map);
+
+  // Filter out partitions that consist of a single QuantizeLinear or DequantizeLinear node.
+  // We also count the number of supported nodes in all valid partitions.
+  for (auto& partition : partitions) {
+    bool is_valid_partition = true;
+    size_t nodes_in_partition = 0;
+
+    if (partition && ComputeCapability__SubGraph(*partition)) {
+      const auto& subgraph = ComputeCapability__SubGraph(*partition);
+      const auto& subgraph_nodes = IndexedSubGraph__Nodes(*subgraph);
+
+      nodes_in_partition = subgraph_nodes.size();
+
+      if (nodes_in_partition == 1 && !is_qnn_ctx_model) {
+        const Node* node = graph_viewer.GetNode(subgraph_nodes[0]);
+
+        if (!node) {
+          LOGS(logger, ERROR) << "QNN EP: Invalid node in partition of one node.";
+          is_valid_partition = false;
+        } else if (node->OpType() == "QuantizeLinear" || node->OpType() == "DequantizeLinear") {
+          LOGS(logger, WARNING) << "QNN EP does not support a single Quantize/Dequantize node in a partition.";
+          is_valid_partition = false;
+        }
+      }
+    } else {
+      LOGS(logger, ERROR) << "QNN EP: Invalid partition.";
+      is_valid_partition = false;
+    }
+
+    if (is_valid_partition) {
+      result.push_back(std::move(partition));
+      num_of_supported_nodes += nodes_in_partition;
+    }
+  }  // for
+
+  const size_t num_of_partitions = result.size();
+  const auto summary_msg = MakeString("Number of partitions supported by QNN EP: ", num_of_partitions,
+                                      ", number of nodes in the graph: ", num_nodes_in_graph,
+                                      ", number of nodes supported by QNN: ", num_of_supported_nodes);
+  LOGS(logger, INFO) << summary_msg;
+
+  // Print list of unsupported nodes to the ERROR logger if the CPU EP
+  // has been disabled for this inference session.
+  if (!is_qnn_ctx_model && disable_cpu_ep_fallback_ && num_nodes_in_graph != num_of_supported_nodes) {
+    LOGS(logger, ERROR) << "Unsupported nodes in QNN EP: " << get_unsupported_node_names();
+  }
+
+  return result;
+}
+
+DataLayout QNNExecutionProvider::GetPreferredLayout() const {
+  return DataLayout::NHWC;
+}
+
+std::optional<bool> QNNExecutionProvider::ShouldConvertDataLayoutForOp(std::string_view node_domain,
+                                                                       std::string_view node_op_type,
+                                                                       DataLayout target_data_layout) const {
+  if (target_data_layout != DataLayout::NHWC) {
+    return std::nullopt;
+  }
+
+  if (node_domain == kOnnxDomain && node_op_type == "Upsample") {
+    // Upsample is translated to QNN's Resize, which requires the NHWC layout for processing.
+    return true;
+  }
+
+  return std::nullopt;
+}
+
+Status QNNExecutionProvider::CreateComputeFunc(std::vector<NodeComputeInfo>& node_compute_funcs,
+                                               const logging::Logger& logger) {
+  NodeComputeInfo compute_info;
+  compute_info.create_state_func = [&](ComputeContext* context, FunctionState* state) {
+    LOGS(logger, VERBOSE) << "compute_info.create_state_func context->node_name: " << context->node_name;
+    *state = qnn_models_[context->node_name].get();
+    return 0;
+  };
+
+  compute_info.release_state_func = [](FunctionState state) {
+    // the 'state' is a qnn::QnnModel managed by unique_ptr
+    ORT_UNUSED_PARAMETER(state);
+  };
+
+  compute_info.compute_func = [&logger](FunctionState state, const OrtApi*, OrtKernelContext* context) {
+    Ort::KernelContext ctx(context);
+    qnn::QnnModel* model = reinterpret_cast<qnn::QnnModel*>(state);
+    Status result = model->ExecuteGraph(ctx, logger);
+    return result;
+  };
+
+  node_compute_funcs.push_back(compute_info);
+
+  return Status::OK();
 }
 
 void QnnEp::InitQnnHtpGraphConfigs(

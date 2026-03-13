@@ -103,7 +103,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   void ParseHtpGraphFinalizationOptimizationMode(const std::string& htp_graph_finalization_opt_mode_string,
                                                  const Ort::Logger& logger);
 
-  bool IsHtpSharedMemoryAllocatorAvailable() const { return rpcmem_library_ != nullptr; }
+  bool IsHtpSharedMemoryAllocatorAvailable() const { return enable_htp_shared_mem_allocator_ && rpcmem_library_ != nullptr; }
 
   void InitQnnHtpGraphConfigs(
       qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t>& configs_builder) const;
@@ -154,6 +154,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool qnn_context_embed_mode_ = true;
   bool stop_share_ep_contexts_ = false;
   bool enable_spill_fill_buffer_ = false;
+  bool enable_file_mapped_weights_ = true;
+  bool enable_htp_shared_mem_allocator_ = false;
 #if defined(_WIN32)
   qnn::QnnTelemetry::EtwInternalCallback callback_ETWSink_provider_ = nullptr;
 #endif
