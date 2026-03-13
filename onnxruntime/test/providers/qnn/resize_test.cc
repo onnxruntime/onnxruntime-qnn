@@ -486,12 +486,8 @@ TEST_F(QnnHTPBackendTests, ResizeU8_2xCubicHalfPixelFloor_scales) {
                        19,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
-<<<<<<< HEAD
-                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-=======
                        nullptr,
-                       logging::Severity::kERROR,
->>>>>>> 0dc97060b4 (add udo unit test)
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        "",
                        {},
                        GraphOptimizationLevel::ORT_DISABLE_ALL);
