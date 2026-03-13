@@ -226,8 +226,7 @@ list(REMOVE_ITEM onnxruntime_test_framework_src
      "${TEST_SRC_DIR}/providers/qnn/qnn_node_group/lpbqmatmul_fusion_without_ql_test.cc"
      "${TEST_SRC_DIR}/providers/qnn/qnn_node_group/scale_softmax_fusion_test.cc"
      "${TEST_SRC_DIR}/providers/qnn/qnn_node_group/gather_transpose_reshape_fusion_test.cc"
-     "${TEST_SRC_DIR}/providers/qnn/optimizer/transpose_optimizer_test.cc"
-     "${TEST_SRC_DIR}/providers/qnn/qnn_basic_test.cc")
+     "${TEST_SRC_DIR}/providers/qnn/optimizer/transpose_optimizer_test.cc")
 
 #This is a small wrapper library that shouldn't use any onnxruntime internal symbols(except onnxruntime_common).
 #Because it could dynamically link to onnxruntime. Otherwise you will have two copies of onnxruntime in the same
