@@ -751,6 +751,52 @@ TEST_F(QnnHTPBackendTests, UnaryOp_LogSoftmax11_SetAxis) {
                         ExpectedEPNodeAssignment::All);
 }
 
+// Tests accuracy of QDQ LogSoftmax (opset 13) with default axis.
+TEST_F(QnnHTPBackendTests, UnaryOp_LogSoftmax13_U16_DefaultAxis) {
+  std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 6);
+  RunQDQOpTest<uint16_t>("LogSoftmax",
+                         {TestInputDef<float>({1, 2, 3}, false, input_data)},
+                         {},  // Uses default axis of -1 for opset 13
+                         13,
+                         ExpectedEPNodeAssignment::All,
+                         kOnnxDomain,
+                         true);  // Use com.microsoft domain for Q/DQ ops
+}
+
+// Test that QDQ LogSoftmax (opset 13) with axis != -1 is supported by QNN EP.
+TEST_F(QnnHTPBackendTests, UnaryOp_LogSoftmax13_U16_NonLastAxis) {
+  std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 6);
+  RunQDQOpTest<uint16_t>("LogSoftmax",
+                         {TestInputDef<float>({1, 2, 3}, false, input_data)},
+                         {test::MakeAttribute("axis", static_cast<int64_t>(1))},
+                         13,
+                         ExpectedEPNodeAssignment::All,
+                         kOnnxDomain,
+                         true);  // Use com.microsoft domain for Q/DQ ops
+}
+
+// Tests accuracy of QDQ LogSoftmax (opset < 13) with default axis.
+TEST_F(QnnHTPBackendTests, UnaryOp_LogSoftmax11_U16_DefaultAxis) {
+  std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 6);
+  RunQDQOpTest<uint16_t>("LogSoftmax",
+                         {TestInputDef<float>({1, 2, 3}, false, input_data)},
+                         {},  // Uses default axis of 1 for opset < 13
+                         11,
+                         ExpectedEPNodeAssignment::All,
+                         kOnnxDomain,
+                         true);  // Use com.microsoft domain for Q/DQ ops
+}
+
+// Test QDQ LogSoftmax (opset < 13) with axis=0 is supported by QNN EP.
+TEST_F(QnnHTPBackendTests, UnaryOp_LogSoftmax11_Axis0) {
+  std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 6);
+  RunQDQOpTest<uint8_t>("LogSoftmax",
+                        {TestInputDef<float>({1, 2, 3}, false, input_data)},
+                        {test::MakeAttribute("axis", static_cast<int64_t>(0))},
+                        11,
+                        ExpectedEPNodeAssignment::All);
+}
+
 // Test accuracy of QDQ Abs op.
 TEST_F(QnnHTPBackendTests, UnaryOp_Abs) {
   RunQDQOpTest<uint8_t>("Abs",
