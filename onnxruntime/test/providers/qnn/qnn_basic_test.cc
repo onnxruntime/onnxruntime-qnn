@@ -889,7 +889,7 @@ TEST_F(QnnHTPBackendTests, MultithreadSustainedHighPowerCfgFromEpOption) {
   constexpr int loop_count = 10;
 
   for (int i = 0; i < num_threads; i++) {
-    threads.push_back(std::thread(RunSessionAndVerify, std::ref(session_obj), std::move(run_opts),
+    threads.push_back(std::thread(RunSessionAndVerify, std::ref(session), std::move(run_opts),
                                   std::ref(model->builder.feeds_), output_shapes, output_values, loop_count));
   }
 
