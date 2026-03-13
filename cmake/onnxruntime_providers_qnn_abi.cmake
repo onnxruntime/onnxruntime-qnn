@@ -125,7 +125,7 @@
     endif()
   endif()
 
-  # Copy License to output directory
+  # Copy License, README, and release notes to output directory
   add_custom_command(
     TARGET ${onnxruntime_providers_qnn_abi_target} POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy
@@ -137,7 +137,35 @@
     COMMAND ${CMAKE_COMMAND} -E copy
         ${REPO_ROOT}/LICENSE
         $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_abi_target}>/
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${REPO_ROOT}/README.md
+        ${REPO_ROOT}/docs/release-notes.txt
+        $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_abi_target}>/
   )
+  # Create document destination directory first to ensure it exists
+  add_custom_command(
+    TARGET ${onnxruntime_providers_qnn_abi_target} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_abi_target}>/docs/execution_providers
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_abi_target}>/docs/images
+    COMMENT "Creating document destination directory"
+  )
+  # Copy documents to output docs directory to preserve the file structure and maintain document links
+  add_custom_command(
+    TARGET ${onnxruntime_providers_qnn_abi_target} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${REPO_ROOT}/docs/execution_providers/QNN-ExecutionProvider.md
+        ${REPO_ROOT}/docs/execution_providers/build.md
+        ${REPO_ROOT}/docs/execution_providers/development.md
+        $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_abi_target}>/docs/execution_providers
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${REPO_ROOT}/docs/images/qnn_ep_quant_workflow.png
+        ${REPO_ROOT}/docs/images/quantization_mixed_precision_1.png
+        ${REPO_ROOT}/docs/images/quantization_mixed_precision_2.png
+        # Used in README.md
+        ${REPO_ROOT}/docs/images/ONNX_Runtime_logo_dark.png
+        $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_abi_target}>/docs/images
+  )
+
   if (EXISTS "${onnxruntime_QNN_HOME}/LICENSE.pdf")
     add_custom_command(
       TARGET ${onnxruntime_providers_qnn_abi_target} POST_BUILD
