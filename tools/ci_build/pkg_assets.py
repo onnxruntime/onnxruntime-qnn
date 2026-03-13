@@ -159,14 +159,38 @@ def build_zip_asset(
 
         # Get list of files to include
         asset_files = get_qnn_asset_file_list()
-        asset_files.extend(["LICENSE", "Qualcomm_LICENSE.pdf", "Privacy.md", "ThirdPartyNotices.txt"])
+        asset_files.extend(
+            [
+                "LICENSE",
+                "Qualcomm_LICENSE.pdf",
+                "Privacy.md",
+                "ThirdPartyNotices.txt",
+                "README.md",
+                "release-notes.txt",
+            ]
+        )
+        doc_md_files = ["QNN-ExecutionProvider.md", "build.md", "development.md"]
+        doc_png_files = [
+            "qnn_ep_quant_workflow.png",
+            "quantization_mixed_precision_1.png",
+            "quantization_mixed_precision_2.png",
+            "ONNX_Runtime_logo_dark.png",  # Used in README.md
+        ]
+        asset_files.extend(doc_md_files)
+        asset_files.extend(doc_png_files)
 
         # Collect and verify files exist
         missing_files = []
         found_files = []
 
         for filename in asset_files:
-            file_path = os.path.join(cwd, filename)
+            if filename in doc_md_files:
+                file_path = os.path.join(cwd, "docs", "execution_providers", filename)
+            elif filename in doc_png_files:
+                file_path = os.path.join(cwd, "docs", "images", filename)
+            else:
+                file_path = os.path.join(cwd, filename)
+
             if os.path.exists(file_path):
                 found_files.append((filename, file_path))
                 log.debug(f"Found asset file: {file_path}")
@@ -185,9 +209,10 @@ def build_zip_asset(
         # Create zip file
         log.info(f"Creating zip: {zip_path}")
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-            for filename, file_path in found_files:
-                zipf.write(file_path, filename)
-                log.debug(f"Added to zip: {filename}")
+            for _filename, file_path in found_files:
+                arcname = os.path.relpath(file_path, cwd)
+                zipf.write(file_path, arcname)
+                log.debug(f"Added to zip: {arcname}")
 
         log.info(f"Created zip asset: {zip_path} ({len(found_files)} files)")
         created_zips.append(zip_path)

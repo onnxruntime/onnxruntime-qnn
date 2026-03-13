@@ -143,7 +143,7 @@
     COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/onnxruntime_qnn
     COMMENT "Creating QNN library destination directory"
   )
-  # Copy version & license files to output directory
+  # Copy version, license, README, and release notes files to output directory
   add_custom_command(
     TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
     # Copy to output directory, required for zip archive
@@ -152,6 +152,8 @@
         ${REPO_ROOT}/ThirdPartyNotices.txt
         ${REPO_ROOT}/docs/Privacy.md
         ${REPO_ROOT}/LICENSE
+        ${REPO_ROOT}/README.md
+        ${REPO_ROOT}/docs/release-notes.txt
         $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>
     # Copy to onnxruntime_qnn directory, required for python wheel
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -161,7 +163,30 @@
         ${REPO_ROOT}/LICENSE
         ${ONNXRUNTIME_ROOT}/python/__init__.py
         $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/onnxruntime_qnn
-    COMMENT "Copying license files"
+    COMMENT "Copying version, license, README, and release notes files"
+  )
+  # Create document destination directory first to ensure it exists
+  add_custom_command(
+    TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/docs/execution_providers
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/docs/images
+    COMMENT "Creating document destination directory"
+  )
+  # Copy documents to output docs directory to preserve the file structure and maintain document links
+  add_custom_command(
+    TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${REPO_ROOT}/docs/execution_providers/QNN-ExecutionProvider.md
+        ${REPO_ROOT}/docs/execution_providers/build.md
+        ${REPO_ROOT}/docs/execution_providers/development.md
+        $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/docs/execution_providers
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${REPO_ROOT}/docs/images/qnn_ep_quant_workflow.png
+        ${REPO_ROOT}/docs/images/quantization_mixed_precision_1.png
+        ${REPO_ROOT}/docs/images/quantization_mixed_precision_2.png
+        # Used in README.md
+        ${REPO_ROOT}/docs/images/ONNX_Runtime_logo_dark.png
+        $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/docs/images
   )
   if (EXISTS "${onnxruntime_QNN_HOME}/LICENSE.pdf")
     add_custom_command(
