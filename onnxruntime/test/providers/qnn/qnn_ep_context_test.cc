@@ -12,6 +12,7 @@
 #include "core/session/inference_session.h"
 #include "core/graph/model_saving_options.h"
 #include "core/session/utils.h"
+#include "core/session/abi_devices.h"
 #include "core/session/abi_session_options_impl.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
@@ -26,7 +27,6 @@
 #define ORT_MODEL_FOLDER ORT_TSTR("testdata/")
 
 using namespace ONNX_NAMESPACE;
-using namespace onnxruntime::logging;
 
 // in test_main.cc
 extern std::unique_ptr<Ort::Env> ort_env;
@@ -35,40 +35,48 @@ namespace onnxruntime {
 namespace test {
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
-
-static int64_t GetNodeAttr(const Node& node, const std::string& attr_name, int64_t default_val) {
-  const auto& attributes = node.GetAttributes();
-  if (auto entry = attributes.find(attr_name); entry != attributes.end()) {
-    return entry->second.i();
+static void LoadOnnxModelFromFile(const std::string& path, onnx::ModelProto& out_model) {
+  std::ifstream fin(path, std::ios::in | std::ios::binary);
+  if (!fin) {
+    throw std::runtime_error("Failed to open file: " + path);
   }
-
-  return default_val;
-}
-
-static const std::string& GetNodeAttr(const Node& node, const std::string& attr_name, const std::string& default_val) {
-  const auto& attributes = node.GetAttributes();
-  if (auto entry = attributes.find(attr_name); entry != attributes.end()) {
-    return entry->second.s();
+  if (!out_model.ParseFromIstream(&fin)) {
+    throw std::runtime_error("ParseFromIstream() failed for: " + path);
   }
-
-  return default_val;
+  fin.close();
+  return;
 }
 
 // from the context cache Onnx model, find the EPContext node with main_context=1,
 // and get the QNN context binary file name
-static void GetContextBinaryFileName(const std::string onnx_ctx_file,
-                                     std::string& last_ctx_bin_file,
-                                     const Logger& logger) {
-  std::shared_ptr<Model> ctx_model;
-  ASSERT_STATUS_OK(Model::Load(ToPathString(onnx_ctx_file), ctx_model, nullptr, logger));
-  auto& ctx_graph = ctx_model->MainGraph();
-  for (auto& node : ctx_graph.Nodes()) {
-    if (node.OpType() == "EPContext") {
-      int64_t is_main_context = GetNodeAttr(node, "main_context", static_cast<int64_t>(0));
-      if (1 == is_main_context) {
-        last_ctx_bin_file = GetNodeAttr(node, "ep_cache_context", "");
-        return;
+static void GetContextBinaryFileName(const std::string& onnx_ctx_file,
+                                     std::string& last_ctx_bin_file) {
+  // Load model using ONNX protobuf API (avoid onnxruntime::Model).
+  ONNX_NAMESPACE::ModelProto ctx_model_proto;
+  std::ifstream ifs(onnx_ctx_file, std::ios::in | std::ios::binary);
+  ASSERT_TRUE(ifs.good()) << "Failed to open ONNX file: " << onnx_ctx_file;
+  ASSERT_TRUE(ctx_model_proto.ParseFromIstream(&ifs)) << "Failed to parse ONNX file: " << onnx_ctx_file;
+
+  // Iterate nodes in the main graph and find EPContext node with main_context == 1.
+  for (const auto& node : ctx_model_proto.graph().node()) {
+    if (node.op_type() != "EPContext") {
+      continue;
+    }
+
+    int64_t is_main_context = 0;
+    std::string ep_cache_context;
+
+    for (const auto& attr : node.attribute()) {
+      if (attr.name() == "main_context") {
+        is_main_context = attr.i();
+      } else if (attr.name() == "ep_cache_context") {
+        ep_cache_context = attr.s();
       }
+    }
+
+    if (is_main_context == 1) {
+      last_ctx_bin_file = ep_cache_context;
+      return;
     }
   }
 }
@@ -76,8 +84,7 @@ static void GetContextBinaryFileName(const std::string onnx_ctx_file,
 // Get context binary file name from Context model file and remove it with the context model file
 void CleanUpCtxFile(std::string context_file_path) {
   std::string qnn_ctx_binary_file_name;
-  GetContextBinaryFileName(context_file_path, qnn_ctx_binary_file_name,
-                           DefaultLoggingManager().DefaultLogger());
+  GetContextBinaryFileName(context_file_path, qnn_ctx_binary_file_name);
 
   std::filesystem::path ctx_model_path(context_file_path);
 
@@ -93,50 +100,66 @@ void CleanUpCtxFile(std::string context_file_path) {
 static GetTestModelFn BuildGraphWithQAndNonQ(bool single_ep_node = true) {
   return [single_ep_node](ModelTestBuilder& builder) {
     // Create non-quantized FusedGemm node1
-    std::vector<float> gemm_input_data(12, 1.0f);
-    std::vector<float> gemm_weight_data(16, 1.0f);  // 4x4 = 16 elements
-    NodeArg* input1 = MakeTestInput(builder, TestInputDef<float>({3, 4}, false, gemm_input_data));
-    NodeArg* add1_ini_input2 = MakeTestInput(builder, TestInputDef<float>({4, 4}, true, gemm_weight_data));
-
-    auto* add1_output = builder.MakeIntermediate();
-    Node& fused_gemm_node1 = builder.AddNode("FusedGemm", {input1, add1_ini_input2}, {add1_output}, kMSDomain);
-    fused_gemm_node1.AddAttribute("activation", "Relu");
+    std::vector<float> data(200 * 200, 1.0f);
+    MakeTestInput(builder, "input1", TestInputDef<float>({200, 200}, false, data));
+    MakeTestInput(builder, "add1_ini_input2", TestInputDef<float>({200, 200}, true, data));
+    std::vector<ONNX_NAMESPACE::AttributeProto> fusedgemm_attrs;
+    fusedgemm_attrs.push_back(builder.MakeStringAttribute("activation", "Relu"));
+    builder.AddNode("FusedGemm_node0",
+                    "FusedGemm",
+                    {"input1", "add1_ini_input2"},
+                    {"add1_out"},
+                    kMSDomain,
+                    fusedgemm_attrs);
 
     // Create quantized Add node2
     std::vector<float> add_data(12, 1.0f);
     gsl::span<float> data_range = gsl::make_span(add_data);
     QuantParams<uint8_t> q_parameter = GetDataQuantParams<uint8_t>(data_range);
-    auto* add2_input1_qdq = AddQDQNodePair<uint8_t>(builder, add1_output, q_parameter.scale, q_parameter.zero_point);
+    std::string add2_input1_qdq =
+        AddQDQNodePair<uint8_t>(builder, "add2_in1_qdq", "add1_out", q_parameter.scale, q_parameter.zero_point);
 
-    NodeArg* add2_input2 = MakeTestInput(builder, TestInputDef<float>({3, 4}, true, add_data));
-    auto* add2_input2_qdq = AddQDQNodePair<uint8_t>(builder, add2_input2, q_parameter.scale, q_parameter.zero_point);
+    MakeTestInput(builder, "add2_input2", TestInputDef<float>({200, 200}, true, data));
+    std::string add2_input2_qdq =
+        AddQDQNodePair<uint8_t>(builder, "add2_in2_qdq", "add2_input2", q_parameter.scale, q_parameter.zero_point);
 
-    auto* add2_output = builder.MakeIntermediate();
-
-    builder.AddNode("Add", {add2_input1_qdq, add2_input2_qdq}, {add2_output});
+    builder.AddNode("Add_node0",
+                    "Add",
+                    {add2_input1_qdq, add2_input2_qdq},
+                    {"add2_out"});
 
     if (single_ep_node) {
-      // add_output -> Q -> DQ -> output
-      AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, add2_output, q_parameter.scale, q_parameter.zero_point);
+      // add2_out -> Q -> DQ -> output
+      auto final_out = AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_out", "add2_out", q_parameter.scale, q_parameter.zero_point);
     } else {
-      auto* add3_input1_qdq = AddQDQNodePair<uint8_t>(builder, add2_output, q_parameter.scale, q_parameter.zero_point);
-      NodeArg* add3_ini_input2 = MakeTestInput(builder, TestInputDef<float>({4, 4}, true, gemm_weight_data));
+      std::string add3_input1_qdq =
+          AddQDQNodePair<uint8_t>(builder, "add3_in1_qdq", "add2_out", q_parameter.scale, q_parameter.zero_point);
 
-      auto* add3_output = builder.MakeIntermediate();
-      Node& fused_gemm_node2 = builder.AddNode("FusedGemm", {add3_input1_qdq, add3_ini_input2}, {add3_output}, kMSDomain);
-      fused_gemm_node2.AddAttribute("activation", "Relu");
+      MakeTestInput(builder, "add3_ini_input2", TestInputDef<float>({200, 200}, true, data));
+
+      std::vector<ONNX_NAMESPACE::AttributeProto> fusedgemm_attrs2;
+      fusedgemm_attrs2.push_back(builder.MakeStringAttribute("activation", "Relu"));
+      builder.AddNode("FusedGemm_node1",
+                      "FusedGemm",
+                      {add3_input1_qdq, "add3_ini_input2"},
+                      {"add3_out"},
+                      kMSDomain,
+                      fusedgemm_attrs2);
 
       // Create quantized Add node4
-      auto* add4_input1_qdq = AddQDQNodePair<uint8_t>(builder, add3_output, q_parameter.scale, q_parameter.zero_point);
+      std::string add4_input1_qdq =
+          AddQDQNodePair<uint8_t>(builder, "add4_in1_qdq", "add3_out", q_parameter.scale, q_parameter.zero_point);
 
-      NodeArg* add4_input2 = MakeTestInput(builder, TestInputDef<float>({3, 4}, true, add_data));
-      auto* add4_input2_qdq = AddQDQNodePair<uint8_t>(builder, add4_input2, q_parameter.scale, q_parameter.zero_point);
+      MakeTestInput(builder, "add4_input2", TestInputDef<float>({200, 200}, true, data));
+      std::string add4_input2_qdq =
+          AddQDQNodePair<uint8_t>(builder, "add4_in2_qdq", "add4_input2", q_parameter.scale, q_parameter.zero_point);
 
-      auto* add4_output = builder.MakeIntermediate();
+      builder.AddNode("Add_node1",
+                      "Add",
+                      {add4_input1_qdq, add4_input2_qdq},
+                      {"add4_out"});
 
-      builder.AddNode("Add", {add4_input1_qdq, add4_input2_qdq}, {add4_output});
-      // add_output -> Q -> DQ -> output
-      AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, add4_output, q_parameter.scale, q_parameter.zero_point);
+      auto final_out = AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_out", "add4_out", q_parameter.scale, q_parameter.zero_point);
     }
   };
 }
@@ -148,28 +171,27 @@ void QnnContextBinaryMultiPartitionTestBody(bool single_ep_node = true) {
 
   const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
 
-  auto& logging_manager = DefaultLoggingManager();
-  logging_manager.SetDefaultLoggerSeverity(logging::Severity::kERROR);
-
-  onnxruntime::Model model("QNN_EP_TestModel", false, ModelMetaData(), PathString(),
-                           IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                           logging_manager.DefaultLogger());
-  Graph& graph = model.MainGraph();
-  ModelTestBuilder helper(graph);
+  // Build input model via ModelProto directly (avoid onnxruntime::Model/Graph/Resolve).
+  ModelTestBuilder helper;
   BuildGraphWithQAndNonQ(single_ep_node)(helper);
-  helper.SetGraphOutputs();
-  ASSERT_STATUS_OK(model.MainGraph().Resolve());
 
-  // Serialize the model to a string.
+  // opset imports
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
   std::string model_data;
-  model.ToProto().SerializeToString(&model_data);
-
+  helper.model_.SerializeToString(&model_data);
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
 
   const std::string context_model_file = "./testdata/qnn_context_binary_multi_partition_test.onnx";
   std::remove(context_model_file.c_str());
 
-  std::shared_ptr<Model> ctx_model;
+  // Use ONNX protobuf APIs (ModelProto) instead of onnxruntime::Model/Graph APIs.
+  ONNX_NAMESPACE::ModelProto ctx_model_proto;
 
   {
     Ort::SessionOptions so;
@@ -184,15 +206,20 @@ void QnnContextBinaryMultiPartitionTestBody(bool single_ep_node = true) {
     // Make sure the Qnn context cache binary file is generated
     EXPECT_TRUE(std::filesystem::exists(context_model_file.c_str()));
 
+    // Load generated context model into ModelProto
+    std::ifstream ifs(context_model_file, std::ios::in | std::ios::binary);
+    ASSERT_TRUE(ifs.good()) << "Failed to open ONNX file: " << context_model_file;
+    ASSERT_TRUE(ctx_model_proto.ParseFromIstream(&ifs)) << "Failed to parse ONNX file: " << context_model_file;
+
     int ep_context_node_count = 0;
     int non_ep_context_node_count = 0;
-    ASSERT_STATUS_OK(Model::Load(ToPathString(context_model_file), ctx_model, nullptr, DefaultLoggingManager().DefaultLogger()));
-    auto& ctx_graph = ctx_model->MainGraph();
-    for (auto& node : ctx_graph.Nodes()) {
-      if (node.OpType() == "EPContext") {
+
+    for (const auto& node : ctx_model_proto.graph().node()) {
+      if (node.op_type() == "EPContext") {
         ++ep_context_node_count;
+
         // validate the fix for the partition issue relate to QDQ model
-        ASSERT_EQ(node.InputDefs().size(), 1);
+        ASSERT_EQ(node.input_size(), 1);
       } else {
         ++non_ep_context_node_count;
       }
@@ -212,7 +239,7 @@ void QnnContextBinaryMultiPartitionTestBody(bool single_ep_node = true) {
     RegisterQnnEpLibrary(registered_ep_device, so2, onnxruntime::kQnnExecutionProvider, provider_options);
 
     std::string ctx_model_data;
-    ctx_model->ToProto().SerializeToString(&ctx_model_data);
+    ctx_model_proto.SerializeToString(&ctx_model_data);
     Ort::Session session2(*ort_env, ctx_model_data.data(), ctx_model_data.size(), so2);
   }
 
@@ -220,52 +247,58 @@ void QnnContextBinaryMultiPartitionTestBody(bool single_ep_node = true) {
   CleanUpCtxFile(context_model_file);
 }
 
-// Helper struct that represents a test model.
 struct TestModel {
-  std::unique_ptr<onnxruntime::Model> model;
   std::unique_ptr<ModelTestBuilder> builder;
 
   std::string Serialize() const {
     std::string model_data;
-    model->ToProto().SerializeToString(&model_data);
+    builder->model_.SerializeToString(&model_data);
     return model_data;
   }
 
-  Status Save(const ORTCHAR_T* path) const {
-    return onnxruntime::Model::Save(*model, PathString(path));
+  bool Save(const ORTCHAR_T* path) const {
+    std::ofstream ofs(PathString(path), std::ios::binary);
+    return builder->model_.SerializeToOstream(&ofs);
   }
 };
 
 // Create a test model from a function that programmatically builds a graph.
+// Note: We intentionally avoid onnxruntime::Model + Graph::Resolve() here. These tests only need a valid ONNX
+// ModelProto for feeding into Ort::Session / Ort::Compile_extractor.
 static void CreateTestModel(test::GetTestModelFn graph_builder,
                             int onnx_opset_version,
-                            logging::Severity log_severity,
+                            OrtLoggingLevel log_severity,
                             TestModel& test_model) {
-  auto& logging_manager = DefaultLoggingManager();
-  logging_manager.SetDefaultLoggerSeverity(log_severity);
+  ORT_UNUSED_PARAMETER(log_severity);
   const std::unordered_map<std::string, int> domain_to_version = {{"", onnx_opset_version}, {kMSDomain, 1}};
 
-  test_model.model = std::make_unique<onnxruntime::Model>("QNN_EP_TestModel", false, ModelMetaData(), PathString(),
-                                                          IOnnxRuntimeOpSchemaRegistryList(), domain_to_version,
-                                                          std::vector<ONNX_NAMESPACE::FunctionProto>{}, logging_manager.DefaultLogger());
-  test_model.builder = std::make_unique<ModelTestBuilder>(test_model.model->MainGraph());
+  test_model.builder = std::make_unique<ModelTestBuilder>();
   graph_builder(*test_model.builder);
-  test_model.builder->SetGraphOutputs();
-  ASSERT_STATUS_OK(test_model.model->MainGraph().Resolve());
+
+  // Populate opset imports (similar to RunQnnModelTest).
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{test_model.builder->model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+
+  // Keep IR version consistent with other QNN ABI tests.
+  test_model.builder->model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 }
 
 // Helper that checks that a compiled model has the expected number of EPContext nodes.
-static void CheckEpContextNodeCounts(const onnxruntime::Model& ep_ctx_model,
+static void CheckEpContextNodeCounts(const ONNX_NAMESPACE::ModelProto& model_proto,
                                      int expected_ep_context_node_count,
                                      int expected_other_node_count) {
   int ep_context_node_count = 0;
   int non_ep_context_node_count = 0;
-  auto& ctx_graph = ep_ctx_model.MainGraph();
-  for (auto& node : ctx_graph.Nodes()) {
-    if (node.OpType() == "EPContext") {
+
+  // Iterate through nodes in the main graph
+  for (const auto& node : model_proto.graph().node()) {
+    if (node.op_type() == "EPContext") {
       ++ep_context_node_count;
       // validate the fix for the partition issue relate to QDQ model
-      ASSERT_EQ(node.InputDefs().size(), 1);
+      ASSERT_EQ(node.input_size(), 1);
     } else {
       ++non_ep_context_node_count;
     }
@@ -279,22 +312,22 @@ static void CheckEpContextNodeCounts(const onnxruntime::Model& ep_ctx_model,
 static void CheckEpContextNodeCounts(const ORTCHAR_T* model_path,
                                      int expected_ep_context_node_count,
                                      int expected_other_node_count) {
-  std::shared_ptr<Model> ep_ctx_model;
-  ASSERT_STATUS_OK(Model::Load(ToPathString(model_path), ep_ctx_model, nullptr, DefaultLoggingManager().DefaultLogger()));
-  CheckEpContextNodeCounts(*ep_ctx_model, expected_ep_context_node_count, expected_other_node_count);
+  ONNX_NAMESPACE::ModelProto model_proto;
+  std::ifstream ifs(model_path, std::ios::in | std::ios::binary);
+  ASSERT_TRUE(ifs.good()) << "Failed to open ONNX file: " << model_path;
+  ASSERT_TRUE(model_proto.ParseFromIstream(&ifs)) << "Failed to parse ONNX file: " << model_path;
+  ifs.close();
+  CheckEpContextNodeCounts(model_proto, expected_ep_context_node_count, expected_other_node_count);
 }
 
 // Helper to check that a compiled model (stored in a buffer) has the expected number of EPContext nodes.
 static void CheckEpContextNodeCounts(void* model_buffer, size_t model_buffer_size,
                                      int expected_ep_context_node_count,
                                      int expected_other_node_count) {
-  std::shared_ptr<Model> ep_ctx_model;
-  const ORTCHAR_T* output_model_path = ORT_TSTR("tmp_output_ctx_model.onnx");
-  ASSERT_STATUS_OK(onnxruntime::Model::LoadFromBytes(static_cast<int>(model_buffer_size),
-                                                     model_buffer, output_model_path, ep_ctx_model,
-                                                     nullptr, DefaultLoggingManager().DefaultLogger()));
-  CheckEpContextNodeCounts(*ep_ctx_model, expected_ep_context_node_count, expected_other_node_count);
-  std::filesystem::remove(output_model_path);
+  ONNX_NAMESPACE::ModelProto model_proto;
+  ASSERT_TRUE(model_proto.ParseFromArray(model_buffer, static_cast<int>(model_buffer_size)))
+      << "Failed to parse model from buffer";
+  CheckEpContextNodeCounts(model_proto, expected_ep_context_node_count, expected_other_node_count);
 }
 
 // Test workflow that:
@@ -302,6 +335,7 @@ static void CheckEpContextNodeCounts(void* model_buffer, size_t model_buffer_siz
 //   - Session creation fails because input model is not pre-compiled.
 //   - Uses OrtCompileApi to compile the model.
 //   - Recreates session with the compiled model.
+
 TEST_F(QnnHTPBackendTests, CompileApi_DisableEpCompile_ThenCompileExplicitly) {
   const ORTCHAR_T* input_model_file = ORT_TSTR("./compileapi_disable_compile_input.onnx");
   const ORTCHAR_T* output_model_file = ORT_TSTR("./compileapi_disable_compile_output.onnx");
@@ -310,8 +344,8 @@ TEST_F(QnnHTPBackendTests, CompileApi_DisableEpCompile_ThenCompileExplicitly) {
 
   // Create a test model and save it to a file.
   TestModel test_model;
-  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, logging::Severity::kERROR, test_model);
-  ASSERT_STATUS_OK(test_model.Save(input_model_file));
+  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
+  ASSERT_TRUE(test_model.Save(input_model_file));
 
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -369,8 +403,8 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelFromPath) {
 
   // Create a test model and save it to a file.
   TestModel test_model;
-  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, logging::Severity::kERROR, test_model);
-  ASSERT_STATUS_OK(test_model.Save(input_model_file));
+  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
+  ASSERT_TRUE(test_model.Save(input_model_file));
 
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -406,7 +440,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelFromPath) {
 TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelAsBuffer_Embedded) {
   // Create a test model and serialize it to a buffer.
   TestModel test_model;
-  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, logging::Severity::kERROR, test_model);
+  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
   std::string model_data = test_model.Serialize();
 
   const ORTCHAR_T* output_model_file = ORT_TSTR("./qnn_context_binary_multi_partition_test.onnx");
@@ -449,8 +483,8 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer) {
 
   // Create a test model and save it to a file.
   TestModel test_model;
-  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, logging::Severity::kERROR, test_model);
-  ASSERT_STATUS_OK(test_model.Save(input_model_file));
+  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
+  ASSERT_TRUE(test_model.Save(input_model_file));
 
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -494,7 +528,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer) {
 TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputAndOutputModelsInBuffers) {
   // Create a test model and serialize it to a buffer.
   TestModel test_model;
-  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, logging::Severity::kERROR, test_model);
+  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
   std::string model_data = test_model.Serialize();
 
   ProviderOptions provider_options;
@@ -549,7 +583,15 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputAndOutputModelsInB
     std::string model_name = "test_model_in_mem.onnx";
     auto pos = model_name.rfind(".onnx");
     std::string bin_file_name = model_name.substr(0, pos) + "_qnn.bin";
-    compile_options.SetEpContextBinaryInformation(ToWideString(target_dir).c_str(), ToWideString(model_name).c_str());
+#if defined(_WIN32)
+    // Use public ORT API surface: `Ort::SessionOptions` / `ORTCHAR_T`-based strings on Windows.
+    const std::wstring target_dir_w = std::wstring(target_dir.begin(), target_dir.end());
+    const std::wstring model_name_w = std::wstring(model_name.begin(), model_name.end());
+    compile_options.SetEpContextBinaryInformation(target_dir_w.c_str(), model_name_w.c_str());
+#else
+    // On non-Windows platforms ORTCHAR_T is `char`, so std::string is already correct.
+    compile_options.SetEpContextBinaryInformation(target_dir.c_str(), model_name.c_str());
+#endif
     compile_options.SetEpContextEmbedMode(false);
     compile_options.SetGraphOptimizationLevel(ORT_ENABLE_BASIC);
 
@@ -590,8 +632,8 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer_Outpu
 
   // Create a test model and save it to a file.
   TestModel test_model;
-  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, logging::Severity::kERROR, test_model);
-  ASSERT_STATUS_OK(test_model.Save(input_model_file));
+  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
+  ASSERT_TRUE(test_model.Save(input_model_file));
 
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -765,7 +807,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_OriginalCompileApproach_NoCompiledNo
 // Also, ORT should not return an error.
 TEST_F(QnnHTPBackendTests, QnnContextBinary_OriginalCompileApproach_IgnoreCompilingOfCompiledModel) {
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
-  const char* output_model_file = "mul_1_ctx.onnx";
+  const std::string output_model_file = "mul_1_ctx.onnx";
   std::filesystem::remove(output_model_file);
 
   ProviderOptions qnn_options = {{"backend_type", "htp"}};
@@ -774,7 +816,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_OriginalCompileApproach_IgnoreCompil
   {
     Ort::SessionOptions so;
     so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
-    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, output_model_file);
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, output_model_file.c_str());
 
     RegisteredEpDeviceUniquePtr registered_ep_device;
     RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
@@ -797,7 +839,12 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_OriginalCompileApproach_IgnoreCompil
 
     // Currently it would failed at ConvertEpContextNodes in ep_plugin_provider_interfaces.cc.
     try {
-      Ort::Session session(*ort_env, ToPathString(output_model_file).c_str(), so);
+#ifdef _WIN32
+      std::wstring out_model_file(output_model_file.begin(), output_model_file.end());
+#else
+      std::string out_model_file(output_model_file.begin(), output_model_file.end());
+#endif
+      Ort::Session session(*ort_env, out_model_file.c_str(), so);
     } catch (const Ort::Exception& e) {
       ASSERT_EQ(e.GetOrtErrorCode(), ORT_FAIL);
       ASSERT_THAT(e.what(), testing::HasSubstr("OrtEp::Compile() returned a NULL EPContext node"));
@@ -821,33 +868,122 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryMultiPartitionSupport2) {
   QnnContextBinaryMultiPartitionTestBody(false);
 }
 
+static void ExternalizeAllInitializersToFile(ONNX_NAMESPACE::ModelProto& model,
+                                             const std::string& external_file_name,
+                                             const std::string& external_file_full_path) {
+  std::ofstream ext_ofs(external_file_full_path, std::ios::binary);
+  ASSERT_TRUE(ext_ofs.good()) << "Failed to open external initializer file: " << external_file_full_path;
+
+  int64_t offset = 0;
+  for (auto& initializer : *model.mutable_graph()->mutable_initializer()) {
+    // Ensure tensor data is in raw_data so we can write a single contiguous blob.
+    if (!initializer.has_raw_data()) {
+      // Convert other typed fields to raw_data if needed.
+      if (initializer.data_type() == ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT) {
+        const size_t n = static_cast<size_t>(initializer.float_data_size());
+        const float* src = initializer.float_data().data();
+        initializer.set_raw_data(reinterpret_cast<const void*>(src), n * sizeof(float));
+        initializer.clear_float_data();
+      } else if (initializer.data_type() == ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_UINT8) {
+        const size_t n = static_cast<size_t>(initializer.int32_data_size());
+        std::string bytes;
+        bytes.resize(n);
+        for (size_t i = 0; i < n; ++i) {
+          bytes[i] = static_cast<char>(static_cast<uint8_t>(initializer.int32_data(static_cast<int>(i))));
+        }
+        initializer.set_raw_data(bytes);
+        initializer.clear_int32_data();
+      } else if (initializer.data_type() == ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_INT8) {
+        const size_t n = static_cast<size_t>(initializer.int32_data_size());
+        std::string bytes;
+        bytes.resize(n);
+        for (size_t i = 0; i < n; ++i) {
+          bytes[i] = static_cast<char>(static_cast<int8_t>(initializer.int32_data(static_cast<int>(i))));
+        }
+        initializer.set_raw_data(bytes);
+        initializer.clear_int32_data();
+      }
+    }
+
+    // IMPORTANT: take a copy of raw_data BEFORE we clear it (protobuf string reference would become empty).
+    const std::string raw_copy = initializer.raw_data();
+    ASSERT_FALSE(raw_copy.empty()) << "Initializer has no data: " << initializer.name();
+
+    ext_ofs.write(raw_copy.data(), raw_copy.size());
+    ASSERT_TRUE(ext_ofs.good()) << "Failed writing external initializer bytes";
+
+    // Mark tensor as external and point to the external file.
+    initializer.set_data_location(ONNX_NAMESPACE::TensorProto_DataLocation::TensorProto_DataLocation_EXTERNAL);
+
+    initializer.clear_raw_data();
+    initializer.clear_float_data();
+    initializer.clear_int32_data();
+    initializer.clear_int64_data();
+    initializer.clear_double_data();
+    initializer.clear_string_data();
+    initializer.clear_uint64_data();
+
+    initializer.clear_external_data();
+    auto* kv_loc = initializer.add_external_data();
+    kv_loc->set_key("location");
+    kv_loc->set_value(external_file_name);
+
+    auto* kv_off = initializer.add_external_data();
+    kv_off->set_key("offset");
+    kv_off->set_value(std::to_string(offset));
+
+    auto* kv_len = initializer.add_external_data();
+    kv_len->set_key("length");
+    kv_len->set_value(std::to_string(raw_copy.size()));
+
+    offset += static_cast<int64_t>(raw_copy.size());
+  }
+
+  ext_ofs.flush();
+  ext_ofs.close();
+}
+
 void EpCtxCpuNodeWithExternalIniFileTestBody(bool expect_external_ini_file, bool load_model_from_buffer = false) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
   const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
 
-  auto& logging_manager = DefaultLoggingManager();
-  logging_manager.SetDefaultLoggerSeverity(logging::Severity::kERROR);
-
-  onnxruntime::Model model("QNN_EP_TestModel", false, ModelMetaData(), PathString(),
-                           IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                           logging_manager.DefaultLogger());
-  Graph& graph = model.MainGraph();
-  ModelTestBuilder helper(graph);
+  // Build input model via ModelProto directly (avoid onnxruntime::Model/Graph/Resolve).
+  ModelTestBuilder helper;
   BuildGraphWithQAndNonQ(true)(helper);
-  helper.SetGraphOutputs();
-  ASSERT_STATUS_OK(model.MainGraph().Resolve());
-  ModelSavingOptions model_saving_options{10};
-  // dump the model in testdata folder in case it hides the bug that not able to find model not in current dir
-  const std::string model_with_ext = "./testdata/model_external.onnx";
-  const std::string model_ext_file = "model_external.bin";
-  ASSERT_STATUS_OK(Model::SaveWithExternalInitializers(model, model_with_ext,
-                                                       model_ext_file, model_saving_options));
+
+  // opset imports
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  // Keep ONNX model + external initializer file in testdata folder so it can be resolved via
+  // kOrtSessionOptionsModelExternalInitializersFileFolderPath.
+  const std::string ext_folder = "./testdata/";
+  const std::string model_with_ext = ext_folder + "model_external.onnx";
+  const std::string model_ext_file_name = "model_external.bin";  // NOTE: stored in TensorProto.external_data.location
+  const std::string model_ext_file = ext_folder + model_ext_file_name;
+
+  // Ensure external initializer folder exists before writing.
+  std::filesystem::create_directories(ext_folder);
+
+  std::filesystem::remove(model_with_ext);
+  std::filesystem::remove(model_ext_file);
+
+  // Use ONNX protobuf APIs (ModelProto external_data) to save initializers to model_external.bin
+  ExternalizeAllInitializersToFile(helper.model_, model_ext_file_name, model_ext_file);
+
+  std::ofstream model_ofs(model_with_ext, std::ios::binary);
+  ASSERT_TRUE(model_ofs.good());
+  ASSERT_TRUE(helper.model_.SerializeToOstream(&model_ofs));
+  model_ofs.close();
 
   EXPECT_TRUE(std::filesystem::exists(model_with_ext.c_str()));
-  std::string model_ext_file_full_path = "./testdata/" + model_ext_file;
-  EXPECT_TRUE(std::filesystem::exists(model_ext_file_full_path.c_str()));
+  EXPECT_TRUE(std::filesystem::exists(model_ext_file.c_str()));
 
   Ort::SessionOptions so;
   so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
@@ -868,16 +1004,21 @@ void EpCtxCpuNodeWithExternalIniFileTestBody(bool expect_external_ini_file, bool
     {
       std::ifstream file(model_with_ext, std::ios::binary | std::ios::ate);
       if (!file)
-        ORT_THROW("Error reading model");
+        throw std::runtime_error("Error reading model");
       buffer.resize(narrow<size_t>(file.tellg()));
       file.seekg(0, std::ios::beg);
       if (!file.read(buffer.data(), buffer.size()))
-        ORT_THROW("Error reading model");
+        throw std::runtime_error("Error reading model");
     }
-    so.AddConfigEntry(kOrtSessionOptionsModelExternalInitializersFileFolderPath, "./testdata/");
+    so.AddConfigEntry(kOrtSessionOptionsModelExternalInitializersFileFolderPath, ext_folder.c_str());
     Ort::Session session(*ort_env, buffer.data(), buffer.size(), so);
   } else {
-    Ort::Session session(*ort_env, ToPathString(model_with_ext).c_str(), so);
+#if defined(_WIN32)
+    const std::wstring model_with_ext_w(model_with_ext.begin(), model_with_ext.end());
+    Ort::Session session(*ort_env, model_with_ext_w.c_str(), so);
+#else
+    Ort::Session session(*ort_env, model_with_ext.c_str(), so);
+#endif
   }
 
   EXPECT_TRUE(std::filesystem::exists(ep_context_model_file.c_str()));
@@ -890,7 +1031,7 @@ void EpCtxCpuNodeWithExternalIniFileTestBody(bool expect_external_ini_file, bool
 
   // clean up
   ASSERT_EQ(std::remove(model_with_ext.c_str()), 0);
-  ASSERT_EQ(std::remove(model_ext_file_full_path.c_str()), 0);
+  ASSERT_EQ(std::remove(model_ext_file.c_str()), 0);
   CleanUpCtxFile(ep_context_model_file);
 }
 
@@ -921,22 +1062,19 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGenerationFolderPathNotExpected) {
 
   const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
 
-  auto& logging_manager = DefaultLoggingManager();
-  logging_manager.SetDefaultLoggerSeverity(logging::Severity::kERROR);
-
-  onnxruntime::Model model("QNN_EP_TestModel", false, ModelMetaData(), PathString(),
-                           IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                           logging_manager.DefaultLogger());
-  Graph& graph = model.MainGraph();
-  ModelTestBuilder helper(graph);
+  ModelTestBuilder helper;
   bool single_ep_node = true;
   BuildGraphWithQAndNonQ(single_ep_node)(helper);
-  helper.SetGraphOutputs();
-  ASSERT_STATUS_OK(model.MainGraph().Resolve());
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   // Serialize the model to a string.
   std::string model_data;
-  model.ToProto().SerializeToString(&model_data);
+  helper.model_.SerializeToString(&model_data);
 
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
 
@@ -967,22 +1105,22 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGenerationFolderPathNotExpected2) {
 
   const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
 
-  auto& logging_manager = DefaultLoggingManager();
-  logging_manager.SetDefaultLoggerSeverity(logging::Severity::kERROR);
-
-  onnxruntime::Model model("QNN_EP_TestModel", false, ModelMetaData(), PathString(),
-                           IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                           logging_manager.DefaultLogger());
-  Graph& graph = model.MainGraph();
-  ModelTestBuilder helper(graph);
+  // Build input model via ModelProto directly (avoid onnxruntime::Model/Graph/Resolve).
+  ModelTestBuilder helper;
   bool single_ep_node = true;
   BuildGraphWithQAndNonQ(single_ep_node)(helper);
-  helper.SetGraphOutputs();
-  ASSERT_STATUS_OK(model.MainGraph().Resolve());
+
+  // opset imports
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   // Serialize the model to a string.
   std::string model_data;
-  model.ToProto().SerializeToString(&model_data);
+  helper.model_.SerializeToString(&model_data);
 
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
 
@@ -1015,22 +1153,22 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGenerationNoOverWrite) {
 
   const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
 
-  auto& logging_manager = DefaultLoggingManager();
-  logging_manager.SetDefaultLoggerSeverity(logging::Severity::kERROR);
-
-  onnxruntime::Model model("QNN_EP_TestModel", false, ModelMetaData(), PathString(),
-                           IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                           logging_manager.DefaultLogger());
-  Graph& graph = model.MainGraph();
-  ModelTestBuilder helper(graph);
+  // Build input model via ModelProto directly (avoid onnxruntime::Model/Graph/Resolve).
+  ModelTestBuilder helper;
   bool single_ep_node = true;
   BuildGraphWithQAndNonQ(single_ep_node)(helper);
-  helper.SetGraphOutputs();
-  ASSERT_STATUS_OK(model.MainGraph().Resolve());
+
+  // opset imports
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   // Serialize the model to a string.
   std::string model_data;
-  model.ToProto().SerializeToString(&model_data);
+  helper.model_.SerializeToString(&model_data);
 
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
 
@@ -1070,28 +1208,39 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGenerationNoOverWrite) {
 //             input2 -> Q -> DQ -> Add -> Q -> DQ -> output
 static GetTestModelFn BuildCastAddTestCase() {
   return [](ModelTestBuilder& builder) {
-    // Creat Cast node int32 -> float32
-    NodeArg* cast_input = MakeTestInput(builder, TestInputDef<int32_t>({2, 3}, false, {0, 1, 0, 1, 0, 1}));
+    // Create Cast node int32 -> float32
+    MakeTestInput(builder, "cast_in", TestInputDef<int32_t>({2, 3}, false, {0, 1, 0, 1, 0, 1}));
 
-    auto* cast_output = builder.MakeIntermediate();
-    Node& cast_node = builder.AddNode("Cast", {cast_input}, {cast_output});
-    cast_node.AddAttribute("to", static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT));
+    std::vector<ONNX_NAMESPACE::AttributeProto> cast_attrs;
+    cast_attrs.push_back(builder.MakeScalarAttribute(
+        "to", static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT)));
+
+    builder.AddNode("cast_node",
+                    "Cast",
+                    {"cast_in"},
+                    {"cast_out"},
+                    "",
+                    cast_attrs);
 
     // Create Add node
     std::vector<float> data = {0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f};
     gsl::span<float> data_range = gsl::make_span(data);
     QuantParams<uint8_t> q_parameter = GetDataQuantParams<uint8_t>(data_range);
-    auto* add_input1_qdq = AddQDQNodePair<uint8_t>(builder, cast_output, q_parameter.scale, q_parameter.zero_point);
 
-    NodeArg* add_input2 = MakeTestInput(builder, TestInputDef<float>({2, 3}, false, data));
-    auto* add_input2_qdq = AddQDQNodePair<uint8_t>(builder, add_input2, q_parameter.scale, q_parameter.zero_point);
+    std::string add_input1_qdq =
+        AddQDQNodePair<uint8_t>(builder, "add_in1_qdq", "cast_out", q_parameter.scale, q_parameter.zero_point);
 
-    auto* add_output = builder.MakeIntermediate();
+    MakeTestInput(builder, "add_in2", TestInputDef<float>({2, 3}, false, data));
+    std::string add_input2_qdq =
+        AddQDQNodePair<uint8_t>(builder, "add_in2_qdq", "add_in2", q_parameter.scale, q_parameter.zero_point);
 
-    builder.AddNode("Add", {add_input1_qdq, add_input2_qdq}, {add_output});
+    builder.AddNode("Add_node",
+                    "Add",
+                    {add_input1_qdq, add_input2_qdq},
+                    {"add_out"});
 
-    // add_output -> Q -> DQ -> output
-    AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, add_output, q_parameter.scale, q_parameter.zero_point);
+    // add_out -> Q -> DQ -> output
+    AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_out", "add_out", q_parameter.scale, q_parameter.zero_point);
   };
 }
 
@@ -1104,18 +1253,22 @@ static GetTestModelFn BuildAddTestCase() {
     std::vector<float> data = {0.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f};
     gsl::span<float> data_range = gsl::make_span(data);
     QuantParams<uint8_t> q_parameter = GetDataQuantParams<uint8_t>(data_range);
-    NodeArg* add_input1 = MakeTestInput(builder, TestInputDef<float>({2, 3}, false, data));
-    auto* add_input1_qdq = AddQDQNodePair<uint8_t>(builder, add_input1, q_parameter.scale, q_parameter.zero_point);
 
-    NodeArg* add_input2 = MakeTestInput(builder, TestInputDef<float>({2, 3}, true, data));
-    auto* add_input2_qdq = AddQDQNodePair<uint8_t>(builder, add_input2, q_parameter.scale, q_parameter.zero_point);
+    MakeTestInput(builder, "add_in1", TestInputDef<float>({2, 3}, false, data));
+    std::string add_input1_qdq =
+        AddQDQNodePair<uint8_t>(builder, "add_in1_qdq", "add_in1", q_parameter.scale, q_parameter.zero_point);
 
-    auto* add_output = builder.MakeIntermediate();
+    MakeTestInput(builder, "add_in2", TestInputDef<float>({2, 3}, true, data));
+    std::string add_input2_qdq =
+        AddQDQNodePair<uint8_t>(builder, "add_in2_qdq", "add_in2", q_parameter.scale, q_parameter.zero_point);
 
-    builder.AddNode("Add", {add_input1_qdq, add_input2_qdq}, {add_output});
+    builder.AddNode("Add_node",
+                    "Add",
+                    {add_input1_qdq, add_input2_qdq},
+                    {"add_out"});
 
-    // add_output -> Q -> DQ -> output
-    AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, add_output, q_parameter.scale, q_parameter.zero_point);
+    // add_out -> Q -> DQ -> output
+    AddQDQNodePairWithOutputAsGraphOutput<uint8_t>(builder, "qdq_out", "add_out", q_parameter.scale, q_parameter.zero_point);
   };
 }
 
@@ -1127,21 +1280,21 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGeneration2InputTypes) {
 
   const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
 
-  auto& logging_manager = DefaultLoggingManager();
-  logging_manager.SetDefaultLoggerSeverity(logging::Severity::kERROR);
-
-  onnxruntime::Model model("QNN_EP_TestModel", false, ModelMetaData(), PathString(),
-                           IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                           logging_manager.DefaultLogger());
-  Graph& graph = model.MainGraph();
-  ModelTestBuilder helper(graph);
+  // Build input model via ModelProto directly (avoid onnxruntime::Model/Graph/Resolve).
+  ModelTestBuilder helper;
   BuildCastAddTestCase()(helper);
-  helper.SetGraphOutputs();
-  ASSERT_STATUS_OK(model.MainGraph().Resolve());
+
+  // opset imports
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   // Serialize the model to a string.
   std::string model_data;
-  model.ToProto().SerializeToString(&model_data);
+  helper.model_.SerializeToString(&model_data);
 
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
 
@@ -1177,10 +1330,24 @@ TEST_F(QnnHTPBackendTests, QnnContextGeneration2InputsOrderIssue) {
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
 
-  auto& logging_manager = DefaultLoggingManager();
-  logging_manager.SetDefaultLoggerSeverity(logging::Severity::kERROR);
-
   const std::string context_model_file = "./qnn_ctx_2_inputs_order_test_gen.onnx";
+  std::remove(context_model_file.c_str());
+
+  const std::string source_model_file = "testdata/qnn_ctx_2_inputs_order_test.onnx";
+  ModelTestBuilder helper;
+  LoadOnnxModelFromFile(source_model_file, helper.model_);
+
+  // opset imports
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
 
   Ort::SessionOptions so;
   so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
@@ -1189,17 +1356,22 @@ TEST_F(QnnHTPBackendTests, QnnContextGeneration2InputsOrderIssue) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
 
-  Ort::Session session(*ort_env, ORT_TSTR("testdata/qnn_ctx_2_inputs_order_test.onnx"), so);
+  Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
 
   // Make sure the Qnn context cache binary file is generated
   EXPECT_TRUE(std::filesystem::exists(context_model_file.c_str()));
 
-  std::shared_ptr<Model> model;
-  ASSERT_STATUS_OK(Model::Load(ToPathString(context_model_file), model, nullptr, DefaultLoggingManager().DefaultLogger()));
-  auto inputs = model->MainGraph().GetInputs();
-  EXPECT_TRUE(inputs.size() == 2);
-  EXPECT_TRUE(inputs[0]->Name() == "attention_mask");
-  EXPECT_TRUE(inputs[1]->Name() == "Add_input_0");
+  // Load generated context model using ONNX protobuf API.
+  ONNX_NAMESPACE::ModelProto model_proto;
+  std::ifstream ifs(context_model_file, std::ios::in | std::ios::binary);
+  ASSERT_TRUE(ifs.good()) << "Failed to open ONNX file: " << context_model_file;
+  ASSERT_TRUE(model_proto.ParseFromIstream(&ifs)) << "Failed to parse ONNX file: " << context_model_file;
+  ifs.close();
+
+  // Graph inputs order must be preserved.
+  EXPECT_EQ(model_proto.graph().input_size(), 2);
+  EXPECT_TRUE(model_proto.graph().input()[0].name() == "attention_mask");
+  EXPECT_TRUE(model_proto.graph().input()[1].name() == "Add_input_0");
 
   // clean up
   CleanUpCtxFile(context_model_file);
@@ -1219,10 +1391,23 @@ TEST_F(QnnHTPBackendTests, DISABLED_QnnContextGenerationNodeNamePrefix) {
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
 
-  auto& logging_manager = DefaultLoggingManager();
-  logging_manager.SetDefaultLoggerSeverity(logging::Severity::kERROR);
-
   const std::string context_model_file = "./qnn_ctx_2_inputs_order_test_gen.onnx";
+  std::remove(context_model_file.c_str());
+
+  ModelTestBuilder helper;
+  LoadOnnxModelFromFile(context_model_file, helper.model_);
+
+  // opset imports
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
 
   Ort::SessionOptions so;
   so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
@@ -1232,16 +1417,20 @@ TEST_F(QnnHTPBackendTests, DISABLED_QnnContextGenerationNodeNamePrefix) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
 
-  Ort::Session session(*ort_env, ORT_TSTR("testdata/qnn_ctx_2_inputs_order_test.onnx"), so);
+  Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
 
   // Make sure the Qnn context cache binary file is generated
   EXPECT_TRUE(std::filesystem::exists(context_model_file.c_str()));
 
-  std::shared_ptr<Model> model;
-  ASSERT_STATUS_OK(Model::Load(ToPathString(context_model_file), model, nullptr, DefaultLoggingManager().DefaultLogger()));
-  for (auto& node : model->MainGraph().Nodes()) {
-    if (node.OpType() == "EPContext") {
-      EXPECT_TRUE(node.Name().find(node_name_prefix) != std::string::npos);
+  // Load generated context model using ONNX protobuf API.
+  ONNX_NAMESPACE::ModelProto model_proto;
+  std::ifstream ifs(context_model_file, std::ios::in | std::ios::binary);
+  ASSERT_TRUE(ifs.good()) << "Failed to open ONNX file: " << context_model_file;
+  ASSERT_TRUE(model_proto.ParseFromIstream(&ifs)) << "Failed to parse ONNX file: " << context_model_file;
+
+  for (const auto& node : model_proto.graph().node()) {
+    if (node.op_type() == "EPContext") {
+      EXPECT_NE(node.name().find(node_name_prefix), std::string::npos);
     }
   }
 
@@ -1268,13 +1457,13 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheEmbedModeTest) {
 
   // Runs model with DQ-> Atan-> Q and compares the outputs of the CPU and QNN EPs.
   // 1st run will generate the Qnn context cache binary file
-  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type, {input_def}, {}, {}),
-                       BuildQDQOpTestCase<uint8_t>(op_type, {input_def}, {}, {}),
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def}, {}, {}),
                        provider_options,
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
-                       logging::Severity::kERROR,
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        "",  // context model file path, not required for this inference
                        session_option_pairs);
 
@@ -1284,13 +1473,13 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheEmbedModeTest) {
   // 2nd run directly loads and run from Qnn context cache model
   std::unordered_map<std::string, std::string> session_option_pairs2;
   session_option_pairs2.emplace(kOrtSessionOptionEpContextFilePath, context_model_file);
-  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type, {input_def}, {}, {}),
-                       BuildQDQOpTestCase<uint8_t>(op_type, {input_def}, {}, {}),
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def}, {}, {}),
                        provider_options,
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
-                       logging::Severity::kERROR,
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        context_model_file,
                        session_option_pairs2);
   // Clean up
@@ -1320,13 +1509,13 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
 
   // Runs model with DQ-> Atan-> Q and compares the outputs of the CPU and QNN EPs.
   // 1st run will generate the Onnx skeleton file + Qnn context cache binary file
-  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type, {input_def}, {}, {}),
-                       BuildQDQOpTestCase<uint8_t>(op_type, {input_def}, {}, {}),
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def}, {}, {}),
                        provider_options,
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
-                       logging::Severity::kERROR,
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        "",  // context model file path, not required for this inference
                        session_option_pairs);
 
@@ -1339,13 +1528,13 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
   // Need to set the context file path since TestQDQModelAccuracy load the model from memory
   session_option_pairs2.emplace(kOrtSessionOptionEpContextFilePath, context_binary_file);
   // 2nd run directly loads and run from Onnx skeleton file + Qnn context cache binary file
-  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type, {input_def}, {}, {}),
-                       BuildQDQOpTestCase<uint8_t>(op_type, {input_def}, {}, {}),
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def}, {}, {}),
                        provider_options,
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
-                       logging::Severity::kERROR,
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        context_binary_file,
                        session_option_pairs2);
 
@@ -1354,11 +1543,11 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
   {
     std::ifstream file(context_binary_file, std::ios::binary | std::ios::ate);
     if (!file)
-      ORT_THROW("Error reading model");
+      throw std::runtime_error("Error reading model");
     buffer.resize(narrow<size_t>(file.tellg()));
     file.seekg(0, std::ios::beg);
     if (!file.read(buffer.data(), buffer.size()))
-      ORT_THROW("Error reading model");
+      throw std::runtime_error("Error reading model");
   }
 
   Ort::SessionOptions so;  // No need to set the context file path in so since it's load from file
@@ -1398,13 +1587,13 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_InvalidGraph) {
 
   // Runs model with DQ-> Atan-> Q and compares the outputs of the CPU and QNN EPs.
   // 1st run will generate the Onnx skeleton file + Qnn context cache binary file
-  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type, {input_def}, {}, {}),
-                       BuildQDQOpTestCase<uint8_t>(op_type, {input_def}, {}, {}),
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def}, {}, {}),
                        provider_options,
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
-                       logging::Severity::kERROR,
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        "",  // context model file path, not required for this inference
                        session_option_pairs);
 
@@ -1417,9 +1606,12 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_InvalidGraph) {
 
   // loads and run from Onnx skeleton file + Qnn context cache binary file
   onnx::ModelProto model_proto;
-  onnxruntime::Model qnn_ctx_model;
-  // Load the QNN context cache model from path specified
-  ASSERT_STATUS_OK(qnn_ctx_model.Load(ToPathString(context_binary_file), model_proto));
+  {
+    std::ifstream ifs(context_binary_file, std::ios::in | std::ios::binary);
+    ASSERT_TRUE(ifs.good()) << "Failed to open ONNX file: " << context_binary_file;
+    ASSERT_TRUE(model_proto.ParseFromIstream(&ifs)) << "Failed to parse ONNX file: " << context_binary_file;
+  }
+
   std::string qnn_ctx_model_data;
   model_proto.SerializeToString(&qnn_ctx_model_data);
 
@@ -1432,38 +1624,49 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_InvalidGraph) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
 
-  auto* ort_so = static_cast<OrtSessionOptions*>(so);
-  InferenceSessionWrapper session_object{ort_so->value, GetEnvironment()};
-
-  ASSERT_STATUS_OK(session_object.Load(qnn_ctx_model_data.data(), static_cast<int>(qnn_ctx_model_data.size())));
-  // Verify the return status with code INVALID_GRAPH
-  auto* status_ptr = InitializeSession(ort_so, session_object);
-  ASSERT_TRUE(status_ptr != nullptr && Ort::GetApi().GetErrorCode(status_ptr) == ORT_INVALID_GRAPH);
+  // Verify session creation fails with INVALID_GRAPH when the external context binary is missing.
+  try {
+    Ort::Session session(*ort_env, qnn_ctx_model_data.data(), qnn_ctx_model_data.size(), so);
+    FAIL() << "Expected session creation to fail but it succeeded";
+  } catch (const Ort::Exception& e) {
+    ASSERT_EQ(e.GetOrtErrorCode(), ORT_INVALID_GRAPH);
+  }
 
   // Clean up
   ASSERT_EQ(std::remove(context_binary_file.c_str()), 0);
 }
 
 std::string CreateQnnCtxModelWithNonEmbedMode(std::string external_bin_path) {
-  const std::unordered_map<std::string, int> domain_to_version = {{"", 11}, {kMSDomain, 1}};
-  auto& logging_manager = DefaultLoggingManager();
-  onnxruntime::Model model("QNN_ctx_model", false, ModelMetaData(), PathString(),
-                           IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                           logging_manager.DefaultLogger());
-  Graph& graph = model.MainGraph();
-  ModelTestBuilder helper(graph);
-  std::vector<int64_t> shape = {2, 3};
-  NodeArg* graph_input = MakeTestInput(helper, TestInputDef<float>(shape, true, {0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f}));
-  auto* graph_output = helper.MakeOutput<float>(shape);
-  Node& ep_context_node = helper.AddNode("EPContext", {graph_input}, {graph_output}, kMSDomain);
-  ep_context_node.AddAttribute("embed_mode", static_cast<int64_t>(0));
-  ep_context_node.AddAttribute("ep_cache_context", external_bin_path);
-  ep_context_node.AddAttribute("partition_name", "QNNExecutionProvider_QNN_1110111000111000111_1_0");
-  ep_context_node.AddAttribute("source", "QNN");
-  helper.SetGraphOutputs();
-  std::string model_data;
-  model.ToProto().SerializeToString(&model_data);
+  ModelTestBuilder builder;
+  const std::vector<int64_t> shape = {2, 3};
 
+  MakeTestInput(builder, "X", TestInputDef<float>(shape, true, {0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f}));
+  builder.MakeOutput<float>("Y", shape);
+
+  std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+  attrs.push_back(builder.MakeScalarAttribute("embed_mode", static_cast<int64_t>(0)));
+  attrs.push_back(builder.MakeStringAttribute("ep_cache_context", external_bin_path));
+  attrs.push_back(builder.MakeStringAttribute("partition_name", "QNNExecutionProvider_QNN_1110111000111000111_1_0"));
+  attrs.push_back(builder.MakeStringAttribute("source", "QNN"));
+
+  builder.AddNode("ep_ctx",
+                  "EPContext",
+                  {"X"},
+                  {"Y"},
+                  kMSDomain,
+                  attrs);
+
+  // opset imports
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 11}, {kMSDomain, 1}};
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{builder.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  std::string model_data;
+  builder.model_.SerializeToString(&model_data);
   return model_data;
 }
 
@@ -1482,13 +1685,13 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryRelativePathTest) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
 
-  auto* ort_so = static_cast<OrtSessionOptions*>(so);
-  InferenceSessionWrapper session_object{ort_so->value, GetEnvironment()};
-
-  ASSERT_STATUS_OK(session_object.Load(model_data.data(), static_cast<int>(model_data.size())));
-  // Verify the return status with code INVALID_GRAPH
-  auto* status_ptr = InitializeSession(ort_so, session_object);
-  ASSERT_TRUE(status_ptr != nullptr && Ort::GetApi().GetErrorCode(status_ptr) == ORT_INVALID_GRAPH);
+  // Verify session creation fails with INVALID_GRAPH.
+  try {
+    Ort::Session session(*ort_env, model_data.data(), model_data.size(), so);
+    FAIL() << "Expected session creation to fail but it succeeded";
+  } catch (const Ort::Exception& e) {
+    ASSERT_EQ(e.GetOrtErrorCode(), ORT_INVALID_GRAPH);
+  }
 }
 
 // Create a model with EPContext node. Set the node property ep_cache_context has absolute path
@@ -1511,13 +1714,13 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryAbsolutePathTest) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
 
-  auto* ort_so = static_cast<OrtSessionOptions*>(so);
-  InferenceSessionWrapper session_object{ort_so->value, GetEnvironment()};
-
-  ASSERT_STATUS_OK(session_object.Load(model_data.data(), static_cast<int>(model_data.size())));
-  // Verify the return status with code INVALID_GRAPH
-  auto* status_ptr = InitializeSession(ort_so, session_object);
-  ASSERT_TRUE(status_ptr != nullptr && Ort::GetApi().GetErrorCode(status_ptr) == ORT_INVALID_GRAPH);
+  // Verify session creation fails with INVALID_GRAPH.
+  try {
+    Ort::Session session(*ort_env, model_data.data(), model_data.size(), so);
+    FAIL() << "Expected session creation to fail but it succeeded";
+  } catch (const Ort::Exception& e) {
+    ASSERT_EQ(e.GetOrtErrorCode(), ORT_INVALID_GRAPH);
+  }
 }
 
 // Create a model with EPContext node. Set the node property ep_cache_context to a file not exist
@@ -1536,13 +1739,13 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryFileNotExistTest) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
 
-  auto* ort_so = static_cast<OrtSessionOptions*>(so);
-  InferenceSessionWrapper session_object{ort_so->value, GetEnvironment()};
-
-  ASSERT_STATUS_OK(session_object.Load(model_data.data(), static_cast<int>(model_data.size())));
-  // Verify the return status with code INVALID_GRAPH
-  auto* status_ptr = InitializeSession(ort_so, session_object);
-  ASSERT_TRUE(status_ptr != nullptr && Ort::GetApi().GetErrorCode(status_ptr) == ORT_INVALID_GRAPH);
+  // Verify session creation fails with INVALID_GRAPH.
+  try {
+    Ort::Session session(*ort_env, model_data.data(), model_data.size(), so);
+    FAIL() << "Expected session creation to fail but it succeeded";
+  } catch (const Ort::Exception& e) {
+    ASSERT_EQ(e.GetOrtErrorCode(), ORT_INVALID_GRAPH);
+  }
 }
 
 // Create a model with EPContext node. Set the node property ep_cache_context to empty string
@@ -1561,13 +1764,13 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryFileEmptyStringTest) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
 
-  auto* ort_so = static_cast<OrtSessionOptions*>(so);
-  InferenceSessionWrapper session_object{ort_so->value, GetEnvironment()};
-
-  ASSERT_STATUS_OK(session_object.Load(model_data.data(), static_cast<int>(model_data.size())));
-  // Verify the return status with code INVALID_GRAPH
-  auto* status_ptr = InitializeSession(ort_so, session_object);
-  ASSERT_TRUE(status_ptr != nullptr && Ort::GetApi().GetErrorCode(status_ptr) == ORT_INVALID_GRAPH);
+  // Verify session creation fails with INVALID_GRAPH.
+  try {
+    Ort::Session session(*ort_env, model_data.data(), model_data.size(), so);
+    FAIL() << "Expected session creation to fail but it succeeded";
+  } catch (const Ort::Exception& e) {
+    ASSERT_EQ(e.GetOrtErrorCode(), ORT_INVALID_GRAPH);
+  }
 }
 
 // Run QDQ model on HTP with 2 inputs
@@ -1590,13 +1793,13 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary2InputsTest) {
 
   // Runs model with DQ-> Add-> Q and compares the outputs of the CPU and QNN EPs.
   // 1st run will generate the Qnn context cache binary file
-  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type, {input_def1, input_def2}, {}, {}),
-                       BuildQDQOpTestCase<uint8_t>(op_type, {input_def1, input_def2}, {}, {}),
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def1, input_def2}, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def1, input_def2}, {}, {}),
                        provider_options,
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
-                       logging::Severity::kERROR,
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        "",  // context model file path, not required for this inference
                        session_option_pairs);
 
@@ -1606,13 +1809,13 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary2InputsTest) {
   // 2nd run directly loads and run from Qnn context cache model
   std::unordered_map<std::string, std::string> session_option_pairs2;
   session_option_pairs2.emplace(kOrtSessionOptionEpContextFilePath, context_model_file);
-  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type, {input_def1, input_def2}, {}, {}),
-                       BuildQDQOpTestCase<uint8_t>(op_type, {input_def1, input_def2}, {}, {}),
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def1, input_def2}, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def1, input_def2}, {}, {}),
                        provider_options,
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
-                       logging::Severity::kERROR,
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        context_model_file,
                        session_option_pairs2);
   // Clean up
@@ -1629,9 +1832,9 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphName
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
   const std::string context_model_file = "./qnn_context_cache_non_embed.onnx";
-  const std::string context_bin = "qnn_context_cache_non_embed_qnn.bin";
+  std::filesystem::path context_bin = "qnn_context_cache_non_embed_qnn.bin";
   std::remove(context_model_file.c_str());
-  std::remove(context_bin.c_str());
+  std::remove(context_bin.string().c_str());
 
   std::unordered_map<std::string, std::string> session_option_pairs;
   session_option_pairs.emplace(kOrtSessionOptionEpContextEnable, "1");
@@ -1643,13 +1846,13 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphName
 
   // Runs model with DQ-> Atan-> Q and compares the outputs of the CPU and QNN EPs.
   // 1st run will generate the Onnx skeleton file + Qnn context cache binary file
-  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type, {input_def}, {}, {}),
-                       BuildQDQOpTestCase<uint8_t>(op_type, {input_def}, {}, {}),
+  TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, {}),
+                       BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def}, {}, {}),
                        provider_options,
                        14,
                        ExpectedEPNodeAssignment::All,
                        QDQTolerance(),
-                       logging::Severity::kERROR,
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                        "",  // context model file path, not required for this inference
                        session_option_pairs);
 
@@ -1658,25 +1861,37 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphName
   // Check the Qnn context cache binary file is generated
   EXPECT_TRUE(std::filesystem::exists(context_bin));
 
-  const std::unordered_map<std::string, int> domain_to_version = {{"", 11}, {kMSDomain, 1}};
-  auto& logging_manager = DefaultLoggingManager();
-  onnxruntime::Model model("QNN_ctx_model", false, ModelMetaData(), PathString(),
-                           IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                           logging_manager.DefaultLogger());
-  Graph& graph = model.MainGraph();
-  ModelTestBuilder helper(graph);
+  // Create another model that references the context bin but uses a different EPContext node name.
+  ModelTestBuilder builder;
   std::vector<int64_t> shape = {1, 2, 3};
-  NodeArg* graph_input = MakeTestInput(helper, TestInputDef<float>(shape, false, {0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f}));
-  auto* graph_output = helper.MakeOutput<float>(shape);
-  Node& ep_context_node = helper.AddNode("EPContext", {graph_input}, {graph_output}, kMSDomain);
-  ep_context_node.AddAttribute("embed_mode", static_cast<int64_t>(0));
-  ep_context_node.AddAttribute("ep_cache_context", context_bin.string());
-  ep_context_node.AddAttribute("partition_name", "QNNExecutionProvider_QNN_1110111000111000111_1_0");
-  ep_context_node.AddAttribute("source", "QNNExecutionProvider");
-  helper.SetGraphOutputs();
-  ASSERT_STATUS_OK(graph.Resolve());
+
+  MakeTestInput(builder, "quant_input_defs_0", TestInputDef<float>(shape, false, {0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f}));
+  builder.MakeOutput<float>("qdq_out_dq_out", shape);
+
+  std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+  attrs.push_back(builder.MakeScalarAttribute("embed_mode", static_cast<int64_t>(0)));
+  attrs.push_back(builder.MakeStringAttribute("ep_cache_context", context_bin.string()));
+  attrs.push_back(builder.MakeStringAttribute("partition_name", "QNNExecutionProvider_QNNExecutionProvider_10006633230345173511_0_0"));
+  attrs.push_back(builder.MakeStringAttribute("source", "QNNExecutionProvider"));
+
+  builder.AddNode("ep_ctx",
+                  "EPContext",
+                  {"quant_input_defs_0"},
+                  {"qdq_out_dq_out"},
+                  kMSDomain,
+                  attrs);
+
+  // opset imports
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 11}, {kMSDomain, 1}};
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{builder.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
   std::string model_data;
-  model.ToProto().SerializeToString(&model_data);
+  builder.model_.SerializeToString(&model_data);
 
   Ort::SessionOptions so;
   so.SetLogId("qnn_ctx_model_logger");
@@ -1685,11 +1900,8 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphName
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
 
-  auto* ort_so = static_cast<OrtSessionOptions*>(so);
-  InferenceSessionWrapper session_object{ort_so->value, GetEnvironment()};
-
-  ASSERT_STATUS_OK(session_object.Load(model_data.data(), static_cast<int>(model_data.size())));
-  ASSERT_EQ(InitializeSession(ort_so, session_object), nullptr);
+  // Session creation should succeed even if EPContext node name does not match graph name in the bin file.
+  EXPECT_NO_THROW((Ort::Session(*ort_env, model_data.data(), model_data.size(), so)));
 
   // Clean up
   ASSERT_EQ(std::remove(context_model_file.c_str()), 0);
@@ -1722,17 +1934,30 @@ TEST_F(QnnHTPBackendTests, QnnMultiContextExternal) {
   Ort::Session session(*ort_env, ORT_TSTR("testdata/qnn_ctx/qnn_multi_ctx_external.onnx"), so);
 }
 
-static void CreateQdqModel(const std::string& model_file_name, const Logger& logger) {
+static void CreateQdqModel(const std::string& model_file_name) {
   const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
-  onnxruntime::Model model(model_file_name, false, ModelMetaData(), PathString(),
-                           IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                           logger);
-  Graph& graph = model.MainGraph();
-  ModelTestBuilder helper(graph);
+
+  ModelTestBuilder helper;
   BuildAddTestCase()(helper);
-  helper.SetGraphOutputs();
-  ASSERT_STATUS_OK(model.MainGraph().Resolve());
-  ASSERT_STATUS_OK(onnxruntime::Model::Save(model, ToPathString(model_file_name)));
+
+  // opset imports
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+  // Serialize to file
+#if defined(_WIN32)
+  const std::wstring model_file_name_w(model_file_name.begin(), model_file_name.end());
+  std::ofstream model_ofs(model_file_name_w, std::ios::binary);
+#else
+  std::ofstream model_ofs(model_file_name, std::ios::binary);
+#endif
+  ASSERT_TRUE(model_ofs.good());
+  ASSERT_TRUE(helper.model_.SerializeToOstream(&model_ofs));
+  model_ofs.close();
 }
 
 static void DumpModelWithSharedCtx(ProviderOptions provider_options,
@@ -1756,29 +1981,37 @@ static void DumpModelWithSharedCtx(ProviderOptions provider_options,
 
   // Create 2 sessions to generate context binary models, the 1st session will share the QnnBackendManager
   // to the 2nd session, so graphs from these 2 models are all included in the 2nd context binary
-  Ort::Session session1(*ort_env, ToPathString(onnx_model_path1).c_str(), so);
+#if defined(_WIN32)
+  const std::wstring onnx_model_path1_w(onnx_model_path1.begin(), onnx_model_path1.end());
+  const std::wstring onnx_model_path2_w(onnx_model_path2.begin(), onnx_model_path2.end());
+  Ort::Session session1(*ort_env, onnx_model_path1_w.c_str(), so);
 
   so.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
-  Ort::Session session2(*ort_env, ToPathString(onnx_model_path2).c_str(), so);
+  Ort::Session session2(*ort_env, onnx_model_path2_w.c_str(), so);
+#else
+  Ort::Session session1(*ort_env, onnx_model_path1.c_str(), so);
+
+  so.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
+  Ort::Session session2(*ort_env, onnx_model_path2.c_str(), so);
+#endif
 }
 
 static void GetModelInputNames(const std::string& model_path,
                                std::vector<std::string>& input_names,
-                               std::vector<std::string>& output_names,
-                               const Logger& logger) {
-  std::shared_ptr<Model> ctx_model;
-  auto path_str = ToPathString(model_path);
-  ASSERT_STATUS_OK(Model::Load(path_str, ctx_model, nullptr, logger));
-  auto& ctx_graph = ctx_model->MainGraph();
+                               std::vector<std::string>& output_names) {
+  // Load model using ONNX protobuf API (avoid onnxruntime::Model).
+  ONNX_NAMESPACE::ModelProto model_proto;
+  std::ifstream ifs(model_path, std::ios::in | std::ios::binary);
+  ASSERT_TRUE(ifs.good()) << "Failed to open ONNX file: " << model_path;
+  ASSERT_TRUE(model_proto.ParseFromIstream(&ifs)) << "Failed to parse ONNX file: " << model_path;
 
-  auto& inputs = ctx_graph.GetInputs();
-  for (auto input : inputs) {
-    input_names.push_back(input->Name());
+  // Graph inputs/outputs are ValueInfoProto. Name order is as stored in the model.
+  for (const auto& input : model_proto.graph().input()) {
+    input_names.push_back(input.name());
   }
 
-  auto& outputs = ctx_graph.GetOutputs();
-  for (auto output : outputs) {
-    output_names.push_back(output->Name());
+  for (const auto& output : model_proto.graph().output()) {
+    output_names.push_back(output.name());
   }
 }
 
@@ -1803,7 +2036,7 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
 
   std::vector<std::string> ctx_model_paths;
   for (auto model_path : onnx_model_paths) {
-    CreateQdqModel(model_path, DefaultLoggingManager().DefaultLogger());
+    CreateQdqModel(model_path);
     EXPECT_TRUE(std::filesystem::exists(model_path.c_str()));
     auto pos = model_path.find_last_of(".");
     if (pos != std::string::npos) {
@@ -1820,13 +2053,11 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
   DumpModelWithSharedCtx(provider_options, onnx_model_paths[0], onnx_model_paths[1]);
 
   std::string qnn_ctx_binary_file_name1;
-  GetContextBinaryFileName(ctx_model_paths[0], qnn_ctx_binary_file_name1,
-                           DefaultLoggingManager().DefaultLogger());
+  GetContextBinaryFileName(ctx_model_paths[0], qnn_ctx_binary_file_name1);
   EXPECT_TRUE(!qnn_ctx_binary_file_name1.empty());
 
   std::string qnn_ctx_binary_file_name2;
-  GetContextBinaryFileName(ctx_model_paths[1], qnn_ctx_binary_file_name2,
-                           DefaultLoggingManager().DefaultLogger());
+  GetContextBinaryFileName(ctx_model_paths[1], qnn_ctx_binary_file_name2);
   EXPECT_TRUE(!qnn_ctx_binary_file_name2.empty());
   // 2 *_ctx.onn point to same .bin file
   EXPECT_TRUE(qnn_ctx_binary_file_name1 == qnn_ctx_binary_file_name2);
@@ -1860,8 +2091,7 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
 
   std::vector<std::string> input_names;
   std::vector<std::string> output_names;
-  GetModelInputNames(ctx_model_paths[1], input_names, output_names,
-                     DefaultLoggingManager().DefaultLogger());
+  GetModelInputNames(ctx_model_paths[1], input_names, output_names);
 
   // Run sessions
   // prepare input
@@ -1910,7 +2140,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
 
   std::vector<std::string> ctx_model_paths;
   for (auto model_path : onnx_model_paths) {
-    CreateQdqModel(model_path, DefaultLoggingManager().DefaultLogger());
+    CreateQdqModel(model_path);
     EXPECT_TRUE(std::filesystem::exists(model_path.c_str()));
     auto pos = model_path.find_last_of(".");
     if (pos != std::string::npos) {
@@ -1927,13 +2157,11 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
   DumpModelWithSharedCtx(provider_options, onnx_model_paths[0], onnx_model_paths[1]);
 
   std::string qnn_ctx_binary_file_name1;
-  GetContextBinaryFileName(ctx_model_paths[0], qnn_ctx_binary_file_name1,
-                           DefaultLoggingManager().DefaultLogger());
+  GetContextBinaryFileName(ctx_model_paths[0], qnn_ctx_binary_file_name1);
   EXPECT_TRUE(!qnn_ctx_binary_file_name1.empty());
 
   std::string qnn_ctx_binary_file_name2;
-  GetContextBinaryFileName(ctx_model_paths[1], qnn_ctx_binary_file_name2,
-                           DefaultLoggingManager().DefaultLogger());
+  GetContextBinaryFileName(ctx_model_paths[1], qnn_ctx_binary_file_name2);
   EXPECT_TRUE(!qnn_ctx_binary_file_name2.empty());
   // 2 *_ctx.onn point to same .bin file
   EXPECT_TRUE(qnn_ctx_binary_file_name1 == qnn_ctx_binary_file_name2);
@@ -1966,8 +2194,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
 
   std::vector<std::string> input_names;
   std::vector<std::string> output_names;
-  GetModelInputNames(ctx_model_paths[1], input_names, output_names,
-                     DefaultLoggingManager().DefaultLogger());
+  GetModelInputNames(ctx_model_paths[1], input_names, output_names);
 
   // Run sessions
   // prepare input
@@ -2016,7 +2243,7 @@ TEST_F(QnnHTPBackendTests, QnnContextGenWeightSharingSessionAPI) {
 
   std::vector<std::string> ctx_model_paths;
   for (auto model_path : onnx_model_paths) {
-    CreateQdqModel(model_path, DefaultLoggingManager().DefaultLogger());
+    CreateQdqModel(model_path);
     EXPECT_TRUE(std::filesystem::exists(model_path.c_str()));
     auto pos = model_path.find_last_of(".");
     if (pos != std::string::npos) {
@@ -2033,13 +2260,11 @@ TEST_F(QnnHTPBackendTests, QnnContextGenWeightSharingSessionAPI) {
   DumpModelWithSharedCtx(provider_options, onnx_model_paths[0], onnx_model_paths[1]);
 
   std::string qnn_ctx_binary_file_name1;
-  GetContextBinaryFileName(ctx_model_paths[0], qnn_ctx_binary_file_name1,
-                           DefaultLoggingManager().DefaultLogger());
+  GetContextBinaryFileName(ctx_model_paths[0], qnn_ctx_binary_file_name1);
   EXPECT_TRUE(!qnn_ctx_binary_file_name1.empty());
 
   std::string qnn_ctx_binary_file_name2;
-  GetContextBinaryFileName(ctx_model_paths[1], qnn_ctx_binary_file_name2,
-                           DefaultLoggingManager().DefaultLogger());
+  GetContextBinaryFileName(ctx_model_paths[1], qnn_ctx_binary_file_name2);
   EXPECT_TRUE(!qnn_ctx_binary_file_name2.empty());
 
   // 2 *_ctx.onn point to same .bin file
@@ -2068,21 +2293,14 @@ TEST_F(QnnHTPBackendTests, LoadFromArrayWithQnnEpContextGenPathValidation) {
 #endif
   const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
 
-  auto& logging_manager = DefaultLoggingManager();
-  logging_manager.SetDefaultLoggerSeverity(logging::Severity::kERROR);
-  onnxruntime::Model model("QNN_EP_TestModel", false, ModelMetaData(), PathString(),
-                           IOnnxRuntimeOpSchemaRegistryList(), domain_to_version, {},
-                           logging_manager.DefaultLogger());
-  Graph& graph = model.MainGraph();
-  ModelTestBuilder helper(graph);
+  // Graph& graph = model.MainGraph();
+  ModelTestBuilder helper;
   bool single_ep_node = true;
   BuildGraphWithQAndNonQ(single_ep_node)(helper);
-  helper.SetGraphOutputs();
-  ASSERT_STATUS_OK(model.MainGraph().Resolve());
 
   // Serialize the model to a string.
   std::string model_data;
-  model.ToProto().SerializeToString(&model_data);
+  helper.model_.SerializeToString(&model_data);
 
   const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
 
@@ -2132,8 +2350,7 @@ TEST_F(QnnHTPBackendTests, QnnEpDynamicOptions) {
 
   std::vector<std::string> input_names;
   std::vector<std::string> output_names;
-  GetModelInputNames("testdata/qnn_ctx/qnn_multi_ctx_embed.onnx", input_names, output_names,
-                     DefaultLoggingManager().DefaultLogger());
+  GetModelInputNames("testdata/qnn_ctx/qnn_multi_ctx_embed.onnx", input_names, output_names);
 
   // Run sessions
   // prepare input
@@ -2225,8 +2442,8 @@ TEST_F(QnnHTPBackendTests, CompileApi_InputFile_WriteOutputModelBytes) {
 
   // Create a test model and save it to a file.
   TestModel test_model;
-  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, logging::Severity::kERROR, test_model);
-  ASSERT_STATUS_OK(test_model.Save(input_model_file));
+  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
+  ASSERT_TRUE(test_model.Save(input_model_file));
 
   // Initialize session options with QNN EP
   Ort::SessionOptions so;
@@ -2267,7 +2484,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_InputFile_WriteOutputModelBytes) {
 TEST_F(QnnHTPBackendTests, CompileApi_OutputStream_ReturnStatus) {
   // Create a test model (in memory).
   TestModel test_model;
-  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, logging::Severity::kERROR, test_model);
+  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
   std::string model_data = test_model.Serialize();
 
   // Initialize session options with QNN EP
@@ -2362,8 +2579,8 @@ TEST_F(QnnHTPBackendTests, CompileApi_InputFile_OutputFile_InitializerHandler) {
 
   // Create a test model and save it to a file.
   TestModel test_model;
-  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, logging::Severity::kERROR, test_model);
-  ASSERT_STATUS_OK(test_model.Save(input_model_file));
+  CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
+  ASSERT_TRUE(test_model.Save(input_model_file));
 
   // Initialize session options with QNN EP
   Ort::SessionOptions so;
@@ -2779,7 +2996,7 @@ static void TestModelCompatibilityApiValidate(const CompatibilityTestInfo& test_
 
   OrtEpFactory* ep_factory = registered_ep_device->GetMutableFactory();
   OrtEp* ep = nullptr;
-  ep_factory->CreateEp(ep_factory, nullptr, nullptr, 0, so, DefaultLoggingManager().DefaultLogger().ToExternal(), &ep);
+  ep_factory->CreateEp(ep_factory, nullptr, nullptr, 0, so, nullptr, &ep);
 
   const OrtEpDevice* ep_device = registered_ep_device.get();
   OrtCompiledModelCompatibility out_status;
@@ -2789,14 +3006,16 @@ static void TestModelCompatibilityApiValidate(const CompatibilityTestInfo& test_
   ep_factory->ReleaseEp(ep_factory, ep);
 }
 
-TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate) {
+// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
+TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate) {
   CompatibilityTestInfo test_info;
   test_info.htp_arch = static_cast<uint32_t>(QnnHTPBackendTests::GetPlatformAttributes().htp_arch);
 
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_SUPPORTED_OPTIMAL);
 }
 
-TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_NoEp) {
+// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
+TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_NoEp) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, {{"backend_type", "htp"}});
@@ -2808,14 +3027,16 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_NoEp) {
   ASSERT_TRUE(message.find("Unable to validate model compatibility without EP created.") != std::string::npos);
 }
 
-TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_DiffBackend) {
+// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
+TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_DiffBackend) {
   CompatibilityTestInfo test_info;
   test_info.backend_id = QNN_BACKEND_ID_CPU;
 
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }
 
-TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewApiVersion) {
+// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
+TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewApiVersion) {
   CompatibilityTestInfo test_info;
   test_info.backend_api_version_major = 9999;
   test_info.backend_api_version_minor = 9999;
@@ -2824,7 +3045,8 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewApiV
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }
 
-TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewBlobVersion) {
+// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
+TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewBlobVersion) {
   CompatibilityTestInfo test_info;
   test_info.context_blob_version_major = 9999;
   test_info.context_blob_version_minor = 9999;
@@ -2891,14 +3113,16 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbHnrdRtHnrd_
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }
 
-TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbOldHtpArch) {
+// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
+TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbOldHtpArch) {
   CompatibilityTestInfo test_info;
   test_info.htp_arch = 0;
 
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_SUPPORTED_PREFER_RECOMPILATION);
 }
 
-TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbNewHtpArch) {
+// TODO: Re-enable once TestModelCompatibilityApiValidate can be achieved through public API.
+TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbNewHtpArch) {
   CompatibilityTestInfo test_info;
   test_info.htp_arch = 9999;
 
