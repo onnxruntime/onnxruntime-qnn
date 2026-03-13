@@ -34,6 +34,7 @@ size_t GetElementSizeByType(const Qnn_DataType_t& data_type) {
       {QNN_DATATYPE_UINT_64, 8},
       {QNN_DATATYPE_FLOAT_16, 2},
       {QNN_DATATYPE_FLOAT_32, 4},
+      {QNN_DATATYPE_FLOAT_64, 8},
       {QNN_DATATYPE_BFLOAT_16, 2},
       {QNN_DATATYPE_BOOL_8, 1},
       {QNN_DATATYPE_SFIXED_POINT_4, sizeof(Int4x2)},
@@ -143,6 +144,9 @@ std::ostream& operator<<(std::ostream& out, const Qnn_Scalar_t& scalar) {
     case QNN_DATATYPE_FLOAT_32:
       out << scalar.floatValue;
       break;
+    case QNN_DATATYPE_FLOAT_64:
+      out << "double is not supported";
+      break;
     case QNN_DATATYPE_SFIXED_POINT_8:
     case QNN_DATATYPE_SFIXED_POINT_16:
     case QNN_DATATYPE_SFIXED_POINT_32:
@@ -191,6 +195,9 @@ std::ostream& operator<<(std::ostream& out, const Qnn_DataType_t& data_type) {
       break;
     case QNN_DATATYPE_FLOAT_32:
       out << "QNN_DATATYPE_FLOAT_32";
+      break;
+    case QNN_DATATYPE_FLOAT_64:
+      out << "QNN_DATATYPE_FLOAT_64";
       break;
     case QNN_DATATYPE_SFIXED_POINT_8:
       out << "QNN_DATATYPE_SFIXED_POINT_8";
@@ -823,6 +830,7 @@ bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64, QNN_DATATYPE_UINT_64},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16, QNN_DATATYPE_FLOAT_16},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, QNN_DATATYPE_FLOAT_32},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE, QNN_DATATYPE_FLOAT_64},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL, QNN_DATATYPE_BOOL_8},
   };
 
@@ -839,6 +847,7 @@ bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64, QNN_DATATYPE_UINT_64},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16, QNN_DATATYPE_FLOAT_16},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, QNN_DATATYPE_FLOAT_32},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE, QNN_DATATYPE_FLOAT_64},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL, QNN_DATATYPE_BOOL_8},
   };
 

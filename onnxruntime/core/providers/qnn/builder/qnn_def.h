@@ -232,7 +232,25 @@ class QnnTensorWrapper {
         data_type = QNN_DATATYPE_INT_32;
         client_buf_ = std::move(cast_data);
       }
+    } else if (data_type == QNN_DATATYPE_FLOAT_64) {
+      // QNN doesn't support double, so we cast to float.
+      if (tensor_type == QNN_TENSOR_TYPE_NATIVE) {
+        data_type = QNN_DATATYPE_FLOAT_32;
+      }
+      if (client_buf_.size()) {
+        const size_t num_elems = client_buf_.size() / sizeof(double);
+        std::vector<uint8_t> cast_data;
+        cast_data.resize(num_elems * sizeof(float));
+        gsl::span<double> origin_values{reinterpret_cast<double*>(client_buf_.data()), num_elems};
+        gsl::span<float> new_values(reinterpret_cast<float*>(cast_data.data()), num_elems);
+        for (size_t i = 0; i < num_elems; i++) {
+          new_values[i] = static_cast<float>(origin_values[i]);
+        }
+        data_type = QNN_DATATYPE_FLOAT_32;
+        client_buf_ = std::move(cast_data);
+      }
     }
+
     SetQnnTensorType(qnn_tensor_, tensor_type);
     SetQnnTensorName(qnn_tensor_, tensor_name_.c_str());
     SetQnnTensorDataType(qnn_tensor_, data_type);
