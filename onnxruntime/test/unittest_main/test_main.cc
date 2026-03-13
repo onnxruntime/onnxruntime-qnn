@@ -45,7 +45,7 @@ std::unique_ptr<Ort::Env> ort_env;
 // define environment variable name constants here
 namespace env_var_names {
 // Set ORT log level to the specified numeric log level.
-constexpr const char* kLogLevel = "ORT_UNIT_TEST_MAIN_LOG_LEVEL";
+constexpr const char* kLogLevel = "QNN_VERBOSE";
 
 #if defined(TEST_MAIN_ENABLE_DYNAMIC_PLUGIN_EP_USAGE)
 // Specify dynamic plugin EP configuration JSON.
