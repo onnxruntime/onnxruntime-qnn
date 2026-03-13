@@ -512,10 +512,10 @@ void QnnHTPBackendTests::SetUp() {
          << ", DLBC supported: " << attrs.dlbc_supported
          << ", VTCM size MB: " << attrs.vtcm_size_mb
          << ", SoC model: " << attrs.soc_model
-         << ", SDK version: " << attrs.sdk_version;
+         << ", Backend API version: " << attrs.backend_api_version;
 
       std::string platform_info_str = ss.str();
-      std::cout << platform_info_str;
+      std::cout << platform_info_str << std::endl;
       // TODO: Fix the crash here with ORT_CXX_LOG
       // ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_INFO, platform_info_str.c_str());
 
@@ -740,9 +740,9 @@ Ort::Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackend
       Qnn_ApiVersion_t api_version;
       qnn_status = backendGetApiVersionFn(&api_version);
       if (qnn_status == QNN_SUCCESS) {
-        out.sdk_version = std::to_string(api_version.coreApiVersion.major) + "." +
-                          std::to_string(api_version.coreApiVersion.minor) + "." +
-                          std::to_string(api_version.coreApiVersion.patch);
+        out.backend_api_version = std::to_string(api_version.coreApiVersion.major) + "." +
+                                  std::to_string(api_version.coreApiVersion.minor) + "." +
+                                  std::to_string(api_version.coreApiVersion.patch);
       }
     }
 
