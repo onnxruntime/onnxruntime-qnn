@@ -227,7 +227,6 @@ list(REMOVE_ITEM onnxruntime_test_framework_src
      "${TEST_SRC_DIR}/providers/qnn/qnn_node_group/scale_softmax_fusion_test.cc"
      "${TEST_SRC_DIR}/providers/qnn/qnn_node_group/gather_transpose_reshape_fusion_test.cc"
      "${TEST_SRC_DIR}/providers/qnn/optimizer/transpose_optimizer_test.cc"
-     "${TEST_SRC_DIR}/providers/qnn/qnn_basic_test.cc"
      "${TEST_SRC_DIR}/providers/qnn/qnn_ep_context_test.cc")
 
 #This is a small wrapper library that shouldn't use any onnxruntime internal symbols(except onnxruntime_common).
@@ -344,6 +343,13 @@ block()
 
   # For onnxruntime_cxx_api.h
   target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session)
+
+  add_custom_command(
+    TARGET onnxruntime_provider_test POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+    ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT}/test/testdata
+    $<TARGET_FILE_DIR:onnxruntime_provider_test>/testdata
+  )
 
   # Exclude test_dynamic_plugin_ep when using prebuilt ONNX Runtime
   # TODO: Evaluate whether we can enable test_dynamic_plugin_ep with public API
