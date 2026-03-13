@@ -702,7 +702,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     enable_HTP_FP16_precision_ = false;
   } else {
     ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
+                ORT_LOGGING_LEVEL_ERROR,
                 ("Invalid enable_htp_fp16_precision: " +
                  enable_htp_fp16_precision_str +
                  " only 0 or 1 allowed. Set to 0.")
@@ -725,7 +725,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     enable_HTP_monolithic_lstm_ = false;
   } else {
     ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
+                ORT_LOGGING_LEVEL_ERROR,
                 ("Invalid enable_HTP_monolithic_lstm: " +
                  enable_htp_monolithic_lstm_str +
                  " only 0 or 1 allowed. Set to 0.")

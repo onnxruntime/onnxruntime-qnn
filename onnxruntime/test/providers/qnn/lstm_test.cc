@@ -282,7 +282,7 @@ static void RunHtpFp16LSTMOpTest(const TestInputDef<float>& X_def,
                                  const int64_t layout,
                                  ExpectedEPNodeAssignment expected_ep_assignment,
                                  bool enable_htp_monolithic_lstm = false,
-                                 float tolerance = 0.04f,
+                                 float tolerance = 0.004f,
                                  int opset = 22) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -723,7 +723,9 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_H) {
       direction,                                                                               // direction
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
-      ExpectedEPNodeAssignment::All);
+      ExpectedEPNodeAssignment::All,
+      false,
+      0.015);
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_C) {
@@ -836,7 +838,9 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_h_only) {
       direction,                                                                               // direction
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
-      ExpectedEPNodeAssignment::All);
+      ExpectedEPNodeAssignment::All,
+      false,
+      0.005);
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_c_only) {
@@ -1257,7 +1261,8 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_reverse_monolithic_lstm) {
                        hidden_size,                                                                             // hidden_size
                        0,                                                                                       // layout
                        ExpectedEPNodeAssignment::All,
-                       true);
+                       true,
+                       0.013);
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_monolithic_lstm) {
@@ -1350,7 +1355,8 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_H_monolithic_lstm) 
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
       ExpectedEPNodeAssignment::All,
-      true);
+      true,
+      0.12);
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_C_monolithic_lstm) {
@@ -1380,7 +1386,8 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_C_monolithic_lstm) 
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
       ExpectedEPNodeAssignment::All,
-      true);
+      true,
+      0.008);
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_wo_P_monolithic_lstm) {
@@ -1504,7 +1511,8 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_h_only_monolithic_ls
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
       ExpectedEPNodeAssignment::All,
-      true);
+      true,
+      0.04);
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_c_only_monolithic_lstm) {
@@ -1535,7 +1543,8 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_c_only_monolithic_ls
       hidden_size,                                                                             // hidden_size
       0,                                                                                       // layout
       ExpectedEPNodeAssignment::All,
-      true);
+      true,
+      0.04);
 }
 
 // CPU FP32

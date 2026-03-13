@@ -670,7 +670,7 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
       {0, 0},
       {1, 2},
       {2, 1}};
-  for (size_t j = 0; j < 3; j++) {
+  for (size_t j = 0; j < qnn_lstm_output_names.size(); j++) {
     QnnTensorWrapper output_tensorwrapper(qnn_lstm_output_names[j],
                                           QNN_TENSOR_TYPE_NATIVE,
                                           output_tensor_infos[output_position_map[j]].qnn_data_type,
