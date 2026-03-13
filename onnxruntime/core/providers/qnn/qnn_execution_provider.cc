@@ -795,8 +795,11 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                       false,
                       logger_)) {
     // Initialize rpcmem_library_.
-    // This is necessary for HtpSharedMemoryAllocator to function and also indicates that the allocator is available.
-    rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
+    // This library is only necessary for the inference (for the shared memory allocator), if we are in context
+    // generation stage, there is no need to load it as no allocations will be made.
+    if (!context_cache_enabled_) {
+      rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
+    }
     model_settings_.htp_shared_memory = true;
   }
 
