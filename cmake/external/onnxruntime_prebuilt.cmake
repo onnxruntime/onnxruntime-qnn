@@ -63,6 +63,7 @@ else()
         --build_shared_lib
         --parallel
         --skip_tests
+        --skip_submodule_sync
         --cmake_generator "${CMAKE_GENERATOR}"
         --use_qnn "${QNN_LIBRARY_KIND}"
         --qnn_home "${onnxruntime_QNN_HOME}"
