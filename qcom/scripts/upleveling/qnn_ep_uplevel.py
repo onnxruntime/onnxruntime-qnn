@@ -264,6 +264,19 @@ class WheelUpleveler(ArtifactUpleveler):
                 with open(record_file, "w") as f:
                     f.write(record.replace(self.args.version_from, self.args.version_to))
 
+                # Update build_and_package_info.py if it exists
+                for root, _dirs, files in os.walk(tmp_dir):
+                    if "build_and_package_info.py" in files:
+                        build_info_file = os.path.join(root, "build_and_package_info.py")
+                        with open(build_info_file) as f:
+                            lines = f.readlines()
+                        with open(build_info_file, "w") as f:
+                            f.writelines(
+                                f"__version__ = '{self.args.version_to}'\n" if "__version__" in line else line
+                                for line in lines
+                            )
+                        break
+
                 # Rename dist-info directory
                 new_dist_info = dist_info_file.replace(self.args.version_from, self.args.version_to)
                 os.rename(

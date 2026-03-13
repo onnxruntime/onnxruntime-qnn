@@ -172,6 +172,7 @@ else:
         "QnnSaver.dll",
         "QnnSystem.dll",
         "QnnHtpPrepare.dll",
+        "HtpPrepare.dll",
         "QnnHtpV81Stub.dll",
         "libQnnHtpV81Skel.so",
         "libqnnhtpv81.cat",
