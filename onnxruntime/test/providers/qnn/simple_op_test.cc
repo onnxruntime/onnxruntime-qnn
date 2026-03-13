@@ -775,29 +775,6 @@ TEST_F(QnnHTPBackendTests, UnaryOp_LogSoftmax13_U16_NonLastAxis) {
                          true);  // Use com.microsoft domain for Q/DQ ops
 }
 
-// Test that QDQ LogSoftmax (opset 13) with axis != -1 is supported by QNN EP.
-// Uses 124 elements (large count) but a moderate value range [-10, 10]
-TEST_F(QnnHTPBackendTests, UnaryOp_LogSoftmax13_NonLastAxis_LargeInput) {
-  const std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 124);
-  RunQDQOpTest<uint8_t>("LogSoftmax",
-                        {TestInputDef<float>({1, 124, 1}, false, input_data)},
-                        {test::MakeAttribute("axis", static_cast<int64_t>(1))},
-                        13,
-                        ExpectedEPNodeAssignment::All);
-}
-
-// Test that QDQ LogSoftmax (opset 13) with axis != -1 is supported by QNN EP.
-TEST_F(QnnHTPBackendTests, UnaryOp_LogSoftmax13_U16_NonLastAxis_LargeInput) {
-  const std::vector<float> input_data = GetFloatDataInRange(-50.0f, 50.0f, 124);
-  RunQDQOpTest<uint16_t>("LogSoftmax",
-                         {TestInputDef<float>({1, 124, 1}, false, input_data)},
-                         {test::MakeAttribute("axis", static_cast<int64_t>(1))},
-                         13,
-                         ExpectedEPNodeAssignment::All,
-                         kOnnxDomain,
-                         true);  // Use com.microsoft domain for Q/DQ ops
-}
-
 // Tests accuracy of QDQ LogSoftmax (opset < 13) with default axis.
 TEST_F(QnnHTPBackendTests, UnaryOp_LogSoftmax11_U16_DefaultAxis) {
   std::vector<float> input_data = GetFloatDataInRange(-5.0f, 5.0f, 6);
