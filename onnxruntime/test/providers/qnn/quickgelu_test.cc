@@ -36,11 +36,13 @@ static void RunQuickGeluTest(const TestInputDef<DataType>& input_def,
   }
 
   auto model_builder = [input_def, alpha](ModelTestBuilder& builder) {
-    NodeArg* input = MakeTestInput<DataType>(builder, input_def);
-    auto* output = builder.MakeOutput();
+    MakeTestInput<DataType>(builder, "input", input_def);
 
-    Node& node = builder.AddNode("QuickGelu", {input}, {output}, kMSDomain);
-    node.AddAttribute("alpha", alpha);
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("alpha", alpha));
+
+    builder.AddNode("quickgelu", "QuickGelu", {"input"}, {"output"}, kMSDomain, attributes);
+    builder.MakeOutput("output");
   };
 
   RunQnnModelTest(model_builder,
@@ -62,26 +64,29 @@ static void RunQDQQuickGeluTest(const TestInputDef<float>& input_def,
   provider_options["offload_graph_io_quantization"] = "0";
 
   GetTestModelFn model_builder_fn = [input_def, alpha](ModelTestBuilder& builder) {
-    NodeArg* input = MakeTestInput<float>(builder, input_def);
-    auto* output = builder.MakeOutput();
+    MakeTestInput<float>(builder, "input", input_def);
 
-    Node& node = builder.AddNode("QuickGelu", {input}, {output}, kMSDomain);
-    node.AddAttribute("alpha", alpha);
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("alpha", alpha));
+
+    builder.AddNode("quickgelu", "QuickGelu", {"input"}, {"output"}, kMSDomain, attributes);
+    builder.MakeOutput("output");
   };
 
   GetTestQDQModelFn<QType> qdq_model_builder_fn = [input_def, alpha, use_contrib_qdq](ModelTestBuilder& builder, std::vector<QuantParams<QType>>& output_qparams) {
-    NodeArg* input = MakeTestInput<float>(builder, input_def);
+    MakeTestInput<float>(builder, "input", input_def);
     QuantParams<QType> input_qparams = GetTestInputQuantParams<QType>(input_def);
-    NodeArg* input_after_qdq = AddQDQNodePair<QType>(builder, input, input_qparams.scale,
-                                                     input_qparams.zero_point, use_contrib_qdq);
+    std::string input_after_qdq = AddQDQNodePair<QType>(builder, "qdq_input", "input", input_qparams.scale,
+                                                        input_qparams.zero_point, use_contrib_qdq);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("alpha", alpha));
 
     // QuickGelu -> op_output
-    auto* op_output = builder.MakeIntermediate();
-    Node& node = builder.AddNode("QuickGelu", {input_after_qdq}, {op_output}, kMSDomain);
-    node.AddAttribute("alpha", alpha);
+    builder.AddNode("quickgelu", "QuickGelu", {input_after_qdq}, {"op_output"}, kMSDomain, attributes);
 
     // op_output -> Q -> DQ -> output
-    AddQDQNodePairWithOutputAsGraphOutput<QType>(builder, op_output, output_qparams[0].scale,
+    AddQDQNodePairWithOutputAsGraphOutput<QType>(builder, "qdq_output", "op_output", output_qparams[0].scale,
                                                  output_qparams[0].zero_point, use_contrib_qdq);
   };
 
@@ -148,27 +153,27 @@ TEST_F(QnnHTPBackendTests, QuickGelu_Negative_Alpha) {
 }
 
 TEST_F(QnnHTPBackendTests, QuickGelu_Float16_Default_Alpha) {
-  RunQuickGeluTest<MLFloat16>(ConvertToFP16InputDef(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48))),
-                              1.0f,
-                              ExpectedEPNodeAssignment::All,
-                              "htp",
-                              0.01f);
+  RunQuickGeluTest<Ort::Float16_t>(ConvertToFP16InputDef(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48))),
+                                   1.0f,
+                                   ExpectedEPNodeAssignment::All,
+                                   "htp",
+                                   0.01f);
 }
 
 // Test QuickGelu with float16 inputs and custom alpha on HTP
 TEST_F(QnnHTPBackendTests, QuickGelu_Float16_Custom_Alpha) {
-  RunQuickGeluTest<MLFloat16>(ConvertToFP16InputDef(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48))),
-                              1.702f,  // alpha
-                              ExpectedEPNodeAssignment::All,
-                              "htp");
+  RunQuickGeluTest<Ort::Float16_t>(ConvertToFP16InputDef(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48))),
+                                   1.702f,  // alpha
+                                   ExpectedEPNodeAssignment::All,
+                                   "htp");
 }
 
 // Test QuickGelu with float16 inputs and negative alpha on HTP
 TEST_F(QnnHTPBackendTests, QuickGelu_Float16_Negative_Alpha) {
-  RunQuickGeluTest<MLFloat16>(ConvertToFP16InputDef(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48))),
-                              -1.702f,  // alpha
-                              ExpectedEPNodeAssignment::All,
-                              "htp");
+  RunQuickGeluTest<Ort::Float16_t>(ConvertToFP16InputDef(TestInputDef<float>({1, 3, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 48))),
+                                   -1.702f,  // alpha
+                                   ExpectedEPNodeAssignment::All,
+                                   "htp");
 }
 
 // Test 8-bit QDQ QuickGelu with default alpha value on HTP
