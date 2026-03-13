@@ -901,10 +901,18 @@ Ort::Status GetQuantParams(float rmin,
 
   double scale_dbl = (rmax_dbl - rmin_dbl) / (qmax - qmin);
   double initial_zero_point = 0.0;
-  if (symmetric) {
+  if (!symmetric) {
+    // Asymmetric
+    initial_zero_point = qmin - (rmin_dbl / scale_dbl);
+  } else if ((qnn_data_type == QNN_DATATYPE_SFIXED_POINT_32 ||
+              qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16 ||
+              qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8 ||
+              qnn_data_type == QNN_DATATYPE_SFIXED_POINT_4)) {
+    // Signed symmetric
     initial_zero_point = std::round(rmin_dbl + rmax_dbl) / 2;
   } else {
-    initial_zero_point = qmin - (rmin_dbl / scale_dbl);
+    // Unsigned symmetric
+    initial_zero_point = std::round(qmax + qmin) / 2;
   }
   zero_point = static_cast<int32_t>(RoundHalfToEven(static_cast<float>(Saturate(qmax, qmin, initial_zero_point))));
   zero_point = -zero_point;  // Negate to match QNN quantization definition.
