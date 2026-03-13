@@ -148,14 +148,14 @@ class SliceOpBuilder : public BaseOpBuilder {
                                           bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
  private:
-  Ort::Status ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const;
+  Ort::Status ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const;
   void GetDataFromAttribute(const OrtNodeUnit& node_unit,
                             std::vector<int64_t>& raw_starts,
                             std::vector<int64_t>& raw_ends,
                             std::vector<int64_t>& raw_axes) const;
 };
 
-Ort::Status SliceOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const {
+Ort::Status SliceOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const {
   size_t input_count = node_unit.Inputs().size();
 
   // Opset < 10: Only has 1 data input. The starts, ends, and axes values are attributes.
@@ -163,8 +163,8 @@ Ort::Status SliceOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, c
   if (input_count > 1) {
     // Skip the first input. All other input need to be initializer
     for (size_t i = 1; i < input_count; i++) {
-      const auto& next_input = node_unit.Inputs()[i].name;
-      if (!qnn_model_wrapper.IsConstantInput(next_input)) {
+      const auto& next_input = node_unit.Inputs()[i];
+      if (next_input.Exists() && !qnn_model_wrapper.IsConstantInput(next_input.name)) {
         return MAKE_EP_FAIL("QNN doesn't support dynamic slice.");
       }
     }
@@ -225,7 +225,7 @@ Ort::Status SliceOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                           std::vector<std::string>& input_names,
                                           bool do_op_validation) const {
   if (do_op_validation) {
-    RETURN_IF_ERROR(ExplictOpCheck(qnn_model_wrapper, node_unit));
+    RETURN_IF_ERROR(ExplicitOpCheck(qnn_model_wrapper, node_unit));
   }
 
   // Only need to add input 0. The other inputs (if any) contain static data that is passed to QNN APIs

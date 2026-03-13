@@ -185,6 +185,8 @@ struct TestInputDef {
 
   TestInputDef() = default;
 
+  TestInputDef(bool is_optional) : is_optional_(is_optional) {};
+
   // Creates a random input definition. Specify its shape, whether it's an initializer, and
   // the min/max range.
   TestInputDef(std::vector<int64_t> shape, bool is_initializer, T rand_min, T rand_max)
@@ -311,12 +313,17 @@ struct TestInputDef {
     return per_axis_ranges;
   }
 
+  bool IsOptional() const {
+    return is_optional_;
+  }
+
  private:
   std::vector<int64_t> shape_;
   std::variant<RawData, RandomData> data_info_;
   bool is_initializer_{false};
   bool has_range_override_{false};
   std::pair<T, T> range_override_;
+  bool is_optional_{false};
 };
 
 // Convert a float input definition to a float16 input definition.
@@ -1298,9 +1305,13 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
     }
 
     for (int i = 0; i < input_defs_2.size(); i++) {
-      const std::string tmp_name = "input_defs_2_" + std::to_string(i);
-      MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i], input_allocator);
-      op_input_names.push_back(tmp_name);
+      if (input_defs_2[i].IsOptional()) {
+        op_input_names.push_back("");
+      } else {
+        const std::string tmp_name = "input_defs_2_" + std::to_string(i);
+        MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i], input_allocator);
+        op_input_names.push_back(tmp_name);
+      }
     }
 
     builder.MakeOutput("Y");
@@ -1397,9 +1408,13 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
 
     // Create non-QDQ inputs
     for (size_t i = 0; i < non_quant_input_defs.size(); i++) {
-      const std::string tmp_name = "non_quant_input_defs_" + std::to_string(i);
-      MakeTestInput<OtherInputType>(builder, tmp_name, non_quant_input_defs[i], input_allocator);
-      op_input_names.push_back(tmp_name);
+      if (non_quant_input_defs[i].IsOptional()) {
+        op_input_names.push_back("");
+      } else {
+        const std::string tmp_name = "non_quant_input_defs_" + std::to_string(i);
+        MakeTestInput<OtherInputType>(builder, tmp_name, non_quant_input_defs[i], input_allocator);
+        op_input_names.push_back(tmp_name);
+      }
     }
 
     builder.AddNode(node_name, op_type,
