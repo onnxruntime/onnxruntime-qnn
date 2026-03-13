@@ -181,3 +181,6 @@ qairt:
   url: https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/{version}/v{version}.zip
   content_root: qairt/{version}
   bindir: bin
+qualcomm_device_cloud_sdk:
+  version: 0.3.0
+  url: https://softwarecenter.qualcomm.com/api/download/software/tools/Qualcomm_Device_Cloud_SDK/Windows/{version}/qualcomm_device_cloud_sdk-{version}.zip
