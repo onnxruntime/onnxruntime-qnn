@@ -510,6 +510,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool context_created_ = false;
   bool backend_setup_completed_ = false;
   bool vtcm_backup_buffer_sharing_enabled_ = false;
+  bool share_resource_optimization_enabled_ = false;
 
   uint32_t backend_id_ = QNN_BACKEND_ID_CPU;
   QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;

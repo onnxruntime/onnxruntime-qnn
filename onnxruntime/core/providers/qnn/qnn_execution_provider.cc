@@ -1337,7 +1337,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   Ort::Status rt = ep->qnn_backend_manager_->SetupBackend(is_qnn_ctx_model,
                                                           ep->context_cache_enabled_,
                                                           ep->share_ep_contexts_,
-                                                          ep->enable_share_resource_opt,
+                                                          ep->share_resource_optimization_,
                                                           context_bin_map);
 
   context_bin_map.clear();
