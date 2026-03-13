@@ -1556,9 +1556,6 @@ TEST_F(QnnHTPBackendTests, LoadingAndUnloadingOfQnnLibrary_FixSegFault) {
 // Tests autoEP feature to automatically select an EP that supports the NPU.
 // Currently only works on Windows.
 TEST_F(QnnHTPBackendTests, AutoEp_PreferNpu) {
-  // V68 device (Makena) on win-arm64 doesn't support NPU device discovery with dxcore.dll,
-  // which is required by auto-EP.Expand commentComment on line R1471ResolvedCode has comments. Press enter to view.
-  QNN_SKIP_TEST_IF_AUTOEP_NPU_UNSUPPORTED();
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
 

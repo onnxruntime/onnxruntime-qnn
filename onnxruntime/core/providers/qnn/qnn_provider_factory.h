@@ -57,6 +57,9 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
 
   QnnEp* qnn_ep_ = nullptr;
   std::vector<OrtEpDevice*> ep_devices_;
+
+  using HardwareDeviceUniquePtr = std::unique_ptr<OrtHardwareDevice, std::function<void(OrtHardwareDevice*)>>;
+  HardwareDeviceUniquePtr virtual_npu_hw_device_;
 };
 
 }  // namespace onnxruntime
