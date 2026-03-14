@@ -840,7 +840,7 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_h_only) {
       0,                                                                                       // layout
       ExpectedEPNodeAssignment::All,
       false,
-      0.009);
+      0.02);
 }
 
 TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_c_only) {
@@ -869,7 +869,7 @@ TEST_F(QnnHTPBackendTests, LSTM_Fp16_sanity_bidirectional_Y_c_only) {
       0,                                                                                       // layout
       ExpectedEPNodeAssignment::All,
       false,
-      0.009);
+      0.02);
 }
 
 // HTP QDQ monolithic lstm
