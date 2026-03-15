@@ -1,0 +1,68 @@
+From c66acc1ea78522cf91c8fdd796474340e17299de Mon Sep 17 00:00:00 2001
+From: "Cheng-Hsin Weng (Brian)" <chenweng@qti.qualcomm.com>
+Date: Fri, 13 Mar 2026 15:57:10 +0800
+Subject: [PATCH 3/3] Update argument for monolithic lstm
+
+---
+ onnxruntime/test/onnx/main.cc                    | 3 ++-
+ onnxruntime/test/perftest/command_args_parser.cc | 1 +
+ onnxruntime/test/perftest/ort_test_session.cc    | 3 ++-
+ 3 files changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/onnxruntime/test/onnx/main.cc b/onnxruntime/test/onnx/main.cc
+index f08b974d60..a50d771234 100644
+--- a/onnxruntime/test/onnx/main.cc
++++ b/onnxruntime/test/onnx/main.cc
+@@ -87,6 +87,7 @@ void usage() {
+       "\t    Options are '0', '68', '69', '73', '75', '81'. Defaults to '0' (none). \n"
+       "\t    [QNN only] [device_id]: The ID of the device to use when setting 'htp_arch'. Defaults to '0' (for single device). \n"
+       "\t    [QNN only] [enable_htp_fp16_precision]: Enable the HTP_FP16 precision so that the float32 model will be inferenced with fp16 precision. \n"
++      "\t    [QNN only] [enable_htp_monolithic_lstm]: Enable the HTP monolithic lstm. \n"
+       "\t    Otherwise, it will be fp32 precision. Works for float32 model for HTP backend. Defaults to '1' (with FP16 precision.). \n"
+       "\t    [QNN only] [offload_graph_io_quantization]: Offload graph input quantization and graph output dequantization to another EP (typically CPU EP). \n"
+       "\t    Defaults to '0' (QNN EP handles the graph I/O quantization and dequantization). \n"
+@@ -612,7 +613,7 @@ int real_main(int argc, char* argv[], Ort::Env& env) {
+             std::string str = str_stream.str();
+             ORT_THROW("Wrong value for htp_arch. select from: " + str);
+           }
+-        } else if (key == "enable_htp_fp16_precision" || key == "offload_graph_io_quantization") {
++        } else if (key == "enable_htp_fp16_precision" || key == "offload_graph_io_quantization" || key == "enable_htp_monolithic_lstm") {
+           std::unordered_set<std::string> supported_options = {"0", "1"};
+           if (supported_options.find(value) == supported_options.end()) {
+             std::ostringstream str_stream;
+diff --git a/onnxruntime/test/perftest/command_args_parser.cc b/onnxruntime/test/perftest/command_args_parser.cc
+index cb583812e1..5aa0d556a1 100644
+--- a/onnxruntime/test/perftest/command_args_parser.cc
++++ b/onnxruntime/test/perftest/command_args_parser.cc
+@@ -110,6 +110,7 @@ ABSL_FLAG(std::string, i, "",
+           "  Options are '0', '68', '69', '73', '75'. Defaults to '0' (none). \n"
+           "  [QNN only] [device_id]: The ID of the device to use when setting 'htp_arch'. Defaults to '0' (for single device). \n"
+           "  [QNN only] [enable_htp_fp16_precision]: Enable the HTP_FP16 precision so that the float32 model will be inferenced with fp16 precision. \n"
++          "  [QNN only] [enable_htp_monolithic_lstm]: Enable the HTP monolithic lstm. \n"
+           "  Otherwise, it will be fp32 precision. Works for float32 model for HTP backend. Defaults to '1' (with FP16 precision.). \n"
+           "  [QNN only] [offload_graph_io_quantization]: Offload graph input quantization and graph output dequantization to another EP (typically CPU EP). \n"
+           "  Defaults to '0' (QNN EP handles the graph I/O quantization and dequantization). \n"
+diff --git a/onnxruntime/test/perftest/ort_test_session.cc b/onnxruntime/test/perftest/ort_test_session.cc
+index 1e879bf5df..795ee2fadd 100644
+--- a/onnxruntime/test/perftest/ort_test_session.cc
++++ b/onnxruntime/test/perftest/ort_test_session.cc
+@@ -256,7 +256,7 @@ OnnxRuntimeTestSession::OnnxRuntimeTestSession(Ort::Env& env, std::random_device
+                         {"backend_type", "backend_path", "profiling_file_path", "profiling_level",
+                               "rpc_control_latency", "vtcm_mb", "soc_model", "device_id", "htp_performance_mode", "op_packages",
+                              "qnn_saver_path", "htp_graph_finalization_optimization_mode", "qnn_context_priority",
+-                             "htp_arch", "enable_htp_fp16_precision", "offload_graph_io_quantization",
++                             "htp_arch", "enable_htp_fp16_precision", "enable_htp_monolithic_lstm", "offload_graph_io_quantization",
+                              "enable_htp_spill_fill_buffer", "enable_htp_shared_memory_allocator", "dump_json_qnn_graph",
+                              "json_qnn_graph_dir", "disable_file_mapped_weights", "htp_bf16_enable", "enable_vtcm_backup_buffer_sharing"});
+     for (const auto& provider_option : provider_options) {
+@@ -319,6 +319,7 @@ OnnxRuntimeTestSession::OnnxRuntimeTestSession(Ort::Env& env, std::random_device
+           ORT_THROW("Wrong value for htp_arch. select from: " + str);
+         }
+       } else if (key == "enable_htp_fp16_precision" ||
++                 key == "enable_htp_monolithic_lstm" ||
+                  key == "offload_graph_io_quantization" ||
+                  key == "enable_htp_spill_fill_buffer" ||
+                  key == "enable_htp_shared_memory_allocator" ||
+-- 
+2.53.0.windows.1
+

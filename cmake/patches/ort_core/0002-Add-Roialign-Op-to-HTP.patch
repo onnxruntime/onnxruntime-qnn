@@ -1,7 +1,7 @@
-From cf0d097d6864e8f5f1393c20dcbc96e2fe2efc9e Mon Sep 17 00:00:00 2001
+From f5a780e269da13dae5f9ee397d12bdd66b112039 Mon Sep 17 00:00:00 2001
 From: qti-hungjuiw <hungjuiw@qti.qualcomm.com>
 Date: Mon, 9 Mar 2026 12:03:21 +0800
-Subject: [PATCH 2/2] Add Roialign Op to HTP
+Subject: [PATCH 2/3] Add Roialign Op to HTP
 
 ---
  onnxruntime/test/onnx/TestCase.cc | 2 ++
@@ -36,8 +36,9 @@ index 8446f88639..f08b974d60 100644
 +        ORT_TSTR("roialign_aligned_false"),
 +        ORT_TSTR("roialign_aligned_true"),
 +        ORT_TSTR("roialign_mode_max")};
-
+ 
      std::unordered_set<std::basic_string<ORTCHAR_T>> all_disabled_tests(std::begin(immutable_broken_tests), std::end(immutable_broken_tests));
+ 
+-- 
+2.53.0.windows.1
 
---
-2.34.1.windows.1

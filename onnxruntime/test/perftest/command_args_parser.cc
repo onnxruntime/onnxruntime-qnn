@@ -110,6 +110,7 @@ ABSL_FLAG(std::string, i, "",
           "  Options are '0', '68', '69', '73', '75'. Defaults to '0' (none). \n"
           "  [QNN only] [device_id]: The ID of the device to use when setting 'htp_arch'. Defaults to '0' (for single device). \n"
           "  [QNN only] [enable_htp_fp16_precision]: Enable the HTP_FP16 precision so that the float32 model will be inferenced with fp16 precision. \n"
+          "  [QNN only] [enable_htp_monolithic_lstm]: Enable the HTP monolithic lstm. \n"
           "  Otherwise, it will be fp32 precision. Works for float32 model for HTP backend. Defaults to '1' (with FP16 precision.). \n"
           "  [QNN only] [offload_graph_io_quantization]: Offload graph input quantization and graph output dequantization to another EP (typically CPU EP). \n"
           "  Defaults to '0' (QNN EP handles the graph I/O quantization and dequantization). \n"

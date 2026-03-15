@@ -1,11 +1,11 @@
-From c72f2f3cebee9aed9db117101c85ea4f68aec107 Mon Sep 17 00:00:00 2001
+From f4dd9cd618afabe03728da02f5a987ad3902f5c5 Mon Sep 17 00:00:00 2001
 From: qti-hungjuiw <hungjuiw@qti.qualcomm.com>
 Date: Mon, 9 Mar 2026 12:01:48 +0800
-Subject: [PATCH 1/2] cpp model test runner uses plugin EP
+Subject: [PATCH 1/3] cpp model test runner uses plugin EP
 
 ---
  cmake/CMakeLists.txt                          |   5 +
- cmake/onnxruntime_unittests.cmake             |  91 +-
+ cmake/onnxruntime_unittests.cmake             |  87 +-
  onnxruntime/test/onnx/TestCase.cc             |  20 +
  onnxruntime/test/onnx/dataitem_request.cc     |  13 +-
  .../onnx/plugin_ep/command_args_parser.cc     | 370 ++++++++
@@ -26,7 +26,7 @@ Subject: [PATCH 1/2] cpp model test runner uses plugin EP
  .../internal_api}/compare_ortvalue.cc         |   0
  .../values/public_api/compare_ortvalue.cc     | 849 ++++++++++++++++++
  .../util/values/public_api/compare_ortvalue.h |  35 +
- 22 files changed, 2498 insertions(+), 182 deletions(-)
+ 22 files changed, 2496 insertions(+), 180 deletions(-)
  create mode 100644 onnxruntime/test/onnx/plugin_ep/command_args_parser.cc
  create mode 100644 onnxruntime/test/onnx/plugin_ep/command_args_parser.h
  create mode 100644 onnxruntime/test/onnx/plugin_ep/main.cc
@@ -56,13 +56,13 @@ index 6d0d39556e..00a303368f 100644
        foreach(CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORY ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
          target_compile_options(${target_name} PRIVATE "$<$<COMPILE_LANGUAGE:CXX,C>:/external:I${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORY}>")
 diff --git a/cmake/onnxruntime_unittests.cmake b/cmake/onnxruntime_unittests.cmake
-index ad6f6eb790..7ba7e3c0b1 100644
+index ad6f6eb790..b00fb6f221 100644
 --- a/cmake/onnxruntime_unittests.cmake
 +++ b/cmake/onnxruntime_unittests.cmake
 @@ -356,6 +356,14 @@ file(GLOB onnxruntime_test_utils_src CONFIGURE_DEPENDS
    "${TEST_SRC_DIR}/util/*.cc"
  )
-
+ 
 +file(GLOB onnxruntime_test_utils_public_values_src CMAKE_CONFIGURE_DEPENDS
 +  "${TEST_SRC_DIR}/util/values/public_api/*.cc"
 +)
@@ -75,17 +75,17 @@ index ad6f6eb790..7ba7e3c0b1 100644
    "${TEST_SRC_DIR}/common/*.cc"
    "${TEST_SRC_DIR}/common/*.h"
 @@ -620,6 +628,7 @@ set (onnxruntime_webgpu_delay_load_test_SRC
-
+ 
  set(onnxruntime_test_common_libs
    onnxruntime_unittest_utils
 +  onnxruntime_test_utils_internal_values
    onnxruntime_common
  )
-
+ 
 @@ -842,6 +851,21 @@ target_include_directories(onnxruntime_test_utils PUBLIC "${TEST_SRC_DIR}/util/i
  set_target_properties(onnxruntime_test_utils PROPERTIES FOLDER "ONNXRuntimeTest")
  source_group(TREE ${TEST_SRC_DIR} FILES ${onnxruntime_test_utils_src})
-
+ 
 +# This utility library uses onnxruntime c/c++ apis to provide capability of comparing two OrtValues with all supported data type.
 +onnxruntime_add_static_library(onnxruntime_test_utils_public_values ${onnxruntime_test_utils_public_values_src})
 +onnxruntime_add_include_to_target(onnxruntime_test_utils_public_values onnxruntime_common onnx onnx_proto Eigen3::Eigen)
@@ -112,10 +112,10 @@ index ad6f6eb790..7ba7e3c0b1 100644
 +        ${onnx_test_runner_src_dir}/*.cc
 +        ${onnx_test_runner_src_dir}/utils/*.h
 +        ${onnx_test_runner_src_dir}/utils/*.cc)
-
+ 
 -    list(REMOVE_ITEM onnx_test_runner_common_srcs ${onnx_test_runner_src_dir}/main.cc)
 +        list(REMOVE_ITEM onnx_test_runner_common_srcs ${onnx_test_runner_src_dir}/main.cc)
-
+ 
      onnxruntime_add_static_library(onnx_test_runner_common ${onnx_test_runner_common_srcs})
      if(MSVC)
 @@ -951,7 +977,7 @@ if (onnxruntime_ENABLE_CUDA_EP_INTERNAL_TESTS)
@@ -127,26 +127,8 @@ index ad6f6eb790..7ba7e3c0b1 100644
    if (MSVC)
      # Cutlass code has an issue with the following:
      # warning C4100: 'magic': unreferenced formal parameter
-@@ -1233,7 +1259,7 @@ block()
-     DEPENDS ${onnxruntime_provider_test_deps}
-   )
-
--  # Expose QNN SDK headers to unit tests via an interface target
-+  # Expose QNN SDK headers to unit tests via an interface target
-   if(onnxruntime_USE_QNN)
-     add_library(qnn_sdk_headers_include INTERFACE)
-     target_include_directories(qnn_sdk_headers_include INTERFACE
-@@ -1241,7 +1267,7 @@ block()
-       ${onnxruntime_QNN_HOME}/include/QNN)
-     target_link_libraries(onnxruntime_provider_test PRIVATE qnn_sdk_headers_include)
-   endif()
--
-+
-   if (UNIX AND (onnxruntime_USE_TENSORRT OR onnxruntime_USE_NV))
-     # The test_main.cc includes NvInfer.h where it has many deprecated declarations
-     # simply ignore them for TensorRT EP build
 @@ -1298,6 +1324,7 @@ endif()
-
+ 
  set(onnx_test_libs
    onnxruntime_test_utils
 +  onnxruntime_test_utils_internal_values
@@ -156,7 +138,7 @@ index ad6f6eb790..7ba7e3c0b1 100644
 @@ -1331,6 +1358,60 @@ if (NOT IOS)
              RUNTIME  DESTINATION ${CMAKE_INSTALL_BINDIR})
  endif()
-
+ 
 +if (NOT IOS)
 +    onnxruntime_add_executable(onnxruntime_plugin_ep_onnx_test
 +                               ${onnx_test_runner_src_dir}/plugin_ep/main.cc
@@ -243,7 +225,7 @@ index fbb9fb2797..ba733a3751 100644
 +    broken_tests->insert({"stft", "expected 0 (0), got 8.39259e-05 (38b0015b), diff: 8.39259e-05, tol=1e-05 idx=269. 14 of 270 differ"});
 +    broken_tests->insert({"stft_with_window", "expected 0 (0), got 4.19629e-05 (3830015b), diff: 4.19629e-05, tol=1e-05 idx=269. 12 of 270 differ"});
    }
-
+ 
  #ifdef DISABLE_CONTRIB_OPS
 diff --git a/onnxruntime/test/onnx/dataitem_request.cc b/onnxruntime/test/onnx/dataitem_request.cc
 index e391f8847c..769e972064 100644
@@ -254,7 +236,7 @@ index e391f8847c..769e972064 100644
  #include "TestCase.h"
  #include "test/compare_ortvalue.h"
 +#include "utils/macros.h"
-
+ 
  #include "core/common/logging/logging.h"
  #include "core/common/common.h"
 @@ -29,7 +30,7 @@ std::pair<EXECUTE_RESULT, TIME_SPEC> DataTaskRequestContext::Run(const ITestCase
@@ -274,7 +256,7 @@ index e391f8847c..769e972064 100644
 +      TEST_LOG_ERROR(test_case_.GetTestCaseName() + ":" + ex.what());
      });
    }
-
+ 
 @@ -145,7 +146,7 @@ std::pair<EXECUTE_RESULT, TIME_SPEC> DataTaskRequestContext::RunImpl() {
      auto iter = name_fetch_output_map.find(output_name);
      if (iter == name_fetch_output_map.end()) {
@@ -304,7 +286,7 @@ index e391f8847c..769e972064 100644
              "Expected None output but received an OrtValue that is not None"};
 @@ -213,7 +214,7 @@ std::pair<EXECUTE_RESULT, TIME_SPEC> DataTaskRequestContext::RunImpl() {
      }
-
+ 
      if (compare_result != COMPARE_RESULT::SUCCESS && !ret.second.empty()) {
 -      LOGS_DEFAULT(ERROR) << test_case_.GetTestCaseName() << ":output=" << output_name << ":" << ret.second;
 +      TEST_LOG_ERROR(test_case_.GetTestCaseName() + ":output=" + output_name + ":" + ret.second);
@@ -1571,10 +1553,10 @@ index 0e14a0dcb6..06b2872ccc 100644
  #include "testcase_request.h"
  #include "testenv.h"
 +#include "utils/macros.h"
-
+ 
  #include <core/common/logging/logging.h>
 +#include <sstream>
-
+ 
  namespace onnxruntime {
  namespace test {
 @@ -37,7 +39,7 @@ std::vector<std::shared_ptr<TestCaseResult>> TestCaseDriver::RunParallel(const T
@@ -1593,7 +1575,7 @@ index 0e14a0dcb6..06b2872ccc 100644
 -  LOGF_DEFAULT(ERROR, "Running tests finished. Generating report");
 +  TEST_LOG_VERBOSE("Running tests finished. Generating report");
  }
-
+ 
  void TestCaseDriver::OnTestCaseComplete(size_t test_case_id, std::shared_ptr<TestCaseResult> result) {
 diff --git a/onnxruntime/test/onnx/testcase_request.cc b/onnxruntime/test/onnx/testcase_request.cc
 index 95c7c89056..3814be0637 100644
@@ -1604,13 +1586,13 @@ index 95c7c89056..3814be0637 100644
  #include "dataitem_request.h"
  #include "TestCase.h"
 +#include "utils/macros.h"
-
+ 
  #include "core/common/logging/logging.h"
  #include "core/common/logging/macros.h"
-
+ 
 +#include <iostream>
  #include <utility>
-
+ 
  namespace onnxruntime {
 @@ -39,12 +41,13 @@ bool TestCaseRequestContext::SetupSession() {
      session_opts_.SetLogId(test_case_name);
@@ -1686,7 +1668,7 @@ index d9fd2a2a55..951f138890 100644
 +++ b/onnxruntime/test/onnx/utils/strings_helper.cc
 @@ -12,49 +12,8 @@
  #include "core/common/string_utils.h"
-
+ 
  namespace onnxruntime {
 -namespace perftest {
 -
@@ -1733,13 +1715,13 @@ index d9fd2a2a55..951f138890 100644
 -}
 +namespace test {
 +namespace utils {
-
+ 
  bool ParseDimensionOverride(const std::string& input, std::map<std::string, int64_t>& free_dim_override_map) {
    std::stringstream ss(input);
 @@ -103,13 +62,55 @@ bool ParseDimensionOverrideFromArgv(int argc, std::vector<std::string>& argv, st
    return true;
  }
-
+ 
 +void ParseSessionConfigs(const std::string& configs_string,
 +                         std::unordered_map<std::string, std::string>& session_configs,
 +                         const std::unordered_set<std::string>& available_keys) {
@@ -1785,7 +1767,7 @@ index d9fd2a2a55..951f138890 100644
  void ParseEpOptions(const std::string& input, std::vector<std::unordered_map<std::string, std::string>>& result) {
 -  auto tokens = utils::SplitString(input, ";", true);
 +  auto tokens = onnxruntime::utils::SplitString(input, ";", true);
-
+ 
    for (const auto& token : tokens) {
      result.emplace_back();  // Adds a new empty map
      if (!token.empty()) {
@@ -1847,7 +1829,7 @@ index d6c6f6112a..eea7474f22 100644
  #include <unordered_map>
 @@ -9,16 +11,17 @@
  #include <vector>
-
+ 
  namespace onnxruntime {
 -namespace perftest {
 -
@@ -1856,21 +1838,21 @@ index d6c6f6112a..eea7474f22 100644
 -                         const std::unordered_set<std::string>& available_keys = {});
 +namespace test {
 +namespace utils {
-
+ 
  bool ParseDimensionOverride(const std::string& input, std::map<std::string, int64_t>& free_dim_override_map);
-
+ 
  bool ParseDimensionOverrideFromArgv(int argc, std::vector<std::string>& argv, std::string& option, std::map<std::string, int64_t>& free_dim_override_map);
-
+ 
 +void ParseSessionConfigs(const std::string& configs_string,
 +                         std::unordered_map<std::string, std::string>& session_configs,
 +                         const std::unordered_set<std::string>& available_keys = {});
 +
  void ParseEpList(const std::string& input, std::vector<std::string>& result);
-
+ 
  void ParseEpOptions(const std::string& input, std::vector<std::unordered_map<std::string, std::string>>& result);
 @@ -26,5 +29,11 @@ void ParseEpOptions(const std::string& input, std::vector<std::unordered_map<std
  void ParseEpDeviceIndexList(const std::string& input, std::vector<int>& result);
-
+ 
  void ParseEpDeviceFilterKeyValuePairs(const std::string& input, std::vector<std::pair<std::string, std::string>>& result);
 -}  // namespace perftest
 +
@@ -2016,23 +1998,23 @@ index e21120e62e..cb583812e1 100644
 +++ b/onnxruntime/test/perftest/command_args_parser.cc
 @@ -19,7 +19,7 @@
  #include <core/session/onnxruntime_run_options_config_keys.h>
-
+ 
  #include "test_configuration.h"
 -#include "strings_helper.h"
 +#include "test/onnx/utils/strings_helper.h"
-
+ 
  #ifdef _MSC_VER
  #pragma warning(push)
 @@ -233,8 +233,8 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
    absl::SetFlagsUsageConfig(config);
    absl::SetProgramUsageMessage(CustomUsageMessage());
-
+ 
 -  auto utf8_argv_strings = utils::ConvertArgvToUtf8Strings(argc, argv);
 -  auto utf8_argv = utils::CStringsFromStrings(utf8_argv_strings);
 +  auto utf8_argv_strings = test::utils::ConvertArgvToUtf8Strings(argc, argv);
 +  auto utf8_argv = test::utils::CStringsFromStrings(utf8_argv_strings);
    auto positional = absl::ParseCommandLine(static_cast<int>(utf8_argv.size()), utf8_argv.data());
-
+ 
    // -f
 @@ -245,7 +245,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
        // To preserve the previous usage of '-f', where users may specify it multiple times to override different dimension names,
@@ -2068,7 +2050,7 @@ index e21120e62e..cb583812e1 100644
 -    if (!plugin_eps.empty()) ParseEpList(plugin_eps, test_config.machine_config.plugin_provider_type_list);
 +    if (!plugin_eps.empty()) test::utils::ParseEpList(plugin_eps, test_config.machine_config.plugin_provider_type_list);
    }
-
+ 
    // --plugin_ep_options
 @@ -563,7 +563,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
      const auto& filter_ep_devices = absl::GetFlag(FLAGS_filter_ep_devices);
@@ -2085,17 +2067,17 @@ index 63882c64c2..8b4ce43356 100644
 +++ b/onnxruntime/test/perftest/common_utils.cc
 @@ -2,7 +2,7 @@
  // Licensed under the MIT License.
-
+ 
  #include "test/perftest/utils.h"
 -#include "test/perftest/strings_helper.h"
 +#include "test/onnx/utils/strings_helper.h"
  #include <core/platform/path_lib.h>
-
+ 
  #include <cstdint>
 @@ -13,83 +13,6 @@ namespace onnxruntime {
  namespace perftest {
  namespace utils {
-
+ 
 -void ListEpDevices(const Ort::Env& env) {
 -  std::vector<Ort::ConstEpDevice> ep_devices = env.GetEpDevices();
 -
@@ -2186,12 +2168,12 @@ index 63882c64c2..8b4ce43356 100644
        if (static_cast<size_t>(index) > (ep_devices.size() - 1)) {
          fprintf(stderr, "%s", "The device index provided is not correct. Will skip this device id.");
 @@ -175,7 +98,7 @@ void AppendPluginExecutionProviders(Ort::Env& env,
-
+ 
    // EP's associated provider option lists
    std::vector<std::unordered_map<std::string, std::string>> ep_options_list;
 -  ParseEpOptions(ep_option_string, ep_options_list);
 +  test::utils::ParseEpOptions(ep_option_string, ep_options_list);
-
+ 
    // If user only provide the EPs' provider option lists for the first several EPs,
    // add empty provider option lists for the rest EPs.
 diff --git a/onnxruntime/test/perftest/main.cc b/onnxruntime/test/perftest/main.cc
@@ -2207,16 +2189,16 @@ index 512f217a77..c1fd4663be 100644
  #include "utils.h"
 -#include "strings_helper.h"
  #include <google/protobuf/stubs/common.h>
-
+ 
  using namespace onnxruntime;
 @@ -48,7 +49,7 @@ int real_main(int argc, char* argv[]) {
    }
-
+ 
    if (!test_config.plugin_ep_names_and_libs.empty()) {
 -    perftest::utils::RegisterExecutionProviderLibrary(env, test_config);
 +    test::utils::RegisterExecutionProviderLibrary(env, test_config.plugin_ep_names_and_libs, test_config.registered_plugin_eps);
    }
-
+ 
    // Unregister all registered plugin EP libraries before program exits.
 @@ -58,12 +59,12 @@ int real_main(int argc, char* argv[]) {
    // See "ep_device.ep_factory->ReleaseAllocator" in Environment::CreateSharedAllocatorImpl.
@@ -2226,7 +2208,7 @@ index 512f217a77..c1fd4663be 100644
 +      test::utils::UnregisterExecutionProviderLibrary(env, test_config.registered_plugin_eps);  // this won't throw
      }
    });
-
+ 
    if (test_config.list_available_ep_devices) {
 -    perftest::utils::ListEpDevices(env);
 +    test::utils::ListEpDevices(env);
@@ -2244,7 +2226,7 @@ index 71f9050730..1e879bf5df 100644
 -#include "strings_helper.h"
  #include "utils.h"
 +#include "test/onnx/utils/strings_helper.h"
-
+ 
  #ifdef USE_OPENVINO
  #include "nlohmann/json.hpp"
 @@ -252,13 +252,13 @@ OnnxRuntimeTestSession::OnnxRuntimeTestSession(Ort::Env& env, std::random_device
@@ -2273,7 +2255,7 @@ index 71f9050730..1e879bf5df 100644
                                                                     kCoremlProviderOption_ModelCacheDirectory};
 -    ParseSessionConfigs(ov_string, provider_options, available_keys);
 +    test::utils::ParseSessionConfigs(ov_string, provider_options, available_keys);
-
+ 
      std::unordered_map<std::string, std::string> available_options = {
          {"CPUAndNeuralEngine", "1"},
 diff --git a/onnxruntime/test/perftest/utils.h b/onnxruntime/test/perftest/utils.h
@@ -2281,9 +2263,9 @@ index c008273a3d..e630d1b098 100644
 --- a/onnxruntime/test/perftest/utils.h
 +++ b/onnxruntime/test/perftest/utils.h
 @@ -23,16 +23,6 @@ class ICPUUsage {
-
+ 
  std::unique_ptr<ICPUUsage> CreateICPUUsage();
-
+ 
 -std::vector<std::string> ConvertArgvToUtf8Strings(int argc, ORTCHAR_T* argv[]);
 -
 -std::vector<char*> CStringsFromStrings(std::vector<std::string>& utf8_args);
@@ -3197,5 +3179,6 @@ index 0000000000..c85630b5b2
 +std::pair<COMPARE_RESULT, std::string> VerifyValueInfo(const ONNX_NAMESPACE::ValueInfoProto& expected,
 +                                                       const OrtValue* value);
 +}  // namespace onnxruntime
---
-2.34.1.windows.1
+-- 
+2.53.0.windows.1
+
