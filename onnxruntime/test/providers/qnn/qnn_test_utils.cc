@@ -414,15 +414,20 @@ void InferenceModel(const std::string& model_data,
   Ort::RunOptions ort_run_options;
   ort_run_options.SetRunTag(log_id);
 
-  std::string test_suite_name = ::testing::UnitTest::GetInstance()->current_test_info()->test_suite_name();
+  auto provider_type = "QNNExecutionProvider";
   // TODO: Implement EP assignment verification once public API for ep partition is ready
-  // This disable_cpu_ep_fallback is an workaround for ExpectedEPNodeAssignment::All
-  if (test_suite_name != "QnnCPUBackendTests" &&
-      expected_ep_assignment == ExpectedEPNodeAssignment::All) {
-    // ASSERT_EQ(ep_nodes, graph.NumberOfNodes()) << "Not all nodes were assigned to " << registration_name;
-    session_options.AddConfigEntry("session.disable_cpu_ep_fallback", "1");
-  }
+  session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
   Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
+  int num_nodes = CountNodes(session);
+  int num_ep_nodes = CountAssignedNodes(session, provider_type);
+  if (expected_ep_assignment == ExpectedEPNodeAssignment::All) {
+    // Verify the entire graph is assigned to the EP
+    ASSERT_EQ(num_ep_nodes, num_nodes) << "Not all nodes were assigned to " << provider_type;
+  } else if (expected_ep_assignment == ExpectedEPNodeAssignment::None) {
+    ASSERT_EQ(num_ep_nodes, 0) << "No nodes are supposed to be assigned to " << provider_type;
+  } else {
+    ASSERT_GT(num_ep_nodes, 0) << "No nodes were assigned to " << provider_type;
+  }
 
   // TODO: Implement graph_checker once public API for ep partition is ready
   // const auto& graph = ort_session.GetGraph();
