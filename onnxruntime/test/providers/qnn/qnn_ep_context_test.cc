@@ -2341,7 +2341,7 @@ TEST_F(QnnHTPBackendTests, QnnEpDynamicOptions) {
   provider_options["offload_graph_io_quantization"] = "0";
 
   Ort::SessionOptions so;
-  so.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+  so.SetLogSeverityLevel(ORT_LOGGING_LEVEL_INFO);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);

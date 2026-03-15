@@ -921,8 +921,9 @@ QnnEp::~QnnEp() {
     qnn_backend_manager_->RemovePerThreadHtpPowerConfigMapping(thread_id);
 
     std::lock_guard<std::mutex> lock(config_id_mutex_);
+    qnn_backend_manager_->ReleaseTimerThread();
     if (htp_power_config_id_.has_value()) {
-      qnn_backend_manager_->DestroyHTPPowerConfigID(*htp_power_config_id_);
+      qnn_backend_manager_->DeInitializePowerCfgId(*htp_power_config_id_);
     }
   }
 
@@ -1704,7 +1705,15 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
   if (qnn::IsOrtGraphHasCtxNode(graphs, count, ep->ort_api)) {
-    return ep->CompileContextModel(graphs, fused_nodes, count, node_compute_infos);
+    uint32_t htp_power_config_id = 0;
+    if (ep->GetHtpPowerConfigId(htp_power_config_id)) {
+      RETURN_IF_NOT_OK(ep->qnn_backend_manager_->SetState(onnxruntime::qnn::GraphState::INIT_START, htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_));
+    }
+    auto status = ep->CompileContextModel(graphs, fused_nodes, count, node_compute_infos);
+    if (ep->GetHtpPowerConfigId(htp_power_config_id)) {
+      RETURN_IF_NOT_OK(ep->qnn_backend_manager_->SetState(onnxruntime::qnn::GraphState::INIT_DONE, htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_));
+    }
+    return status;
   }
 
   for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
@@ -1782,7 +1791,23 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     }
 
     RETURN_IF_NOT_OK(qnn_model->ComposeGraph(context));
-    RETURN_IF_NOT_OK(qnn_model->FinalizeGraphs(ep->logger_));
+
+    uint32_t htp_power_config_id = 0;
+
+    if (ep->GetHtpPowerConfigId(htp_power_config_id)) {
+      RETURN_IF_NOT_OK(ep->qnn_backend_manager_->SetState(onnxruntime::qnn::GraphState::INIT_START, htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_));
+    }
+
+    auto finalize_status = qnn_model->FinalizeGraphs(ep->logger_);
+
+    if (ep->GetHtpPowerConfigId(htp_power_config_id)) {
+      RETURN_IF_NOT_OK(ep->qnn_backend_manager_->SetState(onnxruntime::qnn::GraphState::INIT_DONE, htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_));
+    }
+
+    if (!finalize_status.IsOK()) {
+      return finalize_status.release();
+    }
+
     RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(ep->logger_));
 
     ep->qnn_models_.emplace(fused_node_name, std::move(qnn_model));
@@ -1874,17 +1899,31 @@ bool QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thr
     configs_set = true;
 
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, (std::string("rpc_control_latency: ") + rpc_latency).c_str());
+  } else {
+    per_thread_htp_power_configs.rpc_control_latency = default_rpc_control_latency_;
+    configs_set = true;
   }
 
-  uint32_t rpc_polling_time = 0;
   if (qnn::HtpPerformanceMode::kHtpBurst == pre_run_htp_performance_mode) {
-    rpc_polling_time = 9999;
+    per_thread_htp_power_configs.rpc_polling_time = 9999;
+    configs_set = true;
+  } else {
+    per_thread_htp_power_configs.rpc_polling_time = default_rpc_polling_time_;
+    configs_set = true;
+  }
+
+  if (qnn::HtpPerformanceMode::kHtpDefault != dynamic_htp_performance_mode_) {
+    // reset perf mode, rpc control latency and rpc polling time to dynamic perf mode values
+    per_thread_htp_power_configs.default_perf_mode = dynamic_htp_performance_mode_;
+    configs_set = true;
+  } else if (qnn::HtpPerformanceMode::kHtpDefault != default_htp_performance_mode_) {
+    per_thread_htp_power_configs.default_perf_mode = default_htp_performance_mode_;
+    configs_set = true;
   }
 
   if (qnn::HtpPerformanceMode::kHtpDefault != pre_run_htp_performance_mode) {
     per_thread_htp_power_configs.pre_run_perf_mode = pre_run_htp_performance_mode;
     // rpc polling time will only be updated with perf mode changes
-    per_thread_htp_power_configs.rpc_polling_time = rpc_polling_time;
     configs_set = true;
   }
 
@@ -1986,17 +2025,11 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
       qnn::HtpPerformanceMode htp_performance_mode = qnn::HtpPerformanceMode::kHtpDefault;
       ParseHtpPerformanceMode(value, htp_performance_mode, ep->logger_);
 
-      uint32_t rpc_polling_time = 0;
-      if (htp_performance_mode == qnn::HtpPerformanceMode::kHtpBurst) {
-        rpc_polling_time = 9999;
-      }
-
-      uint32_t htp_power_config_id = 0;
-      if (ep->GetHtpPowerConfigId(htp_power_config_id)) {
-        RETURN_IF_NOT_OK(ep->qnn_backend_manager_->SetHtpPowerConfigs(htp_power_config_id,
-                                                                      htp_performance_mode,
-                                                                      rpc_polling_time,
-                                                                      ep->default_rpc_control_latency_));
+      if (htp_performance_mode != qnn::HtpPerformanceMode::kHtpDefault) {
+        ep->dynamic_htp_performance_mode_ = htp_performance_mode;
+        if (htp_performance_mode == qnn::HtpPerformanceMode::kHtpBurst) {
+          ep->default_rpc_polling_time_ = 9999;
+        }
       }
     } else {
       ORT_CXX_LOG(ep->logger_,
@@ -2122,19 +2155,10 @@ void QnnEp::CreateHtpPowerConfigId() const {
   constexpr uint32_t core_id = 0;
   uint32_t htp_power_config_id;
 
-  Ort::Status rt = qnn_backend_manager_->CreateHtpPowerCfgId(device_id_, core_id, htp_power_config_id);
+  Ort::Status rt = qnn_backend_manager_->InitializePowerCfgId(device_id_, core_id, htp_power_config_id);
 
   if (rt.IsOK()) {
     htp_power_config_id_ = htp_power_config_id;
-
-    rt = qnn_backend_manager_->SetHtpPowerConfigs(htp_power_config_id,
-                                                  default_htp_performance_mode_,
-                                                  default_rpc_polling_time_,
-                                                  default_rpc_control_latency_);
-
-    if (!rt.IsOK()) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Unable to set HTP power configurations.");
-    }
   } else {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Failed to create HTP power config id.");
   }
@@ -2180,7 +2204,6 @@ OrtStatus* QnnEp::QnnNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr,
 
   qnn::QnnModel* model = reinterpret_cast<qnn::QnnModel*>(compute_state);
   RETURN_IF_NOT_OK(model->ExecuteGraph(kernel_context, ep.logger_));
-
   return nullptr;
 }
 

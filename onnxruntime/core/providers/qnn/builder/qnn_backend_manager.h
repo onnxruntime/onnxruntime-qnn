@@ -33,6 +33,8 @@
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/builder/timer.h"
+#include <HTP/QnnHtpPerfInfrastructure.h>
 
 namespace onnxruntime {
 namespace qnn {
@@ -123,6 +125,16 @@ struct QnnBackendManagerConfig {
   bool skip_qnn_version_check;
 };
 
+// Graph states to tune the power/performance configurations
+enum class GraphState {
+  INIT_START,
+  INIT_DONE,
+  RUN_START,
+  RUN_DONE,
+  TIMEOUT,
+  NONE
+};
+
 class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
  private:
   // private tag to pass to constructor to ensure that constructor cannot be directly called externally
@@ -179,12 +191,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       bool enable_vtcm_backup_buffer_sharing,
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map);
 
-  Ort::Status CreateHtpPowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
+  Ort::Status InitializePowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
 
-  Ort::Status SetHtpPowerConfigs(uint32_t htp_power_config_client_id,
-                                 HtpPerformanceMode htp_performance_mode,
-                                 uint32_t rpc_polling_time,
-                                 uint32_t rpc_control_latency);
+  Ort::Status DeInitializePowerCfgId(uint32_t htp_power_config_id);
+
+  void ReleaseTimerThread();
 
   Ort::Status SetPerThreadHtpPowerConfigs(const std::thread::id& thread_id, bool pre_run);
 
@@ -254,8 +265,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                                      : backend_path.parent_path().string();
   }
 
-  Ort::Status DestroyHTPPowerConfigID(uint32_t htp_power_config_id);
-
   Ort::Status GetMaxSpillFillBufferSize(unsigned char* buffer,
                                         uint64_t buffer_length,
                                         uint64_t& max_spill_fill_buffer_size);
@@ -291,6 +300,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Releases all QNN resources. Called in the destructor.
   // NOTE: This function indirectly locks the internal `logger_recursive_mutex_` via nested function calls.
   void ReleaseResources();
+  Ort::Status SetState(GraphState state, uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
 
  private:
   Ort::Status LoadBackend();
@@ -331,6 +341,27 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Ort::Status UnloadLib(void* handle);
 
   void* LibFunction(void* handle, const char* symbol, std::string& error_msg);
+
+  bool IsTimerThreadRunning();
+
+  Ort::Status SetSustainedPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
+
+  Ort::Status SetPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
+
+  static void TimerCallback(void* user_data);
+
+  Ort::Status CreateHtpPowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
+
+  void CreateTimerThread(uint32_t htp_power_config_client_id);
+
+  Ort::Status DestroyHTPPowerConfigID(uint32_t htp_power_config_id);
+
+  Ort::Status SetHtpPowerConfigs(uint32_t htp_power_config_client_id,
+                                 HtpPerformanceMode htp_performance_mode,
+                                 uint32_t rpc_polling_time,
+                                 uint32_t rpc_control_latency);
+
+  Ort::Status SetHtpPowerCustomConfigs(uint32_t htp_power_config_client_id, QnnHtpPerfInfrastructure_PowerConfig_t power_config, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
 
   template <class T>
   inline T ResolveSymbol(void* lib_handle, const char* sym, const Ort::Logger& logger) {
@@ -537,6 +568,23 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   const ApiPtrs api_ptrs_;
   const Ort::Logger& logger_;
+  std::mutex perf_mutex_;
+  std::mutex state_mutex_;
+  std::unique_ptr<Timer> timer_;
+  struct TimerResource {
+    static const uint64_t sustained_timer_duration_ = kDefaultTimerTimeoutUs;  // in microseconds
+    std::atomic<bool> caller_busy_ = false;
+  };
+  TimerResource timer_resource_;
+  std::atomic<GraphState> graph_state_ = GraphState::NONE;
+  struct TimerCallbackArg {
+    uint32_t power_config_id_;
+    QnnBackendManager* instance_;
+
+    TimerCallbackArg(uint32_t id, QnnBackendManager* manager)
+        : power_config_id_(id), instance_(manager) {}
+  };
+  std::unique_ptr<TimerCallbackArg> timer_callback_arg_;
 };
 
 }  // namespace qnn

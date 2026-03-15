@@ -529,7 +529,6 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
 #endif
 
     RETURN_IF_ERROR(qnn_backend_manager_->SetPerThreadHtpPowerConfigs(thread_id, false));
-
     // NOTE: This function returns immediately when profiling is disabled.
     // Extracting profiling data can be expensive, but it is typically only enabled for debugging purposes
     // and not in production. We can improve synchronization for event profiling if it becomes an issue.
