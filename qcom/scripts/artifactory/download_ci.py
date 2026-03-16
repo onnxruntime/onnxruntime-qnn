@@ -29,12 +29,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", type=valid_artifact_name, required=True, help="Artifact name")
-    parser.add_argument(
-        "--dest-root",
-        type=Path,
-        default=REPO_ROOT / "build",
-        help="Root directory of artifacts"
-    )
+    parser.add_argument("--dest-root", type=Path, default=REPO_ROOT / "build", help="Root directory of artifacts")
 
     args = parser.parse_args()
 

@@ -23,26 +23,32 @@ class Artifactory:
         # jf rt download preserves all the extra bookkeeping stuff we put into the path.
         # Download everything into a tempdir and copy into the final destination.
         with tempfile.TemporaryDirectory(prefix="ArtifactoryDownload-") as tmpdir:
-            self.__run([
-                "rt",
-                "download",
-                "--insecure-tls=true",  # TODO-jrk
-                src_pattern,
-                f"{tmpdir}/",
-            ], cwd=None)
+            self.__run(
+                [
+                    "rt",
+                    "download",
+                    "--insecure-tls=true",  # TODO-jrk
+                    src_pattern,
+                    f"{tmpdir}/",
+                ],
+                cwd=None,
+            )
             for f in Path(tmpdir).glob("**/*"):
                 logging.info(f"Found file {f}")
             relpath = "/".join(src_pattern.split("/")[1:])
             shutil.copytree(Path(tmpdir) / relpath, destination, dirs_exist_ok=True)
 
     def upload(self, cwd: Path, src_pattern: str, destination: str) -> None:
-        self.__run([
-            "rt",
-            "upload",
-            "--insecure-tls=true",  # TODO-jrk
-            src_pattern,
-            destination,
-        ], cwd)
+        self.__run(
+            [
+                "rt",
+                "upload",
+                "--insecure-tls=true",  # TODO-jrk
+                src_pattern,
+                destination,
+            ],
+            cwd,
+        )
 
     def __run(self, args: Iterable[str], cwd: Path | None) -> None:
         cmd = ["jf", *args]
