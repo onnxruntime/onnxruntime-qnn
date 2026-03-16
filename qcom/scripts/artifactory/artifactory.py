@@ -56,12 +56,11 @@ class CiArtifactory(Artifactory):
         self.__commit_hash = os.environ["GITHUB_SHA"]
         actor = os.environ["GITHUB_ACTOR"] if os.environ["GITHUB_ACTOR"] != "" else "main"
         run_id = os.environ["GITHUB_RUN_ID"]
-        self.__run_attempt = os.environ["GITHUB_RUN_ATTEMPT"]
         self.__ref = os.environ.get("GITHUB_REF", f"{actor}/{run_id}")
 
     @property
     def artifact_root(self) -> str:
-        return f"{super().repo_path}/ci/{self.__ref}/{self.__commit_hash[:10]}-{self.__run_attempt}"
+        return f"{super().repo_path}/ci/{self.__ref}/{self.__commit_hash[:10]}"
 
 
 def initialize_logging(name: str) -> None:
