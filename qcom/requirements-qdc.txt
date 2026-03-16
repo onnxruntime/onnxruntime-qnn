@@ -2,4 +2,3 @@
 # SPDX-License-Identifier: MIT
 
 -r requirements.txt
-qdc-public-api-client == 0.0.14
