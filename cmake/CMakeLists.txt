@@ -7,7 +7,6 @@ cmake_minimum_required(VERSION 3.28)
 
 # Don't let cmake set a default value for CMAKE_CUDA_ARCHITECTURES
 cmake_policy(SET CMP0104 OLD)
-
 # Project
 project(onnxruntime_qnn C CXX ASM)
 
@@ -67,8 +66,7 @@ option(onnxruntime_REDIRECT_STATIC_ANALYSIS_OUTPUTS_TO_FILE "Use a custom SDL Ru
 option(onnxruntime_ENABLE_MEMLEAK_CHECKER "Experimental: Enable memory leak checker in Windows debug build" OFF)
 option(onnxruntime_ENABLE_CONVSYMKERNELAVX2_SAT_CHECKER "Experimental: Enable ConvSymKernelAvx2 assembly saturation checker in build" OFF)
 
-# TODO: Turn on the onnxruntime_BUILD_UNIT_TESTS
-option(onnxruntime_BUILD_UNIT_TESTS "Build ONNXRuntime unit tests" OFF)
+option(onnxruntime_BUILD_UNIT_TESTS "Build ONNXRuntime unit tests" ON)
 option(onnxruntime_USE_PREINSTALLED_EIGEN "Use pre-installed EIGEN. Need to provide eigen_SOURCE_PATH if turn this on." OFF)
 
 option(onnxruntime_BUILD_SHARED_LIB "Build a shared library" OFF)
@@ -478,7 +476,6 @@ if (MSVC OR ${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
     endif()
     message(STATUS "QNN lib files: " ${QNN_LIB_FILES})
 endif()
-
 if (onnxruntime_USE_LOCK_FREE_QUEUE)
     add_compile_definitions(USE_LOCK_FREE_QUEUE)
 endif()
@@ -843,8 +840,6 @@ if (WIN32 AND NOT GDK_PLATFORM AND NOT CMAKE_CROSSCOMPILING)
 endif()
 
 include(onnxruntime_providers_qnn.cmake)
-# TODO: Enable the onnxruntime_providers_qnn_simulation.cmake if needed
-# include(onnxruntime_providers_qnn_simulation.cmake)
 
 if (UNIX)
   option(BUILD_PKGCONFIG_FILES "Build and install pkg-config files" ON)
@@ -932,6 +927,7 @@ if(DEFINED BUILD_AS_ARM64X)
 endif()
 
 if(onnxruntime_BUILD_UNIT_TESTS)
+  include(onnxruntime_unittests.cmake)
   include("${CMAKE_CURRENT_SOURCE_DIR}/onnxruntime_test_pch.cmake")
 endif()
 

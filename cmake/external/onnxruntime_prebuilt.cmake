@@ -103,6 +103,7 @@ else()
     list(APPEND ORT_BUILD_COMMAND --targets)
     list(APPEND ORT_BUILD_COMMAND onnxruntime_perf_test)
     list(APPEND ORT_BUILD_COMMAND onnxruntime_plugin_ep_onnx_test)
+    list(APPEND ORT_BUILD_COMMAND onnxruntime_providers_shared)
     list(APPEND ORT_BUILD_COMMAND onnxruntime)
 
     if(IS_MULTI_CONFIG)
@@ -130,6 +131,8 @@ if(WIN32)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${ORT_PREBUILT_SOURCE}/onnxruntime.dll"
             "${ORT_PREBUILT_SOURCE}/onnxruntime.lib"
+            "${ORT_PREBUILT_SOURCE}/onnxruntime_providers_shared.dll"
+            "${ORT_PREBUILT_SOURCE}/onnxruntime_providers_shared.lib"
             "${ORT_PREBUILT_SOURCE}/onnxruntime_plugin_ep_onnx_test.exe"
             "${ORT_PREBUILT_SOURCE}/onnxruntime_perf_test.exe"
             "${ORT_PREBUILT_DEST}"
@@ -143,6 +146,7 @@ elseif(UNIX AND NOT ANDROID)
             "${ORT_PREBUILT_SOURCE}/libonnxruntime.so"
             "${ORT_PREBUILT_SOURCE}/libonnxruntime.so.1"
             "${ORT_PREBUILT_SOURCE}/libonnxruntime.so.${ORT_CORE_VER}"
+            "${ORT_PREBUILT_SOURCE}/libonnxruntime_providers_shared.so"
             "${ORT_PREBUILT_SOURCE}/onnxruntime_plugin_ep_onnx_test"
             "${ORT_PREBUILT_SOURCE}/onnxruntime_perf_test"
             "${ORT_PREBUILT_DEST}"
@@ -152,6 +156,7 @@ elseif(ANDROID)
         COMMAND ${CMAKE_COMMAND} -E echo "Copying Android ONNX Runtime files"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${ORT_PREBUILT_SOURCE}/libonnxruntime.so"
+            "${ORT_PREBUILT_SOURCE}/libonnxruntime_providers_shared.so"
             "${ORT_PREBUILT_SOURCE}/onnxruntime_plugin_ep_onnx_test"
             "${ORT_PREBUILT_SOURCE}/onnxruntime_perf_test"
             "${ORT_PREBUILT_DEST}"
@@ -165,6 +170,24 @@ list(APPEND ORT_INSTALL_COMMAND
     COMMAND ${CMAKE_COMMAND} -E echo "File copying completed"
 )
 
+# Declare build byproducts so Ninja knows ort_core_target produces these files.
+# Without BUILD_BYPRODUCTS, Ninja reports "missing and no known rule to make it"
+# for IMPORTED_LOCATION / IMPORTED_IMPLIB files that don't exist at configure time.
+if(WIN32)
+    set(ORT_BUILD_BYPRODUCTS
+        "${ORT_PREBUILT_DEST}/onnxruntime.dll"
+        "${ORT_PREBUILT_DEST}/onnxruntime.lib"
+        "${ORT_PREBUILT_DEST}/onnxruntime_providers_shared.dll"
+        "${ORT_PREBUILT_DEST}/onnxruntime_providers_shared.lib"
+    )
+else()
+    # Linux and Android
+    set(ORT_BUILD_BYPRODUCTS
+        "${ORT_PREBUILT_DEST}/libonnxruntime.so"
+        "${ORT_PREBUILT_DEST}/libonnxruntime_providers_shared.so"
+    )
+endif()
+
 message(STATUS "ORT_BUILD_COMMAND for ExternalProject: ${ORT_BUILD_COMMAND}")
 ExternalProject_Add(
     ort_core_target
@@ -175,6 +198,7 @@ ExternalProject_Add(
     CONFIGURE_COMMAND ""
     BUILD_COMMAND ${ORT_BUILD_COMMAND}
     INSTALL_COMMAND ${ORT_INSTALL_COMMAND}
+    BUILD_BYPRODUCTS ${ORT_BUILD_BYPRODUCTS}
     # Enable comprehensive logging for debugging
     LOG_DOWNLOAD ON
     LOG_PATCH ON
@@ -194,8 +218,11 @@ set(ONNXRUNTIME_APPLICATION_INCLUDE_ROOT "${ORT_SOURCE_DIR}/include/onnxruntime"
 
 # Create imported target for ONNX Runtime
 add_library(onnxruntime SHARED IMPORTED GLOBAL)
+add_library(onnxruntime_providers_shared SHARED IMPORTED GLOBAL)
+
 # Add dependency on the external projects to ensure they're downloaded first
 add_dependencies(onnxruntime ort_core_target)
+add_dependencies(onnxruntime_providers_shared ort_core_target)
 
 # Hack since cmake check the existence of INTERFACE_INCLUDE_DIRECTORIES
 file(MAKE_DIRECTORY ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT})
@@ -207,9 +234,16 @@ if(WIN32)
         IMPORTED_LOCATION ${ORT_PREBUILT_DEST}/onnxruntime.dll
         IMPORTED_IMPLIB ${ORT_PREBUILT_DEST}/onnxruntime.lib
     )
+    set_target_properties(onnxruntime_providers_shared PROPERTIES
+        IMPORTED_LOCATION ${ORT_PREBUILT_DEST}/onnxruntime_providers_shared.dll
+        IMPORTED_IMPLIB ${ORT_PREBUILT_DEST}/onnxruntime_providers_shared.lib
+    )
 else()
     # Linux: Use .so for IMPORTED_LOCATION
     set_target_properties(onnxruntime PROPERTIES
         IMPORTED_LOCATION ${ORT_PREBUILT_DEST}/libonnxruntime.so
+    )
+    set_target_properties(onnxruntime_providers_shared PROPERTIES
+        IMPORTED_LOCATION ${ORT_PREBUILT_DEST}/libonnxruntime_providers_shared.so
     )
 endif()
