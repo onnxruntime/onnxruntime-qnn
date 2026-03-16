@@ -5,11 +5,11 @@ name: Qualcomm Internal Clean Artifacts
 description: Periodically impose a retention policy on Artifactory Artifacts
 
 on:
-  schedule:
-    - cron: "0 8 * * *"  # Every day at 1am in San Diego/PDT (8am UTC)
+  # schedule:
+  #   - cron: "0 8 * * *"  # Every day at 1am in San Diego/PDT (8am UTC)
   workflow_dispatch:
-  pull_request:  # TODO-jrk: remove this trigger
-    branches: [main]
+  # pull_request:  # TODO-jrk: remove this trigger
+  #   branches: [main]
 
 # only one active job per PR. this will cause jobs to be immediately cancelled on subsequent pushes in PRs.
 # ref: https://docs.github.com/en/actions/using-jobs/using-concurrency#example-using-a-fallback-value
@@ -34,6 +34,9 @@ jobs:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
+      # TODO-jrk: remove insecure-tls
+      # TODO-jrk: service account isn't allowed to do this
+      # TODO-jrk: prune empty directories
       - name: Delete old CI artifacts
         run: >
           jf rt delete --insecure-tls=true
