@@ -26,7 +26,7 @@ on:
       # Cross-compiling from X64 to ARM64 is faster with our runners, but cannot produce a wheel.
       windows_arm64_runner_arch:
         type: string
-        default: "ARM64"
+        default: X64
       target_py_vsn:
         default: "3.12"
         type: string
@@ -72,17 +72,19 @@ jobs:
 #      target_os: linux
 #      target_arch: aarch64_oe_gcc11_2
 
-#   build-and-test-windows-arm64:
-#     if: ${{ inputs.do_all || inputs.do_windows_arm64 }}
-#     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
-#     secrets: inherit
-#     with:
-#       nightly_build: ${{ inputs.nightly_build }}
-#       build_runner_arch: ${{ inputs.windows_arm64_runner_arch }}
-#       target_arch: arm64
-#       upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' }}
-#       target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
-#       test_runner_arch: arm64
+  build-and-test-windows-arm64:
+    if: ${{ inputs.do_all || inputs.do_windows_arm64 }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      target_arch: arm64
+      build_runner_arch: ${{ inputs.windows_arm64_runner_arch }}
+      test_runner_arch: arm64
+      upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn }}
+      upload_test_archive: ${{ inputs.windows_arm64_runner_arch != 'ARM64' }}
+      build_test_same_runner: ${{ inputs.windows_arm64_runner_arch == 'ARM64' }}
+      target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
+      nightly_build: ${{ inputs.nightly_build }}
 
   build-and-test-windows-arm64ec:
     if: ${{ inputs.do_all }}

@@ -168,13 +168,13 @@ jobs:
           report_paths: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
-      - uses: actions/upload-artifact@v4
+      - name: Upload Test Archive to Artifactory
         if: ${{ inputs.upload_test_archive }}
-        with:
-          name: ORT ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Tests
-          retention-days: 7
-          path: |
-            ${{ github.workspace }}/build/onnxruntime-tests-${{inputs.target_os}}-${{ inputs.target_arch }}.*
+        run: >
+          "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
+          qcom/scripts/artifactory/publish_ci.py
+          --src-pattern "onnxruntime-tests-${{inputs.target_os}}-${{ inputs.target_arch }}.*"
+          --name "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
 
       - name: Upload Wheel to Artifactory
         if: ${{ inputs.upload_wheel }}
@@ -213,11 +213,20 @@ jobs:
         with:
           submodules: recursive
 
-      - uses: actions/download-artifact@v4
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
         with:
-          name: ORT ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Tests
-          path: |
-            ${{ github.workspace }}/build
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Download Tests from Artifactory
+        run: >
+          "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
+          qcom/scripts/artifactory/download_ci.py
+          --name "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
 
       - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         run: >
