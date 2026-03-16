@@ -297,8 +297,7 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  // TODO: Upgrade the ONNX IR VERSION to 12 when using ORT 1.24 prebuilt
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   // Serialize the model to a string.
   std::string model_data;
@@ -512,10 +511,10 @@ void QnnHTPBackendTests::SetUp() {
          << ", DLBC supported: " << attrs.dlbc_supported
          << ", VTCM size MB: " << attrs.vtcm_size_mb
          << ", SoC model: " << attrs.soc_model
-         << ", SDK version: " << attrs.sdk_version;
+         << ", Backend API version: " << attrs.backend_api_version;
 
       std::string platform_info_str = ss.str();
-      std::cout << platform_info_str;
+      std::cout << platform_info_str << std::endl;
       // TODO: Fix the crash here with ORT_CXX_LOG
       // ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_INFO, platform_info_str.c_str());
 
@@ -740,9 +739,9 @@ Ort::Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackend
       Qnn_ApiVersion_t api_version;
       qnn_status = backendGetApiVersionFn(&api_version);
       if (qnn_status == QNN_SUCCESS) {
-        out.sdk_version = std::to_string(api_version.coreApiVersion.major) + "." +
-                          std::to_string(api_version.coreApiVersion.minor) + "." +
-                          std::to_string(api_version.coreApiVersion.patch);
+        out.backend_api_version = std::to_string(api_version.coreApiVersion.major) + "." +
+                                  std::to_string(api_version.coreApiVersion.minor) + "." +
+                                  std::to_string(api_version.coreApiVersion.patch);
       }
     }
 
