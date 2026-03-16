@@ -154,7 +154,6 @@ size_t CountAssignedNodes(const Ort::Session& current_session, const std::string
       count += ep_assigned_subgraph.GetNodes().size();
     }
   }
-
   return count;
 }
 

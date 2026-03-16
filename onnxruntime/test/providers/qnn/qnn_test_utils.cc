@@ -339,7 +339,6 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
 
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
-                       ExpectedEPNodeAssignment expected_ep_assignment [[maybe_unused]],
                        std::unordered_map<std::string, Ort::Value>& feeds,
                        std::vector<Ort::Value>& output_vals,
                        std::optional<GraphOptimizationLevel> graph_optimization_level) {
