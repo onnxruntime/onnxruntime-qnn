@@ -70,6 +70,6 @@ def initialize_logging(name: str) -> None:
 
 
 def valid_artifact_name(proposed_name: str) -> str:
-    if not re.match(r"^[a-z][a-z0-9-\._]*$", proposed_name):
+    if not re.match(r"^[a-zA-Z][a-zA-Z0-9-\._]*$", proposed_name):
         raise ValueError(f"{proposed_name} is not a valid artifact name.")
     return proposed_name
