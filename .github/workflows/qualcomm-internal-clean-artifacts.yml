@@ -8,7 +8,7 @@ on:
   schedule:
     - cron: "0 8 * * *"  # Every day at 1am in San Diego/PDT (8am UTC)
   workflow_dispatch:
-  push:  # TODO-jrk: remove this trigger
+  pull_request:  # TODO-jrk: remove this trigger
     branches: [main]
 
 # only one active job per PR. this will cause jobs to be immediately cancelled on subsequent pushes in PRs.
