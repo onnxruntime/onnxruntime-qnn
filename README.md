@@ -28,9 +28,13 @@ ONNX Runtime supports hardware acceleration through **Execution Providers (EPs)*
 
 The Plugin EP workflow is different from the classic built-in EP. Follow these steps to migrate or get started.
 
-**1. Learn about the ONNX Runtime Plugin EP API →** [Plugin EP Usage](https://onnxruntime.ai/docs/execution-providers/plugin-ep-libraries/usage.html)
+**1. Client impact: Learn about the ONNX Runtime Plugin EP API →** [Plugin EP Usage](https://onnxruntime.ai/docs/execution-providers/plugin-ep-libraries/usage.html)
 
-**2. Client app usage (Python):**
+**2. QNN-specific examples:**
+
+- [C++ example →](https://github.com/onnxruntime/onnxruntime-qnn/blob/rel-2.0.0_1.24.1/docs/execution_providers/QNN-ExecutionProvider.md#c)
+
+- Python example:
 
 ```python
 import onnxruntime as ort
@@ -62,6 +66,8 @@ result = session.run(None, {"input": input_data}, run_options)
 del session
 ort.unregister_execution_provider_library(lib_registration_name)
 ```
+
+- [More examples →](https://github.com/onnxruntime/onnxruntime-qnn/blob/rel-2.0.0_1.24.1/docs/execution_providers/QNN-ExecutionProvider.md#qnn-execution-provider)
 
 ---
 
