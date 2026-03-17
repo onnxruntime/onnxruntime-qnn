@@ -33,9 +33,8 @@ class Artifactory:
                 ],
                 cwd=None,
             )
-            for f in Path(tmpdir).glob("**/*"):
-                logging.info(f"Found file {f}")
             relpath = "/".join(src_pattern.split("/")[1:])
+            logging.info(f"Copying everything under {Path(tmpdir) / relpath} to {destination}.")
             shutil.copytree(Path(tmpdir) / relpath, destination, dirs_exist_ok=True)
 
     def upload(self, cwd: Path, src_pattern: str, destination: str) -> None:

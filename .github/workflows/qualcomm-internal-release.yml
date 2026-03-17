@@ -63,6 +63,10 @@ jobs:
           qcom/scripts/artifactory/download_ci.py
           --name "linux-x86_64-py3.10-wheels"
 
+      - name: TODO-jrk
+        run: >
+          find ${{ github.workspace }}/build
+
       - name: Create config file
         run: |
           echo "[distutils]" > build/pypirc
