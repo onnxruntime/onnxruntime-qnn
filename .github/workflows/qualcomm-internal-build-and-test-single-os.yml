@@ -167,14 +167,14 @@ jobs:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
-      - name: Upload Wheel to Artifactory
-        env:
-          BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
-        run: >
-          "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
-          qcom/scripts/artifactory/publish_ci.py
-          --src-pattern "${{ inputs.target_os }}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl"
-          --name "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
+      # - name: Upload Wheel to Artifactory
+      #   env:
+      #     BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
+      #   run: >
+      #     "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
+      #     qcom/scripts/artifactory/publish_ci.py
+      #     --src-pattern "${{ inputs.target_os }}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl"
+      #     --name "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
 
       # - name: Upload Test Archive to Artifactory
       #   if: ${{ inputs.upload_test_archive }}
@@ -183,12 +183,12 @@ jobs:
       #     name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
       #     src_pattern: "onnxruntime-tests-${{inputs.target_os}}-${{ inputs.target_arch }}.zip"
 
-      # - name: Upload Wheel to Artifactory
-      #   if: ${{ inputs.upload_wheel }}
-      #   uses: ./.github/actions/upload-ci-artifact
-      #   with:
-      #     name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
-      #     src_pattern: "${{ inputs.target_os }}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl"
+      - name: Upload Wheel to Artifactory
+        if: ${{ inputs.upload_wheel }}
+        uses: ./.github/actions/upload-ci-artifact
+        with:
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
+          src_pattern: "${{ inputs.target_os }}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl"
 
       - uses: actions/upload-artifact@v4
         if: ${{ inputs.upload_nuget }}
