@@ -30,7 +30,7 @@ The Plugin EP workflow is different from the classic built-in EP. Follow these s
 
 **1. Client impact: Learn about the ONNX Runtime Plugin EP API →** [Plugin EP Usage](https://onnxruntime.ai/docs/execution-providers/plugin-ep-libraries/usage.html)
 
-**2. QNN-specific examples:**
+**2. QNN Plugin EP specific examples:**
 
 - [C++ example →](https://github.com/onnxruntime/onnxruntime-qnn/blob/rel-2.0.0_1.24.1/docs/execution_providers/QNN-ExecutionProvider.md#c)
 
