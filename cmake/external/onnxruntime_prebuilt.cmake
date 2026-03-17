@@ -103,8 +103,10 @@ else()
     list(APPEND ORT_BUILD_COMMAND --targets)
     list(APPEND ORT_BUILD_COMMAND onnxruntime_perf_test)
     list(APPEND ORT_BUILD_COMMAND onnxruntime_plugin_ep_onnx_test)
-    list(APPEND ORT_BUILD_COMMAND onnxruntime_providers_shared)
     list(APPEND ORT_BUILD_COMMAND onnxruntime)
+    if (NOT (${CMAKE_SYSTEM_NAME} STREQUAL "Android"))
+        list(APPEND ORT_BUILD_COMMAND onnxruntime_providers_shared)
+    endif()
 
     if(IS_MULTI_CONFIG)
         # Multi-config generators: executable is in config subdirectory
@@ -156,7 +158,6 @@ elseif(ANDROID)
         COMMAND ${CMAKE_COMMAND} -E echo "Copying Android ONNX Runtime files"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${ORT_PREBUILT_SOURCE}/libonnxruntime.so"
-            "${ORT_PREBUILT_SOURCE}/libonnxruntime_providers_shared.so"
             "${ORT_PREBUILT_SOURCE}/onnxruntime_plugin_ep_onnx_test"
             "${ORT_PREBUILT_SOURCE}/onnxruntime_perf_test"
             "${ORT_PREBUILT_DEST}"
@@ -184,8 +185,11 @@ else()
     # Linux and Android
     set(ORT_BUILD_BYPRODUCTS
         "${ORT_PREBUILT_DEST}/libonnxruntime.so"
-        "${ORT_PREBUILT_DEST}/libonnxruntime_providers_shared.so"
     )
+    if(NOT ANDROID)
+        list(APPEND ORT_BUILD_BYPRODUCTS
+            "${ORT_PREBUILT_DEST}/libonnxruntime_providers_shared.so")
+    endif()
 endif()
 
 message(STATUS "ORT_BUILD_COMMAND for ExternalProject: ${ORT_BUILD_COMMAND}")
@@ -243,7 +247,9 @@ else()
     set_target_properties(onnxruntime PROPERTIES
         IMPORTED_LOCATION ${ORT_PREBUILT_DEST}/libonnxruntime.so
     )
-    set_target_properties(onnxruntime_providers_shared PROPERTIES
-        IMPORTED_LOCATION ${ORT_PREBUILT_DEST}/libonnxruntime_providers_shared.so
-    )
+    if(NOT ANDROID)
+        set_target_properties(onnxruntime_providers_shared PROPERTIES
+            IMPORTED_LOCATION ${ORT_PREBUILT_DEST}/libonnxruntime_providers_shared.so
+        )
+    endif()
 endif()
