@@ -158,33 +158,21 @@ jobs:
           report_paths: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
-      # - name: Setup JFrog CLI
-      #   uses: jfrog/setup-jfrog-cli@v4
-      #   with:
-      #     disable-auto-build-publish: true
-      #     disable-job-summary: true
-      #   env:
-      #     JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
-      #     JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
-      - name: Setup Artifactory
-        uses: ./.github/actions/setup-artifactory
-
-      # - name: Upload Wheel to Artifactory
-      #   env:
-      #     BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
-      #   run: >
-      #     "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
-      #     qcom/scripts/artifactory/publish_ci.py
-      #     --src-pattern "${{ inputs.target_os }}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl"
-      #     --name "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
-
-      # - name: Upload Test Archive to Artifactory
-      #   if: ${{ inputs.upload_test_archive }}
-      #   uses: ./.github/actions/upload-ci-artifact
-      #   with:
-      #     name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
-      #     src_pattern: "onnxruntime-tests-${{inputs.target_os}}-${{ inputs.target_arch }}.zip"
+      - name: Upload Test Archive to Artifactory
+        if: ${{ inputs.upload_test_archive }}
+        uses: ./.github/actions/upload-ci-artifact
+        with:
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
+          src_pattern: "onnxruntime-tests-${{inputs.target_os}}-${{ inputs.target_arch }}.zip"
 
       - name: Upload Wheel to Artifactory
         if: ${{ inputs.upload_wheel }}
