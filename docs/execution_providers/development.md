@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide provides instructions for developing features for the ONNX Runtime (ORT) QNN Execution Provider using the ABI-compliant EP library. The ABI compatibility ensures stable interfaces and streamlined session creation.
+This guide provides instructions for developing features for the ONNX Runtime (ORT) QNN Execution Provider using the plugin EP library. The ABI compatibility ensures stable interfaces and streamlined session creation.
 
 - **Note**: QNN EP version < 2.0 is **NOT** included in this page.
 
@@ -17,7 +17,7 @@ This guide provides instructions for developing features for the ONNX Runtime (O
 
 ## Objective
 
-Enable ONNX Runtime developers to integrate and maintain features using the ABI-compliant EP library, ensuring ABI compatibility and streamlined session creation.
+Enable ONNX Runtime developers to integrate and maintain features using the plugin EP library, ensuring ABI compatibility and streamlined session creation.
 
 ## Key Components
 
