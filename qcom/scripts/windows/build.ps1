@@ -128,7 +128,8 @@ $CommonArgs = `
 $QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot"
 if ($OrtPrebuiltRoot -ne "") {
     $OrtPrebuiltRoot = Resolve-Path -Path $OrtPrebuiltRoot
-    $QnnArgs += "--ort_home $OrtPrebuiltRoot"
+    $QnnArgs += "--ort_home"
+    $QnnArgs += "$OrtPrebuiltRoot"
 }
 $GenerateBuild = $false
 $DoBuild = $false

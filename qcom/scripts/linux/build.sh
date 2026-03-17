@@ -158,7 +158,8 @@ case "${target_platform}" in
   linux)
     qnn_args=(--use_qnn --qnn_home "${qairt_sdk_root}")
     if [ -n "${ort_prebuilt_root}" ]; then
-      qnn_args+=("--ort_home ${ort_prebuilt_root}")
+      qnn_args+=("--ort_home")
+      qnn_args+=("${ort_prebuilt_root}")
     fi
     platform_args=(--build_shared_lib)
 
@@ -214,7 +215,8 @@ case "${target_platform}" in
 
     qnn_args=(--use_qnn static_lib --qnn_home "${qairt_sdk_root}")
     if [ -n "${ort_prebuilt_root}" ]; then
-      qnn_args+=("--ort_home ${ort_prebuilt_root}")
+      qnn_args+=("--ort_home")
+      qnn_args+=("${ort_prebuilt_root}")
     fi
     platform_args=(--build_shared_lib \
                    --android_sdk_path "${android_sdk_path}" \

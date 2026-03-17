@@ -117,80 +117,75 @@ else()
     endif()
 endif()
 
-# Determine ORT_INSTALL_COMMAND here
-# Generic install command that copies required files from ORT_PREBUILT_SOURCE to ORT_PREBUILT_DEST
-# Handles both Windows (.dll) and Linux (.so) platforms, and allows missing files
-set(ORT_INSTALL_COMMAND
-    ${CMAKE_COMMAND} -E make_directory "${ORT_PREBUILT_DEST}"
-    COMMAND ${CMAKE_COMMAND} -E echo "Copying files from ${ORT_PREBUILT_SOURCE} to ${ORT_PREBUILT_DEST}"
-)
-
-# Platform-specific library copying
+# Define platform-specific file lists.
+# ORT_BINARY_FILES: library and test binaries to be copied during install, used as both install sources and build byproducts.
 if(WIN32)
-    # Windows: Use file globbing to copy existing .dll and .lib files
-    list(APPEND ORT_INSTALL_COMMAND
-        COMMAND ${CMAKE_COMMAND} -E echo "Copying Windows ONNX Runtime files"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${ORT_PREBUILT_SOURCE}/onnxruntime.dll"
-            "${ORT_PREBUILT_SOURCE}/onnxruntime.lib"
-            "${ORT_PREBUILT_SOURCE}/onnxruntime_providers_shared.dll"
-            "${ORT_PREBUILT_SOURCE}/onnxruntime_providers_shared.lib"
-            "${ORT_PREBUILT_SOURCE}/onnxruntime_plugin_ep_onnx_test.exe"
-            "${ORT_PREBUILT_SOURCE}/onnxruntime_perf_test.exe"
-            "${ORT_PREBUILT_DEST}"
+    set(ORT_BINARY_FILES
+        "onnxruntime.dll"
+        "onnxruntime.lib"
+        "onnxruntime_providers_shared.dll"
+        "onnxruntime_providers_shared.lib"
     )
-elseif(UNIX AND NOT ANDROID)
-    # Linux: Use file globbing to copy existing .so files and test executable
-    # This will copy libonnxruntime.so, libonnxruntime.so.1, libonnxruntime.so.1.24.1, etc.
-    list(APPEND ORT_INSTALL_COMMAND
-        COMMAND ${CMAKE_COMMAND} -E echo "Copying Linux ONNX Runtime files"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${ORT_PREBUILT_SOURCE}/libonnxruntime.so"
-            "${ORT_PREBUILT_SOURCE}/libonnxruntime.so.1"
-            "${ORT_PREBUILT_SOURCE}/libonnxruntime.so.${ORT_CORE_VER}"
-            "${ORT_PREBUILT_SOURCE}/libonnxruntime_providers_shared.so"
-            "${ORT_PREBUILT_SOURCE}/onnxruntime_plugin_ep_onnx_test"
-            "${ORT_PREBUILT_SOURCE}/onnxruntime_perf_test"
-            "${ORT_PREBUILT_DEST}"
-    )
+    if (NOT onnxruntime_ORT_HOME)
+        list(APPEND ORT_BINARY_FILES
+            "onnxruntime_plugin_ep_onnx_test.exe"
+            "onnxruntime_perf_test.exe"
+        )
+    endif()
 elseif(ANDROID)
-    list(APPEND ORT_INSTALL_COMMAND
-        COMMAND ${CMAKE_COMMAND} -E echo "Copying Android ONNX Runtime files"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            "${ORT_PREBUILT_SOURCE}/libonnxruntime.so"
-            "${ORT_PREBUILT_SOURCE}/onnxruntime_plugin_ep_onnx_test"
-            "${ORT_PREBUILT_SOURCE}/onnxruntime_perf_test"
-            "${ORT_PREBUILT_DEST}"
+    set(ORT_BINARY_FILES
+        "libonnxruntime.so"
     )
+    if (NOT onnxruntime_ORT_HOME)
+        list(APPEND ORT_BINARY_FILES
+            "onnxruntime_plugin_ep_onnx_test"
+            "onnxruntime_perf_test"
+        )
+    endif()
+elseif(UNIX)
+    # Linux: libonnxruntime.so.1 and the versioned symlink are extra; only the
+    # unversioned .so files are needed as imported targets / build byproducts.
+    set(ORT_BINARY_FILES
+        "libonnxruntime.so"
+        "libonnxruntime.so.1"
+        "libonnxruntime.so.${ORT_CORE_VER}"
+        "libonnxruntime_providers_shared.so"
+    )
+    if (NOT onnxruntime_ORT_HOME)
+        list(APPEND ORT_BINARY_FILES
+            "onnxruntime_plugin_ep_onnx_test"
+            "onnxruntime_perf_test"
+        )
+    endif()
 else()
     message(FATAL_ERROR "Unknown platform")
 endif()
 
-# Add completion message
-list(APPEND ORT_INSTALL_COMMAND
+# Build the list of source paths for the install copy command.
+set(ORT_PREBUILT_SOURCE_FILES)
+foreach(_file IN LISTS ORT_BINARY_FILES)
+    list(APPEND ORT_PREBUILT_SOURCE_FILES "${ORT_PREBUILT_SOURCE}/${_file}")
+endforeach()
+
+# Generic install command that copies required files from ORT_PREBUILT_SOURCE to ORT_PREBUILT_DEST.
+# Handles both Windows (.dll/.lib) and Linux/Android (.so) platforms.
+set(ORT_INSTALL_COMMAND
+    ${CMAKE_COMMAND} -E make_directory "${ORT_PREBUILT_DEST}"
+    COMMAND ${CMAKE_COMMAND} -E echo "Copying files from ${ORT_PREBUILT_SOURCE} to ${ORT_PREBUILT_DEST}"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${ORT_PREBUILT_SOURCE_FILES}
+        "${ORT_PREBUILT_DEST}"
     COMMAND ${CMAKE_COMMAND} -E echo "File copying completed"
 )
 
 # Declare build byproducts so Ninja knows ort_core_target produces these files.
 # Without BUILD_BYPRODUCTS, Ninja reports "missing and no known rule to make it"
 # for IMPORTED_LOCATION / IMPORTED_IMPLIB files that don't exist at configure time.
-if(WIN32)
-    set(ORT_BUILD_BYPRODUCTS
-        "${ORT_PREBUILT_DEST}/onnxruntime.dll"
-        "${ORT_PREBUILT_DEST}/onnxruntime.lib"
-        "${ORT_PREBUILT_DEST}/onnxruntime_providers_shared.dll"
-        "${ORT_PREBUILT_DEST}/onnxruntime_providers_shared.lib"
-    )
-else()
-    # Linux and Android
-    set(ORT_BUILD_BYPRODUCTS
-        "${ORT_PREBUILT_DEST}/libonnxruntime.so"
-    )
-    if(NOT ANDROID)
-        list(APPEND ORT_BUILD_BYPRODUCTS
-            "${ORT_PREBUILT_DEST}/libonnxruntime_providers_shared.so")
-    endif()
-endif()
+# Derived directly from ORT_LIBRARY_FILES to avoid repeating filenames.
+set(ORT_BUILD_BYPRODUCTS)
+foreach(_file IN LISTS ORT_BINARY_FILES)
+    list(APPEND ORT_BUILD_BYPRODUCTS "${ORT_PREBUILT_DEST}/${_file}")
+endforeach()
 
 message(STATUS "ORT_BUILD_COMMAND for ExternalProject: ${ORT_BUILD_COMMAND}")
 ExternalProject_Add(
