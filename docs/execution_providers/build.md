@@ -245,17 +245,16 @@ build/
 
 Located in `build/Release/Release/dist/` (Windows) or `build/Release/dist/` (Linux):
 
-* Windows ARM64: `onnxruntime_qnn-[version]-py3-none-win_arm64.whl`
-* Windows x86-64: `onnxruntime_qnn-[version]-py3-none-win_amd64.whl`
-* Linux x86-64: `onnxruntime_qnn-[version]-py3-none-linux_x86_64.whl`
-* Linux AArch64: `onnxruntime_qnn-[version]-py3-none-manylinux_2_34_aarch64.whl`
+* Windows ARM64: `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-win_arm64.whl`
+* Windows x86-64: `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-win_amd64.whl`
+* Linux x86-64: `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-linux_x86_64.whl`
+* Linux AArch64: `onnxruntime_qnn-[version]-cp[py_version]-cp[py_version]-manylinux_2_34_aarch64.whl`
 
 #### NuGet Packages
 
-Located in `csharp/src/Microsoft.ML.OnnxRuntime/bin/[Config]/`:
+Located in `build/Release/Release/nuget-local-artifacts/` (Windows):
 
-* `Microsoft.ML.OnnxRuntime.[version].nupkg` (standard package)
-* `Qualcomm.ML.OnnxRuntime.QNN.[version].nupkg` (QNN-specific package)
+* `Qualcomm.ML.OnnxRuntime.QNN.[version].nupkg`
 
 #### Zip Archives
 
