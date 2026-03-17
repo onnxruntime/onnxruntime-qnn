@@ -23,8 +23,8 @@ from ..tools import (
     PythonExecutableArchT,
     get_model_zoo_root,
     get_onnx_models_root,
-    get_package_content_dir,
     get_python_executable,
+    get_qualcomm_device_cloud_sdk_root,
 )
 from ..util import (
     MSFT_CI_REQUIREMENTS_RELPATH,
@@ -33,21 +33,16 @@ from ..util import (
 from .build import BuildConfigT, TargetPyVersionT, get_ort_version
 
 
-def _get_qdc_sdk_wheel(venv: Path | None = None) -> Path:
-    """Return the path to the QDC SDK wheel, downloading and extracting it if necessary."""
-    sdk_dir = get_package_content_dir(venv, "qualcomm_device_cloud_sdk")
-    wheels = list(sdk_dir.glob("qualcomm_device_cloud_sdk-*.whl"))
-    if not wheels:
-        raise FileNotFoundError(f"Could not find Qualcomm Device Cloud SDK wheel in {sdk_dir}")
-    return wheels[0]
-
-
 def uv_pip_install_cmd(
-    requirements: Iterable[Path] = [], packages: Iterable[Path] = [], index_url: str | None = None
+    requirements: Iterable[Path] = [],
+    packages: Iterable[Path] = [],
+    find_links: Iterable[Path] = [],
+    index_url: str | None = None,
 ) -> list[str]:
     cmd = (
         ["uv", "pip", "install", "--native-tls"]
         + [f"--requirement={r}" for r in requirements]
+        + [f"--find-links={p}" for p in find_links]
         + [str(p) for p in packages]
     )
     if index_url is not None:
@@ -83,6 +78,7 @@ class PipInstallQcomDevRequirements(RunExecutablesWithVenvTask):
     ) -> None:
         requirements: str = "requirements-qdc.txt" if qdc else "requirements.txt"
         req_path = REPO_ROOT / "qcom" / requirements
+        package_manager_venv = venv_path.parent / (venv_path.name + "-pkg-manager")
         if qdc:
             super().__init__(
                 group_name,
@@ -90,7 +86,7 @@ class PipInstallQcomDevRequirements(RunExecutablesWithVenvTask):
                 executables_and_args=lambda: [
                     uv_pip_install_cmd(
                         requirements=[req_path],
-                        packages=[_get_qdc_sdk_wheel(venv_path)],
+                        find_links=[get_qualcomm_device_cloud_sdk_root(package_manager_venv)],
                     )
                 ],
             )
@@ -145,22 +141,24 @@ class CreateOrtVenvTask(CompositeTask):
 
 class CreateQdcVenvTask(CompositeTask):
     def __init__(self, python_executable: Path, venv_path: Path) -> None:
+        pkg_manager_venv = venv_path.parent / (venv_path.name + "-pkg-manager")
         super().__init__(
             group_name=None,
             tasks=[
-                CreateVenvTask(python_executable=python_executable, venv_path=venv_path),
+                CreateVenvTask(python_executable=python_executable, venv_path=pkg_manager_venv),
                 PipInstallTask(
-                    f"Installing package manager requirements into {venv_path}",
-                    venv_path,
+                    f"Installing package manager requirements into {pkg_manager_venv}",
+                    pkg_manager_venv,
                     requirements=[REPO_ROOT / "qcom" / "requirements.txt"],
                 ),
+                CreateVenvTask(python_executable=python_executable, venv_path=venv_path),
                 RunExecutablesWithVenvTask(
                     f"Installing QDC build requirements into {venv_path}",
                     venv=venv_path,
                     executables_and_args=lambda: [
                         uv_pip_install_cmd(
                             requirements=[REPO_ROOT / "qcom" / "requirements-qdc.txt"],
-                            packages=[_get_qdc_sdk_wheel(venv_path)],
+                            find_links=[get_qualcomm_device_cloud_sdk_root(pkg_manager_venv)],
                         )
                     ],
                 ),
