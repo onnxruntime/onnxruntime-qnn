@@ -59,18 +59,18 @@ jobs:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
-      # - name: Download Wheel from Artifactory
-      #   uses: ./.github/actions/download-ci-artifact
-      #   with:
-      #     name: linux-x86_64-py3.10-wheels
-
       - name: Download Wheel from Artifactory
-        env:
-          BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
-        run: >
-          "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
-          qcom/scripts/artifactory/download_ci.py
-          --name linux-x86_64-py3.10-wheels
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64-py3.10-wheels
+
+      # - name: Download Wheel from Artifactory
+      #   env:
+      #     BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
+      #   run: >
+      #     "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
+      #     qcom/scripts/artifactory/download_ci.py
+      #     --name linux-x86_64-py3.10-wheels
 
       - name: Consolidate Wheels
         run: |
