@@ -168,7 +168,6 @@ jobs:
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
       - name: Upload Wheel to Artifactory
-        shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
         env:
           BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
         run: >
