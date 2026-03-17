@@ -17,14 +17,20 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Setup Artifactory
-      uses: ./.github/actions/setup-artifactory
+    - name: Setup JFrog CLI
+      uses: jfrog/setup-jfrog-cli@v4
+      with:
+        disable-auto-build-publish: true
+        disable-job-summary: true
+      env:
+        JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+        JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
     - name: env from upload
       shell: bash
       run: env
 
-    - name: Upload Test Archive to Artifactory
+    - name: Upload to Artifactory
       shell: "${{ runner.os == 'Windows' && 'cmd' || 'bash' }}"
       env:
         BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
