@@ -172,7 +172,7 @@ jobs:
         uses: ./.github/actions/upload-ci-artifact
         with:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
-          src_pattern: "onnxruntime-tests-${{inputs.target_os}}-${{ inputs.target_arch }}.zip"
+          src_pattern: "onnxruntime-tests-${{inputs.target_os}}-${{ inputs.target_arch }}.*"
 
       - name: Upload Wheel to Artifactory
         if: ${{ inputs.upload_wheel }}
