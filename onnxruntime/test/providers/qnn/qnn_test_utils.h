@@ -832,7 +832,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  f32_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  f32_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   f32_helper.model_.SerializeToString(&f32_model_data);
 
@@ -881,7 +881,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  qdq_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  qdq_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   qdq_helper.model_.SerializeToString(&qdq_model_data);
 
@@ -1083,7 +1083,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  f32_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  f32_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
   f32_helper.model_.SerializeToString(&f32_model_data);
 
   if (QNNTestEnvironment::GetInstance().dump_onnx()) {
@@ -1127,7 +1127,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  f16_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  f16_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
   f16_helper.model_.SerializeToString(&f16_model_data);
 
   if (QNNTestEnvironment::GetInstance().dump_onnx()) {
@@ -1286,13 +1286,13 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
     std::vector<std::string> op_input_names;
     op_input_names.reserve(input_defs_1.size() + input_defs_2.size());
 
-    for (int i = 0; i < input_defs_1.size(); i++) {
+    for (size_t i = 0; i < input_defs_1.size(); i++) {
       const std::string tmp_name = "input_defs_1_" + std::to_string(i);
       MakeTestInput<InputType1>(builder, tmp_name, input_defs_1[i], input_allocator);
       op_input_names.push_back(tmp_name);
     }
 
-    for (int i = 0; i < input_defs_2.size(); i++) {
+    for (size_t i = 0; i < input_defs_2.size(); i++) {
       const std::string tmp_name = "input_defs_2_" + std::to_string(i);
       MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i], input_allocator);
       op_input_names.push_back(tmp_name);
@@ -1322,19 +1322,19 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
     std::vector<std::string> op_input_names;
     op_input_names.reserve(input_defs_1.size() + input_defs_2.size() + input_defs_3.size());
 
-    for (int i = 0; i < input_defs_1.size(); i++) {
+    for (size_t i = 0; i < input_defs_1.size(); i++) {
       const std::string tmp_name = "input_defs_1_" + std::to_string(i);
       MakeTestInput<InputType1>(builder, tmp_name, input_defs_1[i], input_allocator);
       op_input_names.push_back(tmp_name);
     }
 
-    for (int i = 0; i < input_defs_2.size(); i++) {
+    for (size_t i = 0; i < input_defs_2.size(); i++) {
       const std::string tmp_name = "input_defs_2_" + std::to_string(i);
       MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i], input_allocator);
       op_input_names.push_back(tmp_name);
     }
 
-    for (int i = 0; i < input_defs_3.size(); i++) {
+    for (size_t i = 0; i < input_defs_3.size(); i++) {
       const std::string tmp_name = "input_defs_3_" + std::to_string(i);
       MakeTestInput<InputType1>(builder, tmp_name, input_defs_3[i], input_allocator);
       op_input_names.push_back(tmp_name);
@@ -1508,7 +1508,7 @@ class QnnHTPBackendTests : public ::testing::Test {
     bool dlbc_supported{false};
     uint32_t vtcm_size_mb{0};
     uint32_t soc_model{QNN_SOC_MODEL_UNKNOWN};
-    std::string sdk_version;
+    std::string backend_api_version;
   };
 
  protected:

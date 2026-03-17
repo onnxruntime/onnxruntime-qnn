@@ -21,17 +21,11 @@ void OrtSelectors::RegisterSelector(const OrtOpVersionsAndSelector::OpVersionsMa
 // Helper function to get the number of actual values (inputs or outputs) for a node
 int NumActualValues(const OrtNode* node, const OrtApi& ort_api, bool input) {
   size_t num_defs = 0;
-  OrtStatus* status = nullptr;
 
   if (input) {
-    status = ort_api.Node_GetNumInputs(node, &num_defs);
+    RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(node, &num_defs), ort_api, 0);
   } else {
-    status = ort_api.Node_GetNumOutputs(node, &num_defs);
-  }
-
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return 0;
+    RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(node, &num_defs), ort_api, 0);
   }
 
   return static_cast<int>(num_defs);
@@ -40,19 +34,12 @@ int NumActualValues(const OrtNode* node, const OrtApi& ort_api, bool input) {
 // Helper function to get the data type of a node's input or output
 int32_t GetNodeIODataType(const OrtNode* node, const OrtApi& ort_api, bool is_input, int index) {
   // Get the inputs or outputs as OrtValueInfo instances
-  OrtStatus* status = nullptr;
-
   size_t num_defs = 0;
 
   if (is_input) {
-    status = ort_api.Node_GetNumInputs(node, &num_defs);
+    RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(node, &num_defs), ort_api, -1);
   } else {
-    status = ort_api.Node_GetNumOutputs(node, &num_defs);
-  }
-
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return -1;
+    RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(node, &num_defs), ort_api, -1);
   }
 
   if (index >= static_cast<int>(num_defs)) {
@@ -61,13 +48,9 @@ int32_t GetNodeIODataType(const OrtNode* node, const OrtApi& ort_api, bool is_in
 
   std::vector<const OrtValueInfo*> io_array(num_defs);
   if (is_input) {
-    status = ort_api.Node_GetInputs(node, io_array.data(), io_array.size());
+    RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(node, io_array.data(), io_array.size()), ort_api, -1);
   } else {
-    status = ort_api.Node_GetOutputs(node, io_array.data(), io_array.size());
-  }
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return -1;
+    RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(node, io_array.data(), io_array.size()), ort_api, -1);
   }
 
   // Get the OrtValueInfo at the specified index
@@ -75,26 +58,17 @@ int32_t GetNodeIODataType(const OrtNode* node, const OrtApi& ort_api, bool is_in
 
   // Get the type info from the value info
   const OrtTypeInfo* type_info = nullptr;
-  status = ort_api.GetValueInfoTypeInfo(value_info, &type_info);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return -1;
-  }
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetValueInfoTypeInfo(value_info, &type_info), ort_api, -1);
 
   // Get the tensor element data type from the type info
   ONNXTensorElementDataType element_type;
   const OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
-  status = ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info);
-  if (status != nullptr || tensor_info == nullptr) {
-    if (status != nullptr) ort_api.ReleaseStatus(status);
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info), ort_api, -1);
+  if (tensor_info == nullptr) {
     return -1;
   }
 
-  status = ort_api.GetTensorElementType(tensor_info, &element_type);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return -1;
-  }
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetTensorElementType(tensor_info, &element_type), ort_api, -1);
 
   return static_cast<int32_t>(element_type);
 }
@@ -154,32 +128,20 @@ const OrtValue* GetConstantInitializer(const OrtGraph* graph, const OrtApi& ort_
 bool IsQOrDQScalePositiveConstantScalar(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* q_node) {
   // Get the scale input (index 1) of the Q/DQ node
   size_t num_inputs = 0;
-  OrtStatus* status = ort_api.Node_GetNumInputs(q_node, &num_inputs);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  OrtStatus* status = nullptr;
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(q_node, &num_inputs), ort_api);
   if (num_inputs < 2) {
     return false;
   }
 
   std::vector<const OrtValueInfo*> inputs(num_inputs);
-  status = ort_api.Node_GetInputs(q_node, inputs.data(), inputs.size());
-
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(q_node, inputs.data(), inputs.size()), ort_api);
 
   // Get the scale input name
   const OrtValueInfo* scale_value_info = inputs[1];
   const char* scale_name = nullptr;
   // Use the correct API function to get the name of a value info
-  status = ort_api.GetValueInfoName(scale_value_info, &scale_name);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.GetValueInfoName(scale_value_info, &scale_name), ort_api);
 
   // Get the scale initializer
   const OrtValue* scale_initializer = GetConstantInitializer(graph, ort_api, scale_name);
@@ -189,18 +151,10 @@ bool IsQOrDQScalePositiveConstantScalar(const OrtGraph* graph, const OrtApi& ort
 
   // Check if the scale is a scalar
   OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
-  status = ort_api.GetTensorTypeAndShape(scale_initializer, &tensor_info);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.GetTensorTypeAndShape(scale_initializer, &tensor_info), ort_api);
 
   size_t num_dims = 0;
-  status = ort_api.GetDimensionsCount(tensor_info, &num_dims);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.GetDimensionsCount(tensor_info, &num_dims), ort_api);
   if (num_dims != 0) {  // Scalar has 0 dimensions
     return false;
   }
@@ -219,19 +173,11 @@ bool IsQOrDQScalePositiveConstantScalar(const OrtGraph* graph, const OrtApi& ort
   // Check the value based on the data type
   if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
     float* scale_data = nullptr;
-    status = ort_api.GetTensorMutableData(const_cast<OrtValue*>(scale_initializer), (void**)&scale_data);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return false;
-    }
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.GetTensorMutableData(const_cast<OrtValue*>(scale_initializer), (void**)&scale_data), ort_api);
     return *scale_data > 0.0f;
   } else if (element_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE) {
     double* scale_data = nullptr;
-    status = ort_api.GetTensorMutableData(const_cast<OrtValue*>(scale_initializer), (void**)&scale_data);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return false;
-    }
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.GetTensorMutableData(const_cast<OrtValue*>(scale_initializer), (void**)&scale_data), ort_api);
     return *scale_data > 0.0;
   }
 
@@ -270,29 +216,17 @@ bool CanCreateNodeGroup(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
 
   // Get the outputs as OrtValueInfo instances
   size_t num_outputs_actual = 0;
-  OrtStatus* status = ort_api.Node_GetNumOutputs(node, &num_outputs_actual);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumOutputs(node, &num_outputs_actual), ort_api);
 
   std::vector<const OrtValueInfo*> outputs(num_outputs_actual);
-  status = ort_api.Node_GetOutputs(node, outputs.data(), outputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetOutputs(node, outputs.data(), outputs.size()), ort_api);
 
   // Check if any of the outputs are graph outputs
   bool produces_graph_output = false;
   for (size_t i = 0; i < num_outputs_actual; i++) {
     const OrtValueInfo* value_info = outputs[i];
     bool is_graph_output = false;
-    status = ort_api.ValueInfo_IsGraphOutput(value_info, &is_graph_output);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      continue;
-    }
+    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_IsGraphOutput(value_info, &is_graph_output), ort_api);
 
     if (is_graph_output) {
       produces_graph_output = true;
@@ -305,11 +239,7 @@ bool CanCreateNodeGroup(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
   for (size_t i = 0; i < num_outputs_actual; i++) {
     const OrtValueInfo* value_info = outputs[i];
     size_t num_consumers = 0;
-    status = ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      continue;
-    }
+    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers), ort_api);
 
     total_consumers += num_consumers;
   }
@@ -323,50 +253,33 @@ bool CanCreateNodeGroup(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
 bool IsQDQPairSupported(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* q_node, const OrtNode* dq_node) {
   // Check if both nodes have the same scale
   size_t q_num_inputs = 0;
-  OrtStatus* status = ort_api.Node_GetNumInputs(q_node, &q_num_inputs);
-  if (status != nullptr || q_num_inputs < 2) {
-    if (status != nullptr) ort_api.ReleaseStatus(status);
+  OrtStatus* status = nullptr;
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(q_node, &q_num_inputs), ort_api);
+  if (q_num_inputs < 2) {
     return false;
   }
 
   std::vector<const OrtValueInfo*> q_inputs(q_num_inputs);
-  status = ort_api.Node_GetInputs(q_node, q_inputs.data(), q_inputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(q_node, q_inputs.data(), q_inputs.size()), ort_api);
 
   size_t dq_num_inputs = 0;
-  status = ort_api.Node_GetNumInputs(dq_node, &dq_num_inputs);
-  if (status != nullptr || dq_num_inputs < 2) {
-    if (status != nullptr) ort_api.ReleaseStatus(status);
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(dq_node, &dq_num_inputs), ort_api);
+  if (dq_num_inputs < 2) {
     return false;
   }
 
   std::vector<const OrtValueInfo*> dq_inputs(dq_num_inputs);
-  status = ort_api.Node_GetInputs(dq_node, dq_inputs.data(), dq_inputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(dq_node, dq_inputs.data(), dq_inputs.size()), ort_api);
 
   // Get the scale input names
   const OrtValueInfo* q_scale_value_info = q_inputs[1];
   const OrtValueInfo* dq_scale_value_info = dq_inputs[1];
 
   const char* q_scale_name = nullptr;
-  status = ort_api.GetValueInfoName(q_scale_value_info, &q_scale_name);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.GetValueInfoName(q_scale_value_info, &q_scale_name), ort_api);
 
   const char* dq_scale_name = nullptr;
-  status = ort_api.GetValueInfoName(dq_scale_value_info, &dq_scale_name);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.GetValueInfoName(dq_scale_value_info, &dq_scale_name), ort_api);
 
   // Check if the scale names are the same (indicating they're the same initializer)
   bool same_scale = (strcmp(q_scale_name, dq_scale_name) == 0);
@@ -382,11 +295,7 @@ bool IsQDQPairSupported(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
 
     // Check if both scales have the same data type and shape
     OrtTensorTypeAndShapeInfo* q_tensor_info = nullptr;
-    status = ort_api.GetTensorTypeAndShape(q_scale_initializer, &q_tensor_info);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return false;
-    }
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.GetTensorTypeAndShape(q_scale_initializer, &q_tensor_info), ort_api);
 
     OrtTensorTypeAndShapeInfo* dq_tensor_info = nullptr;
     status = ort_api.GetTensorTypeAndShape(dq_scale_initializer, &dq_tensor_info);
@@ -494,18 +403,10 @@ bool OrtNodeGroupSelector::CheckQDQNodes(const OrtGraph* /*graph*/, const OrtApi
 
   // Get the outputs as OrtValueInfo instances
   size_t num_outputs_actual = 0;
-  OrtStatus* status = ort_api.Node_GetNumOutputs(node, &num_outputs_actual);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumOutputs(node, &num_outputs_actual), ort_api);
 
   std::vector<const OrtValueInfo*> outputs(num_outputs_actual);
-  status = ort_api.Node_GetOutputs(node, outputs.data(), outputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetOutputs(node, outputs.data(), outputs.size()), ort_api);
 
   // Check if any of the outputs are graph outputs
   bool produces_graph_output = false;
@@ -513,11 +414,7 @@ bool OrtNodeGroupSelector::CheckQDQNodes(const OrtGraph* /*graph*/, const OrtApi
   for (size_t i = 0; i < num_outputs_actual; i++) {
     const OrtValueInfo* value_info = outputs[i];
     bool is_graph_output = false;
-    status = ort_api.ValueInfo_IsGraphOutput(value_info, &is_graph_output);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      continue;
-    }
+    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_IsGraphOutput(value_info, &is_graph_output), ort_api);
 
     if (is_graph_output) {
       produces_graph_output = true;
@@ -530,11 +427,7 @@ bool OrtNodeGroupSelector::CheckQDQNodes(const OrtGraph* /*graph*/, const OrtApi
   for (size_t i = 0; i < num_outputs_actual; i++) {
     const OrtValueInfo* value_info = outputs[i];
     size_t num_consumers = 0;
-    status = ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      continue;
-    }
+    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers), ort_api);
 
     total_consumers += num_consumers;
   }
@@ -663,6 +556,32 @@ bool OrtClipNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
 
   if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes, static_cast<int>(num_dq_nodes))) {
     return false;
+  }
+
+  // If Clip feeds a Q node, require the data input[0] to come from a DQ node.
+  // DQ -> Clip -> Q can form Clip ORT Unit, but DQ -> Op -> Clip -> Q is not allowed as Clip here is redundant.
+  if (!q_nodes.empty()) {
+    // 1. get num of inputs
+    size_t clip_input_count = 0;
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(node, &clip_input_count), ort_api);
+
+    // 2. get inputs as OrtValueInfo instances
+    std::vector<const OrtValueInfo*> clip_inputs(clip_input_count);
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(node, clip_inputs.data(), clip_inputs.size()), ort_api);
+
+    // 3. get the producer/parent of the Clip first input
+    const OrtNode* data_producer = nullptr;
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.ValueInfo_GetValueProducer(clip_inputs[0], &data_producer, nullptr), ort_api);
+
+    // 4. check if the Clip first input producer is a DQ node
+    if (data_producer == nullptr || Ort::ConstNode(data_producer).GetOperatorType() != "DequantizeLinear") {
+      return false;
+    }
+
+    // 5. check if DQ node in the same group
+    if (std::find(dq_nodes.begin(), dq_nodes.end(), data_producer) == dq_nodes.end()) {
+      return false;
+    }
   }
 
   int32_t dt_input = GetNodeIODataType(dq_nodes[0], ort_api, true, 0);
@@ -977,28 +896,20 @@ bool OrtDQMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& or
 
   // Check if DQ node has only one output edge and is not a graph output
   size_t num_dq_outputs = 0;
-  OrtStatus* status = ort_api.Node_GetNumOutputs(dq_nodes[0], &num_dq_outputs);
-  if (status != nullptr || num_dq_outputs != 1) {
-    if (status != nullptr) ort_api.ReleaseStatus(status);
+  OrtStatus* status = nullptr;
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumOutputs(dq_nodes[0], &num_dq_outputs), ort_api);
+  if (num_dq_outputs != 1) {
     return false;
   }
 
   std::vector<const OrtValueInfo*> dq_outputs(num_dq_outputs);
-  status = ort_api.Node_GetOutputs(dq_nodes[0], dq_outputs.data(), dq_outputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetOutputs(dq_nodes[0], dq_outputs.data(), dq_outputs.size()), ort_api);
 
   const OrtValueInfo* dq_output_value_info = dq_outputs[0];
 
   // Check if DQ output is a graph output
   bool is_graph_output = false;
-  status = ort_api.ValueInfo_IsGraphOutput(dq_output_value_info, &is_graph_output);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.ValueInfo_IsGraphOutput(dq_output_value_info, &is_graph_output), ort_api);
 
   if (is_graph_output) {
     return false;
@@ -1006,52 +917,40 @@ bool OrtDQMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& or
 
   // Check if DQ node has only one consumer
   size_t num_consumers = 0;
-  status = ort_api.ValueInfo_GetValueNumConsumers(dq_output_value_info, &num_consumers);
-  if (status != nullptr || num_consumers != 1) {
-    if (status != nullptr) ort_api.ReleaseStatus(status);
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.ValueInfo_GetValueNumConsumers(dq_output_value_info, &num_consumers), ort_api);
+  if (num_consumers != 1) {
     return false;
   }
 
   // Check if DQ is connected to MatMul's second input
   // This requires checking the inputs of the MatMul node
   size_t num_inputs = 0;
-  status = ort_api.Node_GetNumInputs(node, &num_inputs);
-  if (status != nullptr || num_inputs < 2) {
-    if (status != nullptr) ort_api.ReleaseStatus(status);
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(node, &num_inputs), ort_api);
+  if (num_inputs < 2) {
     return false;
   }
 
   std::vector<const OrtValueInfo*> node_inputs(num_inputs);
-  status = ort_api.Node_GetInputs(node, node_inputs.data(), node_inputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(node, node_inputs.data(), node_inputs.size()), ort_api);
 
   const OrtValueInfo* second_input_value_info = node_inputs[1];
 
   // Get the producer of the second input
   const OrtNode* second_input_producer = nullptr;
-  status = ort_api.ValueInfo_GetValueProducer(second_input_value_info, &second_input_producer, nullptr);
-  if (status != nullptr || second_input_producer != dq_nodes[0]) {
-    if (status != nullptr) ort_api.ReleaseStatus(status);
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.ValueInfo_GetValueProducer(second_input_value_info, &second_input_producer, nullptr), ort_api);
+  if (second_input_producer != dq_nodes[0]) {
     return false;
   }
 
   // Get DQ node inputs to check weight and scale types
   size_t num_dq_inputs = 0;
-  status = ort_api.Node_GetNumInputs(dq_nodes[0], &num_dq_inputs);
-  if (status != nullptr || num_dq_inputs < 2) {
-    if (status != nullptr) ort_api.ReleaseStatus(status);
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(dq_nodes[0], &num_dq_inputs), ort_api);
+  if (num_dq_inputs < 2) {
     return false;
   }
 
   std::vector<const OrtValueInfo*> dq_inputs(num_dq_inputs);
-  status = ort_api.Node_GetInputs(dq_nodes[0], dq_inputs.data(), dq_inputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetInputs(dq_nodes[0], dq_inputs.data(), dq_inputs.size()), ort_api);
 
   // Get weight and scale data types
   const OrtValueInfo* weight_value_info = dq_inputs[0];
@@ -1094,29 +993,17 @@ bool OrtDQMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& or
 
   // Get names of weight, scale, and zero point
   const char* weight_name = nullptr;
-  status = ort_api.GetValueInfoName(weight_value_info, &weight_name);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.GetValueInfoName(weight_value_info, &weight_name), ort_api);
 
   const char* scale_name = nullptr;
-  status = ort_api.GetValueInfoName(scale_value_info, &scale_name);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return false;
-  }
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.GetValueInfoName(scale_value_info, &scale_name), ort_api);
 
   // Check for zero point (optional)
   const OrtValueInfo* zero_point_value_info = nullptr;
   const char* zero_point_name = nullptr;
   if (num_dq_inputs > 2) {
     zero_point_value_info = dq_inputs[2];
-    status = ort_api.GetValueInfoName(zero_point_value_info, &zero_point_name);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return false;
-    }
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.GetValueInfoName(zero_point_value_info, &zero_point_name), ort_api);
   }
 
   // Check if weight, scale, and zero point are constants
@@ -1538,18 +1425,10 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
 
   // Get the inputs as OrtValueInfo instances
   size_t num_inputs = 0;
-  OrtStatus* status = ort_api.Node_GetNumInputs(node, &num_inputs);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return std::nullopt;
-  }
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(node, &num_inputs), ort_api, std::nullopt);
 
   std::vector<const OrtValueInfo*> inputs(num_inputs);
-  status = ort_api.Node_GetInputs(node, inputs.data(), inputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return std::nullopt;
-  }
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(node, inputs.data(), inputs.size()), ort_api, std::nullopt);
 
   // For each input, get the producer node
   for (size_t i = 0; i < num_inputs; ++i) {
@@ -1560,11 +1439,7 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
 
     // Get the producer node
     const OrtNode* producer_node = nullptr;
-    status = ort_api.ValueInfo_GetValueProducer(value_info, &producer_node, nullptr);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      continue;
-    }
+    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueProducer(value_info, &producer_node, nullptr), ort_api);
 
     if (producer_node == nullptr) {
       continue;
@@ -1581,72 +1456,44 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
 
   // Get the outputs to check count
   size_t output_count = 0;
-  status = ort_api.Node_GetNumOutputs(node, &output_count);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return std::nullopt;
-  }
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(node, &output_count), ort_api, std::nullopt);
 
   if (output_count == 1) {
     // Get the outputs as OrtValueInfo instances
     std::vector<const OrtValueInfo*> outputs(output_count);
-    status = ort_api.Node_GetOutputs(node, outputs.data(), outputs.size());
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return std::nullopt;
-    }
+    RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(node, outputs.data(), outputs.size()), ort_api, std::nullopt);
 
     // For each output, get the consumer nodes
     const OrtValueInfo* value_info = outputs[0];
 
     // Get the number of consumers
     size_t num_consumers = 0;
-    status = ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      return std::nullopt;
-    }
+    RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers), ort_api, std::nullopt);
 
     if (num_consumers == 1) {
       // Get the consumer node
       const OrtNode* next_node = nullptr;
       int64_t input_index = 0;  // This value is not used, but necessary for the API call
-      status = ort_api.ValueInfo_GetValueConsumers(value_info, &next_node, &input_index, 1);
-      if (status != nullptr) {
-        ort_api.ReleaseStatus(status);
-        return std::nullopt;
-      }
+      RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueConsumers(value_info, &next_node, &input_index, 1), ort_api, std::nullopt);
 
       // Check if it's a Relu or Clip node
       const std::string next_node_op_type = Ort::ConstNode(next_node).GetOperatorType();
       if (next_node_op_type == "Relu" || next_node_op_type == "Clip") {
         // Get the outputs of the next node to check count
         size_t next_output_count = 0;
-        status = ort_api.Node_GetNumOutputs(next_node, &next_output_count);
-        if (status != nullptr) {
-          ort_api.ReleaseStatus(status);
-          return std::nullopt;
-        }
+        RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(next_node, &next_output_count), ort_api, std::nullopt);
 
         if (next_output_count == 1) {
           // Get the outputs of the next node
           std::vector<const OrtValueInfo*> next_outputs(next_output_count);
-          status = ort_api.Node_GetOutputs(next_node, next_outputs.data(), next_outputs.size());
-          if (status != nullptr) {
-            ort_api.ReleaseStatus(status);
-            return std::nullopt;
-          }
+          RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(next_node, next_outputs.data(), next_outputs.size()), ort_api, std::nullopt);
 
           // Check if any of the outputs are graph outputs
           bool produces_graph_output = false;
           for (size_t i = 0; i < next_output_count; i++) {
             const OrtValueInfo* next_value_info = next_outputs[i];
             bool is_graph_output = false;
-            status = ort_api.ValueInfo_IsGraphOutput(next_value_info, &is_graph_output);
-            if (status != nullptr) {
-              ort_api.ReleaseStatus(status);
-              continue;
-            }
+            ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_IsGraphOutput(next_value_info, &is_graph_output), ort_api);
 
             if (is_graph_output) {
               produces_graph_output = true;
@@ -1658,11 +1505,7 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
           size_t next_num_consumers = 0;
           if (next_output_count > 0) {
             const OrtValueInfo* next_value_info = next_outputs[0];
-            status = ort_api.ValueInfo_GetValueNumConsumers(next_value_info, &next_num_consumers);
-            if (status != nullptr) {
-              ort_api.ReleaseStatus(status);
-              return std::nullopt;
-            }
+            RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueNumConsumers(next_value_info, &next_num_consumers), ort_api, std::nullopt);
           }
 
           if (next_num_consumers == 1 && !produces_graph_output) {
@@ -1678,18 +1521,10 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
 
   // Get the outputs as OrtValueInfo instances
   size_t num_outputs = 0;
-  status = ort_api.Node_GetNumOutputs(clip_node ? clip_node : node, &num_outputs);
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return std::nullopt;
-  }
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(clip_node ? clip_node : node, &num_outputs), ort_api, std::nullopt);
 
   std::vector<const OrtValueInfo*> outputs(num_outputs);
-  status = ort_api.Node_GetOutputs(clip_node ? clip_node : node, outputs.data(), outputs.size());
-  if (status != nullptr) {
-    ort_api.ReleaseStatus(status);
-    return std::nullopt;
-  }
+  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(clip_node ? clip_node : node, outputs.data(), outputs.size()), ort_api, std::nullopt);
 
   // For each output, get the consumer nodes
   for (size_t i = 0; i < num_outputs; ++i) {
@@ -1700,11 +1535,7 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
 
     // Get the number of consumers
     size_t num_consumers = 0;
-    status = ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      continue;
-    }
+    ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers), ort_api);
 
     if (num_consumers > 0) {
       // Allocate arrays for consumer nodes and input indices
@@ -1712,11 +1543,7 @@ std::optional<OrtNodeGroup> GetOrtQDQSelection(const OrtGraph* graph, const OrtA
       std::vector<int64_t> input_indices_vec(num_consumers);
 
       // Get the consumer nodes
-      status = ort_api.ValueInfo_GetValueConsumers(value_info, consumer_nodes_vec.data(), input_indices_vec.data(), num_consumers);
-      if (status != nullptr) {
-        ort_api.ReleaseStatus(status);
-        continue;
-      }
+      ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueConsumers(value_info, consumer_nodes_vec.data(), input_indices_vec.data(), num_consumers), ort_api);
 
       // Check each consumer node
       for (size_t j = 0; j < num_consumers; ++j) {
@@ -1976,11 +1803,7 @@ std::vector<OrtNodeGroup> OrtSelectorManager::GetOrtQDQSelections(const OrtGraph
 
     // Get node domain
     const char* domain = nullptr;
-    status = ort_api.Node_GetDomain(node, &domain);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      continue;
-    }
+    ORT_CONTINUE_ON_ERROR(ort_api.Node_GetDomain(node, &domain), ort_api);
 
     // Check domain (similar to the GraphViewer version)
     std::string domain_str(domain);
@@ -2001,11 +1824,7 @@ std::vector<OrtNodeGroup> OrtSelectorManager::GetOrtQDQSelections(const OrtGraph
     if (!versions.empty()) {
       // Get node version
       int since_version = 0;
-      status = ort_api.Node_GetSinceVersion(node, &since_version);
-      if (status != nullptr) {
-        ort_api.ReleaseStatus(status);
-        continue;
-      }
+      ORT_CONTINUE_ON_ERROR(ort_api.Node_GetSinceVersion(node, &since_version), ort_api);
 
       if (std::find(versions.cbegin(), versions.cend(), since_version) == versions.cend()) {
         ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Op version is not supported for " + op_type).c_str());
@@ -2102,11 +1921,7 @@ std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
 
     // A node that is already assigned to an EP other than current EP is unsupported.
     const char* node_ep_name;
-    status = ort_api.Node_GetEpName(node, &node_ep_name);
-    if (status != nullptr) {
-      ort_api.ReleaseStatus(status);
-      continue;
-    }
+    ORT_CONTINUE_ON_ERROR(ort_api.Node_GetEpName(node, &node_ep_name), ort_api);
     const bool is_node_supported = ((std::string(node_ep_name).empty() || node_ep_name == ep_type) &&
                                     std::find(supported_nodes.cbegin(), supported_nodes.cend(), node) != supported_nodes.cend());
 
