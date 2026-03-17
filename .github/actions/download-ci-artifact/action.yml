@@ -16,6 +16,9 @@ env:
 runs:
   using: "composite"
   steps:
+    - name: Setup Artifactory
+      uses: ./.github/actions/setup-artifactory
+
     - name: Download from Artifactory
       shell: "${{ runner.os == 'Windows' && 'cmd' || 'bash' }}"
       run: >

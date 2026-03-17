@@ -20,6 +20,9 @@ env:
 runs:
   using: "composite"
   steps:
+    - name: Setup Artifactory
+      uses: ./.github/actions/setup-artifactory
+
     - name: Upload Test Archive to Artifactory
       shell: "${{ runner.os == 'Windows' && 'cmd' || 'bash' }}"
       run: >

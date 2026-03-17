@@ -44,15 +44,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4.1.1
 
-      - name: Setup JFrog CLI
-        uses: jfrog/setup-jfrog-cli@v4
-        with:
-          disable-auto-build-publish: true
-          disable-job-summary: true
-        env:
-          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
-          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
-
       # We only publish this for AI Hub to use and they only want x86_64 Linux
       - name: Download Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
