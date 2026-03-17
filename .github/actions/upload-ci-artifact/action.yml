@@ -32,7 +32,6 @@ runs:
         JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
         JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
       run: |
-        cat ~/.jfrog/jfrog-cli.conf
         echo "JF_URL: ${JF_URL:-nope}"
 
     - name: Upload to Artifactory
