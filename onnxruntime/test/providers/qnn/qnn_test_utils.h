@@ -559,7 +559,6 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
  */
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
-                       ExpectedEPNodeAssignment expected_ep_assignment,
                        std::unordered_map<std::string, Ort::Value>& feeds,
                        std::vector<Ort::Value>& output_vals,
                        std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt);
@@ -852,8 +851,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run f32 model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_f32_outputs;
-  InferenceModelCPU(f32_model_data, "f32_model_logger", ExpectedEPNodeAssignment::All,
-                    f32_helper.feeds_, cpu_f32_outputs, graph_optimization_level);
+  InferenceModelCPU(f32_model_data, "f32_model_logger", f32_helper.feeds_, cpu_f32_outputs, graph_optimization_level);
   ASSERT_FALSE(cpu_f32_outputs.empty());
 
   const size_t num_outputs = cpu_f32_outputs.size();
@@ -902,8 +900,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_qdq_outputs;
-  InferenceModelCPU(qdq_model_data, "qdq_model_logger", ExpectedEPNodeAssignment::All,
-                    qdq_helper.feeds_, cpu_qdq_outputs, graph_optimization_level);
+  InferenceModelCPU(qdq_model_data, "qdq_model_logger", qdq_helper.feeds_, cpu_qdq_outputs, graph_optimization_level);
 
   qnn_options["dump_json_qnn_graph"] = "1";
 
@@ -1104,8 +1101,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run f32 model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_f32_outputs;
-  InferenceModelCPU(f32_model_data, "f32_model_logger", ExpectedEPNodeAssignment::All,
-                    f32_helper.feeds_, cpu_f32_outputs);
+  InferenceModelCPU(f32_model_data, "f32_model_logger", f32_helper.feeds_, cpu_f32_outputs);
   ASSERT_FALSE(cpu_f32_outputs.empty());
 
   const size_t num_outputs = cpu_f32_outputs.size();
@@ -1149,8 +1145,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_f16_outputs;
-  InferenceModelCPU(f16_model_data, "fp16_model_logger", ExpectedEPNodeAssignment::All,
-                    f16_helper.feeds_, cpu_f16_outputs);
+  InferenceModelCPU(f16_model_data, "fp16_model_logger", f16_helper.feeds_, cpu_f16_outputs);
 
   if (QNNTestEnvironment::GetInstance().dump_dlc()) {
     qnn_options["dump_qnn_ir_dlc"] = "1";

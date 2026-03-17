@@ -323,6 +323,7 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   Ort::SessionOptions session_options;
 
   session_options.SetLogSeverityLevel(log_severity);
+  session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
 
   TryEnableQNNSaver(provider_options);
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
@@ -337,7 +338,6 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
 
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
-                       ExpectedEPNodeAssignment expected_ep_assignment [[maybe_unused]],
                        std::unordered_map<std::string, Ort::Value>& feeds,
                        std::vector<Ort::Value>& output_vals,
                        std::optional<GraphOptimizationLevel> graph_optimization_level) {
@@ -414,15 +414,10 @@ void InferenceModel(const std::string& model_data,
   Ort::RunOptions ort_run_options;
   ort_run_options.SetRunTag(log_id);
 
-  std::string test_suite_name = ::testing::UnitTest::GetInstance()->current_test_info()->test_suite_name();
-  // TODO: Implement EP assignment verification once public API for ep partition is ready
-  // This disable_cpu_ep_fallback is an workaround for ExpectedEPNodeAssignment::All
-  if (test_suite_name != "QnnCPUBackendTests" &&
-      expected_ep_assignment == ExpectedEPNodeAssignment::All) {
-    // ASSERT_EQ(ep_nodes, graph.NumberOfNodes()) << "Not all nodes were assigned to " << registration_name;
-    session_options.AddConfigEntry("session.disable_cpu_ep_fallback", "1");
-  }
+  auto provider_type = "QNNExecutionProvider";
+  session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
   Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
+  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(session, provider_type, expected_ep_assignment));
 
   // TODO: Implement graph_checker once public API for ep partition is ready
   // const auto& graph = ort_session.GetGraph();
