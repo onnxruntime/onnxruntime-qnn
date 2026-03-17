@@ -20,6 +20,10 @@ runs:
     - name: Setup Artifactory
       uses: ./.github/actions/setup-artifactory
 
+    - name: env from upload
+      shell: bash
+      run: env
+
     - name: Upload Test Archive to Artifactory
       shell: "${{ runner.os == 'Windows' && 'cmd' || 'bash' }}"
       env:
