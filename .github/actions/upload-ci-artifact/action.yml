@@ -16,12 +16,13 @@ inputs:
 
 env:
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
-  JF_URL: "${{ secrets.BUILD_ARTIFACTORY_URL }}"
-  JF_ACCESS_TOKEN: "${{ secrets.BUILD_ARTIFACTORY_TOKEN }}"
 
 runs:
   using: "composite"
   steps:
+    - name: Setup Artifactory
+      uses: ./.github/actions/setup-artifactory
+
     - name: Upload Test Archive to Artifactory
       shell: "${{ runner.os == 'Windows' && 'cmd' || 'bash' }}"
       run: >

@@ -44,9 +44,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4.1.1
 
-      - name: Setup Artifactory
-        uses: ./.github/actions/setup-artifactory
-
       # We only publish this for AI Hub to use and they only want x86_64 Linux
       - name: Download Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact

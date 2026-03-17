@@ -120,8 +120,6 @@ env:
 
   ORT_VERSION_SUFFIX: "${{ inputs.version_suffix != '' && inputs.version_suffix || '' }}"
 
-  BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
-
 jobs:
   build:
     name: "build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
@@ -133,9 +131,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Setup Artifactory
-        uses: ./.github/actions/setup-artifactory
 
       - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         run: >
@@ -164,19 +159,17 @@ jobs:
 
       - name: Upload Test Archive to Artifactory
         if: ${{ inputs.upload_test_archive }}
-        run: >
-          "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
-          qcom/scripts/artifactory/publish_ci.py
-          --src-pattern "onnxruntime-tests-${{inputs.target_os}}-${{ inputs.target_arch }}.zip"
-          --name "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
+        uses: ./.github/actions/upload-ci-artifact
+        with:
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
+          src_pattern: "onnxruntime-tests-${{inputs.target_os}}-${{ inputs.target_arch }}.zip"
 
       - name: Upload Wheel to Artifactory
         if: ${{ inputs.upload_wheel }}
-        run: >
-          "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
-          qcom/scripts/artifactory/publish_ci.py
-          --src-pattern "${{ inputs.target_os }}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl"
-          --name "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
+        uses: ./.github/actions/upload-ci-artifact
+        with:
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
+          src_pattern: "${{ inputs.target_os }}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl"
 
       - uses: actions/upload-artifact@v4
         if: ${{ inputs.upload_nuget }}
@@ -207,14 +200,10 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Setup Artifactory
-        uses: ./.github/actions/setup-artifactory
-
       - name: Download Tests from Artifactory
-        run: >
-          "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
-          qcom/scripts/artifactory/download_ci.py
-          --name "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
 
       - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         run: >
@@ -253,14 +242,10 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Setup Artifactory
-        uses: ./.github/actions/setup-artifactory
-
       - name: Download Wheel from Artifactory
-        run: >
-          "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
-          qcom/scripts/artifactory/download_ci.py
-          --name "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
 
       - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Wheel
         run: >
