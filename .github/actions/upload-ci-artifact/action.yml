@@ -17,23 +17,6 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Setup JFrog CLI
-      uses: jfrog/setup-jfrog-cli@v4
-      with:
-        disable-auto-build-publish: true
-        disable-job-summary: true
-      env:
-        JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
-        JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
-
-    - name: cat config
-      shell: bash
-      env:
-        JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
-        JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
-      run: |
-        echo "JF_URL: ${JF_URL:-nope}"
-
     - name: Upload to Artifactory
       shell: "${{ runner.os == 'Windows' && 'cmd' || 'bash' }}"
       env:
