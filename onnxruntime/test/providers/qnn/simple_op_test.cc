@@ -962,6 +962,50 @@ TEST_F(QnnHTPBackendTests, BinaryOp_Add4D_U16) {
                          true);  // Use com.microsoft Q/DQ ops
 }
 
+// Test double Add.
+TEST_F(QnnHTPBackendTests, BinaryOp_Add4D_FP64) {
+  // Wrap FP64 in between since QNN cannot handle model IO in FP64 currently.
+  GetTestModelFn builder = [](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 2, 2, 3}, false, -1.0, 1.0));
+
+    builder.AddNode("cast1",
+                    "Cast",
+                    {"input"},
+                    {"cast1_output"},
+                    kOnnxDomain,
+                    {builder.MakeScalarAttribute(
+                        "to",
+                        static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_DOUBLE))});
+
+    MakeTestInput<double>(builder, "add_const", TestInputDef<double>({3}, true, {1.0, 0.5, -0.3}));
+    builder.AddNode("add", "Add", {"cast1_output", "add_const"}, {"add_output"}, kOnnxDomain);
+
+    builder.AddNode("cast2",
+                    "Cast",
+                    {"add_output"},
+                    {"output"},
+                    kOnnxDomain,
+                    {builder.MakeScalarAttribute(
+                        "to",
+                        static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT))});
+    builder.MakeOutput("output");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+#if defined(_WIN32)
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  provider_options["enable_htp_fp16_precision"] = "1";
+
+  RunQnnModelTest(builder, provider_options, 17, ExpectedEPNodeAssignment::All, 1e-3);
+}
+
 // Test 8-bit QDQ Sub
 TEST_F(QnnHTPBackendTests, BinaryOp_Sub4D) {
   RunQDQOpTest<uint8_t>("Sub",

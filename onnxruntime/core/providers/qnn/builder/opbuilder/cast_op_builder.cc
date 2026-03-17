@@ -102,6 +102,8 @@ Ort::Status CastOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   const auto& input = inputs[0];
 
   const auto& input_name = input.name;
+  RETURN_IF(qnn_model_wrapper.IsGraphInput(input_name) && input.type == ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE,
+            "Unsupported FP64 data type in graph IO.");
 
   if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_name)) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor already added, skip it: " + input_name).c_str());
@@ -167,6 +169,9 @@ Ort::Status CastOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   const Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
   if (qnn_data_type == QNN_DATATYPE_INT_64 && tensor_type == QNN_TENSOR_TYPE_NATIVE) {
     qnn_data_type = QNN_DATATYPE_INT_32;
+  } else if (qnn_data_type == QNN_DATATYPE_FLOAT_64) {
+    RETURN_IF(is_graph_output, "Unsupported FP64 data type in graph IO.");
+    qnn_data_type = QNN_DATATYPE_FLOAT_32;
   }
   QnnTensorWrapper output_tensorwrapper(output_name,
                                         tensor_type,
