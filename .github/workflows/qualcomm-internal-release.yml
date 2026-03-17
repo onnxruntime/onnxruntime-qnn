@@ -29,9 +29,6 @@ on:
         type: boolean
         default: true
 
-env:
-  BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
-
 jobs:
   build-wheels:
     uses: ./.github/workflows/qualcomm-internal-build-wheels.yml
