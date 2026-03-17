@@ -63,6 +63,11 @@ jobs:
           qcom/scripts/artifactory/download_ci.py
           --name "linux-x86_64-py3.10-wheels"
 
+      - name: Consolidate Wheels
+        run: |
+          mkdir "${{ github.workspace }}/build/dist"
+          cp "${{ github.workspace }}/build/linux-x86_64/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
+
       - name: TODO-jrk
         run: >
           find ${{ github.workspace }}/build
