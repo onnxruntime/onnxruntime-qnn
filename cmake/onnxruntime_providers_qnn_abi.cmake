@@ -161,8 +161,9 @@
         ${REPO_ROOT}/docs/images/qnn_ep_quant_workflow.png
         ${REPO_ROOT}/docs/images/quantization_mixed_precision_1.png
         ${REPO_ROOT}/docs/images/quantization_mixed_precision_2.png
-        # Used in README.md
-        ${REPO_ROOT}/docs/images/ONNX_Runtime_logo_dark.png
+        ${REPO_ROOT}/docs/images/PluginEP-final.png
+        ${REPO_ROOT}/docs/images/Q-icon-rgb-blue.png
+        ${REPO_ROOT}/docs/images/header.png
         $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_abi_target}>/docs/images
   )
 
