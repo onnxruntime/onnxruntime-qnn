@@ -915,14 +915,7 @@ install(
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}")
 
 if(DEFINED BUILD_AS_ARM64X)
-    set(ARM64X_TARGETS onnxruntime)
-
-    # Add additional ARM64X build targets
-    if (onnxruntime_USE_QNN AND NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
-      list(APPEND ARM64X_TARGETS onnxruntime_providers_shared)
-      list(APPEND ARM64X_TARGETS onnxruntime_providers_qnn)
-    endif()
-
+    set(ARM64X_TARGETS onnxruntime_providers_qnn)
     include("${CMAKE_CURRENT_SOURCE_DIR}/arm64x.cmake")
 endif()
 
