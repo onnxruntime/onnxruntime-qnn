@@ -429,7 +429,7 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
     Qnn_Scalar_t mode_qnn_scalar = QNN_SCALAR_INIT;
     mode_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
-    mode_qnn_scalar.uint32Value = QNN_OP_SPACE_TO_DEPTH_MODE_CRD;
+    mode_qnn_scalar.uint32Value = QNN_OP_SPACE_TO_DEPTH_MODE_DCR;
 
     QnnParamWrapper mode_param(node_unit.Index(), node_unit.Name(), QNN_OP_SPACE_TO_DEPTH_PARAM_MODE, mode_qnn_scalar);
     param_tensor_names.push_back(mode_param.GetParamTensorName());
