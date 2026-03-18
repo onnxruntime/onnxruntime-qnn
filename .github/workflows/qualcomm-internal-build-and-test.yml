@@ -33,6 +33,7 @@ on:
 
 env:
   ORT_NIGHTLY_BUILD: "${{ inputs.nightly_build == true && '1' || '0' }}"
+  BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
 
 jobs:
 

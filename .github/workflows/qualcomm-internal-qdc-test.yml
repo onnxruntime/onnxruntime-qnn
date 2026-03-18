@@ -33,6 +33,7 @@ on:
 env:
   # The QDC results folder is a bit odd
   QDC_RESULTS_ARCH: "${{ (inputs.target_os == 'linux' && inputs.target_arch == 'aarch64_oe_gcc11_2') && 'qualcomm_linux' || 'android' }}"
+  BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
 
 jobs:
   test:
