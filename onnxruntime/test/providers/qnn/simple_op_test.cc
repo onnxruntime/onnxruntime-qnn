@@ -130,6 +130,23 @@ TEST_F(QnnCPUBackendTests, DISABLED_UnaryOp_Relu) {
                  ExpectedEPNodeAssignment::All);
 }
 
+TEST_F(QnnCPUBackendTests, UnaryOp_Softplus) {
+  RunOpTestOnCPU("Softplus",
+                 {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+                 {},
+                 14,
+                 ExpectedEPNodeAssignment::All);
+}
+
+// Rank > 4D is supported on CPU (no HTP rank constraint).
+TEST_F(QnnCPUBackendTests, UnaryOp_Softplus_Rank5) {
+  RunOpTestOnCPU("Softplus",
+                 {TestInputDef<float>({1, 2, 3, 4, 5}, false, GetFloatDataInRange(-10.0f, 10.0f, 120))},
+                 {},
+                 14,
+                 ExpectedEPNodeAssignment::All);
+}
+
 TEST_F(QnnCPUBackendTests, Concat_EmptyInput) {
   RunOpTestOnCPU("Concat",
                  {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
@@ -442,6 +459,24 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Relu) {
                         {},
                         14,
                         ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, UnaryOp_Softplus_U8) {
+  RunQDQOpTest<uint8_t>("Softplus",
+                        {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+                        {},
+                        14,
+                        ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, UnaryOp_Softplus_U16) {
+  RunQDQOpTest<uint16_t>("Softplus",
+                         {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+                         {},
+                         14,
+                         ExpectedEPNodeAssignment::All,
+                         kOnnxDomain,
+                         true);
 }
 
 // Check that QNN compiles DQ -> HardSwish -> Q as a single unit.
