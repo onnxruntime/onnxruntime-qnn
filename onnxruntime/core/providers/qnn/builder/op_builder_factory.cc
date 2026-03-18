@@ -207,6 +207,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   }
 
   {
+    CreateRandomNormalLikeOpBuilder("RandomNormalLike", *this);
+  }
+
+  {
     CreateRandomUniformLikeOpBuilder("RandomUniformLike", *this);
   }
 
