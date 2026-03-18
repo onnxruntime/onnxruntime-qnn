@@ -167,7 +167,7 @@ def build_zip_asset(
                 "Privacy.md",
                 "ThirdPartyNotices.txt",
                 "README.md",
-                "release-notes.txt",
+                "release-notes.md",
             ]
         )
         doc_md_files = ["QNN-ExecutionProvider.md", "build.md", "development.md"]
@@ -175,7 +175,9 @@ def build_zip_asset(
             "qnn_ep_quant_workflow.png",
             "quantization_mixed_precision_1.png",
             "quantization_mixed_precision_2.png",
-            "ONNX_Runtime_logo_dark.png",  # Used in README.md
+            "PluginEP-final.png",
+            "Q-icon-rgb-blue.png",
+            "header.png",
         ]
         asset_files.extend(doc_md_files)
         asset_files.extend(doc_png_files)
