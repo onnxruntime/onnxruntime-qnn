@@ -1116,16 +1116,11 @@ TEST_F(QnnHTPBackendTests, BinaryOp_Div4D_U16_SmallInputs) {
                          true);  // Use com.microsoft Q/DQ ops
 }
 
-// TODO: Enable when this is fixed.
-// QNN v2.13: Inaccuracy detected for output 'output', element 2551923.
-// Output quant params: scale=4100.92626953125, zero_point=126.
-// Expected val: -277957.3125
-// QNN QDQ val: 0 (err 277957.3125)
-// CPU QDQ val: -516716.71875 (err 238759.40625)
-TEST_F(QnnHTPBackendTests, DISABLED_BinaryOp_Div4D_LargeInputs) {
+// Create non-zero second input to avoid zero divisor cases.
+TEST_F(QnnHTPBackendTests, BinaryOp_Div4D_LargeInputs) {
   RunQDQOpTest<uint8_t>("Div",
                         {TestInputDef<float>({1, 3, 768, 1152}, false, -1.0f, 1.0f),
-                         TestInputDef<float>({1, 3, 768, 1152}, false, -1.0f, 1.0f)},
+                         TestInputDef<float>({1, 3, 768, 1152}, false, 1.0f, 2.0f)},
                         {},
                         17,
                         ExpectedEPNodeAssignment::All);
