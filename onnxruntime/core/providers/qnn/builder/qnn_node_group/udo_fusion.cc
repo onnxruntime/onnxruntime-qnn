@@ -47,20 +47,22 @@ Ort::Status GetInputNodeUnits(const QnnModelWrapper& qnn_model_wrapper,
     const OrtValueInfo* input_value_info = inputs[i];
 
     // Get the producer of this input
-    const OrtNode* input_node = nullptr;
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.ValueInfo_GetValueProducer(input_value_info, &input_node, nullptr));
-    if (input_node != nullptr) {
-      const auto input_node_unit_it = node_unit_map.find(input_node);
-      RETURN_IF(input_node_unit_it == node_unit_map.end(), "Input node has no OrtNodeUnit mapping.");
-      const OrtNodeUnit* input_node_unit = input_node_unit_it->second;
+    if (input_value_info != nullptr) {
+      const OrtNode* input_node = nullptr;
+      ORT_CXX_RETURN_ON_API_FAIL(ort_api.ValueInfo_GetValueProducer(input_value_info, &input_node, nullptr));
+      if (input_node != nullptr) {
+        const auto input_node_unit_it = node_unit_map.find(input_node);
+        RETURN_IF(input_node_unit_it == node_unit_map.end(), "Input node has no OrtNodeUnit mapping.");
+        const OrtNodeUnit* input_node_unit = input_node_unit_it->second;
 
-      // Check if input quant node has already been handled. Should not be the case if the calling
-      // fusion function has been called in topological order, but check to be safe.
-      RETURN_IF(input_node_unit->OpType() == DEQUANTIZE_LINEAR && qnn_node_group_map.count(input_node_unit) != 0,
-                "Input quant node has been added");
+        // Check if input quant node has already been handled. Should not be the case if the calling
+        // fusion function has been called in topological order, but check to be safe.
+        RETURN_IF(input_node_unit->OpType() == DEQUANTIZE_LINEAR && qnn_node_group_map.count(input_node_unit) != 0,
+                  "Input quant node has been added");
 
-      RETURN_IF(input_node_unit->UnitType() != OrtNodeUnit::Type::SingleNode, "Input node is not in single format.");
-      input_node_units[i] = input_node_unit;
+        RETURN_IF(input_node_unit->UnitType() != OrtNodeUnit::Type::SingleNode, "Input node is not in single format.");
+        input_node_units[i] = input_node_unit;
+      }
     }
   }
   return Ort::Status();
@@ -83,23 +85,26 @@ Ort::Status GetOutputNodeUnits(const QnnModelWrapper& qnn_model_wrapper,
   for (size_t i = 0; i < num_outputs; ++i) {
     const OrtValueInfo* output_value_info = outputs[i];
 
-    // Get the consumer of this output
-    size_t num_consumers;
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.ValueInfo_GetValueNumConsumers(output_value_info, &num_consumers));
-    std::vector<const OrtNode*> output_nodes(num_consumers);
-    std::vector<int64_t> output_consumer_indices(num_consumers);
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.ValueInfo_GetValueConsumers(output_value_info,
-                                                                   output_nodes.data(),
-                                                                   output_consumer_indices.data(),
-                                                                   num_consumers));
-    if (!output_nodes.empty() && output_nodes[0] != nullptr) {
-      const OrtNode* output_node = output_nodes[0];
-      const auto output_node_unit_it = node_unit_map.find(output_node);
-      RETURN_IF(output_node_unit_it == node_unit_map.end(), "Output node has no OrtNodeUnit mapping.");
-      const OrtNodeUnit* output_node_unit = output_node_unit_it->second;
+    if (output_value_info != nullptr)
+    {
+      // Get the consumer of this output
+      size_t num_consumers;
+      ORT_CXX_RETURN_ON_API_FAIL(ort_api.ValueInfo_GetValueNumConsumers(output_value_info, &num_consumers));
+      std::vector<const OrtNode*> output_nodes(num_consumers);
+      std::vector<int64_t> output_consumer_indices(num_consumers);
+      ORT_CXX_RETURN_ON_API_FAIL(ort_api.ValueInfo_GetValueConsumers(output_value_info,
+                                                                     output_nodes.data(),
+                                                                     output_consumer_indices.data(),
+                                                                     num_consumers));
+      if (!output_nodes.empty() && output_nodes[0] != nullptr) {
+        const OrtNode* output_node = output_nodes[0];
+        const auto output_node_unit_it = node_unit_map.find(output_node);
+        RETURN_IF(output_node_unit_it == node_unit_map.end(), "Output node has no OrtNodeUnit mapping.");
+        const OrtNodeUnit* output_node_unit = output_node_unit_it->second;
 
-      RETURN_IF(output_node_unit->UnitType() != OrtNodeUnit::Type::SingleNode, "Output node is not in single format.");
-      output_node_units[i] = output_node_unit;
+        RETURN_IF(output_node_unit->UnitType() != OrtNodeUnit::Type::SingleNode, "Output node is not in single format.");
+        output_node_units[i] = output_node_unit;
+      }
     }
   }
   return Ort::Status();
