@@ -14,6 +14,8 @@ from pathlib import Path
 class Artifactory:
     def __init__(self) -> None:
         self.__repo = os.environ["BUILD_ARTIFACTORY_REPO"]
+        if len(self.__repo) == 0:
+            raise ValueError("BUILD_ARTIFACTORY_REPO not set")
 
     @property
     def repo_path(self) -> str:
