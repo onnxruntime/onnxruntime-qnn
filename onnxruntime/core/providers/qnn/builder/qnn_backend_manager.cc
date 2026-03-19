@@ -1419,12 +1419,8 @@ Ort::Status QnnBackendManager::SetupBackend(
                 ORT_LOGGING_LEVEL_WARNING,
                 "Weight sharing requires QNN API version >= 2.32, current version is too old.");
 #endif
-#elif defined(_M_X64)
-    enable_htp_weight_sharing = true;
 #else
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_WARNING,
-                "Weight sharing only available with offline generation on WoS x64/arm64 platform.");
+    enable_htp_weight_sharing = true;
 #endif
   }
 
