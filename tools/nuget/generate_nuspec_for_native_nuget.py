@@ -283,7 +283,7 @@ def generate_release_notes(line_list, dependency_sdk_info):
     build_id = get_env_var("BUILD_BUILDID")
     line_list.append(
         "\t"
-        + "Build: https://aiinfra.visualstudio.com/Lotus/_build/results?buildId="
+        + "Build: https://github.com/onnxruntime/onnxruntime-qnn/actions/runs/"
         + (build_id if build_id is not None else "")
     )
 
@@ -306,7 +306,7 @@ def generate_metadata(line_list, args):
     generate_description(metadata_list, args.package_name)
     generate_copyright(metadata_list, "\xc2\xa9 " + "Microsoft Corporation. All rights reserved.")
     generate_tags(metadata_list, tags)
-    generate_icon(metadata_list, "ORT_icon_for_light_bg.png")
+    generate_icon(metadata_list, "header.png")
     generate_license(metadata_list)
     generate_project_url(metadata_list, "https://github.com/onnxruntime/onnxruntime-qnn")
     generate_repo_url(metadata_list, "https://github.com/onnxruntime/onnxruntime-qnn.git", args.commit_id)
@@ -519,8 +519,8 @@ def generate_files(line_list, args):
     files_list.append(
         "<file src="
         + '"'
-        + os.path.join(args.sources_path, "ORT_icon_for_light_bg.png")
-        + '" target="ORT_icon_for_light_bg.png" />'
+        + os.path.join(args.sources_path, "docs", "images", "header.png")
+        + '" target="header.png" />'
     )
     if is_qnn_package:
         files_list.append(
