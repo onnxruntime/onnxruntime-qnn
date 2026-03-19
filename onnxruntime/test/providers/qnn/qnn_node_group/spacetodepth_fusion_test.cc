@@ -158,6 +158,83 @@ GetTestModelFn BuildSpaceToDepthTestCase(const std::vector<int64_t>& input_shape
   };
 }
 
+GetTestModelFn BuildWrappedSpaceToDepthTestCase() {
+  return [=](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("spacetodepth_wrapped_fusion_graph");
+
+    // Match ChannelShuffle test topology: Conv -> RTR -> Conv.
+    const int64_t num_channels = 12;
+    const int64_t block_height = 2;
+    const int64_t block_width = 2;
+    const std::vector<int64_t> input_shape{1, num_channels, 8, 8};
+    const auto input_def = TestInputDef<float>(input_shape, false, -0.5f, 0.5f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // Conv1 weights
+    const std::vector<int64_t> conv1_weight_shape = {num_channels, num_channels / 2, 1, 1};
+    builder.MakeInitializer<float>("conv1_weight", conv1_weight_shape, -2.f, 2.f);
+
+    // Conv1: input + conv1_weight -> conv1_out
+    {
+      std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+      attrs.push_back(test::MakeAttribute("group", static_cast<int64_t>(2)));
+      builder.AddNode("Conv1",
+                      "Conv",
+                      {"input", "conv1_weight"},
+                      {"conv1_out"},
+                      kOnnxDomain,
+                      attrs);
+    }
+
+    const int64_t n = input_shape[0];
+    const int64_t c = input_shape[1];
+    const int64_t h = input_shape[2];
+    const int64_t w = input_shape[3];
+    const int64_t h_div = h / block_height;
+    const int64_t w_div = w / block_width;
+
+    // RTR for SpaceToDepth CRD decomposition.
+    builder.Make1DInitializer<int64_t>("reshape1_shape_wrapped", {n, c, h_div, block_height, w_div, block_width});
+    builder.AddNode("Reshape1",
+                    "Reshape",
+                    {"conv1_out", "reshape1_shape_wrapped"},
+                    {"reshape1_out"},
+                    kOnnxDomain);
+
+    builder.AddNode("TransposeCore",
+                    "Transpose",
+                    {"reshape1_out"},
+                    {"transpose_out"},
+                    kOnnxDomain,
+                    {builder.MakeIntsAttribute("perm", std::vector<int64_t>{0, 1, 3, 5, 2, 4})});
+
+    builder.Make1DInitializer<int64_t>("reshape2_shape_wrapped", {n, c * block_height * block_width, h_div, w_div});
+    builder.AddNode("Reshape2",
+                    "Reshape",
+                    {"transpose_out", "reshape2_shape_wrapped"},
+                    {"reshape2_out"},
+                    kOnnxDomain);
+
+    // Conv2 weights
+    const std::vector<int64_t> conv2_weight_shape = {c * block_height * block_width, 1, 3, 1};
+    builder.MakeInitializer<float>("conv2_weight", conv2_weight_shape, -2.f, 2.f);
+
+    // Conv2: reshape2_out + conv2_weight -> Y
+    {
+      std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+      attrs.push_back(test::MakeAttribute("group", static_cast<int64_t>(c * block_height * block_width)));
+      attrs.push_back(test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 1}));
+      builder.MakeOutput("Y");
+      builder.AddNode("Conv2",
+                      "Conv",
+                      {"reshape2_out", "conv2_weight"},
+                      {"Y"},
+                      kOnnxDomain,
+                      attrs);
+    }
+  };
+}
+
 ProviderOptions GetProviderOptions(const std::string& backend_type) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_type;
@@ -198,6 +275,38 @@ void RunSpaceToDepthFusionTest(const std::filesystem::path& json_qnn_graph_dir,
   AssertOpInQnnGraph(json_qnn_graph_dir, "SpaceToDepth", 1);
 }
 
+void RunWrappedSpaceToDepthFusionTest(const std::filesystem::path& json_qnn_graph_dir,
+                                      const std::string& backend_type) {
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  const int uncaught_on_entry = std::uncaught_exceptions();
+  auto cleanup = gsl::finally([&json_qnn_graph_dir, uncaught_on_entry]() {
+    if (std::uncaught_exceptions() > uncaught_on_entry) {
+      return;
+    }
+    // std::filesystem::remove_all(json_qnn_graph_dir);
+  });
+
+  ProviderOptions provider_options = GetProviderOptions(backend_type);
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  RunQnnModelTest(BuildWrappedSpaceToDepthTestCase(),
+                  provider_options,
+                  /*opset_version=*/13,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f,
+                  /*log_severity=*/OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
+
+  // 1) Ensure SpaceToDepth is materialized exactly once.
+  AssertOpInQnnGraph(json_qnn_graph_dir, "SpaceToDepth", 1);
+
+  // 2) Ensure original RTR decomposition nodes are gone.
+  AssertNodeNotInQnnGraph(json_qnn_graph_dir, "Reshape1");
+  AssertNodeNotInQnnGraph(json_qnn_graph_dir, "TransposeCore");
+  AssertNodeNotInQnnGraph(json_qnn_graph_dir, "Reshape2");
+}
+
 }  // namespace
 
 TEST_F(QnnCPUBackendTests, SpaceToDepthFusion_Float_DCR) {
@@ -220,6 +329,11 @@ TEST_F(QnnCPUBackendTests, SpaceToDepthFusion_Float_CRD) {
                             /*use_qdq=*/false,
                             /*use_contrib_qdq=*/false,
                             /*backend_type=*/"cpu");
+}
+
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped5Node_Float_CRD) {
+  RunWrappedSpaceToDepthFusionTest("SpaceToDepthFusionWrapped5NodeFloatCRD_HTP",
+                                   /*backend_type=*/"htp");
 }
 
 // Fails with QNN CPU graph execution failure.
