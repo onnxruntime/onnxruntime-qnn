@@ -168,8 +168,9 @@
   # Create document destination directory first to ensure it exists
   add_custom_command(
     TARGET ${onnxruntime_providers_qnn_target} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/docs/execution_providers
-    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/docs/images
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/docs/execution_providers
+        $<TARGET_FILE_DIR:${onnxruntime_providers_qnn_target}>/docs/images
     COMMENT "Creating document destination directory"
   )
   # Copy documents to output docs directory to preserve the file structure and maintain document links
