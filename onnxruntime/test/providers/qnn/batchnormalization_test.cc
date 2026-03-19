@@ -336,7 +336,7 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_U8S8S32) {
   RunBatchNormQDQTest<uint8_t, int8_t>(TestInputDef<float>({2, num_channels, 2, 2}, false, input_data),  // Input data
                                        TestInputDef<float>({num_channels}, true, {1.0f, 2.0f}),          // Scale initializer
                                        TestInputDef<float>({num_channels}, true, {1.1f, 2.1f}),          // Bias initializer
-                                       ExpectedEPNodeAssignment::None);
+                                       ExpectedEPNodeAssignment::All);
 }
 
 // Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.
