@@ -456,8 +456,8 @@ Ort::Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper
       params_.bwScaleOffsetEncoding.offset = 0;
     }
   } else if (!is_per_tensor && is_int4_type) {
-    const std::vector<int64_t> io_shape = io_def.shape;
-    RETURN_IF(io_shape.empty(), "Input/output tensor proto must have a shape");
+    std::vector<uint32_t> io_shape;
+    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(io_def.shape, io_shape), "Cannot get shape");
     const int32_t io_rank = static_cast<int32_t>(io_shape.size());
 
     constexpr int64_t DEFAULT_QDQ_AXIS = 1;
@@ -499,8 +499,8 @@ Ort::Status QnnQuantParamsWrapper::Init(const QnnModelWrapper& qnn_model_wrapper
     params_.bwAxisScaleOffsetEncoding.scales = scales_span.data();
     params_.bwAxisScaleOffsetEncoding.offsets = zps_span.data();
   } else if (!is_per_tensor && !is_int4_type) {
-    const std::vector<int64_t> io_shape = io_def.shape;
-    RETURN_IF(io_shape.empty(), "Input/output tensor proto must have a shape");
+    std::vector<uint32_t> io_shape;
+    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(io_def.shape, io_shape), "Cannot get shape");
     const int32_t io_rank = static_cast<int32_t>(io_shape.size());
 
     constexpr int64_t DEFAULT_QDQ_AXIS = 1;
