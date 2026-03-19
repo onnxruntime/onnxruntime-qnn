@@ -130,31 +130,38 @@ static Ort::Status CreateOrValidateOnQnn(
   for (size_t i = 0; i < inputs.size(); i++) {
     const OrtNodeUnit* input_edge_src_node_unit = (input_node_units.find(i) != input_node_units.end()) ? input_node_units.at(i) : nullptr;
     if (!inputs[i].Exists()) {
-      continue;
-    }
+      std::string null_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_null_tensor");
+      QnnTensorWrapper null_tensor_wrapper(null_tensor_name, QNN_TENSOR_TYPE_NULL, QNN_DATATYPE_UNDEFINED,
+                                           QnnQuantParamsWrapper(), std::vector<uint32_t>{0});
 
-    // since input could come from initialize or graph input, which are not OrtNodeUnit,
-    // we have to compare the name to get the correct order
-    std::string input_name = inputs[i].name;
-    const OrtNodeUnitIODef* input_def = &inputs[i];
-    if (input_edge_src_node_unit && input_edge_src_node_unit->OpType() == DEQUANTIZE_LINEAR) {
-      input_name = input_edge_src_node_unit->Inputs()[0].name;
-      input_def = &(input_edge_src_node_unit->Inputs()[0]);
-    }
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(null_tensor_wrapper)),
+                    ("Failed to add null tensor: " + null_tensor_name).c_str());
 
-    if (!qnn_model_wrapper.IsQnnTensorWrapperExist(input_name)) {
-      TensorInfo tensor_info;
-      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(*input_def, tensor_info));
-
-      QnnTensorWrapper tensor_wrapper;
-      RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(tensor_info, input_name, tensor_wrapper));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tensor_wrapper)),
-                    ("Failed to add tensor: " + input_name).c_str());
+      input_names.emplace_back(null_tensor_name);
     } else {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor already added, skip it: " + input_name).c_str());
-    }
+      // since input could come from initialize or graph input, which are not OrtNodeUnit,
+      // we have to compare the name to get the correct order
+      std::string input_name = inputs[i].name;
+      const OrtNodeUnitIODef* input_def = &inputs[i];
+      if (input_edge_src_node_unit && input_edge_src_node_unit->OpType() == DEQUANTIZE_LINEAR) {
+        input_name = input_edge_src_node_unit->Inputs()[0].name;
+        input_def = &(input_edge_src_node_unit->Inputs()[0]);
+      }
 
-    input_names.emplace_back(input_name);
+      if (!qnn_model_wrapper.IsQnnTensorWrapperExist(input_name)) {
+        TensorInfo tensor_info;
+        RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(*input_def, tensor_info));
+
+        QnnTensorWrapper tensor_wrapper;
+        RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(tensor_info, input_name, tensor_wrapper));
+        RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tensor_wrapper)),
+                      ("Failed to add tensor: " + input_name).c_str());
+      } else {
+        ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor already added, skip it: " + input_name).c_str());
+      }
+
+      input_names.emplace_back(input_name);
+    }
   }
 
   // get qnn outputs
@@ -163,27 +170,34 @@ static Ort::Status CreateOrValidateOnQnn(
   for (size_t i = 0; i < outputs.size(); ++i) {
     const OrtNodeUnit* output_edge_dst_node_unit = (output_node_units.find(i) != output_node_units.end()) ? output_node_units.at(i) : nullptr;
     if (!outputs[i].Exists()) {
-      continue;
-    }
-    std::string output_name = outputs[i].name;
-    const OrtNodeUnitIODef* output_def = &outputs[i];
-    if (output_edge_dst_node_unit && output_edge_dst_node_unit->OpType() == QUANTIZE_LINEAR) {
-      output_name = output_edge_dst_node_unit->Outputs()[0].name;
-      output_def = &(output_edge_dst_node_unit->Outputs()[0]);
-    }
+      std::string null_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_null_tensor");
+      QnnTensorWrapper null_tensor_wrapper(null_tensor_name, QNN_TENSOR_TYPE_NULL, QNN_DATATYPE_UNDEFINED,
+                                             QnnQuantParamsWrapper(), std::vector<uint32_t>{0});
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(null_tensor_wrapper)), "Failed to add null tensor.");
 
-    TensorInfo output_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(*output_def, output_info));
-    bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
+      output_names.emplace_back(null_tensor_name);
+    } else {
+      std::string output_name = outputs[i].name;
+      const OrtNodeUnitIODef* output_def = &outputs[i];
+      if (output_edge_dst_node_unit && output_edge_dst_node_unit->OpType() == QUANTIZE_LINEAR) {
+        output_name = output_edge_dst_node_unit->Outputs()[0].name;
+        output_def = &(output_edge_dst_node_unit->Outputs()[0]);
+      }
 
-    Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
-    QnnTensorWrapper output_tensor_wrapper(output_name,
-                                           tensor_type,
-                                           output_info.qnn_data_type,
-                                           std::move(output_info.quant_param),
-                                           std::move(output_info.shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor_wrapper)), "Failed to add tensor.");
-    output_names.emplace_back(output_name);
+      TensorInfo output_info = {};
+      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(*output_def, output_info));
+      bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
+
+      Qnn_TensorType_t tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+      QnnTensorWrapper output_tensor_wrapper(output_name,
+                                             tensor_type,
+                                             output_info.qnn_data_type,
+                                             std::move(output_info.quant_param),
+                                             std::move(output_info.shape));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor_wrapper)), "Failed to add tensor.");
+
+      output_names.emplace_back(output_name);
+    }
   }
 
   // get qnn params
