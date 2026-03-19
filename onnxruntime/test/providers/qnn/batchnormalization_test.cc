@@ -550,6 +550,7 @@ TEST_F(QnnHTPBackendTests, BatchNorm2dQdqParams) {
                        21,
                        ExpectedEPNodeAssignment::All);
 }
+
 // Test BatchNorm with U8 input, S8 scale (converted to U8), float bias (converted to S32)
 TEST_F(QnnHTPBackendTests, BatchNorm2D_U8S8F32) {
   constexpr int64_t num_channels = 2;
