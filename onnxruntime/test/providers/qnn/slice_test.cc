@@ -204,6 +204,39 @@ TEST_F(QnnHTPBackendTests, SliceU8_MultAxes_LargeEnd) {
                            TestInputDef<int64_t>({2}, true, {1, 1}),      // steps
                            ExpectedEPNodeAssignment::All);
 }
+
+// Test 8-bit QDQ Slice without axes and steps.
+TEST_F(QnnHTPBackendTests, SliceU8_NoAxesSteps) {
+  std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
+  RunSliceQDQTest<uint8_t>(TestInputDef<float>({2, 4}, false, input_data),
+                           TestInputDef<int64_t>({2}, true, {1, 0}),     // starts
+                           TestInputDef<int64_t>({2}, true, {2, 3}),     // ends
+                           TestInputDef<int64_t>(/*is_optional*/ true),  // axes
+                           TestInputDef<int64_t>(/*is_optional*/ true),  // steps
+                           ExpectedEPNodeAssignment::All);
+}
+
+// Test 8-bit QDQ Slice without axes.
+TEST_F(QnnHTPBackendTests, SliceU8_NoAxes) {
+  std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
+  RunSliceQDQTest<uint8_t>(TestInputDef<float>({2, 4}, false, input_data),
+                           TestInputDef<int64_t>({2}, true, {1, 0}),     // starts
+                           TestInputDef<int64_t>({2}, true, {2, 3}),     // ends
+                           TestInputDef<int64_t>(/*is_optional*/ true),  // axes
+                           TestInputDef<int64_t>({2}, true, {1, 1}),     // steps
+                           ExpectedEPNodeAssignment::All);
+}
+
+// Test 8-bit QDQ Slice without steps.
+TEST_F(QnnHTPBackendTests, SliceU8_NoSteps) {
+  std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f, 8.0f};
+  RunSliceQDQTest<uint8_t>(TestInputDef<float>({2, 4}, false, input_data),
+                           TestInputDef<int64_t>({2}, true, {1, 0}),     // starts
+                           TestInputDef<int64_t>({2}, true, {2, 3}),     // ends
+                           TestInputDef<int64_t>({2}, true, {0, 1}),     // axes
+                           TestInputDef<int64_t>(/*is_optional*/ true),  // steps
+                           ExpectedEPNodeAssignment::All);
+}
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test

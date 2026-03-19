@@ -64,6 +64,12 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
               "QNN EP does not support ScatterND op on CPU backend. Falling back to ORT CPU.");
   }
 
+  // TODO: Remove once QNN HTP PRelu bug is fixed
+  if (op_type == "PRelu") {
+    RETURN_IF(qnn_backend_type == QnnBackendType::CPU,
+              "QNN EP does not support PRelu op on CPU backend. Falling back to ORT CPU.");
+  }
+
   // ONNX's Min, Max, and Sum operators accept a variable number of inputs (i.e., variadic).
   // However, QNN's Min, Max, and Add operators must take in exactly two inputs.
   if (op_type == "Min" || op_type == "Max") {

@@ -297,12 +297,19 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  // TODO: Upgrade the ONNX IR VERSION to 12 when using ORT 1.24 prebuilt
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   // Serialize the model to a string.
   std::string model_data;
   helper.model_.SerializeToString(&model_data);
+
+  if (QNNTestEnvironment::GetInstance().dump_onnx()) {
+    // TODO: Use public logger
+    // LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx model at: " << dump_path;
+    auto dump_path = output_dir / "dumped_f32_model.onnx";
+    std::ofstream ofs(dump_path, std::ios::binary);
+    ofs.write(model_data.data(), static_cast<std::streamsize>(model_data.size()));
+  }
 
   if (QNNTestEnvironment::GetInstance().dump_dlc()) {
     provider_options["dump_qnn_ir_dlc"] = "1";
@@ -323,7 +330,11 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   const std::string& registration_name = "QNNExecutionProvider";
   Ort::SessionOptions session_options;
 
+  session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
   session_options.SetLogSeverityLevel(log_severity);
+  if (QNNTestEnvironment::GetInstance().verbose()) {
+    session_options.SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
+  }
 
   TryEnableQNNSaver(provider_options);
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
@@ -338,7 +349,6 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
 
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
-                       ExpectedEPNodeAssignment expected_ep_assignment [[maybe_unused]],
                        std::unordered_map<std::string, Ort::Value>& feeds,
                        std::vector<Ort::Value>& output_vals,
                        std::optional<GraphOptimizationLevel> graph_optimization_level) {
@@ -392,6 +402,7 @@ void InferenceModel(const std::string& model_data,
                     ExpectedEPNodeAssignment expected_ep_assignment,
                     std::unordered_map<std::string, Ort::Value>& feeds,
                     std::vector<Ort::Value>& output_vals,
+                    OrtLoggingLevel log_severity,
                     const std::unordered_map<std::string, std::string>& session_option_pairs,
                     std::optional<GraphOptimizationLevel> graph_optimization_level,
                     std::function<void(const Graph&)>* graph_checker [[maybe_unused]]) {
@@ -404,9 +415,10 @@ void InferenceModel(const std::string& model_data,
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
 
   session_options.SetLogId(log_id);
-
-  // Uncomment to dump verbose output to stdout.
-  // session_options.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+  session_options.SetLogSeverityLevel(log_severity);
+  if (QNNTestEnvironment::GetInstance().verbose()) {
+    session_options.SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
+  }
 
   for (auto key_value : session_option_pairs) {
     session_options.AddConfigEntry(key_value.first.c_str(), key_value.second.c_str());
@@ -415,15 +427,10 @@ void InferenceModel(const std::string& model_data,
   Ort::RunOptions ort_run_options;
   ort_run_options.SetRunTag(log_id);
 
-  std::string test_suite_name = ::testing::UnitTest::GetInstance()->current_test_info()->test_suite_name();
-  // TODO: Implement EP assignment verification once public API for ep partition is ready
-  // This disable_cpu_ep_fallback is an workaround for ExpectedEPNodeAssignment::All
-  if (test_suite_name != "QnnCPUBackendTests" &&
-      expected_ep_assignment == ExpectedEPNodeAssignment::All) {
-    // ASSERT_EQ(ep_nodes, graph.NumberOfNodes()) << "Not all nodes were assigned to " << registration_name;
-    session_options.AddConfigEntry("session.disable_cpu_ep_fallback", "1");
-  }
+  auto provider_type = "QNNExecutionProvider";
+  session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
   Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
+  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(session, provider_type, expected_ep_assignment));
 
   // TODO: Implement graph_checker once public API for ep partition is ready
   // const auto& graph = ort_session.GetGraph();
@@ -512,10 +519,10 @@ void QnnHTPBackendTests::SetUp() {
          << ", DLBC supported: " << attrs.dlbc_supported
          << ", VTCM size MB: " << attrs.vtcm_size_mb
          << ", SoC model: " << attrs.soc_model
-         << ", SDK version: " << attrs.sdk_version;
+         << ", Backend API version: " << attrs.backend_api_version;
 
       std::string platform_info_str = ss.str();
-      std::cout << platform_info_str;
+      std::cout << platform_info_str << std::endl;
       // TODO: Fix the crash here with ORT_CXX_LOG
       // ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_INFO, platform_info_str.c_str());
 
@@ -740,9 +747,9 @@ Ort::Status QnnHTPBackendTests::QueryQnnPlatformAttributesDirectly(QnnHTPBackend
       Qnn_ApiVersion_t api_version;
       qnn_status = backendGetApiVersionFn(&api_version);
       if (qnn_status == QNN_SUCCESS) {
-        out.sdk_version = std::to_string(api_version.coreApiVersion.major) + "." +
-                          std::to_string(api_version.coreApiVersion.minor) + "." +
-                          std::to_string(api_version.coreApiVersion.patch);
+        out.backend_api_version = std::to_string(api_version.coreApiVersion.major) + "." +
+                                  std::to_string(api_version.coreApiVersion.minor) + "." +
+                                  std::to_string(api_version.coreApiVersion.patch);
       }
     }
 
