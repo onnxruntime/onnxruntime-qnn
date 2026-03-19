@@ -140,15 +140,15 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
   *ep = nullptr;
 
   // Check if logger is nullptr and get default logger if available
-  const OrtLogger* logger_to_use = logger;
-  if (logger_to_use == nullptr) {
-    RETURN_IF_NOT(OrtLoggingManager::HasDefaultLogger(),
-                  "Logger is nullptr and OrtLoggingManager does not have a default logger.");
-    logger_to_use = OrtLoggingManager::GetDefaultLoggerPtr();
+  if (logger == nullptr) {
+    if (!OrtLoggingManager::HasDefaultLogger()) {
+      return factory->ort_api.CreateStatus(ORT_FAIL, "Logger is nullptr and OrtLoggingManager does not have a default logger.");
+    }
+    logger = OrtLoggingManager::GetDefaultLoggerPtr();
   }
 
   // Create the execution provider
-  RETURN_IF_NOT_NULL(factory->ort_api.Logger_LogMessage(logger_to_use,
+  RETURN_IF_NOT_NULL(factory->ort_api.Logger_LogMessage(logger,
                                                         OrtLoggingLevel::ORT_LOGGING_LEVEL_INFO,
                                                         "Creating QNN EP", ORT_FILE, __LINE__, __FUNCTION__));
 
@@ -196,7 +196,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
       auto device_it = std::find_if(devices, devices + num_devices, is_npu);
       if (device_it != devices + num_devices) {
         RETURN_IF_NOT_NULL(factory->ort_api.Logger_LogMessage(
-            logger_to_use,
+            logger,
             OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
             "QNN EP only supports one device. Only the NPU device will be used.",
             ORT_FILE, __LINE__, __FUNCTION__));
@@ -205,7 +205,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
         device_it = std::find_if(devices, devices + num_devices, is_gpu);
         if (device_it != devices + num_devices) {
           RETURN_IF_NOT_NULL(factory->ort_api.Logger_LogMessage(
-              logger_to_use,
+              logger,
               OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
               "QNN EP only supports one device. An NPU device was not provided, so only the GPU device will be used.",
               ORT_FILE, __LINE__, __FUNCTION__));
@@ -247,7 +247,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
 
   std::unique_ptr<QnnEp> qnn_ep;
   try {
-    qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *session_options, logger_to_use);
+    qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *session_options, logger);
   } catch (const std::runtime_error& e) {
     return factory->ort_api.CreateStatus(ORT_FAIL, e.what());
   } catch (...) {
@@ -319,7 +319,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
   // QNN EP supports general CPU devices and NPU/GPU devices with Qualcomm vendor ID
   auto supported_backend_types_it = kSupportedBackendTypes.find(device_type);
   if (supported_backend_types_it == kSupportedBackendTypes.end() || (vendor_id != factory->vendor_id_ && device_type != OrtHardwareDeviceType_CPU)) {
-    uint32_t reasons = static_cast<uint32_t>(OrtDeviceEpIncompatibility_DEVICE_INCOMPATIBLE);
+    OrtDeviceEpIncompatibilityReason reasons = OrtDeviceEpIncompatibility_DEVICE_INCOMPATIBLE;
     return factory->ep_api.DeviceEpIncompatibilityDetails_SetDetails(
         details,
         reasons,
@@ -353,7 +353,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
         compat_details.error_code,
         compat_details.notes.c_str());
   } catch (...) {
-    uint32_t reasons = static_cast<uint32_t>(OrtDeviceEpIncompatibility_UNKNOWN);
+    OrtDeviceEpIncompatibilityReason reasons = OrtDeviceEpIncompatibility_UNKNOWN;
     return factory->ep_api.DeviceEpIncompatibilityDetails_SetDetails(
         details,
         reasons,
