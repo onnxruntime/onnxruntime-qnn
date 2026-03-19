@@ -304,8 +304,11 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   helper.model_.SerializeToString(&model_data);
 
   if (QNNTestEnvironment::GetInstance().dump_onnx()) {
+<<<<<<< HEAD
     // TODO: Use public logger
     // LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx model at: " << dump_path;
+=======
+>>>>>>> 800dd7c177 (debugging enabled fix)
     auto dump_path = output_dir / "dumped_f32_model.onnx";
     std::ofstream ofs(dump_path, std::ios::binary);
     ofs.write(model_data.data(), static_cast<std::streamsize>(model_data.size()));
@@ -415,10 +418,9 @@ void InferenceModel(const std::string& model_data,
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
 
   session_options.SetLogId(log_id);
-  session_options.SetLogSeverityLevel(log_severity);
-  if (QNNTestEnvironment::GetInstance().verbose()) {
-    session_options.SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
-  }
+
+  // Uncomment to dump verbose output to stdout.
+  session_options.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
 
   for (auto key_value : session_option_pairs) {
     session_options.AddConfigEntry(key_value.first.c_str(), key_value.second.c_str());

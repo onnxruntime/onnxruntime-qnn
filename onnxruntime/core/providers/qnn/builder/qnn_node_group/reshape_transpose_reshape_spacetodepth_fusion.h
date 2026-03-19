@@ -24,10 +24,14 @@ class QnnModelWrapper;
 class ReshapeTransposeReshapeSpaceToDepthFusion : public IQnnNodeGroup {
  public:
   ReshapeTransposeReshapeSpaceToDepthFusion(gsl::span<const OrtNodeUnit* const> node_units,
-                        uint32_t block_height,
-                        uint32_t block_width,
-                                            uint32_t mode)
-      : block_height_(block_height), block_width_(block_width), mode_(mode) {
+                                            uint32_t block_height,
+                                            uint32_t block_width,
+                                            uint32_t mode,
+                                            bool use_nhwc_fallback)
+      : block_height_(block_height),
+        block_width_(block_width),
+        mode_(mode),
+        use_nhwc_fallback_(use_nhwc_fallback) {
     if (node_units.size() != 3) {
       ORT_CXX_API_THROW("Pattern expects exactly 3 NodeUnits.", ORT_EP_FAIL);
     }
@@ -56,9 +60,10 @@ class ReshapeTransposeReshapeSpaceToDepthFusion : public IQnnNodeGroup {
 
  private:
   std::array<const OrtNodeUnit*, 3> node_units_;  // Reshape1, Transpose, Reshape2
-    uint32_t block_height_ = 0;
-    uint32_t block_width_ = 0;
+  uint32_t block_height_ = 0;
+  uint32_t block_width_ = 0;
   uint32_t mode_ = 0;
+  bool use_nhwc_fallback_ = false;
 };
 
 }  // namespace qnn
