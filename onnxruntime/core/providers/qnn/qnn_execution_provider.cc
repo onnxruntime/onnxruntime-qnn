@@ -643,7 +643,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     LOGS_DEFAULT(VERBOSE) << "User specified disable_file_mapped_weights: " << enable_file_mapped_weights_;
   }
 
-
 #ifndef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   enable_file_mapped_weights_ = false;
   LOGS_DEFAULT(WARNING) << "File mapped weights feature is only available on Windows arm64 devices for QNN API versions >= 2.32. "

@@ -995,7 +995,7 @@ void QnnBackendManager::ProcessContextFromBinListAsync(Qnn_ContextHandle_t conte
 }
 
 Ort::Status QnnBackendManager::GetFileSizeIfValid(const std::string& filepath,
-                                             size_t& file_size) {
+                                                  size_t& file_size) {
   std::error_code ec;
   ORT_RETURN_IF(!std::filesystem::exists(filepath, ec), "Context binary does not exist: ", filepath);
   ORT_RETURN_IF(ec, "Failed to read file: ", filepath,
@@ -1014,7 +1014,7 @@ Ort::Status QnnBackendManager::GetFileSizeIfValid(const std::string& filepath,
 }
 
 Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_bin_filepath,
-                                                std::vector<char>& buffer) {
+                                                     std::vector<char>& buffer) {
   size_t buffer_size;
   ORT_RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_size));
 
@@ -1081,8 +1081,8 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
 }
 
 Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Config_t** configs,
-                                                     std::unordered_map<std::string,
-                                                                        std::unique_ptr<std::vector<std::string>>>& context_bin_map) {
+                                                          std::unordered_map<std::string,
+                                                                             std::unique_ptr<std::vector<std::string>>>& context_bin_map) {
   std::vector<QnnContext_Params_t> context_params_list;
   std::vector<QnnContext_ParamsV1_t> context_paramsv1_list;
   std::vector<const QnnContext_Params_t*> context_params_ptr_list;
@@ -1127,8 +1127,8 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnContext_Config_t** configs,
-                                                                 std::unordered_map<std::string,
-                                                                                    std::unique_ptr<std::vector<std::string>>>& context_bin_map) {
+                                                                      std::unordered_map<std::string,
+                                                                                         std::unique_ptr<std::vector<std::string>>>& context_bin_map) {
   std::vector<QnnContext_Params_t> context_params_list;
   std::vector<QnnContext_ParamsV2_t> context_paramsv2_list;
   std::vector<Qnn_ContextBinaryCallback_t> context_callbacks_list;
