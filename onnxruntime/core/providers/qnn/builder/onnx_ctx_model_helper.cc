@@ -143,7 +143,7 @@ Ort::Status GetEpContextFromMainNode(const OrtNode* main_context_node,
     return qnn_backend_manager->LoadCachedQnnContextFromBuffer(nullptr,
                                                                0,
                                                                context_binary_path_str,
-                                                               main_context_node.Name(),
+                                                               main_context_node_name,
                                                                qnn_models,
                                                                max_spill_fill_size);
   }

@@ -309,9 +309,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Qnn_ErrorHandle_t ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_t data_mem, void* mapped_base_ptr);
 #endif
 
-  QnnLog_Level_t MapOrtSeverityToQNNLogLevel(logging::Severity ort_log_level);
-  static logging::Severity MapQNNLogLevelToOrtSeverity(QnnLog_Level_t qnn_log_level);
-
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   typedef struct FileMappingCallbackInfo {
     void* const mapped_file_ptr;
@@ -323,56 +320,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   } FileMappingCallbackInfo_t;
 #endif
-
- private:
-  Status LoadBackend();
-
-  Status InitializeBackend();
-
-  Status CreateDevice();
-
-  Status ReleaseDevice();
-
-  Status ShutdownBackend();
-
-  Status InitializeProfiling();
-
-  Status ReleaseProfilehandle();
-
-  Status CreateContext(bool enable_htp_weight_sharing);
-
-  Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
-
-  Status ReadContextBinIfValid(const std::string& context_bin_filepath,
-                               std::vector<char>& buffer);
-
-  Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
-                                                                        std::unique_ptr<std::vector<std::string>>>& context_bin_map);
-
-  Status CreateContextFromListAsync(const QnnContext_Config_t** configs,
-                                    std::unordered_map<std::string,
-                                                       std::unique_ptr<std::vector<std::string>>>& context_bin_map);
-
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-  Status CreateContextFromListAsyncWithCallback(const QnnContext_Config_t** configs,
-                                                std::unordered_map<std::string,
-                                                                   std::unique_ptr<std::vector<std::string>>>& context_bin_map);
-#endif
-
-  Status ReleaseContext();
-
-  // Sets the ORT logger and creates a corresponding QNN logger with the same log level.
-  // NOTE: caller must lock the `logger_recursive_mutex_` before calling this function.
-  Status InitializeQnnLog(const logging::Logger& logger);
-
-  // Terminate logging in the backend
-  // NOTE: This function locks the internal `logger_recursive_mutex_`.
-  Status TerminateQnnLog();
->>>>>>> f83d4d06e4 ([QNN-EP] Implement file mapped weights feature (#26952))
-
-  // Releases all QNN resources. Called in the destructor.
-  // NOTE: This function indirectly locks the internal `logger_recursive_mutex_` via nested function calls.
-  void ReleaseResources();
 
  private:
   Ort::Status LoadBackend();

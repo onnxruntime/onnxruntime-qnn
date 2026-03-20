@@ -20,7 +20,7 @@ namespace qnn {
 
 class WindowsFileMapper : public FileMappingInterface {
  public:
-  explicit WindowsFileMapper(const logging::Logger& logger);
+  explicit WindowsFileMapper(const Ort::Logger& logger);
   ~WindowsFileMapper() override;
 
   // Creates a file mapping of the context binary and returns the
@@ -33,7 +33,7 @@ class WindowsFileMapper : public FileMappingInterface {
   // key: filepath to context bin, value: smart pointer of mapview memory pointers
   std::mutex map_mutex_;
   std::unordered_map<std::string, onnxruntime::Env::MappedMemoryPtr> mapped_memory_ptrs_;
-  const logging::Logger* logger_;
+  const Ort::Logger* logger_;
 };
 
 }  // namespace qnn

@@ -15,7 +15,7 @@
 namespace onnxruntime {
 namespace qnn {
 
-WindowsFileMapper::WindowsFileMapper(const logging::Logger& logger)
+WindowsFileMapper::WindowsFileMapper(const Ort::Logger& logger)
     : logger_(&logger) {
 }
 
@@ -26,16 +26,17 @@ static void UnmapFile(void* addr) noexcept {
   bool successful = UnmapViewOfFile(addr);
   if (!successful) {
     const auto error_code = GetLastError();
-    LOGS_DEFAULT(ERROR) << "Failed to unmap view of file with ptr: " << addr
-                        << ", Error code: " << error_code << ", \""
-                        << std::system_category().message(error_code) << "\"";
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
+                ORT_LOGGING_LEVEL_ERROR,
+                ("Failed to unmap view of file with ptr: ",  addr,
+                 ", Error code: ", error_code, ", \"",
+                 std::system_category().message(error_code), "\""));
   }
 }
 
 Status WindowsFileMapper::GetContextBinMappedMemoryPtr(const std::string& bin_filepath,
                                                        void** mapped_data_ptr) {
-  LOGS(*logger_, INFO) << "Creating context bin file mapping for "
-                       << bin_filepath;
+  ORT_CXX_LOG(*logger_, ORT_LOGGING_LEVEL_INFO, ("Creating context bin file mapping for ", bin_filepath));
 
   ORT_RETURN_IF(bin_filepath.empty(), "Context bin file path is empty");
 
@@ -43,8 +44,8 @@ Status WindowsFileMapper::GetContextBinMappedMemoryPtr(const std::string& bin_fi
   auto map_it = mapped_memory_ptrs_.find(bin_filepath);
   if (map_it != mapped_memory_ptrs_.end()) {
     *mapped_data_ptr = map_it->second.get();
-    LOGS(*logger_, INFO) << "Found existing mapview memory pointer (" << mapped_data_ptr
-                         << ") for context bin file: " << bin_filepath;
+    ORT_CXX_LOG(*logger_, ORT_LOGGING_LEVEL_INFO, ("Found existing mapview memory pointer (", mapped_data_ptr,
+                                                   ") for context bin file: ", bin_filepath));
     return Status::OK();
   }
 
@@ -62,8 +63,8 @@ Status WindowsFileMapper::GetContextBinMappedMemoryPtr(const std::string& bin_fi
                            std::system_category().message(error_code), "\"");
   }
 
-  LOGS(*logger_, VERBOSE) << "Created file handle (" << file_handle.get() << ") for context bin: "
-                          << bin_filepath;
+  ORT_CXX_LOG(*logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Created file handle (", file_handle.get(), ") for context bin: "
+                                                    bin_filepath));
 
   wil::unique_hfile file_mapping_handle{CreateFileMappingW(file_handle.get(),
                                                            nullptr,
@@ -79,8 +80,7 @@ Status WindowsFileMapper::GetContextBinMappedMemoryPtr(const std::string& bin_fi
                            std::system_category().message(error_code), "\"");
   }
 
-  LOGS(*logger_, VERBOSE) << "Created file mapping with handle (" << file_mapping_handle.get()
-                          << ") for context bin:" << bin_filepath;
+  ORT_CXX_LOG(*logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Created file mapping with handle (", file_mapping_handle.get(), ") for context bin:", bin_filepath));
 
   void* const mapped_base_ptr = MapViewOfFile(file_mapping_handle.get(),
                                               FILE_MAP_READ,
@@ -94,8 +94,8 @@ Status WindowsFileMapper::GetContextBinMappedMemoryPtr(const std::string& bin_fi
                            std::system_category().message(error_code), "\"");
   }
 
-  LOGS(*logger_, INFO) << "Created mapview pointer with address " << mapped_base_ptr
-                       << " for context bin " << bin_filepath;
+  ORT_CXX_LOG(*logger_, ORT_LOGGING_LEVEL_INFO, ("Created mapview pointer with address ", mapped_base_ptr,
+                                " for context bin ", bin_filepath));
 
   onnxruntime::Env::MappedMemoryPtr mapped_memory_ptr{reinterpret_cast<char*>(mapped_base_ptr),
                                                       [mapped_base_ptr](void*) {
