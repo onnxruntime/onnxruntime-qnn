@@ -1047,18 +1047,6 @@ def main():
         num_parallel_jobs = number_of_parallel_jobs(args)
         build_targets(args, cmake_path, build_dir, configs, num_parallel_jobs, args.targets)
 
-    # if args.test:
-    #     if args.enable_onnx_tests:
-    #         source_onnx_model_dir = "C:\\local\\models" if is_windows() else "/data/models"
-    #         setup_test_data(source_onnx_model_dir, "models", build_dir, configs)
-
-    #     run_onnxruntime_tests(args, source_dir, ctest_path, build_dir, configs)
-
-    #     # run node.js binding tests
-    #     if args.build_nodejs and not args.skip_nodejs_tests:
-    #         nodejs_binding_dir = os.path.normpath(os.path.join(source_dir, "js", "node"))
-    #         run_nodejs_tests(nodejs_binding_dir)
-
     # Build packages after running the tests.
     # NOTE: if you have a test that rely on a file which only get copied/generated during packaging step, it could
     # fail unexpectedly. Similar, if your packaging step forgot to copy a file into the package, we don't know it

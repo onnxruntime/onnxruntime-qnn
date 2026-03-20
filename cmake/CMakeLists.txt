@@ -426,7 +426,6 @@ endif()
 include(external/onnxruntime_prebuilt.cmake)
 
 # Generate onnxruntime_config.h
-# TODO: Investigate whether we need the VERSION_NUMBER
 file (STRINGS "${REPO_ROOT}/VERSION_NUMBER" ORT_VERSION)
 
 set(ORT_PROVIDER_FLAGS)
@@ -491,14 +490,14 @@ function(onnxruntime_set_compile_flags target_name)
     if(onnxruntime_ENABLE_LAZY_TENSOR)
       target_compile_definitions(${target_name} PRIVATE ENABLE_LAZY_TENSOR)
     endif()
-	  # Enable stream for all the non-minimal build
+    # Enable stream for all the non-minimal build
     if (NOT onnxruntime_MINIMAL_BUILD)
       target_compile_definitions(${target_name} PRIVATE ORT_ENABLE_STREAM)
     endif()
-	  if (onnxruntime_REDUCED_OPS_BUILD)
+    if (onnxruntime_REDUCED_OPS_BUILD)
       target_compile_definitions(${target_name} PRIVATE REDUCED_OPS_BUILD)
     endif()
-	  if (onnxruntime_DISABLE_EXTERNAL_INITIALIZERS)
+    if (onnxruntime_DISABLE_EXTERNAL_INITIALIZERS)
       target_compile_definitions(${target_name} PRIVATE DISABLE_EXTERNAL_INITIALIZERS)
     endif()
     if(onnxruntime_DISABLE_ABSEIL)
@@ -893,10 +892,9 @@ string(APPEND PROJECT_CONFIG_CONTENT
 
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/PROJECT_CONFIG_FILE" ${PROJECT_CONFIG_CONTENT})
 
-# TODO: Investigate whether we need the install
-# install(EXPORT ${PROJECT_NAME}Targets
-#         NAMESPACE ${PROJECT_NAME}::
-#         DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME})
+install(EXPORT ${PROJECT_NAME}Targets
+        NAMESPACE ${PROJECT_NAME}::
+        DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME})
 
 # Create config for find_package()
 configure_package_config_file(
