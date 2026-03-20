@@ -185,6 +185,8 @@ struct TestInputDef {
 
   TestInputDef() = default;
 
+  TestInputDef(bool is_optional) : is_optional_(is_optional) {};
+
   // Creates a random input definition. Specify its shape, whether it's an initializer, and
   // the min/max range.
   TestInputDef(std::vector<int64_t> shape, bool is_initializer, T rand_min, T rand_max)
@@ -311,12 +313,17 @@ struct TestInputDef {
     return per_axis_ranges;
   }
 
+  bool IsOptional() const {
+    return is_optional_;
+  }
+
  private:
   std::vector<int64_t> shape_;
   std::variant<RawData, RandomData> data_info_;
   bool is_initializer_{false};
   bool has_range_override_{false};
   std::pair<T, T> range_override_;
+  bool is_optional_{false};
 };
 
 // Convert a float input definition to a float16 input definition.
@@ -325,6 +332,24 @@ TestInputDef<Ort::Float16_t> ConvertToFP16InputDef(const TestInputDef<float>& in
 template <typename QType>
 inline QuantParams<QType> GetTestInputQuantParams(const TestInputDef<float>& input_def, bool symmetric = false) {
   const std::pair<float, float> frange = input_def.GetRange();
+  return QuantParams<QType>::Compute(frange.first, frange.second, symmetric);
+}
+
+template <typename QType>
+inline QuantParams<QType> GetTestInputsQuantParams(const std::vector<TestInputDef<float>>& input_defs,
+                                                   bool symmetric = false) {
+  // We initialize the value using std::numeric_limits<float>::lowest() to ensure that negative values are
+  // also handled correctly.
+  std::pair<float, float> frange = {std::numeric_limits<float>::max(), std::numeric_limits<float>::lowest()};
+
+  // Compute global range across all inputs
+  for (const auto& input_def : input_defs) {
+    const auto input_range = input_def.GetRange();
+    frange.first = std::min(frange.first, input_range.first);
+    frange.second = std::max(frange.second, input_range.second);
+  }
+
+  // Compute QuantParams using combined range.
   return QuantParams<QType>::Compute(frange.first, frange.second, symmetric);
 }
 
@@ -552,7 +577,6 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
  */
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
-                       ExpectedEPNodeAssignment expected_ep_assignment,
                        std::unordered_map<std::string, Ort::Value>& feeds,
                        std::vector<Ort::Value>& output_vals,
                        std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt);
@@ -563,6 +587,7 @@ void InferenceModel(const std::string& model_data,
                     ExpectedEPNodeAssignment expected_ep_assignment,
                     std::unordered_map<std::string, Ort::Value>& feeds,
                     std::vector<Ort::Value>& output_vals,
+                    OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                     const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                     std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
                     std::function<void(const Graph&)>* graph_checker = nullptr);
@@ -810,7 +835,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                                  ProviderOptions qnn_options, int opset_version,
                                  ExpectedEPNodeAssignment expected_ep_assignment,
                                  QDQTolerance tolerance = QDQTolerance(),
-                                 OrtLoggingLevel log_severity [[maybe_unused]] = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                                 OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                                  const std::string& qnn_ctx_model_path = "",
                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                                  std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
@@ -833,7 +858,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  f32_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  f32_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   f32_helper.model_.SerializeToString(&f32_model_data);
 
@@ -845,8 +870,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run f32 model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_f32_outputs;
-  InferenceModelCPU(f32_model_data, "f32_model_logger", ExpectedEPNodeAssignment::All,
-                    f32_helper.feeds_, cpu_f32_outputs, graph_optimization_level);
+  InferenceModelCPU(f32_model_data, "f32_model_logger", f32_helper.feeds_, cpu_f32_outputs, graph_optimization_level);
   ASSERT_FALSE(cpu_f32_outputs.empty());
 
   const size_t num_outputs = cpu_f32_outputs.size();
@@ -883,7 +907,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  qdq_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  qdq_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
   qdq_helper.model_.SerializeToString(&qdq_model_data);
 
@@ -895,8 +919,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_qdq_outputs;
-  InferenceModelCPU(qdq_model_data, "qdq_model_logger", ExpectedEPNodeAssignment::All,
-                    qdq_helper.feeds_, cpu_qdq_outputs, graph_optimization_level);
+  InferenceModelCPU(qdq_model_data, "qdq_model_logger", qdq_helper.feeds_, cpu_qdq_outputs, graph_optimization_level);
 
   qnn_options["dump_json_qnn_graph"] = "1";
 
@@ -914,8 +937,6 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
     qnn_options["json_qnn_graph_dir"] = output_dir.string();
   }
 
-  // TODO: Enable QNN_VERBOSE to SetLogSeverityLevel
-
   TryEnableQNNSaver(qnn_options);
 
   // Run with QNN.
@@ -932,6 +953,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                    expected_ep_assignment,
                    qdq_helper.feeds_,
                    qnn_qdq_outputs,
+                   log_severity,
                    session_option_pairs,
                    graph_optimization_level);
   } else {
@@ -941,6 +963,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                    expected_ep_assignment,
                    qdq_helper.feeds_,
                    qnn_qdq_outputs,
+                   log_severity,
                    session_option_pairs,
                    graph_optimization_level,
                    qnn_ep_graph_checker);
@@ -1065,7 +1088,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                                   int opset_version,
                                   ExpectedEPNodeAssignment expected_ep_assignment,
                                   float tolerance = 0.004,
-                                  OrtLoggingLevel log_severity [[maybe_unused]] = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                                  OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                                   const std::string& qnn_ctx_model_path = "",
                                   const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
   std::filesystem::path output_dir;
@@ -1086,7 +1109,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  f32_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  f32_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
   f32_helper.model_.SerializeToString(&f32_model_data);
 
   if (QNNTestEnvironment::GetInstance().dump_onnx()) {
@@ -1097,8 +1120,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run f32 model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_f32_outputs;
-  InferenceModelCPU(f32_model_data, "f32_model_logger", ExpectedEPNodeAssignment::All,
-                    f32_helper.feeds_, cpu_f32_outputs);
+  InferenceModelCPU(f32_model_data, "f32_model_logger", f32_helper.feeds_, cpu_f32_outputs);
   ASSERT_FALSE(cpu_f32_outputs.empty());
 
   const size_t num_outputs = cpu_f32_outputs.size();
@@ -1131,7 +1153,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     opset_id_proto->set_domain(domain);
     opset_id_proto->set_version(version);
   }
-  f16_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION_2025_05_12);
+  f16_helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
   f16_helper.model_.SerializeToString(&f16_model_data);
 
   if (QNNTestEnvironment::GetInstance().dump_onnx()) {
@@ -1142,8 +1164,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_f16_outputs;
-  InferenceModelCPU(f16_model_data, "fp16_model_logger", ExpectedEPNodeAssignment::All,
-                    f16_helper.feeds_, cpu_f16_outputs);
+  InferenceModelCPU(f16_model_data, "fp16_model_logger", f16_helper.feeds_, cpu_f16_outputs);
 
   if (QNNTestEnvironment::GetInstance().dump_dlc()) {
     qnn_options["dump_qnn_ir_dlc"] = "1";
@@ -1158,8 +1179,6 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     qnn_options["dump_json_qnn_graph"] = "1";
     qnn_options["json_qnn_graph_dir"] = output_dir.string();
   }
-
-  // TODO: Enable QNN_VERBOSE to SetLogSeverityLevel
 
   TryEnableQNNSaver(qnn_options);
 
@@ -1177,6 +1196,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                    expected_ep_assignment,
                    f16_helper.feeds_,
                    qnn_f16_outputs,
+                   log_severity,
                    session_option_pairs);
   } else {
     InferenceModel(f16_model_data,
@@ -1185,6 +1205,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                    expected_ep_assignment,
                    f16_helper.feeds_,
                    qnn_f16_outputs,
+                   log_severity,
                    session_option_pairs);
   }
 
@@ -1291,16 +1312,20 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
     std::vector<std::string> op_input_names;
     op_input_names.reserve(input_defs_1.size() + input_defs_2.size());
 
-    for (int i = 0; i < input_defs_1.size(); i++) {
+    for (size_t i = 0; i < input_defs_1.size(); i++) {
       const std::string tmp_name = "input_defs_1_" + std::to_string(i);
       MakeTestInput<InputType1>(builder, tmp_name, input_defs_1[i], input_allocator);
       op_input_names.push_back(tmp_name);
     }
 
-    for (int i = 0; i < input_defs_2.size(); i++) {
-      const std::string tmp_name = "input_defs_2_" + std::to_string(i);
-      MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i], input_allocator);
-      op_input_names.push_back(tmp_name);
+    for (size_t i = 0; i < input_defs_2.size(); i++) {
+      if (input_defs_2[i].IsOptional()) {
+        op_input_names.push_back("");
+      } else {
+        const std::string tmp_name = "input_defs_2_" + std::to_string(i);
+        MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i], input_allocator);
+        op_input_names.push_back(tmp_name);
+      }
     }
 
     builder.MakeOutput("Y");
@@ -1327,19 +1352,19 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
     std::vector<std::string> op_input_names;
     op_input_names.reserve(input_defs_1.size() + input_defs_2.size() + input_defs_3.size());
 
-    for (int i = 0; i < input_defs_1.size(); i++) {
+    for (size_t i = 0; i < input_defs_1.size(); i++) {
       const std::string tmp_name = "input_defs_1_" + std::to_string(i);
       MakeTestInput<InputType1>(builder, tmp_name, input_defs_1[i], input_allocator);
       op_input_names.push_back(tmp_name);
     }
 
-    for (int i = 0; i < input_defs_2.size(); i++) {
+    for (size_t i = 0; i < input_defs_2.size(); i++) {
       const std::string tmp_name = "input_defs_2_" + std::to_string(i);
       MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i], input_allocator);
       op_input_names.push_back(tmp_name);
     }
 
-    for (int i = 0; i < input_defs_3.size(); i++) {
+    for (size_t i = 0; i < input_defs_3.size(); i++) {
       const std::string tmp_name = "input_defs_3_" + std::to_string(i);
       MakeTestInput<InputType1>(builder, tmp_name, input_defs_3[i], input_allocator);
       op_input_names.push_back(tmp_name);
@@ -1397,9 +1422,13 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
 
     // Create non-QDQ inputs
     for (size_t i = 0; i < non_quant_input_defs.size(); i++) {
-      const std::string tmp_name = "non_quant_input_defs_" + std::to_string(i);
-      MakeTestInput<OtherInputType>(builder, tmp_name, non_quant_input_defs[i], input_allocator);
-      op_input_names.push_back(tmp_name);
+      if (non_quant_input_defs[i].IsOptional()) {
+        op_input_names.push_back("");
+      } else {
+        const std::string tmp_name = "non_quant_input_defs_" + std::to_string(i);
+        MakeTestInput<OtherInputType>(builder, tmp_name, non_quant_input_defs[i], input_allocator);
+        op_input_names.push_back(tmp_name);
+      }
     }
 
     builder.AddNode(node_name, op_type,
@@ -1513,7 +1542,7 @@ class QnnHTPBackendTests : public ::testing::Test {
     bool dlbc_supported{false};
     uint32_t vtcm_size_mb{0};
     uint32_t soc_model{QNN_SOC_MODEL_UNKNOWN};
-    std::string sdk_version;
+    std::string backend_api_version;
   };
 
  protected:

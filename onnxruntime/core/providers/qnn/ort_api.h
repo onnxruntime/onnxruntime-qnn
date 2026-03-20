@@ -75,6 +75,20 @@ namespace onnxruntime {
     }                                                                 \
   } while (0)
 
+#define ORT_RETURN_FALSE_ON_ERROR(ort_api_fn_call, ort_api) \
+  RETURN_DEFAULT_IF_API_FAIL((ort_api_fn_call), (ort_api), false)
+
+#define ORT_RETURN_NULLPTR_ON_ERROR(ort_api_fn_call, ort_api) \
+  RETURN_DEFAULT_IF_API_FAIL((ort_api_fn_call), (ort_api), nullptr)
+
+#define ORT_CONTINUE_ON_ERROR(ort_api_fn_call, ort_api) \
+  do {                                                  \
+    if (OrtStatus* _status = (ort_api_fn_call)) {       \
+      (ort_api).ReleaseStatus(_status);                 \
+      continue;                                         \
+    }                                                   \
+  } while (0)
+
 // QNN-EP COPY START
 // Below are macors copied from core/common/common.h directly.
 #ifdef _WIN32
