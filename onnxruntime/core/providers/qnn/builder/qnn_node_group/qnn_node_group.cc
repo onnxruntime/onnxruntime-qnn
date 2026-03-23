@@ -16,6 +16,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/dq_q_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/gather_transpose_reshape_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/gelu_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/layer_norm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/hardsigmoid_mul_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/lpbqgemm_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/lpbqmatmul_fusion.h"
@@ -89,6 +90,7 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"Mul", {ScaleSoftmaxFusion::TryFusion}},
     {"Cast", {CastLoneQFusion::TryFusion}},
     {"Erf", {GeluFusion::TryFusion}},
+    {"ReduceMean", {LayerNormFusion::TryFusion}},
     {"Einsum", {ReshapeEinsumReshapeNodeGroup::TryFusion}},
     {"Reshape", {Rank6ToRank5Fusion::TryFusion}},
     {"Transpose", {ChannelShuffleFusion::TryFusion}}};
@@ -132,6 +134,7 @@ static std::unique_ptr<IQnnNodeGroup> TryQnnFusions(
       starting_node_unit.OpType() != "Gather" &&
       starting_node_unit.OpType() != "MatMul" &&
       starting_node_unit.OpType() != "Erf" &&
+      starting_node_unit.OpType() != "ReduceMean" &&
       starting_node_unit.OpType() != "Reshape") {
     return nullptr;
   }
