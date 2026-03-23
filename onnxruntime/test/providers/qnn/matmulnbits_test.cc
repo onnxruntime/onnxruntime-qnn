@@ -74,7 +74,7 @@ static void RunMatMul4BitsTest(const TestParams4Bits params,
   provider_options["offload_graph_io_quantization"] = "0";
 
   auto model_builder = [&params](ModelTestBuilder& builder) {
-    std::vector<NodeArg*> inputs;
+    std::vector<std::string> input_names;
 
     RandomValueGenerator random{1234};
     std::vector<float> input0_vals(random.Gaussian<float>(AsSpan({params.batch_count, params.M, params.K}),
@@ -83,7 +83,8 @@ static void RunMatMul4BitsTest(const TestParams4Bits params,
     std::vector<float> input1_f_vals(random.Gaussian<float>(AsSpan({params.K, params.N}), 0.0f, 0.25f));
 
     auto input0_def = TestInputDef<float>({params.batch_count, params.M, params.K}, false, input0_vals);
-    inputs.push_back(MakeTestInput<float>(builder, input0_def));
+    MakeTestInput<float>(builder, "input0", input0_def);
+    input_names.push_back("input0");
 
     int64_t k_blocks = (params.K + params.block_size - 1) / params.block_size;
     int64_t blob_size = (params.block_size * QBits + 7) / 8;
@@ -108,24 +109,36 @@ static void RunMatMul4BitsTest(const TestParams4Bits params,
                        static_cast<int32_t>(params.block_size));
 
     auto input1_def = TestInputDef<uint8_t>({params.N, k_blocks, blob_size}, true, input1_vals);
-    inputs.push_back(MakeTestInput<uint8_t>(builder, input1_def));
+    MakeTestInput<uint8_t>(builder, "input1", input1_def);
+    input_names.push_back("input1");
 
     auto scales_def = TestInputDef<float>({params.N, k_blocks}, true, scales);
-    inputs.push_back(MakeTestInput<float>(builder, scales_def));
+    MakeTestInput<float>(builder, "scales", scales_def);
+    input_names.push_back("scales");
 
     if (params.has_zero_point) {
       auto zp_def = TestInputDef<uint8_t>({params.N, zero_point_blob_size}, true, zp);
-      inputs.push_back(MakeTestInput<uint8_t>(builder, zp_def));
+      MakeTestInput<uint8_t>(builder, "zero_point", zp_def);
+      input_names.push_back("zero_point");
     }
 
-    auto* output = builder.MakeOutput();
+    builder.MakeOutput("Y");
 
-    Node& node = builder.AddNode("MatMulNBits", inputs, {output}, kMSDomain);
-    node.AddAttribute("K", static_cast<int64_t>(params.K));
-    node.AddAttribute("N", static_cast<int64_t>(params.N));
-    node.AddAttribute("block_size", static_cast<int64_t>(params.block_size));
-    node.AddAttribute("bits", static_cast<int64_t>(QBits));
-    node.AddAttribute("accuracy_level", static_cast<int64_t>(params.accuracy_level));
+    // Create attributes
+    std::vector<ONNX_NAMESPACE::AttributeProto> attributes;
+    attributes.push_back(builder.MakeScalarAttribute("K", static_cast<int64_t>(params.K)));
+    attributes.push_back(builder.MakeScalarAttribute("N", static_cast<int64_t>(params.N)));
+    attributes.push_back(builder.MakeScalarAttribute("block_size", static_cast<int64_t>(params.block_size)));
+    attributes.push_back(builder.MakeScalarAttribute("bits", static_cast<int64_t>(QBits)));
+    attributes.push_back(builder.MakeScalarAttribute("accuracy_level", static_cast<int64_t>(params.accuracy_level)));
+
+    builder.AddNode(
+        "matmul_nbits",
+        "MatMulNBits",
+        input_names,
+        {"Y"},
+        kMSDomain,
+        attributes);
   };
 
   RunQnnModelTest(model_builder,
