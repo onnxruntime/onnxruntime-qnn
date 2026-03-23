@@ -21,7 +21,9 @@ class QnnModelWrapper;
 /// <summary>
 /// Represents a fusion of either:
 /// 1) Reshape -> Transpose -> Reshape
-/// 2) Transpose -> (Reshape -> Transpose -> Reshape) -> Transpose
+/// 2) Transpose -> (Reshape -> Transpose -> Reshape)
+/// 3) (Reshape -> Transpose -> Reshape) -> Transpose
+/// 4) Transpose -> (Reshape -> Transpose -> Reshape) -> Transpose
 /// that can be replaced by SpaceToDepth.
 /// </summary>
 class ReshapeTransposeReshapeSpaceToDepthFusion : public IQnnNodeGroup {
@@ -35,8 +37,8 @@ class ReshapeTransposeReshapeSpaceToDepthFusion : public IQnnNodeGroup {
         block_width_(block_width),
         mode_(mode),
         use_nhwc_fallback_(use_nhwc_fallback) {
-    if (node_units.size() != 3 && node_units.size() != 5) {
-      ORT_CXX_API_THROW("Pattern expects either 3 or 5 NodeUnits.", ORT_EP_FAIL);
+    if (node_units.size() < 3 || node_units.size() > 5) {
+      ORT_CXX_API_THROW("S2D Pattern expects 3 to 5 NodeUnits.", ORT_EP_FAIL);
     }
     node_units_.reserve(node_units.size());
     for (const OrtNodeUnit* node_unit : node_units) {
@@ -44,7 +46,10 @@ class ReshapeTransposeReshapeSpaceToDepthFusion : public IQnnNodeGroup {
     }
 
     // Target remains the first Reshape node regardless of optional wrap transposes.
-    target_node_unit_ = (node_units_.size() == 5) ? node_units_[1] : node_units_[0];
+    const bool has_head_transpose = node_units_.size() >= 4 &&
+                                    node_units_[0] != nullptr &&
+                                    node_units_[0]->OpType() == "Transpose";
+    target_node_unit_ = has_head_transpose ? node_units_[1] : node_units_[0];
   }
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(ReshapeTransposeReshapeSpaceToDepthFusion);
 
