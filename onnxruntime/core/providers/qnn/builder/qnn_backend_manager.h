@@ -309,6 +309,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Qnn_ErrorHandle_t ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_t data_mem, void* mapped_base_ptr);
 #endif
 
+  // Releases all QNN resources. Called in the destructor.
+  // NOTE: This function indirectly locks the internal `logger_recursive_mutex_` via nested function calls.
+  void ReleaseResources();
+
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   typedef struct FileMappingCallbackInfo {
     void* const mapped_file_ptr;
@@ -338,8 +342,23 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status CreateContext(bool enable_htp_weight_sharing);
 
+  Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
+
+  Ort::Status ReadContextBinIfValid(const std::string& context_bin_filepath,
+                                    std::vector<char>& buffer);
+
   Ort::Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
                                                                              std::unique_ptr<std::vector<std::string>>>& context_bin_map);
+
+  Ort::Status CreateContextFromListAsync(const QnnContext_Config_t** configs,
+                                         std::unordered_map<std::string,
+                                                            std::unique_ptr<std::vector<std::string>>>& context_bin_map);
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  Ort::Status CreateContextFromListAsyncWithCallback(const QnnContext_Config_t** configs,
+                                                     std::unordered_map<std::string,
+                                                                        std::unique_ptr<std::vector<std::string>>>& context_bin_map);
+#endif
 
   Ort::Status ReleaseContext();
 

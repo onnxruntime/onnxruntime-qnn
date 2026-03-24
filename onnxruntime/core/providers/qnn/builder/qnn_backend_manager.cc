@@ -827,13 +827,13 @@ Ort::Status SetQnnContextConfig(ContextPriority context_priority, QnnContext_Con
 static Qnn_ErrorHandle_t MapDmaDataCallback(Qnn_ContextBinaryDataRequest_t request,
                                             Qnn_ContextBinaryDmaDataResponse_t* response, void* notify_param) {
   if (notify_param == nullptr) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("MapDmaDataCallback: notify_param is null"));
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "MapDmaDataCallback: notify_param is null");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
   auto callback_info = reinterpret_cast<QnnBackendManager::FileMappingCallbackInfo_t*>(notify_param);
 
   if (callback_info->backend_manager == nullptr) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("MapDmaDataCallback: QnnBackendManager is null"));
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "MapDmaDataCallback: QnnBackendManager is null");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
@@ -847,38 +847,35 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
                                                 void* const mapped_base_ptr,
                                                 const size_t file_size) {
   if (!file_mapped_weights_enabled_) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, ("Attempting to map DMA data but file mapping has been disabled, ",
-                                   "possibly due to an error in a previous request."));
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING,
+                "Attempting to map DMA data but file mapping has been disabled, possibly due to an error in a previous request.");
     return QNN_CONTEXT_ERROR_ABORTED;
   }
 
   if (mapped_base_ptr == nullptr) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Attempting to map DMA data for null memory mapped base pointer"));
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Attempting to map DMA data for null memory mapped base pointer");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
-
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, ("Mapping DMA data for request: memory mapped base pointer(",
-                       mapped_base_ptr , "), offset(" , request.offset,
-                       "), size(" , request.size , "), total file size(",
-                       file_size , ") isBackendMappingNeeded(",
-                       request.isBackendMappingNeeded , ")"));
+  ORT_CXX_LOG(logger_,
+              ORT_LOGGING_LEVEL_INFO,
+              ("Mapping DMA data for request: memory mapped base pointer(" + utils::PtrToString(mapped_base_ptr) + "), offset(" + std::to_string(request.offset) + "), size(" + std::to_string(request.size) + "), total file size(" + std::to_string(file_size) + ") isBackendMappingNeeded(" + std::to_string(request.isBackendMappingNeeded) + ")").c_str());
 
   auto size = request.size;
   if (size == 0 || !request.isBackendMappingNeeded) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Mapping request size must be > 0 with backend mapping required"));
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Mapping request size must be > 0 with backend mapping required");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
   // offset & size are type uint64_t
   // Should never be an issue, but if this occurs then there is something inherently wrong with QNN
   if ((UINT64_MAX - request.offset) < size) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Critical error in QNN: mapping request offset + size will overflow 64 bits"));
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Critical error in QNN: mapping request offset + size will overflow 64 bits");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
   // file_size will be promoted to 64 bits on 32-bit systems
   if ((request.offset + size) > file_size) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Requested offset and size includes memory outside of mapped file"));
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Requested offset and size includes memory outside of mapped file");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
@@ -888,11 +885,11 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
 
   auto fd = rpcmem_library_->Api().to_fd(unaligned_data_ptr);
   if (fd == -1) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Failed to register DMA data mapping to RPCMEM"));
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Failed to register DMA data mapping to RPCMEM");
     return QNN_COMMON_ERROR_SYSTEM;
   }
 
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, ("Created DMA data mapping with address: ", unaligned_data_ptr));
+  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, ("Created DMA data mapping with address: " + utils::PtrToString(unaligned_data_ptr)).c_str());
 
   response->dmaBuffer.fd = fd;
   response->dmaBuffer.data = unaligned_data_ptr;
@@ -905,14 +902,14 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
 // Callback required for releasing file mapping resources
 static Qnn_ErrorHandle_t ReleaseDmaDataCallback(Qnn_ContextBinaryDmaDataMem_t data_mem, void* notify_param) {
   if (notify_param == nullptr) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("ReleaseDmaDataCallback: notify_param is null"));
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "ReleaseDmaDataCallback: notify_param is null");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
   auto callback_info = reinterpret_cast<QnnBackendManager::FileMappingCallbackInfo_t*>(notify_param);
 
   if (callback_info->backend_manager == nullptr) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("ReleaseDmaDataCallback: QnnBackendManager is null"));
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "ReleaseDmaDataCallback: QnnBackendManager is null");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
@@ -928,12 +925,12 @@ Qnn_ErrorHandle_t QnnBackendManager::ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
-  ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_INFO, ("Releasing DMA data mapping for memory mapped pointer(",
-                                                            mapped_base_ptr , "), address(" , data_mem.dmaBuffer.data,
-                                                            "), size: (" , data_mem.memSize , ")"));
+  ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
+              ORT_LOGGING_LEVEL_INFO,
+              ("Releasing DMA data mapping for memory mapped pointer(" + utils::PtrToString(mapped_base_ptr) + "), address(" + utils::PtrToString(data_mem.dmaBuffer.data) + "), size: (" + std::to_string(data_mem.memSize) + ")").c_str());
 
   if (data_mem.dmaBuffer.data == nullptr || data_mem.memSize == 0) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("Mapping release request address must not be null and size must be > 0"));
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "Mapping release request address must not be null and size must be > 0");
     return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
   }
 
@@ -945,7 +942,7 @@ Qnn_ErrorHandle_t QnnBackendManager::ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_
 
   auto fd = rpcmem_library_->Api().to_fd(unaligned_data_ptr);
   if (fd != -1) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("Failed to deregister buffer from RPCMEM: ", unaligned_data_ptr));
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("Failed to deregister buffer from RPCMEM: " + utils::PtrToString(unaligned_data_ptr)).c_str());
     return QNN_CONTEXT_ERROR_MEM_ALLOC;
   }
   return QNN_SUCCESS;
@@ -997,20 +994,17 @@ void QnnBackendManager::ProcessContextFromBinListAsync(Qnn_ContextHandle_t conte
 Ort::Status QnnBackendManager::GetFileSizeIfValid(const std::string& filepath,
                                                   size_t& file_size) {
   std::error_code ec;
-  RETURN_IF(!std::filesystem::exists(filepath, ec), "Context binary does not exist: ", filepath);
-  RETURN_IF(ec, "Failed to read file: ", filepath,
-                ", error: ", ec.message());
+  RETURN_IF(!std::filesystem::exists(filepath, ec), ("Context binary does not exist: " + filepath).c_str());
+  RETURN_IF(ec, ("Failed to read file: " + filepath + ", error: " + ec.message()).c_str());
 
   auto size = std::filesystem::file_size(filepath, ec);
-  RETURN_IF(ec, "Failed to retrieve size of file: ", filepath,
-                ", error: ", ec.message());
+  RETURN_IF(ec, ("Failed to retrieve size of file: " + filepath + ", error: " + ec.message()).c_str());
 
-  RETURN_IF(size == 0, "File is empty: ", filepath);
-  RETURN_IF(size > SIZE_MAX, "File (", filepath, ") file size (", size,
-                " bytes) exceeds maximum value of size_t for this platform (", SIZE_MAX, " bytes).");
+  RETURN_IF(size == 0, ("File is empty: " + filepath).c_str());
+  RETURN_IF(size > SIZE_MAX, ("File (" + filepath + ") file size (" + std::to_string(size) + " bytes) exceeds maximum value of size_t for this platform (" + std::to_string(SIZE_MAX) + " bytes).").c_str());
 
   file_size = static_cast<size_t>(size);
-  return Status::OK();
+  return Ort::Status();
 }
 
 Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_bin_filepath,
@@ -1021,12 +1015,12 @@ Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_
   buffer.resize(buffer_size);
 
   std::ifstream cache_file(context_bin_filepath.c_str(), std::ifstream::binary);
-  RETURN_IF(!cache_file || !cache_file.good(), "Failed to read context binary from: ", context_bin_filepath);
+  RETURN_IF(!cache_file || !cache_file.good(), ("Failed to read context binary from: " + context_bin_filepath).c_str());
 
   const auto& read_result = cache_file.read(buffer.data(), buffer_size);
   RETURN_IF(!read_result, "Failed to read contents from cached context file.");
 
-  return Status::OK();
+  return Ort::Status();
 }
 
 Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
@@ -1053,7 +1047,7 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   context_config_weight_sharing.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
   context_config_weight_sharing.customConfig = &custom_config;
 #else
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, ("Called CreateContextVtcmBackupBufferSharingEnabled() but QNN API version is older than 2.26!"));
+  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, "Called CreateContextVtcmBackupBufferSharingEnabled() but QNN API version is older than 2.26!");
 #endif
   QnnContext_Config_t context_priority_config = QNN_CONTEXT_CONFIG_INIT;
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, context_priority_config));
@@ -1071,9 +1065,9 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     // Retry logic -- if context creation failed with file mapped weights, then retry with feature disabled
     auto res = CreateContextFromListAsyncWithCallback(configs, context_bin_map);
     if (!res.IsOK()) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNINGm (res.ErrorMessage(), ". Retrying with feature disabled."));
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, (res.GetErrorMessage() + ". Retrying with feature disabled.").c_str());
     } else {
-      return Status::OK();
+      return Ort::Status();
     }
   }
 #endif
@@ -1121,8 +1115,8 @@ Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Confi
                                                                 configs,
                                                                 nullptr);
 
-  RETURN_IF(QNN_CONTEXT_NO_ERROR != result, "Failed to create context. Error: ", QnnErrorHandleToString(result), ", Code:", result);
-  return Status::OK();
+  RETURN_IF(QNN_CONTEXT_NO_ERROR != result, ("Failed to create context. Error: " + QnnErrorHandleToString(result) + ", Code:" + std::to_string(result)).c_str());
+  return Ort::Status();
 }
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
@@ -1185,9 +1179,10 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
                                                                 configs,
                                                                 nullptr);
 
-  RETURN_IF(QNN_CONTEXT_NO_ERROR != result, "Failed to create context with file mapping enabled. Error: ",
-                QnnErrorHandleToString(result), ", Code:", result);
-  return Status::OK();
+  RETURN_IF(QNN_CONTEXT_NO_ERROR != result, ("Failed to create context with file mapping enabled. Error: " +
+                                             QnnErrorHandleToString(result) + ", Code:" + std::to_string(result))
+                                                .c_str());
+  return Ort::Status();
 }
 #endif  // QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 
@@ -1419,7 +1414,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 
     RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_length));
 
-    RETURN_IF(buffer_length == 0, "Context bin has a size of 0 bytes: ", context_bin_filepath);
+    RETURN_IF(buffer_length == 0, ("Context bin has a size of 0 bytes: " + context_bin_filepath).c_str());
     RETURN_IF_ERROR(file_mapper_->GetContextBinMappedMemoryPtr(context_bin_filepath, &bin_buffer));
 
   } else {
@@ -1520,7 +1515,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     Qnn_ContextBinaryCallback_t callbacks;
     if (file_mapped_weights_enabled_ && file_mapper_) {
       RETURN_IF(nullptr == qnn_interface_.contextCreateFromBinaryWithCallback,
-                    "Invalid function pointer for contextCreateFromBinaryWithCallback.");
+                "Invalid function pointer for contextCreateFromBinaryWithCallback.");
 
       auto notify_param_ptr = std::make_unique<FileMappingCallbackInfo_t>(bin_buffer, buffer_length, this);
 
@@ -1557,9 +1552,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
                                                               NULL);
 
       if (rt != QNN_SUCCESS) {
-        LOGS(*logger_, WARNING) << "Failed to create context with file mapping enabled. Error: "
-                                << QnnErrorHandleToString(rt) << ", Code : " << rt
-                                << ". Retrying with feature disabled.";
+        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, ("Failed to create context with file mapping enabled. Error: " + QnnErrorHandleToString(rt) + ", Code : " + std::to_string(rt) + ". Retrying with feature disabled.").c_str());
 
         // Read context bin from file since file mapping has failed
         RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, backup_buffer));
@@ -1672,7 +1665,7 @@ Ort::Status QnnBackendManager::SetupBackend(
     RETURN_IF(!rpcmem_library, "RPCMem Library is required for file mapping but is uninitialized.");
     rpcmem_library_ = rpcmem_library;
     file_mapped_weights_enabled_ = true;
-    file_mapper_ = std::make_unique<WindowsFileMapper>(logger);
+    file_mapper_ = std::make_unique<WindowsFileMapper>(logger_);
   }
 #else
   ORT_UNUSED_PARAMETER(enable_file_mapped_weights);

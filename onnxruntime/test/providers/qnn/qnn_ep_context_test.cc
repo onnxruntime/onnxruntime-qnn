@@ -2242,7 +2242,7 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
 
   std::vector<std::string> ctx_model_paths;
   for (auto model_path : onnx_model_paths) {
-    CreateQdqModel(model_path, DefaultLoggingManager().DefaultLogger());
+    CreateQdqModel(model_path);
     EXPECT_TRUE(std::filesystem::exists(model_path.c_str()));
     auto pos = model_path.find_last_of(".");
     if (pos != std::string::npos) {
@@ -2259,13 +2259,11 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
   DumpModelWithSharedCtx(provider_options, onnx_model_paths[0], onnx_model_paths[1]);
 
   std::string qnn_ctx_binary_file_name1;
-  GetContextBinaryFileName(ctx_model_paths[0], qnn_ctx_binary_file_name1,
-                           DefaultLoggingManager().DefaultLogger());
+  GetContextBinaryFileName(ctx_model_paths[0], qnn_ctx_binary_file_name1);
   EXPECT_TRUE(!qnn_ctx_binary_file_name1.empty());
 
   std::string qnn_ctx_binary_file_name2;
-  GetContextBinaryFileName(ctx_model_paths[1], qnn_ctx_binary_file_name2,
-                           DefaultLoggingManager().DefaultLogger());
+  GetContextBinaryFileName(ctx_model_paths[1], qnn_ctx_binary_file_name2);
   EXPECT_TRUE(!qnn_ctx_binary_file_name2.empty());
   // 2 *_ctx.onn point to same .bin file
   EXPECT_TRUE(qnn_ctx_binary_file_name1 == qnn_ctx_binary_file_name2);
@@ -2299,8 +2297,7 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
 
   std::vector<std::string> input_names;
   std::vector<std::string> output_names;
-  GetModelInputNames(ctx_model_paths[1], input_names, output_names,
-                     DefaultLoggingManager().DefaultLogger());
+  GetModelInputNames(ctx_model_paths[1], input_names, output_names);
 
   // Run sessions
   // prepare input

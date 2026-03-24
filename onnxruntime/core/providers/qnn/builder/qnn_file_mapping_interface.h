@@ -17,8 +17,8 @@ class FileMappingInterface {
  public:
   virtual ~FileMappingInterface() = default;
 
-  virtual Status GetContextBinMappedMemoryPtr(const std::string& bin_filepath,
-                                              void** mapped_data_ptr) = 0;
+  virtual Ort::Status GetContextBinMappedMemoryPtr(const std::string& bin_filepath,
+                                                   void** mapped_data_ptr) = 0;
 };
 
 }  // namespace qnn

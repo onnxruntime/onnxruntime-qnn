@@ -182,7 +182,9 @@ RpcMemApi CreateApi(void* library_handle) {
     ORT_CXX_API_THROW("Failed to get symbol rpcmem_to_fd.", ORT_RUNTIME_EXCEPTION);
   }
 
-  ORT_THROW_IF_ERROR(env.GetSymbolFromLibrary(library_handle, "remote_register_buf_attr2", (void**)&api.register_buf));
+  if (!OrtGetSymbolFromLibrary(library_handle, "remote_register_buf_attr2", (void**)&api.register_buf).IsOK()) {
+    ORT_CXX_API_THROW("Failed to get symbol remote_register_buf_attr2.", ORT_RUNTIME_EXCEPTION);
+  }
 
   return api;
 }
