@@ -1,7 +1,7 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
-#include "core/providers/qnn/builder/qnn_node_group/reshape_transpose_reshape_spacetodepth_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/spacetodepth_fusion.h"
 
 #include <gsl/gsl>
 
@@ -222,7 +222,8 @@ std::optional<SpaceToDepthPattern> MatchPattern(
     const QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnit& reshape1,
     const MapNodeToNodeUnit& node_to_node_unit,
-    const MapNodeUnitToGroup& node_unit_to_qnn_node_group) {
+  const MapNodeUnitToGroup& node_unit_to_qnn_node_group,
+  const Ort::Logger& logger) {
   // 1. Validate the starting node op type.
   if (reshape1.OpType() != kOpReshape) {
     return std::nullopt;
@@ -425,44 +426,45 @@ Ort::Status CreateOrValidateOnQnn(
     uint32_t block_width,
     uint32_t mode,
     const Ort::Logger& logger,
-    bool validate,
-    std::optional<bool> use_nhwc_fallback,
-    std::optional<bool>* use_nhwc_fallback_out) {
+  bool validate) {
   const PatternIndices pattern_indices = GetPatternIndices(node_units);
   // RTR + T(NCHW->NHWC) ==> NHWC->NCHW + S2D
   const bool need_pre_transpose = !pattern_indices.has_head_transpose;
   // NHWC->NCHW + RTR ==> S2D + NHWC->NCHW
   const bool need_post_transpose = !pattern_indices.has_tail_transpose;
 
-  // 1) Common setup: resolve pattern boundary IO tensors.
+  // 1) Common setup: pattern boundary IO tensors and base S2D params (mode).
   const OrtNodeUnit& reshape2 = GetReshape2Node(node_units);
-
   const OrtNodeUnitIODef& input_def = GetPatternInputDef(node_units);
   const OrtNodeUnitIODef& output_def = GetPatternOutputDef(node_units);
 
   QnnTensorWrapper input_tensor;
   QnnTensorWrapper output_tensor;
-
   RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(input_def, input_tensor));
   RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(output_def, output_tensor));
 
-  // 2) Common setup: build SpaceToDepth node name and params.
-  const std::string node_name = utils::GetUniqueName(reshape2, "_fused_spacetodepth");
+  const std::string direct_s2d_node_name = utils::GetUniqueName(reshape2, "_fused_spacetodepth");
 
-  const uint32_t block_size_h = block_height;
-  const uint32_t block_size_w = block_width;
-
-  // 2.1) Mode param.
+  // 1.1) Common S2D mode param.
   Qnn_Scalar_t mode_scalar = QNN_SCALAR_INIT;
   mode_scalar.dataType = QNN_DATATYPE_UINT_32;
   mode_scalar.uint32Value = mode;
   QnnParamWrapper mode_param(reshape2.Index(), reshape2.Name(),
                              QNN_OP_SPACE_TO_DEPTH_PARAM_MODE, mode_scalar);
 
-  // ============ Helper: Validation of SpaceToDepth node with given block param.
-  auto validate_with_block_param = [&](QnnParamWrapper& block_param,
-                                       const Qnn_Tensor_t& input,
-                                       const Qnn_Tensor_t& output) -> Ort::Status {
+  // 2) Helpers.
+  auto build_block_param = [&]() -> QnnParamWrapper {
+    std::vector<uint32_t> block_shape{2};
+    std::vector<uint32_t> block_data{block_height, block_width};
+    return QnnParamWrapper(reshape2.Index(), reshape2.Name(),
+                           QNN_OP_DEPTH_TO_SPACE_PARAM_BLOCK_SIZE,
+                           std::move(block_shape), std::move(block_data));
+  };
+
+  auto validate_s2d = [&](QnnParamWrapper& block_param,
+                          const std::string& node_name,
+                          const Qnn_Tensor_t& input,
+                          const Qnn_Tensor_t& output) -> Ort::Status {
     std::vector<Qnn_Param_t> params;
     params.push_back(block_param.GetQnnParam());
     params.push_back(mode_param.GetQnnParam());
@@ -474,8 +476,17 @@ Ort::Status CreateOrValidateOnQnn(
                                              std::move(params));
   };
 
-  // ============ Helper: Create direct SpaceToDepth node (no extra pre/post transpose nodes).
-  auto create_with_block_param = [&](QnnParamWrapper& block_param) -> Ort::Status {
+  auto ensure_rank4_shape = [&](const OrtNodeUnitIODef& def,
+                                std::vector<uint32_t>& shape,
+                                const char* shape_name) -> Ort::Status {
+    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(def.shape, shape),
+                  (std::string("Failed to get ") + shape_name + " shape.").c_str());
+    RETURN_IF_NOT(shape.size() == kRank4,
+                  (std::string("Expected rank-4 ") + shape_name + " shape for NHWC SpaceToDepth.").c_str());
+    return Ort::Status();
+  };
+
+  auto ensure_boundary_tensors_exist = [&]() -> Ort::Status {
     // A) Add input tensor.
     if (!qnn_model_wrapper.IsQnnTensorWrapperExist(input_def.name)) {
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensor)), "Failed to add s2d input");
@@ -487,79 +498,48 @@ Ort::Status CreateOrValidateOnQnn(
     // B) Add output tensor.
     if (!qnn_model_wrapper.IsQnnTensorWrapperExist(output_def.name)) {
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)), "Failed to add s2d output");
+    } else {
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Tensor already added, skip it: " + output_def.name).c_str());
     }
-
-    // C) Add block-size and mode params.
-    std::vector<std::string> param_tensor_names;
-    const std::string block_param_name = block_param.GetParamTensorName();
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(block_param)), "Failed to add s2d blocksize param");
-    param_tensor_names.push_back(block_param_name);
-
-    const std::string mode_param_name = mode_param.GetParamTensorName();
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(mode_param)), "Failed to add s2d mode param");
-    param_tensor_names.push_back(mode_param_name);
-
-    // D) Create SpaceToDepth node.
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_SPACE_TO_DEPTH,
-                                                  {input_def.name}, {output_def.name},
-                                                  std::move(param_tensor_names), validate),
-                  "Failed to add fused SpaceToDepth node.");
-
     return Ort::Status();
   };
 
-  auto build_tensor_block_param = [&]() -> QnnParamWrapper {
-    std::vector<uint32_t> block_shape{2};
-    std::vector<uint32_t> block_data{block_size_h, block_size_w};
-    return QnnParamWrapper(reshape2.Index(), reshape2.Name(),
-                           QNN_OP_DEPTH_TO_SPACE_PARAM_BLOCK_SIZE,
-                           std::move(block_shape), std::move(block_data));
-  };
+  // 3) Validation path.
+  // 3.1) Fully wrapped boundary (no extra transposes): validate direct S2D.
+  const bool is_direct_boundary_case = !need_pre_transpose && !need_post_transpose;
 
-  // 3) ============= Validation path =============
   if (validate) {
-    auto block_param = build_tensor_block_param();
+    auto block_param = build_block_param();
 
-    // 3.1) Fully wrapped pattern (NHWC->NCHW + RTR + NCHW->NHWC = S2D).
-    if (!need_pre_transpose && !need_post_transpose) {
-      Ort::Status status = validate_with_block_param(block_param,
-                                                     input_tensor.GetQnnTensor(),
-                                                     output_tensor.GetQnnTensor());
-      if (use_nhwc_fallback_out) {
-        *use_nhwc_fallback_out = false;
-      }
+    if (is_direct_boundary_case) {
+      Ort::Status status = validate_s2d(block_param,
+                                        direct_s2d_node_name,
+                                        input_tensor.GetQnnTensor(),
+                                        output_tensor.GetQnnTensor());
       return status;
     }
 
-    // 3.2) Wrapped-NHWC validation: gather IO shape + tensor metadata.
-    // Two cases: a) T(NHWC->NCHW) + RTR ==> S2D + T(NHWC->NCHW), so input is from head transpose
-    //               and output is Reshape2 + Post Transpose.
-    //            b) RTR + T(NHWC->NCHW) ==> T(NCHW->NHWC) + S2D, so input is from Pre Transpose + Reshape1
-    //               and output is from tail transpose.
-    std::vector<uint32_t> input_shape;
-    std::vector<uint32_t> output_shape;
-    if (!qnn_model_wrapper.GetOnnxShape(input_def.shape, input_shape) ||
-        !qnn_model_wrapper.GetOnnxShape(output_def.shape, output_shape) ||
-        input_shape.size() != kRank4 || output_shape.size() != kRank4) {
-      return MAKE_EP_FAIL("Failed to get rank-4 input/output shapes for NHWC SpaceToDepth.");
-    }
-
-    TensorInfo input_info = {};
-    TensorInfo output_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input_def, input_info));
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(output_def, output_info));
-
+    // 3.2) Wrapped boundary validation: validate pre/post transpose legs around S2D as needed.
     const std::string base_name = utils::GetUniqueName(reshape2, "_spacetodepth_nhwc");
     const std::string pre_node_name = base_name + "_pre";
     const std::string post_node_name = base_name + "_post";
     const std::string nhwc_in_name = base_name + "_in";
     const std::string nhwc_out_name = base_name + "_out";
 
+    std::vector<uint32_t> input_shape;
+    std::vector<uint32_t> output_shape;
+    TensorInfo input_info = {};
+    TensorInfo output_info = {};
+
     std::optional<QnnTensorWrapper> nhwc_input_tensor;
     std::optional<QnnTensorWrapper> nhwc_output_tensor;
 
     // 3.3) If needed, validate pre-transpose (NCHW -> NHWC).
     if (need_pre_transpose) {
+      RETURN_IF_ERROR(ensure_rank4_shape(input_def, input_shape, "input"));
+      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input_def, input_info));
+
       std::vector<uint32_t> nhwc_input_shape = {input_shape[0], input_shape[2], input_shape[3], input_shape[1]};
       nhwc_input_tensor.emplace(nhwc_in_name,
                                 QNN_TENSOR_TYPE_NATIVE,
@@ -573,19 +553,19 @@ Ort::Status CreateOrValidateOnQnn(
                                      {static_cast<uint32_t>(pre_perm.size())},
                                      std::move(pre_perm));
 
-      Ort::Status pre_status = qnn_model_wrapper.ValidateQnnNode(pre_node_name,
-                                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                                 QNN_OP_TRANSPOSE,
-                                                                 {input_tensor.GetQnnTensor()},
-                                                                 {nhwc_input_tensor->GetQnnTensor()},
-                                                                 {pre_perm_param.GetQnnParam()});
-      if (!pre_status.IsOK()) {
-        return pre_status;
-      }
+      RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(pre_node_name,
+                                                        QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                        QNN_OP_TRANSPOSE,
+                                                        {input_tensor.GetQnnTensor()},
+                                                        {nhwc_input_tensor->GetQnnTensor()},
+                                                        {pre_perm_param.GetQnnParam()}));
     }
 
     // 3.4) If needed, prepare NHWC output tensor for post-transpose.
     if (need_post_transpose) {
+      RETURN_IF_ERROR(ensure_rank4_shape(output_def, output_shape, "output"));
+      RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(output_def, output_info));
+
       std::vector<uint32_t> nhwc_output_shape = {output_shape[0], output_shape[2], output_shape[3], output_shape[1]};
       nhwc_output_tensor.emplace(nhwc_out_name,
                                  QNN_TENSOR_TYPE_NATIVE,
@@ -594,16 +574,13 @@ Ort::Status CreateOrValidateOnQnn(
                                  std::move(nhwc_output_shape));
     }
 
-    // 3.5) Validate SpaceToDepth core with wrapped NHWC IO.
+    // 3.5) Validate S2D core with effective IO tensors.
     const Qnn_Tensor_t& s2d_input = need_pre_transpose ? nhwc_input_tensor->GetQnnTensor()
-                                                       : input_tensor.GetQnnTensor();
+                                                        : input_tensor.GetQnnTensor();
     const Qnn_Tensor_t& s2d_output = need_post_transpose ? nhwc_output_tensor->GetQnnTensor()
-                                                         : output_tensor.GetQnnTensor();
+                                                          : output_tensor.GetQnnTensor();
 
-    Ort::Status nhwc_status = validate_with_block_param(block_param, s2d_input, s2d_output);
-    if (!nhwc_status.IsOK()) {
-      return nhwc_status;
-    }
+    RETURN_IF_ERROR(validate_s2d(block_param, base_name + "_s2d", s2d_input, s2d_output));
 
     // 3.6) If needed, validate post-transpose (NHWC -> NCHW).
     if (need_post_transpose) {
@@ -612,64 +589,77 @@ Ort::Status CreateOrValidateOnQnn(
                                       QNN_OP_TRANSPOSE_PARAM_PERM,
                                       {static_cast<uint32_t>(post_perm.size())},
                                       std::move(post_perm));
-      Ort::Status post_status = qnn_model_wrapper.ValidateQnnNode(post_node_name,
-                                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                                  QNN_OP_TRANSPOSE,
-                                                                  {nhwc_output_tensor->GetQnnTensor()},
-                                                                  {output_tensor.GetQnnTensor()},
-                                                                  {post_perm_param.GetQnnParam()});
-      if (!post_status.IsOK()) {
-        return post_status;
-      }
+
+      RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(post_node_name,
+                                                        QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                        QNN_OP_TRANSPOSE,
+                                                        {nhwc_output_tensor->GetQnnTensor()},
+                                                        {output_tensor.GetQnnTensor()},
+                                                        {post_perm_param.GetQnnParam()}));
     }
 
-    if (use_nhwc_fallback_out) {
-      *use_nhwc_fallback_out = true;
-    }
-    return nhwc_status;
+    return Ort::Status();
   }
 
-  if (!use_nhwc_fallback.has_value()) {
-    use_nhwc_fallback = false;
-  }
+  // 4) Creation path: build QNN nodes.
+  const bool use_wrapped_nhwc = need_pre_transpose || need_post_transpose;
 
-  // 4) ============= Creation path: build QNN nodes =============
-  const bool use_wrapped_nhwc = need_pre_transpose || need_post_transpose || use_nhwc_fallback.value();
-
+  // 4.1) Direct creation path (no pre/post transposes).
   if (!use_wrapped_nhwc) {
-    auto block_param = build_tensor_block_param();
-    return create_with_block_param(block_param);
+    if (!qnn_model_wrapper.IsQnnTensorWrapperExist(input_def.name)) {
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensor)), "Failed to add s2d input");
+    } else {
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Tensor already added, skip it: " + input_def.name).c_str());
+    }
+
+    if (!qnn_model_wrapper.IsQnnTensorWrapperExist(output_def.name)) {
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)), "Failed to add s2d output");
+    }
+
+    std::vector<std::string> param_tensor_names;
+    auto block_param = build_block_param();
+    const std::string block_param_name = block_param.GetParamTensorName();
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(block_param)), "Failed to add s2d blocksize param");
+    param_tensor_names.push_back(block_param_name);
+
+    const std::string mode_param_name = mode_param.GetParamTensorName();
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(mode_param)), "Failed to add s2d mode param");
+    param_tensor_names.push_back(mode_param_name);
+
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(direct_s2d_node_name,
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  QNN_OP_SPACE_TO_DEPTH,
+                                                  {input_def.name}, {output_def.name},
+                                                  std::move(param_tensor_names), validate),
+                  "Failed to add fused SpaceToDepth node.");
+    return Ort::Status();
   }
 
-  if (!qnn_model_wrapper.IsQnnTensorWrapperExist(input_def.name)) {
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensor)), "Failed to add input");
-  }
-  if (!qnn_model_wrapper.IsQnnTensorWrapperExist(output_def.name)) {
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)), "Failed to add output");
-  }
+  RETURN_IF_ERROR(ensure_boundary_tensors_exist());
 
-  // 4.1) Wrapped-NHWC creation: gather tensor metadata and ONNX shapes.
-  TensorInfo input_info = {};
-  TensorInfo output_info = {};
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input_def, input_info));
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(output_def, output_info));
+  // 4.2) Wrapped creation path: optional pre/post transpose + S2D core.
+  const std::string base_name = utils::GetUniqueName(reshape2, "_spacetodepth_nhwc");
+  // node
+  const std::string pre_node_name = base_name + "_pre";
+  const std::string post_node_name = base_name + "_post";
+  // tensor
+  const std::string nhwc_in_name = base_name + "_in";
+  const std::string nhwc_out_name = base_name + "_out";
 
   std::vector<uint32_t> input_shape;
   std::vector<uint32_t> output_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_def.shape, input_shape), "Failed to get input shape.");
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(output_def.shape, output_shape), "Failed to get output shape.");
-
-  const std::string base_name = utils::GetUniqueName(reshape2, "_spacetodepth_nhwc");
-  const std::string pre_node_name = base_name + "_pre";
-  const std::string post_node_name = base_name + "_post";
-  const std::string nhwc_in_name = base_name + "_in";
-  const std::string nhwc_out_name = base_name + "_out";
+  TensorInfo input_info = {};
+  TensorInfo output_info = {};
 
   std::string s2d_input_name = input_def.name;
   std::string s2d_output_name = output_def.name;
 
-  // 4.2) If needed, create pre-transpose and route S2D input through NHWC tensor.
+  // 4.3) If needed, create pre-transpose and route S2D input through NHWC tensor.
   if (need_pre_transpose) {
+    RETURN_IF_ERROR(ensure_rank4_shape(input_def, input_shape, "input"));
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input_def, input_info));
+
     std::vector<uint32_t> nhwc_input_shape = {input_shape[0], input_shape[2], input_shape[3], input_shape[1]};
     QnnTensorWrapper nhwc_input_tensor(nhwc_in_name,
                                        QNN_TENSOR_TYPE_NATIVE,
@@ -697,8 +687,11 @@ Ort::Status CreateOrValidateOnQnn(
     s2d_input_name = nhwc_in_name;
   }
 
-  // 4.3) If needed, create NHWC output tensor for post-transpose.
+  // 4.4) If needed, create NHWC output tensor for post-transpose.
   if (need_post_transpose) {
+    RETURN_IF_ERROR(ensure_rank4_shape(output_def, output_shape, "output"));
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(output_def, output_info));
+
     std::vector<uint32_t> nhwc_output_shape = {output_shape[0], output_shape[2], output_shape[3], output_shape[1]};
     QnnTensorWrapper nhwc_output_tensor(nhwc_out_name,
                                         QNN_TENSOR_TYPE_NATIVE,
@@ -710,9 +703,9 @@ Ort::Status CreateOrValidateOnQnn(
     s2d_output_name = nhwc_out_name;
   }
 
-  // 4.4) Create wrapped SpaceToDepth core node.
+  // 4.5) Create wrapped S2D core node.
   std::vector<std::string> s2d_params;
-  auto block_param = build_tensor_block_param();
+  auto block_param = build_block_param();
   const std::string block_name = block_param.GetParamTensorName();
   RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(block_param)),
                 "Failed to add blocksize param.");
@@ -729,7 +722,7 @@ Ort::Status CreateOrValidateOnQnn(
                                                 std::move(s2d_params), validate),
                 "Failed to add NHWC SpaceToDepth node.");
 
-  // 4.5) If needed, create post-transpose to restore NCHW boundary.
+  // 4.6) If needed, create post-transpose to restore boundary layout.
   if (need_post_transpose) {
     std::vector<uint32_t> post_perm = {0, 3, 1, 2};
     QnnParamWrapper post_perm_param(reshape2.Index(), post_node_name,
@@ -753,7 +746,7 @@ Ort::Status CreateOrValidateOnQnn(
 
 }  // namespace
 
-std::unique_ptr<IQnnNodeGroup> ReshapeTransposeReshapeSpaceToDepthFusion::TryFusion(
+std::unique_ptr<IQnnNodeGroup> SpaceToDepthFusion::TryFusion(
     QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnit& reshape_node_unit,
     const MapNodeToNodeUnit& node_to_node_unit,
@@ -796,11 +789,10 @@ std::unique_ptr<IQnnNodeGroup> ReshapeTransposeReshapeSpaceToDepthFusion::TryFus
   }
 
   // 5. Validate on QNN.
-  std::optional<bool> use_nhwc_fallback;
   gsl::span<const OrtNodeUnit* const> pattern_span(pattern->node_units.data(), pattern->node_count);
   Ort::Status validate_status = CreateOrValidateOnQnn(qnn_model_wrapper, pattern_span,
                                                       block_height, block_width, mode,
-                                                      logger, true, std::nullopt, &use_nhwc_fallback);
+                                                      logger, true);
   if (!validate_status.IsOK()) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
                 ("SpaceToDepthFusion: QNN validation failed: " + validate_status.GetErrorMessage()).c_str());
@@ -808,25 +800,22 @@ std::unique_ptr<IQnnNodeGroup> ReshapeTransposeReshapeSpaceToDepthFusion::TryFus
   }
 
   // 6. Create and return the fusion group.
-  return std::make_unique<ReshapeTransposeReshapeSpaceToDepthFusion>(pattern_span,
-                                                                     block_height, block_width, mode,
-                                                                     use_nhwc_fallback.value_or(false));
+  return std::make_unique<SpaceToDepthFusion>(pattern_span,
+                                              block_height, block_width, mode);
 }
 
-gsl::span<const OrtNodeUnit* const> ReshapeTransposeReshapeSpaceToDepthFusion::GetNodeUnits() const {
+gsl::span<const OrtNodeUnit* const> SpaceToDepthFusion::GetNodeUnits() const {
   return gsl::span<const OrtNodeUnit* const>{node_units_.data(), node_units_.size()};
 }
 
-Ort::Status ReshapeTransposeReshapeSpaceToDepthFusion::IsSupported(
+Ort::Status SpaceToDepthFusion::IsSupported(
     QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const {
-  return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), block_height_, block_width_, mode_, logger, true,
-                               std::nullopt, nullptr);
+  return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), block_height_, block_width_, mode_, logger, true);
 }
 
-Ort::Status ReshapeTransposeReshapeSpaceToDepthFusion::AddToModelBuilder(
+Ort::Status SpaceToDepthFusion::AddToModelBuilder(
     QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const {
-  return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), block_height_, block_width_, mode_, logger, false,
-                               use_nhwc_fallback_, nullptr);
+  return CreateOrValidateOnQnn(qnn_model_wrapper, GetNodeUnits(), block_height_, block_width_, mode_, logger, false);
 }
 
 }  // namespace qnn

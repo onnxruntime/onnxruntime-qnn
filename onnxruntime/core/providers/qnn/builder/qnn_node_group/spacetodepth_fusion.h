@@ -25,17 +25,15 @@ class QnnModelWrapper;
 /// 3) Transpose -> (Reshape -> Transpose -> Reshape) -> Transpose
 /// that can be replaced by SpaceToDepth.
 /// </summary>
-class ReshapeTransposeReshapeSpaceToDepthFusion : public IQnnNodeGroup {
+class SpaceToDepthFusion : public IQnnNodeGroup {
  public:
-  ReshapeTransposeReshapeSpaceToDepthFusion(gsl::span<const OrtNodeUnit* const> node_units,
+  SpaceToDepthFusion(gsl::span<const OrtNodeUnit* const> node_units,
                                             uint32_t block_height,
                                             uint32_t block_width,
-                                            uint32_t mode,
-                                            bool use_nhwc_fallback)
+                                            uint32_t mode)
       : block_height_(block_height),
         block_width_(block_width),
-        mode_(mode),
-        use_nhwc_fallback_(use_nhwc_fallback) {
+        mode_(mode) {
     if (node_units.size() < 4 || node_units.size() > 5) {
       ORT_CXX_API_THROW("S2D Pattern expects 4 to 5 NodeUnits.", ORT_EP_FAIL);
     }
@@ -50,13 +48,13 @@ class ReshapeTransposeReshapeSpaceToDepthFusion : public IQnnNodeGroup {
                                     node_units_[0]->OpType() == "Transpose";
     target_node_unit_ = has_head_transpose ? node_units_[1] : node_units_[0];
   }
-  ORT_DISALLOW_COPY_AND_ASSIGNMENT(ReshapeTransposeReshapeSpaceToDepthFusion);
+  ORT_DISALLOW_COPY_AND_ASSIGNMENT(SpaceToDepthFusion);
 
   Ort::Status IsSupported(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qnn_model_wrapper, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override { return target_node_unit_; }
-  std::string_view Type() const override { return "ReshapeTransposeReshapeSpaceToDepthFusion"; }
+  std::string_view Type() const override { return "SpaceToDepthFusion"; }
 
   /// <summary>
   /// Traverses graph to check if the given starting NodeUnit is part of a wrapped
@@ -76,7 +74,6 @@ class ReshapeTransposeReshapeSpaceToDepthFusion : public IQnnNodeGroup {
   uint32_t block_height_ = 0;
   uint32_t block_width_ = 0;
   uint32_t mode_ = 0;
-  bool use_nhwc_fallback_ = false;
 };
 
 }  // namespace qnn
