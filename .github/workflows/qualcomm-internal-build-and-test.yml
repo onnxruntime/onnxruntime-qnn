@@ -142,7 +142,8 @@ jobs:
         run: |
           python3 qcom/build_and_test.py archive_ort_android_aarch64
 
-      - uses: ./.github/actions/upload-ci-artifact
+      - name: Upload Test Archive to Artifactory
+        uses: ./.github/actions/upload-ci-artifact
         with:
           name: "android-aarch64-pyNone-tests"
           src_pattern: onnxruntime-tests-android-aarch64.zip
