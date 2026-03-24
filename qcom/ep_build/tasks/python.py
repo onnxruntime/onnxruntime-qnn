@@ -19,7 +19,13 @@ from ..task import (
     RunInTempDirectoryTask,
     Task,
 )
-from ..tools import PythonExecutableArchT, get_model_zoo_root, get_onnx_models_root, get_python_executable
+from ..tools import (
+    PythonExecutableArchT,
+    get_model_zoo_root,
+    get_onnx_models_root,
+    get_python_executable,
+    get_qualcomm_device_cloud_sdk_root,
+)
 from ..util import (
     MSFT_CI_REQUIREMENTS_RELPATH,
     REPO_ROOT,
@@ -28,11 +34,15 @@ from .build import BuildConfigT, TargetPyVersionT, get_ort_version
 
 
 def uv_pip_install_cmd(
-    requirements: Iterable[Path] = [], packages: Iterable[Path] = [], index_url: str | None = None
+    requirements: Iterable[Path] = [],
+    packages: Iterable[Path] = [],
+    find_links: Iterable[Path] = [],
+    index_url: str | None = None,
 ) -> list[str]:
     cmd = (
         ["uv", "pip", "install", "--native-tls"]
         + [f"--requirement={r}" for r in requirements]
+        + [f"--find-links={p}" for p in find_links]
         + [str(p) for p in packages]
     )
     if index_url is not None:
@@ -59,19 +69,33 @@ class PipInstallTask(RunExecutablesWithVenvTask):
         )
 
 
-class PipInstallQcomDevRequirements(PipInstallTask):
+class PipInstallQcomDevRequirements(RunExecutablesWithVenvTask):
     def __init__(
         self,
         group_name: str | None,
         venv_path: Path,
         qdc: bool,
     ) -> None:
-        requirements: str = "requirements.txt"
-        index_url: str | None = None
+        requirements: str = "requirements-qdc.txt" if qdc else "requirements.txt"
+        req_path = REPO_ROOT / "qcom" / requirements
+        package_manager_venv = venv_path.parent / (venv_path.name + "-pkg-manager")
         if qdc:
-            requirements = "requirements-qdc.txt"
-            index_url = "http://ort-ep-win-01.na.qualcomm.com:8080"
-        super().__init__(group_name, venv_path, requirements=[REPO_ROOT / "qcom" / requirements], index_url=index_url)
+            super().__init__(
+                group_name,
+                venv=venv_path,
+                executables_and_args=lambda: [
+                    uv_pip_install_cmd(
+                        requirements=[req_path],
+                        find_links=[get_qualcomm_device_cloud_sdk_root(package_manager_venv)],
+                    )
+                ],
+            )
+        else:
+            super().__init__(
+                group_name,
+                venv=venv_path,
+                executables_and_args=[uv_pip_install_cmd(requirements=[req_path])],
+            )
 
 
 class CreateOrtVenvTask(CompositeTask):
@@ -117,17 +141,26 @@ class CreateOrtVenvTask(CompositeTask):
 
 class CreateQdcVenvTask(CompositeTask):
     def __init__(self, python_executable: Path, venv_path: Path) -> None:
+        pkg_manager_venv = venv_path.parent / (venv_path.name + "-pkg-manager")
         super().__init__(
             group_name=None,
             tasks=[
-                CreateVenvTask(python_executable=python_executable, venv_path=venv_path),
+                CreateVenvTask(python_executable=python_executable, venv_path=pkg_manager_venv),
                 PipInstallTask(
+                    f"Installing package manager requirements into {pkg_manager_venv}",
+                    pkg_manager_venv,
+                    requirements=[REPO_ROOT / "qcom" / "requirements.txt"],
+                ),
+                CreateVenvTask(python_executable=python_executable, venv_path=venv_path),
+                RunExecutablesWithVenvTask(
                     f"Installing QDC build requirements into {venv_path}",
-                    venv_path,
-                    requirements=[
-                        REPO_ROOT / "qcom" / "requirements-qdc.txt",
+                    venv=venv_path,
+                    executables_and_args=lambda: [
+                        uv_pip_install_cmd(
+                            requirements=[REPO_ROOT / "qcom" / "requirements-qdc.txt"],
+                            find_links=[get_qualcomm_device_cloud_sdk_root(pkg_manager_venv)],
+                        )
                     ],
-                    index_url="http://ort-ep-win-01.na.qualcomm.com:8080",
                 ),
             ],
         )
