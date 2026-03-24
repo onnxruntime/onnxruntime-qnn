@@ -7,6 +7,7 @@
 #include <cassert>
 #include <cstring>
 #include <optional>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -19,7 +20,6 @@
 namespace onnxruntime {
 namespace qnn {
 
-// Forward declarations.
 #define ValidateOnQnn(qmw, node_units, root_input, gamma_input, beta_input, final_output, epsilon, axes) \
   CreateOrValidateOnQnn((qmw), (node_units), (root_input), (gamma_input), (beta_input), (final_output), (epsilon), (axes), true)
 #define CreateOnQnn(qmw, node_units, root_input, gamma_input, beta_input, final_output, epsilon, axes) \
@@ -35,10 +35,6 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
                                          gsl::span<const uint32_t> axes,
                                          bool validate);
 
-/// <summary>
-/// Reads a float scalar value from a constant initializer.
-/// Returns std::nullopt if the input is not a constant float scalar.
-/// </summary>
 static std::optional<float> GetConstantFloatScalar(const QnnModelWrapper& qmw,
                                                     const OrtApi& ort_api,
                                                     const std::string& input_name) {
@@ -74,11 +70,6 @@ static std::optional<float> GetConstantFloatScalar(const QnnModelWrapper& qmw,
   return *static_cast<const float*>(raw_data);
 }
 
-/// <summary>
-/// Reads the axes from a ReduceMean node. Handles both opset < 18 (attribute) and opset >= 18 (input).
-/// Returns the axes as positive uint32_t values normalized by input rank.
-/// Returns std::nullopt on failure.
-/// </summary>
 static std::optional<std::vector<uint32_t>> GetReduceMeanAxes(const QnnModelWrapper& qmw,
                                                                const OrtNodeUnit& reduce_mean_node_unit) {
   const auto& inputs = reduce_mean_node_unit.Inputs();
@@ -161,127 +152,51 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     return nullptr;
   }
 
-  // ---- Step 2: Sub → Pow or Transpose (detect pattern) ----
-  // Regular pattern: Sub has 2 consumers: Pow and Div.
-  // Transpose pattern: Sub has 1 consumer: Transpose. Transpose then has 2 consumers: Pow and Div.
+  // Sub must have exactly 2 consumers: Pow and Div.
   const auto& sub_outputs = sub_node_unit->Outputs();
   if (sub_outputs.empty()) {
     return nullptr;
   }
 
-  bool has_transpose = false;
-  const OrtNodeUnit* transpose_node_unit = nullptr;
   const OrtNodeUnit* pow_node_unit = nullptr;
-  // Track which tensor feeds the Div numerator (Sub output for regular, Transpose output for transpose pattern).
-  std::string div_numerator_name;
-
+  const OrtNodeUnit* div_from_sub_unit = nullptr;
   {
     const Ort::ConstNode sub_node(&sub_node_unit->GetNode());
     const auto sub_node_outputs = sub_node.GetOutputs();
     if (sub_node_outputs.size() != 1) {
       return nullptr;
     }
-
     const auto consumers = sub_node_outputs[0].GetConsumers();
-    if (consumers.size() == 2) {
-      // Regular pattern: Sub → {Pow, Div}
-      for (const auto& consumer_info : consumers) {
-        if (consumer_info.node == nullptr) {
-          return nullptr;
-        }
-        const Ort::ConstNode consumer_node = consumer_info.node;
-        const std::string consumer_type = consumer_node.GetOperatorType();
-
-        const auto it = node_to_node_unit.find(consumer_node);
-        if (it == node_to_node_unit.end()) {
-          return nullptr;
-        }
-        const OrtNodeUnit* consumer_unit = it->second;
-
-        if (node_unit_to_qnn_node_group.count(consumer_unit) != 0) {
-          return nullptr;
-        }
-        if (consumer_unit->UnitType() != OrtNodeUnit::Type::SingleNode) {
-          return nullptr;
-        }
-
-        if (consumer_type == "Pow") {
-          pow_node_unit = consumer_unit;
-        }
-        // "Div" is the other consumer — handled later
-      }
-      div_numerator_name = sub_outputs[0].name;
-    } else if (consumers.size() == 1) {
-      // Transpose pattern: Sub → Transpose → {Pow, Div}
-      if (consumers[0].node == nullptr) {
-        return nullptr;
-      }
-      const Ort::ConstNode consumer_node = consumers[0].node;
-      if (std::string(consumer_node.GetOperatorType()) != "Transpose") {
-        return nullptr;
-      }
-      const auto it = node_to_node_unit.find(consumer_node);
-      if (it == node_to_node_unit.end()) {
-        return nullptr;
-      }
-      transpose_node_unit = it->second;
-      if (node_unit_to_qnn_node_group.count(transpose_node_unit) != 0 ||
-          transpose_node_unit->UnitType() != OrtNodeUnit::Type::SingleNode) {
-        return nullptr;
-      }
-      has_transpose = true;
-      div_numerator_name = transpose_node_unit->Outputs()[0].name;
-    } else {
+    if (consumers.size() != 2) {
       return nullptr;
     }
-  }
-
-  // ---- Step 3: Handle Transpose (Pattern B) ----
-  if (has_transpose) {
-    if (transpose_node_unit == nullptr) {
-      return nullptr;
-    }
-    // Transpose has 2 consumers: Pow (variance path) and Div (numerator path).
-    // Find Pow among Transpose's consumers.
-    const Ort::ConstNode transpose_node(&transpose_node_unit->GetNode());
-    const auto transpose_outputs = transpose_node.GetOutputs();
-    if (transpose_outputs.size() != 1) {
-      return nullptr;
-    }
-    const auto transpose_consumers = transpose_outputs[0].GetConsumers();
-    if (transpose_consumers.size() != 2) {
-      return nullptr;
-    }
-    for (const auto& consumer_info : transpose_consumers) {
+    for (const auto& consumer_info : consumers) {
       if (consumer_info.node == nullptr) {
         return nullptr;
       }
       const Ort::ConstNode consumer_node = consumer_info.node;
-      if (std::string(consumer_node.GetOperatorType()) == "Pow") {
-        const auto it = node_to_node_unit.find(consumer_node);
-        if (it == node_to_node_unit.end()) {
-          return nullptr;
-        }
-        pow_node_unit = it->second;
-        if (node_unit_to_qnn_node_group.count(pow_node_unit) != 0 ||
-            pow_node_unit->UnitType() != OrtNodeUnit::Type::SingleNode) {
-          return nullptr;
-        }
-        break;
+      const auto it = node_to_node_unit.find(consumer_node);
+      if (it == node_to_node_unit.end()) {
+        return nullptr;
+      }
+      const OrtNodeUnit* consumer_unit = it->second;
+      if (node_unit_to_qnn_node_group.count(consumer_unit) != 0 ||
+          consumer_unit->UnitType() != OrtNodeUnit::Type::SingleNode) {
+        return nullptr;
+      }
+      const std::string op_type = consumer_node.GetOperatorType();
+      if (op_type == "Pow") {
+        pow_node_unit = consumer_unit;
+      } else if (op_type == "Div") {
+        div_from_sub_unit = consumer_unit;
       }
     }
-    if (pow_node_unit == nullptr) {
-      return nullptr;
-    }
-  } else {
-    // Pattern A: pow_node_unit should have been found above.
-    if (pow_node_unit == nullptr) {
-      return nullptr;
-    }
+  }
+  if (pow_node_unit == nullptr || div_from_sub_unit == nullptr) {
+    return nullptr;
   }
 
-  // ---- Step 4: Pow(2) → ReduceMean₂ ----
-  // Verify Pow exponent is 2.0.
+  // Pow exponent must be 2.0.
   const auto& pow_inputs = pow_node_unit->Inputs();
   if (pow_inputs.size() < 2) {
     return nullptr;
@@ -291,7 +206,7 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     return nullptr;
   }
 
-  // Pow → ReduceMean₂ (only child).
+  // Pow → ReduceMean₂
   const std::array<std::string_view, 1> rm_types{"ReduceMean"};
   const OrtNodeUnit* reduce_mean2_node_unit = GetOnlyChildOfType(qnn_model_wrapper, *pow_node_unit,
                                                                   rm_types, node_to_node_unit,
@@ -300,41 +215,25 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     return nullptr;
   }
 
-  // ---- Step 5: Verify axes match between ReduceMean₁ and ReduceMean₂ ----
+  // Both ReduceMeans must have the same axes, pointing to the last dimension.
   auto axes1_opt = GetReduceMeanAxes(qnn_model_wrapper, reduce_mean_node_unit);
   auto axes2_opt = GetReduceMeanAxes(qnn_model_wrapper, *reduce_mean2_node_unit);
-  if (!axes1_opt.has_value() || !axes2_opt.has_value()) {
+  if (!axes1_opt.has_value() || !axes2_opt.has_value() || axes1_opt.value() != axes2_opt.value()) {
     return nullptr;
   }
-  if (axes1_opt.value() != axes2_opt.value()) {
-    return nullptr;
-  }
-
-  // Compute QNN axes.
   std::vector<uint32_t> input_shape;
   if (!qnn_model_wrapper.GetOnnxShape(rm1_inputs[0].shape, input_shape)) {
     return nullptr;
   }
   const size_t input_rank = input_shape.size();
 
-  std::vector<uint32_t> qnn_axes;
-  if (has_transpose) {
-    // Pattern B: Transpose absorbed, QNN always sees axis = last dim.
-    qnn_axes = {static_cast<uint32_t>(input_rank - 1)};
-  } else {
-    // Pattern A: axes must include the last dimension for HTP.
-    const auto& axes = axes1_opt.value();
-    if (axes.empty()) {
-      return nullptr;
-    }
-    // Check that axes end at last dim (required by QNN HTP LayerNorm).
-    if (axes.back() != static_cast<uint32_t>(input_rank - 1)) {
-      return nullptr;
-    }
-    qnn_axes = axes;
+  // Axes must point to the last dimension
+  const auto& axes = axes1_opt.value();
+  if (axes.empty() || axes.back() != static_cast<uint32_t>(input_rank - 1)) {
+    return nullptr;
   }
 
-  // ---- Step 6: ReduceMean₂ → Add(ε) ----
+  // ReduceMean₂ → Add(ε)
   const std::array<std::string_view, 1> add_types{"Add"};
   const OrtNodeUnit* add_eps_node_unit = GetOnlyChildOfType(qnn_model_wrapper, *reduce_mean2_node_unit,
                                                              add_types, node_to_node_unit,
@@ -361,7 +260,7 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
   }
   const float epsilon = epsilon_opt.value();
 
-  // ---- Step 7: Add(ε) → Sqrt ----
+  // Add(ε) → Sqrt
   const std::array<std::string_view, 1> sqrt_types{"Sqrt"};
   const OrtNodeUnit* sqrt_node_unit = GetOnlyChildOfType(qnn_model_wrapper, *add_eps_node_unit,
                                                           sqrt_types, node_to_node_unit,
@@ -370,25 +269,20 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     return nullptr;
   }
 
-  // ---- Step 8: Sqrt → Div ----
+  // Sqrt → Div
   const std::array<std::string_view, 1> div_types{"Div"};
   const OrtNodeUnit* div_node_unit = GetOnlyChildOfType(qnn_model_wrapper, *sqrt_node_unit,
                                                          div_types, node_to_node_unit,
                                                          node_unit_to_qnn_node_group);
-  if (div_node_unit == nullptr) {
+  if (div_node_unit == nullptr || div_node_unit != div_from_sub_unit) {
     return nullptr;
   }
-
-  // Verify Div input[0] is the numerator (Sub output for regular, Transpose output for transpose pattern).
   const auto& div_inputs = div_node_unit->Inputs();
-  if (div_inputs.size() < 2) {
-    return nullptr;
-  }
-  if (div_inputs[0].name != div_numerator_name) {
+  if (div_inputs.size() < 2 || div_inputs[0].name != sub_outputs[0].name) {
     return nullptr;
   }
 
-  // ---- Step 9: Div → Mul(γ) ----
+  // Div → Mul(γ)
   const std::array<std::string_view, 1> mul_types{"Mul"};
   const OrtNodeUnit* mul_gamma_node_unit = GetOnlyChildOfType(qnn_model_wrapper, *div_node_unit,
                                                                mul_types, node_to_node_unit,
@@ -413,7 +307,7 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     return nullptr;
   }
 
-  // ---- Step 10: Mul(γ) → Add(β) ----
+  // Mul(γ) → Add(β)
   const OrtNodeUnit* add_beta_node_unit = GetOnlyChildOfType(qnn_model_wrapper, *mul_gamma_node_unit,
                                                               add_types, node_to_node_unit,
                                                               node_unit_to_qnn_node_group);
@@ -437,17 +331,9 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     return nullptr;
   }
 
-  // ---- Step 11: Collect node units and validate on QNN ----
-  std::vector<const OrtNodeUnit*> node_units;
-  if (has_transpose) {
-    node_units = {&reduce_mean_node_unit, sub_node_unit, transpose_node_unit,
-                  pow_node_unit, reduce_mean2_node_unit, add_eps_node_unit,
-                  sqrt_node_unit, div_node_unit, mul_gamma_node_unit, add_beta_node_unit};
-  } else {
-    node_units = {&reduce_mean_node_unit, sub_node_unit,
-                  pow_node_unit, reduce_mean2_node_unit, add_eps_node_unit,
-                  sqrt_node_unit, div_node_unit, mul_gamma_node_unit, add_beta_node_unit};
-  }
+  std::vector<const OrtNodeUnit*> node_units = {
+      &reduce_mean_node_unit, sub_node_unit, pow_node_unit, reduce_mean2_node_unit,
+      add_eps_node_unit, sqrt_node_unit, div_node_unit, mul_gamma_node_unit, add_beta_node_unit};
 
   const OrtNodeUnitIODef& root_input = rm1_inputs[0];
   const OrtNodeUnitIODef& final_output = add_beta_node_unit->Outputs()[0];
@@ -457,37 +343,53 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     if (i > 0) shape_str += "x";
     shape_str += std::to_string(input_shape[i]);
   }
+  std::string axes_str;
+  for (size_t i = 0; i < axes.size(); ++i) {
+    if (i > 0) axes_str += ",";
+    axes_str += std::to_string(axes[i]);
+  }
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-              ("LayerNormFusion: Fusing LayerNorm pattern (" +
-               std::string(has_transpose ? "Transpose-wrapped" : "Regular") +
-               ") starting at node: " + reduce_mean_node_unit.Name() +
+              ("LayerNormFusion: Fusing LayerNorm starting at node: " + reduce_mean_node_unit.Name() +
                ", input_shape=" + shape_str +
                ", epsilon=" + std::to_string(epsilon) +
-               ", axes=[" + std::to_string(qnn_axes[0]) + "]" +
+               ", axes=[" + axes_str + "]" +
                ", gamma=" + gamma_input_def->name +
                ", beta=" + beta_input_def->name).c_str());
 
   if (auto status = ValidateOnQnn(qnn_model_wrapper, node_units, root_input,
                                   *gamma_input_def, *beta_input_def, final_output,
-                                  epsilon, qnn_axes);
+                                  epsilon, axes);
       !status.IsOK()) {
     return nullptr;
   }
 
   return std::make_unique<LayerNormFusion>(std::move(node_units), &reduce_mean_node_unit,
-                                           epsilon, std::move(qnn_axes), has_transpose);
+                                           epsilon, axes,
+                                           gamma_input_def->name, beta_input_def->name);
 }
 
 LayerNormFusion::LayerNormFusion(std::vector<const OrtNodeUnit*>&& node_units,
                                  const OrtNodeUnit* target_node_unit,
                                  float epsilon,
                                  std::vector<uint32_t> axes,
-                                 bool has_transpose)
+                                 std::string gamma_input_name,
+                                 std::string beta_input_name)
     : node_units_(std::move(node_units)),
       target_node_unit_(target_node_unit),
       epsilon_(epsilon),
       axes_(std::move(axes)),
-      has_transpose_(has_transpose) {
+      gamma_input_name_(std::move(gamma_input_name)),
+      beta_input_name_(std::move(beta_input_name)) {
+}
+
+// Finds the OrtNodeUnitIODef matching the given name from a node's inputs.
+static const OrtNodeUnitIODef* FindInputByName(const OrtNodeUnit& node_unit, const std::string& name) {
+  for (const auto& inp : node_unit.Inputs()) {
+    if (inp.name == name) {
+      return &inp;
+    }
+  }
+  return nullptr;
 }
 
 Ort::Status LayerNormFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
@@ -496,26 +398,14 @@ Ort::Status LayerNormFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger
   const OrtNodeUnit& add_beta = *node_units_.back();
   const OrtNodeUnit& mul_gamma = *node_units_[node_units_.size() - 2];
 
-  const OrtNodeUnitIODef* gamma_input_def = nullptr;
-  for (const auto& inp : mul_gamma.Inputs()) {
-    if (qmw.IsConstantInput(inp.name)) {
-      gamma_input_def = &inp;
-      break;
-    }
-  }
-  const OrtNodeUnitIODef* beta_input_def = nullptr;
-  for (const auto& inp : add_beta.Inputs()) {
-    if (qmw.IsConstantInput(inp.name)) {
-      beta_input_def = &inp;
-      break;
-    }
-  }
-  if (!gamma_input_def || !beta_input_def) {
+  const OrtNodeUnitIODef* gamma_def = FindInputByName(mul_gamma, gamma_input_name_);
+  const OrtNodeUnitIODef* beta_def = FindInputByName(add_beta, beta_input_name_);
+  if (!gamma_def || !beta_def) {
     return MAKE_EP_FAIL("LayerNormFusion: cannot find gamma or beta inputs.");
   }
 
   return ValidateOnQnn(qmw, node_units_, rm1.Inputs()[0],
-                       *gamma_input_def, *beta_input_def,
+                       *gamma_def, *beta_def,
                        add_beta.Outputs()[0], epsilon_, axes_);
 }
 
@@ -524,32 +414,18 @@ Ort::Status LayerNormFusion::AddToModelBuilder(QnnModelWrapper& qmw, const Ort::
   const OrtNodeUnit& add_beta = *node_units_.back();
   const OrtNodeUnit& mul_gamma = *node_units_[node_units_.size() - 2];
 
-  const OrtNodeUnitIODef* gamma_input_def = nullptr;
-  for (const auto& inp : mul_gamma.Inputs()) {
-    if (qmw.IsConstantInput(inp.name)) {
-      gamma_input_def = &inp;
-      break;
-    }
-  }
-  const OrtNodeUnitIODef* beta_input_def = nullptr;
-  for (const auto& inp : add_beta.Inputs()) {
-    if (qmw.IsConstantInput(inp.name)) {
-      beta_input_def = &inp;
-      break;
-    }
-  }
-  if (!gamma_input_def || !beta_input_def) {
+  const OrtNodeUnitIODef* gamma_def = FindInputByName(mul_gamma, gamma_input_name_);
+  const OrtNodeUnitIODef* beta_def = FindInputByName(add_beta, beta_input_name_);
+  if (!gamma_def || !beta_def) {
     return MAKE_EP_FAIL("LayerNormFusion: cannot find gamma or beta inputs.");
   }
 
   auto status = CreateOnQnn(qmw, node_units_, rm1.Inputs()[0],
-                            *gamma_input_def, *beta_input_def,
+                            *gamma_def, *beta_def,
                             add_beta.Outputs()[0], epsilon_, axes_);
   if (status.IsOK()) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_INFO,
-                ("LayerNormFusion: Successfully fused LayerNorm (" +
-                 std::string(has_transpose_ ? "Transpose-wrapped" : "Regular") +
-                 ") node: " + rm1.Name()).c_str());
+                ("LayerNormFusion: Successfully fused LayerNorm node: " + rm1.Name()).c_str());
   }
   return status;
 }
@@ -560,6 +436,52 @@ gsl::span<const OrtNodeUnit* const> LayerNormFusion::GetNodeUnits() const {
 
 const OrtNodeUnit* LayerNormFusion::GetTargetNodeUnit() const {
   return target_node_unit_;
+}
+
+// Validates that a gamma/beta shape is compatible with LayerNorm over the given axes,
+// then squeezes it to 1D. Rules:
+//   - All non-normalized dims must be 1 (no scaling along non-normalized axes).
+//   - All normalized dims must match the input shape at those axes.
+// Returns std::nullopt if the shape is invalid.
+static std::optional<std::vector<uint32_t>> ValidateAndSqueezeScaleShape(
+    const std::vector<uint32_t>& scale_shape,
+    const std::vector<uint32_t>& input_shape,
+    gsl::span<const uint32_t> axes) {
+  // If already the right rank, verify each dim matches the input at the corresponding axis.
+  if (scale_shape.size() == axes.size()) {
+    for (size_t i = 0; i < axes.size(); ++i) {
+      if (scale_shape[i] != input_shape[axes[i]]) {
+        return std::nullopt;
+      }
+    }
+    return scale_shape;
+  }
+
+  // Must have same rank as input to check per-dim semantics.
+  if (scale_shape.size() != input_shape.size()) {
+    return std::nullopt;
+  }
+
+  std::unordered_set<uint32_t> axes_set(axes.begin(), axes.end());
+  std::vector<uint32_t> squeezed;
+  squeezed.reserve(axes.size());
+
+  for (size_t i = 0; i < scale_shape.size(); ++i) {
+    if (axes_set.count(static_cast<uint32_t>(i))) {
+      // Normalized axis: dim must match input.
+      if (scale_shape[i] != input_shape[i]) {
+        return std::nullopt;
+      }
+      squeezed.push_back(scale_shape[i]);
+    } else {
+      // Non-normalized axis: dim must be 1.
+      if (scale_shape[i] != 1) {
+        return std::nullopt;
+      }
+    }
+  }
+
+  return squeezed;
 }
 
 static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
@@ -574,38 +496,63 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
   assert(!node_units.empty());
   const std::string node_name = utils::GetUniqueName(*node_units[0]);
 
-  // Build input/output tensor wrappers.
   QnnTensorWrapper input_tensor;
   QnnTensorWrapper gamma_tensor;
   QnnTensorWrapper beta_tensor;
   QnnTensorWrapper output_tensor;
 
   RETURN_IF_ERROR(qmw.MakeTensorWrapper(root_input, input_tensor));
-  RETURN_IF_ERROR(qmw.MakeTensorWrapper(gamma_input, gamma_tensor));
-  RETURN_IF_ERROR(qmw.MakeTensorWrapper(beta_input, beta_tensor));
   RETURN_IF_ERROR(qmw.MakeTensorWrapper(final_output, output_tensor));
 
-  if (validate) {
-    // Skip QNN op validation for LayerNorm fusion.
-    // The QNN SDK validator may incorrectly reject valid rank-3 inputs (socModel=INT32_MAX).
-    // HTP supports up to rank 4, CPU supports up to rank 5. Actual validation happens at HTP compile time.
-    return Ort::Status();
+  // Gamma and beta must only scale along the normalized axes.
+  // Non-normalized dims must be 1; normalized dims must match the input.
+  // The validated shape is then squeezed to 1D for QNN.
+  std::vector<uint32_t> input_shape;
+  RETURN_IF_NOT(qmw.GetOnnxShape(root_input.shape, input_shape), "Cannot get input shape.");
+
+  {
+    TensorInfo gamma_info = {};
+    RETURN_IF_ERROR(qmw.GetTensorInfo(gamma_input, gamma_info));
+    auto squeezed = ValidateAndSqueezeScaleShape(gamma_info.shape, input_shape, axes);
+    RETURN_IF_NOT(squeezed.has_value(), "LayerNormFusion: gamma shape is incompatible with LayerNorm axes.");
+    gamma_info.shape = std::move(squeezed.value());
+    RETURN_IF_ERROR(qmw.MakeTensorWrapper(gamma_info, gamma_input.name, gamma_tensor));
+  }
+  {
+    TensorInfo beta_info = {};
+    RETURN_IF_ERROR(qmw.GetTensorInfo(beta_input, beta_info));
+    auto squeezed = ValidateAndSqueezeScaleShape(beta_info.shape, input_shape, axes);
+    RETURN_IF_NOT(squeezed.has_value(), "LayerNormFusion: beta shape is incompatible with LayerNorm axes.");
+    beta_info.shape = std::move(squeezed.value());
+    RETURN_IF_ERROR(qmw.MakeTensorWrapper(beta_info, beta_input.name, beta_tensor));
   }
 
-  // For creation, register params by name then create the node.
   Qnn_Scalar_t epsilon_scalar = QNN_SCALAR_INIT;
   epsilon_scalar.dataType = QNN_DATATYPE_FLOAT_32;
   epsilon_scalar.floatValue = epsilon;
   QnnParamWrapper epsilon_param(node_units[0]->Index(), node_units[0]->Name(),
                                 QNN_OP_LAYER_NORM_PARAM_EPSILON, epsilon_scalar);
-  const std::string epsilon_param_name = epsilon_param.GetParamTensorName();
-  RETURN_IF_NOT(qmw.AddParamWrapper(std::move(epsilon_param)), "Failed to add epsilon param.");
 
   std::vector<uint32_t> axes_vec(axes.begin(), axes.end());
   std::vector<uint32_t> axes_shape{static_cast<uint32_t>(axes_vec.size())};
   QnnParamWrapper axes_param(node_units[0]->Index(), node_units[0]->Name(),
                              QNN_OP_LAYER_NORM_PARAM_AXES,
                              std::move(axes_shape), std::move(axes_vec));
+
+  if (validate) {
+    return qmw.ValidateQnnNode(node_name,
+                               QNN_OP_PACKAGE_NAME_QTI_AISW,
+                               QNN_OP_LAYER_NORM,
+                               {input_tensor.GetQnnTensor(),
+                                gamma_tensor.GetQnnTensor(),
+                                beta_tensor.GetQnnTensor()},
+                               {output_tensor.GetQnnTensor()},
+                               {epsilon_param.GetQnnParam(), axes_param.GetQnnParam()});
+  }
+
+  const std::string epsilon_param_name = epsilon_param.GetParamTensorName();
+  RETURN_IF_NOT(qmw.AddParamWrapper(std::move(epsilon_param)), "Failed to add epsilon param.");
+
   const std::string axes_param_name = axes_param.GetParamTensorName();
   RETURN_IF_NOT(qmw.AddParamWrapper(std::move(axes_param)), "Failed to add axes param.");
 
