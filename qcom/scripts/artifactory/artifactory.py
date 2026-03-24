@@ -29,7 +29,6 @@ class Artifactory:
                 [
                     "rt",
                     "download",
-                    "--insecure-tls=true",  # TODO-jrk
                     src_pattern,
                     f"{tmpdir}/",
                 ],
@@ -44,7 +43,6 @@ class Artifactory:
             [
                 "rt",
                 "upload",
-                "--insecure-tls=true",  # TODO-jrk
                 src_pattern,
                 destination,
             ],

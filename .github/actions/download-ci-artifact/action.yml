@@ -15,8 +15,6 @@ runs:
   steps:
     - name: Download from Artifactory
       shell: "${{ runner.os == 'Windows' && 'cmd' || 'bash' }}"
-      env:
-        BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
       run: >
         "${{ runner.os == 'Windows' && 'python.exe' || 'python3' }}"
         qcom/scripts/artifactory/download_ci.py
