@@ -358,12 +358,7 @@ TEST_F(QnnHTPBackendTests, MaxPool_Ceil_HTP_u8) {
                             ExpectedEPNodeAssignment::All);
 }
 
-// QNN v2.13: Inaccuracy detected for output 'output', element 58367.
-// Output quant params: scale=0.078431375324726105, zero_point=127.
-// Expected val: 5.6846914291381836
-// QNN QDQ val: -5.3333334922790527 (err 11.018024444580078)
-// CPU QDQ val: 5.6470589637756348 (err 0.037632465362548828)
-TEST_F(QnnHTPBackendTests, DISABLED_MaxPool_Large_Input2_Ceil_HTP_u8) {
+TEST_F(QnnHTPBackendTests, MaxPool_Large_Input2_Ceil_HTP_u8) {
   RunQDQPoolOpTest<uint8_t>("MaxPool",
                             TestInputDef<float>({1, 128, 16, 113}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                             {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
