@@ -8,14 +8,17 @@ on:
   # schedule:
   #   - cron: "0 8 * * *"  # Every day at 1am in San Diego/PDT (8am UTC)
   workflow_dispatch:
-  # pull_request:  # TODO-jrk: remove this trigger
-  #   branches: [main]
+  pull_request:  # TODO-jrk: remove this trigger
+    branches: [main]
 
 # only one active job per PR. this will cause jobs to be immediately cancelled on subsequent pushes in PRs.
 # ref: https://docs.github.com/en/actions/using-jobs/using-concurrency#example-using-a-fallback-value
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
+
+env:
+  BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
 
 jobs:
   clean-ci-artifacts:
@@ -34,9 +37,24 @@ jobs:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
-      # TODO-jrk: prune empty directories
       - name: Delete old CI artifacts
         run: >
           jf rt delete
           --spec "${{ github.workspace }}/qcom/scripts/artifactory/aql/expired_ci_artifacts.json"
-          --spec-vars "repo=aisw-ortqnnep-generic-virtual"
+          --spec-vars "repo=${{ env.BUILD_ARTIFACTORY_REPO }}"
+
+      # This is a bit of a hack, but there does not appear to be a way to do this nicely without
+      # a server-side plugin. Instead, we just use a CLI-side plugin several times. Eventually
+      # it will converge and do nothing.
+      - name: Prune empty folders
+        run: |
+          jf plugin install rm-empty
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
