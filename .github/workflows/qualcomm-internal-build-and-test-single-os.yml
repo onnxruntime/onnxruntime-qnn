@@ -118,6 +118,8 @@ env:
   # Cross compilation on Windows adds a folder to the build directory.
   BUILD_CONFIG_DIR: "${{ (inputs.target_os == 'windows' && ((inputs.build_runner_arch == 'X64' && inputs.target_arch != 'x86_64') || (inputs.build_runner_arch == 'ARM64' && inputs.target_arch != 'arm64'))) && 'Release/Release' || 'Release' }}"
 
+  TEST_ARCHIVE_EXT: "${{ inputs.target_os == 'linux' && 'tar.bz2' || 'zip' }}"
+
   ORT_VERSION_SUFFIX: "${{ inputs.version_suffix != '' && inputs.version_suffix || '' }}"
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
 
@@ -172,7 +174,7 @@ jobs:
         uses: ./.github/actions/upload-ci-artifact
         with:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
-          src_pattern: "onnxruntime-tests-${{inputs.target_os}}-${{ inputs.target_arch }}.*"
+          src_pattern: "onnxruntime-tests-${{inputs.target_os}}-${{ inputs.target_arch }}.${{ env.TEST_ARCHIVE_EXT }}"
 
       - name: Upload Wheel to Artifactory
         if: ${{ inputs.upload_wheel }}
