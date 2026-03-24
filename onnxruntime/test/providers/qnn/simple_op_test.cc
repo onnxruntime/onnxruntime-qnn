@@ -875,7 +875,23 @@ TEST_F(QnnHTPBackendTests, DepthToSpaceOp_DCR) {
                         ExpectedEPNodeAssignment::All);
 }
 
-// Test QDQ SpaceToDepth.
+// Test float32 SpaceToDepth on HTP.
+// TODO: Disabling it due to known issues
+// Will be enabled once those issues are resolved
+TEST_F(QnnHTPBackendTests, DISABLED_SpaceToDepthOp_FP32) {
+  const std::vector<float> X = {0.0f, 0.1f, 0.2f, 0.3f,
+                                1.0f, 1.1f, 1.2f, 1.3f,
+
+                                2.0f, 2.1f, 2.2f, 2.3f,
+                                3.0f, 3.1f, 3.2f, 3.3f};
+  RunOpTest<float>("SpaceToDepth",
+                   {TestInputDef<float>({1, 2, 2, 4}, false, X)},
+                   {test::MakeAttribute("blocksize", static_cast<int64_t>(2))},
+                   11,
+                   ExpectedEPNodeAssignment::All);
+}
+
+// Test 8-bit QDQ SpaceToDepth.
 TEST_F(QnnHTPBackendTests, SpaceToDepthOp) {
   const std::vector<float> X = {0.0f, 0.1f, 0.2f, 0.3f,
                                 1.0f, 1.1f, 1.2f, 1.3f,
