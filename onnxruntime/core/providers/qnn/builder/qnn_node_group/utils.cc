@@ -84,7 +84,7 @@ const OrtNodeUnit* GetChildNodeUnitAllowQdq(
   const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
   const OrtNode& parent_node = parent_node_unit.GetNode();
 
-  // For QDQ NodeUnits, look at the Q node's output instead of the target node's output.
+  // 1. For QDQ NodeUnits (DQ->op->Q), look at the Q node's output instead of the target node's output.
   const OrtNode* search_node = &parent_node;
   if (parent_node_unit.UnitType() == OrtNodeUnit::Type::QDQGroup) {
     const auto& q_nodes = parent_node_unit.GetQNodes();
@@ -93,7 +93,7 @@ const OrtNodeUnit* GetChildNodeUnitAllowQdq(
     }
   }
 
-  // Search node must have a single child and must not produce a graph output.
+  // 2. Search node must have a single child and must not produce a graph output.
   size_t num_outputs = 0;
   RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(search_node, &num_outputs), ort_api, nullptr);
   if (num_outputs != 1) {
@@ -103,6 +103,7 @@ const OrtNodeUnit* GetChildNodeUnitAllowQdq(
   std::vector<const OrtValueInfo*> outputs(num_outputs);
   RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(search_node, outputs.data(), outputs.size()), ort_api, nullptr);
 
+  // 2.1 Output must not be a graph output.
   const OrtValueInfo* output_info = outputs[0];
   bool is_graph_output = false;
   RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_IsGraphOutput(output_info, &is_graph_output), ort_api, nullptr);
@@ -110,13 +111,14 @@ const OrtNodeUnit* GetChildNodeUnitAllowQdq(
     return nullptr;
   }
 
-  // Require exactly one consumer.
+  // 3. Search node must have exactly one consumer.
   size_t num_consumers = 0;
   RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueNumConsumers(output_info, &num_consumers), ort_api, nullptr);
   if (num_consumers != 1) {
     return nullptr;
   }
 
+  // 3.1 Get the consumer child node
   std::vector<const OrtNode*> consumers(num_consumers);
   std::vector<int64_t> input_indices(num_consumers);
   RETURN_DEFAULT_IF_API_FAIL(
@@ -128,7 +130,8 @@ const OrtNodeUnit* GetChildNodeUnitAllowQdq(
     return nullptr;
   }
 
-  // If the child is a DequantizeLinear, skip it and look at its child.
+  // 4. If the child is a DequantizeLinear, skip it and look at its child.
+  // DQ -> op -> Q -> (DQ) -> ...
   if (Ort::ConstNode(potential_child).GetOperatorType() == DEQUANTIZE_LINEAR) {
     size_t dq_num_outputs = 0;
     RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(potential_child, &dq_num_outputs), ort_api, nullptr);
@@ -161,10 +164,12 @@ const OrtNodeUnit* GetChildNodeUnitAllowQdq(
     }
   }
 
+  // 5. Check if the child node is of the expected type.
   if (Ort::ConstNode(potential_child).GetOperatorType() != child_op_type) {
     return nullptr;
   }
 
+  // 5.1 Check if the child node is not already part of another NodeUnit.
   const auto child_node_unit_it = node_unit_map.find(potential_child);
   if (child_node_unit_it == node_unit_map.end()) {
     return nullptr;

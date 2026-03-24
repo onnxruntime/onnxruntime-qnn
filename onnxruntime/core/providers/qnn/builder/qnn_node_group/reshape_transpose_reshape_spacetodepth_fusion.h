@@ -20,10 +20,9 @@ class QnnModelWrapper;
 
 /// <summary>
 /// Represents a fusion of either:
-/// 1) Reshape -> Transpose -> Reshape
-/// 2) Transpose -> (Reshape -> Transpose -> Reshape)
-/// 3) (Reshape -> Transpose -> Reshape) -> Transpose
-/// 4) Transpose -> (Reshape -> Transpose -> Reshape) -> Transpose
+/// 1) Transpose -> (Reshape -> Transpose -> Reshape)
+/// 2) (Reshape -> Transpose -> Reshape) -> Transpose
+/// 3) Transpose -> (Reshape -> Transpose -> Reshape) -> Transpose
 /// that can be replaced by SpaceToDepth.
 /// </summary>
 class ReshapeTransposeReshapeSpaceToDepthFusion : public IQnnNodeGroup {
@@ -37,8 +36,8 @@ class ReshapeTransposeReshapeSpaceToDepthFusion : public IQnnNodeGroup {
         block_width_(block_width),
         mode_(mode),
         use_nhwc_fallback_(use_nhwc_fallback) {
-    if (node_units.size() < 3 || node_units.size() > 5) {
-      ORT_CXX_API_THROW("S2D Pattern expects 3 to 5 NodeUnits.", ORT_EP_FAIL);
+    if (node_units.size() < 4 || node_units.size() > 5) {
+      ORT_CXX_API_THROW("S2D Pattern expects 4 to 5 NodeUnits.", ORT_EP_FAIL);
     }
     node_units_.reserve(node_units.size());
     for (const OrtNodeUnit* node_unit : node_units) {
@@ -60,8 +59,9 @@ class ReshapeTransposeReshapeSpaceToDepthFusion : public IQnnNodeGroup {
   std::string_view Type() const override { return "ReshapeTransposeReshapeSpaceToDepthFusion"; }
 
   /// <summary>
-  /// Traverses graph to check if the given starting NodeUnit is part of a Reshape -> Transpose -> Reshape
-  /// pattern that can be replaced by SpaceToDepth. Returns a fusion if the pattern matches, or nullptr.
+  /// Traverses graph to check if the given starting NodeUnit is part of a wrapped
+  /// Reshape -> Transpose -> Reshape pattern that can be replaced by SpaceToDepth.
+  /// Returns a fusion if the pattern matches, or nullptr.
   /// </summary>
   static std::unique_ptr<IQnnNodeGroup> TryFusion(
       QnnModelWrapper& qnn_model_wrapper,
@@ -71,7 +71,7 @@ class ReshapeTransposeReshapeSpaceToDepthFusion : public IQnnNodeGroup {
       const Ort::Logger& logger);
 
  private:
-  std::vector<const OrtNodeUnit*> node_units_;  // 3-node core pattern or 5-node wrapped pattern
+  std::vector<const OrtNodeUnit*> node_units_;  // 4/5-node wrapped pattern
   const OrtNodeUnit* target_node_unit_ = nullptr;
   uint32_t block_height_ = 0;
   uint32_t block_width_ = 0;

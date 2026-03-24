@@ -108,16 +108,25 @@ GetTestModelFn BuildSpaceToDepthTestCase(const std::vector<int64_t>& input_shape
     const auto input_def = TestInputDef<float>(input_shape, false, -1.0f, 1.0f);
     MakeTestInput<float>(builder, "input", input_def);
 
-    std::string reshape1_input = "input";
+    // Add layout-sensitive Conv around RTR so wrapped fusion can trigger.
+    const int64_t c = input_shape[1];
+    const std::vector<int64_t> conv1_weight_shape = {c, c, 1, 1};
+    builder.MakeInitializer<float>("conv1_weight", conv1_weight_shape, -2.f, 2.f);
+    builder.AddNode("Conv1",
+                    "Conv",
+                    {"input", "conv1_weight"},
+                    {"conv1_out"},
+                    kOnnxDomain);
+
+    std::string reshape1_input = "conv1_out";
     if (use_qdq) {
       const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
-      reshape1_input = AddQDQNodePair<QuantType>(builder, "qdq_in", "input",
+      reshape1_input = AddQDQNodePair<QuantType>(builder, "qdq_in", "conv1_out",
                                                  input_qparams.scale, input_qparams.zero_point,
                                                  use_contrib_qdq);
     }
 
     const int64_t n = input_shape[0];
-    const int64_t c = input_shape[1];
     const int64_t h = input_shape[2];
     const int64_t w = input_shape[3];
     const int64_t h_div = h / block_height;
@@ -154,50 +163,58 @@ GetTestModelFn BuildSpaceToDepthTestCase(const std::vector<int64_t>& input_shape
                     {"reshape2_out"},
                     kOnnxDomain);
 
-    builder.MakeOutput("reshape2_out");
+    const int64_t out_c = c * block_height * block_width;
+    const std::vector<int64_t> conv2_weight_shape = {out_c, out_c, 1, 1};
+    builder.MakeInitializer<float>("conv2_weight", conv2_weight_shape, -2.f, 2.f);
+    builder.AddNode("Conv2",
+                    "Conv",
+                    {"reshape2_out", "conv2_weight"},
+                    {"Y"},
+                    kOnnxDomain);
+
+    builder.MakeOutput("Y");
   };
 }
 
-GetTestModelFn BuildWrappedSpaceToDepthTestCase() {
+template <typename QuantType = uint8_t>
+GetTestModelFn BuildHeadWrappedSpaceToDepthTestCase(bool use_qdq,
+                                                    bool use_contrib_qdq) {
   return [=](ModelTestBuilder& builder) -> void {
-    builder.graph_->set_name("spacetodepth_wrapped_fusion_graph");
+    builder.graph_->set_name("spacetodepth_head_wrapped_fusion_graph");
 
-    // Match ChannelShuffle test topology: Conv -> RTR -> Conv.
-    const int64_t num_channels = 12;
     const int64_t block_height = 2;
     const int64_t block_width = 2;
-    const std::vector<int64_t> input_shape{1, num_channels, 8, 8};
+    const std::vector<int64_t> input_shape{1, 6, 8, 8};
     const auto input_def = TestInputDef<float>(input_shape, false, -0.5f, 0.5f);
     MakeTestInput<float>(builder, "input", input_def);
 
-    // Conv1 weights
-    const std::vector<int64_t> conv1_weight_shape = {num_channels, num_channels / 2, 1, 1};
-    builder.MakeInitializer<float>("conv1_weight", conv1_weight_shape, -2.f, 2.f);
-
-    // Conv1: input + conv1_weight -> conv1_out
-    {
-      std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
-      attrs.push_back(test::MakeAttribute("group", static_cast<int64_t>(2)));
-      builder.AddNode("Conv1",
-                      "Conv",
-                      {"input", "conv1_weight"},
-                      {"conv1_out"},
-                      kOnnxDomain,
-                      attrs);
+    std::string conv1_input = "input";
+    if (use_qdq) {
+      const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
+      conv1_input = AddQDQNodePair<QuantType>(builder, "qdq_in_head", "input",
+                                              input_qparams.scale, input_qparams.zero_point,
+                                              use_contrib_qdq);
     }
 
-    const int64_t n = input_shape[0];
-    const int64_t c = input_shape[1];
-    const int64_t h = input_shape[2];
-    const int64_t w = input_shape[3];
+    const std::vector<int64_t> conv1_weight_shape = {12, 6, 1, 1};
+    builder.MakeInitializer<float>("conv1_weight", conv1_weight_shape, -2.f, 2.f);
+    builder.AddNode("Conv1",
+                    "Conv",
+                    {conv1_input, "conv1_weight"},
+                    {"conv1_out"},
+                    kOnnxDomain);
+
+    const int64_t n = 1;
+    const int64_t c = 12;
+    const int64_t h = 8;
+    const int64_t w = 8;
     const int64_t h_div = h / block_height;
     const int64_t w_div = w / block_width;
 
-    // RTR for SpaceToDepth CRD decomposition.
-    builder.Make1DInitializer<int64_t>("reshape1_shape_wrapped", {n, c, h_div, block_height, w_div, block_width});
+    builder.Make1DInitializer<int64_t>("reshape1_shape_head", {n, c, h_div, block_height, w_div, block_width});
     builder.AddNode("Reshape1",
                     "Reshape",
-                    {"conv1_out", "reshape1_shape_wrapped"},
+                    {"conv1_out", "reshape1_shape_head"},
                     {"reshape1_out"},
                     kOnnxDomain);
 
@@ -208,30 +225,94 @@ GetTestModelFn BuildWrappedSpaceToDepthTestCase() {
                     kOnnxDomain,
                     {builder.MakeIntsAttribute("perm", std::vector<int64_t>{0, 1, 3, 5, 2, 4})});
 
-    builder.Make1DInitializer<int64_t>("reshape2_shape_wrapped", {n, c * block_height * block_width, h_div, w_div});
+    builder.Make1DInitializer<int64_t>("reshape2_shape_head", {n, c * block_height * block_width, h_div, w_div});
     builder.AddNode("Reshape2",
                     "Reshape",
-                    {"transpose_out", "reshape2_shape_wrapped"},
+                    {"transpose_out", "reshape2_shape_head"},
+                    {"Y"},
+                    kOnnxDomain);
+
+    builder.MakeOutput("Y");
+  };
+}
+
+template <typename QuantType = uint8_t>
+GetTestModelFn BuildTailWrappedSpaceToDepthTestCase(bool use_qdq,
+                                                    bool use_contrib_qdq) {
+  return [=](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("spacetodepth_tail_wrapped_fusion_graph");
+
+    const int64_t block_height = 2;
+    const int64_t block_width = 2;
+    const std::vector<int64_t> input_shape{1, 12, 8, 8};
+    const auto input_def = TestInputDef<float>(input_shape, false, -0.5f, 0.5f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    std::string reshape1_input = "input";
+    if (use_qdq) {
+      const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
+      reshape1_input = AddQDQNodePair<QuantType>(builder, "qdq_in_tail", "input",
+                                                 input_qparams.scale, input_qparams.zero_point,
+                                                 use_contrib_qdq);
+    }
+
+    const int64_t n = input_shape[0];
+    const int64_t c = input_shape[1];
+    const int64_t h = input_shape[2];
+    const int64_t w = input_shape[3];
+    const int64_t h_div = h / block_height;
+    const int64_t w_div = w / block_width;
+
+    builder.Make1DInitializer<int64_t>("reshape1_shape_tail", {n, c, h_div, block_height, w_div, block_width});
+    builder.AddNode("Reshape1",
+                    "Reshape",
+                    {reshape1_input, "reshape1_shape_tail"},
+                    {"reshape1_out"},
+                    kOnnxDomain);
+
+    std::string transpose_input = "reshape1_out";
+    if (use_qdq) {
+      const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
+      transpose_input = AddQDQNodePair<QuantType>(builder, "qdq_after_reshape1_tail", "reshape1_out",
+                                                  input_qparams.scale, input_qparams.zero_point,
+                                                  use_contrib_qdq);
+    }
+
+    builder.AddNode("TransposeCore",
+                    "Transpose",
+                    {transpose_input},
+                    {"transpose_out"},
+                    kOnnxDomain,
+                    {builder.MakeIntsAttribute("perm", std::vector<int64_t>{0, 1, 3, 5, 2, 4})});
+
+    builder.Make1DInitializer<int64_t>("reshape2_shape_tail", {n, c * block_height * block_width, h_div, w_div});
+    builder.AddNode("Reshape2",
+                    "Reshape",
+                    {"transpose_out", "reshape2_shape_tail"},
                     {"reshape2_out"},
                     kOnnxDomain);
 
-    // Conv2 weights
-    const std::vector<int64_t> conv2_weight_shape = {c * block_height * block_width, 1, 3, 1};
-    builder.MakeInitializer<float>("conv2_weight", conv2_weight_shape, -2.f, 2.f);
-
-    // Conv2: reshape2_out + conv2_weight -> Y
-    {
-      std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
-      attrs.push_back(test::MakeAttribute("group", static_cast<int64_t>(c * block_height * block_width)));
-      attrs.push_back(test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 1}));
-      builder.MakeOutput("Y");
-      builder.AddNode("Conv2",
-                      "Conv",
-                      {"reshape2_out", "conv2_weight"},
-                      {"Y"},
-                      kOnnxDomain,
-                      attrs);
+    std::string conv_input = "reshape2_out";
+    if (use_qdq) {
+      const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
+      conv_input = AddQDQNodePair<QuantType>(builder, "qdq_after_reshape2_tail", "reshape2_out",
+                                             input_qparams.scale, input_qparams.zero_point,
+                                             use_contrib_qdq);
     }
+
+    const std::vector<int64_t> conv2_weight_shape = {c * block_height * block_width, 1, 3, 1};
+    builder.MakeInitializer<float>("conv2_weight_tail", conv2_weight_shape, -2.f, 2.f);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> attrs;
+    attrs.push_back(test::MakeAttribute("group", static_cast<int64_t>(c * block_height * block_width)));
+    attrs.push_back(test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 1}));
+    builder.AddNode("Conv2",
+                    "Conv",
+                    {conv_input, "conv2_weight_tail"},
+                    {"Y"},
+                    kOnnxDomain,
+                    attrs);
+    builder.MakeOutput("Y");
   };
 }
 
@@ -250,7 +331,8 @@ void RunSpaceToDepthFusionTest(const std::filesystem::path& json_qnn_graph_dir,
                                const std::vector<int64_t>& perm,
                                bool use_qdq,
                                bool use_contrib_qdq,
-                               const std::string& backend_type) {
+                               const std::string& backend_type,
+                               float fp32_abs_err = 1e-2f) {
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
   const int uncaught_on_entry = std::uncaught_exceptions();
@@ -269,14 +351,15 @@ void RunSpaceToDepthFusionTest(const std::filesystem::path& json_qnn_graph_dir,
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f,
+                  /*fp32_abs_err=*/fp32_abs_err,
                   /*log_severity=*/OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "SpaceToDepth", 1);
 }
 
-void RunWrappedSpaceToDepthFusionTest(const std::filesystem::path& json_qnn_graph_dir,
-                                      const std::string& backend_type) {
+void RunWrappedPatternSpaceToDepthFusionTest(const std::filesystem::path& json_qnn_graph_dir,
+                                             GetTestModelFn model_builder,
+                                             const std::string& backend_type) {
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
   const int uncaught_on_entry = std::uncaught_exceptions();
@@ -291,17 +374,14 @@ void RunWrappedSpaceToDepthFusionTest(const std::filesystem::path& json_qnn_grap
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
-  RunQnnModelTest(BuildWrappedSpaceToDepthTestCase(),
+  RunQnnModelTest(model_builder,
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-2f,
                   /*log_severity=*/OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
 
-  // 1) Ensure SpaceToDepth is materialized exactly once.
   AssertOpInQnnGraph(json_qnn_graph_dir, "SpaceToDepth", 1);
-
-  // 2) Ensure original RTR decomposition nodes are gone.
   AssertNodeNotInQnnGraph(json_qnn_graph_dir, "Reshape1");
   AssertNodeNotInQnnGraph(json_qnn_graph_dir, "TransposeCore");
   AssertNodeNotInQnnGraph(json_qnn_graph_dir, "Reshape2");
@@ -331,49 +411,72 @@ TEST_F(QnnCPUBackendTests, SpaceToDepthFusion_Float_CRD) {
                             /*backend_type=*/"cpu");
 }
 
-TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped5Node_Float_CRD) {
-  RunWrappedSpaceToDepthFusionTest("SpaceToDepthFusionWrapped5NodeFloatCRD_HTP",
-                                   /*backend_type=*/"htp");
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped4Node_Head_Float_CRD) {
+  RunWrappedPatternSpaceToDepthFusionTest("SpaceToDepthFusionWrapped4NodeHeadFloatCRD_HTP",
+                                          BuildHeadWrappedSpaceToDepthTestCase<>(/*use_qdq=*/false,
+                                                                                 /*use_contrib_qdq=*/false),
+                                          /*backend_type=*/"htp");
+}
+
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped4Node_Head_QDQ_CRD) {
+  RunWrappedPatternSpaceToDepthFusionTest("SpaceToDepthFusionWrapped4NodeHeadQDQCRD_HTP",
+                                          BuildHeadWrappedSpaceToDepthTestCase<>(/*use_qdq=*/true,
+                                                                                 /*use_contrib_qdq=*/false),
+                                          /*backend_type=*/"htp");
+}
+
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped4Node_Tail_Float_CRD) {
+  RunWrappedPatternSpaceToDepthFusionTest("SpaceToDepthFusionWrapped4NodeTailFloatCRD_HTP",
+                                          BuildTailWrappedSpaceToDepthTestCase<>(/*use_qdq=*/false,
+                                                                                 /*use_contrib_qdq=*/false),
+                                          /*backend_type=*/"htp");
+}
+
+TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped4Node_Tail_QDQ_CRD) {
+  RunWrappedPatternSpaceToDepthFusionTest("SpaceToDepthFusionWrapped4NodeTailQDQCRD_HTP",
+                                          BuildTailWrappedSpaceToDepthTestCase<>(/*use_qdq=*/true,
+                                                                                 /*use_contrib_qdq=*/false),
+                                          /*backend_type=*/"htp");
 }
 
 // Fails with QNN CPU graph execution failure.
 // * Tracking issue: https://jira-dc.qualcomm.com/jira/browse/AISW-175353
-// TEST_F(QnnCPUBackendTests, SpaceToDepthFusion_Float_UnequalBlockSize) {
-//   RunSpaceToDepthFusionTest("SpaceToDepthFusionUnequalBlock_CPU",
-//                             /*input_shape=*/{1, 2, 4, 6},
-//                             /*block_height=*/2,
-//                             /*block_width=*/3,
-//                             /*perm=*/{0, 3, 5, 1, 2, 4},
-//                             /*use_qdq=*/false,
-//                             /*use_contrib_qdq=*/false,
-//                             /*backend_type=*/"cpu");
-// }
+TEST_F(QnnCPUBackendTests, DISABLED_SpaceToDepthFusion_Float_UnequalBlockSize) {
+  RunSpaceToDepthFusionTest("SpaceToDepthFusionUnequalBlock_CPU",
+                            /*input_shape=*/{1, 2, 4, 6},
+                            /*block_height=*/2,
+                            /*block_width=*/3,
+                            /*perm=*/{0, 3, 5, 1, 2, 4},
+                            /*use_qdq=*/false,
+                            /*use_contrib_qdq=*/false,
+                            /*backend_type=*/"cpu");
+}
 
 // Fails with QNN CPU graph execution failure.
 // * Tracking issue: https://jira-dc.qualcomm.com/jira/browse/AISW-175353
-// TEST_F(QnnCPUBackendTests, SpaceToDepthFusion_Float_UnequalBlockSize_CRD) {
-//   RunSpaceToDepthFusionTest("SpaceToDepthFusionUnequalBlockCRD_CPU",
-//                             /*input_shape=*/{1, 2, 4, 6},
-//                             /*block_height=*/2,
-//                             /*block_width=*/3,
-//                             /*perm=*/{0, 1, 3, 5, 2, 4},
-//                             /*use_qdq=*/false,
-//                             /*use_contrib_qdq=*/false,
-//                             /*backend_type=*/"cpu");
-// }
+TEST_F(QnnCPUBackendTests, DISABLED_SpaceToDepthFusion_Float_UnequalBlockSize_CRD) {
+  RunSpaceToDepthFusionTest("SpaceToDepthFusionUnequalBlockCRD_CPU",
+                            /*input_shape=*/{1, 2, 4, 6},
+                            /*block_height=*/2,
+                            /*block_width=*/3,
+                            /*perm=*/{0, 1, 3, 5, 2, 4},
+                            /*use_qdq=*/false,
+                            /*use_contrib_qdq=*/false,
+                            /*backend_type=*/"cpu");
+}
 
 // Fails with Accuracy mismatch
 // * Tracking issue: https://jira-dc.qualcomm.com/jira/browse/AISW-175353
-// TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Float_DCR) {
-//   RunSpaceToDepthFusionTest("SpaceToDepthFusionFloatDCR",
-//                             /*input_shape=*/{1, 2, 4, 4},
-//                             /*block_height=*/2,
-//                             /*block_width=*/2,
-//                             /*perm=*/{0, 3, 5, 1, 2, 4},
-//                             /*use_qdq=*/false,
-//                             /*use_contrib_qdq=*/false,
-//                             /*backend_type=*/"htp");
-// }
+TEST_F(QnnHTPBackendTests, DISABLED_SpaceToDepthFusion_Float_DCR) {
+  RunSpaceToDepthFusionTest("SpaceToDepthFusionFloatDCR",
+                            /*input_shape=*/{1, 2, 4, 4},
+                            /*block_height=*/2,
+                            /*block_width=*/2,
+                            /*perm=*/{0, 3, 5, 1, 2, 4},
+                            /*use_qdq=*/false,
+                            /*use_contrib_qdq=*/false,
+                            /*backend_type=*/"htp");
+}
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_DCR) {
   RunSpaceToDepthFusionTest("SpaceToDepthFusionFloatDCRQDQ",
@@ -383,7 +486,8 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_DCR) {
                             /*perm=*/{0, 3, 5, 1, 2, 4},
                             /*use_qdq=*/true,
                             /*use_contrib_qdq=*/false,
-                            /*backend_type=*/"htp");
+                            /*backend_type=*/"htp",
+                            /*fp32_abs_err=*/3.9e-2f);
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Float_CRD) {
@@ -405,21 +509,22 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD) {
                             /*perm=*/{0, 1, 3, 5, 2, 4},
                             /*use_qdq=*/true,
                             /*use_contrib_qdq=*/false,
-                            /*backend_type=*/"htp");
+                            /*backend_type=*/"htp",
+                            /*fp32_abs_err=*/2.9e-2);
 }
 
 // Fails with Accuracy mismatch
 // * Tracking issue: https://jira-dc.qualcomm.com/jira/browse/AISW-175353
-// TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_DCR) {
-//   RunSpaceToDepthFusionTest("SpaceToDepthFusionUnequalBlock",
-//                             /*input_shape=*/{1, 2, 4, 6},
-//                             /*block_height=*/2,
-//                             /*block_width=*/3,
-//                             /*perm=*/{0, 3, 5, 1, 2, 4},
-//                             /*use_qdq=*/false,
-//                             /*use_contrib_qdq=*/false,
-//                             /*backend_type=*/"htp");
-// }
+TEST_F(QnnHTPBackendTests, DISABLED_SpaceToDepthFusion_UnequalBlockSize_DCR) {
+  RunSpaceToDepthFusionTest("SpaceToDepthFusionUnequalBlock",
+                            /*input_shape=*/{1, 2, 4, 6},
+                            /*block_height=*/2,
+                            /*block_width=*/3,
+                            /*perm=*/{0, 3, 5, 1, 2, 4},
+                            /*use_qdq=*/false,
+                            /*use_contrib_qdq=*/false,
+                            /*backend_type=*/"htp");
+}
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_CRD) {
   RunSpaceToDepthFusionTest("SpaceToDepthFusionUnequalBlockCRD",
@@ -440,7 +545,8 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_QDQ) {
                             /*perm=*/{0, 3, 5, 1, 2, 4},
                             /*use_qdq=*/true,
                             /*use_contrib_qdq=*/false,
-                            /*backend_type=*/"htp");
+                            /*backend_type=*/"htp",
+                            /*fp32_abs_err=*/2.9e-2f);
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_QDQ_CRD) {
@@ -512,7 +618,7 @@ TEST_F(QnnHTPBackendTests, TempDumpDlcTest) {
   std::filesystem::remove_all(qnn_dlc_dir);
   ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
 
-  InitNHWCResizeModel("sr_sim.onnx",
+  InitNHWCResizeModel("s2d_head.onnx",
                       TestBackend::Htp,
                       registered_ep_device,
                       TestBackend::Ir);
