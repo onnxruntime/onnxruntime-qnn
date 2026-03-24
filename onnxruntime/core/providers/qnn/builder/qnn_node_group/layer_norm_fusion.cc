@@ -36,8 +36,8 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
                                          bool validate);
 
 static std::optional<float> GetConstantFloatScalar(const QnnModelWrapper& qmw,
-                                                    const OrtApi& ort_api,
-                                                    const std::string& input_name) {
+                                                   const OrtApi& ort_api,
+                                                   const std::string& input_name) {
   if (!qmw.IsConstantInput(input_name)) {
     return std::nullopt;
   }
@@ -71,7 +71,7 @@ static std::optional<float> GetConstantFloatScalar(const QnnModelWrapper& qmw,
 }
 
 static std::optional<std::vector<uint32_t>> GetReduceMeanAxes(const QnnModelWrapper& qmw,
-                                                               const OrtNodeUnit& reduce_mean_node_unit) {
+                                                              const OrtNodeUnit& reduce_mean_node_unit) {
   const auto& inputs = reduce_mean_node_unit.Inputs();
   std::vector<uint32_t> input_shape;
   if (!qmw.GetOnnxShape(inputs[0].shape, input_shape)) {
@@ -124,10 +124,18 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
-  // Must start with a ReduceMean SingleNode.
+  // Must start with a ReduceMean SingleNode with keepdims=1.
+  // keepdims=1 is required so that the mean output has the same rank as x,
+  // allowing Sub(x, mean) to broadcast correctly.
   if (reduce_mean_node_unit.OpType() != "ReduceMean" ||
       reduce_mean_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode) {
     return nullptr;
+  }
+  {
+    OrtNodeAttrHelper rm1_helper(reduce_mean_node_unit);
+    if (rm1_helper.Get("keepdims", static_cast<int64_t>(1)) != 1) {
+      return nullptr;
+    }
   }
 
   const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
@@ -209,10 +217,16 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
   // Pow → ReduceMean₂
   const std::array<std::string_view, 1> rm_types{"ReduceMean"};
   const OrtNodeUnit* reduce_mean2_node_unit = GetOnlyChildOfType(qnn_model_wrapper, *pow_node_unit,
-                                                                  rm_types, node_to_node_unit,
-                                                                  node_unit_to_qnn_node_group);
+                                                                 rm_types, node_to_node_unit,
+                                                                 node_unit_to_qnn_node_group);
   if (reduce_mean2_node_unit == nullptr) {
     return nullptr;
+  }
+  {
+    OrtNodeAttrHelper rm2_helper(*reduce_mean2_node_unit);
+    if (rm2_helper.Get("keepdims", static_cast<int64_t>(1)) != 1) {
+      return nullptr;
+    }
   }
 
   // Both ReduceMeans must have the same axes, pointing to the last dimension.
@@ -236,8 +250,8 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
   // ReduceMean₂ → Add(ε)
   const std::array<std::string_view, 1> add_types{"Add"};
   const OrtNodeUnit* add_eps_node_unit = GetOnlyChildOfType(qnn_model_wrapper, *reduce_mean2_node_unit,
-                                                             add_types, node_to_node_unit,
-                                                             node_unit_to_qnn_node_group);
+                                                            add_types, node_to_node_unit,
+                                                            node_unit_to_qnn_node_group);
   if (add_eps_node_unit == nullptr) {
     return nullptr;
   }
@@ -263,8 +277,8 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
   // Add(ε) → Sqrt
   const std::array<std::string_view, 1> sqrt_types{"Sqrt"};
   const OrtNodeUnit* sqrt_node_unit = GetOnlyChildOfType(qnn_model_wrapper, *add_eps_node_unit,
-                                                          sqrt_types, node_to_node_unit,
-                                                          node_unit_to_qnn_node_group);
+                                                         sqrt_types, node_to_node_unit,
+                                                         node_unit_to_qnn_node_group);
   if (sqrt_node_unit == nullptr) {
     return nullptr;
   }
@@ -272,8 +286,8 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
   // Sqrt → Div
   const std::array<std::string_view, 1> div_types{"Div"};
   const OrtNodeUnit* div_node_unit = GetOnlyChildOfType(qnn_model_wrapper, *sqrt_node_unit,
-                                                         div_types, node_to_node_unit,
-                                                         node_unit_to_qnn_node_group);
+                                                        div_types, node_to_node_unit,
+                                                        node_unit_to_qnn_node_group);
   if (div_node_unit == nullptr || div_node_unit != div_from_sub_unit) {
     return nullptr;
   }
@@ -285,8 +299,8 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
   // Div → Mul(γ)
   const std::array<std::string_view, 1> mul_types{"Mul"};
   const OrtNodeUnit* mul_gamma_node_unit = GetOnlyChildOfType(qnn_model_wrapper, *div_node_unit,
-                                                               mul_types, node_to_node_unit,
-                                                               node_unit_to_qnn_node_group);
+                                                              mul_types, node_to_node_unit,
+                                                              node_unit_to_qnn_node_group);
   if (mul_gamma_node_unit == nullptr) {
     return nullptr;
   }
@@ -309,8 +323,8 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
 
   // Mul(γ) → Add(β)
   const OrtNodeUnit* add_beta_node_unit = GetOnlyChildOfType(qnn_model_wrapper, *mul_gamma_node_unit,
-                                                              add_types, node_to_node_unit,
-                                                              node_unit_to_qnn_node_group);
+                                                             add_types, node_to_node_unit,
+                                                             node_unit_to_qnn_node_group);
   if (add_beta_node_unit == nullptr) {
     return nullptr;
   }
@@ -354,7 +368,8 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
                ", epsilon=" + std::to_string(epsilon) +
                ", axes=[" + axes_str + "]" +
                ", gamma=" + gamma_input_def->name +
-               ", beta=" + beta_input_def->name).c_str());
+               ", beta=" + beta_input_def->name)
+                  .c_str());
 
   if (auto status = ValidateOnQnn(qnn_model_wrapper, node_units, root_input,
                                   *gamma_input_def, *beta_input_def, final_output,
