@@ -23,6 +23,9 @@ on:
         type: boolean
         default: false
 
+env:
+  BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
+
 jobs:
   build-artifacts:
     uses: ./.github/workflows/qualcomm-internal-build-wheels-nugets-zips.yml
@@ -43,57 +46,68 @@ jobs:
         run: |
           ./qcom/scripts/upleveling/create_uplevel_venv.sh
 
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
       # Upload Python wheel to Artifactory
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
+      - name: Download Python 3.11 Wheel for ARM64 Windows from Artifactory
+        uses: ./.github/actions/download-ci-artifact
         with:
-          name: ORT windows arm64 Python 3.11 Wheel
-          path: ${{ github.workspace }}/build/dist
+          name: "windows-arm64-py3.11-wheels"
 
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
+      - name: Download Python 3.11 Wheel for ARM64ec Windows from Artifactory
+        uses: ./.github/actions/download-ci-artifact
         with:
-          name: ORT windows arm64ec Python 3.11 Wheel
-          path: ${{ github.workspace }}/build/dist
-  
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ORT windows arm64 Python 3.12 Wheel
-          path: ${{ github.workspace }}/build/dist
-  
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ORT windows arm64ec Python 3.12 Wheel
-          path: ${{ github.workspace }}/build/dist
-  
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ORT windows arm64 Python 3.13 Wheel
-          path: ${{ github.workspace }}/build/dist
-  
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ORT windows arm64ec Python 3.13 Wheel
-          path: ${{ github.workspace }}/build/dist
+          name: "windows-arm64ec-py3.11-wheels"
 
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
+      - name: Download Python 3.12 Wheel for ARM64 Windows from Artifactory
+        uses: ./.github/actions/download-ci-artifact
         with:
-          name: ORT windows arm64 Python 3.14 Wheel
-          path: ${{ github.workspace }}/build/dist
+          name: "windows-arm64-py3.12-wheels"
 
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
+      - name: Download Python 3.12 Wheel for ARM64ec Windows from Artifactory
+        uses: ./.github/actions/download-ci-artifact
         with:
-          name: ORT windows arm64ec Python 3.14 Wheel
-          path: ${{ github.workspace }}/build/dist
+          name: "windows-arm64ec-py3.12-wheels"
 
-      - name: Check wheel
+      - name: Download Python 3.13 Wheel for ARM64 Windows from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: "windows-arm64-py3.13-wheels"
+
+      - name: Download Python 3.13 Wheel for ARM64ec Windows from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: "windows-arm64ec-py3.13-wheels"
+
+      - name: Download Python 3.14 Wheel for ARM64 Windows from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: "windows-arm64-py3.14-wheels"
+
+      - name: Download Python 3.14 Wheel for ARM64ec Windows from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: "windows-arm64ec-py3.14-wheels"
+
+      - name: Consolidate Wheels
         run: |
+          mkdir "${{ github.workspace }}/build/dist"
+          cp "${{ github.workspace }}/build/*/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
+          cp "${{ github.workspace }}/build/*/Release/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
+
+      - name: Check wheels
+        run: |
+          if [ $(find ${{ github.workspace }}/build/dist -maxdepth 1 | wc -l) -ne 8 ]; then
+            echo "Found wrong number of wheels in build/dist"
+            exit 1
+          fi
           source uplevel_venv/bin/activate
           twine check ${{ github.workspace }}/build/dist/*
 
@@ -117,12 +131,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4.1.1
 
-      # Upload Nuget package to Artifactory
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
         with:
-          name: ORT windows arm64 Python 3.12 QNN NuGet Package
-          path: ${{ github.workspace }}/build/nuget
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Download NuGet package for ARM64 Windows from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: "windows-arm64-py3.12-nuget"
+
+      - name: Consolidate NuGet Packages
+        run: |
+          mkdir "${{ github.workspace }}/build/nuget"
+          cp "${{ github.workspace }}/build/*/Release/"Qualcomm.ML.OnnxRuntime.QNN*.nupkg "${{ github.workspace }}/build/nuget"
+          cp "${{ github.workspace }}/build/*/Release/Release/"Qualcomm.ML.OnnxRuntime.QNN*.nupkg "${{ github.workspace }}/build/nuget"
+
+      - name: Check NuGet Packages
+        run: |
+          if [ $(find ${{ github.workspace }}/build/nuget -maxdepth 1 | wc -l) -ne 1 ]; then
+            echo "Found wrong number of NuGet packages in build/nuget"
+            exit 1
+          fi
 
       - name: Publish
         if: ${{ !inputs.skip_publish }}
@@ -151,12 +185,32 @@ jobs:
     steps:
       - uses: actions/checkout@v4.1.1
 
-      # Upload Zip package to Artifactory
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
         with:
-          name: ORT windows arm64 Python 3.12 Zip Asset
-          path: ${{ github.workspace }}/build/zip
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Download Zip package for ARM64 Windows from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: "windows-arm64-py3.12-zip"
+
+      - name: Consolidate Zip Packages
+        run: |
+          mkdir "${{ github.workspace }}/build/zip"
+          cp "${{ github.workspace }}/build/*/Release/dist/"onnxruntime-qnn*.zip "${{ github.workspace }}/build/zip"
+          cp "${{ github.workspace }}/build/*/Release/Release/dist/"onnxruntime-qnn*.zip "${{ github.workspace }}/build/zip"
+
+      - name: Check Zip Packages
+        run: |
+          if [ $(find ${{ github.workspace }}/build/zip -maxdepth 1 | wc -l) -ne 1 ]; then
+            echo "Found wrong number of Zip packages in build/zip"
+            exit 1
+          fi
 
       - name: Publish
         if: ${{ !inputs.skip_publish }}

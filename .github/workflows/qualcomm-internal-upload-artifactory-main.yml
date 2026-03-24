@@ -15,6 +15,9 @@ on:
         description: "Version suffix for released package. If set, the specified suffix will be appended to the version string."
         type: string
         default: "rc0"
+      skip_publish:
+        type: boolean
+        default: false
 
 jobs:
   check-admin-permission:
@@ -53,5 +56,5 @@ jobs:
     secrets: inherit
     with:
       nightly_build: false
-      skip_publish: false
+      skip_publish: true  # TODO-jrk
       version_suffix: ${{ inputs.version_suffix }}
