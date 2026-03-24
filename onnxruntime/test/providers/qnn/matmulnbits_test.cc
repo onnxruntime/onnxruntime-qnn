@@ -5,7 +5,6 @@
 
 #include "gtest/gtest.h"
 
-#include "core/mlas/inc/mlas_q4.h"
 #include "core/session/ort_env.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 
@@ -25,30 +24,25 @@ void QuantizeDequantize(std::vector<float>& raw_vals,
                         int32_t N,
                         int32_t K,
                         int32_t block_size) {
-  auto& ortenv = **GetOrtEnv();
-  onnxruntime::concurrency::ThreadPool* tp = ortenv.GetEnvironment().GetIntraOpThreadPool();
-
-  MlasQuantizeBlockwise<float, QBits>(quant_vals.data(),
-                                      scales.data(),
-                                      zp != nullptr ? zp->data() : nullptr,
-                                      raw_vals.data(),
-                                      block_size,
-                                      true,
-                                      K,
-                                      N,
-                                      N,
-                                      tp);
+  QuantizeBlockwise<float, QBits>(quant_vals.data(),
+                                  scales.data(),
+                                  zp != nullptr ? zp->data() : nullptr,
+                                  raw_vals.data(),
+                                  block_size,
+                                  true,
+                                  K,
+                                  N,
+                                  N);
 
   // Note that raw_vals is NxK after dequant
-  MlasDequantizeBlockwise<float, QBits>(raw_vals.data(),                       // dequantized output
-                                        quant_vals.data(),                     // quantized input
-                                        scales.data(),                         // quantization scales
-                                        zp != nullptr ? zp->data() : nullptr,  // quantization zero points
-                                        block_size,                            // quantization block size
-                                        true,                                  // columnwise quantization
-                                        K,                                     // number of rows
-                                        N,                                     // number of columns
-                                        tp);
+  DequantizeBlockwise<float, QBits>(raw_vals.data(),                       // dequantized output
+                                    quant_vals.data(),                     // quantized input
+                                    scales.data(),                         // quantization scales
+                                    zp != nullptr ? zp->data() : nullptr,  // quantization zero points
+                                    block_size,                            // quantization block size
+                                    true,                                  // columnwise quantization
+                                    K,                                     // number of rows
+                                    N);                                    // number of columns
 }
 
 struct TestParams4Bits {
