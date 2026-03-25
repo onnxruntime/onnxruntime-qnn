@@ -269,7 +269,7 @@ void RunSpaceToDepthFusionTest(const std::filesystem::path& json_qnn_graph_dir,
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
   const int uncaught_on_entry = std::uncaught_exceptions();
-  auto cleanup = gsl::finally([&json_qnn_graph_dir, uncaught_on_entry]() {
+  auto cleanup = gsl::finally([uncaught_on_entry]() {
     if (std::uncaught_exceptions() > uncaught_on_entry) {
       return;
     }
@@ -296,7 +296,7 @@ void RunWrappedPatternSpaceToDepthFusionTest(const std::filesystem::path& json_q
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
   const int uncaught_on_entry = std::uncaught_exceptions();
-  auto cleanup = gsl::finally([&json_qnn_graph_dir, uncaught_on_entry]() {
+  auto cleanup = gsl::finally([uncaught_on_entry]() {
     if (std::uncaught_exceptions() > uncaught_on_entry) {
       return;
     }

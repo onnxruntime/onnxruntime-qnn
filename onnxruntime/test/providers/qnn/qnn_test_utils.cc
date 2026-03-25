@@ -415,6 +415,7 @@ void InferenceModel(const std::string& model_data,
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
 
   session_options.SetLogId(log_id);
+  session_options.SetLogSeverityLevel(log_severity);
 
   // Uncomment to dump verbose output to stdout.
   // session_options.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
