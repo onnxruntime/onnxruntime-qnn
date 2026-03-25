@@ -681,7 +681,7 @@ bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
 
 bool QnnModelWrapper::GetOnnxShape(const std::optional<std::vector<int64_t>>& onnx_shape, std::vector<uint32_t>& shape) {
   // Don't support dynamic shape.
-  if (onnx_shape == std::nullopt) {
+  if (!onnx_shape.has_value()) {
     return false;
   }
 
