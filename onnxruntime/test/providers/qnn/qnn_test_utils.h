@@ -587,6 +587,7 @@ void InferenceModel(const std::string& model_data,
                     ExpectedEPNodeAssignment expected_ep_assignment,
                     std::unordered_map<std::string, Ort::Value>& feeds,
                     std::vector<Ort::Value>& output_vals,
+                    OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                     const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                     std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
                     std::function<void(const Graph&)>* graph_checker = nullptr);
@@ -834,7 +835,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                                  ProviderOptions qnn_options, int opset_version,
                                  ExpectedEPNodeAssignment expected_ep_assignment,
                                  QDQTolerance tolerance = QDQTolerance(),
-                                 OrtLoggingLevel log_severity [[maybe_unused]] = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                                 OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                                  const std::string& qnn_ctx_model_path = "",
                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                                  std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
@@ -936,8 +937,6 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
     qnn_options["json_qnn_graph_dir"] = output_dir.string();
   }
 
-  // TODO: Enable QNN_VERBOSE to SetLogSeverityLevel
-
   TryEnableQNNSaver(qnn_options);
 
   // Run with QNN.
@@ -954,6 +953,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                    expected_ep_assignment,
                    qdq_helper.feeds_,
                    qnn_qdq_outputs,
+                   log_severity,
                    session_option_pairs,
                    graph_optimization_level);
   } else {
@@ -963,6 +963,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                    expected_ep_assignment,
                    qdq_helper.feeds_,
                    qnn_qdq_outputs,
+                   log_severity,
                    session_option_pairs,
                    graph_optimization_level,
                    qnn_ep_graph_checker);
@@ -1087,7 +1088,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                                   int opset_version,
                                   ExpectedEPNodeAssignment expected_ep_assignment,
                                   float tolerance = 0.004,
-                                  OrtLoggingLevel log_severity [[maybe_unused]] = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                                  OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                                   const std::string& qnn_ctx_model_path = "",
                                   const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
   std::filesystem::path output_dir;
@@ -1179,8 +1180,6 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     qnn_options["json_qnn_graph_dir"] = output_dir.string();
   }
 
-  // TODO: Enable QNN_VERBOSE to SetLogSeverityLevel
-
   TryEnableQNNSaver(qnn_options);
 
   // Run with QNN.
@@ -1197,6 +1196,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                    expected_ep_assignment,
                    f16_helper.feeds_,
                    qnn_f16_outputs,
+                   log_severity,
                    session_option_pairs);
   } else {
     InferenceModel(f16_model_data,
@@ -1205,6 +1205,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                    expected_ep_assignment,
                    f16_helper.feeds_,
                    qnn_f16_outputs,
+                   log_severity,
                    session_option_pairs);
   }
 
