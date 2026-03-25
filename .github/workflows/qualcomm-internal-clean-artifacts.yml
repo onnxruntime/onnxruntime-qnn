@@ -13,8 +13,8 @@ env:
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
 
 jobs:
-  clean-ci-artifacts:
-    name: "Clean temporary CI artifacts"
+  clean-artifacts:
+    name: "Clean temporary CI and old QA artifacts"
     runs-on: [self-hosted]
 
     steps:
@@ -35,18 +35,24 @@ jobs:
           --spec "${{ github.workspace }}/qcom/scripts/artifactory/aql/expired_ci_artifacts.json"
           --spec-vars "repo=${{ env.BUILD_ARTIFACTORY_REPO }}"
 
+      - name: Delete old QA artifacts
+        run: >
+          jf rt delete
+          --spec "${{ github.workspace }}/qcom/scripts/artifactory/aql/expired_qa_artifacts.json"
+          --spec-vars "repo=${{ env.BUILD_ARTIFACTORY_REPO }}"
+
       # This is a bit of a hack, but there does not appear to be a way to do this nicely without
       # a server-side plugin. Instead, we just use a CLI-side plugin several times. Eventually
       # it will converge and do nothing.
       - name: Prune empty folders
         run: |
           jf plugin install rm-empty
-          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
-          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
-          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
-          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
-          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
-          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
-          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
-          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
-          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ --quiet

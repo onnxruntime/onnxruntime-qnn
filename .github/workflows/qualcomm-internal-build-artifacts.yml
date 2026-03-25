@@ -1,0 +1,107 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Qualcomm Internal Build Artifacts
+
+permissions:
+  contents: read
+  checks: write
+
+on:
+  workflow_call:
+    inputs: &common_inputs
+      nightly_build:
+        description: "If true, include a verbose version string in wheel file names."
+        type: boolean
+        default: true
+      version_suffix:
+        description: "Version suffix for released package. If set, the specified suffix will be appended to the version string."
+        type: string
+        default: ""
+      build_linux_x86_64:
+        description: "If true, build for x86_64 Linux"
+        type: boolean
+        default: true
+      linux_aarch64_manylinux_2_34_target_py_vsns:
+        description: "JSON list of Python versions to build for aarch64 manylinux_2_34"
+        type: string
+        default: "['3.10','3.11','3.12','3.13']"
+      windows_target_archs:
+        description: "JSON list of Windows architectures to build"
+        type: string
+        default: "['arm64', 'arm64x']"
+      windows_target_py_vsns:
+        description: "JSON list of Python versions to build for Windows"
+        type: string
+        default: "['3.11','3.12','3.13','3.14']"
+      windows_arm64_build_nuget:
+        description: "If true, build a NuGet package with the first ARM64 build."
+        type: boolean
+        default: true
+      windows_arm64_build_zip:
+        description: "If true, build a zip archive with the first ARM64 build."
+        type: boolean
+        default: true
+
+  workflow_dispatch:
+    inputs: *common_inputs
+
+jobs:
+  build-linux-aarch64-manylinux_2_34:
+    if: ${{ toJSON(fromJSON(inputs.linux_aarch64_manylinux_2_34_target_py_vsns)) != '[]' }}
+    strategy:
+      matrix:
+        target_py_vsn: ${{ fromJSON(inputs.linux_aarch64_manylinux_2_34_target_py_vsns) }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: linux
+      target_arch: aarch64_manylinux_2_34
+      target_py_vsn: ${{ matrix.target_py_vsn }}
+      run_tests: false
+      upload_test_archive: false
+      upload_wheel: false
+
+  build-linux-x86_64:
+    if: ${{ inputs.build_linux_x86_64 }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: linux
+      target_arch: x86_64
+      # Specifying a python version here doesn't actually do anything at this point since we don't know what the Linux
+      # wheel distribution story is yet. For now, this is just so that all of the job and artifact names reflect the
+      # version of cpython that's installed on our Linux build machines.
+      target_py_vsn: "3.10"
+      run_tests: false
+      upload_test_archive: false
+      upload_wheel: true
+
+  build-windows:
+    if: ${{ toJSON(fromJSON(inputs.windows_target_archs)) != '[]' && toJSON(fromJSON(inputs.windows_target_py_vsns)) != '[]' }}
+    strategy:
+      matrix:
+        target_arch: ${{ fromJSON(inputs.windows_target_archs) }}
+        target_py_vsn: ${{ fromJSON(inputs.windows_target_py_vsns) }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: windows
+      target_arch: ${{ matrix.target_arch }}
+      target_py_vsn: ${{ matrix.target_py_vsn }}
+      build_runner_arch: "${{ matrix.target_arch == 'arm64' && 'ARM64' || 'X64' }}"
+      test_runner_arch: ARM64
+      run_tests: false
+      test_wheel: false
+      upload_test_archive: false
+      # On ARM64, build NuGet/Zip with the first python version we encounter
+      build_nuget: ${{ inputs.windows_arm64_build_nuget && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      upload_nuget: ${{ inputs.windows_arm64_build_nuget && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      build_zip: ${{ inputs.windows_arm64_build_zip && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      upload_zip: ${{ inputs.windows_arm64_build_zip && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}

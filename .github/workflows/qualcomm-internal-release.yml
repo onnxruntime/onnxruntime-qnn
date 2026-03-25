@@ -1,7 +1,7 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
-name: Publish ONNX Runtime Execution Provider wheel
+name: Publish ONNX Runtime Execution Provider
 
 permissions:
   checks: write
@@ -10,39 +10,43 @@ permissions:
 
 on:
   workflow_call:
-    inputs:
+    inputs: &common_inputs
       nightly_build:
         description: "If true, include a verbose version string in wheel file names."
         type: boolean
         default: true
-      skip_publish:
+      skip_publish_qa:
+        description: "If true, don't publish QA artifacts."
         type: boolean
         default: false
+      skip_publish_wheel:
+        description: "If true, don't publish the Wheel."
+        type: boolean
+        default: false
+      qa_tag:
+        description: "Name of the build for QA purposes; leave blank to generate one based on today's date."
+        type: string
+        default: ''
   workflow_dispatch:
-    inputs:
-      nightly_build:
-        description: "If true, include a verbose version string in wheel file names."
-        type: boolean
-        default: true
-      skip_publish:
-        description: "If true, do everything except publishing to the PyPI server"
-        type: boolean
-        default: true
+    inputs: *common_inputs
 
 env:
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
 
 jobs:
-  build-wheels:
-    uses: ./.github/workflows/qualcomm-internal-build-wheels.yml
+  build-artifacts:
+    uses: ./.github/workflows/qualcomm-internal-build-artifacts.yml
     secrets: inherit
     with:
       nightly_build: ${{inputs.nightly_build}}
+      linux_aarch64_manylinux_2_34_target_py_vsns: "[]"
+      windows_target_archs: "['arm64', 'arm64ec', 'x86_64']"
+      windows_target_py_vsns: "['3.11','3.12','3.13','3.14']"
 
   publish-wheel-workflow:
     name: "Publish distribution to PyPI"
     runs-on: [Linux, self-hosted, Build]
-    needs: [build-wheels]
+    needs: [build-artifacts]
 
     steps:
       - uses: actions/checkout@v6
@@ -86,6 +90,137 @@ jobs:
           source venv/bin/activate && twine check ${{ github.workspace }}/build/dist/*
 
       - name: Publish
-        if: ${{ !inputs.skip_publish }}
+        if: ${{ !inputs.skip_publish_wheel }}
         run: |
           source venv/bin/activate && twine upload --config-file=build/pypirc -r local ${{ github.workspace }}/build/dist/*
+
+  publish-qa-artifacts:
+    name: "Publish QA artifacts to Artifactory"
+    runs-on: [Linux, self-hosted, Build]
+    needs: [build-artifacts]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v5
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Download x86_64 Linux 3.10 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64-py3.10-wheels
+
+      - name: Download arm64 Windows 3.11 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64-py3.11-wheels
+
+      - name: Download x86_64 Windows 3.11 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.11-wheels
+
+      - name: Download arm64ec Windows 3.11 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.11-wheels
+
+      - name: Download arm64 Windows 3.12 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64-py3.12-wheels
+
+      - name: Download arm64ec Windows 3.12 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.12-wheels
+
+      - name: Download x86_64 Windows 3.12 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.12-wheels
+
+      - name: Download arm64 Windows 3.13 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64-py3.13-wheels
+
+      - name: Download arm64ec Windows 3.13 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.13-wheels
+
+      - name: Download x86_64 Windows 3.13 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.13-wheels
+
+      - name: Download arm64 Windows 3.14 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64-py3.14-wheels
+
+      - name: Download arm64ec Windows 3.14 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.14-wheels
+
+      - name: Download x86_64 Windows 3.14 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.14-wheels
+
+      # TODO(mbadnara): Switch to download-ci-artifact
+      - name: Download Artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ORT windows arm64 Python 3.11 QNN NuGet Package
+          path: ${{ github.workspace }}/build/nuget
+
+      # TODO(mbadnara): Switch to download-ci-artifact
+      - name: Download Artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: ORT windows arm64 Python 3.11 Zip Asset
+          path: ${{ github.workspace }}/build/zip
+
+      - name: Merge AMD Wheels
+        run: |
+          # Collect the ARM64ec and x86_64 wheels into known locations
+          mkdir -p "${{ github.workspace }}/build/dist/x86_64" "${{ github.workspace }}/build/dist/arm64ec"
+          find "${{ github.workspace }}/build/windows-arm64ec" -name "*.whl" -exec cp '{}' "${{ github.workspace }}/build/dist/arm64ec" ';'
+          find "${{ github.workspace }}/build/windows-x86_64" -name "*.whl" -exec cp '{}' "${{ github.workspace }}/build/dist/x86_64" ';'
+
+          # Merge the wheels
+          ${{ github.workspace }}/qcom/scripts/upleveling/create_uplevel_venv.sh
+          source ${{ github.workspace }}/uplevel_venv/bin/activate
+          ${{ github.workspace }}/qcom/scripts/upleveling/merge_wheels.sh \
+            "${{ github.workspace }}/build/dist/x86_64" \
+            "${{ github.workspace }}/build/dist/arm64ec" \
+            "${{ github.workspace }}/build/dist"
+
+          # Purge the un-merged wheels
+          rm -fr "${{ github.workspace }}/build/dist/x86_64/" "${{ github.workspace }}/build/dist/arm64ec/"
+          find "${{ github.workspace }}/build/windows-arm64ec" -name "*.whl" -delete
+          find "${{ github.workspace }}/build/windows-x86_64" -name "*.whl" -delete
+
+      - name: Set QA Build Tag
+        run: |
+          if [ -z "${{ inputs.qa_tag }}" ]; then
+            echo "QA_TAG=nightly-$(date --rfc-3339=date)-${GITHUB_SHA:0:10}" >> ${GITHUB_ENV}
+          else
+            echo "QA_TAG=${{ inputs.qa_tag }}" >> ${GITHUB_ENV}
+          fi
+
+      - name: Upload Artifacts to QA Artifactory
+        if: ${{ !inputs.skip_publish_qa }}
+        uses: ./.github/actions/upload-qa-artifact
+        with:
+          src_pattern: "*.*"
+          qa_tag: ${{ env.QA_TAG }}
