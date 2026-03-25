@@ -14,14 +14,14 @@ namespace onnxruntime {
 namespace qnn {
 namespace power {
 
-HtpPowerConfigManager::HtpPowerConfigManager(const Ort::Logger& logger) : logger_(logger) {
+HtpPowerConfigManager::HtpPowerConfigManager() {
   constexpr int kMaxNumConfigs = 3;
   power_configs_.reserve(kMaxNumConfigs);
 }
 
 HtpPowerConfigManager::~HtpPowerConfigManager() {}
 
-Ort::Status HtpPowerConfigManager::AddRpcPollingTime(uint32_t rpc_polling_time) {
+Ort::Status HtpPowerConfigManager::AddRpcPollingTime(uint32_t rpc_polling_time, const Ort::Logger& logger) {
   RETURN_IF(rpc_polling_time > kMaxRpcPolling,
             ("Cannot set RPC polling time to " + std::to_string(rpc_polling_time) +
              ". Max allowable RPC polling time is: " + std::to_string(kMaxRpcPolling))
@@ -30,11 +30,11 @@ Ort::Status HtpPowerConfigManager::AddRpcPollingTime(uint32_t rpc_polling_time) 
   RETURN_IF(rpc_polling_time_set_, "There is already a pending RPC polling time config");
 
   if (rpc_polling_time == last_set_rpc_polling_time_) {
-    ORT_CXX_LOG(logger_,
+    ORT_CXX_LOG(logger,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("Requested rpc polling time is the same as last set (" + std::to_string(last_set_rpc_polling_time_) + "). Ignoring request").c_str());
   } else {
-    ORT_CXX_LOG(logger_,
+    ORT_CXX_LOG(logger,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("Updating rpc polling time to: " + std::to_string(rpc_polling_time) + "us.").c_str());
     auto& rpc_polling_time_cfg = power_configs_.emplace_back();
@@ -47,16 +47,16 @@ Ort::Status HtpPowerConfigManager::AddRpcPollingTime(uint32_t rpc_polling_time) 
   return Ort::Status();
 }
 
-Ort::Status HtpPowerConfigManager::AddRpcControlLatency(uint32_t rpc_control_latency) {
+Ort::Status HtpPowerConfigManager::AddRpcControlLatency(uint32_t rpc_control_latency, const Ort::Logger& logger) {
   RETURN_IF(rpc_control_latency_set_, "There is already a pending RPC control latency config");
   if (rpc_control_latency == last_set_rpc_control_latency_) {
-    ORT_CXX_LOG(logger_,
+    ORT_CXX_LOG(logger,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("Requested rpc control latency is the same as last set (" +
                  std::to_string(last_set_rpc_control_latency_) + "). Ignoring request")
                     .c_str());
   } else {
-    ORT_CXX_LOG(logger_,
+    ORT_CXX_LOG(logger,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("Updating rpc control latency to: " + std::to_string(rpc_control_latency) + "us.").c_str());
     auto& rpc_control_latency_cfg = power_configs_.emplace_back();
@@ -95,17 +95,18 @@ static std::string_view PerformanceModeToString(HtpPerformanceMode htp_performan
 }
 
 Ort::Status HtpPowerConfigManager::AddHtpPerformanceMode(HtpPerformanceMode htp_performance_mode,
-                                                         uint32_t htp_power_config_client_id) {
+                                                         uint32_t htp_power_config_client_id,
+                                                         const Ort::Logger& logger) {
   RETURN_IF(htp_performance_mode_set_, "There is already a pending HTP performance mode config");
   if (htp_performance_mode == last_set_htp_performance_mode_) {
-    ORT_CXX_LOG(logger_,
+    ORT_CXX_LOG(logger,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("Requested htp performance mode is the same as last set (" +
                  std::string(PerformanceModeToString(last_set_htp_performance_mode_)) +
                  "). Ignoring request")
                     .c_str());
   } else {
-    ORT_CXX_LOG(logger_,
+    ORT_CXX_LOG(logger,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("Updating htp performance mode to: " +
                  std::string(PerformanceModeToString(htp_performance_mode)) + ".")
@@ -126,7 +127,8 @@ Ort::Status HtpPowerConfigManager::AddHtpPerformanceMode(HtpPerformanceMode htp_
 }
 
 Ort::Status HtpPowerConfigManager::SetPowerConfig(uint32_t htp_power_config_client_id,
-                                                  const QNN_INTERFACE_VER_TYPE& qnn_interface) {
+                                                  const QNN_INTERFACE_VER_TYPE& qnn_interface,
+                                                  const Ort::Logger& logger) {
   if (!power_configs_.empty()) {
     QnnDevice_Infrastructure_t qnn_device_infra = nullptr;
     auto status = qnn_interface.deviceGetInfrastructure(&qnn_device_infra);
@@ -152,7 +154,7 @@ Ort::Status HtpPowerConfigManager::SetPowerConfig(uint32_t htp_power_config_clie
     htp_performance_mode_set_ = false;
     power_configs_.clear();
   } else {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "SetPowerConfig called but no configs to be set.");
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "SetPowerConfig called but no configs to be set.");
   }
 
   return Ort::Status();

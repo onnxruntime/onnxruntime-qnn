@@ -89,6 +89,11 @@ namespace onnxruntime {
     }                                                   \
   } while (0)
 
+// Convenient macro for logging with an Ort::Logger pointer, espeically in QnnBackendManager.
+// This macro avoids the necessity of parentheses (i.e., (*logger_ptr)) in every ORT_CXX_LOG call.
+// This macro can be removed once ORT_CXX_LOG is fixed to properly wrap given logger with parentheses.
+#define ORT_CXX_LOG_PTR(logger_ptr, message_severity, message) ORT_CXX_LOG((*logger_ptr), message_severity, message)
+
 // QNN-EP COPY START
 // Below are macors copied from core/common/common.h directly.
 #ifdef _WIN32
