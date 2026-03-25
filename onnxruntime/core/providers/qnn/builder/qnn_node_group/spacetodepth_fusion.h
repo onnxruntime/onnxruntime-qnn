@@ -56,11 +56,6 @@ class SpaceToDepthFusion : public IQnnNodeGroup {
   const OrtNodeUnit* GetTargetNodeUnit() const override { return target_node_unit_; }
   std::string_view Type() const override { return "SpaceToDepthFusion"; }
 
-  /// <summary>
-  /// Traverses graph to check if the given starting NodeUnit is part of a wrapped
-  /// Reshape -> Transpose -> Reshape pattern that can be replaced by SpaceToDepth.
-  /// Returns a fusion if the pattern matches, or nullptr.
-  /// </summary>
   static std::unique_ptr<IQnnNodeGroup> TryFusion(
       QnnModelWrapper& qnn_model_wrapper,
       const OrtNodeUnit& reshape_node_unit,

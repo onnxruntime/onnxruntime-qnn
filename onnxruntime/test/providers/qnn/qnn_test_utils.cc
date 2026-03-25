@@ -420,7 +420,7 @@ void InferenceModel(const std::string& model_data,
   session_options.SetLogId(log_id);
 
   // Uncomment to dump verbose output to stdout.
-  session_options.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
+  // session_options.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
 
   for (auto key_value : session_option_pairs) {
     session_options.AddConfigEntry(key_value.first.c_str(), key_value.second.c_str());

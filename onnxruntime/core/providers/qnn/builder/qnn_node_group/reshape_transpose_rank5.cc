@@ -63,61 +63,6 @@ std::optional<std::vector<int64_t>> GetTensorShape(const OrtApi& ort_api, const 
   return dims;
 }
 
-bool LooksLikeSpaceToDepthPattern(const OrtNodeUnit* reshape1,
-                                  const OrtNodeUnit* transpose,
-                                  const OrtNodeUnit* reshape2,
-                                  const QnnModelWrapper& qnn_model_wrapper) {
-  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
-
-  size_t num_inputs = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(&reshape1->GetNode(), &num_inputs), ort_api, false);
-  if (num_inputs == 0) {
-    return false;
-  }
-
-  std::vector<const OrtValueInfo*> reshape1_inputs(num_inputs);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(&reshape1->GetNode(), reshape1_inputs.data(), reshape1_inputs.size()), ort_api, false);
-
-  size_t num_reshape1_outputs = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(&reshape1->GetNode(), &num_reshape1_outputs), ort_api, false);
-  std::vector<const OrtValueInfo*> reshape1_outputs(num_reshape1_outputs);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(&reshape1->GetNode(), reshape1_outputs.data(), reshape1_outputs.size()), ort_api, false);
-
-  size_t num_transpose_outputs = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(&transpose->GetNode(), &num_transpose_outputs), ort_api, false);
-  std::vector<const OrtValueInfo*> transpose_outputs(num_transpose_outputs);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(&transpose->GetNode(), transpose_outputs.data(), transpose_outputs.size()), ort_api, false);
-
-  size_t num_reshape2_outputs = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(&reshape2->GetNode(), &num_reshape2_outputs), ort_api, false);
-  std::vector<const OrtValueInfo*> reshape2_outputs(num_reshape2_outputs);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(&reshape2->GetNode(), reshape2_outputs.data(), reshape2_outputs.size()), ort_api, false);
-
-  auto t0_shape = GetTensorShape(ort_api, reshape1_inputs[0]);
-  auto t1_shape = GetTensorShape(ort_api, reshape1_outputs[0]);
-  auto t2_shape = GetTensorShape(ort_api, transpose_outputs[0]);
-  auto t3_shape = GetTensorShape(ort_api, reshape2_outputs[0]);
-
-  if (!t0_shape.has_value() || !t1_shape.has_value() || !t2_shape.has_value() || !t3_shape.has_value()) {
-    return false;
-  }
-
-  if (t0_shape->size() != 4 || t1_shape->size() != kRank6 || t2_shape->size() != kRank6 || t3_shape->size() != 4) {
-    return false;
-  }
-
-  OrtNodeAttrHelper transpose_helper(*transpose);
-  std::vector<int64_t> perm = transpose_helper.Get(kAttrTransposePerm, std::vector<int64_t>{});
-  if (perm.size() != kRank6) {
-    return false;
-  }
-
-  const std::array<int64_t, 6> perm_dcr = {0, 3, 5, 1, 2, 4};
-  const std::array<int64_t, 6> perm_crd = {0, 1, 3, 5, 2, 4};
-  return std::equal(perm.begin(), perm.end(), perm_dcr.begin()) ||
-         std::equal(perm.begin(), perm.end(), perm_crd.begin());
-}
-
 /// @brief Match the pattern: Reshape -> Transpose -> Reshape with rank-6 intermediate tensors
 std::optional<std::array<const OrtNodeUnit*, 3>> MatchRank6ToRank5Pattern(
     const QnnModelWrapper& qnn_model_wrapper,
@@ -413,12 +358,6 @@ std::unique_ptr<IQnnNodeGroup> Rank6ToRank5Fusion::TryFusion(
   const OrtNodeUnit* reshape1 = pattern->at(0);
   const OrtNodeUnit* transpose = pattern->at(1);
   const OrtNodeUnit* reshape2 = pattern->at(2);
-
-  if (LooksLikeSpaceToDepthPattern(reshape1, transpose, reshape2, qnn_model_wrapper)) {
-    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-                "Rank6ToRank5Fusion: skipping SpaceToDepth-like pattern.");
-    return nullptr;
-  }
 
   // Validate pattern conditions and get unit dimension index
   auto unit_dim_index = ValidatePatternConditions(reshape1, transpose, reshape2, qnn_model_wrapper, logger);
