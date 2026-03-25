@@ -304,11 +304,8 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   helper.model_.SerializeToString(&model_data);
 
   if (QNNTestEnvironment::GetInstance().dump_onnx()) {
-<<<<<<< HEAD
     // TODO: Use public logger
     // LOGS(logging_manager.DefaultLogger(), VERBOSE) << "Save onnx model at: " << dump_path;
-=======
->>>>>>> 800dd7c177 (debugging enabled fix)
     auto dump_path = output_dir / "dumped_f32_model.onnx";
     std::ofstream ofs(dump_path, std::ios::binary);
     ofs.write(model_data.data(), static_cast<std::streamsize>(model_data.size()));
