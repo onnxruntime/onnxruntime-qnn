@@ -224,7 +224,7 @@ struct OrtNodeUnitIODef {
 
   std::string name;
   ONNXTensorElementDataType type;
-  std::vector<int64_t> shape;
+  std::optional<std::vector<int64_t>> shape;
   std::optional<QuantParam> quant_param;
 
   bool Exists() const noexcept { return !name.empty(); }
