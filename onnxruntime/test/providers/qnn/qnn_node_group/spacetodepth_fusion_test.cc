@@ -28,73 +28,6 @@ namespace test {
 
 namespace {
 
-constexpr std::string_view kDlcOutputDir("dlc_output");
-
-enum class TestBackend {
-  Htp,
-  Ir,
-};
-
-static std::string ToBackendLibName(TestBackend backend) {
-  switch (backend) {
-    case TestBackend::Htp:
-      return "Htp";
-    case TestBackend::Ir:
-      return "Ir";
-  }
-
-  return "";
-}
-
-static void AddSerializerConfigs(TestBackend serializer_backend, onnxruntime::ProviderOptions& options) {
-  std::string serializer_lib = ToBackendLibName(serializer_backend);
-  std::string serializer_path_key;
-
-  switch (serializer_backend) {
-    case TestBackend::Htp:
-      FAIL() << "Unsupported serializer backend for DLC dump test: Htp";
-      return;
-    case TestBackend::Ir:
-      serializer_path_key = "qnn_ir_backend_path";
-      options["dump_qnn_ir_dlc"] = "1";
-      options["dump_qnn_ir_dlc_dir"] = std::string{kDlcOutputDir};
-      break;
-  }
-
-#if defined(_WIN32)
-  options[serializer_path_key] = "Qnn" + serializer_lib + ".dll";
-#else
-  options[serializer_path_key] = "libQnn" + serializer_lib + ".so";
-#endif
-}
-
-static Ort::Session InitNHWCResizeModel(const ORTCHAR_T* ort_model_path,
-                                        TestBackend backend,
-                                        RegisteredEpDeviceUniquePtr& registered_ep_device,
-                                        std::optional<TestBackend> serializer_backend = std::nullopt) {
-  Ort::SessionOptions so;
-  so.AddConfigEntry(kOrtSessionOptionsConfigStrictShapeTypeInference, "1");
-  so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
-
-  onnxruntime::ProviderOptions options;
-  options["offload_graph_io_quantization"] = "0";
-
-  std::string backend_lib = ToBackendLibName(backend);
-
-#if defined(_WIN32)
-  options["backend_path"] = "Qnn" + backend_lib + ".dll";
-#else
-  options["backend_path"] = "libQnn" + backend_lib + ".so";
-#endif
-
-  if (serializer_backend) {
-    AddSerializerConfigs(*serializer_backend, options);
-  }
-
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
-  return Ort::Session(*::ort_env, ort_model_path, so);
-}
-
 template <typename QuantType = uint8_t>
 GetTestModelFn BuildSpaceToDepthTestCase(const std::vector<int64_t>& input_shape,
                                          int64_t block_height,
@@ -602,36 +535,6 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_QDQ_U16_CRD) {
                                       /*use_qdq=*/true,
                                       /*use_contrib_qdq=*/true,
                                       /*backend_type=*/"htp");
-}
-
-TEST_F(QnnHTPBackendTests, TempDumpDlcTest) {
-  if (IsIRBackendSupported() == BackendSupport::UNSUPPORTED) {
-    GTEST_SKIP() << "QNN IR backend is not available.";
-  } else if (IsIRBackendSupported() == BackendSupport::SUPPORT_ERROR) {
-    FAIL() << "Failed to check if QNN IR backend is available.";
-  }
-
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
-
-  // Remove pre-existing QNN IR output files. remove_all handles non-existing paths.
-  std::filesystem::remove_all(qnn_dlc_dir);
-  ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
-
-  InitNHWCResizeModel("s2d_head.onnx",
-                      TestBackend::Htp,
-                      registered_ep_device,
-                      TestBackend::Ir);
-
-  ASSERT_TRUE(std::filesystem::exists(qnn_dlc_dir));
-  int file_count = 0;
-  for (const auto& entry : std::filesystem::directory_iterator(qnn_dlc_dir)) {
-    EXPECT_TRUE(entry.is_regular_file());
-    EXPECT_EQ(entry.path().extension(), ".dlc");
-    ++file_count;
-  }
-
-  EXPECT_EQ(file_count, 1);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

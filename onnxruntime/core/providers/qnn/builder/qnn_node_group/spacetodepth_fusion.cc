@@ -33,6 +33,10 @@ constexpr char kOpReshape[] = "Reshape";
 constexpr char kOpTranspose[] = "Transpose";
 constexpr size_t kRank4 = 4;
 constexpr size_t kRank6 = 6;
+constexpr std::array<int64_t, 4> kPermNchwToNhwc = {0, 2, 3, 1};
+constexpr std::array<int64_t, 4> kPermNhwcToNchw = {0, 3, 1, 2};
+constexpr std::array<int64_t, 6> kPermS2dDcr = {0, 3, 5, 1, 2, 4};
+constexpr std::array<int64_t, 6> kPermS2dCrd = {0, 1, 3, 5, 2, 4};
 
 using MapNodeToNodeUnit = std::unordered_map<const OrtNode*, const OrtNodeUnit*>;
 using MapNodeUnitToGroup = std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>;
@@ -40,9 +44,6 @@ using MapNodeUnitToGroup = std::unordered_map<const OrtNodeUnit*, const IQnnNode
 struct SpaceToDepthPattern {
   std::array<const OrtNodeUnit*, 5> node_units{};
   size_t node_count = 0;
-  size_t reshape1_index = 0;
-  size_t transpose_index = 1;
-  size_t reshape2_index = 2;
 };
 
 struct PatternIndices {
@@ -67,6 +68,34 @@ PatternIndices GetPatternIndices(gsl::span<const OrtNodeUnit* const> node_units)
                                node_units[indices.reshape2_index + 1] != nullptr &&
                                node_units[indices.reshape2_index + 1]->OpType() == kOpTranspose;
   return indices;
+}
+
+bool IsOpType(const OrtNodeUnit* node_unit, const char* op_type) {
+  return node_unit != nullptr && node_unit->OpType() == op_type;
+}
+
+SpaceToDepthPattern BuildPattern(const OrtNodeUnit& reshape1,
+                                 const OrtNodeUnit& transpose,
+                                 const OrtNodeUnit& reshape2,
+                                 const OrtNodeUnit* head_transpose,
+                                 const OrtNodeUnit* tail_transpose) {
+  SpaceToDepthPattern pattern;
+
+  if (head_transpose != nullptr && tail_transpose != nullptr) {
+    pattern.node_units = {head_transpose, &reshape1, &transpose, &reshape2, tail_transpose};
+    pattern.node_count = 5;
+  } else if (head_transpose != nullptr) {
+    pattern.node_units = {head_transpose, &reshape1, &transpose, &reshape2, nullptr};
+    pattern.node_count = 4;
+  } else if (tail_transpose != nullptr) {
+    pattern.node_units = {&reshape1, &transpose, &reshape2, tail_transpose, nullptr};
+    pattern.node_count = 4;
+  } else {
+    pattern.node_units = {&reshape1, &transpose, &reshape2, nullptr, nullptr};
+    pattern.node_count = 3;
+  }
+
+  return pattern;
 }
 
 std::optional<std::vector<int64_t>> GetTransposePerm(const OrtNodeUnit& transpose) {
@@ -120,13 +149,11 @@ const OrtNodeUnitIODef& GetPatternOutputDef(gsl::span<const OrtNodeUnit* const> 
 }
 
 bool IsNchwToNhwcPerm(gsl::span<const int64_t> perm) {
-  static constexpr std::array<int64_t, 4> kPermNchwToNhwc = {0, 2, 3, 1};
   return perm.size() == kPermNchwToNhwc.size() &&
          std::equal(perm.begin(), perm.end(), kPermNchwToNhwc.begin());
 }
 
 bool IsNhwcToNchwPerm(gsl::span<const int64_t> perm) {
-  static constexpr std::array<int64_t, 4> kPermNhwcToNchw = {0, 3, 1, 2};
   return perm.size() == kPermNhwcToNchw.size() &&
          std::equal(perm.begin(), perm.end(), kPermNhwcToNchw.begin());
 }
@@ -210,20 +237,18 @@ bool HasSpaceToDepthCoreSignature(
   // check transpose perm to be either {0,3,5,1,2,4} or {0,1,3,5,2,4}.
   OrtNodeAttrHelper transpose_attrs(transpose);
   std::vector<int64_t> perm = transpose_attrs.Get(kAttrTransposePerm, std::vector<int64_t>{});
-  const std::array<int64_t, 6> perm_dcr = {0, 3, 5, 1, 2, 4};
-  const std::array<int64_t, 6> perm_crd = {0, 1, 3, 5, 2, 4};
 
   return perm.size() == kRank6 &&
-         (std::equal(perm.begin(), perm.end(), perm_dcr.begin()) ||
-          std::equal(perm.begin(), perm.end(), perm_crd.begin()));
+         (std::equal(perm.begin(), perm.end(), kPermS2dDcr.begin()) ||
+          std::equal(perm.begin(), perm.end(), kPermS2dCrd.begin()));
 }
 
 std::optional<SpaceToDepthPattern> MatchPattern(
     const QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnit& reshape1,
     const MapNodeToNodeUnit& node_to_node_unit,
-  const MapNodeUnitToGroup& node_unit_to_qnn_node_group,
-  const Ort::Logger& logger) {
+    const MapNodeUnitToGroup& node_unit_to_qnn_node_group,
+    const Ort::Logger& logger) {
   // 1. Validate the starting node op type.
   if (reshape1.OpType() != kOpReshape) {
     return std::nullopt;
@@ -252,12 +277,8 @@ std::optional<SpaceToDepthPattern> MatchPattern(
   }
 
   // 4. Find optional head and tail Transposes around the Reshape-Transpose-Reshape core pattern.
-  SpaceToDepthPattern core;
-  core.node_units = {&reshape1, transpose, reshape2, nullptr, nullptr};
-  core.node_count = 3;
-  core.reshape1_index = 0;
-  core.transpose_index = 1;
-  core.reshape2_index = 2;
+  const OrtNodeUnit* matched_head_transpose = nullptr;
+  const OrtNodeUnit* matched_tail_transpose = nullptr;
 
   // 4.1 Check for optional head transpose before Reshape1.
   const OrtNodeUnit* transpose_head =
@@ -266,7 +287,7 @@ std::optional<SpaceToDepthPattern> MatchPattern(
                        reshape1.Inputs()[0],
                        node_to_node_unit,
                        node_unit_to_qnn_node_group);
-  if (transpose_head != nullptr && transpose_head->OpType() == kOpTranspose) {
+  if (IsOpType(transpose_head, kOpTranspose)) {
     const OrtNodeUnit* reshape1_from_head = GetChildNodeUnitAllowQdq(qnn_model_wrapper,
                                                                      *transpose_head,
                                                                      kOpReshape,
@@ -278,11 +299,7 @@ std::optional<SpaceToDepthPattern> MatchPattern(
         // 4.1.1 If head transpose is NHWC->NCHW, then mark it as head of SpaceToDepth pattern.
         const auto head_perm_span = gsl::make_span<const int64_t>(head_perm->data(), head_perm->size());
         if (IsNhwcToNchwPerm(head_perm_span)) {
-          core.node_units = {transpose_head, &reshape1, transpose, reshape2, nullptr};
-          core.node_count = 4;
-          core.reshape1_index = 1;
-          core.transpose_index = 2;
-          core.reshape2_index = 3;
+          matched_head_transpose = transpose_head;
         }
       }
     }
@@ -294,39 +311,32 @@ std::optional<SpaceToDepthPattern> MatchPattern(
                                                                kOpTranspose,
                                                                node_to_node_unit,
                                                                node_unit_to_qnn_node_group);
-  if (transpose_tail != nullptr && transpose_tail->OpType() == kOpTranspose) {
+  if (IsOpType(transpose_tail, kOpTranspose)) {
     std::optional<std::vector<int64_t>> tail_perm = GetTransposePerm(*transpose_tail);
     if (tail_perm.has_value()) {
       const auto tail_perm_span = gsl::make_span<const int64_t>(tail_perm->data(), tail_perm->size());
       if (IsNchwToNhwcPerm(tail_perm_span)) {
-        const bool has_head = core.node_count == 4 && core.node_units[0] != nullptr &&
-                              core.node_units[0]->OpType() == kOpTranspose;
-        if (has_head) {
+        if (matched_head_transpose != nullptr) {
           // It is a 5-node pattern with both head and tail transposes.
-          std::optional<std::vector<int64_t>> head_perm = GetTransposePerm(*core.node_units[0]);
+          std::optional<std::vector<int64_t>> head_perm = GetTransposePerm(*matched_head_transpose);
 
           if (head_perm.has_value()) {
             auto head_perm_span = gsl::make_span<const int64_t>(head_perm->data(), head_perm->size());
             // 4.2.1 If head and tail transposes needs to be NHWC<->NCHW pair
             if (IsNhwcNchwTransposePair(head_perm_span, tail_perm_span)) {
-              core.node_units = {core.node_units[0], &reshape1, transpose, reshape2, transpose_tail};
-              core.node_count = 5;
-              core.reshape1_index = 1;
-              core.transpose_index = 2;
-              core.reshape2_index = 3;
+              matched_tail_transpose = transpose_tail;
             }
           }
         } else {
           // It is a 4-node pattern with only tail transpose.
-          core.node_units = {&reshape1, transpose, reshape2, transpose_tail, nullptr};
-          core.node_count = 4;
-          core.reshape1_index = 0;
-          core.transpose_index = 1;
-          core.reshape2_index = 2;
+          matched_tail_transpose = transpose_tail;
         }
       }
     }
   }
+
+  SpaceToDepthPattern core = BuildPattern(reshape1, *transpose, *reshape2,
+                                          matched_head_transpose, matched_tail_transpose);
 
   // After (3) we know it is S2D RTR pattern but we Skip RTR-only pattern to avoid fusion in 1st get_capability call,
   // as it results in redundant cancelling Transpose operators added into QnnModelWrapper and gets into DLC.
@@ -382,17 +392,15 @@ bool ValidateAndComputeParams(
   // 3. Validate transpose permutation and resolve mode (DCR / CRD).
   OrtNodeAttrHelper transpose_attrs(transpose);
   std::vector<int64_t> perm = transpose_attrs.Get(kAttrTransposePerm, std::vector<int64_t>{});
-  const std::array<int64_t, 6> perm_dcr = {0, 3, 5, 1, 2, 4};
-  const std::array<int64_t, 6> perm_crd = {0, 1, 3, 5, 2, 4};
 
   if (perm.size() != kRank6) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "SpaceToDepthFusion: perm rank is not 6.");
     return false;
   }
 
-  if (std::equal(perm.begin(), perm.end(), perm_dcr.begin())) {
+  if (std::equal(perm.begin(), perm.end(), kPermS2dDcr.begin())) {
     mode = QNN_OP_SPACE_TO_DEPTH_MODE_DCR;
-  } else if (std::equal(perm.begin(), perm.end(), perm_crd.begin())) {
+  } else if (std::equal(perm.begin(), perm.end(), kPermS2dCrd.begin())) {
     mode = QNN_OP_SPACE_TO_DEPTH_MODE_CRD;
   } else {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "SpaceToDepthFusion: perm is not DCR/CRD.");
@@ -426,7 +434,7 @@ Ort::Status CreateOrValidateOnQnn(
     uint32_t block_width,
     uint32_t mode,
     const Ort::Logger& logger,
-  bool validate) {
+    bool validate) {
   const PatternIndices pattern_indices = GetPatternIndices(node_units);
   // RTR + T(NCHW->NHWC) ==> NHWC->NCHW + S2D
   const bool need_pre_transpose = !pattern_indices.has_head_transpose;
@@ -486,22 +494,22 @@ Ort::Status CreateOrValidateOnQnn(
     return Ort::Status();
   };
 
-  auto ensure_boundary_tensors_exist = [&]() -> Ort::Status {
-    // A) Add input tensor.
-    if (!qnn_model_wrapper.IsQnnTensorWrapperExist(input_def.name)) {
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensor)), "Failed to add s2d input");
-    } else {
+  auto add_tensor_if_needed = [&](QnnTensorWrapper&& tensor,
+                                  const std::string& tensor_name,
+                                  const char* error_message) -> Ort::Status {
+    if (qnn_model_wrapper.IsQnnTensorWrapperExist(tensor_name)) {
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-                  ("Tensor already added, skip it: " + input_def.name).c_str());
+                  ("Tensor already added, skip it: " + tensor_name).c_str());
+      return Ort::Status();
     }
 
-    // B) Add output tensor.
-    if (!qnn_model_wrapper.IsQnnTensorWrapperExist(output_def.name)) {
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)), "Failed to add s2d output");
-    } else {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-                  ("Tensor already added, skip it: " + output_def.name).c_str());
-    }
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tensor)), error_message);
+    return Ort::Status();
+  };
+
+  auto ensure_boundary_tensors_exist = [&]() -> Ort::Status {
+    RETURN_IF_ERROR(add_tensor_if_needed(std::move(input_tensor), input_def.name, "Failed to add s2d input"));
+    RETURN_IF_ERROR(add_tensor_if_needed(std::move(output_tensor), output_def.name, "Failed to add s2d output"));
     return Ort::Status();
   };
 
@@ -513,11 +521,10 @@ Ort::Status CreateOrValidateOnQnn(
     auto block_param = build_block_param();
 
     if (is_direct_boundary_case) {
-      Ort::Status status = validate_s2d(block_param,
-                                        direct_s2d_node_name,
-                                        input_tensor.GetQnnTensor(),
-                                        output_tensor.GetQnnTensor());
-      return status;
+      return validate_s2d(block_param,
+                          direct_s2d_node_name,
+                          input_tensor.GetQnnTensor(),
+                          output_tensor.GetQnnTensor());
     }
 
     // 3.2) Wrapped boundary validation: validate pre/post transpose legs around S2D as needed.
@@ -576,9 +583,9 @@ Ort::Status CreateOrValidateOnQnn(
 
     // 3.5) Validate S2D core with effective IO tensors.
     const Qnn_Tensor_t& s2d_input = need_pre_transpose ? nhwc_input_tensor->GetQnnTensor()
-                                                        : input_tensor.GetQnnTensor();
+                                                       : input_tensor.GetQnnTensor();
     const Qnn_Tensor_t& s2d_output = need_post_transpose ? nhwc_output_tensor->GetQnnTensor()
-                                                          : output_tensor.GetQnnTensor();
+                                                         : output_tensor.GetQnnTensor();
 
     RETURN_IF_ERROR(validate_s2d(block_param, base_name + "_s2d", s2d_input, s2d_output));
 
@@ -606,16 +613,8 @@ Ort::Status CreateOrValidateOnQnn(
 
   // 4.1) Direct creation path (no pre/post transposes).
   if (!use_wrapped_nhwc) {
-    if (!qnn_model_wrapper.IsQnnTensorWrapperExist(input_def.name)) {
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensor)), "Failed to add s2d input");
-    } else {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
-                  ("Tensor already added, skip it: " + input_def.name).c_str());
-    }
-
-    if (!qnn_model_wrapper.IsQnnTensorWrapperExist(output_def.name)) {
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)), "Failed to add s2d output");
-    }
+    RETURN_IF_ERROR(add_tensor_if_needed(std::move(input_tensor), input_def.name, "Failed to add s2d input"));
+    RETURN_IF_ERROR(add_tensor_if_needed(std::move(output_tensor), output_def.name, "Failed to add s2d output"));
 
     std::vector<std::string> param_tensor_names;
     auto block_param = build_block_param();
@@ -775,9 +774,11 @@ std::unique_ptr<IQnnNodeGroup> SpaceToDepthFusion::TryFusion(
   }
 
   // 3. Get pattern node units.
-  const OrtNodeUnit* reshape1 = pattern->node_units[pattern->reshape1_index];
-  const OrtNodeUnit* transpose = pattern->node_units[pattern->transpose_index];
-  const OrtNodeUnit* reshape2 = pattern->node_units[pattern->reshape2_index];
+  gsl::span<const OrtNodeUnit* const> pattern_span(pattern->node_units.data(), pattern->node_count);
+  const PatternIndices indices = GetPatternIndices(pattern_span);
+  const OrtNodeUnit* reshape1 = pattern->node_units[indices.reshape1_index];
+  const OrtNodeUnit* transpose = pattern->node_units[indices.transpose_index];
+  const OrtNodeUnit* reshape2 = pattern->node_units[indices.reshape2_index];
 
   // 4. Compute block h,w and mode params.
   uint32_t block_height = 0;
@@ -789,7 +790,6 @@ std::unique_ptr<IQnnNodeGroup> SpaceToDepthFusion::TryFusion(
   }
 
   // 5. Validate on QNN.
-  gsl::span<const OrtNodeUnit* const> pattern_span(pattern->node_units.data(), pattern->node_count);
   Ort::Status validate_status = CreateOrValidateOnQnn(qnn_model_wrapper, pattern_span,
                                                       block_height, block_width, mode,
                                                       logger, true);

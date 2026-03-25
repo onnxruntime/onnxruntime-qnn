@@ -28,9 +28,9 @@ class QnnModelWrapper;
 class SpaceToDepthFusion : public IQnnNodeGroup {
  public:
   SpaceToDepthFusion(gsl::span<const OrtNodeUnit* const> node_units,
-                                            uint32_t block_height,
-                                            uint32_t block_width,
-                                            uint32_t mode)
+                     uint32_t block_height,
+                     uint32_t block_width,
+                     uint32_t mode)
       : block_height_(block_height),
         block_width_(block_width),
         mode_(mode) {
