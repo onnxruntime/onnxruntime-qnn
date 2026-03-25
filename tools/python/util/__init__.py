@@ -1,7 +1,6 @@
 # Copyright (c) Microsoft Corporation. All rights reserved.
 # Licensed under the MIT License.
 
-from .get_azcopy import get_azcopy  # noqa: F401
 from .logger import get_logger
 from .platform_helpers import is_linux, is_macOS, is_windows  # noqa: F401
 from .qnn_helpers import parse_qnn_version_from_sdk_yaml  # noqa: F401

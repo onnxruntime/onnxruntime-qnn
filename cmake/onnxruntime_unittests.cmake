@@ -187,8 +187,7 @@ set(onnxruntime_test_common_libs
   GTest::gtest
   GTest::gmock
   ${onnxruntime_EXTERNAL_LIBRARIES}
-  # TODO: Remove the suffix _prebuilt once we complete standalone build
-  onnxruntime_prebuilt
+  onnxruntime
   onnxruntime_test_utils
   onnxruntime_unittest_utils
   cpuinfo::cpuinfo
