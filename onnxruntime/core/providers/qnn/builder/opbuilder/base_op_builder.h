@@ -190,6 +190,7 @@ class BaseOpBuilder : public IOpBuilder {
         {"Elu", QNN_OP_ELU},
         {"Relu", QNN_OP_RELU},
         {"Gelu", QNN_OP_GELU},
+        {"Softplus", QNN_OP_ELEMENT_WISE_NEURON},
 
         {"HardSigmoid", QNN_OP_ELEMENT_WISE_NEURON},
         {"HardSwish", QNN_OP_HARD_SWISH},

@@ -121,7 +121,8 @@ static bool ValidateAndComputeFusionParams(
     std::vector<uint32_t>& perm_4d) {
   // Input must be rank-5 with fully static shape.
   const OrtNodeUnitIODef& x_def = gather.Inputs()[0];
-  const std::vector<int64_t>& x_shape = x_def.shape;
+  std::vector<uint32_t> x_shape;
+  if (!qnn_model_wrapper.GetOnnxShape(x_def.shape, x_shape)) return false;
   if (x_shape.size() != 5) return false;
   for (int64_t d : x_shape)
     if (d <= 0) return false;
@@ -135,16 +136,21 @@ static bool ValidateAndComputeFusionParams(
   // Indices must be rank-2 and constant.
   if (gather.Inputs().size() < 2) return false;
   const OrtNodeUnitIODef& idx_def = gather.Inputs()[1];
-  if (idx_def.shape.size() != 2 || idx_def.shape[0] <= 0 || idx_def.shape[1] <= 0) return false;
+  std::vector<uint32_t> idx_def_shape;
+  if (!qnn_model_wrapper.GetOnnxShape(idx_def.shape, idx_def_shape)) return false;
+  if (idx_def_shape.size() != 2 || idx_def_shape[0] <= 0 || idx_def_shape[1] <= 0) return false;
   if (!qnn_model_wrapper.IsConstantInput(idx_def.name)) return false;
-  idx0 = idx_def.shape[0];
-  idx1 = idx_def.shape[1];
+  idx0 = idx_def_shape[0];
+  idx1 = idx_def_shape[1];
 
   // Indices must cover exactly the gathered dimension.
   if (x_shape[4] != idx0 * idx1) return false;
 
   // Gather output must be rank-6.
-  if (gather.Outputs().empty() || gather.Outputs()[0].shape.size() != 6) return false;
+  if (gather.Outputs().empty()) return false;
+  std::vector<uint32_t> gather_out_shape;
+  if (!qnn_model_wrapper.GetOnnxShape(gather.Outputs()[0].shape, gather_out_shape)) return false;
+  if (gather_out_shape.size() != 6) return false;
 
   // Detect row-major / col-major index pattern.
   const OrtValueInfo* idx_vi = qnn_model_wrapper.GetConstantTensor(idx_def.name);
@@ -163,10 +169,16 @@ static bool ValidateAndComputeFusionParams(
   if (tail != std::unordered_set<int64_t>{3, 4, 5}) return false;
 
   // Transpose output must be rank-6.
-  if (transpose.Outputs().empty() || transpose.Outputs()[0].shape.size() != 6) return false;
+  if (transpose.Outputs().empty()) return false;
+  std::vector<uint32_t> transpose_out_shape;
+  if (!qnn_model_wrapper.GetOnnxShape(transpose.Outputs()[0].shape, transpose_out_shape)) return false;
+  if (transpose_out_shape.size() != 6) return false;
 
   // Reshape output must be rank < 6.
-  if (reshape.Outputs().empty() || reshape.Outputs()[0].shape.size() >= 6) return false;
+  if (reshape.Outputs().empty()) return false;
+  std::vector<uint32_t> reshape_out_shape;
+  if (!qnn_model_wrapper.GetOnnxShape(reshape.Outputs()[0].shape, reshape_out_shape)) return false;
+  if (reshape_out_shape.size() >= 6) return false;
 
   // Compute 4D permutation: dims 0,1,2 merge to 0; old dim k -> new dim k-2 for k in {3,4,5}.
   perm_4d.resize(4);

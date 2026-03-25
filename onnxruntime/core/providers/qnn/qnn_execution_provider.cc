@@ -839,6 +839,9 @@ QnnEp::QnnEp(QnnEpFactory& factory,
       ((context_cache_enabled_ && share_ep_contexts_) || enable_vtcm_backup_buffer_sharing_) &&
       SharedContext::GetInstance().GetSharedQnnBackendManager()) {
     qnn_backend_manager_ = SharedContext::GetInstance().GetSharedQnnBackendManager();
+    // Reset QnnBackendManager's logger to the one in current session as original one could be deleted along with the
+    // previous session.
+    qnn_backend_manager_->ResetLogger(logger_);
     // Clear the QnnBackendManager from singleton to stop the resource share
     if (stop_share_ep_contexts_) {
       SharedContext::GetInstance().ResetSharedQnnBackendManager();

@@ -336,7 +336,7 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_U8S8S32) {
   RunBatchNormQDQTest<uint8_t, int8_t>(TestInputDef<float>({2, num_channels, 2, 2}, false, input_data),  // Input data
                                        TestInputDef<float>({num_channels}, true, {1.0f, 2.0f}),          // Scale initializer
                                        TestInputDef<float>({num_channels}, true, {1.1f, 2.1f}),          // Bias initializer
-                                       ExpectedEPNodeAssignment::None);
+                                       ExpectedEPNodeAssignment::All);
 }
 
 // Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.
@@ -546,6 +546,27 @@ TEST_F(QnnHTPBackendTests, BatchNorm2dQdqParams) {
 
   TestQDQModelAccuracy(BuildBatchNormTestCase(input_def, scale_def, bias_def),
                        BuildBatchNormQdqParamsTestCase<uint16_t, int8_t>(input_def, scale_def, bias_def),
+                       provider_options,
+                       21,
+                       ExpectedEPNodeAssignment::All);
+}
+
+// Test BatchNorm with U8 input, S8 scale (converted to U8), float bias (converted to S32)
+TEST_F(QnnHTPBackendTests, BatchNorm2D_U8S8F32) {
+  constexpr int64_t num_channels = 2;
+  std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
+                                   -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
+
+  TestInputDef<float> input_def({2, num_channels, 2, 2}, false, input_data);
+  TestInputDef<float> scale_def({num_channels}, true, {1.0f, 2.0f});
+  TestInputDef<float> bias_def({num_channels}, true, {1.1f, 2.1f});
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  TestQDQModelAccuracy(BuildBatchNormTestCase(input_def, scale_def, bias_def),
+                       BuildBatchNormQdqParamsTestCase<uint8_t, int8_t>(input_def, scale_def, bias_def),
                        provider_options,
                        21,
                        ExpectedEPNodeAssignment::All);
