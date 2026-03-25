@@ -7,14 +7,16 @@
 #include <cctype>
 #include <cstring>
 #include <functional>
+#include <mutex>
 #include <numeric>
 #include <sstream>
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
-#include <unordered_set>
 
 #include <gsl/gsl>
 
@@ -121,11 +123,54 @@ Ort::Status GetQnnDataType(const bool is_quantized_tensor,
                            const ONNXTensorElementDataType onnx_data_type,
                            Qnn_DataType_t& tensor_data_type);
 
-// Returns an unique name string based on a base string and an optional suffix.
-std::string GetUniqueName(const std::string& base, std::string_view suffix = {});
+// Name generator that produces unique QNN node names by appending a counter suffix,
+// (e.g., "_2") when the same base + suffix combination is requested more than once.
+class UniqueNameGeneratorImpl {
+ public:
+  void Reset() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    counter_.clear();
+  }
 
-// Returns an unique name string from its name or op type and index, plus an optional suffix.
-std::string GetUniqueName(const OrtNodeUnit& node_unit, std::string_view suffix = {});
+  std::string New(std::string_view base, std::string_view suffix = {}) {
+    std::string name(base);
+    if (!suffix.empty()) {
+      name.append(suffix);
+    }
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      int& count = counter_[name];
+      if (count++ > 0) {
+        name.append("_").append(std::to_string(count));
+      }
+    }
+    return name;
+  }
+
+  std::string New(const OrtNodeUnit& node_unit, std::string_view suffix = {}) {
+    std::string_view base = node_unit.Name();
+    if (base.empty()) {
+      return New(node_unit.OpType() + std::to_string(node_unit.Index()), suffix);
+    }
+    return New(base, suffix);
+  }
+
+ private:
+  std::unordered_map<std::string, int> counter_;
+  std::mutex mutex_;
+};
+
+inline UniqueNameGeneratorImpl& UniqueNameGenerator() {
+  static UniqueNameGeneratorImpl instance;
+  return instance;
+}
+
+inline std::string GetUniqueName(std::string_view base, std::string_view suffix = {}) {
+  return UniqueNameGenerator().New(base, suffix);
+}
+inline std::string GetUniqueName(const OrtNodeUnit& node_unit, std::string_view suffix = {}) {
+  return UniqueNameGenerator().New(node_unit, suffix);
+}
 
 bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
                                Qnn_DataType_t& qnn_data_type,

@@ -787,34 +787,7 @@ Ort::Status GetQnnDataType(const bool is_quantized_tensor,
   return Ort::Status();
 }
 
-std::string GetUniqueName(const std::string& base, std::string_view suffix) {
-  std::string name = base;
-  if (!suffix.empty()) {
-    name += suffix;
-  }
-  {
-    static std::unordered_map<std::string, int> counter;
-    static std::mutex counter_mutex;
-    std::lock_guard<std::mutex> lock(counter_mutex);
 
-    int& count = counter[name];
-    if (count++ > 0) {
-      return name + "_" + std::to_string(count);
-    }
-  }
-  return name;
-}
-
-std::string GetUniqueName(const OrtNodeUnit& node_unit, std::string_view suffix) {
-  // Preserve node name when exist. Otherwise, use op type with index
-  std::string base;
-  if (!node_unit.Name().empty()) {
-    base = node_unit.Name();
-  } else {
-    base = node_unit.OpType() + std::to_string(node_unit.Index());
-  }
-  return GetUniqueName(base, suffix);
-}
 
 bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
                                Qnn_DataType_t& qnn_data_type,
