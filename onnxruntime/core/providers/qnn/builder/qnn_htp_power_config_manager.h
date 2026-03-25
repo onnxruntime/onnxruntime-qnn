@@ -20,30 +20,32 @@ namespace power {
 // updates power configurations for the HTP backend
 class HtpPowerConfigManager {
  public:
-  HtpPowerConfigManager(const Ort::Logger& logger);
+  HtpPowerConfigManager();
   ~HtpPowerConfigManager();
 
   // Stages a new rpc polling time for next power config update
   // If the value is the same as the last previously set, then
   // there will be no new rpc polling time staged
-  Ort::Status AddRpcPollingTime(uint32_t rpc_polling_time);
+  Ort::Status AddRpcPollingTime(uint32_t rpc_polling_time, const Ort::Logger& logger);
 
   // Stages a new rpc control latency for next power config update
   // If the value is the same as the last previously set, then
   // there will be no new rpc control latency staged
-  Ort::Status AddRpcControlLatency(uint32_t rpc_control_latency);
+  Ort::Status AddRpcControlLatency(uint32_t rpc_control_latency, const Ort::Logger& logger);
 
   // Stages a new performance mode for next power config update
   // If the value is the same as the last previously set, then
   // there will be no new performance mode staged
   Ort::Status AddHtpPerformanceMode(HtpPerformanceMode htp_performance_mode,
-                                    uint32_t htp_power_config_client_id);
+                                    uint32_t htp_power_config_client_id,
+                                    const Ort::Logger& logger);
 
   // Takes all configs staged for update and attempts to update
   // the HTP power configurations. If there is nothing staged,
   // then no attempt will be made.
   Ort::Status SetPowerConfig(uint32_t htp_power_config_client_id,
-                             const QNN_INTERFACE_VER_TYPE& qnn_interface);
+                             const QNN_INTERFACE_VER_TYPE& qnn_interface,
+                             const Ort::Logger& logger);
 
  private:
   // Sets voltage corner votes for HTP based on the given performance mode
@@ -60,8 +62,6 @@ class HtpPowerConfigManager {
   bool htp_performance_mode_set_ = false;
 
   std::vector<QnnHtpPerfInfrastructure_PowerConfig_t> power_configs_;
-
-  const Ort::Logger& logger_;
 };
 }  // namespace power
 }  // namespace qnn

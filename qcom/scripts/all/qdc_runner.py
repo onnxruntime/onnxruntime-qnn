@@ -25,36 +25,36 @@ import backoff
 import requests
 from package_manager import PackageManager
 from prettytable import PrettyTable
-from qdc_public_api_client import Client
-from qdc_public_api_client.api.artifacts import (
-    post_artifacts_startupload,
-    post_artifacts_uuid_continueupload,
-    post_artifacts_uuid_endupload,
+from qualcomm_device_cloud_sdk import Client
+from qualcomm_device_cloud_sdk.api.artifacts import (
+    post_artifacts_start_upload,
+    post_artifacts_uuid_continue_upload,
+    post_artifacts_uuid_end_upload,
 )
-from qdc_public_api_client.api.jobs import (
-    get_jobs_downloadlogs,
-    get_jobs_id,
+from qualcomm_device_cloud_sdk.api.jobs import (
+    get_jobs_download_logs,
+    get_jobs_job_id,
     get_jobs_job_id_logs,
     post_jobs,
     post_jobs_job_id_abort,
 )
-from qdc_public_api_client.models.artifact_type import ArtifactType
-from qdc_public_api_client.models.artifact_type_0 import ArtifactType0
-from qdc_public_api_client.models.create_job_type_0 import CreateJobType0
-from qdc_public_api_client.models.error_message_type_0 import ErrorMessageType0
-from qdc_public_api_client.models.job_logs_type_0 import JobLogsType0
-from qdc_public_api_client.models.job_mode import JobMode
-from qdc_public_api_client.models.job_result import JobResult
-from qdc_public_api_client.models.job_state import JobState
-from qdc_public_api_client.models.job_submission_parameter import JobSubmissionParameter
-from qdc_public_api_client.models.job_type import JobType
-from qdc_public_api_client.models.job_type_0 import JobType0
-from qdc_public_api_client.models.log_upload_status import LogUploadStatus
-from qdc_public_api_client.models.post_artifacts_uuid_continueupload_body import (
-    PostArtifactsUuidContinueuploadBody,
+from qualcomm_device_cloud_sdk.models.artifact_type import ArtifactType
+from qualcomm_device_cloud_sdk.models.artifact_type_0 import ArtifactType0
+from qualcomm_device_cloud_sdk.models.create_job_type_0 import CreateJobType0
+from qualcomm_device_cloud_sdk.models.error_message_type_0 import ErrorMessageType0
+from qualcomm_device_cloud_sdk.models.job_logs_type_0 import JobLogsType0
+from qualcomm_device_cloud_sdk.models.job_mode import JobMode
+from qualcomm_device_cloud_sdk.models.job_result import JobResult
+from qualcomm_device_cloud_sdk.models.job_state import JobState
+from qualcomm_device_cloud_sdk.models.job_submission_parameter import JobSubmissionParameter
+from qualcomm_device_cloud_sdk.models.job_type import JobType
+from qualcomm_device_cloud_sdk.models.job_type_0 import JobType0
+from qualcomm_device_cloud_sdk.models.log_upload_status import LogUploadStatus
+from qualcomm_device_cloud_sdk.models.post_artifacts_uuid_continue_upload_body import (
+    PostArtifactsUuidContinueUploadBody,
 )
-from qdc_public_api_client.models.test_framework import TestFramework
-from qdc_public_api_client.types import File, Response, Unset
+from qualcomm_device_cloud_sdk.models.test_framework import TestFramework
+from qualcomm_device_cloud_sdk.types import File, Response, Unset
 
 REPO_ROOT = Path(__file__).parent.parent.parent.parent.absolute()
 
@@ -329,7 +329,7 @@ class QdcClient:
 
     @retry_with_backoff()
     def post_artifacts_startupload(self, *args, **kwargs) -> Response["ArtifactType0 | None"]:
-        result = post_artifacts_startupload.sync_detailed(
+        result = post_artifacts_start_upload.sync_detailed(
             client=self._client,
             *args,  # noqa: B026
             **kwargs,
@@ -351,7 +351,7 @@ class QdcClient:
 
     @retry_with_backoff()
     def post_artifacts_uuid_endupload(self, *args, **kwargs) -> Response["ArtifactType0 | None"]:
-        result = post_artifacts_uuid_endupload.sync_detailed(
+        result = post_artifacts_uuid_end_upload.sync_detailed(
             client=self._client,
             *args,  # noqa: B026
             **kwargs,
@@ -362,7 +362,7 @@ class QdcClient:
 
     @retry_with_backoff()
     def post_artifacts_uuid_continueupload(self, *args, **kwargs) -> Response["ArtifactType0 | None"]:
-        result = post_artifacts_uuid_continueupload.sync_detailed(
+        result = post_artifacts_uuid_continue_upload.sync_detailed(
             client=self._client,
             *args,  # noqa: B026
             **kwargs,
@@ -384,7 +384,7 @@ class QdcClient:
 
     @retry_with_backoff()
     def get_jobs_id(self, *args, **kwargs) -> Response["JobType0 | None"]:
-        result = get_jobs_id.sync_detailed(
+        result = get_jobs_job_id.sync_detailed(
             client=self._client,
             *args,  # noqa: B026
             **kwargs,
@@ -413,7 +413,7 @@ class QdcClient:
 
     @retry_with_backoff()
     def _download_zipped_log(self, qdc_log_path: PurePosixPath) -> Response[File]:
-        result = get_jobs_downloadlogs.sync_detailed(client=self._client, path=str(qdc_log_path))
+        result = get_jobs_download_logs.sync_detailed(client=self._client, path=str(qdc_log_path))
         if isinstance(result, ErrorMessageType0):
             raise RuntimeError(result.message)
         if result is None:
@@ -622,7 +622,7 @@ class QdcRunner:
         ):
             return self._client.post_artifacts_uuid_continueupload(
                 uuid=artifact_upload_uuid,
-                body=PostArtifactsUuidContinueuploadBody(
+                body=PostArtifactsUuidContinueUploadBody(
                     file=File(
                         payload=buffer,
                         file_name="artifact.zip",

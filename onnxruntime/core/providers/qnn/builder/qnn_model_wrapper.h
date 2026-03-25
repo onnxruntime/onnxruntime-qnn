@@ -192,7 +192,7 @@ class QnnModelWrapper {
   }
 
   // static bool GetOnnxShape(const NodeArg& node_arg, std::vector<uint32_t>& shape);
-  static bool GetOnnxShape(const std::vector<int64_t>& onnx_shape, std::vector<uint32_t>& shape);
+  static bool GetOnnxShape(const std::optional<std::vector<int64_t>>& onnx_shape, std::vector<uint32_t>& shape);
 
   bool IsQnnTensorWrapperExist(const std::string& tensor_name) const;
 
