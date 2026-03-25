@@ -787,8 +787,6 @@ Ort::Status GetQnnDataType(const bool is_quantized_tensor,
   return Ort::Status();
 }
 
-
-
 bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
                                Qnn_DataType_t& qnn_data_type,
                                bool is_quantized) {
