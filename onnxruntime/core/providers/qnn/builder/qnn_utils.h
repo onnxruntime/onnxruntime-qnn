@@ -148,7 +148,7 @@ class UniqueNameGeneratorImpl {
   }
 
   std::string New(const OrtNodeUnit& node_unit, std::string_view suffix = {}) {
-    std::string_view base = node_unit.Name();
+    const std::string base = node_unit.Name();
     if (base.empty()) {
       return New(node_unit.OpType() + std::to_string(node_unit.Index()), suffix);
     }
