@@ -76,8 +76,8 @@ const OrtNodeUnit* GetParentOfInputByName(const QnnModelWrapper& qnn_model_wrapp
 /// <summary>
 /// Utility function to read a constant initializer shape input into a vector of int64 values.
 /// </summary>
-std::optional<std::vector<int64_t>> GetInitializerShape(const QnnModelWrapper& qnn_model_wrapper,
-                                                        const OrtNodeUnitIODef& shape_input);
+std::optional<std::vector<int64_t>> GetInitializerDataAsInt64(const QnnModelWrapper& qnn_model_wrapper,
+                                                              const OrtNodeUnitIODef& shape_input);
 
 }  // namespace qnn
 }  // namespace onnxruntime

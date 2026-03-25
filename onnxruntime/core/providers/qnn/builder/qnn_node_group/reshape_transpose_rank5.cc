@@ -30,6 +30,8 @@ constexpr size_t kRank5 = 5;
 constexpr const char* kOpTypeReshape = "Reshape";
 constexpr const char* kOpTypeTranspose = "Transpose";
 constexpr const char* kAttrTransposePerm = "perm";
+constexpr std::array<int64_t, 6> kPermS2dDcr = {0, 3, 5, 1, 2, 4};
+constexpr std::array<int64_t, 6> kPermS2dCrd = {0, 1, 3, 5, 2, 4};
 
 using MapNodeToNodeUnit = std::unordered_map<const OrtNode*, const OrtNodeUnit*>;
 using MapNodeUnitToGroup = std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>;
@@ -173,6 +175,12 @@ std::optional<size_t> ValidatePatternConditions(
   OrtNodeAttrHelper transpose_helper(*transpose);
   std::vector<int64_t> perm = transpose_helper.Get(kAttrTransposePerm, std::vector<int64_t>{});
   if (perm.size() != kRank6) {
+    return std::nullopt;
+  }
+
+  // Keep SpaceToDepth RTR decomposition exclusively handled by SpaceToDepthFusion.
+  if (std::equal(perm.begin(), perm.end(), kPermS2dDcr.begin()) ||
+      std::equal(perm.begin(), perm.end(), kPermS2dCrd.begin())) {
     return std::nullopt;
   }
 

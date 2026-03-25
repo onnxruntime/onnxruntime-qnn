@@ -12,7 +12,6 @@
 
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
-#include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -76,114 +75,76 @@ const OrtNodeUnit* GetOnlyChildOfType(const QnnModelWrapper& /*qnn_model_wrapper
 }
 
 const OrtNodeUnit* GetChildNodeUnitAllowQdq(
-    const QnnModelWrapper& qnn_model_wrapper,
+    const QnnModelWrapper& /*qnn_model_wrapper*/,
     const OrtNodeUnit& parent_node_unit,
     const std::string& child_op_type,
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& qnn_node_group_map) {
-  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
-  const OrtNode& parent_node = parent_node_unit.GetNode();
+  try {
+    const Ort::ConstNode parent_node(&parent_node_unit.GetNode());
 
-  // 1. For QDQ NodeUnits (DQ->op->Q), look at the Q node's output instead of the target node's output.
-  const OrtNode* search_node = &parent_node;
-  if (parent_node_unit.UnitType() == OrtNodeUnit::Type::QDQGroup) {
-    const auto& q_nodes = parent_node_unit.GetQNodes();
-    if (!q_nodes.empty()) {
-      search_node = q_nodes[0];
+    // 1. For QDQ NodeUnits (DQ->op->Q), look at the Q node's output instead of the target node's output.
+    const OrtNode* search_node = parent_node;
+    if (parent_node_unit.UnitType() == OrtNodeUnit::Type::QDQGroup) {
+      const auto& q_nodes = parent_node_unit.GetQNodes();
+      if (!q_nodes.empty()) {
+        search_node = q_nodes[0];
+      }
     }
-  }
 
-  // 2. Search node must have a single child and must not produce a graph output.
-  size_t num_outputs = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(search_node, &num_outputs), ort_api, nullptr);
-  if (num_outputs != 1) {
-    return nullptr;
-  }
-
-  std::vector<const OrtValueInfo*> outputs(num_outputs);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(search_node, outputs.data(), outputs.size()), ort_api, nullptr);
-
-  // 2.1 Output must not be a graph output.
-  const OrtValueInfo* output_info = outputs[0];
-  bool is_graph_output = false;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_IsGraphOutput(output_info, &is_graph_output), ort_api, nullptr);
-  if (is_graph_output) {
-    return nullptr;
-  }
-
-  // 3. Search node must have exactly one consumer.
-  size_t num_consumers = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueNumConsumers(output_info, &num_consumers), ort_api, nullptr);
-  if (num_consumers != 1) {
-    return nullptr;
-  }
-
-  // 3.1 Get the consumer child node
-  std::vector<const OrtNode*> consumers(num_consumers);
-  std::vector<int64_t> input_indices(num_consumers);
-  RETURN_DEFAULT_IF_API_FAIL(
-      ort_api.ValueInfo_GetValueConsumers(output_info, consumers.data(), input_indices.data(), num_consumers),
-      ort_api, nullptr);
-
-  const OrtNode* potential_child = consumers[0];
-  if (potential_child == nullptr) {
-    return nullptr;
-  }
-
-  // 4. If the child is a DequantizeLinear, skip it and look at its child.
-  // DQ -> op -> Q -> (DQ) -> ...
-  if (Ort::ConstNode(potential_child).GetOperatorType() == DEQUANTIZE_LINEAR) {
-    size_t dq_num_outputs = 0;
-    RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(potential_child, &dq_num_outputs), ort_api, nullptr);
-    if (dq_num_outputs != 1) {
+    // 2. Search node must have a single child and must not produce a graph output.
+    const std::vector<Ort::ConstValueInfo> outputs = Ort::ConstNode(search_node).GetOutputs();
+    if (outputs.size() != 1 || outputs[0].IsGraphOutput()) {
       return nullptr;
     }
 
-    std::vector<const OrtValueInfo*> dq_outputs(dq_num_outputs);
-    RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(potential_child, dq_outputs.data(), dq_outputs.size()),
-                               ort_api, nullptr);
-
-    const OrtValueInfo* dq_output_info = dq_outputs[0];
-    size_t dq_num_consumers = 0;
-    RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueNumConsumers(dq_output_info, &dq_num_consumers), ort_api,
-                               nullptr);
-    if (dq_num_consumers != 1) {
+    // 3. Search node must have exactly one consumer.
+    const std::vector<Ort::ValueInfoConsumerProducerInfo> consumers = outputs[0].GetConsumers();
+    if (consumers.size() != 1 || consumers[0].node == nullptr) {
       return nullptr;
     }
 
-    std::vector<const OrtNode*> dq_consumers(dq_num_consumers);
-    std::vector<int64_t> dq_input_indices(dq_num_consumers);
-    RETURN_DEFAULT_IF_API_FAIL(
-        ort_api.ValueInfo_GetValueConsumers(dq_output_info, dq_consumers.data(), dq_input_indices.data(),
-                                            dq_num_consumers),
-        ort_api, nullptr);
+    const OrtNode* potential_child = consumers[0].node;
 
-    potential_child = dq_consumers[0];
-    if (potential_child == nullptr) {
+    // 4. If the child is a DequantizeLinear, skip it and look at its child.
+    // DQ -> op -> Q -> (DQ) -> ...
+    if (Ort::ConstNode(potential_child).GetOperatorType() == DEQUANTIZE_LINEAR) {
+      const std::vector<Ort::ConstValueInfo> dq_outputs = Ort::ConstNode(potential_child).GetOutputs();
+      if (dq_outputs.size() != 1) {
+        return nullptr;
+      }
+
+      const std::vector<Ort::ValueInfoConsumerProducerInfo> dq_consumers = dq_outputs[0].GetConsumers();
+      if (dq_consumers.size() != 1 || dq_consumers[0].node == nullptr) {
+        return nullptr;
+      }
+
+      potential_child = dq_consumers[0].node;
+    }
+
+    // 5. Check if the child node is of the expected type.
+    if (Ort::ConstNode(potential_child).GetOperatorType() != child_op_type) {
       return nullptr;
     }
-  }
 
-  // 5. Check if the child node is of the expected type.
-  if (Ort::ConstNode(potential_child).GetOperatorType() != child_op_type) {
+    // 5.1 Check if the child node is not already part of another NodeUnit.
+    const auto child_node_unit_it = node_unit_map.find(potential_child);
+    if (child_node_unit_it == node_unit_map.end()) {
+      return nullptr;
+    }
+    const OrtNodeUnit* child_node_unit = child_node_unit_it->second;
+
+    if (qnn_node_group_map.count(child_node_unit) != 0) {
+      return nullptr;
+    }
+
+    return child_node_unit;
+  } catch (const Ort::Exception&) {
     return nullptr;
   }
-
-  // 5.1 Check if the child node is not already part of another NodeUnit.
-  const auto child_node_unit_it = node_unit_map.find(potential_child);
-  if (child_node_unit_it == node_unit_map.end()) {
-    return nullptr;
-  }
-  const OrtNodeUnit* child_node_unit = child_node_unit_it->second;
-
-  if (qnn_node_group_map.count(child_node_unit) != 0) {
-    return nullptr;
-  }
-
-  return child_node_unit;
 }
 
-std::optional<std::vector<int64_t>> GetInitializerShape(
+std::optional<std::vector<int64_t>> GetInitializerDataAsInt64(
     const QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnitIODef& shape_input) {
   // 1. Require the shape input (eg: Reshape node input[1]) to be a constant initializer.
@@ -197,41 +158,25 @@ std::optional<std::vector<int64_t>> GetInitializerShape(
     return std::nullopt;
   }
 
-  // 3. Fetch type info for the initializer.
-  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
-  const OrtTypeInfo* type_info = nullptr;
-  if (ort_api.GetValueInfoTypeInfo(tensor, &type_info) != nullptr) {
-    return std::nullopt;
-  }
-
-  // 4. Cast the type info to tensor-specific info.
-  const OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
-  if (ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info) != nullptr) {
-    return std::nullopt;
-  }
-
-  // 5. Read the tensor element type.
   ONNXTensorElementDataType elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
-  if (ort_api.GetTensorElementType(tensor_info, &elem_type) != nullptr) {
+  size_t element_count = 0;
+  try {
+    // 3. Read element type from CXX type wrappers.
+    const Ort::ConstValueInfo shape_tensor(tensor);
+    const Ort::ConstTensorTypeAndShapeInfo tensor_info = shape_tensor.TypeInfo().GetTensorTypeAndShapeInfo();
+    elem_type = tensor_info.GetElementType();
+
+    // 4. Use NodeUnit I/O shape metadata to get the expected number of entries in the shape tensor.
+    std::vector<uint32_t> shape_tensor_dims;
+    if (!qnn_model_wrapper.GetOnnxShape(shape_input.shape, shape_tensor_dims) || shape_tensor_dims.size() != 1) {
+      return std::nullopt;
+    }
+    element_count = static_cast<size_t>(shape_tensor_dims[0]);
+  } catch (const Ort::Exception&) {
     return std::nullopt;
   }
 
-  // 6. Require a 1-D shape tensor.
-  size_t dims_count = 0;
-  if (ort_api.GetDimensionsCount(tensor_info, &dims_count) != nullptr || dims_count != 1) {
-    return std::nullopt;
-  }
-
-  // 7. Get the length of the shape vector.
-  std::vector<int64_t> dims(dims_count);
-  if (ort_api.GetDimensions(tensor_info, dims.data(), dims_count) != nullptr) {
-    return std::nullopt;
-  }
-
-  // assume dims to be always positive.
-  size_t element_count = static_cast<size_t>(dims[0]);
-
-  // 8. Unpack the raw initializer data.
+  // 5. Unpack the raw initializer data.
   std::vector<uint8_t> raw_bytes;
   if (!qnn_model_wrapper.UnpackInitializerData(tensor, raw_bytes).IsOK()) {
     return std::nullopt;
@@ -241,14 +186,14 @@ std::optional<std::vector<int64_t>> GetInitializerShape(
   values.reserve(element_count);
 
   if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) {
-    // 9. Validate the byte size for int64 data.
+    // 6. Validate the byte size for int64 data.
     if (raw_bytes.size() != element_count * sizeof(int64_t)) {
       return std::nullopt;
     }
     const int64_t* data = reinterpret_cast<const int64_t*>(raw_bytes.data());
     values.assign(data, data + element_count);
   } else if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32) {
-    // 10. Validate the byte size for int32 data.
+    // 7. Validate the byte size for int32 data.
     if (raw_bytes.size() != element_count * sizeof(int32_t)) {
       return std::nullopt;
     }
@@ -257,7 +202,7 @@ std::optional<std::vector<int64_t>> GetInitializerShape(
       values.push_back(static_cast<int64_t>(data[i]));
     }
   } else {
-    // 11. Reject unsupported element types.
+    // 8. Reject unsupported element types.
     return std::nullopt;
   }
 
