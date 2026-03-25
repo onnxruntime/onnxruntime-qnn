@@ -816,7 +816,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     // Initialize rpcmem_library_.
     // This is necessary for HtpSharedMemoryAllocator to function and also indicates that the allocator is available.
     rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
-    model_settings_.htp_shared_memory = enable_htp_shared_mem_allocator_;
+    model_settings_.htp_shared_memory = true;
   }
 
   if (enable_file_mapped_weights_ && !rpcmem_library_) {
