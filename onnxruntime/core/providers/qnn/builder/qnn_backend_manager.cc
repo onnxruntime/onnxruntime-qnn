@@ -1420,7 +1420,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
       bin_buffer = static_cast<void*>(buffer);
       ORT_CXX_LOG_PTR(logger_ptr_,
                       ORT_LOGGING_LEVEL_WARNING,
-                      ("Model " + node_name + " is using embedded cache. Disabling file mapping for this model.").c_str());
+                      ("Node " + node_name + " is using embedded cache. Disabling file mapping for this node.").c_str());
     } else {
       RETURN_IF(!file_mapper_, "Attemping to use File Mapping feature but file_mapper_ is uninitialized");
 
@@ -1455,25 +1455,38 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   // retrieve Qnn graph info from binary info
   RETURN_IF(nullptr == binary_info, "Qnn cached binary info is nullptr.");
   uint32_t graph_count = 0;
+  Qnn_Version_t blob_version;
   QnnSystemContext_GraphInfo_t* graphs_info = nullptr;
   if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_1) {
     graph_count = binary_info->contextBinaryInfoV1.numGraphs;
     graphs_info = binary_info->contextBinaryInfoV1.graphs;
+    blob_version = binary_info->contextBinaryInfoV1.contextBlobVersion;
   }
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 15)  // starts from 2.22
   else if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_2) {
     graph_count = binary_info->contextBinaryInfoV2.numGraphs;
     graphs_info = binary_info->contextBinaryInfoV2.graphs;
+    blob_version = binary_info->contextBinaryInfoV2.contextBlobVersion;
   }
 #endif
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)  // starts from 2.28
   else if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_3) {
     graph_count = binary_info->contextBinaryInfoV3.numGraphs;
     graphs_info = binary_info->contextBinaryInfoV3.graphs;
+    blob_version = binary_info->contextBinaryInfoV3.contextBlobVersion;
   }
 #endif
   else {
     return MAKE_EP_FAIL("Unsupported context binary info version.");
+  }
+
+  // Cannot use contextCreateFromBinaryWithCallback() unless context bin version is >= 3.3.3
+  if (use_file_mapping && (blob_version.major < 3 || blob_version.minor < 3 || blob_version.patch < 3)) {
+    std::string version_str(std::to_string(blob_version.major) + "." + std::to_string(blob_version.minor) + "." + std::to_string(blob_version.patch));
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_WARNING,
+                    ("Context binary of " + node_name + " is " + version_str + ". File mapping is only supported for versions >= 3.3.3. Disabling file mapping for this node.").c_str());
+    use_file_mapping = false;
   }
 
   RETURN_IF(graph_count < 1 || graphs_info == nullptr, "Failed to get graph info from Qnn cached context.");
