@@ -2315,36 +2315,38 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
   RegisterQnnEpLibrary(registered_ep_device, so1, onnxruntime::kQnnExecutionProvider, provider_options);
 
   so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
-  Ort::Session session1(*ort_env, ctx_model_file1.c_str(), so1);
-  Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);
+  {
+    Ort::Session session1(*ort_env, ctx_model_file1.c_str(), so1);
+    Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);
 
-  std::vector<std::string> input_names;
-  std::vector<std::string> output_names;
-  GetModelInputNames(ctx_model_paths[1], input_names, output_names);
+    std::vector<std::string> input_names;
+    std::vector<std::string> output_names;
+    GetModelInputNames(ctx_model_paths[1], input_names, output_names);
 
-  // Run sessions
-  // prepare input
-  std::vector<int64_t> input_dim{2, 3};
-  std::vector<float> input_value(2 * 3, 0.0f);
-  Ort::MemoryInfo info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
-  std::vector<Ort::Value> ort_inputs;
-  std::vector<const char*> input_names_c;
-  for (size_t i = 0; i < input_names.size(); ++i) {
-    auto input_tensor = Ort::Value::CreateTensor(info, input_value.data(), input_value.size(),
-                                                 input_dim.data(), input_dim.size());
-    ort_inputs.push_back(std::move(input_tensor));
-    input_names_c.push_back(input_names[i].c_str());
+    // Run sessions
+    // prepare input
+    std::vector<int64_t> input_dim{2, 3};
+    std::vector<float> input_value(2 * 3, 0.0f);
+    Ort::MemoryInfo info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+    std::vector<Ort::Value> ort_inputs;
+    std::vector<const char*> input_names_c;
+    for (size_t i = 0; i < input_names.size(); ++i) {
+      auto input_tensor = Ort::Value::CreateTensor(info, input_value.data(), input_value.size(),
+                                                   input_dim.data(), input_dim.size());
+      ort_inputs.push_back(std::move(input_tensor));
+      input_names_c.push_back(input_names[i].c_str());
+    }
+    std::vector<const char*> output_names_c;
+    for (size_t i = 0; i < output_names.size(); ++i) {
+      output_names_c.push_back(output_names[i].c_str());
+    }
+
+    auto ort_outputs1 = session1.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
+                                     output_names_c.data(), 1);
+    auto ort_outputs2 = session2.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
+                                     output_names_c.data(), 1);
   }
-  std::vector<const char*> output_names_c;
-  for (size_t i = 0; i < output_names.size(); ++i) {
-    output_names_c.push_back(output_names[i].c_str());
-  }
-
-  auto ort_outputs1 = session1.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
-                                   output_names_c.data(), 1);
-  auto ort_outputs2 = session2.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
-                                   output_names_c.data(), 1);
-#endif
+#endif  // defined(__aarch64__) || defined(_M_ARM64)
 
   for (auto model_path : onnx_model_paths) {
     std::remove(model_path.c_str());
