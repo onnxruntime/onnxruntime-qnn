@@ -2236,7 +2236,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
 TEST_F(QnnHTPBackendTests, QnnContextGenWeightSharingSessionAPI) {
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
-  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.32.";
+  GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
 #endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
