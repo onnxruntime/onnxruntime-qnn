@@ -3,7 +3,7 @@
 
 #include <filesystem>
 #include <fstream>
-#include <set>
+#include <unordered_set>
 #include <string>
 #include <thread>
 
@@ -2413,7 +2413,7 @@ TEST_F(QnnCPUBackendTests, GetUniqueNameResetBetweenCompilations) {
   auto tmp_dir = fs::temp_directory_path() / "qnn_unique_name_test";
   fs::create_directories(tmp_dir);
 
-  auto compile_and_get_node_names = [&](const std::string& sub_dir) -> std::set<std::string> {
+  auto compile_and_get_node_names = [&](const std::string& sub_dir) -> std::unordered_set<std::string> {
     auto json_dir = tmp_dir / sub_dir;
     fs::create_directories(json_dir);
 
@@ -2425,7 +2425,7 @@ TEST_F(QnnCPUBackendTests, GetUniqueNameResetBetweenCompilations) {
 
     RunQnnModelTest(model_fn, provider_options, 13, ExpectedEPNodeAssignment::All);
 
-    std::set<std::string> node_names;
+    std::unordered_set<std::string> node_names;
     for (const auto& entry : fs::directory_iterator(json_dir)) {
       if (entry.path().extension() == ".json") {
         std::ifstream ifs(entry.path());
