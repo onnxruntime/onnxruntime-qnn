@@ -2108,7 +2108,7 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
 
 OrtStatus* QnnEp::GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevice* /*hw*/,
                                                           OrtDeviceEpIncompatibilityDetails* details) noexcept {
-  // This function is always called by temparay QnnEp, so no need to check if backend is already setup.
+  // This function is always called by temporary QnnEp, so no need to check if backend is already setup.
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
   Ort::Status status = qnn_backend_manager_->SetupBackend(false, false, false, false, dummy_map);
 
@@ -2146,7 +2146,7 @@ OrtStatus* QnnEp::GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevic
         error_message.c_str());
   }
 
-  // Since this function is always called by temparay QnnEp, so no need to release resource.
+  // Since this function is always called by temporary QnnEp, so no need to release resource.
 
   return ep_api.DeviceEpIncompatibilityDetails_SetDetails(
       details,

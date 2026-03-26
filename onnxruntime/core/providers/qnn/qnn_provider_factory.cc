@@ -339,6 +339,9 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
   RETURN_IF_NOT_NULL(factory->ort_api.AddSessionConfigEntry(session_options.get(), (provider_prefix + "backend_type").c_str(), backend_type.c_str()));
 
   // Use default logger for the compatibility check
+  if (!OrtLoggingManager::HasDefaultLogger()) {
+    return factory->ort_api.CreateStatus(ORT_FAIL, "Default logger is not available for device compatibility check.");
+  }
   const OrtLogger* logger = OrtLoggingManager::GetDefaultLoggerPtr();
 
   // Try to create a temporary QNN EP to test backend setup
