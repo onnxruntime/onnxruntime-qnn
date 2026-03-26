@@ -2275,14 +2275,12 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
   Ort::SessionOptions so1;
   so1.SetLogId("so1");
   so1.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
-  so1.AppendExecutionProvider("QNN", provider_options);
   Ort::SessionOptions so2;
 
   // Test CreateFromBinaryListAsync path
   provider_options["enable_vtcm_backup_buffer_sharing"] = "1";
   so2.SetLogId("so2");
   so2.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
-  so2.AppendExecutionProvider("QNN", provider_options);
 
   EXPECT_TRUE(2 == ctx_model_paths.size());
 #ifdef _WIN32
@@ -2292,6 +2290,11 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
   std::string ctx_model_file1(ctx_model_paths[0].begin(), ctx_model_paths[0].end());
   std::string ctx_model_file2(ctx_model_paths[1].begin(), ctx_model_paths[1].end());
 #endif
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so1, onnxruntime::kQnnExecutionProvider, provider_options);
+
+  so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
   Ort::Session session1(*ort_env, ctx_model_file1.c_str(), so1);
   Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);
 
