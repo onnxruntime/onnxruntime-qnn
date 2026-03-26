@@ -1880,13 +1880,10 @@ void* QnnBackendManager::LoadLib(const char* file_name, int flags, std::string& 
 
   HMODULE mod;
   auto file_path = std::filesystem::path(file_name);
-  std::cout << "++++++++++++++ FILE PATH" << file_path << std::endl;
-  std::cout << std::filesystem::path(OrtGetRuntimePath()) << std::endl;
   if (!file_path.is_absolute()) {
     // construct an absolute path from ORT runtime path + file_name and check whether it exists.
     auto pathstring = std::filesystem::path(OrtGetRuntimePath()) / file_path;
     auto absolute_path = pathstring.c_str();
-    std::cout << "++++++++++++++ Path STRING" << pathstring << std::endl;
     if (std::filesystem::exists(pathstring)) {
       // load library from absolute path and search for dependencies there.
       mod = LoadLibraryExW(absolute_path, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
