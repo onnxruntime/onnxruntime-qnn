@@ -23,13 +23,15 @@
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
 #include "core/providers/qnn/qnn_telemetry.h"
 #include "core/providers/qnn/rpcmem_library.h"
+#include "core/providers/qnn/builder/genie_api_loader.h"
 
 namespace onnxruntime {
 class QnnEpFactory;
 
-// Forward declaration for QnnBackendManager
+// Forward declaration for QnnBackendManager, GenieBackendManager
 namespace qnn {
 class QnnBackendManager;
+class GenieBackendManager;
 }
 
 class QnnEp : public OrtEp, public ApiPtrs {
@@ -126,6 +128,24 @@ class QnnEp : public OrtEp, public ApiPtrs {
     QnnEp& ep;
   };
 
+
+  struct GenieNodeComputeInfo : OrtNodeComputeInfo {
+  explicit GenieNodeComputeInfo(QnnEp& ep,
+                                std::shared_ptr<GenieNodeBuilder> builder);
+
+  static OrtStatus* ORT_API_CALL CreateStateImpl(OrtNodeComputeInfo* this_ptr,
+                                                 OrtNodeComputeContext* compute_context,
+                                                 void** compute_state);
+  static OrtStatus* ORT_API_CALL ComputeImpl(OrtNodeComputeInfo* this_ptr, 
+                                             void* compute_state,
+                                             OrtKernelContext* kernel_context);
+  static void ORT_API_CALL ReleaseStateImpl(OrtNodeComputeInfo* this_ptr, 
+                                            void* compute_state);
+
+  QnnEp& ep;
+  std::shared_ptr<GenieNodeBuilder> builder;
+  };
+
   // Will return true if any power config options need to be updated
   bool GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
                                    const ::OrtRunOptions* run_options);
@@ -194,6 +214,12 @@ class QnnEp : public OrtEp, public ApiPtrs {
   mutable std::unordered_map<std::string, std::string> tensor_name_overrides_;
   // ONNX graph I/O names in declaration order: {input_names, output_names}.
   mutable std::optional<std::pair<std::vector<std::string>, std::vector<std::string>>> onnx_graph_io_names_;
+
+  // Genie pathway-specific variables
+  std::shared_ptr<qnn::GenieBackendManager> genie_backend_manager_;
+  mutable std::shared_ptr<GenieApiLoader> genie_api_loader_;
+  GenieLog_Level_t genie_log_level_ = GENIE_LOG_LEVEL_ERROR;
+  mutable std::atomic<uint64_t> genie_kv_cache_rewind_{1};
 };
 
 }  // namespace onnxruntime
