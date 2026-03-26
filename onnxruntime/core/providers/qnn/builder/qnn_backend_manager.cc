@@ -1420,7 +1420,7 @@ Ort::Status QnnBackendManager::SetupBackend(
 #else
     ORT_CXX_LOG_PTR(logger_ptr_,
                     ORT_LOGGING_LEVEL_WARNING,
-                    "Weight sharing on Windows arm64 device requires QNN API version >=2.32. Since Current version is too old, disabling the Weight sharing.");
+                    "Weight sharing on Windows arm64 device requires QNN API version >=2.34. Since Current version is too old, disabling the Weight sharing."
 #endif
 #else
     enable_htp_weight_sharing = true;
