@@ -1,25 +1,100 @@
-<p align="center"><img width="50%" src="docs/images/ONNX_Runtime_logo_dark.png" /></p>
+<p align="center"><img width="489px" src="docs/images/header.png" /></p>
 
-**ONNX Runtime QNN is an ONNX Runtime execution provider optimized for Qualcomm's hardware**.
+**ONNX Runtime QNN** is a plugin execution provider that brings Qualcomm hardware acceleration to ONNX Runtime — enabling high-performance AI inference on Qualcomm Snapdragon SoCs via the [Qualcomm AI Runtime SDK (QAIRT)](https://qpm.qualcomm.com/#/main/tools/details/Qualcomm_AI_Runtime_SDK).
 
-**ONNX Runtime QNN** provides high-performance inference for machine learning models on Qualcomm platforms. ONNX Runtime QNN leverages Qualcomm's AI Runtime (QAIRT) to deliver optimal performance on Qualcomm hardware accelerators. [Learn more &rarr;](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html)
+This repository is maintained by Qualcomm. For the general ONNX Runtime project, visit [microsoft/onnxruntime](https://github.com/microsoft/onnxruntime).
 
-This repository is maintained by Qualcomm and contains the QNN-specific execution provider for ONNX Runtime. For the general ONNX Runtime project, please visit [microsoft/onnxruntime](https://github.com/microsoft/onnxruntime).
+---
 
-## Get Started & Resources
+## What is a Plugin Execution Provider?
 
-* **General Information**:
-  - [onnxruntime.ai](https://onnxruntime.ai)
-  - [QNN Execution Provider](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html)
+ONNX Runtime supports hardware acceleration through **Execution Providers (EPs)**. The QNN EP is a *plugin* EP — a separately distributed shared library that plugs into a standard ONNX Runtime installation at runtime, without requiring a custom ORT build.
 
-* **Usage documentation and tutorials**: [onnxruntime.ai/docs](https://onnxruntime.ai/docs)
+> **QNN EP 2.0.0 is the new Plugin QNN EP.** Starting with version 2.0.0, the QNN EP ships as a standalone plugin package (`onnxruntime-qnn==2.0.0`) that works with any standard ORT installation — no custom build required. [Learn more about Plugin EPs →](https://onnxruntime.ai/docs/execution-providers/plugin-ep-libraries/)
 
-* **YouTube video tutorials**: [youtube.com/@ONNXRuntime](https://www.youtube.com/@ONNXRuntime)
+<br/>
+<p align="center"><img width="80%" src="docs/images/PluginEP-final.png" /></p>
+<br/>
 
-* [**Upcoming Release Roadmap**](https://onnxruntime.ai/roadmap)
+| | Provider Bridge EP (QNN) | Plugin QNN EP |
+|---|---|---|
+| Distribution | Bundled with ORT | Separate package |
+| ORT build required | Yes | No |
+| Install | `pip install onnxruntime-qnn==1.x.x` | `pip install onnxruntime-qnn==`**`2.0.0`** |
 
-* **Companion sample repositories**:
-  - ONNX Runtime QNN Inferencing: [microsoft/onnxruntime-inference-examples](https://github.com/microsoft/onnxruntime-inference-examples)
+---
+
+## Getting Started with the Plugin QNN EP
+
+The Plugin QNN EP workflow is different from the classic built-in EP. Follow these steps to migrate or get started.
+
+**1. Client impact: Learn about the ONNX Runtime Plugin EP API →** [Plugin EP Usage](https://onnxruntime.ai/docs/execution-providers/plugin-ep-libraries/usage.html)
+
+**2. Plugin QNN EP specific examples:**
+
+- [C++ example →](docs/execution_providers/QNN-ExecutionProvider.md#c)
+
+- Python example:
+
+```python
+import onnxruntime as ort
+import onnxruntime_qnn as qnn_ep
+
+# Register QNN EP library
+ep_lib_path = qnn_ep.get_library_path()
+lib_registration_name = "QNNExecutionProvider"
+ort.register_execution_provider_library(lib_registration_name, ep_lib_path)
+
+# Select QNN EP device
+all_ep_devices = ort.get_ep_devices()
+selected_ep_devices = [ep_device for ep_device in all_ep_devices if ep_device.ep_name == lib_registration_name]
+
+# Configure and create session
+ep_options = {'backend_path': qnn_ep.get_qnn_htp_path()}
+session_options = ort.SessionOptions()
+session_options.add_provider_for_devices(selected_ep_devices, ep_options)
+session = ort.InferenceSession("model.onnx", sess_options=session_options)
+
+# Set run options for this specific inference
+run_options = ort.RunOptions()
+run_options.add_run_config_entry("qnn.perf_mode", "burst")
+run_options.add_run_config_entry("qnn.rpc_control_latency", "100")
+
+result = session.run(None, {"input": input_data}, run_options)
+
+# Clean up
+del session
+ort.unregister_execution_provider_library(lib_registration_name)
+```
+
+- [More examples →](docs/execution_providers/QNN-ExecutionProvider.md#qnn-execution-provider)
+
+---
+
+## Install
+
+```bash
+pip install onnxruntime
+pip install onnxruntime-qnn
+```
+
+**Requirements:**
+- Windows ARM64 (for on-device inference with Qualcomm NPU)
+- Windows X64 (for model quantization and AOT compilation)
+
+For NuGet: [`Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) (Windows ARM64 only)
+
+---
+
+## Resources
+
+| Topic | Link |
+|---|---|
+| Full documentation | [QNN Execution Provider](docs/execution_providers/QNN-ExecutionProvider.md) |
+| Build from source | [Build Guide](docs/execution_providers/build.md) |
+| Development guide | [Development Guide](docs/execution_providers/development.md) |
+
+---
 
 ## Releases
 
@@ -27,17 +102,18 @@ The current release and past releases can be found here: https://github.com/onnx
 
 For details on the general ONNX Runtime roadmap, please visit: https://onnxruntime.ai/roadmap.
 
-## Data/Telemetry
-
-Windows distributions of this project may collect usage data and send it to Microsoft to help improve our products and services. See the [privacy statement](docs/Privacy.md) for more details.
+---
 
 ## Contributions and Feedback
 
-We welcome contributions! Please see the [contribution guidelines](CONTRIBUTING.md).
+We welcome contributions! See the [contribution guidelines](CONTRIBUTING.md).
 
-For feature requests or bug reports, please file a [GitHub Issue](https://github.com/onnxruntime/onnxruntime-qnn/issues).
+- Bug reports / feature requests: [GitHub Issues](https://github.com/onnxruntime/onnxruntime-qnn/issues)
+- Questions / discussion: [GitHub Discussions](https://github.com/onnxruntime/onnxruntime-qnn/discussions)
 
-For general discussion or questions, please use [GitHub Discussions](https://github.com/onnxruntime/onnxruntime-qnn/discussions).
+## Data/Telemetry
+
+Windows distributions of this project may collect usage data and send it to Microsoft to help improve our products and services. See the [privacy statement](docs/Privacy.md) for more details.
 
 ## Code of Conduct
 

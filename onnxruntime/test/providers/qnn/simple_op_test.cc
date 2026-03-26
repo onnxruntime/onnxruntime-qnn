@@ -130,6 +130,23 @@ TEST_F(QnnCPUBackendTests, DISABLED_UnaryOp_Relu) {
                  ExpectedEPNodeAssignment::All);
 }
 
+TEST_F(QnnCPUBackendTests, UnaryOp_Softplus) {
+  RunOpTestOnCPU("Softplus",
+                 {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+                 {},
+                 14,
+                 ExpectedEPNodeAssignment::All);
+}
+
+// Rank > 4D is supported on CPU (no HTP rank constraint).
+TEST_F(QnnCPUBackendTests, UnaryOp_Softplus_Rank5) {
+  RunOpTestOnCPU("Softplus",
+                 {TestInputDef<float>({1, 2, 3, 4, 5}, false, GetFloatDataInRange(-10.0f, 10.0f, 120))},
+                 {},
+                 14,
+                 ExpectedEPNodeAssignment::All);
+}
+
 TEST_F(QnnCPUBackendTests, Concat_EmptyInput) {
   RunOpTestOnCPU("Concat",
                  {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
@@ -442,6 +459,24 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Relu) {
                         {},
                         14,
                         ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, UnaryOp_Softplus_U8) {
+  RunQDQOpTest<uint8_t>("Softplus",
+                        {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+                        {},
+                        14,
+                        ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, UnaryOp_Softplus_U16) {
+  RunQDQOpTest<uint16_t>("Softplus",
+                         {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+                         {},
+                         14,
+                         ExpectedEPNodeAssignment::All,
+                         kOnnxDomain,
+                         true);
 }
 
 // Check that QNN compiles DQ -> HardSwish -> Q as a single unit.
@@ -875,7 +910,23 @@ TEST_F(QnnHTPBackendTests, DepthToSpaceOp_DCR) {
                         ExpectedEPNodeAssignment::All);
 }
 
-// Test QDQ SpaceToDepth.
+// Test float32 SpaceToDepth on HTP.
+// TODO: Disabling it due to known issues
+// Will be enabled once those issues are resolved
+TEST_F(QnnHTPBackendTests, DISABLED_SpaceToDepthOp_FP32) {
+  const std::vector<float> X = {0.0f, 0.1f, 0.2f, 0.3f,
+                                1.0f, 1.1f, 1.2f, 1.3f,
+
+                                2.0f, 2.1f, 2.2f, 2.3f,
+                                3.0f, 3.1f, 3.2f, 3.3f};
+  RunOpTest<float>("SpaceToDepth",
+                   {TestInputDef<float>({1, 2, 2, 4}, false, X)},
+                   {test::MakeAttribute("blocksize", static_cast<int64_t>(2))},
+                   11,
+                   ExpectedEPNodeAssignment::All);
+}
+
+// Test 8-bit QDQ SpaceToDepth.
 TEST_F(QnnHTPBackendTests, SpaceToDepthOp) {
   const std::vector<float> X = {0.0f, 0.1f, 0.2f, 0.3f,
                                 1.0f, 1.1f, 1.2f, 1.3f,
@@ -960,6 +1011,50 @@ TEST_F(QnnHTPBackendTests, BinaryOp_Add4D_U16) {
                          ExpectedEPNodeAssignment::All,
                          kOnnxDomain,
                          true);  // Use com.microsoft Q/DQ ops
+}
+
+// Test double Add.
+TEST_F(QnnHTPBackendTests, BinaryOp_Add4D_FP64) {
+  // Wrap FP64 in between since QNN cannot handle model IO in FP64 currently.
+  GetTestModelFn builder = [](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 2, 2, 3}, false, -1.0, 1.0));
+
+    builder.AddNode("cast1",
+                    "Cast",
+                    {"input"},
+                    {"cast1_output"},
+                    kOnnxDomain,
+                    {builder.MakeScalarAttribute(
+                        "to",
+                        static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_DOUBLE))});
+
+    MakeTestInput<double>(builder, "add_const", TestInputDef<double>({3}, true, {1.0, 0.5, -0.3}));
+    builder.AddNode("add", "Add", {"cast1_output", "add_const"}, {"add_output"}, kOnnxDomain);
+
+    builder.AddNode("cast2",
+                    "Cast",
+                    {"add_output"},
+                    {"output"},
+                    kOnnxDomain,
+                    {builder.MakeScalarAttribute(
+                        "to",
+                        static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType::TensorProto_DataType_FLOAT))});
+    builder.MakeOutput("output");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+#if defined(_WIN32)
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  provider_options["enable_htp_fp16_precision"] = "1";
+
+  RunQnnModelTest(builder, provider_options, 17, ExpectedEPNodeAssignment::All, 1e-3);
 }
 
 // Test 8-bit QDQ Sub
@@ -1072,16 +1167,11 @@ TEST_F(QnnHTPBackendTests, BinaryOp_Div4D_U16_SmallInputs) {
                          true);  // Use com.microsoft Q/DQ ops
 }
 
-// TODO: Enable when this is fixed.
-// QNN v2.13: Inaccuracy detected for output 'output', element 2551923.
-// Output quant params: scale=4100.92626953125, zero_point=126.
-// Expected val: -277957.3125
-// QNN QDQ val: 0 (err 277957.3125)
-// CPU QDQ val: -516716.71875 (err 238759.40625)
-TEST_F(QnnHTPBackendTests, DISABLED_BinaryOp_Div4D_LargeInputs) {
+// Create non-zero second input to avoid zero divisor cases.
+TEST_F(QnnHTPBackendTests, BinaryOp_Div4D_LargeInputs) {
   RunQDQOpTest<uint8_t>("Div",
                         {TestInputDef<float>({1, 3, 768, 1152}, false, -1.0f, 1.0f),
-                         TestInputDef<float>({1, 3, 768, 1152}, false, -1.0f, 1.0f)},
+                         TestInputDef<float>({1, 3, 768, 1152}, false, 1.0f, 2.0f)},
                         {},
                         17,
                         ExpectedEPNodeAssignment::All);

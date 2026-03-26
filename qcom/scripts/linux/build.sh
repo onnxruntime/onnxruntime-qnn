@@ -112,7 +112,6 @@ common_args=(--cmake_generator "${cmake_generator}" \
              --parallel \
              --build_dir "${build_dir}" \
              --wheel_name_suffix qcom-internal \
-             --no_kleidiai \
 )
 
 if [ -n "${qnn_arch_abi}" ]; then
@@ -159,7 +158,8 @@ case "${target_platform}" in
   linux)
     qnn_args=(--use_qnn --qnn_home "${qairt_sdk_root}")
     if [ -n "${ort_prebuilt_root}" ]; then
-      qnn_args+=("--ort_home ${ort_prebuilt_root}")
+      qnn_args+=("--ort_home")
+      qnn_args+=("${ort_prebuilt_root}")
     fi
     platform_args=(--build_shared_lib)
 
@@ -178,9 +178,6 @@ case "${target_platform}" in
           # We need $toolchain_root from the toolchain.cmake, but the toolchain.cmake is sometimes
           # evaluated without the project's CMakeCache.txt entries. Pass it through the environment :-/
           export ORT_BUILD_LINUX_TOOLCHAIN_ROOT="${toolchain_root}"
-
-          # Disable SVE for the time being - https://github.com/microsoft/onnxruntime/issues/26131
-          platform_args+=(--no_sve)
 
           platform_args+=(--cmake_extra_defines
                           CMAKE_TOOLCHAIN_FILE:FILEPATH="${toolchain_cmake}"
@@ -218,7 +215,8 @@ case "${target_platform}" in
 
     qnn_args=(--use_qnn static_lib --qnn_home "${qairt_sdk_root}")
     if [ -n "${ort_prebuilt_root}" ]; then
-      qnn_args+=("--ort_home ${ort_prebuilt_root}")
+      qnn_args+=("--ort_home")
+      qnn_args+=("${ort_prebuilt_root}")
     fi
     platform_args=(--build_shared_lib \
                    --android_sdk_path "${android_sdk_path}" \

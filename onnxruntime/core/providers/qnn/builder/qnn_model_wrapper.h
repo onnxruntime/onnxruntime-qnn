@@ -195,7 +195,7 @@ class QnnModelWrapper {
   }
 
   // static bool GetOnnxShape(const NodeArg& node_arg, std::vector<uint32_t>& shape);
-  static bool GetOnnxShape(const std::vector<int64_t>& onnx_shape, std::vector<uint32_t>& shape);
+  static bool GetOnnxShape(const std::optional<std::vector<int64_t>>& onnx_shape, std::vector<uint32_t>& shape);
 
   bool IsQnnTensorWrapperExist(const std::string& tensor_name) const;
 
@@ -266,6 +266,13 @@ class QnnModelWrapper {
                                bool do_op_validation,
                                bool is_for_input = true,
                                bool is_for_output = false);
+
+  // Add Reshape node with identical input/output shapes to handle no-op node.
+  // This is a workaround for no-op nodes as there is no mechanism to reroute wrappers inside op builder currently.
+  Ort::Status AddNoopReshapeNode(const std::string& node_name,
+                                 const std::string& input_name,
+                                 const OrtNodeUnitIODef& output,
+                                 bool do_op_validation);
 
   // Transpose NCHW->HWCN for QNN weight
   Ort::Status AddNchwToHwcnTranspose(size_t node_index,

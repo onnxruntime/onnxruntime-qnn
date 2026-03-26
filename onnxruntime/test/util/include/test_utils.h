@@ -53,11 +53,12 @@ void VerifyOutput(const std::string& output_name,
                   const Ort::Value& actual_value,
                   float fp32_abs_err);
 
-// TODO: Implement the function once MS release public API about graph partition in 1.24
-// int CountAssignedNodes(const Graph& current_graph, const std::string& ep_type);
+size_t CountNodes(const Ort::Session& current_session);
+
+size_t CountAssignedNodes(const Ort::Session& current_session, const std::string& ep_type);
 
 // Verify the assignment of nodes to the EP specified by `provider_type`.
-void VerifyEPNodeAssignment(const Graph& graph, const std::string& provider_type,
+void VerifyEPNodeAssignment(const Ort::Session& current_session, const std::string& provider_type,
                             ExpectedEPNodeAssignment assignment);
 
 using ModelPathOrBytes = std::variant<std::basic_string_view<ORTCHAR_T>,
@@ -84,7 +85,7 @@ void RunWithEP(Ort::Session& ort_session,
 // Calls `check_graph` on the graph of the loaded model.
 void TestModelLoad(ModelPathOrBytes model_path_or_bytes,
                    std::unique_ptr<IExecutionProvider> execution_provider,
-                   const std::function<void(const Graph&)>& check_graph);
+                   const std::function<void(const Ort::Session&)>& check_graph);
 
 // Tests model loading only.
 // The check graph function verifies the expected EP node assignment.
@@ -92,8 +93,8 @@ inline void TestModelLoad(ModelPathOrBytes model_path_or_bytes,
                           std::unique_ptr<IExecutionProvider> execution_provider,
                           ExpectedEPNodeAssignment expected_node_assignment) {
   auto check_node_assignment =
-      [provider_type = execution_provider->Type(), expected_node_assignment](const Graph& graph) {
-        VerifyEPNodeAssignment(graph, provider_type, expected_node_assignment);
+      [provider_type = execution_provider->Type(), expected_node_assignment](const Ort::Session& current_session) {
+        VerifyEPNodeAssignment(current_session, provider_type, expected_node_assignment);
       };
   TestModelLoad(model_path_or_bytes, std::move(execution_provider), check_node_assignment);
 }

@@ -137,40 +137,41 @@ static void VerifyOutputs(const std::vector<std::string>& output_names,
   }
 }
 
-// TODO: Implement the CountAssignedNodes and VerifyEPNodeAssignment once public API support get ep graph partitioning info
+size_t CountNodes(const Ort::Session& current_session) {
+  size_t count = 0;
+  std::vector<Ort::ConstEpAssignedSubgraph> ep_assigned_subgraphs = current_session.GetEpGraphAssignmentInfo();
+  for (const auto& ep_assigned_subgraph : ep_assigned_subgraphs) {
+    count += ep_assigned_subgraph.GetNodes().size();
+  }
+  return count;
+}
 
-// int CountAssignedNodes(const Graph& current_graph, const std::string& ep_type) {
-//   int count = 0;
+size_t CountAssignedNodes(const Ort::Session& current_session, const std::string& ep_type) {
+  size_t count = 0;
+  std::vector<Ort::ConstEpAssignedSubgraph> ep_assigned_subgraphs = current_session.GetEpGraphAssignmentInfo();
+  for (const auto& ep_assigned_subgraph : ep_assigned_subgraphs) {
+    if (ep_assigned_subgraph.GetEpName() == ep_type) {
+      count += ep_assigned_subgraph.GetNodes().size();
+    }
+  }
+  return count;
+}
 
-//   for (const auto& node : current_graph.Nodes()) {
-//     if (node.GetExecutionProviderType() == ep_type) {
-//       ++count;
-//     }
-
-//     if (node.ContainsSubgraph()) {
-//       for (const auto& entry : node.GetSubgraphs()) {
-//         count += CountAssignedNodes(*entry, ep_type);
-//       }
-//     }
-//   }
-
-//   return count;
-// }
-
-// void VerifyEPNodeAssignment(const Graph& graph, const std::string& provider_type,
-//                             ExpectedEPNodeAssignment assignment) {
-//   const auto provider_node_count = CountAssignedNodes(graph, provider_type);
-//   if (assignment == ExpectedEPNodeAssignment::All) {
-//     // Verify the entire graph is assigned to the EP
-//     ASSERT_EQ(provider_node_count, graph.NumberOfNodes()) << "Not all nodes were assigned to " << provider_type;
-//   } else if (assignment == ExpectedEPNodeAssignment::None) {
-//     // or none of the graph
-//     ASSERT_EQ(provider_node_count, 0) << "Some nodes were assigned to " << provider_type;
-//   } else {
-//     // or some of the graph
-//     ASSERT_GT(provider_node_count, 0) << "No nodes were assigned to " << provider_type;
-//   }
-// }
+void VerifyEPNodeAssignment(const Ort::Session& current_session, const std::string& provider_type,
+                            ExpectedEPNodeAssignment assignment) {
+  size_t num_nodes = CountNodes(current_session);
+  size_t num_ep_nodes = CountAssignedNodes(current_session, provider_type);
+  if (assignment == ExpectedEPNodeAssignment::All) {
+    // Verify the entire graph is assigned to the EP
+    ASSERT_EQ(num_ep_nodes, num_nodes) << "Not all nodes were assigned to " << provider_type;
+  } else if (assignment == ExpectedEPNodeAssignment::None) {
+    // or none of the graph
+    ASSERT_EQ(num_ep_nodes, static_cast<size_t>(0)) << "Some nodes were assigned to " << provider_type;
+  } else {
+    // or some of the graph
+    ASSERT_GT(num_ep_nodes, static_cast<size_t>(0)) << "No nodes were assigned to " << provider_type;
+  }
+}
 
 static gsl::span<const std::byte> GetModelBytes(ModelPathOrBytes model_path_or_bytes,
                                                 std::vector<std::byte>& byte_buffer_out) {
@@ -234,7 +235,7 @@ void RunWithEP(Ort::Session& ort_session,
 
 void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
                                Ort::SessionOptions& ort_so,
-                               const std::string& /* provider_type */,
+                               const std::string& provider_type,
                                std::string_view log_id,
                                const std::unordered_map<std::string, Ort::Value>& feeds,
                                const EPVerificationParams& params,
@@ -268,9 +269,7 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
   // Run with EP and verify the result
   Ort::Session ort_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), ort_so);
 
-  // TODO: VerifyEPNodeAssignment and graph_verifier require internal graph access
-  // These are commented out since we're migrating to public API
-  // ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(ort_session.GetGraph(), provider_type, params.ep_node_assignment));
+  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(ort_session, provider_type, params.ep_node_assignment));
 
   Ort::RunOptions ort_run_options;
   ort_run_options.SetRunTag(log_id.data());

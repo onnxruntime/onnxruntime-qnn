@@ -18,8 +18,7 @@ namespace onnxruntime::qnn {
 // The associated QNN context is expected to be in scope for the lifetime of the QnnContextMemHandleManager.
 class QnnContextMemHandleManager {
  public:
-  QnnContextMemHandleManager(const QNN_INTERFACE_VER_TYPE& qnn_interface, Qnn_ContextHandle_t qnn_context,
-                             const Ort::Logger& logger);
+  QnnContextMemHandleManager(const QNN_INTERFACE_VER_TYPE& qnn_interface, Qnn_ContextHandle_t qnn_context);
 
   ~QnnContextMemHandleManager();
 
@@ -27,8 +26,11 @@ class QnnContextMemHandleManager {
 
   // Gets an existing QNN mem handle or registers a new one.
   // `qnn_mem_handle` is set to the QNN mem handle and `did_register` is true if `qnn_mem_handle` was newly registered.
-  Ort::Status GetOrRegister(void* shared_memory_address, const Qnn_Tensor_t& qnn_tensor,
-                            Qnn_MemHandle_t& qnn_mem_handle, bool& did_register);
+  Ort::Status GetOrRegister(void* shared_memory_address,
+                            const Qnn_Tensor_t& qnn_tensor,
+                            Qnn_MemHandle_t& qnn_mem_handle,
+                            bool& did_register,
+                            const Ort::Logger& logger);
 
   Ort::Status Unregister(void* shared_memory_address);
 
@@ -37,7 +39,6 @@ class QnnContextMemHandleManager {
  private:
   const QNN_INTERFACE_VER_TYPE& qnn_interface_;
   Qnn_ContextHandle_t context_;
-  const Ort::Logger& logger_;
 
   // assume Qnn_MemHandle_t is a pointer and able to be wrapped with std::unique_ptr
   static_assert(std::is_pointer_v<Qnn_MemHandle_t>);
