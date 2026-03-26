@@ -713,6 +713,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
               ORT_LOGGING_LEVEL_VERBOSE,
               ("User specified enable_htp_fp16_precision: " + enable_htp_fp16_precision_str).c_str());
 
+#ifdef _WIN32
   std::string num_graph_prepare_threads_str;
   GetSessionConfigEntryOrDefault(ort_api,
                                  session_options_,
@@ -755,6 +756,11 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                 ("Using default number threads for graph prepare: " + std::to_string(def_num_graph_prepare_threads)).c_str());
     num_graph_prepare_threads_ = def_num_graph_prepare_threads;
   }
+#else
+  ORT_CXX_LOG(logger_,
+              ORT_LOGGING_LEVEL_VERBOSE,
+              "Multi-threaded graph compilation is currently only supported on Windows devices. Feature will not be enabled.");
+#endif // _WIN32
 
   // Check for conflicts
   if (qnn_context_embed_mode_ && share_ep_contexts_) {
@@ -1751,9 +1757,11 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     return ep->CompileContextModel(graphs, fused_nodes, count, node_compute_infos);
   }
 
+#if defined(_WIN32)
   auto compile_start = std::chrono::high_resolution_clock::now();
   std::vector<GraphFinalizationInfo_t> model_infos;
   model_infos.reserve(count);
+#endif
 
   for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
     const OrtGraph* graph = graphs[graph_idx];
@@ -1831,12 +1839,22 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
 
     RETURN_IF_NOT_OK(qnn_model->ComposeGraph(context));
 
+#if defined(_WIN32)
     auto& model_info = model_infos.emplace_back();
     model_info.model_name = fused_node_name;
     model_info.model = std::move(qnn_model);
     model_info.graph_idx = graph_idx;
+#else
+    RETURN_IF_NOT_OK(qnn_model->FinalizeGraphs(ep->logger_));
+    RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(ep->logger_));
+
+    ep->qnn_models_.emplace(fused_node_name, std::move(qnn_model));
+
+    node_compute_infos[graph_idx] = node_compute_info.release();
+#endif
   }
 
+#if defined(_WIN32)
   qnn::thread::QnnJobThreadPool tp(ep->num_graph_prepare_threads_);
   tp.Start();
   auto finalize_start = std::chrono::high_resolution_clock::now();
@@ -1878,6 +1896,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   ORT_CXX_LOG(ep->logger_,
               ORT_LOGGING_LEVEL_VERBOSE,
               ("Total compile time for all fused nodes: " + std::to_string(total_compile_time.count()) + " ms").c_str());
+#endif // _WIN32
   return nullptr;
 }
 

@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
+#if defined(_WIN32)
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/builder/qnn_thread_pool.h"
 
@@ -190,3 +191,4 @@ std::function<void()> QnnJobThreadPool::GetJobFromQueueIfExists(const uint8_t th
 }  // namespace thread
 }  // namespace qnn
 }  // namespace onnxruntime
+#endif

@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #pragma once
+#if defined(_WIN32)
 #include <condition_variable>
 #include <mutex>
 #include <queue>
@@ -133,3 +134,4 @@ class QnnJobThreadPool {
 }  // namespace thread
 }  // namespace qnn
 }  // namespace onnxruntime
+#endif

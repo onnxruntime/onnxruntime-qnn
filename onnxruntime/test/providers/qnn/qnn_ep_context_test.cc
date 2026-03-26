@@ -2509,6 +2509,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_OutputStream_ReturnStatus) {
   EXPECT_EQ(status.GetErrorMessage(), "Error from OrtOutStreamWriteFunc callback");
 }
 
+#ifdef _WIN32
 // Tests setting num_graph_prepare_threads to compile model
 // 1. Compile model with 2 threads
 // 2. Check for successful compilation (_ctx.onnx model should exist)
@@ -2561,17 +2562,14 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_InRange) {
   Ort::SessionOptions so;
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
-#ifdef _WIN32
+
   std::string output_model_file_str(output_model_file.string());
   std::wstring compiled_model_file(output_model_file_str.begin(), output_model_file_str.end());
-#else
-  std::string compiled_model_file(output_model_file.string());
-#endif
 
   Ort::Session session_ctx(*ort_env, compiled_model_file.c_str(), so);
   auto outputs = session_ctx.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
                                  output_names_c.data(), 1);
-#endif
+#endif // defined(__aarch64__) || defined(_M_ARM64)
   std::filesystem::remove(output_model_file);
 }
 
@@ -2629,19 +2627,17 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_OutOfRange
   Ort::SessionOptions so;
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
-#ifdef _WIN32
+
   std::string output_model_file_str(output_model_file.string());
   std::wstring compiled_model_file(output_model_file_str.begin(), output_model_file_str.end());
-#else
-  std::string compiled_model_file(output_model_file.string());
-#endif
 
   Ort::Session session_ctx(*ort_env, compiled_model_file.c_str(), so);
   auto outputs = session_ctx.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
                                  output_names_c.data(), 1);
-#endif
+#endif defined(__aarch64__) || defined(_M_ARM64)
   std::filesystem::remove(output_model_file);
 }
+#endif  // _WIN32
 
 struct CustomInitializerHandlerState {
   const ORTCHAR_T* external_file_path = nullptr;
