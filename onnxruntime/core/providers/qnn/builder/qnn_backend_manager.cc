@@ -1413,23 +1413,22 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   bool use_file_mapping = file_mapped_weights_enabled_;
-  if (use_file_mapping) {
-    // A nonzero buffer length implies an embedded context
-    if (buffer_length > 0) {
+  // A nonzero buffer length implies an embedded context
+  if (use_file_mapping && buffer_length == 0) {
+    RETURN_IF(!file_mapper_, "Attemping to use File Mapping feature but file_mapper_ is uninitialized");
+
+    RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_length));
+
+    RETURN_IF(buffer_length == 0, ("Context bin has a size of 0 bytes: " + context_bin_filepath).c_str());
+    RETURN_IF_ERROR(file_mapper_->GetContextBinMappedMemoryPtr(context_bin_filepath, &bin_buffer));
+
+  } else {
+    if (use_file_mapping) {
       use_file_mapping = false;
-      bin_buffer = static_cast<void*>(buffer);
       ORT_CXX_LOG_PTR(logger_ptr_,
                       ORT_LOGGING_LEVEL_WARNING,
-                      ("Node " + node_name + " is using embedded cache. Disabling file mapping for this node.").c_str());
-    } else {
-      RETURN_IF(!file_mapper_, "Attemping to use File Mapping feature but file_mapper_ is uninitialized");
-
-      RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_length));
-
-      RETURN_IF(buffer_length == 0, ("Context bin has a size of 0 bytes: " + context_bin_filepath).c_str());
-      RETURN_IF_ERROR(file_mapper_->GetContextBinMappedMemoryPtr(context_bin_filepath, &bin_buffer));
+                      ("Node " + node_name + " is using an embedded cache. Disabling file mapping for this node.").c_str());
     }
-  } else {
     RETURN_IF(buffer == nullptr, "Attempting to load QNN context from buffer but buffer is null");
     bin_buffer = static_cast<void*>(buffer);
   }
@@ -1454,32 +1453,43 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   // Binary info to graph info
   // retrieve Qnn graph info from binary info
   RETURN_IF(nullptr == binary_info, "Qnn cached binary info is nullptr.");
-  uint32_t graph_count = 0;
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   Qnn_Version_t blob_version;
+#endif
+
+  uint32_t graph_count = 0;
   QnnSystemContext_GraphInfo_t* graphs_info = nullptr;
   if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_1) {
     graph_count = binary_info->contextBinaryInfoV1.numGraphs;
     graphs_info = binary_info->contextBinaryInfoV1.graphs;
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
     blob_version = binary_info->contextBinaryInfoV1.contextBlobVersion;
+#endif
   }
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 15)  // starts from 2.22
   else if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_2) {
     graph_count = binary_info->contextBinaryInfoV2.numGraphs;
     graphs_info = binary_info->contextBinaryInfoV2.graphs;
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
     blob_version = binary_info->contextBinaryInfoV2.contextBlobVersion;
+#endif
   }
 #endif
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)  // starts from 2.28
   else if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_3) {
     graph_count = binary_info->contextBinaryInfoV3.numGraphs;
     graphs_info = binary_info->contextBinaryInfoV3.graphs;
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
     blob_version = binary_info->contextBinaryInfoV3.contextBlobVersion;
+#endif
   }
 #endif
   else {
     return MAKE_EP_FAIL("Unsupported context binary info version.");
   }
 
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   // Cannot use contextCreateFromBinaryWithCallback() unless context bin version is >= 3.3.3
   if (use_file_mapping && (blob_version.major < 3 || blob_version.minor < 3 || blob_version.patch < 3)) {
     std::string version_str(std::to_string(blob_version.major) + "." + std::to_string(blob_version.minor) + "." + std::to_string(blob_version.patch));
@@ -1488,6 +1498,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
                     ("Context binary of " + node_name + " is " + version_str + ". File mapping is only supported for versions >= 3.3.3. Disabling file mapping for this node.").c_str());
     use_file_mapping = false;
   }
+#endif
 
   RETURN_IF(graph_count < 1 || graphs_info == nullptr, "Failed to get graph info from Qnn cached context.");
   ORT_CXX_LOG_PTR(logger_ptr_,
@@ -1587,7 +1598,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     }
 
     if (!use_file_mapping || rt != QNN_SUCCESS)
-#endif  // QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+#endif
     {
       rt = qnn_interface_.contextCreateFromBinary(backend_handle_,
                                                   device_handle_,
