@@ -1,0 +1,26 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: "Upload CI Artifact"
+description: "Upload a CI artifact to Artifactory"
+
+inputs:
+  src_pattern:
+    description: Pattern of files to upload, relative to build/
+    required: true
+    type: string
+  name:
+    description: Name of the artifact to create
+    required: true
+    type: string
+
+runs:
+  using: "composite"
+  steps:
+    - name: Upload to Artifactory
+      shell: "${{ runner.os == 'Windows' && 'cmd' || 'bash' }}"
+      run: >
+        "${{ runner.os == 'Windows' && 'python.exe' || 'python3' }}"
+        qcom/scripts/artifactory/publish_ci.py
+        --src-pattern ${{ inputs.src_pattern }}
+        --name "${{ inputs.name }}"

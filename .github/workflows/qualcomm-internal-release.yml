@@ -29,6 +29,9 @@ on:
         type: boolean
         default: true
 
+env:
+  BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
+
 jobs:
   build-wheels:
     uses: ./.github/workflows/qualcomm-internal-build-wheels.yml
@@ -44,12 +47,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4.1.1
 
-      # We only publish this for AI Hub to use and they only want x86_64 Linux
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
         with:
-          name: ORT linux x86_64 Python 3.10 Wheel
-          path: ${{ github.workspace }}/build/dist
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      # We only publish this for AI Hub to use and they only want x86_64 Linux
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64-py3.10-wheels
+
+      - name: Consolidate Wheels
+        run: |
+          mkdir "${{ github.workspace }}/build/dist"
+          cp "${{ github.workspace }}/build/linux-x86_64/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
 
       - name: Create config file
         run: |
