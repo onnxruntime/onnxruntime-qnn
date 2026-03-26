@@ -128,48 +128,8 @@ def merge_wheels(amd64_wheel, arm64ec_wheel, output_folder):
             logging.info(f"  WARNING: platform_loader.py not found at {platform_loader_src}")
             logging.info("  You may need to create this file manually")
 
-        # Update __init__.py to call platform loader
-        logging.info("[Step 7] Updating __init__.py...")
-        init_file = unified_pkg / "__init__.py"
-        if init_file.exists():
-            with open(init_file, encoding="utf-8") as f:
-                init_content = f.read()
-
-            # Check if platform loader is already added
-            if "platform_loader" not in init_content:
-                init_lines = init_content.splitlines(keepends=True)
-
-                # Add platform loader import at the beginning
-                loader_code = """# Platform-aware library loading
-try:
-    from .platform_loader import setup_library_path
-    _lib_dir_path = setup_library_path()
-except Exception as e:
-    import warnings
-    warnings.warn(f"Failed to setup platform-specific library path: {e}")
-"""
-                processed_lines = []
-                added = False
-                str_to_be_replaced = "os.path.dirname(os.path.abspath(__file__))"
-                for line in init_lines:
-                    if not added and not line.strip().startswith("#"):
-                        processed_lines.append("\n" + loader_code + "\n")
-                        added = True
-                    new_line = line
-                    if str_to_be_replaced in line:
-                        new_line = line.replace(str_to_be_replaced, "os.path.abspath(_lib_dir_path)")
-                    processed_lines.append(new_line)
-
-                with open(init_file, "w", encoding="utf-8") as f:
-                    f.writelines(processed_lines)
-                logging.info("  Updated: __init__.py with platform loader")
-            else:
-                logging.info("  Skipped: __init__.py already has platform loader")
-        else:
-            logging.info("  WARNING: __init__.py not found")
-
         # Copy dist-info from AMD64 wheel
-        logging.info("[Step 8] Copying dist-info...")
+        logging.info("[Step 7] Copying dist-info...")
         for item in amd64_dir.iterdir():
             if item.name.endswith(".dist-info"):
                 dest = unified_dir / item.name
@@ -177,7 +137,7 @@ except Exception as e:
                 logging.info(f"  Copied: {item.name}/")
 
         # Create the unified wheel
-        logging.info("[Step 9] Creating unified wheel...")
+        logging.info("[Step 8] Creating unified wheel...")
         Path(output_folder).mkdir(parents=True, exist_ok=True)
         subprocess.run(["wheel", "pack", unified_dir, "-d", output_folder], check=True)
 
