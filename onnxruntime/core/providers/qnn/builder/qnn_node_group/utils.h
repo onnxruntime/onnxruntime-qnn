@@ -4,8 +4,10 @@
 #pragma once
 
 #include <gsl/gsl>
+#include <optional>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/ort_api.h"
@@ -17,6 +19,17 @@ constexpr const char* DEQUANTIZE_LINEAR = "DequantizeLinear";
 constexpr size_t QDQ_MAX_NUM_INPUTS = 3;
 constexpr size_t QDQ_SCALE_INPUT_IDX = 1;
 constexpr size_t QDQ_ZERO_POINT_INPUT_IDX = 2;
+
+/// <summary>
+/// Extracts and normalizes axes from a Reduce operator (ReduceMean, ReduceSum, etc.).
+/// Handles both attribute-based axes (opset < 18) and input-based axes (opset >= 18).
+/// Returns normalized positive axes, sorted and deduplicated.
+/// </summary>
+/// <param name="qnn_model_wrapper">QnnModelWrapper containing the OrtGraph and OrtApi</param>
+/// <param name="node_unit">The Reduce operator node unit</param>
+/// <returns>Normalized axes as uint32_t vector, or std::nullopt if extraction fails</returns>
+std::optional<std::vector<uint32_t>> GetReduceAxes(const QnnModelWrapper& qnn_model_wrapper,
+                                                   const OrtNodeUnit& node_unit);
 
 /// <summary>
 /// Utility function to get a child NodeUnit. The returned NodeUnit must be the parent's only child, must be

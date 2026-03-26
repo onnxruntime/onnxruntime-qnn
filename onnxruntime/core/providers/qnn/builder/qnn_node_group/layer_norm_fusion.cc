@@ -3,9 +3,9 @@
 
 #include "core/providers/qnn/builder/qnn_node_group/layer_norm_fusion.h"
 
+#include <algorithm>
 #include <gsl/gsl>
 #include <cassert>
-#include <cstring>
 #include <optional>
 #include <unordered_set>
 #include <utility>
@@ -36,7 +36,6 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
                                          bool validate);
 
 static std::optional<float> GetConstantFloatScalar(const QnnModelWrapper& qmw,
-                                                   const OrtApi& ort_api,
                                                    const std::string& input_name) {
   if (!qmw.IsConstantInput(input_name)) {
     return std::nullopt;
@@ -47,75 +46,29 @@ static std::optional<float> GetConstantFloatScalar(const QnnModelWrapper& qmw,
     return std::nullopt;
   }
 
-  const OrtValue* value = nullptr;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetInitializerValue(value_info, &value), ort_api, std::nullopt);
-
-  OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetTensorTypeAndShape(value, &tensor_info), ort_api, std::nullopt);
-
-  ONNXTensorElementDataType elem_type;
-  if (OrtStatus* s = ort_api.GetTensorElementType(tensor_info, &elem_type)) {
-    ort_api.ReleaseTensorTypeAndShapeInfo(tensor_info);
-    RETURN_DEFAULT_IF_API_FAIL(s, ort_api, std::nullopt);
-  }
-  ort_api.ReleaseTensorTypeAndShapeInfo(tensor_info);
-
-  if (elem_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+  Ort::ConstValueInfo ort_value_info(value_info);
+  Ort::ConstValue ort_value;
+  if (!ort_value_info.GetInitializer(ort_value).IsOK()) {
     return std::nullopt;
   }
 
-  const void* raw_data = nullptr;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.GetTensorData(value, &raw_data), ort_api, std::nullopt);
+  auto type_info = ort_value_info.TypeInfo();
+  auto tensor_info = type_info.GetTensorTypeAndShapeInfo();
+  if (tensor_info.GetElementType() != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+    return std::nullopt;
+  }
 
-  return *static_cast<const float*>(raw_data);
+  const float* data = ort_value.GetTensorData<float>();
+  if (!data) {
+    return std::nullopt;
+  }
+
+  return *data;
 }
 
 static std::optional<std::vector<uint32_t>> GetReduceMeanAxes(const QnnModelWrapper& qmw,
                                                               const OrtNodeUnit& reduce_mean_node_unit) {
-  const auto& inputs = reduce_mean_node_unit.Inputs();
-  std::vector<uint32_t> input_shape;
-  if (!qmw.GetOnnxShape(inputs[0].shape, input_shape)) {
-    return std::nullopt;
-  }
-  const size_t input_rank = input_shape.size();
-
-  std::vector<int64_t> raw_axes;
-  OrtNodeAttrHelper node_helper(reduce_mean_node_unit);
-
-  const int opset = reduce_mean_node_unit.SinceVersion();
-  if (opset < 18) {
-    // Axes is an attribute.
-    raw_axes = node_helper.Get("axes", raw_axes);
-  } else if (inputs.size() > 1) {
-    // Axes is input[1] initializer.
-    const std::string& axes_input_name = inputs[1].name;
-    if (!qmw.IsConstantInput(axes_input_name)) {
-      return std::nullopt;
-    }
-    const auto* axes_tensor = qmw.GetConstantTensor(axes_input_name);
-    if (!axes_tensor) {
-      return std::nullopt;
-    }
-    std::vector<uint8_t> axes_bytes;
-    if (!qmw.UnpackInitializerData(axes_tensor, axes_bytes).IsOK()) {
-      return std::nullopt;
-    }
-    raw_axes.resize(axes_bytes.size() / sizeof(int64_t));
-    std::memcpy(raw_axes.data(), axes_bytes.data(), axes_bytes.size());
-  }
-
-  // Normalize to positive values.
-  std::vector<uint32_t> axes;
-  axes.reserve(raw_axes.size());
-  for (int64_t ax : raw_axes) {
-    int64_t positive_ax = (ax < 0) ? (ax + static_cast<int64_t>(input_rank)) : ax;
-    if (positive_ax < 0 || static_cast<size_t>(positive_ax) >= input_rank) {
-      return std::nullopt;
-    }
-    axes.push_back(static_cast<uint32_t>(positive_ax));
-  }
-
-  return axes;
+  return GetReduceAxes(qmw, reduce_mean_node_unit);
 }
 
 std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
@@ -137,8 +90,6 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
       return nullptr;
     }
   }
-
-  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
 
   // ---- Step 1: ReduceMean₁ → Sub ----
   // ReduceMean₁ must have exactly one child: Sub.
@@ -209,7 +160,7 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
   if (pow_inputs.size() < 2) {
     return nullptr;
   }
-  const std::optional<float> pow_exp = GetConstantFloatScalar(qnn_model_wrapper, ort_api, pow_inputs[1].name);
+  const std::optional<float> pow_exp = GetConstantFloatScalar(qnn_model_wrapper, pow_inputs[1].name);
   if (!pow_exp.has_value() || pow_exp.value() != 2.0f) {
     return nullptr;
   }
@@ -232,7 +183,19 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
   // Both ReduceMeans must have the same axes, pointing to the last dimension.
   auto axes1_opt = GetReduceMeanAxes(qnn_model_wrapper, reduce_mean_node_unit);
   auto axes2_opt = GetReduceMeanAxes(qnn_model_wrapper, *reduce_mean2_node_unit);
-  if (!axes1_opt.has_value() || !axes2_opt.has_value() || axes1_opt.value() != axes2_opt.value()) {
+  if (!axes1_opt.has_value() || !axes2_opt.has_value()) {
+    return nullptr;
+  }
+
+  // Normalize axes for comparison: sort and deduplicate.
+  auto axes1 = axes1_opt.value();
+  auto axes2 = axes2_opt.value();
+  std::sort(axes1.begin(), axes1.end());
+  std::sort(axes2.begin(), axes2.end());
+  axes1.erase(std::unique(axes1.begin(), axes1.end()), axes1.end());
+  axes2.erase(std::unique(axes2.begin(), axes2.end()), axes2.end());
+
+  if (axes1 != axes2) {
     return nullptr;
   }
   std::vector<uint32_t> input_shape;
@@ -242,8 +205,7 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
   const size_t input_rank = input_shape.size();
 
   // Axes must point to the last dimension
-  const auto& axes = axes1_opt.value();
-  if (axes.empty() || axes.back() != static_cast<uint32_t>(input_rank - 1)) {
+  if (axes1.empty() || axes1.back() != static_cast<uint32_t>(input_rank - 1)) {
     return nullptr;
   }
 
@@ -263,7 +225,7 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
   }
   std::optional<float> epsilon_opt;
   for (const auto& inp : add_eps_inputs) {
-    auto val = GetConstantFloatScalar(qnn_model_wrapper, ort_api, inp.name);
+    auto val = GetConstantFloatScalar(qnn_model_wrapper, inp.name);
     if (val.has_value()) {
       epsilon_opt = val;
       break;
@@ -358,9 +320,9 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     shape_str += std::to_string(input_shape[i]);
   }
   std::string axes_str;
-  for (size_t i = 0; i < axes.size(); ++i) {
+  for (size_t i = 0; i < axes1.size(); ++i) {
     if (i > 0) axes_str += ",";
-    axes_str += std::to_string(axes[i]);
+    axes_str += std::to_string(axes1[i]);
   }
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE,
               ("LayerNormFusion: Fusing LayerNorm starting at node: " + reduce_mean_node_unit.Name() +
@@ -373,13 +335,13 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
 
   if (auto status = ValidateOnQnn(qnn_model_wrapper, node_units, root_input,
                                   *gamma_input_def, *beta_input_def, final_output,
-                                  epsilon, axes);
+                                  epsilon, axes1);
       !status.IsOK()) {
     return nullptr;
   }
 
   return std::make_unique<LayerNormFusion>(std::move(node_units), &reduce_mean_node_unit,
-                                           epsilon, axes,
+                                           epsilon, axes1,
                                            gamma_input_def->name, beta_input_def->name);
 }
 
@@ -457,46 +419,54 @@ const OrtNodeUnit* LayerNormFusion::GetTargetNodeUnit() const {
 // then squeezes it to 1D. Rules:
 //   - All non-normalized dims must be 1 (no scaling along non-normalized axes).
 //   - All normalized dims must match the input shape at those axes.
-// Returns std::nullopt if the shape is invalid.
-static std::optional<std::vector<uint32_t>> ValidateAndSqueezeScaleShape(
+// Returns an error status if the shape is invalid.
+static Ort::Status ValidateAndSqueezeScaleShape(
     const std::vector<uint32_t>& scale_shape,
     const std::vector<uint32_t>& input_shape,
-    gsl::span<const uint32_t> axes) {
+    gsl::span<const uint32_t> axes,
+    /*out*/ std::vector<uint32_t>& squeezed_shape) {
+  // Normalize axes: sort and deduplicate.
+  std::vector<uint32_t> normalized_axes(axes.begin(), axes.end());
+  std::sort(normalized_axes.begin(), normalized_axes.end());
+  normalized_axes.erase(std::unique(normalized_axes.begin(), normalized_axes.end()),
+                        normalized_axes.end());
+
   // If already the right rank, verify each dim matches the input at the corresponding axis.
-  if (scale_shape.size() == axes.size()) {
-    for (size_t i = 0; i < axes.size(); ++i) {
-      if (scale_shape[i] != input_shape[axes[i]]) {
-        return std::nullopt;
+  if (scale_shape.size() == normalized_axes.size()) {
+    for (size_t i = 0; i < normalized_axes.size(); ++i) {
+      if (scale_shape[i] != input_shape[normalized_axes[i]]) {
+        return MAKE_EP_FAIL("LayerNormFusion: scale shape dimension mismatch at normalized axis.");
       }
     }
-    return scale_shape;
+    squeezed_shape = scale_shape;
+    return Ort::Status();
   }
 
   // Must have same rank as input to check per-dim semantics.
   if (scale_shape.size() != input_shape.size()) {
-    return std::nullopt;
+    return MAKE_EP_FAIL("LayerNormFusion: scale shape rank must match input rank or normalized axes count.");
   }
 
-  std::unordered_set<uint32_t> axes_set(axes.begin(), axes.end());
-  std::vector<uint32_t> squeezed;
-  squeezed.reserve(axes.size());
+  std::unordered_set<uint32_t> axes_set(normalized_axes.begin(), normalized_axes.end());
+  squeezed_shape.clear();
+  squeezed_shape.reserve(normalized_axes.size());
 
   for (size_t i = 0; i < scale_shape.size(); ++i) {
     if (axes_set.count(static_cast<uint32_t>(i))) {
       // Normalized axis: dim must match input.
       if (scale_shape[i] != input_shape[i]) {
-        return std::nullopt;
+        return MAKE_EP_FAIL("LayerNormFusion: scale shape dimension mismatch at normalized axis.");
       }
-      squeezed.push_back(scale_shape[i]);
+      squeezed_shape.push_back(scale_shape[i]);
     } else {
       // Non-normalized axis: dim must be 1.
       if (scale_shape[i] != 1) {
-        return std::nullopt;
+        return MAKE_EP_FAIL("LayerNormFusion: scale shape must be 1 at non-normalized axes.");
       }
     }
   }
 
-  return squeezed;
+  return Ort::Status();
 }
 
 static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
@@ -528,17 +498,17 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
   {
     TensorInfo gamma_info = {};
     RETURN_IF_ERROR(qmw.GetTensorInfo(gamma_input, gamma_info));
-    auto squeezed = ValidateAndSqueezeScaleShape(gamma_info.shape, input_shape, axes);
-    RETURN_IF_NOT(squeezed.has_value(), "LayerNormFusion: gamma shape is incompatible with LayerNorm axes.");
-    gamma_info.shape = std::move(squeezed.value());
+    std::vector<uint32_t> squeezed_gamma;
+    RETURN_IF_ERROR(ValidateAndSqueezeScaleShape(gamma_info.shape, input_shape, axes, squeezed_gamma));
+    gamma_info.shape = std::move(squeezed_gamma);
     RETURN_IF_ERROR(qmw.MakeTensorWrapper(gamma_info, gamma_input.name, gamma_tensor));
   }
   {
     TensorInfo beta_info = {};
     RETURN_IF_ERROR(qmw.GetTensorInfo(beta_input, beta_info));
-    auto squeezed = ValidateAndSqueezeScaleShape(beta_info.shape, input_shape, axes);
-    RETURN_IF_NOT(squeezed.has_value(), "LayerNormFusion: beta shape is incompatible with LayerNorm axes.");
-    beta_info.shape = std::move(squeezed.value());
+    std::vector<uint32_t> squeezed_beta;
+    RETURN_IF_ERROR(ValidateAndSqueezeScaleShape(beta_info.shape, input_shape, axes, squeezed_beta));
+    beta_info.shape = std::move(squeezed_beta);
     RETURN_IF_ERROR(qmw.MakeTensorWrapper(beta_info, beta_input.name, beta_tensor));
   }
 
