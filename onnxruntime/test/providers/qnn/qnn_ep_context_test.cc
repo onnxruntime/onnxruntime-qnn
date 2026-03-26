@@ -2515,24 +2515,29 @@ TEST_F(QnnHTPBackendTests, CompileApi_OutputStream_ReturnStatus) {
 // 3. Execute compiled model successfully
 TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_InRange) {
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
-  std::string output_model_file("mul_1_ctx.onnx");
-  std::filesystem::remove(output_model_file.c_str());
+  std::filesystem::path output_model_file("mul_1_ctx.onnx");
+  std::filesystem::remove(output_model_file);
+  {
+    // Compile a model with QNN. This should succeed.
+    ProviderOptions qnn_options = {{"backend_type", "htp"}, {"num_graph_prepare_threads", "2"}};
 
-  ProviderOptions qnn_options = {{"backend_type", "htp"}, {"num_graph_prepare_threads", "2"}};
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, output_model_file.string().c_str());
+    so.AddConfigEntry(kOrtSessionOptionsFailOnSuboptimalCompiledModel, "1");
 
-  // Compile a model with QNN. This should succeed.
-  Ort::SessionOptions so;
-  so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
-  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, output_model_file.c_str());
-  so.AppendExecutionProvider(kQnnExecutionProvider, qnn_options);
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
 
-  Ort::Session session(*ort_env, input_model_file, so);
-  ASSERT_TRUE(std::filesystem::exists(output_model_file.c_str()));
+    Ort::Session session(*ort_env, input_model_file, so);
+    ASSERT_TRUE(std::filesystem::exists(output_model_file.c_str()));
+  }
 
 #if defined(__aarch64__) || defined(_M_ARM64)
   std::vector<std::string> input_names;
   std::vector<std::string> output_names;
-  GetModelInputNames(output_model_file, input_names, output_names);
+  GetModelInputNames(output_model_file.string(), input_names, output_names);
 
   // Run session with compiled model
   // prepare input
@@ -2552,14 +2557,17 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_InRange) {
     output_names_c.push_back(output_names[i].c_str());
   }
 
-  ProviderOptions exec_qnn_options = {{"backend_type", "htp"}};
-  so = Ort::SessionOptions();
+  ProviderOptions qnn_options = {{"backend_type", "htp"}};
+  Ort::SessionOptions so;
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
 #ifdef _WIN32
-  std::wstring compiled_model_file(output_model_file.begin(), output_model_file.end());
+  std::string output_model_file_str(output_model_file.string());
+  std::wstring compiled_model_file(output_model_file_str.begin(), output_model_file_str.end());
 #else
   std::string compiled_model_file(output_model_file.begin(), output_model_file.end());
 #endif
-  so.AppendExecutionProvider(kQnnExecutionProvider, exec_qnn_options);
+
   Ort::Session session_ctx(*ort_env, compiled_model_file.c_str(), so);
   auto outputs = session_ctx.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
                                  output_names_c.data(), 1);
@@ -2574,25 +2582,30 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_InRange) {
 // 3. Execute compiled model successfully
 TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_OutOfRange) {
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
-  std::string output_model_file("mul_1_ctx.onnx");
-  std::filesystem::remove(output_model_file.c_str());
+  std::filesystem::path output_model_file("mul_1_ctx.onnx");
+  std::filesystem::remove(output_model_file);
+  {
+    // Compile a model with QNN. This should succeed.
+    // number of threads should default back to 8 or the max supported by platform (whichever is lower)
+    ProviderOptions qnn_options = {{"backend_type", "htp"}, {"num_graph_prepare_threads", "100"}};
 
-  // number of threads should default back to 8 or the max supported by platform (whichever is lower)
-  ProviderOptions qnn_options = {{"backend_type", "htp"}, {"num_graph_prepare_threads", "100"}};
+    Ort::SessionOptions so;
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextEmbedMode, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, output_model_file.string().c_str());
+    so.AddConfigEntry(kOrtSessionOptionsFailOnSuboptimalCompiledModel, "1");
 
-  // Compile a model with QNN. This should succeed.
-  Ort::SessionOptions so;
-  so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
-  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, output_model_file.c_str());
-  so.AppendExecutionProvider(kQnnExecutionProvider, qnn_options);
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
 
-  Ort::Session session(*ort_env, input_model_file, so);
-  ASSERT_TRUE(std::filesystem::exists(output_model_file.c_str()));
+    Ort::Session session(*ort_env, input_model_file, so);
+    ASSERT_TRUE(std::filesystem::exists(output_model_file.c_str()));
+  }
 
 #if defined(__aarch64__) || defined(_M_ARM64)
   std::vector<std::string> input_names;
   std::vector<std::string> output_names;
-  GetModelInputNames(output_model_file, input_names, output_names);
+  GetModelInputNames(output_model_file.string(), input_names, output_names);
 
   // Run session with compiled model
   // prepare input
@@ -2612,14 +2625,17 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_OutOfRange
     output_names_c.push_back(output_names[i].c_str());
   }
 
-  ProviderOptions exec_qnn_options = {{"backend_type", "htp"}};
-  so = Ort::SessionOptions();
+  ProviderOptions qnn_options = {{"backend_type", "htp"}};
+  Ort::SessionOptions so;
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
 #ifdef _WIN32
-  std::wstring compiled_model_file(output_model_file.begin(), output_model_file.end());
+  std::string output_model_file_str(output_model_file.string());
+  std::wstring compiled_model_file(output_model_file_str.begin(),output_model_file_str.end());
 #else
-  std::string compiled_model_file(output_model_file.begin(), output_model_file.end());
+  std::string compiled_model_file(output_model_file.string());
 #endif
-  so.AppendExecutionProvider(kQnnExecutionProvider, exec_qnn_options);
+
   Ort::Session session_ctx(*ort_env, compiled_model_file.c_str(), so);
   auto outputs = session_ctx.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
                                  output_names_c.data(), 1);
