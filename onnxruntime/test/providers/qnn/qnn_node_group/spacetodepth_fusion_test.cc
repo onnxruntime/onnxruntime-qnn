@@ -269,11 +269,11 @@ void RunSpaceToDepthFusionTest(const std::filesystem::path& json_qnn_graph_dir,
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
   const int uncaught_on_entry = std::uncaught_exceptions();
-  auto cleanup = gsl::finally([uncaught_on_entry]() {
+  auto cleanup = gsl::finally([uncaught_on_entry, json_qnn_graph_dir]() {
     if (std::uncaught_exceptions() > uncaught_on_entry) {
       return;
     }
-    // std::filesystem::remove_all(json_qnn_graph_dir);
+    std::filesystem::remove_all(json_qnn_graph_dir);
   });
 
   ProviderOptions provider_options = GetProviderOptions(backend_type);
@@ -296,11 +296,11 @@ void RunWrappedPatternSpaceToDepthFusionTest(const std::filesystem::path& json_q
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
   const int uncaught_on_entry = std::uncaught_exceptions();
-  auto cleanup = gsl::finally([uncaught_on_entry]() {
+  auto cleanup = gsl::finally([uncaught_on_entry, json_qnn_graph_dir]() {
     if (std::uncaught_exceptions() > uncaught_on_entry) {
       return;
     }
-    // std::filesystem::remove_all(json_qnn_graph_dir);
+    std::filesystem::remove_all(json_qnn_graph_dir);
   });
 
   ProviderOptions provider_options = GetProviderOptions(backend_type);
@@ -322,23 +322,28 @@ void RunWrappedPatternSpaceToDepthFusionTest(const std::filesystem::path& json_q
 
 }  // namespace
 
-TEST_F(QnnCPUBackendTests, SpaceToDepthFusion_Float_DCR) {
-  RunSpaceToDepthFusionTest("SpaceToDepthFusionFloatDCR_CPU",
-                            /*input_shape=*/{1, 2, 4, 4},
-                            /*block_height=*/2,
-                            /*block_width=*/2,
-                            /*perm=*/{0, 3, 5, 1, 2, 4},
-                            /*use_qdq=*/false,
-                            /*use_contrib_qdq=*/false,
-                            /*backend_type=*/"cpu");
-}
-
-TEST_F(QnnCPUBackendTests, SpaceToDepthFusion_Float_CRD) {
+// Disabling this test as Layout Transformer for CPU BE breaks the pattern by modifying Transpose perm.
+// Test Graph : Input -> Conv -> Reshape -> Transpose(perm={0,3,5,1,2,4}) -> Reshape -> Conv -> Output
+// Layout Transformer modifies Transpose perm to {0,1,3,5,2,4} to {0,5,2,4,1,3} to save one Transpose op.
+// LT Graph: T(NCHW->NHWC) -> Conv -> Reshape -> Transpose(perm={0,5,2,4,1,3}) -> Reshape -> T(NCHW->NHWC) Conv -> Output
+TEST_F(QnnCPUBackendTests, DISABLED_SpaceToDepthFusion_Float_CRD) {
   RunSpaceToDepthFusionTest("SpaceToDepthFusionFloatCRD_CPU",
                             /*input_shape=*/{1, 2, 4, 4},
                             /*block_height=*/2,
                             /*block_width=*/2,
                             /*perm=*/{0, 1, 3, 5, 2, 4},
+                            /*use_qdq=*/false,
+                            /*use_contrib_qdq=*/false,
+                            /*backend_type=*/"cpu");
+}
+
+// Disabling this test as Layout Transformer for CPU BE breaks the pattern by modifying Transpose perm, as explained above.
+TEST_F(QnnCPUBackendTests, DISABLED_SpaceToDepthFusion_Float_DCR) {
+  RunSpaceToDepthFusionTest("SpaceToDepthFusionFloatDCR_CPU",
+                            /*input_shape=*/{1, 2, 4, 4},
+                            /*block_height=*/2,
+                            /*block_width=*/2,
+                            /*perm=*/{0, 3, 5, 1, 2, 4},
                             /*use_qdq=*/false,
                             /*use_contrib_qdq=*/false,
                             /*backend_type=*/"cpu");

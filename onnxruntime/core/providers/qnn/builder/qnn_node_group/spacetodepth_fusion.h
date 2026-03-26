@@ -34,9 +34,6 @@ class SpaceToDepthFusion : public IQnnNodeGroup {
       : block_height_(block_height),
         block_width_(block_width),
         mode_(mode) {
-    if (node_units.size() < 4 || node_units.size() > 5) {
-      ORT_CXX_API_THROW("S2D Pattern expects 4 to 5 NodeUnits.", ORT_EP_FAIL);
-    }
     node_units_.reserve(node_units.size());
     for (const OrtNodeUnit* node_unit : node_units) {
       node_units_.push_back(node_unit);

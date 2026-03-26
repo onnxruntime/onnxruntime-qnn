@@ -454,7 +454,7 @@ Ort::Status CreateOrValidateOnQnn(
     std::vector<uint32_t> block_shape{2};
     std::vector<uint32_t> block_data{block_height, block_width};
     return QnnParamWrapper(reshape2.Index(), reshape2.Name(),
-                           QNN_OP_DEPTH_TO_SPACE_PARAM_BLOCK_SIZE,
+                           QNN_OP_SPACE_TO_DEPTH_PARAM_BLOCK_SIZE,
                            std::move(block_shape), std::move(block_data));
   };
 
