@@ -713,7 +713,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
               ORT_LOGGING_LEVEL_VERBOSE,
               ("User specified enable_htp_fp16_precision: " + enable_htp_fp16_precision_str).c_str());
 
-
   std::string num_graph_prepare_threads_str;
   GetSessionConfigEntryOrDefault(ort_api,
                                  session_options_,

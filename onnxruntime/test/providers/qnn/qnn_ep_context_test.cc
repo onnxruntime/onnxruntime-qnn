@@ -2565,7 +2565,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_InRange) {
   std::string output_model_file_str(output_model_file.string());
   std::wstring compiled_model_file(output_model_file_str.begin(), output_model_file_str.end());
 #else
-  std::string compiled_model_file(output_model_file.begin(), output_model_file.end());
+  std::string compiled_model_file(output_model_file.string());
 #endif
 
   Ort::Session session_ctx(*ort_env, compiled_model_file.c_str(), so);
@@ -2631,7 +2631,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_OutOfRange
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
 #ifdef _WIN32
   std::string output_model_file_str(output_model_file.string());
-  std::wstring compiled_model_file(output_model_file_str.begin(),output_model_file_str.end());
+  std::wstring compiled_model_file(output_model_file_str.begin(), output_model_file_str.end());
 #else
   std::string compiled_model_file(output_model_file.string());
 #endif

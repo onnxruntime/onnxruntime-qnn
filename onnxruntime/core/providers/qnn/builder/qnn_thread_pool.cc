@@ -83,7 +83,7 @@ void QnnJobThreadPool::QnnJobThread::WaitUntilInactive() {
 }
 
 QnnJobThreadPool::QnnJobThreadPool(uint8_t max_num_threads)
-  : max_num_threads_(max_num_threads), running_(false) {
+    : max_num_threads_(max_num_threads), running_(false) {
   thread_pool_.reserve(max_num_threads);
 }
 
@@ -106,7 +106,6 @@ void QnnJobThreadPool::Start() {
     StartJobThread();
   }
 }
-
 
 void QnnJobThreadPool::Stop() {
   if (!IsRunning()) {
