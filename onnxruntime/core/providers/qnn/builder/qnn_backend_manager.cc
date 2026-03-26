@@ -1408,15 +1408,24 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 
   void* bin_buffer = nullptr;
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-  // A nonzero buffer length implies an embedded context
-  if (file_mapped_weights_enabled_ && buffer_length == 0) {
-    RETURN_IF(!file_mapper_, "Attemping to use File Mapping feature but file_mapper_ is uninitialized");
 
-    RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_length));
+  bool use_file_mapping = file_mapped_weights_enabled_;
+  if (use_file_mapping) {
+    // A nonzero buffer length implies an embedded context
+    if (buffer_length > 0) {
+      use_file_mapping = false;
+      bin_buffer = static_cast<void*>(buffer);
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_WARNING,
+                  ("Model " + node_name + " is using embedded cache. Disabling file mapping for this model.").c_str());
+    } else {
+      RETURN_IF(!file_mapper_, "Attemping to use File Mapping feature but file_mapper_ is uninitialized");
 
-    RETURN_IF(buffer_length == 0, ("Context bin has a size of 0 bytes: " + context_bin_filepath).c_str());
-    RETURN_IF_ERROR(file_mapper_->GetContextBinMappedMemoryPtr(context_bin_filepath, &bin_buffer));
+      RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_length));
 
+      RETURN_IF(buffer_length == 0, ("Context bin has a size of 0 bytes: " + context_bin_filepath).c_str());
+      RETURN_IF_ERROR(file_mapper_->GetContextBinMappedMemoryPtr(context_bin_filepath, &bin_buffer));
+    }
   } else {
     RETURN_IF(buffer == nullptr, "Attempting to load QNN context from buffer but buffer is null");
     bin_buffer = static_cast<void*>(buffer);
@@ -1513,7 +1522,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
     Qnn_ContextBinaryCallback_t callbacks;
-    if (file_mapped_weights_enabled_ && file_mapper_) {
+    if (use_file_mapping && file_mapper_) {
       RETURN_IF(nullptr == qnn_interface_.contextCreateFromBinaryWithCallback,
                 "Invalid function pointer for contextCreateFromBinaryWithCallback.");
 
@@ -1540,7 +1549,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
     std::vector<char> backup_buffer;
-    if (file_mapped_weights_enabled_ && file_mapper_) {
+    if (use_file_mapping && file_mapper_) {
       rt = qnn_interface_.contextCreateFromBinaryWithCallback(backend_handle_,
                                                               device_handle_,
                                                               context_configs,
@@ -1562,7 +1571,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     }
 #endif  // QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 
-    if (!file_mapped_weights_enabled_ || rt != QNN_SUCCESS) {
+    if (!use_file_mapping || rt != QNN_SUCCESS) {
       rt = qnn_interface_.contextCreateFromBinary(backend_handle_,
                                                   device_handle_,
                                                   context_configs,
