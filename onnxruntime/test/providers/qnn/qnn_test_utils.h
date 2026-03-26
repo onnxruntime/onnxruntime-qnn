@@ -1452,19 +1452,26 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
     const std::string& op_domain = kOnnxDomain,
     bool use_contrib_qdq = false,
-    AllocatorPtr input_allocator = nullptr) {
+    AllocatorPtr input_allocator = nullptr,
+    bool combine_quant_inputs_qparams = false) {
   return [node_name, op_type, quant_input_defs, non_quant_input_defs, quant_input_defs_2, attrs, op_domain,
-          use_contrib_qdq, input_allocator](
+          use_contrib_qdq, input_allocator, combine_quant_inputs_qparams](
              ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
     std::vector<std::string> op_input_names;
 
     op_input_names.reserve(quant_input_defs.size() + non_quant_input_defs.size() + quant_input_defs_2.size());
 
+    std::vector<TestInputDef<float>> combined_input_defs;
+    combined_input_defs.reserve(quant_input_defs.size() + quant_input_defs_2.size());
+    combined_input_defs.insert(combined_input_defs.end(), quant_input_defs.begin(), quant_input_defs.end());
+    combined_input_defs.insert(combined_input_defs.end(), quant_input_defs_2.begin(), quant_input_defs_2.end());
+    QuantParams<QuantType> combined_input_qparams = GetTestInputsQuantParams<QuantType>(combined_input_defs);
+
     // Create QDQ inputs
     for (size_t i = 0; i < quant_input_defs.size(); i++) {
       const std::string tmp_name = "quant_input_defs_" + std::to_string(i);
       MakeTestInput<float>(builder, tmp_name, quant_input_defs[i], input_allocator);
-      QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(quant_input_defs[i]);
+      QuantParams<QuantType> input_qparams = combine_quant_inputs_qparams ? combined_input_qparams : GetTestInputQuantParams<QuantType>(quant_input_defs[i]);
 
       op_input_names.push_back(
           AddQDQNodePair<QuantType>(builder, "qdq_in" + std::to_string(i), tmp_name, input_qparams.scale,
@@ -1482,7 +1489,7 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     for (size_t i = 0; i < quant_input_defs_2.size(); i++) {
       const std::string tmp_name = "quant_input_defs_2_" + std::to_string(i);
       MakeTestInput<float>(builder, tmp_name, quant_input_defs_2[i], input_allocator);
-      QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(quant_input_defs_2[i]);
+      QuantParams<QuantType> input_qparams = combine_quant_inputs_qparams ? combined_input_qparams : GetTestInputQuantParams<QuantType>(quant_input_defs_2[i]);
 
       op_input_names.push_back(
           AddQDQNodePair<QuantType>(builder, "qdq2_in" + std::to_string(i), tmp_name, input_qparams.scale,
