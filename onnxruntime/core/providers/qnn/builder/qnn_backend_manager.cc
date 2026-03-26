@@ -1410,8 +1410,8 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   RETURN_IF(result, "Failed to get valid function pointer.");
 
   void* bin_buffer = nullptr;
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   bool use_file_mapping = file_mapped_weights_enabled_;
   if (use_file_mapping) {
     // A nonzero buffer length implies an embedded context
@@ -1572,9 +1572,10 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
         bin_buffer = static_cast<void*>(backup_buffer.data());
       }
     }
-#endif  // QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 
-    if (!use_file_mapping || rt != QNN_SUCCESS) {
+    if (!use_file_mapping || rt != QNN_SUCCESS)
+#endif  // QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+    {
       rt = qnn_interface_.contextCreateFromBinary(backend_handle_,
                                                   device_handle_,
                                                   context_configs,
