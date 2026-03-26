@@ -679,14 +679,19 @@ bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
   return true;
 }
 
-bool QnnModelWrapper::GetOnnxShape(const std::vector<int64_t>& onnx_shape, std::vector<uint32_t>& shape) {
+bool QnnModelWrapper::GetOnnxShape(const std::optional<std::vector<int64_t>>& onnx_shape, std::vector<uint32_t>& shape) {
+  // Don't support dynamic shape.
+  if (!onnx_shape.has_value()) {
+    return false;
+  }
+
   // Set shape to 1 for scalar.
-  if (onnx_shape.size() < 1) {
+  if (onnx_shape->size() < 1) {
     shape.push_back(1);
     return true;
   }
 
-  for (const int64_t& dim : onnx_shape) {
+  for (const int64_t& dim : onnx_shape.value()) {
     if (dim < 0) {
       return false;
     }
@@ -790,8 +795,8 @@ Ort::Status QnnModelWrapper::IsPerChannelQuantized(const OrtNodeUnitIODef& io_de
     axis = io_def.quant_param->axis.value_or(1);  // 1 is default axis for Q/DQ ops.
     if (axis < 0) {
       // Normalize negative axis by adding rank.
-      std::vector<int64_t> tensor_shape = io_def.shape;
-      RETURN_IF_NOT(!tensor_shape.empty(), "NULL tensor shape proto");
+      std::vector<uint32_t> tensor_shape;
+      RETURN_IF_NOT(GetOnnxShape(io_def.shape, tensor_shape), "Cannot get shape");
 
       const auto rank = tensor_shape.size();
       RETURN_IF_NOT(rank > 0, "Per-channel quantized tensor should be of rank > 0");
