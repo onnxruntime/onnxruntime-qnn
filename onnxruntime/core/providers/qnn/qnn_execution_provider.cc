@@ -1883,7 +1883,6 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     }
 
     RETURN_IF_NOT_OK(qnn_model->ComposeGraph(context));
-
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
     if (use_multithreaded_prepare) {
       auto& model_info = model_infos.emplace_back();
@@ -1892,7 +1891,6 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
       model_info.graph_idx = graph_idx;
     } else {
 #endif
-      RETURN_IF_NOT_OK(qnn_model->ComposeGraph(context));
       RETURN_IF_NOT_OK(qnn_model->FinalizeGraphs(ep->logger_));
       RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(ep->logger_));
 
