@@ -2509,7 +2509,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_OutputStream_ReturnStatus) {
   EXPECT_EQ(status.GetErrorMessage(), "Error from OrtOutStreamWriteFunc callback");
 }
 
-#ifdef _WIN32
+#ifdef _WIN32 && (defined(__aarch64__) || defined(_M_ARM64))
 // Tests setting num_graph_prepare_threads to compile model
 // 1. Compile model with 2 threads
 // 2. Check for successful compilation (_ctx.onnx model should exist)
@@ -2535,7 +2535,6 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_InRange) {
     ASSERT_TRUE(std::filesystem::exists(output_model_file.c_str()));
   }
 
-#if defined(__aarch64__) || defined(_M_ARM64)
   std::vector<std::string> input_names;
   std::vector<std::string> output_names;
   GetModelInputNames(output_model_file.string(), input_names, output_names);
@@ -2566,10 +2565,12 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_InRange) {
   std::string output_model_file_str(output_model_file.string());
   std::wstring compiled_model_file(output_model_file_str.begin(), output_model_file_str.end());
 
-  Ort::Session session_ctx(*ort_env, compiled_model_file.c_str(), so);
-  auto outputs = session_ctx.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
-                                 output_names_c.data(), 1);
-#endif // defined(__aarch64__) || defined(_M_ARM64)
+  {
+    Ort::Session session_ctx(*ort_env, compiled_model_file.c_str(), so);
+    auto outputs = session_ctx.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
+                                   output_names_c.data(), 1);
+  }
+
   std::filesystem::remove(output_model_file);
 }
 
@@ -2600,7 +2601,6 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_OutOfRange
     ASSERT_TRUE(std::filesystem::exists(output_model_file.c_str()));
   }
 
-#if defined(__aarch64__) || defined(_M_ARM64)
   std::vector<std::string> input_names;
   std::vector<std::string> output_names;
   GetModelInputNames(output_model_file.string(), input_names, output_names);
@@ -2631,13 +2631,14 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_OutOfRange
   std::string output_model_file_str(output_model_file.string());
   std::wstring compiled_model_file(output_model_file_str.begin(), output_model_file_str.end());
 
-  Ort::Session session_ctx(*ort_env, compiled_model_file.c_str(), so);
-  auto outputs = session_ctx.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
-                                 output_names_c.data(), 1);
-#endif defined(__aarch64__) || defined(_M_ARM64)
+  {
+    Ort::Session session_ctx(*ort_env, compiled_model_file.c_str(), so);
+    auto outputs = session_ctx.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
+                                   output_names_c.data(), 1);
+  }
   std::filesystem::remove(output_model_file);
 }
-#endif  // _WIN32
+#endif  // _WIN32 && (defined(__aarch64__) || defined(_M_ARM64))
 
 struct CustomInitializerHandlerState {
   const ORTCHAR_T* external_file_path = nullptr;
