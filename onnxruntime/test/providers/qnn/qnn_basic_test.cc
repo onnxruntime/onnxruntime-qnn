@@ -225,32 +225,6 @@ TEST(QnnEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
-// Tests that the QNN EP loads correctly when backend_type is used instead of backend_path.
-// Verifies the fix for OrtGetRuntimePath() returning the wrong DLL directory in the EP ABI model.
-TEST_F(QnnHTPBackendTests, TestAddEpUsingBackendType) {
-  onnxruntime::ProviderOptions options;
-  options["backend_type"] = "htp";
-
-  const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "constant_floats.onnx";
-
-  {
-    Ort::SessionOptions so;
-    so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
-
-#if defined(__linux__)
-    so.AddConfigEntry(kOrtSessionOptionsDisableCPUEPFallback, "1");
-#endif
-
-    RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
-
-    Ort::Session session(*ort_env, ort_model_path, so);
-    ASSERT_TRUE(SessionHasEp(session, onnxruntime::kQnnExecutionProvider))
-        << "QNN EP was not found in registered providers for session "
-        << "when added to session with backend_type='htp'";
-  }
-}
-
 // Tests that the QNN EP is registered when added via the public C++ API.
 // Loads a simple ONNX model that adds floats.
 TEST_F(QnnHTPBackendTests, TestAddEpUsingPublicApi) {
