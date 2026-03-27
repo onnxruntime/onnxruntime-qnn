@@ -65,7 +65,6 @@ static std::optional<float> GetConstantFloatScalar(const QnnModelWrapper& qmw,
   return *data;
 }
 
-
 std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnit& reduce_mean_node_unit,
