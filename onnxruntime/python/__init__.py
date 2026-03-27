@@ -18,7 +18,7 @@ try:
 
     _lib_dir_path = setup_library_path()
     LIB_DIR_FULL_PATH = os.path.abspath(_lib_dir_path)
-except (ImportError, Exception):
+except ImportError:
     # Silently fall back to default LIB_DIR_FULL_PATH if platform loader is unavailable
     pass
 

@@ -16,36 +16,25 @@ wheel with both library sets in separate subdirectories.
 
 import argparse
 import logging
-import shutil
 import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
 
 
-def extract_wheel(wheel_path, extract_dir):
-    """Extract a wheel file to a directory."""
-    logging.info(f"  Extracting: {wheel_path}")
-    with zipfile.ZipFile(wheel_path, "r") as zip_ref:
-        zip_ref.extractall(extract_dir)
-    return extract_dir
-
-
-def get_package_dir(extract_dir):
-    """Find the main package directory in extracted wheel."""
-    extract_path = Path(extract_dir)
-    # Look for onnxruntime_qnn directory
-    for item in extract_path.iterdir():
-        if item.is_dir() and item.name.startswith("onnxruntime"):
-            if not item.name.endswith(".dist-info"):
-                return item
-    raise ValueError(f"Could not find package directory in {extract_dir}")
-
-
 def is_library_file(filename):
     """Check if a file is a library file that should be moved."""
     suffixes = {".dll", ".so", ".cat", ".pyd", ".dylib"}
     return Path(filename).suffix.lower() in suffixes
+
+
+def get_package_name_from_zip(zip_file):
+    """Find the main package directory name in a wheel zip file."""
+    for name in zip_file.namelist():
+        parts = name.split("/")
+        if len(parts) > 0 and parts[0].startswith("onnxruntime_qnn") and not parts[0].endswith(".dist-info"):
+            return parts[0]
+    raise ValueError("Could not find package directory in wheel")
 
 
 def merge_wheels(amd64_wheel, arm64ec_wheel, output_folder):
@@ -61,102 +50,100 @@ def merge_wheels(amd64_wheel, arm64ec_wheel, output_folder):
     logging.info("Merging Wheels into Unified Package")
     logging.info("=" * 80)
 
+    output_path = Path(output_folder)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Generate output filename
+    output_wheel = output_path / Path(amd64_wheel).name
+
     with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
+        temp_wheel = Path(temp_dir) / "temp.whl"
 
-        # Extract both wheels
-        logging.info("[Step 1] Extracting wheels...")
-        amd64_dir = temp_path / "amd64"
-        extract_wheel(amd64_wheel, amd64_dir)
+        # Open AMD64 wheel and get package name
+        logging.info("[Step 1] Opening AMD64 wheel as base...")
+        with zipfile.ZipFile(amd64_wheel, "r") as amd64_zip:
+            package_name = get_package_name_from_zip(amd64_zip)
+            logging.info(f"  Package: {package_name}")
 
-        arm64ec_dir = temp_path / "arm64ec"
-        extract_wheel(arm64ec_wheel, arm64ec_dir)
+            # Create new wheel with reorganized AMD64 files
+            logging.info("[Step 2] Reorganizing AMD64 libraries...")
+            amd64_lib_count = 0
 
-        # Create unified structure
-        logging.info("[Step 2] Creating unified structure...")
-        unified_dir = temp_path / "unified"
-        unified_dir.mkdir()
+            with zipfile.ZipFile(temp_wheel, "w", zipfile.ZIP_DEFLATED) as output_zip:
+                # Copy all files, moving libraries to libs/amd64/
+                for item in amd64_zip.infolist():
+                    data = amd64_zip.read(item.filename)
 
-        # Get package directories
-        amd64_pkg = get_package_dir(amd64_dir)
-        arm64ec_pkg = get_package_dir(arm64ec_dir)
-        logging.info(f"  AMD64 package: {amd64_pkg.name}")
-        logging.info(f"  ARM64EC package: {arm64ec_pkg.name}")
+                    # Check if this is a library file in the package root
+                    if item.filename.startswith(f"{package_name}/") and is_library_file(item.filename):
+                        parts = item.filename.split("/")
+                        if len(parts) == 2:  # package_name/filename
+                            # Move to libs/amd64/
+                            new_filename = f"{package_name}/libs/amd64/{parts[1]}"
+                            output_zip.writestr(new_filename, data)
+                            amd64_lib_count += 1
+                            logging.info(f"  Moved: {parts[1]} -> libs/amd64/")
+                            continue
 
-        # Copy AMD64 package as base
-        logging.info("[Step 3] Copying base package structure...")
-        unified_pkg = unified_dir / amd64_pkg.name
-        shutil.copytree(amd64_pkg, unified_pkg)
-        logging.info(f"  Created: {unified_pkg.name}/")
+                    # Copy file as-is
+                    output_zip.writestr(item, data)
 
-        # Create libs directory structure
-        libs_dir = unified_pkg / "libs"
-        libs_dir.mkdir(exist_ok=True)
-
-        amd64_libs = libs_dir / "amd64"
-        arm64ec_libs = libs_dir / "arm64ec"
-
-        # Move AMD64 libraries to libs/amd64/
-        logging.info("[Step 4] Organizing AMD64 libraries...")
-        amd64_libs.mkdir()
-        amd64_lib_count = 0
-        for item in unified_pkg.iterdir():
-            if item.is_file() and is_library_file(item.name):
-                dest = amd64_libs / item.name
-                shutil.move(str(item), str(dest))
-                amd64_lib_count += 1
-                logging.info(f"  Moved: {item.name} -> libs/amd64/")
-
-        # Copy ARM64EC libraries to libs/arm64ec/
-        logging.info("[Step 5] Copying ARM64EC libraries...")
-        arm64ec_libs.mkdir()
+        # Append ARM64EC libraries
+        logging.info("[Step 3] Appending ARM64EC libraries...")
         arm64ec_lib_count = 0
-        for item in arm64ec_pkg.iterdir():
-            if item.is_file() and is_library_file(item.name):
-                dest = arm64ec_libs / item.name
-                shutil.copy2(str(item), str(dest))
-                arm64ec_lib_count += 1
-                logging.info(f"  Copied: {item.name} -> libs/arm64ec/")
 
-        # Copy platform_loader.py to package
-        logging.info("[Step 6] Adding platform_loader.py...")
+        with zipfile.ZipFile(arm64ec_wheel, "r") as arm64ec_zip, zipfile.ZipFile(temp_wheel, "a") as output_zip:
+            for item in arm64ec_zip.infolist():
+                # Only add library files from package root
+                if item.filename.startswith(f"{package_name}/") and is_library_file(item.filename):
+                    parts = item.filename.split("/")
+                    if len(parts) == 2:
+                        # Add to libs/arm64ec/
+                        new_filename = f"{package_name}/libs/arm64ec/{parts[1]}"
+                        data = arm64ec_zip.read(item.filename)
+                        output_zip.writestr(new_filename, data)
+                        arm64ec_lib_count += 1
+                        logging.info(f"  Added: {parts[1]} -> libs/arm64ec/")
+
+        # Append platform_loader.py
+        logging.info("[Step 4] Appending platform_loader.py...")
         platform_loader_src = Path(__file__).parent / "platform_loader.py"
-        if platform_loader_src.exists():
-            shutil.copy2(platform_loader_src, unified_pkg / "platform_loader.py")
-            logging.info("  Added: platform_loader.py")
-        else:
-            logging.info(f"  WARNING: platform_loader.py not found at {platform_loader_src}")
-            logging.info("  You may need to create this file manually")
 
-        # Copy dist-info from AMD64 wheel
-        logging.info("[Step 7] Copying dist-info...")
-        for item in amd64_dir.iterdir():
-            if item.name.endswith(".dist-info"):
-                dest = unified_dir / item.name
-                shutil.copytree(item, dest)
-                logging.info(f"  Copied: {item.name}/")
+        with zipfile.ZipFile(temp_wheel, "a") as output_zip:
+            if platform_loader_src.exists():
+                output_zip.write(platform_loader_src, f"{package_name}/platform_loader.py")
+                logging.info("  Added: platform_loader.py")
+            else:
+                logging.warning(f"  platform_loader.py not found at {platform_loader_src}")
 
-        # Create the unified wheel
-        logging.info("[Step 8] Creating unified wheel...")
-        Path(output_folder).mkdir(parents=True, exist_ok=True)
-        subprocess.run(["wheel", "pack", unified_dir, "-d", output_folder], check=True)
+        # Extract and repack with wheel pack for proper compression
+        logging.info("[Step 5] Repacking with wheel pack for compression...")
+        extract_dir = Path(temp_dir) / "extract"
+        extract_dir.mkdir()
 
-        # Log summary
-        logging.info("=" * 80)
-        logging.info("Merge Complete!")
-        logging.info("=" * 80)
-        logging.info("Library Summary:")
-        logging.info(f"  AMD64 libraries: {amd64_lib_count}")
-        logging.info(f"  ARM64EC libraries: {arm64ec_lib_count}")
-        logging.info(f"  Total: {amd64_lib_count + arm64ec_lib_count}")
-        logging.info("Structure:")
-        logging.info(f"  {unified_pkg.name}/")
-        logging.info("    ├── libs/")
-        logging.info(f"    │   ├── amd64/     ({amd64_lib_count} files)")
-        logging.info(f"    │   └── arm64ec/    ({arm64ec_lib_count} files)")
-        logging.info("    ├── platform_loader.py")
-        logging.info("    └── __init__.py (with platform detection)")
-        logging.info("=" * 80)
+        with zipfile.ZipFile(temp_wheel, "r") as zip_ref:
+            zip_ref.extractall(extract_dir)
+
+        subprocess.run(["wheel", "pack", str(extract_dir), "-d", str(output_path)], check=True)
+        logging.info(f"  Created: {Path(amd64_wheel).name}")
+
+    # Log summary
+    logging.info("=" * 80)
+    logging.info("Merge Complete!")
+    logging.info("=" * 80)
+    logging.info("Library Summary:")
+    logging.info(f"  AMD64 libraries: {amd64_lib_count}")
+    logging.info(f"  ARM64EC libraries: {arm64ec_lib_count}")
+    logging.info(f"  Total: {amd64_lib_count + arm64ec_lib_count}")
+    logging.info("Structure:")
+    logging.info(f"  {package_name}/")
+    logging.info("    ├── libs/")
+    logging.info(f"    │   ├── amd64/     ({amd64_lib_count} files)")
+    logging.info(f"    │   └── arm64ec/    ({arm64ec_lib_count} files)")
+    logging.info("    ├── platform_loader.py")
+    logging.info("    └── __init__.py")
+    logging.info(f"Output: {output_wheel}")
+    logging.info("=" * 80)
 
 
 def main():

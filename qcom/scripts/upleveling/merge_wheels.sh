@@ -33,12 +33,22 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 find "$AMD_DIR" -name "*.whl" -type f -print0 | while IFS= read -r -d '' file; do
     file_basename=$(basename "$file")
 
-    echo "Merge AMD and ARM64EC wheels with filename $file_basename..."
     # The name of the arm64ec wheel should be the same as the name of the amd64 wheel.
+    arm64ec_file_path="$ARM64EC_DIR/$file_basename"
+    if [ ! -f "$arm64ec_file_path" ]; then
+        echo "Warning: ARM64EC wheel does not exist for $file_basename, trying win_arm64..."
+        arm64ec_basename="${file_basename/win_amd64/win_arm64}"
+        arm64ec_file_path="$ARM64EC_DIR/$arm64ec_basename"
+        if [ ! -f "$arm64ec_file_path" ]; then
+            echo "Error: ARM64EC wheel does not exist"
+            exit 1
+        fi
+    fi
+    echo "Merge AMD and ARM64EC wheels with filename $file_basename..."
     python ./qcom/scripts/upleveling/merge_wheels.py \
-        --amd64-wheel $file \
-        --arm64ec-wheel $ARM64EC_DIR/$file_basename \
-        --output-folder $OUTPUT_DIR
+        --amd64-wheel "$file" \
+        --arm64ec-wheel "$arm64ec_file_path" \
+        --output-folder "$OUTPUT_DIR"
     echo "Successfully merge $file_basename"
 done
 

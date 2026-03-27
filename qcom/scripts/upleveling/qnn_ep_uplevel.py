@@ -272,7 +272,7 @@ class WheelUpleveler(ArtifactUpleveler):
                             lines = f.readlines()
                         with open(build_info_file, "w") as f:
                             f.writelines(
-                                f"__version__ = '{self.args.version_to}'\n" if "__version__" in line else line
+                                f"__version__ = '{self.args.version_to}'\n" if line.startswith("__version__") else line
                                 for line in lines
                             )
                         break
