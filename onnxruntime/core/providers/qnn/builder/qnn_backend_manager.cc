@@ -32,6 +32,10 @@
 #include "core/providers/qnn/qnn_telemetry.h"
 #include "core/providers/qnn/shared_context.h"
 
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+#include "core/providers/qnn/builder/qnn_windows_file_mapper.h"
+#endif
+
 // Flag to determine if Backend should do node validation for each opNode added
 #define DO_GRAPH_NODE_VALIDATIONS 1
 
@@ -161,12 +165,12 @@ Ort::Status ReadBinaryFromFile(const std::string& file_path, uint8_t* buffer, si
 }
 
 Ort::Status QnnBackendManager::ParseLoraConfig(std::string lora_config_path) {
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, ("Acquiring the QnnInterface " + lora_config_path).c_str());
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, ("Acquiring the QnnInterface " + lora_config_path).c_str());
 
   // QNN Lora Config file format should be a single line, with the graph name first,
   // followed by the qnn lora context binary path, separated by a semicolon (;)
   // Example: <graph_name>;<binary_path>
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, ("Loading Lora Config " + lora_config_path).c_str());
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, ("Loading Lora Config " + lora_config_path).c_str());
   std::ifstream file(lora_config_path);
   std::string line;
 
@@ -211,7 +215,7 @@ Ort::Status QnnBackendManager::ParseLoraConfig(std::string lora_config_path) {
     }
     file.close();
   } else {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Unable to load Lora Config " + lora_config_path).c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Unable to load Lora Config " + lora_config_path).c_str());
   }
 
   return Ort::Status();
@@ -231,7 +235,7 @@ Ort::Status QnnBackendManager::GetQnnInterfaceProvider(const char* lib_path,
 
   // Get QNN Interface providers
   F GetInterfaceProviders{nullptr};
-  GetInterfaceProviders = ResolveSymbol<F>(*backend_lib_handle, interface_provider_name, logger_);
+  GetInterfaceProviders = ResolveSymbol<F>(*backend_lib_handle, interface_provider_name, *logger_ptr_);
   RETURN_IF(nullptr == GetInterfaceProviders, "Failed to get QNN providers!");
 
   T** interface_providers{nullptr};
@@ -254,7 +258,7 @@ Ort::Status QnnBackendManager::GetQnnInterfaceProvider(const char* lib_path,
     std::ostringstream oss;
     oss << lib_path << " interface version: " << interface_version.major << "."
         << interface_version.minor << "." << interface_version.patch;
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, oss.str().c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, oss.str().c_str());
 
     // Check the interface's API version against the required version.
     // Major versions must match. The interface's minor version must be greater OR equal with a suitable patch version.
@@ -345,7 +349,7 @@ Ort::Status QnnBackendManager::LoadBackend() {
       << "." << backend_interface_version.minor << "." << backend_interface_version.patch
       << " backend provider name: " << backend_interface_provider->providerName
       << " backend id: " << backend_id_;
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, oss.str().c_str());
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, oss.str().c_str());
 
   return Ort::Status();
 }
@@ -409,14 +413,14 @@ Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
   oss1 << "Using QnnSaver/Ir version: " << serializer_interface_version.major << "."
        << serializer_interface_version.minor << "." << serializer_interface_version.patch
        << " provider name : " << serializer_interface_provider->providerName;
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, oss1.str().c_str());
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, oss1.str().c_str());
 
   std::ostringstream oss2;
   oss2 << "Intended backend provider name: " << backend_interface_provider->providerName
        << " backend id: " << backend_id_
        << " interface version: " << backend_interface_version.major
        << "." << backend_interface_version.minor << "." << backend_interface_version.patch;
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, oss2.str().c_str());
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, oss2.str().c_str());
 
   return Ort::Status();
 }
@@ -431,7 +435,7 @@ Ort::Status QnnBackendManager::LoadQnnSystemLib() {
 #else
   std::string system_lib_file = "libQnnSystem.so";
 #endif  // #ifdef _WIN32
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, "Loading QnnSystem lib");
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Loading QnnSystem lib");
   std::filesystem::path lib_file_path(backend_path_.c_str());
   std::string sys_file_path(lib_file_path.remove_filename().string() + system_lib_file);
   QnnSystemInterface_t* system_interface_provider{nullptr};
@@ -450,7 +454,7 @@ Ort::Status QnnBackendManager::LoadQnnSystemLib() {
   oss << "Found valid system interface, version: " << system_interface_version.major
       << "." << system_interface_version.minor
       << " backend provider name: " << system_interface_provider->providerName;
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, oss.str().c_str());
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, oss.str().c_str());
 
   system_lib_loaded_ = true;
   return Ort::Status();
@@ -509,9 +513,9 @@ void QnnLogging(const char* format,
 
 Ort::Status QnnBackendManager::InitializeQnnLog() {
   // Set Qnn log level align with Ort log level
-  auto ort_log_level = logger_.GetLoggingSeverityLevel();
+  auto ort_log_level = logger_ptr_->GetLoggingSeverityLevel();
   QnnLog_Level_t qnn_log_level = MapOrtSeverityToQNNLogLevel(ort_log_level);
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Set Qnn log level: " + std::to_string(qnn_log_level)).c_str());
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, ("Set Qnn log level: " + std::to_string(qnn_log_level)).c_str());
 
   // NOTE: Even if logCreate() fails and QNN does not return a valid log_handle_, QNN may still
   // call the QnnLogging() callback. So, we have to make sure that QnnLogging() can handle calls
@@ -521,21 +525,21 @@ Ort::Status QnnBackendManager::InitializeQnnLog() {
   if (result != QNN_SUCCESS) {
     switch (result) {
       case QNN_COMMON_ERROR_NOT_SUPPORTED:
-        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Logging not supported in the QNN backend.");
+        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Logging not supported in the QNN backend.");
         break;
       case QNN_LOG_ERROR_INVALID_ARGUMENT:
-        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Invalid argument provided to QnnLog_create.");
+        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Invalid argument provided to QnnLog_create.");
         break;
       case QNN_LOG_ERROR_MEM_ALLOC:
-        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Memory allocation error during QNN logging initialization.");
+        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Memory allocation error during QNN logging initialization.");
         break;
       case QNN_LOG_ERROR_INITIALIZATION:
-        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Initialization of logging failed in the QNN backend.");
+        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Initialization of logging failed in the QNN backend.");
         break;
       default:
-        ORT_CXX_LOG(logger_,
-                    ORT_LOGGING_LEVEL_WARNING,
-                    "Unknown error occurred while initializing logging in the QNN backend.");
+        ORT_CXX_LOG_PTR(logger_ptr_,
+                        ORT_LOGGING_LEVEL_WARNING,
+                        "Unknown error occurred while initializing logging in the QNN backend.");
         break;
     }
   }
@@ -576,18 +580,19 @@ Ort::Status QnnBackendManager::ResetQnnLogLevel(std::optional<OrtLoggingLevel> o
   }
   RETURN_IF(nullptr == log_handle_, "Unable to update QNN Log Level. Invalid QNN log handle.");
 
-  OrtLoggingLevel actual_log_level = ort_log_level.has_value() ? *ort_log_level : logger_.GetLoggingSeverityLevel();
+  OrtLoggingLevel actual_log_level = ort_log_level.has_value() ? *ort_log_level
+                                                               : logger_ptr_->GetLoggingSeverityLevel();
   QnnLog_Level_t qnn_log_level = MapOrtSeverityToQNNLogLevel(actual_log_level);
 
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, ("Updating Qnn log level to: " + std::to_string(qnn_log_level)).c_str());
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, ("Updating Qnn log level to: " + std::to_string(qnn_log_level)).c_str());
 
   // Use the QnnLog_setLogLevel API to set the new log level
   Qnn_ErrorHandle_t result = qnn_interface_.logSetLogLevel(log_handle_, qnn_log_level);
   if (QNN_SUCCESS != result) {
     if (result == QNN_LOG_ERROR_INVALID_ARGUMENT) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Invalid log level argument provided to QnnLog_setLogLevel.");
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Invalid log level argument provided to QnnLog_setLogLevel.");
     } else if (result == QNN_LOG_ERROR_INVALID_HANDLE) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Invalid log handle provided to QnnLog_setLogLevel.");
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Invalid log handle provided to QnnLog_setLogLevel.");
     }
   }
   RETURN_IF(QNN_BACKEND_NO_ERROR != result,
@@ -597,7 +602,7 @@ Ort::Status QnnBackendManager::ResetQnnLogLevel(std::optional<OrtLoggingLevel> o
 
 Ort::Status QnnBackendManager::InitializeBackend() {
   if (true == backend_initialized_) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, "Backend initialized already.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Backend initialized already.");
     return Ort::Status();
   }
 
@@ -627,7 +632,7 @@ bool QnnBackendManager::IsDevicePropertySupported() {
   if (nullptr != qnn_interface_.propertyHasCapability) {
     auto rt = qnn_interface_.propertyHasCapability(QNN_PROPERTY_GROUP_DEVICE);
     if (QNN_PROPERTY_NOT_SUPPORTED == rt || QNN_PROPERTY_ERROR_UNKNOWN_KEY == rt) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, "Device property not supported or unknown to backend.");
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Device property not supported or unknown to backend.");
       return false;
     }
   }
@@ -637,13 +642,13 @@ bool QnnBackendManager::IsDevicePropertySupported() {
 
 Ort::Status QnnBackendManager::CreateDevice() {
   if (true == device_created_) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, "Device initialized already.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Device initialized already.");
     return Ort::Status();
   }
 
   // Create device if its property supported
   if (!IsDevicePropertySupported()) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, "Skip to create device.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Skip to create device.");
     return Ort::Status();
   }
 
@@ -675,7 +680,7 @@ Ort::Status QnnBackendManager::CreateDevice() {
     }
   }
 
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, "Create device.");
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Create device.");
   if (nullptr != qnn_interface_.deviceCreate) {
     Qnn_ErrorHandle_t result = qnn_interface_.deviceCreate(log_handle_, device_configs_builder.GetQnnConfigs(), &device_handle_);
     if (QNN_SUCCESS != result) {
@@ -712,7 +717,7 @@ Ort::Status QnnBackendManager::InitializeProfiling() {
   }
 
   if (ProfilingLevel::OFF == profiling_level_merge_ || ProfilingLevel::INVALID == profiling_level_merge_) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, "Profiling turned off.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Profiling turned off.");
     return Ort::Status();
   }
 
@@ -720,14 +725,14 @@ Ort::Status QnnBackendManager::InitializeProfiling() {
   bool enable_optrace = false;
   if (ProfilingLevel::BASIC == profiling_level_merge_) {
     qnn_profile_level = QNN_PROFILE_LEVEL_BASIC;
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Profiling level set to basic.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Profiling level set to basic.");
   } else if (ProfilingLevel::DETAILED == profiling_level_merge_) {
     qnn_profile_level = QNN_PROFILE_LEVEL_DETAILED;
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Profiling level set to detailed.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Profiling level set to detailed.");
   } else if (ProfilingLevel::OPTRACE == profiling_level_merge_) {
     qnn_profile_level = QNN_PROFILE_LEVEL_DETAILED;
     enable_optrace = true;
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Profiling level set to optrace.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Profiling level set to optrace.");
   }
 
   Qnn_ErrorHandle_t result = qnn_interface_.profileCreate(backend_handle_, qnn_profile_level, &profile_backend_handle_);
@@ -751,10 +756,10 @@ Ort::Status QnnBackendManager::InitializeProfiling() {
   }
 #else
   if (enable_optrace) {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_WARNING,
-                "Profiling level set to optrace, but QNN SDK Version is older than 2.29.0. "
-                "Profiling level will be set to detailed instead.");
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_WARNING,
+                    "Profiling level set to optrace, but QNN SDK Version is older than 2.29.0. "
+                    "Profiling level will be set to detailed instead.");
   }
 #endif
 
@@ -818,22 +823,145 @@ Ort::Status SetQnnContextConfig(ContextPriority context_priority, QnnContext_Con
   return Ort::Status();
 }
 
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+// Callback required for allocating file mapping resources
+static Qnn_ErrorHandle_t MapDmaDataCallback(Qnn_ContextBinaryDataRequest_t request,
+                                            Qnn_ContextBinaryDmaDataResponse_t* response, void* notify_param) {
+  if (notify_param == nullptr) {
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "MapDmaDataCallback: notify_param is null");
+    return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  }
+  auto callback_info = reinterpret_cast<QnnBackendManager::FileMappingCallbackInfo_t*>(notify_param);
+
+  if (callback_info->backend_manager == nullptr) {
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "MapDmaDataCallback: QnnBackendManager is null");
+    return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  }
+
+  return callback_info->backend_manager->MapDmaData(request, response,
+                                                    callback_info->mapped_file_ptr,
+                                                    callback_info->file_size);
+}
+
+Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t request,
+                                                Qnn_ContextBinaryDmaDataResponse_t* response,
+                                                void* const mapped_base_ptr,
+                                                const size_t file_size) {
+  if (!file_mapped_weights_enabled_) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
+                    "Attempting to map DMA data but file mapping has been disabled, possibly due to an error in a previous request.");
+    return QNN_CONTEXT_ERROR_ABORTED;
+  }
+
+  if (mapped_base_ptr == nullptr) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Attempting to map DMA data for null memory mapped base pointer");
+    return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  }
+  ORT_CXX_LOG_PTR(logger_ptr_,
+                  ORT_LOGGING_LEVEL_INFO,
+                  ("Mapping DMA data for request: memory mapped base pointer(" + utils::PtrToString(mapped_base_ptr) + "), offset(" + std::to_string(request.offset) + "), size(" + std::to_string(request.size) + "), total file size(" + std::to_string(file_size) + ") isBackendMappingNeeded(" + std::to_string(request.isBackendMappingNeeded) + ")").c_str());
+
+  auto size = request.size;
+  if (size == 0 || !request.isBackendMappingNeeded) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Mapping request size must be > 0 with backend mapping required");
+    return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  }
+
+  // offset & size are type uint64_t
+  // Should never be an issue, but if this occurs then there is something inherently wrong with QNN
+  if ((UINT64_MAX - request.offset) < size) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Critical error in QNN: mapping request offset + size will overflow 64 bits");
+    return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  }
+
+  // file_size will be promoted to 64 bits on 32-bit systems
+  if ((request.offset + size) > file_size) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Requested offset and size includes memory outside of mapped file");
+    return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  }
+
+  void* unaligned_data_ptr = static_cast<char*>(mapped_base_ptr) + request.offset;
+  rpcmem_library_->Api().register_buf(unaligned_data_ptr, size, NULL,
+                                      rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
+
+  auto fd = rpcmem_library_->Api().to_fd(unaligned_data_ptr);
+  if (fd == -1) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Failed to register DMA data mapping to RPCMEM");
+    return QNN_COMMON_ERROR_SYSTEM;
+  }
+
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, ("Created DMA data mapping with address: " + utils::PtrToString(unaligned_data_ptr)).c_str());
+
+  response->dmaBuffer.fd = fd;
+  response->dmaBuffer.data = unaligned_data_ptr;
+  response->dataStartOffset = 0;
+  response->alignedSize = size;
+
+  return QNN_SUCCESS;
+}
+
+// Callback required for releasing file mapping resources
+static Qnn_ErrorHandle_t ReleaseDmaDataCallback(Qnn_ContextBinaryDmaDataMem_t data_mem, void* notify_param) {
+  if (notify_param == nullptr) {
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "ReleaseDmaDataCallback: notify_param is null");
+    return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  }
+
+  auto callback_info = reinterpret_cast<QnnBackendManager::FileMappingCallbackInfo_t*>(notify_param);
+
+  if (callback_info->backend_manager == nullptr) {
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "ReleaseDmaDataCallback: QnnBackendManager is null");
+    return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  }
+
+  return callback_info->backend_manager->ReleaseDmaData(data_mem, callback_info->mapped_file_ptr);
+}
+
+// Use LOGS_DEFAULT here as this function will be called during destruction of QnnBackendManager
+// At time of destruction, usage of logger_ will not be available and will result in a seg fault
+Qnn_ErrorHandle_t QnnBackendManager::ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_t data_mem,
+                                                    void* mapped_base_ptr) {
+  if (mapped_base_ptr == nullptr) {
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("Attempting to release DMA data for null memory mapped pointer"));
+    return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  }
+
+  ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
+              ORT_LOGGING_LEVEL_INFO,
+              ("Releasing DMA data mapping for memory mapped pointer(" + utils::PtrToString(mapped_base_ptr) + "), address(" + utils::PtrToString(data_mem.dmaBuffer.data) + "), size: (" + std::to_string(data_mem.memSize) + ")").c_str());
+
+  if (data_mem.dmaBuffer.data == nullptr || data_mem.memSize == 0) {
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, "Mapping release request address must not be null and size must be > 0");
+    return QNN_CONTEXT_ERROR_INVALID_ARGUMENT;
+  }
+
+  // Deregister file mapped data from NPU regardless of file_mapped_weights_enabled_
+  // as there may be file mapped data registered to the NPU prior to any mapping error
+  void* unaligned_data_ptr = data_mem.dmaBuffer.data;
+  rpcmem_library_->Api().register_buf(unaligned_data_ptr, data_mem.memSize, -1,
+                                      rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
+
+  auto fd = rpcmem_library_->Api().to_fd(unaligned_data_ptr);
+  if (fd != -1) {
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, ("Failed to deregister buffer from RPCMEM: " + utils::PtrToString(unaligned_data_ptr)).c_str());
+    return QNN_CONTEXT_ERROR_MEM_ALLOC;
+  }
+  return QNN_SUCCESS;
+}
+#endif  // QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+
 // callback required to add context handles to class list
 // when using contextCreateFromBinaryListAsync()
-void ContextCreateAsyncCallback(Qnn_ContextHandle_t context,
-                                Qnn_GraphHandle_t graph,
-                                const char* graphName,
-                                QnnContext_createFromBinaryAsyncNotifyType_t notifyType,
-                                void* notifyParam,
-                                Qnn_ErrorHandle_t status) {
+static void ContextCreateAsyncCallback(Qnn_ContextHandle_t context,
+                                       Qnn_GraphHandle_t /* graph */,
+                                       const char* /* graph_name */,
+                                       QnnContext_createFromBinaryAsyncNotifyType_t /* notify_type */,
+                                       void* notify_param,
+                                       Qnn_ErrorHandle_t /* status */) {
   auto qnn_backend_manager = SharedContext::GetInstance().GetSharedQnnBackendManager();
 
   if (context) {
-    qnn_backend_manager->ProcessContextFromBinListAsync(context, notifyParam);
-  }
-
-  if (nullptr == graphName || graph || notifyType || status) {
-    // Avoid compilation unused var warning error
+    qnn_backend_manager->ProcessContextFromBinListAsync(context, notify_param);
   }
 }
 
@@ -843,25 +971,57 @@ void QnnBackendManager::ProcessContextFromBinListAsync(Qnn_ContextHandle_t conte
 
   std::lock_guard<std::mutex> guard(ep_context_handle_map_mutex_);
   if (!notifyParam) {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_WARNING,
-                ("No known node names associated with context handle: " + context_ss.str()).c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_WARNING,
+                    ("No known node names associated with context handle: " + context_ss.str()).c_str());
     return;
   }
 
   std::vector<std::string>* ep_node_names = reinterpret_cast<std::vector<std::string>*>(notifyParam);
   for (const auto& node_name : *ep_node_names) {
     if (!(ep_context_handle_map_.emplace(node_name, context).second)) {
-      ORT_CXX_LOG(logger_,
-                  ORT_LOGGING_LEVEL_VERBOSE,
-                  ("Unable to map " + context_ss.str() + " to " + node_name).c_str());
+      ORT_CXX_LOG_PTR(logger_ptr_,
+                      ORT_LOGGING_LEVEL_VERBOSE,
+                      ("Unable to map " + context_ss.str() + " to " + node_name).c_str());
     }
   }
 
   auto s = AddQnnContextHandle(context);
   if (!s.IsOK()) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, ("Unable to add context " + context_ss.str()).c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, ("Unable to add context " + context_ss.str()).c_str());
   }
+}
+
+Ort::Status QnnBackendManager::GetFileSizeIfValid(const std::string& filepath,
+                                                  size_t& file_size) {
+  std::error_code ec;
+  RETURN_IF(!std::filesystem::exists(filepath, ec), ("Context binary does not exist: " + filepath).c_str());
+  RETURN_IF(ec, ("Failed to read file: " + filepath + ", error: " + ec.message()).c_str());
+
+  auto size = std::filesystem::file_size(filepath, ec);
+  RETURN_IF(ec, ("Failed to retrieve size of file: " + filepath + ", error: " + ec.message()).c_str());
+
+  RETURN_IF(size == 0, ("File is empty: " + filepath).c_str());
+  RETURN_IF(size > SIZE_MAX, ("File (" + filepath + ") file size (" + std::to_string(size) + " bytes) exceeds maximum value of size_t for this platform (" + std::to_string(SIZE_MAX) + " bytes).").c_str());
+
+  file_size = static_cast<size_t>(size);
+  return Ort::Status();
+}
+
+Ort::Status QnnBackendManager::ReadContextBinIfValid(const std::string& context_bin_filepath,
+                                                     std::vector<char>& buffer) {
+  size_t buffer_size;
+  RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_size));
+
+  buffer.resize(buffer_size);
+
+  std::ifstream cache_file(context_bin_filepath.c_str(), std::ifstream::binary);
+  RETURN_IF(!cache_file || !cache_file.good(), ("Failed to read context binary from: " + context_bin_filepath).c_str());
+
+  const auto& read_result = cache_file.read(buffer.data(), buffer_size);
+  RETURN_IF(!read_result, "Failed to read contents from cached context file.");
+
+  return Ort::Status();
 }
 
 Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
@@ -888,7 +1048,9 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   context_config_weight_sharing.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
   context_config_weight_sharing.customConfig = &custom_config;
 #else
-  LOGS(logger_, WARNING) << "Called CreateContextVtcmBackupBufferSharingEnabled() but QNN API version is older than 2.26!";
+  ORT_CXX_LOG_PTR(logger_ptr_,
+                  ORT_LOGGING_LEVEL_WARNING,
+                  "Called CreateContextVtcmBackupBufferSharingEnabled() but QNN API version is older than 2.26!");
 #endif
   QnnContext_Config_t context_priority_config = QNN_CONTEXT_CONFIG_INIT;
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, context_priority_config));
@@ -901,10 +1063,27 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
 #endif
                                           nullptr};
 
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  if (file_mapped_weights_enabled_ && file_mapper_) {
+    // Retry logic -- if context creation failed with file mapped weights, then retry with feature disabled
+    auto res = CreateContextFromListAsyncWithCallback(configs, context_bin_map);
+    if (!res.IsOK()) {
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, (res.GetErrorMessage() + ". Retrying with feature disabled.").c_str());
+    } else {
+      return Ort::Status();
+    }
+  }
+#endif
+  return CreateContextFromListAsync(configs, context_bin_map);
+}
+
+Ort::Status QnnBackendManager::CreateContextFromListAsync(const QnnContext_Config_t** configs,
+                                                          std::unordered_map<std::string,
+                                                                             std::unique_ptr<std::vector<std::string>>>& context_bin_map) {
   std::vector<QnnContext_Params_t> context_params_list;
   std::vector<QnnContext_ParamsV1_t> context_paramsv1_list;
   std::vector<const QnnContext_Params_t*> context_params_ptr_list;
-  std::vector<std::unique_ptr<char[]>> buffer_list;
+  std::vector<std::vector<char>> buffer_list;
 
   context_params_list.reserve(context_bin_map.size());
   context_params_ptr_list.reserve(context_bin_map.size() + 1);
@@ -912,23 +1091,14 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
   for (auto& it : context_bin_map) {
     auto context_bin_filepath = it.first;
 
-    std::ifstream cache_file(context_bin_filepath.c_str(), std::ifstream::binary);
-    RETURN_IF(!cache_file || !cache_file.good(),
-              ("Failed to retrieve context binary from: " + context_bin_filepath).c_str());
+    std::vector<char> buffer;
+    RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, buffer));
 
-    cache_file.seekg(0, cache_file.end);
-    size_t buffer_size = static_cast<size_t>(cache_file.tellg());
-    RETURN_IF(0 == buffer_size, "Empty cache file encountered.");
+    size_t buffer_size = buffer.size();
+    buffer_list.push_back(std::move(buffer));
 
-    cache_file.seekg(0, cache_file.beg);
-    std::unique_ptr<char[]> buffer = std::make_unique<char[]>(buffer_size);
-    RETURN_IF(nullptr == buffer, "Failed to allocate memory for cache file.");
-    const auto& read_result = cache_file.read(buffer.get(), buffer_size);
-    RETURN_IF(!read_result, "Failed to read contents from cached context file.");
-
-    cache_file.close();
     QnnContext_ParamsV1_t context_params_v1 = {nullptr,
-                                               buffer.get(),
+                                               buffer_list.back().data(),
                                                buffer_size,
                                                nullptr,
                                                ContextCreateAsyncCallback,
@@ -937,7 +1107,6 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
     QnnContext_Params_t context_params = {QnnContext_ParamsVersion_t::QNN_CONTEXT_PARAMS_VERSION_1,
                                           {context_params_v1}};
 
-    buffer_list.push_back(std::move(buffer));
     context_params_list.push_back(std::move(context_params));
     context_paramsv1_list.push_back(std::move(context_params_v1));
     context_params_ptr_list.push_back(&context_params_list.back());
@@ -949,15 +1118,76 @@ Ort::Status QnnBackendManager::CreateContextVtcmBackupBufferSharingEnabled(
                                                                 configs,
                                                                 nullptr);
 
-  context_params_ptr_list.clear();
-  context_paramsv1_list.clear();
-  context_params_list.clear();
-  buffer_list.clear();
-
-  RETURN_IF(QNN_CONTEXT_NO_ERROR != result,
-            ("Failed to create context. Error: " + QnnErrorHandleToString(result)).c_str());
+  RETURN_IF(QNN_CONTEXT_NO_ERROR != result, ("Failed to create context. Error: " + QnnErrorHandleToString(result) + ", Code:" + std::to_string(result)).c_str());
   return Ort::Status();
 }
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnContext_Config_t** configs,
+                                                                      std::unordered_map<std::string,
+                                                                                         std::unique_ptr<std::vector<std::string>>>& context_bin_map) {
+  std::vector<QnnContext_Params_t> context_params_list;
+  std::vector<QnnContext_ParamsV2_t> context_paramsv2_list;
+  std::vector<Qnn_ContextBinaryCallback_t> context_callbacks_list;
+  std::vector<const QnnContext_Params_t*> context_params_ptr_list;
+
+  context_params_list.reserve(context_bin_map.size());
+  context_paramsv2_list.reserve(context_bin_map.size());
+  context_callbacks_list.reserve(context_bin_map.size());
+  context_params_ptr_list.reserve(context_bin_map.size() + 1);
+
+  for (auto& it : context_bin_map) {
+    auto context_bin_filepath = it.first;
+
+    size_t buffer_size;
+    RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_size));
+
+    void* buffer;
+    RETURN_IF_ERROR(file_mapper_->GetContextBinMappedMemoryPtr(context_bin_filepath, &buffer));
+
+    auto notify_param_ptr = std::make_unique<FileMappingCallbackInfo_t>(buffer, buffer_size, this);
+
+    Qnn_ContextBinaryCallback_t context_file_map_callbacks;
+    context_file_map_callbacks.type = QNN_CONTEXT_CALLBACK_DMA_BUFFER;
+    context_file_map_callbacks.dmaBufferCallback.version = QNN_CONTEXT_CALLBACK_DMA_BUFFER_VERSION_1;
+    context_file_map_callbacks.dmaBufferCallback.v1.dataProvide = MapDmaDataCallback;
+    context_file_map_callbacks.dmaBufferCallback.v1.dataRelease = ReleaseDmaDataCallback;
+    context_file_map_callbacks.dmaBufferCallback.v1.notifyParam = reinterpret_cast<void*>(notify_param_ptr.get());
+
+    file_mapping_notify_params_.push_back(std::move(notify_param_ptr));
+    context_callbacks_list.push_back(std::move(context_file_map_callbacks));
+
+    // Callbacks require QnnContext_ParamsV2_t which is new to QNN API 2.32
+    QnnContext_ParamsV2_t context_params_v2 = {nullptr,
+                                               buffer,
+                                               buffer_size,
+                                               nullptr,
+                                               ContextCreateAsyncCallback,
+                                               it.second.get(),
+                                               &context_callbacks_list.back()};
+
+    QnnContext_Params_t context_params = {QnnContext_ParamsVersion_t::QNN_CONTEXT_PARAMS_VERSION_2,
+                                          {}};
+
+    context_paramsv2_list.push_back(std::move(context_params_v2));
+
+    context_params.v2 = &context_paramsv2_list.back();
+    context_params_list.push_back(std::move(context_params));
+    context_params_ptr_list.push_back(&(context_params_list.back()));
+  }
+  context_params_ptr_list.push_back(nullptr);
+  auto result = qnn_interface_.contextCreateFromBinaryListAsync(backend_handle_,
+                                                                device_handle_,
+                                                                context_params_ptr_list.data(),
+                                                                configs,
+                                                                nullptr);
+
+  RETURN_IF(QNN_CONTEXT_NO_ERROR != result, ("Failed to create context with file mapping enabled. Error: " +
+                                             QnnErrorHandleToString(result) + ", Code:" + std::to_string(result))
+                                                .c_str());
+  return Ort::Status();
+}
+#endif  // QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 
 Ort::Status QnnBackendManager::SetContextPriority(ContextPriority context_priority) {
   QnnContext_Config_t context_priority_config = QNN_CONTEXT_CONFIG_INIT;
@@ -978,7 +1208,7 @@ Ort::Status QnnBackendManager::ResetContextPriority() {
 
 Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing) {
   if (true == context_created_) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO, "Context created already.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Context created already.");
     return Ort::Status();
   }
 
@@ -1051,7 +1281,7 @@ Ort::Status QnnBackendManager::ReleaseContext() {
 std::unique_ptr<unsigned char[]> QnnBackendManager::GetContextBinaryBuffer(uint64_t& written_buffer_size) {
   if (nullptr == qnn_interface_.contextGetBinarySize ||
       nullptr == qnn_interface_.contextGetBinary) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Failed to get valid function pointer.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Failed to get valid function pointer.");
     return nullptr;
   }
   if (contexts_.size() <= 0) {
@@ -1061,15 +1291,15 @@ std::unique_ptr<unsigned char[]> QnnBackendManager::GetContextBinaryBuffer(uint6
   // Generate all graphs in one single context
   Qnn_ErrorHandle_t rt = qnn_interface_.contextGetBinarySize(contexts_[0], &required_buffer_size);
   if (QNN_CONTEXT_NO_ERROR != rt) {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_ERROR,
-                ("Failed to get QNN context binary size. Error: " + QnnErrorHandleToString(rt)).c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_ERROR,
+                    ("Failed to get QNN context binary size. Error: " + QnnErrorHandleToString(rt)).c_str());
     return nullptr;
   }
 
   std::unique_ptr<unsigned char[]> context_buffer = std::make_unique<unsigned char[]>(required_buffer_size);
   if (nullptr == context_buffer) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Failed to allocate buffer for context cache.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Failed to allocate buffer for context cache.");
     return nullptr;
   }
 
@@ -1078,22 +1308,22 @@ std::unique_ptr<unsigned char[]> QnnBackendManager::GetContextBinaryBuffer(uint6
                                        required_buffer_size,
                                        &written_buffer_size);
   if (QNN_CONTEXT_NO_ERROR != rt) {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_ERROR,
-                ("Failed to get context binary. Error: " + QnnErrorHandleToString(rt)).c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_ERROR,
+                    ("Failed to get context binary. Error: " + QnnErrorHandleToString(rt)).c_str());
     return nullptr;
   }
 
   if (required_buffer_size < written_buffer_size) {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_ERROR,
-                ("Context written buffer size: " + std::to_string(written_buffer_size) +
-                 " exceeds allocated buffer size: " + std::to_string(required_buffer_size))
-                    .c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_ERROR,
+                    ("Context written buffer size: " + std::to_string(written_buffer_size) +
+                     " exceeds allocated buffer size: " + std::to_string(required_buffer_size))
+                        .c_str());
     return nullptr;
   }
 
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Get context binary buffer succeed.");
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Get context binary buffer succeed.");
   return context_buffer;
 }
 
@@ -1147,15 +1377,15 @@ Ort::Status QnnBackendManager::GetMaxSpillFillBufferSize(unsigned char* buffer,
         auto spill_fill_buffer_size = htp_graph_info->contextBinaryGraphBlobInfoV1.spillFillBufferSize;
         max_spill_fill_buffer_size = spill_fill_buffer_size > max_spill_fill_buffer_size ? spill_fill_buffer_size : max_spill_fill_buffer_size;
       } else {
-        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Unknown context binary graph info blob version.");
+        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Unknown context binary graph info blob version.");
       }
     } else if (graphs_info[i].version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_2 ||
                graphs_info[i].version == QNN_SYSTEM_CONTEXT_GRAPH_INFO_VERSION_1) {
-      ORT_CXX_LOG(logger_,
-                  ORT_LOGGING_LEVEL_VERBOSE,
-                  "Skip retrieve spill file buffer size, it is not supported with graph info v1 & v2.");
+      ORT_CXX_LOG_PTR(logger_ptr_,
+                      ORT_LOGGING_LEVEL_VERBOSE,
+                      "Skip retrieve spill file buffer size, it is not supported with graph info v1 & v2.");
     } else {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Unknown context binary graph info version.");
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Unknown context binary graph info version.");
     }
   }
 #else
@@ -1163,13 +1393,14 @@ Ort::Status QnnBackendManager::GetMaxSpillFillBufferSize(unsigned char* buffer,
   ORT_UNUSED_PARAMETER(buffer_length);
 #endif
 
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Get max spill fill buffer size completed.");
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Get max spill fill buffer size completed.");
   return Ort::Status();
 }
 
 Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     char* buffer,
     uint64_t buffer_length,
+    const std::string& context_bin_filepath,
     std::string node_name,
     std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
     int64_t max_spill_fill_size) {
@@ -1178,6 +1409,33 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
                 nullptr == qnn_sys_interface_.systemContextFree;
   RETURN_IF(result, "Failed to get valid function pointer.");
 
+  void* bin_buffer = nullptr;
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  bool use_file_mapping = file_mapped_weights_enabled_;
+  // A nonzero buffer length implies an embedded context
+  if (use_file_mapping && buffer_length == 0) {
+    RETURN_IF(!file_mapper_, "Attemping to use File Mapping feature but file_mapper_ is uninitialized");
+
+    RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_length));
+
+    RETURN_IF(buffer_length == 0, ("Context bin has a size of 0 bytes: " + context_bin_filepath).c_str());
+    RETURN_IF_ERROR(file_mapper_->GetContextBinMappedMemoryPtr(context_bin_filepath, &bin_buffer));
+
+  } else {
+    if (use_file_mapping) {
+      use_file_mapping = false;
+      ORT_CXX_LOG_PTR(logger_ptr_,
+                      ORT_LOGGING_LEVEL_WARNING,
+                      ("Node " + node_name + " is using an embedded cache. Disabling file mapping for this node.").c_str());
+    }
+    RETURN_IF(buffer == nullptr, "Attempting to load QNN context from buffer but buffer is null");
+    bin_buffer = static_cast<void*>(buffer);
+  }
+#else
+  bin_buffer = static_cast<void*>(buffer);
+#endif
+
   QnnSystemContext_Handle_t sys_ctx_handle = nullptr;
   auto rt = qnn_sys_interface_.systemContextCreate(&sys_ctx_handle);
   RETURN_IF(QNN_SUCCESS != rt, "Failed to create system handle.");
@@ -1185,7 +1443,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   const QnnSystemContext_BinaryInfo_t* binary_info = nullptr;
   Qnn_ContextBinarySize_t binary_info_size{0};
   rt = qnn_sys_interface_.systemContextGetBinaryInfo(sys_ctx_handle,
-                                                     static_cast<void*>(buffer),
+                                                     bin_buffer,
                                                      buffer_length,
                                                      &binary_info,
                                                      &binary_info_size);
@@ -1195,32 +1453,57 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   // Binary info to graph info
   // retrieve Qnn graph info from binary info
   RETURN_IF(nullptr == binary_info, "Qnn cached binary info is nullptr.");
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  Qnn_Version_t blob_version;
+#endif
+
   uint32_t graph_count = 0;
   QnnSystemContext_GraphInfo_t* graphs_info = nullptr;
   if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_1) {
     graph_count = binary_info->contextBinaryInfoV1.numGraphs;
     graphs_info = binary_info->contextBinaryInfoV1.graphs;
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+    blob_version = binary_info->contextBinaryInfoV1.contextBlobVersion;
+#endif
   }
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 15)  // starts from 2.22
   else if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_2) {
     graph_count = binary_info->contextBinaryInfoV2.numGraphs;
     graphs_info = binary_info->contextBinaryInfoV2.graphs;
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+    blob_version = binary_info->contextBinaryInfoV2.contextBlobVersion;
+#endif
   }
 #endif
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)  // starts from 2.28
   else if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_3) {
     graph_count = binary_info->contextBinaryInfoV3.numGraphs;
     graphs_info = binary_info->contextBinaryInfoV3.graphs;
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+    blob_version = binary_info->contextBinaryInfoV3.contextBlobVersion;
+#endif
   }
 #endif
   else {
     return MAKE_EP_FAIL("Unsupported context binary info version.");
   }
 
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  // Cannot use contextCreateFromBinaryWithCallback() unless context bin version is >= 3.3.3
+  if (use_file_mapping && (blob_version.major < 3 || blob_version.minor < 3 || blob_version.patch < 3)) {
+    std::string version_str(std::to_string(blob_version.major) + "." + std::to_string(blob_version.minor) + "." + std::to_string(blob_version.patch));
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_WARNING,
+                    ("Context binary of " + node_name + " is " + version_str + ". File mapping is only supported for versions >= 3.3.3. Disabling file mapping for this node.").c_str());
+    use_file_mapping = false;
+  }
+#endif
+
   RETURN_IF(graph_count < 1 || graphs_info == nullptr, "Failed to get graph info from Qnn cached context.");
-  ORT_CXX_LOG(logger_,
-              ORT_LOGGING_LEVEL_VERBOSE,
-              ("Graph count from QNN context: " + std::to_string(graph_count)).c_str());
+  ORT_CXX_LOG_PTR(logger_ptr_,
+                  ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Graph count from QNN context: " + std::to_string(graph_count)).c_str());
 
   Qnn_ContextHandle_t context = nullptr;
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 26)
@@ -1255,14 +1538,34 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 #endif
 
     QnnContext_Config_t* spill_fill_config_pointer = max_spill_fill_size > 0 ? &spill_fill_config : nullptr;
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Max spill fill buffer size: " + std::to_string(max_spill_fill_size)).c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_VERBOSE,
+                    ("Max spill fill buffer size: " + std::to_string(max_spill_fill_size)).c_str());
 
     const QnnContext_Config_t* context_configs[] = {&qnn_context_config, spill_fill_config_pointer, nullptr};
 
     RETURN_IF(nullptr == qnn_interface_.contextCreateFromBinary,
               "Invalid function pointer for contextCreateFromBinary.");
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+    Qnn_ContextBinaryCallback_t callbacks;
+    if (use_file_mapping && file_mapper_) {
+      RETURN_IF(nullptr == qnn_interface_.contextCreateFromBinaryWithCallback,
+                "Invalid function pointer for contextCreateFromBinaryWithCallback.");
+
+      auto notify_param_ptr = std::make_unique<FileMappingCallbackInfo_t>(bin_buffer, buffer_length, this);
+
+      callbacks.type = QNN_CONTEXT_CALLBACK_DMA_BUFFER;
+      callbacks.dmaBufferCallback.version = QNN_CONTEXT_CALLBACK_DMA_BUFFER_VERSION_1;
+      callbacks.dmaBufferCallback.v1.dataProvide = MapDmaDataCallback;
+      callbacks.dmaBufferCallback.v1.dataRelease = ReleaseDmaDataCallback;
+      callbacks.dmaBufferCallback.v1.notifyParam = reinterpret_cast<void*>(notify_param_ptr.get());
+
+      file_mapping_notify_params_.push_back(std::move(notify_param_ptr));
+    }
+#else
+  ORT_UNUSED_PARAMETER(context_bin_filepath);
+#endif
 
     qnn::profile::ProfilingInfo profiling_info;
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
@@ -1271,13 +1574,40 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     }
 #endif
 
-    rt = qnn_interface_.contextCreateFromBinary(backend_handle_,
-                                                device_handle_,
-                                                context_configs,
-                                                static_cast<void*>(buffer),
-                                                buffer_length,
-                                                &context,
-                                                profile_backend_handle_);
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+    std::vector<char> backup_buffer;
+    if (use_file_mapping && file_mapper_) {
+      rt = qnn_interface_.contextCreateFromBinaryWithCallback(backend_handle_,
+                                                              device_handle_,
+                                                              context_configs,
+                                                              &callbacks,
+                                                              bin_buffer,
+                                                              buffer_length,
+                                                              &context,
+                                                              profile_backend_handle_,
+                                                              NULL);
+
+      if (rt != QNN_SUCCESS) {
+        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, ("Failed to create context with file mapping enabled. Error: " + QnnErrorHandleToString(rt) + ", Code : " + std::to_string(rt) + ". Retrying with feature disabled.").c_str());
+
+        // Read context bin from file since file mapping has failed
+        RETURN_IF_ERROR(ReadContextBinIfValid(context_bin_filepath, backup_buffer));
+
+        bin_buffer = static_cast<void*>(backup_buffer.data());
+      }
+    }
+
+    if (!use_file_mapping || rt != QNN_SUCCESS)
+#endif
+    {
+      rt = qnn_interface_.contextCreateFromBinary(backend_handle_,
+                                                  device_handle_,
+                                                  context_configs,
+                                                  bin_buffer,
+                                                  buffer_length,
+                                                  &context,
+                                                  profile_backend_handle_);
+    }
 
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
     if (ProfilingEnabled()) {
@@ -1315,7 +1645,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   sys_ctx_handle = nullptr;
   context_created_ = true;
 
-  ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Load from cached QNN Context completed.");
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Load from cached QNN Context completed.");
   return Ort::Status();
 }
 
@@ -1326,21 +1656,23 @@ Ort::Status QnnBackendManager::SetupBackend(
     bool need_load_system_lib,
     bool share_ep_contexts,
     bool enable_vtcm_backup_buffer_sharing,
+    bool enable_file_mapped_weights,
+    std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map) {
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
   if (backend_setup_completed_) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Backend setup already!");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Backend setup already!");
 
     if (vtcm_backup_buffer_sharing_enabled_) {
       // If a context bin filepath has not been processed yet,
       // then a new context must be created for the set of context bins
       auto first_mapping_it = ep_context_handle_map_.find(context_bin_map.begin()->first);
       if (first_mapping_it == ep_context_handle_map_.end()) {
-        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Creating context for new set of context binaries");
+        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Creating context for new set of context binaries");
         return CreateContextVtcmBackupBufferSharingEnabled(context_bin_map);
       }
 
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Mapping contexts to new EP main context nodes");
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Mapping contexts to new EP main context nodes");
 
       for (auto& it : context_bin_map) {
         auto context_bin_filepath = it.first;
@@ -1363,8 +1695,22 @@ Ort::Status QnnBackendManager::SetupBackend(
   } else {
     status = LoadQnnSerializerBackend();
   }
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  // Backend is determined after LoadBackend() or LoadQnnSerializerBackend()
+  if (enable_file_mapped_weights && !file_mapper_ && GetQnnBackendType() == QnnBackendType::HTP) {
+    RETURN_IF(!rpcmem_library, "RPCMem Library is required for file mapping but is uninitialized.");
+    rpcmem_library_ = rpcmem_library;
+    file_mapped_weights_enabled_ = true;
+    file_mapper_ = std::make_unique<WindowsFileMapper>(*logger_ptr_);
+  }
+#else
+  ORT_UNUSED_PARAMETER(enable_file_mapped_weights);
+  ORT_UNUSED_PARAMETER(rpcmem_library);
+#endif
+
   if (status.IsOK()) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "LoadBackend succeed.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "LoadBackend succeed.");
   }
 
   if (status.IsOK() && (load_from_cached_context || need_load_system_lib)) {
@@ -1373,48 +1719,49 @@ Ort::Status QnnBackendManager::SetupBackend(
 
   if (status.IsOK()) {
     sdk_build_version_ = GetBackendBuildId();
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Backend build version: " + sdk_build_version_).c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, ("Backend build version: " + sdk_build_version_).c_str());
   }
 
   if (status.IsOK()) {
     status = InitializeQnnLog();
   }
   if (status.IsOK()) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "SetLogger succeed.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "SetLogger succeed.");
   }
 
   if (status.IsOK()) {
     status = InitializeBackend();
   }
   if (status.IsOK()) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "InitializeBackend succeed.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "InitializeBackend succeed.");
   }
 
   if (status.IsOK()) {
     status = CreateDevice();
   }
   if (status.IsOK()) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "CreateDevice succeed.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "CreateDevice succeed.");
   }
 
   if (status.IsOK()) {
     status = InitializeProfiling();
   }
   if (status.IsOK()) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "InitializeProfiling succeed.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "InitializeProfiling succeed.");
   }
 
   if (status.IsOK()) {
     RETURN_IF_ERROR(LoadOpPackage());
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "LoadOpPackage succeed.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "LoadOpPackage succeed.");
   }
 
   bool enable_htp_weight_sharing = false;
   if (share_ep_contexts && !load_from_cached_context) {
-#if defined(__aarch64__) || defined(_M_ARM64)
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_WARNING,
-                "Weight sharing only available with offline generation on x64 platform, not work on real device.");
+#if (defined(__aarch64__) || defined(_M_ARM64)) && \
+    !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_WARNING,
+                    "Weight sharing on Windows arm64 device requires QNN API version >=2.34. Since Current version is too old, disabling the Weight sharing.");
 #else
     enable_htp_weight_sharing = true;
 #endif
@@ -1425,15 +1772,15 @@ Ort::Status QnnBackendManager::SetupBackend(
                                                  : CreateContext(enable_htp_weight_sharing);
 
     if (status.IsOK()) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "CreateContext succeed.");
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "CreateContext succeed.");
     }
   }
 
   if (status.IsOK()) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "QNN SetupBackend succeed");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "QNN SetupBackend succeed");
     backend_setup_completed_ = true;
   } else {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Failed to setup so cleaning up");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Failed to setup so cleaning up");
     ReleaseResources();
   }
 
@@ -1470,10 +1817,14 @@ Ort::Status QnnBackendManager::SetHtpPowerConfigs(uint32_t htp_power_config_clie
   // to a different EP. Therefore, we have to check that backend setup actually completed before trying to
   // set an HTP power config ID. Otherwise, this causes a segfault because the QNN backend lib is unloaded.
   RETURN_IF_NOT(backend_setup_completed_, "Cannot set HTP power config ID if backend setup is not complete.");
-  RETURN_IF_ERROR(htp_power_config_manager_.AddRpcPollingTime(rpc_polling_time));
-  RETURN_IF_ERROR(htp_power_config_manager_.AddRpcControlLatency(rpc_control_latency));
-  RETURN_IF_ERROR(htp_power_config_manager_.AddHtpPerformanceMode(htp_performance_mode, htp_power_config_client_id));
-  RETURN_IF_ERROR(htp_power_config_manager_.SetPowerConfig(htp_power_config_client_id, GetQnnInterface()));
+  RETURN_IF_ERROR(htp_power_config_manager_.AddRpcPollingTime(rpc_polling_time, *logger_ptr_));
+  RETURN_IF_ERROR(htp_power_config_manager_.AddRpcControlLatency(rpc_control_latency, *logger_ptr_));
+  RETURN_IF_ERROR(htp_power_config_manager_.AddHtpPerformanceMode(htp_performance_mode,
+                                                                  htp_power_config_client_id,
+                                                                  *logger_ptr_));
+  RETURN_IF_ERROR(htp_power_config_manager_.SetPowerConfig(htp_power_config_client_id,
+                                                           GetQnnInterface(),
+                                                           *logger_ptr_));
 
   return Ort::Status();
 }
@@ -1488,22 +1839,26 @@ Ort::Status QnnBackendManager::SetPerThreadHtpPowerConfigs(const std::thread::id
   if (pre_run) {
     if (htp_power_configs.pre_run_perf_mode.has_value()) {
       RETURN_IF_ERROR(htp_power_config_manager_.AddHtpPerformanceMode(*htp_power_configs.pre_run_perf_mode,
-                                                                      htp_power_config_id));
+                                                                      htp_power_config_id,
+                                                                      *logger_ptr_));
     }
 
     if (htp_power_configs.rpc_control_latency.has_value()) {
-      RETURN_IF_ERROR(htp_power_config_manager_.AddRpcControlLatency(*htp_power_configs.rpc_control_latency));
+      RETURN_IF_ERROR(htp_power_config_manager_.AddRpcControlLatency(*htp_power_configs.rpc_control_latency,
+                                                                     *logger_ptr_));
     }
 
     if (htp_power_configs.rpc_polling_time.has_value()) {
-      RETURN_IF_ERROR(htp_power_config_manager_.AddRpcPollingTime(*htp_power_configs.rpc_polling_time));
+      RETURN_IF_ERROR(htp_power_config_manager_.AddRpcPollingTime(*htp_power_configs.rpc_polling_time,
+                                                                  *logger_ptr_));
     }
   } else if (htp_power_configs.post_run_perf_mode.has_value()) {
     RETURN_IF_ERROR(htp_power_config_manager_.AddHtpPerformanceMode(*htp_power_configs.post_run_perf_mode,
-                                                                    htp_power_config_id));
+                                                                    htp_power_config_id,
+                                                                    *logger_ptr_));
   }
 
-  RETURN_IF_ERROR(htp_power_config_manager_.SetPowerConfig(htp_power_config_id, GetQnnInterface()));
+  RETURN_IF_ERROR(htp_power_config_manager_.SetPowerConfig(htp_power_config_id, GetQnnInterface(), *logger_ptr_));
 
   return Ort::Status();
 }
@@ -1576,42 +1931,41 @@ void QnnBackendManager::ReleaseResources() {
 
   auto result = ReleaseContext();
   if (!result.IsOK()) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseContext: " + result.GetErrorMessage()).c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseContext: " + result.GetErrorMessage()).c_str());
   }
 
   result = ReleaseProfilehandle();
   if (!result.IsOK()) {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_ERROR,
-                ("Failed to ReleaseProfilehandle: " + result.GetErrorMessage()).c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_ERROR,
+                    ("Failed to ReleaseProfilehandle: " + result.GetErrorMessage()).c_str());
   }
 
   result = ReleaseDevice();
   if (!result.IsOK()) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseDevice: " + result.GetErrorMessage()).c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseDevice: " + result.GetErrorMessage()).c_str());
   }
 
   result = ShutdownBackend();
   if (!result.IsOK()) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ShutdownBackend: " + result.GetErrorMessage()).c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ShutdownBackend: " + result.GetErrorMessage()).c_str());
   }
 
   result = TerminateQnnLog();
   if (!result.IsOK()) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Failed to TerminateQnnLog: " + result.GetErrorMessage()).c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to TerminateQnnLog: " + result.GetErrorMessage()).c_str());
   }
 
   if (backend_lib_handle_) {
     result = UnloadLib(backend_lib_handle_);
     if (!result.IsOK()) {
-      ORT_CXX_LOG(logger_,
-                  ORT_LOGGING_LEVEL_ERROR,
-                  ("Failed to unload backend library: " + result.GetErrorMessage()).c_str());
+      ORT_CXX_LOG_PTR(logger_ptr_,
+                      ORT_LOGGING_LEVEL_ERROR,
+                      ("Failed to unload backend library: " + result.GetErrorMessage()).c_str());
     }
   }
 
   backend_setup_completed_ = false;
-
   return;
 }
 
@@ -1634,17 +1988,17 @@ Ort::Status QnnBackendManager::ExtractBackendProfilingInfo(qnn::profile::Profili
 
   // ETW disabled previously, but enabled now
   if (ProfilingLevel::INVALID == profiling_level_etw_ && tracelogging_provider_ep_enabled) {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_ERROR,
-                "ETW disabled previously, but enabled now. Can't do the switch! Won't output any profiling.");
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_ERROR,
+                    "ETW disabled previously, but enabled now. Can't do the switch! Won't output any profiling.");
     return Ort::Status();
   }
 
   // ETW enabled previously, but disabled now
   if (ProfilingLevel::INVALID != profiling_level_etw_ && !tracelogging_provider_ep_enabled) {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_ERROR,
-                "ETW enabled previously, but disabled now. Can't do the switch! Won't output any profiling.");
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_ERROR,
+                    "ETW enabled previously, but disabled now. Can't do the switch! Won't output any profiling.");
     return Ort::Status();
   }
 
@@ -1653,9 +2007,9 @@ Ort::Status QnnBackendManager::ExtractBackendProfilingInfo(qnn::profile::Profili
 
   RETURN_IF(nullptr == profile_backend_handle_, "Backend profile handle not valid.");
 
-  ORT_CXX_LOG(logger_,
-              ORT_LOGGING_LEVEL_VERBOSE,
-              ("Extracting profiling events for graph " + profiling_info.graph_name).c_str());
+  ORT_CXX_LOG_PTR(logger_ptr_,
+                  ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Extracting profiling events for graph " + profiling_info.graph_name).c_str());
 
   const QnnProfile_EventId_t* profile_events{nullptr};
   uint32_t num_events{0};
@@ -1671,21 +2025,21 @@ Ort::Status QnnBackendManager::ExtractBackendProfilingInfo(qnn::profile::Profili
   }
 
   if (num_events > 0) {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("profile_events: " + std::to_string(*profile_events) +
-                 " num_events: " + std::to_string(num_events))
-                    .c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_VERBOSE,
+                    ("profile_events: " + std::to_string(*profile_events) +
+                     " num_events: " + std::to_string(num_events))
+                        .c_str());
 
     bool backendSupportsExtendedEventData = false;
     Qnn_ErrorHandle_t resultPropertyHasCapability =
         qnn_interface_.propertyHasCapability(QNN_PROPERTY_PROFILE_SUPPORTS_EXTENDED_EVENT);
     uint16_t errorCodePropertyHasCapability = static_cast<uint16_t>(resultPropertyHasCapability & 0xFFFF);
     if (errorCodePropertyHasCapability == QNN_PROPERTY_SUPPORTED) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "The QNN backend supports extended event data.");
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "The QNN backend supports extended event data.");
       backendSupportsExtendedEventData = true;
     } else {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "The QNN backend does not support extended event data.");
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "The QNN backend does not support extended event data.");
     }
 
     profiling_info.csv_output_filepath = profiling_file_path_;
@@ -1715,17 +2069,17 @@ Ort::Status QnnBackendManager::ExtractBackendProfilingInfo(qnn::profile::Profili
 #endif
 
     if (!profiling_file_path_.empty()) {
-      ORT_CXX_LOG(logger_,
-                  ORT_LOGGING_LEVEL_VERBOSE,
-                  ("Wrote QNN profiling events (" + std::to_string(num_events) +
-                   ") to file (" + profiling_file_path_ + ")")
-                      .c_str());
+      ORT_CXX_LOG_PTR(logger_ptr_,
+                      ORT_LOGGING_LEVEL_VERBOSE,
+                      ("Wrote QNN profiling events (" + std::to_string(num_events) +
+                       ") to file (" + profiling_file_path_ + ")")
+                          .c_str());
     }
 
     if (tracelogging_provider_ep_enabled) {
-      ORT_CXX_LOG(logger_,
-                  ORT_LOGGING_LEVEL_VERBOSE,
-                  ("Wrote QNN profiling events (" + std::to_string(num_events) + ") to ETW").c_str());
+      ORT_CXX_LOG_PTR(logger_ptr_,
+                      ORT_LOGGING_LEVEL_VERBOSE,
+                      ("Wrote QNN profiling events (" + std::to_string(num_events) + ") to ETW").c_str());
     }
   }
 
@@ -1742,11 +2096,11 @@ Ort::Status QnnBackendManager::ExtractProfilingSubEvents(QnnProfile_EventId_t pr
             ("Failed to get profile sub events. Error: " + QnnErrorHandleToString(result)).c_str());
 
   if (num_sub_events > 0) {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("profile_sub_events: " + std::to_string(*profile_sub_events) +
-                 " num_sub_events: " + std::to_string(num_sub_events))
-                    .c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_VERBOSE,
+                    ("profile_sub_events: " + std::to_string(*profile_sub_events) +
+                     " num_sub_events: " + std::to_string(num_sub_events))
+                        .c_str());
 
 #ifdef QNN_SYSTEM_PROFILE_API_ENABLED
     QnnSystemProfile_ProfileEventV1_t* parent_system_event = nullptr;
@@ -1767,9 +2121,9 @@ Ort::Status QnnBackendManager::ExtractProfilingSubEvents(QnnProfile_EventId_t pr
       RETURN_IF_ERROR(ExtractProfilingSubEvents(subevent_id, profile_writer, useExtendedEventData));
     }
 
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Wrote QNN profiling sub events (" + std::to_string(num_sub_events) + ")").c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_VERBOSE,
+                    ("Wrote QNN profiling sub events (" + std::to_string(num_sub_events) + ")").c_str());
   }
 
   return Ort::Status();
@@ -2030,16 +2384,15 @@ Ort::Status QnnBackendManager::AddQnnContextHandle(Qnn_ContextHandle_t raw_conte
   auto free_context_handle = [this](Qnn_ContextHandle_t raw_context_handle) {
     const auto free_result = qnn_interface_.contextFree(raw_context_handle, nullptr);
     if (free_result != QNN_CONTEXT_NO_ERROR) {
-      ORT_CXX_LOG(logger_,
-                  ORT_LOGGING_LEVEL_ERROR,
-                  ("qnn_interface.contextFree() failed: " + utils::GetVerboseQnnErrorMessage(qnn_interface_, free_result)).c_str());
+      ORT_CXX_LOG_PTR(logger_ptr_,
+                      ORT_LOGGING_LEVEL_ERROR,
+                      ("qnn_interface.contextFree() failed: " + utils::GetVerboseQnnErrorMessage(qnn_interface_, free_result)).c_str());
     }
   };
 
   // take ownership of `raw_context_handle`
   auto context_handle = UniqueQnnContextHandle(raw_context_handle, free_context_handle);
-  auto mem_handle_manager = std::make_unique<QnnContextMemHandleManager>(GetQnnInterface(), raw_context_handle,
-                                                                         logger_);
+  auto mem_handle_manager = std::make_unique<QnnContextMemHandleManager>(GetQnnInterface(), raw_context_handle);
 
   auto context_handle_record = std::make_shared<QnnContextHandleRecord>();
   context_handle_record->context_handle = std::move(context_handle);
@@ -2073,13 +2426,15 @@ Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t
   auto& context_mem_handle_manager = context_handle_record->mem_handles;
 
   bool did_register{};
-  RETURN_IF_ERROR(context_mem_handle_manager->GetOrRegister(shared_memory_address, qnn_tensor,
-                                                            mem_handle, did_register));
+  RETURN_IF_ERROR(context_mem_handle_manager->GetOrRegister(shared_memory_address,
+                                                            qnn_tensor,
+                                                            mem_handle,
+                                                            did_register,
+                                                            *logger_ptr_));
 
   if (did_register) {
     HtpSharedMemoryAllocator::AllocationCleanUpFn unregister_mem_handle =
-        [&logger = logger_,
-         shared_memory_address,
+        [shared_memory_address,
          weak_backend_manager = weak_from_this(),
          weak_context_handle_record = std::weak_ptr{context_handle_record}](
             void* /* allocation_base_address */) {
@@ -2104,7 +2459,7 @@ Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t
                 << shared_memory_address
                 << ", error: "
                 << unregister_status.GetErrorMessage();
-            ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
+            ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
           }
         };
 

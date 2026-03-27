@@ -637,7 +637,26 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 #endif
 
-  // Device ID
+  std::string disable_file_mapped_weights_str;
+  GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("disabl_file_mapped_weights"), "0", disable_file_mapped_weights_str);
+  if (disable_file_mapped_weights_str == "1") {
+    enable_file_mapped_weights_ = false;
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING, ("User specified disable_file_mapped_weights: " + std::to_string(enable_file_mapped_weights_)).c_str());
+  }
+
+#ifndef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  enable_file_mapped_weights_ = false;
+  ORT_CXX_LOG(logger_,
+              ORT_LOGGING_LEVEL_WARNING, "File mapped weights feature is only available on Windows arm64 devices for QNN API versions >= 2.32. Feature will be disabled by default");
+#else
+  if (qnn_context_embed_mode_ && enable_file_mapped_weights_) {
+    enable_file_mapped_weights_ = false;
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING, "File mapped weights feature is incompatible with embedded EP contexts. Feature will be disabled by default.");
+  }
+#endif
+
   std::string device_id_str;
   GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("device_id"), "0", device_id_str);
   if (!device_id_str.empty()) {
@@ -853,6 +872,18 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     model_settings_.htp_shared_memory = true;
   }
 
+  if (enable_file_mapped_weights_ && !rpcmem_library_) {
+    // Attempt to init rpcmem_library_ if needed. If this fails, then
+    // disable file mapped weights and proceed with normal operation
+    try {
+      rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
+    } catch (const std::exception& e) {
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_WARNING, ("Unable to load RPCMem library: " + std::string(e.what()) + " - Disabling file mapped weights.").c_str());
+      enable_file_mapped_weights_ = false;
+    }
+  }
+
   dump_json_qnn_graph_ = ParseBoolOption(ort_api,
                                          session_options_,
                                          FormatEPConfigKey("dump_json_qnn_graph"),
@@ -892,6 +923,9 @@ QnnEp::QnnEp(QnnEpFactory& factory,
       ((context_cache_enabled_ && share_ep_contexts_) || enable_vtcm_backup_buffer_sharing_) &&
       SharedContext::GetInstance().GetSharedQnnBackendManager()) {
     qnn_backend_manager_ = SharedContext::GetInstance().GetSharedQnnBackendManager();
+    // Reset QnnBackendManager's logger to the one in current session as original one could be deleted along with the
+    // previous session.
+    qnn_backend_manager_->ResetLogger(logger_);
     // Clear the QnnBackendManager from singleton to stop the resource share
     if (stop_share_ep_contexts_) {
       SharedContext::GetInstance().ResetSharedQnnBackendManager();
@@ -1373,6 +1407,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                           ep->context_cache_enabled_,
                                                           ep->share_ep_contexts_,
                                                           ep->enable_vtcm_backup_buffer_sharing_,
+                                                          ep->enable_file_mapped_weights_,
+                                                          ep->rpcmem_library_,
                                                           context_bin_map);
 
   context_bin_map.clear();
@@ -2203,7 +2239,7 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
   bool is_backend_setup = qnn_backend_manager_->IsBackendSetup();
   if (!is_backend_setup) {
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-    qnn_backend_manager_->SetupBackend(true, true, false, false, dummy_map);
+    qnn_backend_manager_->SetupBackend(true, true, false, false, false, nullptr, dummy_map);
   }
 
   Ort::Status status = qnn_cache_compatibility_manager_->ValidateCompatibilityInfo(info, *model_compatibility);
@@ -2214,6 +2250,55 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
   }
 
   return status.release();
+}
+
+OrtStatus* QnnEp::GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevice* /*hw*/,
+                                                          OrtDeviceEpIncompatibilityDetails* details) noexcept {
+  // This function is always called by temporary QnnEp, so no need to check if backend is already setup.
+  std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
+  Ort::Status status = qnn_backend_manager_->SetupBackend(true, true, false, false, false, nullptr, dummy_map);
+
+  if (!status.IsOK()) {
+    const std::string error_message = status.GetErrorMessage();
+    OrtDeviceEpIncompatibilityReason reasons = OrtDeviceEpIncompatibility_UNKNOWN;
+    int32_t error_code = QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED;
+
+    // Classify the failure based on the error message produced by each SetupBackend step.
+    if (error_message.find("Unable to load backend") != std::string::npos ||
+        error_message.find("Failed to get QNN providers") != std::string::npos) {
+      // LoadBackend: GetQnnInterfaceProvider() failed.
+      // The QNN backend shared library (e.g., QnnHtp.dll) or one of its dependencies could
+      // not be found or loaded, or the required symbol was not present in the library.
+      reasons = OrtDeviceEpIncompatibility_MISSING_DEPENDENCY;
+    } else if (error_message.find("Unable to find a valid interface") != std::string::npos) {
+      // LoadBackend: GetQnnInterfaceProvider() failed.
+      // The library was loaded but no interface version compatible with the required QNN
+      // API version was found. The installed QNN driver is too old or too new relative to this build of ORT.
+      reasons = OrtDeviceEpIncompatibility_DRIVER_INCOMPATIBLE;
+    } else if (error_message.find("Failed to initialize backend") != std::string::npos) {
+      // InitializeBackend: QNN backendCreate() failed.
+      // The backend library loaded successfully but the driver could not be initialised.
+      reasons = OrtDeviceEpIncompatibility_DRIVER_INCOMPATIBLE;
+    } else if (error_message.find("Failed to create device") != std::string::npos) {
+      // CreateDevice: QNN deviceCreate() failed.
+      // The hardware device is not present, not accessible, or not supported by the driver.
+      reasons = OrtDeviceEpIncompatibility_DEVICE_INCOMPATIBLE;
+    }
+
+    return ep_api.DeviceEpIncompatibilityDetails_SetDetails(
+        details,
+        reasons,
+        error_code,
+        error_message.c_str());
+  }
+
+  // Since this function is always called by temporary QnnEp, so no need to release resource.
+
+  return ep_api.DeviceEpIncompatibilityDetails_SetDetails(
+      details,
+      OrtDeviceEpIncompatibility_NONE,
+      QNN_SUCCESS,
+      nullptr);
 }
 
 bool QnnEp::GetHtpPowerConfigId(uint32_t& htp_power_config_id) {

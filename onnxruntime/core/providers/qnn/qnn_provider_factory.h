@@ -42,6 +42,10 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
       _In_ size_t num_devices,
       _In_ const char* compatibility_info,
       _Out_ OrtCompiledModelCompatibility* model_compatibility) noexcept;
+  static OrtStatus* ORT_API_CALL GetHardwareDeviceIncompatibilityDetailsImpl(
+      _In_ OrtEpFactory* this_ptr,
+      _In_ const OrtHardwareDevice* hw,
+      _Inout_ OrtDeviceEpIncompatibilityDetails* details) noexcept;
 
   // const OrtApi& ort_api;
   const std::string ep_name_;              // EP name
