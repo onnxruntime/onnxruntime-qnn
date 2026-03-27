@@ -162,6 +162,7 @@ celerybeat.pid
 .venv
 env/
 venv/
+venv-pkg-manager/
 ENV/
 env.bak/
 venv.bak/

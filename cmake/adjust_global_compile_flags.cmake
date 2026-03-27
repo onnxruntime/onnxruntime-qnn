@@ -304,7 +304,6 @@ else()
   if (NOT (COMPILER_SUPPORT_MF16C AND COMPILER_SUPPORT_FMA AND COMPILER_SUPPORT_AVX) OR
     (CMAKE_SYSTEM_NAME STREQUAL "Android" AND onnxruntime_ENABLE_TRAINING_APIS))
     message("One or more AVX/F16C instruction flags are not supported. ")
-    set(onnxruntime_ENABLE_CPU_FP16_OPS FALSE)
   endif()
 
 endif()

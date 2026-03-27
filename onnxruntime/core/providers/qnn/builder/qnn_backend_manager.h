@@ -26,6 +26,8 @@
 #include "QnnTypes.h"
 #include "System/QnnSystemInterface.h"
 
+#include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/rpcmem_library.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/qnn_context_mem_handle_manager.h"
 #include "core/providers/qnn/builder/qnn_def.h"
@@ -33,6 +35,10 @@
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
 #include "core/providers/qnn/ort_api.h"
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+#include "core/providers/qnn/builder/qnn_file_mapping_interface.h"
+#endif
 
 namespace onnxruntime {
 namespace qnn {
@@ -152,9 +158,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
         soc_model_(config.soc_model),
         op_packages_(config.op_packages),
         skip_qnn_version_check_(config.skip_qnn_version_check),
-        htp_power_config_manager_(power::HtpPowerConfigManager(logger)),
+        htp_power_config_manager_(power::HtpPowerConfigManager()),
         api_ptrs_(api_ptrs),
-        logger_(logger) {
+        logger_ptr_(&logger) {
   }
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnBackendManager);
@@ -166,6 +172,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Ort::Status LoadCachedQnnContextFromBuffer(
       char* buffer,
       uint64_t buffer_length,
+      const std::string& context_bin_filepath,
       std::string node_name,
       std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models,
       int64_t max_spill_fill_size);
@@ -177,6 +184,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       bool need_load_system_lib,
       bool share_ep_contexts,
       bool enable_vtcm_backup_buffer_sharing,
+      bool enable_file_mapped_weights,
+      std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map);
 
   Ort::Status CreateHtpPowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
@@ -287,10 +296,36 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 #endif
 
   bool IsBackendSetup() { return backend_setup_completed_; }
+  bool FileMappingIsEnabled() {
+    return file_mapped_weights_enabled_;
+  }
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  Qnn_ErrorHandle_t MapDmaData(Qnn_ContextBinaryDataRequest_t request,
+                               Qnn_ContextBinaryDmaDataResponse_t* response,
+                               void* const mapped_base_ptr,
+                               const size_t file_size);
+
+  Qnn_ErrorHandle_t ReleaseDmaData(Qnn_ContextBinaryDmaDataMem_t data_mem, void* mapped_base_ptr);
+#endif
 
   // Releases all QNN resources. Called in the destructor.
   // NOTE: This function indirectly locks the internal `logger_recursive_mutex_` via nested function calls.
   void ReleaseResources();
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  typedef struct FileMappingCallbackInfo {
+    void* const mapped_file_ptr;
+    const size_t file_size;
+    QnnBackendManager* const backend_manager;
+
+    FileMappingCallbackInfo(void* ptr, size_t size, QnnBackendManager* manager)
+        : mapped_file_ptr(ptr), file_size(size), backend_manager(manager) {}
+
+  } FileMappingCallbackInfo_t;
+#endif
+
+  void ResetLogger(const Ort::Logger& logger) { logger_ptr_ = &logger; }
 
  private:
   Ort::Status LoadBackend();
@@ -309,8 +344,23 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status CreateContext(bool enable_htp_weight_sharing);
 
+  Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
+
+  Ort::Status ReadContextBinIfValid(const std::string& context_bin_filepath,
+                                    std::vector<char>& buffer);
+
   Ort::Status CreateContextVtcmBackupBufferSharingEnabled(std::unordered_map<std::string,
                                                                              std::unique_ptr<std::vector<std::string>>>& context_bin_map);
+
+  Ort::Status CreateContextFromListAsync(const QnnContext_Config_t** configs,
+                                         std::unordered_map<std::string,
+                                                            std::unique_ptr<std::vector<std::string>>>& context_bin_map);
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  Ort::Status CreateContextFromListAsyncWithCallback(const QnnContext_Config_t** configs,
+                                                     std::unordered_map<std::string,
+                                                                        std::unique_ptr<std::vector<std::string>>>& context_bin_map);
+#endif
 
   Ort::Status ReleaseContext();
 
@@ -357,7 +407,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   std::string GetBackendBuildId() {
     char* backend_build_id{nullptr};
     if (QNN_SUCCESS != qnn_interface_.backendGetBuildId((const char**)&backend_build_id)) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Unable to get build Id from the backend.");
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Unable to get build Id from the backend.");
     }
     return (backend_build_id == nullptr ? std::string("") : std::string(backend_build_id));
   }
@@ -407,57 +457,57 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       if (result != QNN_SUCCESS) {
         switch (result) {
           case QNN_BACKEND_ERROR_INVALID_ARGUMENT:
-            ORT_CXX_LOG(logger_,
-                        ORT_LOGGING_LEVEL_ERROR,
-                        "Invalid argument, please check if op package path or interface provider is NULL.");
+            ORT_CXX_LOG_PTR(logger_ptr_,
+                            ORT_LOGGING_LEVEL_ERROR,
+                            "Invalid argument, please check if op package path or interface provider is NULL.");
             break;
           case QNN_BACKEND_ERROR_OP_PACKAGE_NOT_FOUND:
-            ORT_CXX_LOG(logger_,
-                        ORT_LOGGING_LEVEL_ERROR,
-                        ("Could not open op package path. op_pack_path: " + op_package.path).c_str());
+            ORT_CXX_LOG_PTR(logger_ptr_,
+                            ORT_LOGGING_LEVEL_ERROR,
+                            ("Could not open op package path. op_pack_path: " + op_package.path).c_str());
             break;
           case QNN_BACKEND_ERROR_OP_PACKAGE_IF_PROVIDER_NOT_FOUND:
-            ORT_CXX_LOG(logger_,
-                        ORT_LOGGING_LEVEL_ERROR,
-                        "Could not find interfaceProvider symbol in op package library.");
+            ORT_CXX_LOG_PTR(logger_ptr_,
+                            ORT_LOGGING_LEVEL_ERROR,
+                            "Could not find interfaceProvider symbol in op package library.");
             break;
           case QNN_BACKEND_ERROR_OP_PACKAGE_REGISTRATION_FAILED:
-            ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Op package registration failed.");
+            ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Op package registration failed.");
             break;
           case QNN_BACKEND_ERROR_OP_PACKAGE_UNSUPPORTED_VERSION:
-            ORT_CXX_LOG(logger_,
-                        ORT_LOGGING_LEVEL_ERROR,
-                        "Op package has interface version not supported by this backend.");
+            ORT_CXX_LOG_PTR(logger_ptr_,
+                            ORT_LOGGING_LEVEL_ERROR,
+                            "Op package has interface version not supported by this backend.");
             break;
           case QNN_BACKEND_ERROR_NOT_SUPPORTED:
-            ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Op package registration is not supported.");
+            ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Op package registration is not supported.");
             break;
           case QNN_BACKEND_ERROR_INVALID_HANDLE:
-            ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "backend is not a valid handle.");
+            ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "backend is not a valid handle.");
             break;
           case QNN_BACKEND_ERROR_OP_PACKAGE_DUPLICATE:
-            ORT_CXX_LOG(logger_,
-                        ORT_LOGGING_LEVEL_ERROR,
-                        "OpPackageName+OpName must be unique. Op package content information can be be obtained with"
-                        "QnnOpPackage interface. Indicates that an Op with the same package name and op name was"
-                        "already registered.");
+            ORT_CXX_LOG_PTR(logger_ptr_,
+                            ORT_LOGGING_LEVEL_ERROR,
+                            "OpPackageName+OpName must be unique. Op package content information can be be obtained with"
+                            "QnnOpPackage interface. Indicates that an Op with the same package name and op name was"
+                            "already registered.");
             break;
           case QNN_COMMON_ERROR_SYSTEM_COMMUNICATION:
-            ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "SSR occurrence (successful recovery).");
+            ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "SSR occurrence (successful recovery).");
             break;
           case QNN_COMMON_ERROR_SYSTEM_COMMUNICATION_FATAL:
-            ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "SSR occurrence (unsuccessful recovery).");
+            ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "SSR occurrence (unsuccessful recovery).");
             break;
           default:
-            ORT_CXX_LOG(logger_,
-                        ORT_LOGGING_LEVEL_ERROR,
-                        "Unknown error occurred while initializing logging in the QNN backend.");
+            ORT_CXX_LOG_PTR(logger_ptr_,
+                            ORT_LOGGING_LEVEL_ERROR,
+                            "Unknown error occurred while initializing logging in the QNN backend.");
             break;
         }
       }
       RETURN_IF(QNN_SUCCESS != result,
                 ("Failed to register op package to backend. Error: " + QnnErrorHandleToString(result)).c_str());
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Successfully register the op package.");
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Successfully register the op package.");
       std::string op_package_for_registration = op_package.interface;
       std::string suffix = "InterfaceProvider";
       if (op_package_for_registration.size() >= suffix.size() &&
@@ -512,6 +562,16 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool vtcm_backup_buffer_sharing_enabled_ = false;
 
   uint32_t backend_id_ = QNN_BACKEND_ID_CPU;
+  bool file_mapped_weights_enabled_ = false;
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  std::unique_ptr<FileMappingInterface> file_mapper_ = nullptr;
+  // Notify params for file mapping must persist throughout lifetime of
+  // QnnBackendManager for release of DMA data callback on destruction
+  std::vector<std::unique_ptr<FileMappingCallbackInfo_t>> file_mapping_notify_params_;
+#endif
+
+  // NPU backend requires quantized model
   QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;
   Qnn_ProfileHandle_t profile_backend_handle_ = nullptr;
   ContextPriority context_priority_;
@@ -536,7 +596,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   QnnHtpDevice_Arch_t htp_arch_internal_ = QNN_HTP_DEVICE_ARCH_NONE;
 
   const ApiPtrs api_ptrs_;
-  const Ort::Logger& logger_;
+
+  const Ort::Logger* logger_ptr_;
+  std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library_ = nullptr;
 };
 
 }  // namespace qnn

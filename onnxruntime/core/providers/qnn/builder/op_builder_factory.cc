@@ -46,6 +46,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
     CreateSimpleOpBuilder("ScatterND", *this);
     CreateSimpleOpBuilder("Sigmoid", *this);
     CreateSimpleOpBuilder("Sin", *this);
+    CreateSimpleOpBuilder("Softplus", *this);
     CreateSimpleOpBuilder("Sqrt", *this);
     CreateSimpleOpBuilder("Sub", *this);
     CreateSimpleOpBuilder("Sum", *this);
@@ -231,6 +232,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
 
   {
     CreateMatMulNBitsOpBuilder("MatMulNBits", *this);
+  }
+
+  {
+    CreateRopeOpBuilder("RotaryEmbedding", *this);
   }
 
   {

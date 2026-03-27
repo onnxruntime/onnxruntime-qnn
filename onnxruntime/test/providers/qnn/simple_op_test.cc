@@ -130,6 +130,23 @@ TEST_F(QnnCPUBackendTests, DISABLED_UnaryOp_Relu) {
                  ExpectedEPNodeAssignment::All);
 }
 
+TEST_F(QnnCPUBackendTests, UnaryOp_Softplus) {
+  RunOpTestOnCPU("Softplus",
+                 {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+                 {},
+                 14,
+                 ExpectedEPNodeAssignment::All);
+}
+
+// Rank > 4D is supported on CPU (no HTP rank constraint).
+TEST_F(QnnCPUBackendTests, UnaryOp_Softplus_Rank5) {
+  RunOpTestOnCPU("Softplus",
+                 {TestInputDef<float>({1, 2, 3, 4, 5}, false, GetFloatDataInRange(-10.0f, 10.0f, 120))},
+                 {},
+                 14,
+                 ExpectedEPNodeAssignment::All);
+}
+
 TEST_F(QnnCPUBackendTests, Concat_EmptyInput) {
   RunOpTestOnCPU("Concat",
                  {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
@@ -175,14 +192,15 @@ static void RunQDQOpTest(const std::string& op_type,
                          ExpectedEPNodeAssignment expected_ep_assignment,
                          const std::string& op_domain = kOnnxDomain,
                          bool use_contrib_qdq = false,
-                         QDQTolerance tolerance = QDQTolerance()) {
+                         QDQTolerance tolerance = QDQTolerance(),
+                         bool combine_quant_inputs_qparams = false) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 
   TestQDQModelAccuracy(BuildOpTestCase<float, InputType2>(op_type + "_node", op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
                        BuildQDQOpTestCase<InputQType, InputType2>(op_type + "_node", op_type, input_defs_1, input_defs_2, input_defs_3, attrs,
-                                                                  op_domain, use_contrib_qdq),
+                                                                  op_domain, use_contrib_qdq, nullptr, combine_quant_inputs_qparams),
                        provider_options,
                        opset_version,
                        expected_ep_assignment,
@@ -442,6 +460,24 @@ TEST_F(QnnHTPBackendTests, UnaryOp_Relu) {
                         {},
                         14,
                         ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, UnaryOp_Softplus_U8) {
+  RunQDQOpTest<uint8_t>("Softplus",
+                        {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+                        {},
+                        14,
+                        ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, UnaryOp_Softplus_U16) {
+  RunQDQOpTest<uint16_t>("Softplus",
+                         {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+                         {},
+                         14,
+                         ExpectedEPNodeAssignment::All,
+                         kOnnxDomain,
+                         true);
 }
 
 // Check that QNN compiles DQ -> HardSwish -> Q as a single unit.
@@ -875,7 +911,23 @@ TEST_F(QnnHTPBackendTests, DepthToSpaceOp_DCR) {
                         ExpectedEPNodeAssignment::All);
 }
 
-// Test QDQ SpaceToDepth.
+// Test float32 SpaceToDepth on HTP.
+// TODO: Disabling it due to known issues
+// Will be enabled once those issues are resolved
+TEST_F(QnnHTPBackendTests, DISABLED_SpaceToDepthOp_FP32) {
+  const std::vector<float> X = {0.0f, 0.1f, 0.2f, 0.3f,
+                                1.0f, 1.1f, 1.2f, 1.3f,
+
+                                2.0f, 2.1f, 2.2f, 2.3f,
+                                3.0f, 3.1f, 3.2f, 3.3f};
+  RunOpTest<float>("SpaceToDepth",
+                   {TestInputDef<float>({1, 2, 2, 4}, false, X)},
+                   {test::MakeAttribute("blocksize", static_cast<int64_t>(2))},
+                   11,
+                   ExpectedEPNodeAssignment::All);
+}
+
+// Test 8-bit QDQ SpaceToDepth.
 TEST_F(QnnHTPBackendTests, SpaceToDepthOp) {
   const std::vector<float> X = {0.0f, 0.1f, 0.2f, 0.3f,
                                 1.0f, 1.1f, 1.2f, 1.3f,
@@ -1412,8 +1464,9 @@ TEST_F(QnnHTPBackendTests, ScatterElements_Float_Reduction_None) {
 }
 
 // Test ScatterElements with default attributes on HTP
-// Disable this due to an accuracy issue with selected data range
-TEST_F(QnnHTPBackendTests, DISABLED_ScatterElements_Int8_Reduction_None) {
+// HTP implicitly expects that data and updates tensors share the same encoding,
+// Therefore, we need to combine their quantization parameters.
+TEST_F(QnnHTPBackendTests, ScatterElements_Int8_Reduction_None) {
   std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
   std::vector<int64_t> indices = {1};
   std::vector<float> updates = {10.0f};
@@ -1429,12 +1482,17 @@ TEST_F(QnnHTPBackendTests, DISABLED_ScatterElements_Int8_Reduction_None) {
                                  },
                                  {},
                                  17,
-                                 ExpectedEPNodeAssignment::All);
+                                 ExpectedEPNodeAssignment::All,
+                                 kOnnxDomain,
+                                 false,
+                                 QDQTolerance(),
+                                 true);  // combine_quant_inputs_qparams
 }
 
 // Test ScatterElements with reduction ADD on HTP
-// Disable this due to an accuracy issue with selected data range
-TEST_F(QnnHTPBackendTests, DISABLED_ScatterElements_Int8_Reduction_Add) {
+// HTP implicitly expects that data and updates tensors share the same encoding,
+// Therefore, we need to combine their quantization parameters.
+TEST_F(QnnHTPBackendTests, ScatterElements_Int8_Reduction_Add) {
   std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
   std::vector<int64_t> indices = {1};
   std::vector<float> updates = {10.0f};
@@ -1452,7 +1510,11 @@ TEST_F(QnnHTPBackendTests, DISABLED_ScatterElements_Int8_Reduction_Add) {
                                      test::MakeAttribute("reduction", "add"),
                                  },
                                  17,
-                                 ExpectedEPNodeAssignment::All);
+                                 ExpectedEPNodeAssignment::All,
+                                 kOnnxDomain,
+                                 false,
+                                 QDQTolerance(),
+                                 true);  // combine_quant_inputs_qparams
 }
 
 // Test ScatterElements with reduction Max on HTP
@@ -1474,7 +1536,11 @@ TEST_F(QnnHTPBackendTests, ScatterElements_Int8_Reduction_Max) {
                                      test::MakeAttribute("reduction", "max"),
                                  },
                                  17,
-                                 ExpectedEPNodeAssignment::All);
+                                 ExpectedEPNodeAssignment::All,
+                                 kOnnxDomain,
+                                 false,
+                                 QDQTolerance(),
+                                 true);  // combine_quant_inputs_qparams
 }
 
 // Test ScatterElements with reduction Mul on HTP
@@ -1496,7 +1562,11 @@ TEST_F(QnnHTPBackendTests, ScatterElements_int8_reduction_mul) {
                                      test::MakeAttribute("reduction", "mul"),
                                  },
                                  17,
-                                 ExpectedEPNodeAssignment::All);
+                                 ExpectedEPNodeAssignment::All,
+                                 kOnnxDomain,
+                                 false,
+                                 QDQTolerance(),
+                                 true);  // combine_quant_inputs_qparams
 }
 
 // Test 8-bit QDQ GridSample with bilinear

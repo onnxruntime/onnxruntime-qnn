@@ -46,15 +46,17 @@ OrtStatus* ParseOrtValueInfo(const OrtValueInfo* io,
   ONNXTensorElementDataType elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   RETURN_IF_NOT_NULL(ort_api.GetTensorElementType(type_shape, &elem_type));
 
-  // TODO: Is it possible shape not exist? And how should it be handled?
-  // ort_api.TensorTypeAndShape_HasShape can be used for checking
-  size_t num_dims = 0;
-  RETURN_IF_NOT_NULL(ort_api.GetDimensionsCount(type_shape, &num_dims));
+  std::optional<std::vector<int64_t>> shape = std::nullopt;
 
-  std::vector<int64_t> shape;
-  shape.resize(num_dims, 0);
-  if (num_dims > 0) {
-    RETURN_IF_NOT_NULL(ort_api.GetDimensions(type_shape, shape.data(), shape.size()));
+  if (ort_api.TensorTypeAndShape_HasShape(type_shape)) {
+    size_t num_dims = 0;
+    RETURN_IF_NOT_NULL(ort_api.GetDimensionsCount(type_shape, &num_dims));
+
+    std::vector<int64_t> actual_shape(num_dims, 0);
+    if (num_dims > 0) {
+      RETURN_IF_NOT_NULL(ort_api.GetDimensions(type_shape, actual_shape.data(), actual_shape.size()));
+    }
+    shape = std::move(actual_shape);
   }
 
   result = OrtNodeUnitIODef{name ? name : "", elem_type, shape, quant_param};
@@ -197,7 +199,7 @@ std::vector<OrtNodeUnitIODef> GetQDQIODefs(const OrtNode* target_node,
   for (size_t io_idx = 0; io_idx < num_ios; ++io_idx) {
     if (target_node_ios[io_idx] == nullptr) {
       // Optional IO.
-      io_defs.push_back(OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, {}, std::nullopt});
+      io_defs.push_back(OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, std::nullopt, std::nullopt});
       continue;
     }
 
@@ -210,7 +212,7 @@ std::vector<OrtNodeUnitIODef> GetQDQIODefs(const OrtNode* target_node,
       auto parse_status = ParseOrtValueInfo(target_node_ios[io_idx], std::nullopt, ort_api, regular_io_def);
       if (parse_status != nullptr) {
         ort_api.ReleaseStatus(parse_status);
-        regular_io_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, {}, std::nullopt};
+        regular_io_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, std::nullopt, std::nullopt};
       }
       io_defs.push_back(regular_io_def);
     }
@@ -263,13 +265,13 @@ OrtStatus* OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {
     auto input_status = ParseOrtValueInfo(inputs_data[0], quant_param, ort_api, input_def);
     if (input_status != nullptr) {
       ort_api.ReleaseStatus(input_status);
-      input_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, {}, std::nullopt};
+      input_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, std::nullopt, std::nullopt};
     }
 
     auto output_status = ParseOrtValueInfo(outputs_data[0], std::nullopt, ort_api, output_def);
     if (output_status != nullptr) {
       ort_api.ReleaseStatus(output_status);
-      output_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, {}, std::nullopt};
+      output_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, std::nullopt, std::nullopt};
     }
 
     inputs_.push_back(input_def);
@@ -282,13 +284,13 @@ OrtStatus* OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {
     auto input_status = ParseOrtValueInfo(inputs_data[0], std::nullopt, ort_api, input_def);
     if (input_status != nullptr) {
       ort_api.ReleaseStatus(input_status);
-      input_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, {}, std::nullopt};
+      input_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, std::nullopt, std::nullopt};
     }
 
     auto output_status = ParseOrtValueInfo(outputs_data[0], quant_param, ort_api, output_def);
     if (output_status != nullptr) {
       ort_api.ReleaseStatus(output_status);
-      output_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, {}, std::nullopt};
+      output_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, std::nullopt, std::nullopt};
     }
 
     inputs_.push_back(input_def);
@@ -300,12 +302,12 @@ OrtStatus* OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {
       OrtNodeUnitIODef io_def;
       if (io == nullptr) {
         // Nullptr indicates optional.
-        io_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, {}, std::nullopt};
+        io_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, std::nullopt, std::nullopt};
       } else {
         auto parse_status = ParseOrtValueInfo(io, std::nullopt, ort_api, io_def);
         if (parse_status != nullptr) {
           ort_api.ReleaseStatus(parse_status);
-          io_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, {}, std::nullopt};
+          io_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, std::nullopt, std::nullopt};
         }
       }
       inputs_.push_back(io_def);
@@ -317,12 +319,12 @@ OrtStatus* OrtNodeUnit::InitForSingleNode(const OrtApi& ort_api) {
       OrtNodeUnitIODef io_def;
       if (io == nullptr) {
         // Not sure whether output would be optional.
-        io_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, {}, std::nullopt};
+        io_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, std::nullopt, std::nullopt};
       } else {
         auto parse_status = ParseOrtValueInfo(io, std::nullopt, ort_api, io_def);
         if (parse_status != nullptr) {
           ort_api.ReleaseStatus(parse_status);
-          io_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, {}, std::nullopt};
+          io_def = OrtNodeUnitIODef{"", ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED, std::nullopt, std::nullopt};
         }
       }
       outputs_.push_back(io_def);

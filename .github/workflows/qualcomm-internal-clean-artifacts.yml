@@ -1,0 +1,52 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Qualcomm Internal Clean Artifacts
+description: Periodically impose a retention policy on Artifactory Artifacts
+
+on:
+  schedule:
+    - cron: "0 8 * * *"  # Every day at 1am in San Diego/PDT (8am UTC)
+  workflow_dispatch:
+
+env:
+  BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
+
+jobs:
+  clean-ci-artifacts:
+    name: "Clean temporary CI artifacts"
+    runs-on: [self-hosted]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Delete old CI artifacts
+        run: >
+          jf rt delete
+          --spec "${{ github.workspace }}/qcom/scripts/artifactory/aql/expired_ci_artifacts.json"
+          --spec-vars "repo=${{ env.BUILD_ARTIFACTORY_REPO }}"
+
+      # This is a bit of a hack, but there does not appear to be a way to do this nicely without
+      # a server-side plugin. Instead, we just use a CLI-side plugin several times. Eventually
+      # it will converge and do nothing.
+      - name: Prune empty folders
+        run: |
+          jf plugin install rm-empty
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
+          jf rm-empty folders ${{ env.BUILD_ARTIFACTORY_REPO }}/ci/ --quiet
