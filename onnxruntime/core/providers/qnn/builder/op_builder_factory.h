@@ -137,6 +137,8 @@ void CreateConcatOpBuilder(const std::string& op_type, OpBuilderRegistrations& o
 
 void CreateMatMulNBitsOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
+void CreateRopeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+
 void CreateQuickGeluOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
 void CreateFusedMatMulOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
