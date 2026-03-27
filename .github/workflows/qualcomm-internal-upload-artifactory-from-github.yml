@@ -23,6 +23,9 @@ on:
         type: boolean
         default: false
 
+env:
+  BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
+
 jobs:
   build-artifacts:
     uses: ./.github/workflows/qualcomm-internal-build-wheels-nugets-zips.yml
@@ -43,59 +46,104 @@ jobs:
         run: |
           ./qcom/scripts/upleveling/create_uplevel_venv.sh
 
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v4
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
       # Upload Python wheel to Artifactory
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
         with:
-          name: ORT windows arm64 Python 3.11 Wheel
-          path: ${{ github.workspace }}/build/dist
+          name: windows-arm64-py3.11-wheels
 
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
         with:
-          name: ORT windows arm64ec Python 3.11 Wheel
-          path: ${{ github.workspace }}/build/dist
-  
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ORT windows arm64 Python 3.12 Wheel
-          path: ${{ github.workspace }}/build/dist
-  
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ORT windows arm64ec Python 3.12 Wheel
-          path: ${{ github.workspace }}/build/dist
-  
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ORT windows arm64 Python 3.13 Wheel
-          path: ${{ github.workspace }}/build/dist
-  
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: ORT windows arm64ec Python 3.13 Wheel
-          path: ${{ github.workspace }}/build/dist
+          name: windows-arm64ec-py3.11-wheels
 
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
         with:
-          name: ORT windows arm64 Python 3.14 Wheel
-          path: ${{ github.workspace }}/build/dist
+          name: windows-x86_64-py3.11-wheels
 
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
         with:
-          name: ORT windows arm64ec Python 3.14 Wheel
-          path: ${{ github.workspace }}/build/dist
+          name: windows-arm64-py3.12-wheels
+
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.12-wheels
+
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.12-wheels
+
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64-py3.13-wheels
+
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.13-wheels
+
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.13-wheels
+
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64-py3.14-wheels
+
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.14-wheels
+
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.14-wheels
+
+      - name: Consolidate Wheels
+        run: |
+          mkdir "${{ github.workspace }}/build/dist"
+          cp "${{ github.workspace }}/build/windows-arm64/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
+
+      - name: Consolidate Wheels
+        run: |
+          mkdir "${{ github.workspace }}/build/dist/arm64ec"
+          cp "${{ github.workspace }}/build/windows-arm64ec/Release/Release/dist/"*.whl "${{ github.workspace }}/build/dist/arm64ec"
+
+      - name: Consolidate Wheels
+        run: |
+          mkdir "${{ github.workspace }}/build/dist/x64"
+          cp "${{ github.workspace }}/build/windows-x86_64/Release/dist/"*.whl "${{ github.workspace }}/build/dist/x64"
+
+      - name: Merge AMD wheel
+        run: |
+          # Merge AMD wheels using the merge script
+          source uplevel_venv/bin/activate
+          ./qcom/scripts/upleveling/merge_wheels.sh \
+            "${{ github.workspace }}/build/dist/x64" \
+            "${{ github.workspace }}/build/dist/arm64ec" \
+            "${{ github.workspace }}/build/dist"
 
       - name: Check wheel
         run: |
           source uplevel_venv/bin/activate
-          twine check ${{ github.workspace }}/build/dist/*
+          twine check ${{ github.workspace }}/build/dist/*.whl
 
       - name: Publish
         if: ${{ !inputs.skip_publish }}
@@ -107,7 +155,7 @@ jobs:
           twine upload -r re-artifactory-pypi-test-project \
             --cert ./qcom/scripts/upleveling/certs/artifactory-ca.pem \
             --config-file ./qcom/scripts/upleveling/.pypirc \
-            ${{ github.workspace }}/build/dist/*
+            ${{ github.workspace }}/build/dist/*.whl
 
   upload-nuget-workflow:
     name: "Upload nuget artifatcs to Artifactory"
