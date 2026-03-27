@@ -1,1 +1,0 @@
-Please name the test file with pattern test_*. It is the default module pattern unittest discover search with.

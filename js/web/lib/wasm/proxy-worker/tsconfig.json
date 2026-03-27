@@ -1,8 +1,0 @@
-{
-  "extends": "../../../tsconfig.json",
-  "compilerOptions": {
-    "lib": ["WebWorker"]
-  },
-  "include": ["main.ts", "../../build-def.d.ts"],
-  "exclude": []
-}
