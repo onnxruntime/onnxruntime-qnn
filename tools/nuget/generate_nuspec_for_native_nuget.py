@@ -356,26 +356,6 @@ def generate_files(line_list, args):
 
     # Process headers
     build_dir = "buildTransitive" if "Gpu" in args.package_name else "build"
-    include_dir = f"{build_dir}\\native\\include"
-
-    # Sub.Gpu packages do not include the onnxruntime headers
-    if args.package_name != "Microsoft.ML.OnnxRuntime.Gpu" and args.package_name != "Microsoft.ML.OnnxRuntime.MIGraphX":
-        files_list.append(
-            "<file src="
-            + '"'
-            + os.path.join(args.sources_path, "include\\onnxruntime\\core\\session\\onnxruntime_*.h")
-            + '" target="'
-            + include_dir
-            + '" />'
-        )
-        files_list.append(
-            "<file src="
-            + '"'
-            + os.path.join(args.sources_path, "include\\onnxruntime\\core\\framework\\provider_options.h")
-            + '" target="'
-            + include_dir
-            + '" />'
-        )
 
     if is_qnn_package:
         files_list.append("<file src=" + '"' + os.path.join(args.native_build_path, "QnnCpu.dll") + runtimes + " />")
