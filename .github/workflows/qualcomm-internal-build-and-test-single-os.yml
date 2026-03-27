@@ -135,7 +135,7 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -157,7 +157,7 @@ jobs:
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}} --only
 
       - name: Publish Test Report
-        uses: mikepenz/action-junit-report@v4.0.4
+        uses: mikepenz/action-junit-report@v6
         if: ${{ always() && inputs.run_tests && inputs.build_test_same_runner }} # always run even if the previous step fails
         with:
           check_name: ${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-test-results
@@ -165,7 +165,7 @@ jobs:
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
       - name: Setup JFrog CLI
-        uses: jfrog/setup-jfrog-cli@v4
+        uses: jfrog/setup-jfrog-cli@v5
         with:
           disable-auto-build-publish: true
           disable-job-summary: true
@@ -187,7 +187,7 @@ jobs:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
           src_pattern: "${{ inputs.target_os }}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ inputs.upload_nuget }}
         with:
           name: ORT ${{inputs.target_os}} ${{ inputs.target_arch }} Python ${{ inputs.target_py_vsn }} QNN NuGet Package
@@ -195,7 +195,7 @@ jobs:
           path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/Qualcomm.ML.OnnxRuntime.QNN*.nupkg
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: ${{ inputs.upload_zip }}
         with:
           name: ORT ${{inputs.target_os}} ${{ inputs.target_arch }} Python ${{ inputs.target_py_vsn }} Zip Asset
@@ -212,12 +212,12 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
 
       - name: Setup JFrog CLI
-        uses: jfrog/setup-jfrog-cli@v4
+        uses: jfrog/setup-jfrog-cli@v5
         with:
           disable-auto-build-publish: true
           disable-job-summary: true
@@ -239,14 +239,14 @@ jobs:
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}} --only
 
       - name: Publish Test Report
-        uses: mikepenz/action-junit-report@v4.0.4
+        uses: mikepenz/action-junit-report@v6
         if: always() # always run even if the previous step fails
         with:
           check_name: ${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-test-results
           report_paths: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always() # always run even if the previous step fails
         with:
           name: ORT ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Test Results
@@ -263,12 +263,12 @@ jobs:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
 
       - name: Setup JFrog CLI
-        uses: jfrog/setup-jfrog-cli@v4
+        uses: jfrog/setup-jfrog-cli@v5
         with:
           disable-auto-build-publish: true
           disable-job-summary: true

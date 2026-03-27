@@ -45,10 +45,10 @@ jobs:
     needs: [build-wheels]
 
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v6
 
       - name: Setup JFrog CLI
-        uses: jfrog/setup-jfrog-cli@v4
+        uses: jfrog/setup-jfrog-cli@v5
         with:
           disable-auto-build-publish: true
           disable-job-summary: true
