@@ -5,7 +5,6 @@
 
 #include <algorithm>
 #include <gsl/gsl>
-#include <cassert>
 #include <optional>
 #include <unordered_set>
 #include <utility>
@@ -66,10 +65,6 @@ static std::optional<float> GetConstantFloatScalar(const QnnModelWrapper& qmw,
   return *data;
 }
 
-static std::optional<std::vector<uint32_t>> GetReduceMeanAxes(const QnnModelWrapper& qmw,
-                                                              const OrtNodeUnit& reduce_mean_node_unit) {
-  return GetReduceAxes(qmw, reduce_mean_node_unit);
-}
 
 std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     QnnModelWrapper& qnn_model_wrapper,
@@ -181,19 +176,15 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
   }
 
   // Both ReduceMeans must have the same axes, pointing to the last dimension.
-  auto axes1_opt = GetReduceMeanAxes(qnn_model_wrapper, reduce_mean_node_unit);
-  auto axes2_opt = GetReduceMeanAxes(qnn_model_wrapper, *reduce_mean2_node_unit);
+  auto axes1_opt = GetReduceAxes(qnn_model_wrapper, reduce_mean_node_unit);
+  auto axes2_opt = GetReduceAxes(qnn_model_wrapper, *reduce_mean2_node_unit);
   if (!axes1_opt.has_value() || !axes2_opt.has_value()) {
     return nullptr;
   }
 
-  // Normalize axes for comparison: sort and deduplicate.
-  auto axes1 = axes1_opt.value();
-  auto axes2 = axes2_opt.value();
-  std::sort(axes1.begin(), axes1.end());
-  std::sort(axes2.begin(), axes2.end());
-  axes1.erase(std::unique(axes1.begin(), axes1.end()), axes1.end());
-  axes2.erase(std::unique(axes2.begin(), axes2.end()), axes2.end());
+  // GetReduceAxes already returns sorted, deduplicated axes — compare directly.
+  const auto& axes1 = axes1_opt.value();
+  const auto& axes2 = axes2_opt.value();
 
   if (axes1 != axes2) {
     return nullptr;
@@ -204,9 +195,18 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
   }
   const size_t input_rank = input_shape.size();
 
-  // Axes must point to the last dimension
+  // Axes must be a contiguous trailing suffix ending at the last dimension.
+  // e.g. {1,2} on rank-3 is valid; {0,2} or {0,1} on rank-3 are not.
   if (axes1.empty() || axes1.back() != static_cast<uint32_t>(input_rank - 1)) {
     return nullptr;
+  }
+  {
+    const uint32_t M = static_cast<uint32_t>(axes1.size());
+    for (uint32_t i = 0; i < M; ++i) {
+      if (axes1[i] != static_cast<uint32_t>(input_rank) - M + i) {
+        return nullptr;
+      }
+    }
   }
 
   // ReduceMean₂ → Add(ε)
@@ -478,7 +478,6 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
                                          float epsilon,
                                          gsl::span<const uint32_t> axes,
                                          bool validate) {
-  assert(!node_units.empty());
   const std::string node_name = utils::GetUniqueName(*node_units[0]);
 
   QnnTensorWrapper input_tensor;
