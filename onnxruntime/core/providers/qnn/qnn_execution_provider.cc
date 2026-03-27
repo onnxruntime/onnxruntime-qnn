@@ -1800,7 +1800,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   auto compile_start = std::chrono::high_resolution_clock::now();
   std::vector<GraphFinalizationInfo_t> model_infos;
 
-  bool use_multithreaded_prepare = count > 5 || ep->num_graph_prepare_threads_ > 1;
+  bool use_multithreaded_prepare = count >= 5 || ep->num_graph_prepare_threads_ > 1;
   if (use_multithreaded_prepare) {
     model_infos.reserve(count);
   }
@@ -1928,6 +1928,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
       auto node_compute_info = std::make_unique<QnnNodeComputeInfo>(*ep);
       node_compute_infos[model_info.graph_idx] = node_compute_info.release();
     }
+#endif  // _WIN32
 
     // Clean up transient GetCapability→Compile state.
     ep->onnx_graph_io_names_.reset();
@@ -1947,7 +1948,6 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("Total compile time for all fused nodes: " + std::to_string(total_compile_time.count()) + " ms").c_str());
   }
-#endif // _WIN32
   return nullptr;
 }
 
