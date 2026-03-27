@@ -61,6 +61,8 @@ env_tmpfile=$(mktemp --suffix=-runner-env)
 cat > "${env_tmpfile}" <<EOF
 LANG=en_US.UTF-8
 HOME=${runner_home}
+TMPDIR=${runner_root}/tmp
+JFROG_CLI_HOME_DIR=${runner_root}/jfrog-home
 
 ORT_BUILD_DOCKER_CCACHE_ROOT=${runner_home}/docker-ccache
 ORT_BUILD_PACKAGE_CACHE_PATH=${runner_home}/ort-package-cache
@@ -70,6 +72,8 @@ EOF
 chmod 644 "${env_tmpfile}"
 sudo -u ortqnnepci cp "${env_tmpfile}" "${runner_root}/.env"
 rm "${env_tmpfile}"
+
+mkdir -p "${runner_root}/jfrog_home/jfrog-home/security/certs"
 
 ##################
 # Configure ccache

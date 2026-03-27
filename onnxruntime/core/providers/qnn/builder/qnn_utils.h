@@ -8,6 +8,7 @@
 #include <cstring>
 #include <functional>
 #include <numeric>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <type_traits>
@@ -651,6 +652,11 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
                                   const std::filesystem::path& model_path,
                                   std::vector<uint8_t>& unpacked_tensor);
 
+/*
+   Converts a pointer into a string
+   Intended for ORT logging
+*/
+std::string PtrToString(const void* const ptr);
 }  // namespace utils
 }  // namespace qnn
 }  // namespace onnxruntime

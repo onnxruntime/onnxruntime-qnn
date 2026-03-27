@@ -126,7 +126,7 @@ jobs:
     needs: check-admin-permission
 
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v6
 
       - name: Install Dependencies
         run: |
@@ -155,7 +155,7 @@ jobs:
     needs: check-admin-permission
 
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v6
 
       - name: Publish
         shell: powershell
@@ -189,7 +189,7 @@ jobs:
     needs: check-admin-permission
 
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v6
 
       - name: Install Dependencies
         run: |
