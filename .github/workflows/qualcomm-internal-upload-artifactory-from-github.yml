@@ -40,14 +40,14 @@ jobs:
     needs: [build-artifacts]
 
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v6
 
       - name: Install Dependencies
         run: |
           ./qcom/scripts/upleveling/create_uplevel_venv.sh
 
       - name: Setup JFrog CLI
-        uses: jfrog/setup-jfrog-cli@v4
+        uses: jfrog/setup-jfrog-cli@v5
         with:
           disable-auto-build-publish: true
           disable-job-summary: true
@@ -163,7 +163,7 @@ jobs:
     needs: [build-artifacts]
 
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v6
 
       # Upload Nuget package to Artifactory
       - name: Download Artifact
@@ -197,7 +197,7 @@ jobs:
     needs: [build-artifacts]
 
     steps:
-      - uses: actions/checkout@v4.1.1
+      - uses: actions/checkout@v6
 
       # Upload Zip package to Artifactory
       - name: Download Artifact
