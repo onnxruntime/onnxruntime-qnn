@@ -1937,7 +1937,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     if (ep->context_cache_enabled_) {
       RETURN_IF_NOT_NULL(ep->CreateEPContextNodes(graphs[0], fused_nodes, count, ep_context_nodes));
     }
-
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
     end = std::chrono::high_resolution_clock::now();
     auto total_compile_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - compile_start);
 
@@ -1948,6 +1948,8 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("Total compile time for all fused nodes: " + std::to_string(total_compile_time.count()) + " ms").c_str());
   }
+#endif
+
   return nullptr;
 }
 
