@@ -1410,12 +1410,11 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   RETURN_IF(result, "Failed to get valid function pointer.");
 
   void* bin_buffer = nullptr;
-
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   bool use_file_mapping = file_mapped_weights_enabled_;
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   // A nonzero buffer length implies an embedded context
   if (use_file_mapping && buffer_length == 0) {
-    RETURN_IF(!file_mapper_, "Attemping to use File Mapping feature but file_mapper_ is uninitialized");
+    RETURN_IF(!file_mapper_, "Attempting to use File Mapping feature but file_mapper_ is uninitialized");
 
     RETURN_IF_ERROR(GetFileSizeIfValid(context_bin_filepath, buffer_length));
 
@@ -1455,7 +1454,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   RETURN_IF(nullptr == binary_info, "Qnn cached binary info is nullptr.");
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-  Qnn_Version_t blob_version;
+  Qnn_Version_t blob_version = {0, 0, 0};
 #endif
 
   uint32_t graph_count = 0;
@@ -1491,7 +1490,9 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   // Cannot use contextCreateFromBinaryWithCallback() unless context bin version is >= 3.3.3
-  if (use_file_mapping && (blob_version.major < 3 || blob_version.minor < 3 || blob_version.patch < 3)) {
+  if (use_file_mapping && (blob_version.major < 3 ||
+                           (blob_version.major == 3 && blob_version.minor < 3) ||
+                           (blob_version.major == 3 && blob_version.minor == 3 && blob_version.patch < 3))) {
     std::string version_str(std::to_string(blob_version.major) + "." + std::to_string(blob_version.minor) + "." + std::to_string(blob_version.patch));
     ORT_CXX_LOG_PTR(logger_ptr_,
                     ORT_LOGGING_LEVEL_WARNING,
@@ -1596,10 +1597,8 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
         bin_buffer = static_cast<void*>(backup_buffer.data());
       }
     }
-
-    if (!use_file_mapping || rt != QNN_SUCCESS)
 #endif
-    {
+    if (!use_file_mapping || rt != QNN_SUCCESS) {
       rt = qnn_interface_.contextCreateFromBinary(backend_handle_,
                                                   device_handle_,
                                                   context_configs,
