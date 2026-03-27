@@ -2649,7 +2649,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_OutputStream_ReturnStatus) {
   EXPECT_EQ(status.GetErrorMessage(), "Error from OrtOutStreamWriteFunc callback");
 }
 
-#ifdef _WIN32 && (defined(__aarch64__) || defined(_M_ARM64))
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
 // Tests setting num_graph_prepare_threads to compile model
 // 1. Compile model with 2 threads
 // 2. Check for successful compilation (_ctx.onnx model should exist)
