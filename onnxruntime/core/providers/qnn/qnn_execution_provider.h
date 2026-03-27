@@ -44,6 +44,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                                     size_t num_devices,
                                                     const char* compatibility_info,
                                                     OrtCompiledModelCompatibility* model_compatibility) noexcept;
+  OrtStatus* GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevice* hw,
+                                                     OrtDeviceEpIncompatibilityDetails* details) noexcept;
 
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEp* this_ptr) noexcept;
@@ -154,6 +156,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool qnn_context_embed_mode_ = true;
   bool stop_share_ep_contexts_ = false;
   bool enable_spill_fill_buffer_ = false;
+  bool enable_file_mapped_weights_ = true;
 #if defined(_WIN32)
   qnn::QnnTelemetry::EtwInternalCallback callback_ETWSink_provider_ = nullptr;
 #endif

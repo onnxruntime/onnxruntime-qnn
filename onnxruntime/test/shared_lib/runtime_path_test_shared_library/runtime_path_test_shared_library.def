@@ -1,3 +1,0 @@
-LIBRARY "onnxruntime_runtime_path_test_shared_library.dll"
-EXPORTS
- OrtTestGetSharedLibraryRuntimePath @1
