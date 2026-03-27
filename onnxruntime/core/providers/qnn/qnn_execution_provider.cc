@@ -732,7 +732,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
               ORT_LOGGING_LEVEL_VERBOSE,
               ("User specified enable_htp_fp16_precision: " + enable_htp_fp16_precision_str).c_str());
 
-
   std::string num_graph_prepare_threads_str;
   GetSessionConfigEntryOrDefault(ort_api,
                                  session_options_,
@@ -782,7 +781,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                 "Multi-threaded graph compilation is currently only supported on Windows devices. Feature will not be enabled.");
 #endif  // _WIN32 && (defined(__aarch64__) || defined(_M_ARM64))
   }
-
 
   // Check for conflicts
   if (qnn_context_embed_mode_ && share_ep_contexts_) {
@@ -1803,6 +1801,10 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   bool use_multithreaded_prepare = count >= 5 || ep->num_graph_prepare_threads_ > 1;
   if (use_multithreaded_prepare) {
     model_infos.reserve(count);
+  } else {
+    ORT_CXX_LOG(ep->logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                "Graph count is less than 5. Only using single thread for graph prepare.");
   }
 #endif
 
