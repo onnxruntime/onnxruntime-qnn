@@ -2298,7 +2298,6 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
   Ort::SessionOptions so2;
 
   // Test CreateFromBinaryListAsync path
-  provider_options["enable_vtcm_backup_buffer_sharing"] = "1";
   so2.SetLogId("so2");
   so2.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
 
@@ -2314,6 +2313,7 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so1, onnxruntime::kQnnExecutionProvider, provider_options);
 
+  provider_options["enable_vtcm_backup_buffer_sharing"] = "1";
   so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
   {
     Ort::Session session1(*ort_env, ctx_model_file1.c_str(), so1);
