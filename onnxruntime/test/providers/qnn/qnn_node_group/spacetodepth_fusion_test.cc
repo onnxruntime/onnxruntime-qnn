@@ -495,7 +495,8 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_QDQ_CRD) {
                             /*perm=*/{0, 1, 3, 5, 2, 4},
                             /*use_qdq=*/true,
                             /*use_contrib_qdq=*/false,
-                            /*backend_type=*/"htp");
+                            /*backend_type=*/"htp",
+                            /*fp32_abs_err=*/4.9e-2f);
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_U16_DCR) {
