@@ -244,7 +244,7 @@ class WheelUpleveler(ArtifactUpleveler):
 
     def _should_skip_artifact(self, artifact_filename: str) -> bool:
         """Skip win_amd64 wheels"""
-        return "win_amd64.whl" in artifact_filename
+        return artifact_filename.endswith("win_amd64.whl")
 
     def update_artifacts(self, artifact_list: list[str], input_dir: str, output_dir: str) -> None:
         """Update wheel package versions."""
