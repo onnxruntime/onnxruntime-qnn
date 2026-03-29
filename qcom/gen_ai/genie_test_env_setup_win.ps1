@@ -1,3 +1,5 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
 
 <#
 Rebuild venv → Build project → Install dist artifacts → Set runtime PATH

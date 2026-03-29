@@ -56,8 +56,8 @@ struct GenieNodeState {
     GenieLog_Handle_t        genieLogger = nullptr;
     GenieDlc_Handle_t        dlcHandle = nullptr;
     GenieDlcConfig_Handle_t  dlcConfigHandle = nullptr;
-    size_t num_inputs;
-    size_t num_outputs;
+    size_t                   num_inputs = 0;
+    size_t                   num_outputs = 0;
     std::mutex mu;
 };
 

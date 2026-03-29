@@ -444,7 +444,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("User specified context cache path: " + context_cache_path_cfg_).c_str());
 
-
     std::string genie_log_level;
     GetSessionConfigEntryOrDefault(ort_api,
                                    session_options_,
@@ -1298,49 +1297,39 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   // Genie Pathway
   if (qnn::GraphHasDlcContextNode(graph, ep->ort_api)) {
-    
     // CREATE GENIE_BACKEND_MANAGER
-    if(! ep->genie_backend_manager_) {
+    if (!ep->genie_backend_manager_) {
       ep->genie_backend_manager_ = qnn::GenieBackendManager::Create(
         qnn::GenieBackendManagerConfig{ kDefaultGenieBackendPath }, ep->logger_
       );
       ep->genie_backend_manager_->SetupBackend();
     }
-
-    ep->genie_api_loader_ = std::make_shared<GenieApiLoader>((ep->genie_backend_manager_)->getGenieBackendHandle());
-    
+    ep->genie_api_loader_ = std::make_shared<GenieApiLoader>((ep->genie_backend_manager_)->GetGenieBackendHandle());
     // Get all nodes from the graph
     size_t num_nodes = 0;
     if (ep->ort_api.Graph_GetNumNodes(graph, &num_nodes) != nullptr) {
       return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Graph_GetNumNodes failed");
     }
-
-    if(num_nodes != 1) {
+    if (num_nodes != 1) {
       return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Number of nodes must be 1 for Genie");
     }
-
     std::vector<const OrtNode*> graph_nodes(num_nodes);
     if (ep->ort_api.Graph_GetNodes(graph, graph_nodes.data(), graph_nodes.size()) != nullptr) {
-
       return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Graph Creation error");
     }
 
     // Identify the single node in the graph (which should be the only node)
     const OrtNode* node = graph_nodes[0];
-
     std::vector<const OrtNode*> supported_group{node};
     OrtNodeFusionOptions node_fusion_options = {};
     node_fusion_options.ort_version_supported = ORT_API_VERSION;
-
     auto add_status = ep->ep_api.EpGraphSupportInfo_AddNodesToFuse(graph_support_info,
                                                                  supported_group.data(),
                                                                  supported_group.size(),
                                                                  &node_fusion_options);
-    
     if (add_status != nullptr) {
-      std::cout << "Error adding Node" << std::endl;
+      return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Error adding Node.");
     }
-
     return nullptr;
   }
 
@@ -1803,17 +1792,15 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   if (qnn::IsOrtGraphHasCtxNode(graphs, count, ep->ort_api)) {
     return ep->CompileContextModel(graphs, fused_nodes, count, node_compute_infos);
   } else if (qnn::IsOrtGraphHasDlcCtxNode(graphs, count, ep->ort_api)) {
-
     std::basic_string<ORTCHAR_T> model_path = GetModelPathString(graphs[0], ep->ort_api);
     std::basic_string<ORTCHAR_T> context_model_path;
     GetContextOnnxModelFilePath(ep->context_cache_path_cfg_, model_path, context_model_path);
     std::filesystem::path parent_path = std::filesystem::path(context_model_path).parent_path();
 
     // Extract the DLC information
-    std::filesystem::path dlc_extracted_path;
     std::string dlc_path;
     auto st = qnn::GetEpContextDlcPath(graphs, count, ep->ort_api, dlc_path);
-    dlc_extracted_path = parent_path/dlc_path;
+    std::filesystem::path dlc_extracted_path(parent_path / dlc_path);
 
     // Populate the Genie APIs
     const GenieApi& genie_api_ = ep->genie_api_loader_->Get();
@@ -2099,7 +2086,7 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
 
     if (key == "kvcache_rewind") {
       uint64_t rewind_value = std::stoull(value);
-      if(!(ep->genie_backend_manager_)) {
+      if (!(ep->genie_backend_manager_)) {
         ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, ("Invalid EP Workload Type: " + value).c_str());
         return ep->ort_api.CreateStatus(ORT_INVALID_ARGUMENT, "Genie Execution Not Set.");
       }
@@ -2344,10 +2331,8 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this
   auto* node_compute_info = static_cast<GenieNodeComputeInfo*>(this_ptr);
   auto& ep = node_compute_info->ep;
   auto& builder = node_compute_info->builder;
-
-  
-  std::cout << "compute_info.create_state_func context->node_name: " 
-            << ep.ep_api.NodeComputeContext_NodeName(compute_context) << std::endl;
+  std::string fused_node_name = ep.ep_api.NodeComputeContext_NodeName(compute_context);
+  ORT_CXX_LOG(ep.logger_, ORT_LOGGING_LEVEL_INFO, ("compute_info.create_state_func context->node_name: " + fused_node_name).c_str());
 
   auto* st = new GenieNodeState();
   st->api = builder->api;
@@ -2419,8 +2404,7 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this
     "    }\n"
     "}";
   GenieNodeConfig_Handle_t cfg = nullptr;
-  std::string useCs = "default";
-  if (st->api->NodeConfig_createFromDlc(genieDlcHandle, useCs.c_str(), json_config.c_str(), &cfg) != 0) {
+  if (st->api->NodeConfig_createFromDlc(genieDlcHandle, "default", json_config.c_str(), &cfg) != 0) {
       delete st;
       return ep.ort_api.CreateStatus(ORT_EP_FAIL, "Error creating Node config from dlc");
   }
@@ -2431,7 +2415,6 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this
   const GenieLog_Callback_t     cb        = nullptr;
   const GenieLog_Level_t        level     = ep.genie_log_level_;
 
-
   if (st->api->Log_create(cfgHandle, cb, level, &gLogger) != 0) {
     st->api->NodeConfig_free(cfg);
     delete st;
@@ -2439,14 +2422,12 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this
   }
   st->genieLogger = gLogger;
 
-            
   if (st->api->NodeConfig_bindLogger(cfg, gLogger) != 0) {
     if (st->api->Log_free) st->api->Log_free(gLogger);
     st->api->NodeConfig_free(cfg);
     delete st;
     return ep.ort_api.CreateStatus(ORT_EP_FAIL, "Failed to bind Logger");
   }
-
 
   // 3) Create GenieNode (node)
   GenieNode_Handle_t dlg = nullptr;
@@ -2469,7 +2450,6 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr
   auto& ep = node_compute_info->ep;
   auto* state = reinterpret_cast<GenieNodeState*>(compute_state);
   OrtKernelContext* ctx = kernel_context;
-
 
   GenieNodeState* st = reinterpret_cast<GenieNodeState*>(state);
   auto ort_api = &(ep.ort_api);
@@ -2507,17 +2487,15 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr
     std::vector<int64_t> dims(dim_count);
     ort_api->GetDimensions(info, dims.data(), dim_count);
     std::string dimString = "";
-    int64_t numElem = 1;
+    size_t numElem = 1;
     for(auto d: dims) {
       numElem *= d;
       dimString +=  std::to_string(d)+",";
     }
     dimString.pop_back();
-
-    std::string input_config = "{\"dimensions\": ["+ dimString + "],\"data-type\": \""+GetElementTypeString(elem_type)+"\"}";
+    std::string input_config = "{\"dimensions\": [" + dimString + "],\"data-type\": \"" + GetElementTypeString(elem_type) + "\"}";
     const char *input_config_ptr = input_config.c_str();
-
-    auto byte_size = (size_t)GetElementSizeONNX(elem_type)*numElem;
+    size_t byte_size = static_cast<size_t>(GetElementSizeONNX(elem_type) * numElem);
     Genie_Status_t rc = st->api->Node_setData(
         st->node,
         GENIE_NODE_LM_EXECUTOR_TOKEN_INPUT,
@@ -2530,9 +2508,7 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr
 
   // 2) Execute
   {
-    std::string exec_config = "{}";
-    const char *exec_config_ptr = exec_config.c_str();
-    Genie_Status_t rc = st->api->Node_execute(st->node, exec_config_ptr /*executionConfig*/, nullptr /*userData*/);
+    Genie_Status_t rc = st->api->Node_execute(st->node, "{}" /*executionConfig*/, nullptr /*userData*/);
     if (rc != 0) return ort_api->CreateStatus(ORT_EP_FAIL, "GenieNode_execute failed");
   }
 
@@ -2570,13 +2546,10 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr
         std::memcpy(outDatInfo->outputData.data(), data, dataSize);
     };
 
-    std::string output_config = "{}";
-    const char *output_config_ptr = output_config.c_str();
-    
     Genie_Status_t rc = st->api->Node_getData(
         st->node,
         GENIE_NODE_LM_EXECUTOR_LOGIT_OUTPUT,
-        output_config_ptr /*ioConfig*/,
+        "{}",
         OutputCallback,
         &outputDataInfo
       );

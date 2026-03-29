@@ -31,7 +31,7 @@ static T must_dlsym(void* h, const char* name) {
 }
 
 GenieApiLoader::GenieApiLoader(void* shared_library_handle)
-    : handle_(shared_library_handle) 
+    : handle_(shared_library_handle)
 {
     if (!handle_) {
         throw std::runtime_error("GenieApiLoader: Null library handle");
@@ -56,7 +56,7 @@ void GenieApiLoader::Init() {
         LOAD_GENIE_SYMBOL(DlcConfig_free);
         LOAD_GENIE_SYMBOL(Dlc_create);
         LOAD_GENIE_SYMBOL(Dlc_free);
-        LOAD_GENIE_SYMBOL(Dlc_getUseCases); 
+        LOAD_GENIE_SYMBOL(Dlc_getUseCases);
         LOAD_GENIE_SYMBOL(NodeConfig_createFromDlc);
         LOAD_GENIE_SYMBOL(Node_create);
         LOAD_GENIE_SYMBOL(Node_setData);
@@ -65,12 +65,12 @@ void GenieApiLoader::Init() {
         LOAD_GENIE_SYMBOL(Node_reset);
         LOAD_GENIE_SYMBOL(Node_free);
         LOAD_GENIE_SYMBOL(NodeConfig_free);
-        LOAD_GENIE_SYMBOL(Log_create);      
+        LOAD_GENIE_SYMBOL(Log_create);
         LOAD_GENIE_SYMBOL(NodeConfig_bindLogger);
         LOAD_GENIE_SYMBOL(Log_free);
 
     } catch (const std::exception& ex) {
-        std::cerr << "[GenieApiLoader] Initialization failed: " << ex.what() << std::endl;
+        std::cerr << "[GenieApiLoader] Initialization failed: " << ex.what() << "\n";
         throw;
     }
 }

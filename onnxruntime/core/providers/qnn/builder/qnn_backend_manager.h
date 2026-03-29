@@ -566,7 +566,7 @@ class GenieBackendManager : public std::enable_shared_from_this<GenieBackendMana
   // Initializes handles to Genie resources (device, logger, etc.).
   Ort::Status SetupBackend();
 
-  void* getGenieBackendHandle() {return backend_lib_handle_;}
+  void* GetGenieBackendHandle() {return backend_lib_handle_;}
 
  private:
   Ort::Status LoadBackend();
@@ -582,13 +582,11 @@ class GenieBackendManager : public std::enable_shared_from_this<GenieBackendMana
   const Ort::Logger* logger_ptr_;
 
   const std::string backend_path_;
-  void* genie_interface_ = nullptr;
-  bool backend_initialized_ = false;
   bool backend_setup_completed_ = false;
   void* backend_lib_handle_ = nullptr;
 
 #ifdef _WIN32
-  std::set<HMODULE> mod_handles_;
+  std::unordered_set<HMODULE> mod_handles_;
 #endif
 };
 

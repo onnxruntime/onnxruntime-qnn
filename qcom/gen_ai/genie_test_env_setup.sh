@@ -1,3 +1,6 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
 # Assumes working directory is same as location of script
 
 if [[ -n "$VIRTUAL_ENV" ]]; then

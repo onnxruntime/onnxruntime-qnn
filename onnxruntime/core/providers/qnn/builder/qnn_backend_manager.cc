@@ -2262,12 +2262,12 @@ void* GenieBackendManager::LoadLib(const char* file_name, int flags, std::string
   if (!file_path.is_absolute()) {
     // construct an absolute path from ORT runtime path + file_name and check whether it exists.
 
-    auto pathstring = std::filesystem::path(OrtGetRuntimePath()) / file_path;
-    auto absolute_path = pathstring.c_str();
+    auto absolute_path = std::filesystem::path(OrtGetRuntimePath()) / file_path;
+    auto absolute_path_str = absolute_path.c_str();
 
-    if (std::filesystem::exists(std::filesystem::path(pathstring))) {
+    if (std::filesystem::exists(absolute_path)) {
       // load library from absolute path and search for dependencies there.
-      mod = LoadLibraryExW(absolute_path, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
+      mod = LoadLibraryExW(absolute_path_str, nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
     } else {
       // use default dll search order for file_name.
       mod = LoadLibraryExA(file_name, nullptr, 0);
