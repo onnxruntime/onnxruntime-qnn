@@ -285,6 +285,9 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
   if (gamma_input_def == nullptr) {
     return nullptr;
   }
+  // TODO: If gamma is invalid to fuse (e.g., dynamic or wrong shape), consider partial fusion:
+  // fuse the normalization core (ReduceMean→...→Div) into LayerNorm(scale=ones, bias=β),
+  // leaving Mul(γ) as a standalone op after the fused node.
 
   // Mul(γ) → Add(β)
   const OrtNodeUnit* add_beta_node_unit = GetOnlyChildOfType(qnn_model_wrapper, *mul_gamma_node_unit,
