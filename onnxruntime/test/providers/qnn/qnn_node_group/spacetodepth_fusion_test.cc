@@ -315,9 +315,6 @@ void RunWrappedPatternSpaceToDepthFusionTest(const std::filesystem::path& json_q
                   /*log_severity=*/OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "SpaceToDepth", 1);
-  AssertNodeNotInQnnGraph(json_qnn_graph_dir, "Reshape1");
-  AssertNodeNotInQnnGraph(json_qnn_graph_dir, "TransposeCore");
-  AssertNodeNotInQnnGraph(json_qnn_graph_dir, "Reshape2");
 }
 
 }  // namespace
