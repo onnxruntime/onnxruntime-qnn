@@ -379,7 +379,7 @@ Ort::Status CreateOrValidateOnQnn(
                 "Failed to add the first Reshape's output tensor.");
 
   // Create Reshape1 node.
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(reshape1->Name()),
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(reshape1->Name()),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_RESHAPE,
                                                 {reshape1_input.name},
@@ -410,7 +410,7 @@ Ort::Status CreateOrValidateOnQnn(
   RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(perm_param)), "Failed to add Transpose perm param.");
 
   // Create Transpose node.
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(transpose->Name()),
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(transpose->Name()),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_TRANSPOSE,
                                                 {reshape1_output.name},
@@ -435,7 +435,7 @@ Ort::Status CreateOrValidateOnQnn(
                 "Failed to add the second Reshape's output tensor.");
 
   // Create Reshape2 node.
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(reshape2->Name()),
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(reshape2->Name()),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_RESHAPE,
                                                 {transpose_output.name},

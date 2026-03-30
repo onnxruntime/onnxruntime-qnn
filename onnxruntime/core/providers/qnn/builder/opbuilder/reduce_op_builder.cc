@@ -244,11 +244,11 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
     // Step 1: y_pow2 = x * x, using ElementWiseMultiply instead of ElementWisePower so we don't need to add a new
     // initializer tensor for the power value. The performance difference is negligible.
-    const std::string pow2_output_name = utils::GetUniqueName(input_name, "_pow2");
+    const std::string pow2_output_name = utils::UniqueNameGenerator().New(input_name, "_pow2");
     QnnTensorWrapper pow2_tensorwrapper(pow2_output_name, QNN_TENSOR_TYPE_NATIVE, qnn_data_type, QnnQuantParamsWrapper(),
                                         std::move(input_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(pow2_tensorwrapper)), "AddTensorWrapper failed");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit, QNN_OP_ELEMENT_WISE_MULTIPLY),
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_MULTIPLY),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_ELEMENT_WISE_MULTIPLY,
                                                   {input_name, input_name},
@@ -258,11 +258,11 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                   "CreateQnnNode failed");
 
     // Step 2: y_pow2_sum = ReduceSum(y_pow2)
-    const std::string reduce_output_name = utils::GetUniqueName(input_name, "_sum");
+    const std::string reduce_output_name = utils::UniqueNameGenerator().New(input_name, "_sum");
     QnnTensorWrapper reduce_tensorwrapper(reduce_output_name, QNN_TENSOR_TYPE_NATIVE, qnn_data_type, QnnQuantParamsWrapper(),
                                           std::vector<uint32_t>(output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(reduce_tensorwrapper)), "AddTensorWrapper failed");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit, QNN_OP_REDUCE_SUM),
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_REDUCE_SUM),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_REDUCE_SUM,
                                                   {pow2_output_name},
@@ -277,7 +277,7 @@ Ort::Status ReduceOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     QnnTensorWrapper sqrt_tensorwrapper(output.name, output_tensor_type, qnn_data_type,
                                         QnnQuantParamsWrapper(), std::move(output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sqrt_tensorwrapper)), "AddTensorWrapper failed");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit, QNN_OP_ELEMENT_WISE_SQUARE_ROOT),
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_SQUARE_ROOT),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_ELEMENT_WISE_SQUARE_ROOT,
                                                   {reduce_output_name},

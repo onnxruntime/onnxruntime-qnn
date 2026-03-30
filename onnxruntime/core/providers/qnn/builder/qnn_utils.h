@@ -127,50 +127,16 @@ Ort::Status GetQnnDataType(const bool is_quantized_tensor,
 // (e.g., "_2") when the same base + suffix combination is requested more than once.
 class UniqueNameGeneratorImpl {
  public:
-  void Reset() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    counter_.clear();
-  }
-
-  std::string New(std::string_view base, std::string_view suffix = {}) {
-    std::string name(base);
-    if (!suffix.empty()) {
-      name.append(suffix);
-    }
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      int& count = counter_[name];
-      if (count++ > 0) {
-        name.append("_").append(std::to_string(count));
-      }
-    }
-    return name;
-  }
-
-  std::string New(const OrtNodeUnit& node_unit, std::string_view suffix = {}) {
-    const std::string base = node_unit.Name();
-    if (base.empty()) {
-      return New(node_unit.OpType() + std::to_string(node_unit.Index()), suffix);
-    }
-    return New(base, suffix);
-  }
+  void Reset();
+  std::string New(std::string_view base, std::string_view suffix = {});
+  std::string New(const OrtNodeUnit& node_unit, std::string_view suffix = {});
 
  private:
   std::unordered_map<std::string, int> counter_;
   std::mutex mutex_;
 };
 
-inline UniqueNameGeneratorImpl& UniqueNameGenerator() {
-  static UniqueNameGeneratorImpl instance;
-  return instance;
-}
-
-inline std::string GetUniqueName(std::string_view base, std::string_view suffix = {}) {
-  return UniqueNameGenerator().New(base, suffix);
-}
-inline std::string GetUniqueName(const OrtNodeUnit& node_unit, std::string_view suffix = {}) {
-  return UniqueNameGenerator().New(node_unit, suffix);
-}
+UniqueNameGeneratorImpl& UniqueNameGenerator();
 
 bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
                                Qnn_DataType_t& qnn_data_type,

@@ -88,7 +88,7 @@ Ort::Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
   const std::vector<uint32_t>& reshaped_shape{total_elements / kFlatDim, kFlatDim};
 
   // Reshape input to [-1, 4]
-  const std::string& reshape_output_name = utils::GetUniqueName(node_unit, "_reshape_output");
+  const std::string& reshape_output_name = utils::UniqueNameGenerator().New(node_unit, "_reshape_output");
   QnnTensorWrapper reshape_output(reshape_output_name,
                                   QNN_TENSOR_TYPE_NATIVE,
                                   input_info.qnn_data_type,
@@ -114,13 +114,13 @@ Ort::Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
   constexpr uint32_t kSliceParamNum = 3;
 
   const std::vector<std::string>& sliced_output_names = {
-      utils::GetUniqueName(node_unit, "_slice_00_output"),
-      utils::GetUniqueName(node_unit, "_slice_01_output"),
-      utils::GetUniqueName(node_unit, "_slice_10_output"),
-      utils::GetUniqueName(node_unit, "_slice_11_output"),
+      utils::UniqueNameGenerator().New(node_unit, "_slice_00_output"),
+      utils::UniqueNameGenerator().New(node_unit, "_slice_01_output"),
+      utils::UniqueNameGenerator().New(node_unit, "_slice_10_output"),
+      utils::UniqueNameGenerator().New(node_unit, "_slice_11_output"),
   };
   for (uint32_t i = 0; i < 4; ++i) {
-    const std::string& param_name = utils::GetUniqueName(node_unit, "slice_param");
+    const std::string& param_name = utils::UniqueNameGenerator().New(node_unit, "slice_param");
     QnnParamWrapper ranges_paramwrapper(node_unit.Index(),
                                         param_name,
                                         QNN_OP_STRIDED_SLICE_PARAM_RANGES,
@@ -130,7 +130,7 @@ Ort::Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
     std::vector<std::string>&& slice_param_tensor_name{ranges_paramwrapper.GetParamTensorName()};
     RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(ranges_paramwrapper)), "Failed to add param.");
 
-    const std::string& slice_name = utils::GetUniqueName(node_unit, "_slice");
+    const std::string& slice_name = utils::UniqueNameGenerator().New(node_unit, "_slice");
     // begin_mask
     uint32_t begin_mask = 0b01U;  // ignore dim = 0
     RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper,
@@ -168,8 +168,8 @@ Ort::Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
   }
 
   // det([[a, b], [c, d]]) = ad - bc
-  const std::string& det_mul_0_name = utils::GetUniqueName(node_unit, "_det_mul_0");
-  const std::string& det_mul_0_output_name = utils::GetUniqueName(node_unit, "_det_mul_0_output");
+  const std::string& det_mul_0_name = utils::UniqueNameGenerator().New(node_unit, "_det_mul_0");
+  const std::string& det_mul_0_output_name = utils::UniqueNameGenerator().New(node_unit, "_det_mul_0_output");
   QnnTensorWrapper det_mul_0_output(det_mul_0_output_name,
                                     QNN_TENSOR_TYPE_NATIVE,
                                     input_info.qnn_data_type,
@@ -187,8 +187,8 @@ Ort::Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
                                                 do_op_validation),
                 "Failed to add Inverse - Det - Mul(a, d) node.");
 
-  const std::string& det_mul_1_name = utils::GetUniqueName(node_unit, "_det_mul_1");
-  const std::string& det_mul_1_output_name = utils::GetUniqueName(node_unit, "_det_mul_1_output");
+  const std::string& det_mul_1_name = utils::UniqueNameGenerator().New(node_unit, "_det_mul_1");
+  const std::string& det_mul_1_output_name = utils::UniqueNameGenerator().New(node_unit, "_det_mul_1_output");
   QnnTensorWrapper det_mul_1_output(det_mul_1_output_name,
                                     QNN_TENSOR_TYPE_NATIVE,
                                     input_info.qnn_data_type,
@@ -206,8 +206,8 @@ Ort::Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
                                                 do_op_validation),
                 "Failed to add Inverse - Det - Mul(b, c) node.");
 
-  const std::string& det_sub_name = utils::GetUniqueName(node_unit, "_det_sub");
-  const std::string& det_sub_output_name = utils::GetUniqueName(node_unit, "_det_sub_output");
+  const std::string& det_sub_name = utils::UniqueNameGenerator().New(node_unit, "_det_sub");
+  const std::string& det_sub_output_name = utils::UniqueNameGenerator().New(node_unit, "_det_sub_output");
   QnnTensorWrapper det_sub_output(det_sub_output_name,
                                   QNN_TENSOR_TYPE_NATIVE,
                                   input_info.qnn_data_type,
@@ -226,8 +226,8 @@ Ort::Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
                 "Failed to add Inverse - Det - Sub(ad, bc) node.");
 
   // adj([[a, b], [c, d]]) = [d, b, a, c] * [1, -1, -1, 1]
-  const std::string& adj_cat_name = utils::GetUniqueName(node_unit, "_adj_concat");
-  const std::string& adj_cat_output_name = utils::GetUniqueName(node_unit, "_adj_concat_output");
+  const std::string& adj_cat_name = utils::UniqueNameGenerator().New(node_unit, "_adj_concat");
+  const std::string& adj_cat_output_name = utils::UniqueNameGenerator().New(node_unit, "_adj_concat_output");
   std::vector<std::string> concat_param_name;  // Will be modified in AddQnnScalar
   RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper,
                                          node_unit.Index(),
@@ -261,7 +261,7 @@ Ort::Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
   std::vector<uint8_t> adj_mul_bytes(sizeof(adj_mul_tensor_value));
   std::memcpy(adj_mul_bytes.data(), adj_mul_tensor_value.data(), adj_mul_bytes.size());
 
-  const std::string& adj_mul_tensor_name = utils::GetUniqueName(node_unit, "_adj_mul_tensor");
+  const std::string& adj_mul_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_adj_mul_tensor");
   QnnTensorWrapper adj_mul_tensor(adj_mul_tensor_name,
                                   QNN_TENSOR_TYPE_STATIC,
                                   input_info.qnn_data_type,
@@ -270,8 +270,8 @@ Ort::Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
                                   std::move(adj_mul_bytes));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(adj_mul_tensor)), "Failed to add tensor.");
 
-  const std::string& adj_mul_name = utils::GetUniqueName(node_unit, "_adj_mul");
-  const std::string& adj_mul_output_name = utils::GetUniqueName(node_unit, "_adj_mul_output");
+  const std::string& adj_mul_name = utils::UniqueNameGenerator().New(node_unit, "_adj_mul");
+  const std::string& adj_mul_output_name = utils::UniqueNameGenerator().New(node_unit, "_adj_mul_output");
   QnnTensorWrapper adj_mul_output(adj_mul_output_name,
                                   QNN_TENSOR_TYPE_NATIVE,
                                   input_info.qnn_data_type,
@@ -290,8 +290,8 @@ Ort::Status InverseOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
                 "Failed to add Inverse - Adj - Mul([d, b, a, c], [1, -1, -1, 1]) node.");
 
   // inverse = adj / det
-  const std::string& inverse_div_name = utils::GetUniqueName(node_unit, "_inv_div");
-  const std::string& inverse_div_output_name = utils::GetUniqueName(node_unit, "_inv_div_output");
+  const std::string& inverse_div_name = utils::UniqueNameGenerator().New(node_unit, "_inv_div");
+  const std::string& inverse_div_output_name = utils::UniqueNameGenerator().New(node_unit, "_inv_div_output");
   QnnTensorWrapper inverse_div_tensor(inverse_div_output_name,
                                       QNN_TENSOR_TYPE_NATIVE,
                                       input_info.qnn_data_type,

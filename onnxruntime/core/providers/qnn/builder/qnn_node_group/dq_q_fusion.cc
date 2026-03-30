@@ -91,7 +91,7 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& q_node_unit,
                                          bool validate) {
   assert(dq_node_unit.OpType() == DEQUANTIZE_LINEAR && q_node_unit.OpType() == QUANTIZE_LINEAR);
-  const auto& node_name = utils::GetUniqueName(dq_node_unit);
+  const auto& node_name = utils::UniqueNameGenerator().New(dq_node_unit);
   const OrtNodeUnitIODef& input_def = dq_node_unit.Inputs()[0];
   const OrtNodeUnitIODef& output_def = q_node_unit.Outputs()[0];
 

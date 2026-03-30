@@ -189,7 +189,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
     TensorInfo input_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], input_info));
 
-    std::string actual_name = input_info.is_initializer ? input1_name : utils::GetUniqueName(input1_name, "_transpose");
+    std::string actual_name = input_info.is_initializer ? input1_name : utils::UniqueNameGenerator().New(input1_name, "_transpose");
     input_names.push_back(actual_name);
 
     std::vector<uint32_t> actual_shape;
@@ -305,7 +305,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
 
       // Pop Conv weight. Insert Convert op after Weight
       input_names.pop_back();
-      std::string convert_output_name = utils::GetUniqueName(weight_input_name, "_convert");
+      std::string convert_output_name = utils::UniqueNameGenerator().New(weight_input_name, "_convert");
 
       RETURN_IF_ERROR(utils::InsertConvertOp(qnn_model_wrapper,
                                              weight_input_name,
@@ -541,7 +541,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], input1_info));
 
     if (input0_info.quant_param.IsPerTensor(/*include_bw*/ true) && input1_info.quant_param.IsQuantized()) {
-      const std::string bias_name = qnn::utils::GetUniqueName(node_unit, "_implicit_bias");
+      const std::string bias_name = qnn::utils::UniqueNameGenerator().New(node_unit, "_implicit_bias");
       std::vector<uint32_t> bias_shape = {input1_info.shape[0]};
       RETURN_IF_ERROR(AddZeroBiasInput(qnn_model_wrapper, input0_info.quant_param, input1_info.quant_param,
                                        std::move(bias_shape), bias_name, logger, input_names));
@@ -575,7 +575,7 @@ Ort::Status ConvOpBuilder::ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrappe
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input0_info));
 
     const std::string conv_input0_name = input0_info.is_initializer ? input0_name
-                                                                    : utils::GetUniqueName(input0_name, "_reshape");
+                                                                    : utils::UniqueNameGenerator().New(input0_name, "_reshape");
     input_names.push_back(conv_input0_name);
 
     if (!qnn_model_wrapper.IsQnnTensorWrapperExist(conv_input0_name)) {
@@ -632,7 +632,7 @@ Ort::Status ConvOpBuilder::ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrappe
     TensorInfo input_info = {};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], input_info));
 
-    std::string conv_weight_input_name = input_info.is_initializer ? input1_name : utils::GetUniqueName(input1_name, "_transpose");
+    std::string conv_weight_input_name = input_info.is_initializer ? input1_name : utils::UniqueNameGenerator().New(input1_name, "_transpose");
     input_names.push_back(conv_weight_input_name);
 
     // Create the shape after reshaping.
@@ -657,7 +657,7 @@ Ort::Status ConvOpBuilder::ProcessConv1DInputs(QnnModelWrapper& qnn_model_wrappe
       return MAKE_EP_FAIL(("QNN EP: Unexpected convolution op type: " + node_unit.OpType()).c_str());
     }
 
-    const std::string reshape_output = utils::GetUniqueName(input1_name, "_reshape");
+    const std::string reshape_output = utils::UniqueNameGenerator().New(input1_name, "_reshape");
     std::vector<uint8_t> unpacked_tensor;
     if (input_info.is_initializer) {
       //
@@ -1025,11 +1025,11 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
         output_shape[1],  // W
         output_shape[2],  // C
     };
-    const std::string conv_output_name = utils::GetUniqueName(output_name, "_conv");
+    const std::string conv_output_name = utils::UniqueNameGenerator().New(output_name, "_conv");
     QnnTensorWrapper output_tensorwrapper(conv_output_name, QNN_TENSOR_TYPE_NATIVE, qnn_data_type,
                                           output_quantize_param.Copy(), std::vector<uint32_t>(output_shape_2d));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit),
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   output_node_type,
                                                   std::move(input_names),
@@ -1054,7 +1054,7 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     QnnTensorWrapper output_tensorwrapper(output_name, tensor_type, qnn_data_type,
                                           std::move(output_quantize_param), std::move(output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit),
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   output_node_type,
                                                   std::move(input_names),

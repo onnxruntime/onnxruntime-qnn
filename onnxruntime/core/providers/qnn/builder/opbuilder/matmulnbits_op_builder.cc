@@ -313,7 +313,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
   }
 
   // 2. Add Output for Pre Reshape(FullyConnected)
-  const std::string pre_reshape_name = utils::GetUniqueName(output_tensor_name, "_pre_reshape");
+  const std::string pre_reshape_name = utils::UniqueNameGenerator().New(output_tensor_name, "_pre_reshape");
   TensorInfo output_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(output_tensor, output_info));
   std::vector<uint32_t> pre_reshape_shape(2);
@@ -331,7 +331,7 @@ Ort::Status MatMulNBitsOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor_wrapper)), "Failed to add tensor.");
 
   // 3. Add FullyConnected Op
-  const std::string fully_connected_node_name = utils::GetUniqueName(node_unit, QNN_OP_FULLY_CONNECTED);
+  const std::string fully_connected_node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_FULLY_CONNECTED);
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(fully_connected_node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_FULLY_CONNECTED,

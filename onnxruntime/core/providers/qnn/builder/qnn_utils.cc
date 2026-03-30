@@ -22,6 +22,37 @@ namespace onnxruntime {
 namespace qnn {
 namespace utils {
 
+void UniqueNameGeneratorImpl::Reset() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  counter_.clear();
+}
+
+std::string UniqueNameGeneratorImpl::New(std::string_view base, std::string_view suffix) {
+  std::string name(base);
+  if (!suffix.empty()) {
+    name.append(suffix);
+  }
+  std::lock_guard<std::mutex> lock(mutex_);
+  int& count = counter_[name];
+  if (count++ > 0) {
+    name.append("_").append(std::to_string(count));
+  }
+  return name;
+}
+
+std::string UniqueNameGeneratorImpl::New(const OrtNodeUnit& node_unit, std::string_view suffix) {
+  const std::string base = node_unit.Name();
+  if (base.empty()) {
+    return New(node_unit.OpType() + std::to_string(node_unit.Index()), suffix);
+  }
+  return New(base, suffix);
+}
+
+UniqueNameGeneratorImpl& UniqueNameGenerator() {
+  static UniqueNameGeneratorImpl instance;
+  return instance;
+}
+
 size_t GetElementSizeByType(const Qnn_DataType_t& data_type) {
   const static std::unordered_map<Qnn_DataType_t, size_t> data_type_to_size = {
       {QNN_DATATYPE_INT_8, 1},
@@ -1492,7 +1523,7 @@ Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                                                 QnnQuantParamsWrapper(scale, offset),
                                                 std::move(output_shape_copy));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(convert_output_tensorwrapper)), "Failed to add tensor.");
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(convert_output_name, QNN_OP_CONVERT),
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(UniqueNameGenerator().New(convert_output_name, QNN_OP_CONVERT),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_CONVERT,
                                                 {convert_input_name},

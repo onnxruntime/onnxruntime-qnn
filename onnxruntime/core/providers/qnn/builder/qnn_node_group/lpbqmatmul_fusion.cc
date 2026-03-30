@@ -158,7 +158,7 @@ Ort::Status ProcessInput0(QnnModelWrapper& qnn_model_wrapper,
   std::string actual_input_0_name = original_input_0_name;
 
   if (reshape_input_0) {
-    actual_input_0_name = utils::GetUniqueName(original_input_0_name, "_reshape");
+    actual_input_0_name = utils::UniqueNameGenerator().New(original_input_0_name, "_reshape");
     std::vector<uint32_t> shape_2d{1, input_0_info.shape[0]};
     QnnQuantParamsWrapper quant_param_2d = input_0_info.quant_param.Copy();
     RETURN_IF_ERROR(quant_param_2d.HandleUnsqueeze<uint32_t>(input_0_info.shape, shape_2d));
@@ -432,7 +432,7 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                     (matmul_node_unit.OpType() == "MatMul"),
                 "Invalid Matmul LPBQ pattern identified");
 
-  const auto& node_name = utils::GetUniqueName(matmul_node_unit);
+  const auto& node_name = utils::UniqueNameGenerator().New(matmul_node_unit);
 
   std::vector<std::string> input_names;
 
