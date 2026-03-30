@@ -114,7 +114,7 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                               std::move(pre_reshape_output_shape));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(pre_reshape_output_wrapper)), "Failed to add tensor.");
 
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(pre_reshape_node_unit),
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(pre_reshape_node_unit),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_RESHAPE,
                                                 {pre_reshape_input.name},
@@ -164,7 +164,7 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                       std::move(d2s_output_shape));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(d2s_output_wrapper)), "Failed to add tensor.");
 
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(einsum_node_unit),
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(einsum_node_unit),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_DEPTH_TO_SPACE,
                                                 {pre_reshape_output.name},
@@ -199,7 +199,7 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                                std::move(post_reshape_output_info.shape));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(post_reshape_output_wrapper)), "Failed to add tensor.");
 
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(post_reshape_node_unit),
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(post_reshape_node_unit),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_TRANSPOSE,
                                                 {einsum_output.name},

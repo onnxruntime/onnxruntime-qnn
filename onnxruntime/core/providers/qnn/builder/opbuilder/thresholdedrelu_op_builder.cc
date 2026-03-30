@@ -151,7 +151,7 @@ Ort::Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
   std::vector<uint8_t> alpha_bytes;
   RETURN_IF_ERROR(SetAlphaByte(input_info.qnn_data_type, alpha_bytes, negtive_alpha));
 
-  std::string negtive_alpha_tensor_name = utils::GetUniqueName(node_unit, "_alpha");
+  std::string negtive_alpha_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_alpha");
   QnnTensorWrapper negtive_alpha_tensorwrapper(negtive_alpha_tensor_name,
                                                QNN_TENSOR_TYPE_STATIC,
                                                input_info.qnn_data_type,
@@ -163,8 +163,8 @@ Ort::Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
   // input -> add -> relu -> sign -> mul -> output
   //       --------------------------/
   // 1. Add
-  std::string add_name = utils::GetUniqueName(node_unit, "_Add");
-  std::string add_output_name = utils::GetUniqueName(node_unit, "_Add_output");
+  std::string add_name = utils::UniqueNameGenerator().New(node_unit, "_Add");
+  std::string add_output_name = utils::UniqueNameGenerator().New(node_unit, "_Add_output");
   QnnTensorWrapper add_output(add_output_name,
                               QNN_TENSOR_TYPE_NATIVE,
                               input_info.qnn_data_type,
@@ -183,8 +183,8 @@ Ort::Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
                 "Failed to add ThresholdRelu - Sub node.");
 
   // 2. Relu
-  std::string relu_name = utils::GetUniqueName(node_unit, "_Relu");
-  std::string relu_output_name = utils::GetUniqueName(node_unit, "_Relu_output");
+  std::string relu_name = utils::UniqueNameGenerator().New(node_unit, "_Relu");
+  std::string relu_output_name = utils::UniqueNameGenerator().New(node_unit, "_Relu_output");
 
   QnnTensorWrapper relu_output(relu_output_name,
                                QNN_TENSOR_TYPE_NATIVE,
@@ -204,8 +204,8 @@ Ort::Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
                 "Failed to add ThresholdRelu - Relu node.");
 
   // 3. Sign
-  std::string sign_name = utils::GetUniqueName(node_unit, "_Sign");
-  std::string sign_output_name = utils::GetUniqueName(node_unit, "_Sign_output");
+  std::string sign_name = utils::UniqueNameGenerator().New(node_unit, "_Sign");
+  std::string sign_output_name = utils::UniqueNameGenerator().New(node_unit, "_Sign_output");
   QnnTensorWrapper sign_output(sign_output_name,
                                QNN_TENSOR_TYPE_NATIVE,
                                input_info.qnn_data_type,
@@ -224,7 +224,7 @@ Ort::Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
                 "Failed to add ThresholdRelu - Sign node.");
 
   // 4. Mul
-  std::string mul_name = utils::GetUniqueName(node_unit, "_Mul");
+  std::string mul_name = utils::UniqueNameGenerator().New(node_unit, "_Mul");
   QnnTensorWrapper mul_output(org_output_name,
                               op_output_tensor_type,
                               output_info.qnn_data_type,
