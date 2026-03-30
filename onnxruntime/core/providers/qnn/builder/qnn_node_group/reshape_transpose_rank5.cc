@@ -30,6 +30,8 @@ constexpr size_t kRank5 = 5;
 constexpr const char* kOpTypeReshape = "Reshape";
 constexpr const char* kOpTypeTranspose = "Transpose";
 constexpr const char* kAttrTransposePerm = "perm";
+constexpr std::array<int64_t, 6> kPermS2dDcr = {0, 3, 5, 1, 2, 4};
+constexpr std::array<int64_t, 6> kPermS2dCrd = {0, 1, 3, 5, 2, 4};
 
 using MapNodeToNodeUnit = std::unordered_map<const OrtNode*, const OrtNodeUnit*>;
 using MapNodeUnitToGroup = std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>;
@@ -63,114 +65,6 @@ std::optional<std::vector<int64_t>> GetTensorShape(const OrtApi& ort_api, const 
   return dims;
 }
 
-/// @brief Get child NodeUnit of specified type, allowing QDQ-wrapped nodes
-const OrtNodeUnit* GetChildNodeUnit(
-    const QnnModelWrapper& qnn_model_wrapper,
-    const OrtNodeUnit& parent_node_unit,
-    const std::string& child_op_type,
-    const MapNodeToNodeUnit& node_to_node_unit,
-    const MapNodeUnitToGroup& node_unit_to_qnn_node_group,
-    const Ort::Logger& logger) {
-  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
-  const OrtNode& parent_node = parent_node_unit.GetNode();
-
-  ORT_UNUSED_PARAMETER(logger);
-  // For QDQ NodeUnits, we need to look at the Q node's output, not the target node's output
-  const OrtNode* search_node = &parent_node;
-  if (parent_node_unit.UnitType() == OrtNodeUnit::Type::QDQGroup) {
-    const auto& q_nodes = parent_node_unit.GetQNodes();
-    if (!q_nodes.empty()) {
-      search_node = q_nodes[0];  // Use first Q node
-    }
-  }
-
-  // Search node must have a single child (1 output edge) and must not produce a graph output
-  size_t num_outputs = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(search_node, &num_outputs), ort_api, nullptr);
-  if (num_outputs != 1) {
-    return nullptr;
-  }
-
-  std::vector<const OrtValueInfo*> outputs(num_outputs);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(search_node, outputs.data(), outputs.size()), ort_api, nullptr);
-
-  const OrtValueInfo* output_info = outputs[0];
-  bool is_graph_output = false;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_IsGraphOutput(output_info, &is_graph_output), ort_api, nullptr);
-  if (is_graph_output) {
-    return nullptr;
-  }
-
-  // We should have exactly one consumer
-  size_t num_consumers = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueNumConsumers(output_info, &num_consumers), ort_api, nullptr);
-  if (num_consumers != 1) {
-    return nullptr;
-  }
-
-  // Get the consumers of this output
-  std::vector<const OrtNode*> consumers(num_consumers);
-  std::vector<int64_t> input_indices(num_consumers);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueConsumers(output_info, consumers.data(), input_indices.data(), num_consumers), ort_api, nullptr);
-
-  // Get the child node
-  const OrtNode* potential_child = consumers[0];
-  if (potential_child == nullptr) {
-    return nullptr;
-  }
-
-  // If the child is a DequantizeLinear, skip it and look at its child (the target op of the next QDQ group)
-  if (Ort::ConstNode(potential_child).GetOperatorType() == "DequantizeLinear") {
-    // Get DQ node's output
-    size_t dq_num_outputs = 0;
-    RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(potential_child, &dq_num_outputs), ort_api, nullptr);
-    if (dq_num_outputs != 1) {
-      return nullptr;
-    }
-
-    std::vector<const OrtValueInfo*> dq_outputs(dq_num_outputs);
-    RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(potential_child, dq_outputs.data(), dq_outputs.size()), ort_api, nullptr);
-
-    const OrtValueInfo* dq_output_info = dq_outputs[0];
-
-    // Get consumers of DQ output
-    size_t dq_num_consumers = 0;
-    RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueNumConsumers(dq_output_info, &dq_num_consumers), ort_api, nullptr);
-    if (dq_num_consumers != 1) {
-      return nullptr;
-    }
-
-    std::vector<const OrtNode*> dq_consumers(dq_num_consumers);
-    std::vector<int64_t> dq_input_indices(dq_num_consumers);
-    RETURN_DEFAULT_IF_API_FAIL(ort_api.ValueInfo_GetValueConsumers(dq_output_info, dq_consumers.data(), dq_input_indices.data(), dq_num_consumers), ort_api, nullptr);
-
-    potential_child = dq_consumers[0];
-    if (potential_child == nullptr) {
-      return nullptr;
-    }
-  }
-
-  // Check if this node matches the target type
-  if (Ort::ConstNode(potential_child).GetOperatorType() != child_op_type) {
-    return nullptr;
-  }
-
-  // Get the NodeUnit for the child
-  const auto child_node_unit_it = node_to_node_unit.find(potential_child);
-  if (child_node_unit_it == node_to_node_unit.end()) {
-    return nullptr;
-  }
-
-  const OrtNodeUnit* child_node_unit = child_node_unit_it->second;
-
-  // Check if child node has already been handled
-  if (node_unit_to_qnn_node_group.count(child_node_unit) != 0) {
-    return nullptr;
-  }
-
-  return child_node_unit;
-}
-
 /// @brief Match the pattern: Reshape -> Transpose -> Reshape with rank-6 intermediate tensors
 std::optional<std::array<const OrtNodeUnit*, 3>> MatchRank6ToRank5Pattern(
     const QnnModelWrapper& qnn_model_wrapper,
@@ -184,15 +78,15 @@ std::optional<std::array<const OrtNodeUnit*, 3>> MatchRank6ToRank5Pattern(
   }
 
   // Get Transpose child (middle node in pattern) - allow both SingleNode and QDQGroup
-  const OrtNodeUnit* transpose = GetChildNodeUnit(
-      qnn_model_wrapper, *reshape1, kOpTypeTranspose, node_to_node_unit, node_unit_to_qnn_node_group, logger);
+  const OrtNodeUnit* transpose = GetChildNodeUnitAllowQdq(
+      qnn_model_wrapper, *reshape1, kOpTypeTranspose, node_to_node_unit, node_unit_to_qnn_node_group);
   if (transpose == nullptr) {
     return std::nullopt;
   }
 
   // Get second Reshape child (last node in pattern) - allow both SingleNode and QDQGroup
-  const OrtNodeUnit* reshape2 = GetChildNodeUnit(
-      qnn_model_wrapper, *transpose, kOpTypeReshape, node_to_node_unit, node_unit_to_qnn_node_group, logger);
+  const OrtNodeUnit* reshape2 = GetChildNodeUnitAllowQdq(
+      qnn_model_wrapper, *transpose, kOpTypeReshape, node_to_node_unit, node_unit_to_qnn_node_group);
   if (reshape2 == nullptr) {
     return std::nullopt;
   }
@@ -281,6 +175,12 @@ std::optional<size_t> ValidatePatternConditions(
   OrtNodeAttrHelper transpose_helper(*transpose);
   std::vector<int64_t> perm = transpose_helper.Get(kAttrTransposePerm, std::vector<int64_t>{});
   if (perm.size() != kRank6) {
+    return std::nullopt;
+  }
+
+  // Keep SpaceToDepth RTR decomposition exclusively handled by SpaceToDepthFusion.
+  if (std::equal(perm.begin(), perm.end(), kPermS2dDcr.begin()) ||
+      std::equal(perm.begin(), perm.end(), kPermS2dCrd.begin())) {
     return std::nullopt;
   }
 

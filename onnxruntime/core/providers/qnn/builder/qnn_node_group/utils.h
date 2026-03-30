@@ -4,8 +4,12 @@
 #pragma once
 
 #include <gsl/gsl>
+#include <cstdint>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/ort_api.h"
@@ -35,6 +39,16 @@ const OrtNodeUnit* GetOnlyChildOfType(const QnnModelWrapper& qnn_model_wrapper,
                                       const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                       const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group);
 
+/// <summary>
+/// Utility function to get a child NodeUnit, allowing QDQ-wrapped nodes. The returned NodeUnit must be the parent's
+/// only child, must be of the expected type, and must not be a part of another IQnnNodeGroup.
+/// </summary>
+const OrtNodeUnit* GetChildNodeUnitAllowQdq(const QnnModelWrapper& qnn_model_wrapper,
+                                            const OrtNodeUnit& parent_node_unit,
+                                            const std::string& child_op_type,
+                                            const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
+                                            const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group);
+
 const OrtNodeUnit* GetParentOfType(const QnnModelWrapper& qnn_model_wrapper,
                                    const OrtNodeUnit& child_node_unit,
                                    gsl::span<const std::string_view> parent_op_types,
@@ -58,6 +72,12 @@ const OrtNodeUnit* GetParentOfInputByName(const QnnModelWrapper& qnn_model_wrapp
                                           const std::string& input_name,
                                           const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                           const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& qnn_node_group_map);
+
+/// <summary>
+/// Utility function to read a constant initializer shape input into a vector of int64 values.
+/// </summary>
+std::optional<std::vector<int64_t>> GetInitializerDataAsInt64(const QnnModelWrapper& qnn_model_wrapper,
+                                                              const OrtNodeUnitIODef& shape_input);
 
 }  // namespace qnn
 }  // namespace onnxruntime

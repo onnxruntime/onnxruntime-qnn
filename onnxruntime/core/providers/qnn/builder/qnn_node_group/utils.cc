@@ -4,12 +4,14 @@
 #include "core/providers/qnn/builder/qnn_node_group/utils.h"
 
 #include <gsl/gsl>
+#include <cstdint>
+#include <optional>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
-#include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {
@@ -70,6 +72,141 @@ const OrtNodeUnit* GetOnlyChildOfType(const QnnModelWrapper& /*qnn_model_wrapper
   }
 
   return child_node_unit;
+}
+
+const OrtNodeUnit* GetChildNodeUnitAllowQdq(
+    const QnnModelWrapper& /*qnn_model_wrapper*/,
+    const OrtNodeUnit& parent_node_unit,
+    const std::string& child_op_type,
+    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
+    const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& qnn_node_group_map) {
+  try {
+    const Ort::ConstNode parent_node(&parent_node_unit.GetNode());
+
+    // 1. For QDQ NodeUnits (DQ->op->Q), look at the Q node's output instead of the target node's output.
+    const OrtNode* search_node = parent_node;
+    if (parent_node_unit.UnitType() == OrtNodeUnit::Type::QDQGroup) {
+      const auto& q_nodes = parent_node_unit.GetQNodes();
+      if (!q_nodes.empty()) {
+        search_node = q_nodes[0];
+      }
+    }
+
+    // 2. Search node must have a single child and must not produce a graph output.
+    const std::vector<Ort::ConstValueInfo> outputs = Ort::ConstNode(search_node).GetOutputs();
+    if (outputs.size() != 1 || outputs[0].IsGraphOutput()) {
+      return nullptr;
+    }
+
+    // 3. Search node must have exactly one consumer.
+    const std::vector<Ort::ValueInfoConsumerProducerInfo> consumers = outputs[0].GetConsumers();
+    if (consumers.size() != 1 || consumers[0].node == nullptr) {
+      return nullptr;
+    }
+
+    const OrtNode* potential_child = consumers[0].node;
+
+    // 4. If the child is a DequantizeLinear, skip it and look at its child.
+    // DQ -> op -> Q -> (DQ) -> ...
+    if (Ort::ConstNode(potential_child).GetOperatorType() == DEQUANTIZE_LINEAR) {
+      const std::vector<Ort::ConstValueInfo> dq_outputs = Ort::ConstNode(potential_child).GetOutputs();
+      if (dq_outputs.size() != 1) {
+        return nullptr;
+      }
+
+      const std::vector<Ort::ValueInfoConsumerProducerInfo> dq_consumers = dq_outputs[0].GetConsumers();
+      if (dq_consumers.size() != 1 || dq_consumers[0].node == nullptr) {
+        return nullptr;
+      }
+
+      potential_child = dq_consumers[0].node;
+    }
+
+    // 5. Check if the child node is of the expected type.
+    if (Ort::ConstNode(potential_child).GetOperatorType() != child_op_type) {
+      return nullptr;
+    }
+
+    // 5.1 Check if the child node is not already part of another NodeUnit.
+    const auto child_node_unit_it = node_unit_map.find(potential_child);
+    if (child_node_unit_it == node_unit_map.end()) {
+      return nullptr;
+    }
+    const OrtNodeUnit* child_node_unit = child_node_unit_it->second;
+
+    if (qnn_node_group_map.count(child_node_unit) != 0) {
+      return nullptr;
+    }
+
+    return child_node_unit;
+  } catch (const Ort::Exception&) {
+    return nullptr;
+  }
+}
+
+std::optional<std::vector<int64_t>> GetInitializerDataAsInt64(
+    const QnnModelWrapper& qnn_model_wrapper,
+    const OrtNodeUnitIODef& shape_input) {
+  // 1. Require the shape input (eg: Reshape node input[1]) to be a constant initializer.
+  if (!qnn_model_wrapper.IsConstantInput(shape_input.name)) {
+    return std::nullopt;
+  }
+
+  // 2. Get the initializer tensor and ensure it exists.
+  const OrtValueInfo* tensor = qnn_model_wrapper.GetConstantTensor(shape_input.name);
+  if (tensor == nullptr) {
+    return std::nullopt;
+  }
+
+  ONNXTensorElementDataType elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+  size_t element_count = 0;
+  try {
+    // 3. Read element type from CXX type wrappers.
+    const Ort::ConstValueInfo shape_tensor(tensor);
+    const Ort::ConstTensorTypeAndShapeInfo tensor_info = shape_tensor.TypeInfo().GetTensorTypeAndShapeInfo();
+    elem_type = tensor_info.GetElementType();
+
+    // 4. Use NodeUnit I/O shape metadata to get the expected number of entries in the shape tensor.
+    std::vector<uint32_t> shape_tensor_dims;
+    if (!qnn_model_wrapper.GetOnnxShape(shape_input.shape, shape_tensor_dims) || shape_tensor_dims.size() != 1) {
+      return std::nullopt;
+    }
+    element_count = static_cast<size_t>(shape_tensor_dims[0]);
+  } catch (const Ort::Exception&) {
+    return std::nullopt;
+  }
+
+  // 5. Unpack the raw initializer data.
+  std::vector<uint8_t> raw_bytes;
+  if (!qnn_model_wrapper.UnpackInitializerData(tensor, raw_bytes).IsOK()) {
+    return std::nullopt;
+  }
+
+  std::vector<int64_t> values;
+  values.reserve(element_count);
+
+  if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64) {
+    // 6. Validate the byte size for int64 data.
+    if (raw_bytes.size() != element_count * sizeof(int64_t)) {
+      return std::nullopt;
+    }
+    const int64_t* data = reinterpret_cast<const int64_t*>(raw_bytes.data());
+    values.assign(data, data + element_count);
+  } else if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32) {
+    // 7. Validate the byte size for int32 data.
+    if (raw_bytes.size() != element_count * sizeof(int32_t)) {
+      return std::nullopt;
+    }
+    const int32_t* data = reinterpret_cast<const int32_t*>(raw_bytes.data());
+    for (size_t i = 0; i < element_count; ++i) {
+      values.push_back(static_cast<int64_t>(data[i]));
+    }
+  } else {
+    // 8. Reject unsupported element types.
+    return std::nullopt;
+  }
+
+  return values;
 }
 
 const OrtNodeUnit* GetParentOfType(const QnnModelWrapper& /*qnn_model_wrapper*/,
