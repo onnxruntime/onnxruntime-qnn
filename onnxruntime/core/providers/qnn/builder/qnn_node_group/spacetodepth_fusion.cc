@@ -440,7 +440,7 @@ Ort::Status CreateOrValidateOnQnn(
   RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(input_def, input_tensor));
   RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(output_def, output_tensor));
 
-  const std::string direct_s2d_node_name = utils::GetUniqueName(reshape2, "_fused_spacetodepth");
+  const std::string direct_s2d_node_name = utils::UniqueNameGenerator().New(reshape2, "_fused_spacetodepth");
 
   // 1.1) Common S2D mode param.
   Qnn_Scalar_t mode_scalar = QNN_SCALAR_INIT;
@@ -517,7 +517,7 @@ Ort::Status CreateOrValidateOnQnn(
     }
 
     // 3.2) Wrapped boundary validation: validate pre/post transpose legs around S2D as needed.
-    const std::string base_name = utils::GetUniqueName(reshape2, "_spacetodepth_nhwc");
+    const std::string base_name = utils::UniqueNameGenerator().New(reshape2, "_spacetodepth_nhwc");
     const std::string pre_node_name = base_name + "_pre";
     const std::string post_node_name = base_name + "_post";
     const std::string nhwc_in_name = base_name + "_in";
@@ -627,7 +627,7 @@ Ort::Status CreateOrValidateOnQnn(
   RETURN_IF_ERROR(ensure_boundary_tensors_exist());
 
   // 4.2) Wrapped creation path: optional pre/post transpose + S2D core.
-  const std::string base_name = utils::GetUniqueName(reshape2, "_spacetodepth_nhwc");
+  const std::string base_name = utils::UniqueNameGenerator().New(reshape2, "_spacetodepth_nhwc");
   // node
   const std::string pre_node_name = base_name + "_pre";
   const std::string post_node_name = base_name + "_post";
