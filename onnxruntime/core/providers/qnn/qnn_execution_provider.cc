@@ -100,10 +100,10 @@ static bool ParseBackendTypeName(std::string_view backend_type_name,
 }
 
 static GenieLog_Level_t ResolveGenieLogLevel(const std::string& lvl) {
-    if (lvl == "warn")    return GENIE_LOG_LEVEL_WARN;
-    if (lvl == "verbose") return GENIE_LOG_LEVEL_VERBOSE;
-    if (lvl == "info")    return GENIE_LOG_LEVEL_INFO;
-    return GENIE_LOG_LEVEL_ERROR;
+  if (lvl == "warn") return GENIE_LOG_LEVEL_WARN;
+  if (lvl == "verbose") return GENIE_LOG_LEVEL_VERBOSE;
+  if (lvl == "info") return GENIE_LOG_LEVEL_INFO;
+  return GENIE_LOG_LEVEL_ERROR;
 }
 
 static void ParseProfilingLevel(std::string profiling_level_string,
@@ -1300,8 +1300,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     // CREATE GENIE_BACKEND_MANAGER
     if (!ep->genie_backend_manager_) {
       ep->genie_backend_manager_ = qnn::GenieBackendManager::Create(
-        qnn::GenieBackendManagerConfig{ kDefaultGenieBackendPath }, ep->logger_
-      );
+          qnn::GenieBackendManagerConfig{kDefaultGenieBackendPath}, ep->logger_);
       ep->genie_backend_manager_->SetupBackend();
     }
     ep->genie_api_loader_ = std::make_shared<GenieApiLoader>((ep->genie_backend_manager_)->GetGenieBackendHandle());
@@ -1324,9 +1323,9 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     OrtNodeFusionOptions node_fusion_options = {};
     node_fusion_options.ort_version_supported = ORT_API_VERSION;
     auto add_status = ep->ep_api.EpGraphSupportInfo_AddNodesToFuse(graph_support_info,
-                                                                 supported_group.data(),
-                                                                 supported_group.size(),
-                                                                 &node_fusion_options);
+                                                                   supported_group.data(),
+                                                                   supported_group.size(),
+                                                                   &node_fusion_options);
     if (add_status != nullptr) {
       return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Error adding Node.");
     }
@@ -1760,25 +1759,33 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
 
 static std::string GetElementTypeString(int onnx_type) {
   switch (onnx_type) {
-        case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT: return "float32";
-        case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32: return "uint32_t";
-        case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:  return "int32_t";
-        case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:  return "int64_t";
-        // Add more if your model uses other types
-    }
-    throw std::runtime_error("Unsupported tensor element type");
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
+      return "float32";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32:
+      return "uint32_t";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:
+      return "int32_t";
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:
+      return "int64_t";
+      // Add more if your model uses other types
+  }
+  throw std::runtime_error("Unsupported tensor element type");
 }
 
 // Convert ORT tensor type to byte size
 static size_t GetElementSizeONNX(int onnx_type) {
-    switch (onnx_type) {
-        case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT: return 4;
-        case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32: return 4;
-        case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:  return 4;
-        case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:  return 8;
-        // Add more if your model uses other types
-    }
-    throw std::runtime_error("Unsupported tensor element type");
+  switch (onnx_type) {
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
+      return 4;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32:
+      return 4;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32:
+      return 4;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64:
+      return 8;
+      // Add more if your model uses other types
+  }
+  throw std::runtime_error("Unsupported tensor element type");
 }
 
 OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
@@ -2090,7 +2097,7 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
         ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, ("Invalid EP Workload Type: " + value).c_str());
         return ep->ort_api.CreateStatus(ORT_INVALID_ARGUMENT, "Genie Execution Not Set.");
       }
-      ep->genie_kv_cache_rewind_.store(rewind_value, std::memory_order_acq_rel); 
+      ep->genie_kv_cache_rewind_.store(rewind_value, std::memory_order_acq_rel);
     } else if (key == kOrtEpDynamicOptionsWorkloadType) {
       if (value == "Default") {
         RETURN_IF_NOT_OK(ep->qnn_backend_manager_->ResetContextPriority());
@@ -2312,7 +2319,6 @@ void QnnEp::QnnNodeComputeInfo::ReleaseStateImpl(OrtNodeComputeInfo* this_ptr, v
   ORT_UNUSED_PARAMETER(compute_state);
 }
 
-
 // Constructor implementation
 QnnEp::GenieNodeComputeInfo::GenieNodeComputeInfo(QnnEp& ep,
                                                   std::shared_ptr<GenieNodeBuilder> builder)
@@ -2324,8 +2330,8 @@ QnnEp::GenieNodeComputeInfo::GenieNodeComputeInfo(QnnEp& ep,
 }
 
 OrtStatus* QnnEp::GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_ptr,
-                                                 OrtNodeComputeContext* compute_context,
-                                                 void** compute_state) {
+                                                        OrtNodeComputeContext* compute_context,
+                                                        void** compute_state) {
   ORT_UNUSED_PARAMETER(this_ptr);
 
   auto* node_compute_info = static_cast<GenieNodeComputeInfo*>(this_ptr);
@@ -2341,16 +2347,16 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this
 
   GenieDlcConfig_Handle_t dlcConfigHandle = nullptr;
   if (st->api->DlcConfig_create(builder->dlc_path.c_str(), nullptr, &dlcConfigHandle) != 0) {
-      delete st;
-      return ep.ort_api.CreateStatus(ORT_EP_FAIL, "Error creating DLC Config");
+    delete st;
+    return ep.ort_api.CreateStatus(ORT_EP_FAIL, "Error creating DLC Config");
   }
   st->dlcConfigHandle = dlcConfigHandle;
 
   // Genie DLC Create
   GenieDlc_Handle_t genieDlcHandle;
   if (st->api->Dlc_create(dlcConfigHandle, &genieDlcHandle) != 0) {
-      delete st;
-      return ep.ort_api.CreateStatus(ORT_EP_FAIL, "Error creating DLC");
+    delete st;
+    return ep.ort_api.CreateStatus(ORT_EP_FAIL, "Error creating DLC");
   }
   st->dlcHandle = genieDlcHandle;
 
@@ -2365,8 +2371,8 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this
       if (entry.is_regular_file()) {
         std::string filename = entry.path().filename().string();
         // Check if filename matches pattern tmp**.json
-        if (filename.size() >= 8 && // "tmp" + some random number + ".json"
-            filename.substr(0, 3) == "tmp" && 
+        if (filename.size() >= 8 &&  // "tmp" + some random number + ".json"
+            filename.substr(0, 3) == "tmp" &&
             filename.substr(filename.size() - 5) == ".json") {
           extension_path = entry.path().string();
           found_extension = true;
@@ -2391,29 +2397,31 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this
     }
   }
   std::string json_config =
-    "{\n"
-    "    \"lm-executor\": {\n"
-    "        \"version\": 1,\n"
-    "        \"engine\": {\n"
-    "            \"version\": 1,\n"
-    "            \"backend\": {\n"
-    "                \"version\": 1,\n"
-    "                \"extensions\": \"" + escaped_extension_path + "\"\n"
-    "            }\n"
-    "        }\n"
-    "    }\n"
-    "}";
+      "{\n"
+      "    \"lm-executor\": {\n"
+      "        \"version\": 1,\n"
+      "        \"engine\": {\n"
+      "            \"version\": 1,\n"
+      "            \"backend\": {\n"
+      "                \"version\": 1,\n"
+      "                \"extensions\": \"" +
+      escaped_extension_path +
+      "\"\n"
+      "            }\n"
+      "        }\n"
+      "    }\n"
+      "}";
   GenieNodeConfig_Handle_t cfg = nullptr;
   if (st->api->NodeConfig_createFromDlc(genieDlcHandle, "default", json_config.c_str(), &cfg) != 0) {
-      delete st;
-      return ep.ort_api.CreateStatus(ORT_EP_FAIL, "Error creating Node config from dlc");
+    delete st;
+    return ep.ort_api.CreateStatus(ORT_EP_FAIL, "Error creating Node config from dlc");
   }
   st->config = cfg;
 
   GenieLog_Handle_t gLogger = nullptr;
   const GenieLogConfig_Handle_t cfgHandle = nullptr;
-  const GenieLog_Callback_t     cb        = nullptr;
-  const GenieLog_Level_t        level     = ep.genie_log_level_;
+  const GenieLog_Callback_t cb = nullptr;
+  const GenieLog_Level_t level = ep.genie_log_level_;
 
   if (st->api->Log_create(cfgHandle, cb, level, &gLogger) != 0) {
     st->api->NodeConfig_free(cfg);
@@ -2432,20 +2440,20 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this
   // 3) Create GenieNode (node)
   GenieNode_Handle_t dlg = nullptr;
   if (st->api->Node_create(cfg, &dlg) != 0) {
-      st->api->NodeConfig_free(cfg);
-      delete st;
-      return ep.ort_api.CreateStatus(ORT_EP_FAIL, "Error creating node");
+    st->api->NodeConfig_free(cfg);
+    delete st;
+    return ep.ort_api.CreateStatus(ORT_EP_FAIL, "Error creating node");
   }
   st->node = dlg;
-  
+
   *compute_state = reinterpret_cast<void*>(st);
 
   return nullptr;
 }
 
 OrtStatus* QnnEp::GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr,
-                                             void* compute_state,
-                                             OrtKernelContext* kernel_context) {
+                                                    void* compute_state,
+                                                    OrtKernelContext* kernel_context) {
   auto* node_compute_info = static_cast<GenieNodeComputeInfo*>(this_ptr);
   auto& ep = node_compute_info->ep;
   auto* state = reinterpret_cast<GenieNodeState*>(compute_state);
@@ -2453,7 +2461,7 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr
 
   GenieNodeState* st = reinterpret_cast<GenieNodeState*>(state);
   auto ort_api = &(ep.ort_api);
-  
+
   if (!st) return ort_api->CreateStatus(ORT_EP_FAIL, "Null GenieNodeState");
   if (!st->api) return ort_api->CreateStatus(ORT_EP_FAIL, "Null GenieApi");
   if (!st->node) return ort_api->CreateStatus(ORT_EP_FAIL, "Null GenieDialog node handle");
@@ -2466,7 +2474,7 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr
     // Now reset the value, to prevent repeated rewind
     ep.genie_kv_cache_rewind_.store(1, std::memory_order_release);
   }
-    
+
   // 1) Set inputs
   for (size_t i = 0; i < st->num_inputs; ++i) {
     const OrtValue* in_val = nullptr;
@@ -2488,13 +2496,13 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr
     ort_api->GetDimensions(info, dims.data(), dim_count);
     std::string dimString = "";
     size_t numElem = 1;
-    for(auto d: dims) {
+    for (auto d : dims) {
       numElem *= d;
-      dimString +=  std::to_string(d)+",";
+      dimString += std::to_string(d) + ",";
     }
     dimString.pop_back();
     std::string input_config = "{\"dimensions\": [" + dimString + "],\"data-type\": \"" + GetElementTypeString(elem_type) + "\"}";
-    const char *input_config_ptr = input_config.c_str();
+    const char* input_config_ptr = input_config.c_str();
     size_t byte_size = static_cast<size_t>(GetElementSizeONNX(elem_type) * numElem);
     Genie_Status_t rc = st->api->Node_setData(
         st->node,
@@ -2514,36 +2522,34 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr
 
   // 3) Get outputs
   for (size_t i = 0; i < st->num_outputs; ++i) {
-
-    struct OutputDataInfo{
+    struct OutputDataInfo {
       std::vector<std::byte> outputData;
       std::vector<int64_t> outputShape;
     } outputDataInfo;
 
     GenieNode_IOCallback_t OutputCallback = [](const void* data,
-                            const size_t dataSize,
-                            const char* outputConfig,
-                            const void* userData)
-    {
-        auto* outDatInfo = const_cast<OutputDataInfo*>(static_cast<const OutputDataInfo*>(userData));
-        outDatInfo->outputShape.clear();
-        
-        // Parse outputConfig to fetch output shape
-        std::string outputInfo = outputConfig;
-        size_t firstB = outputInfo.find('[');
-        size_t secondB = outputInfo.find(']');
-        std::string shapeStr = outputInfo.substr(firstB + 1, secondB - firstB - 1);
-        std::stringstream ss(shapeStr);
-        std::string dim;
-        while (std::getline(ss, dim, ',')) {
-          outDatInfo->outputShape.push_back((int64_t)std::stoi(dim));
-        }
-        outDatInfo->outputShape.insert(outDatInfo->outputShape.begin()+1, 1);
+                                               const size_t dataSize,
+                                               const char* outputConfig,
+                                               const void* userData) {
+      auto* outDatInfo = const_cast<OutputDataInfo*>(static_cast<const OutputDataInfo*>(userData));
+      outDatInfo->outputShape.clear();
 
-        // Set appropriate datasize for output buffer
-        outDatInfo->outputData.clear();
-        outDatInfo->outputData.resize(dataSize);
-        std::memcpy(outDatInfo->outputData.data(), data, dataSize);
+      // Parse outputConfig to fetch output shape
+      std::string outputInfo = outputConfig;
+      size_t firstB = outputInfo.find('[');
+      size_t secondB = outputInfo.find(']');
+      std::string shapeStr = outputInfo.substr(firstB + 1, secondB - firstB - 1);
+      std::stringstream ss(shapeStr);
+      std::string dim;
+      while (std::getline(ss, dim, ',')) {
+        outDatInfo->outputShape.push_back((int64_t)std::stoi(dim));
+      }
+      outDatInfo->outputShape.insert(outDatInfo->outputShape.begin() + 1, 1);
+
+      // Set appropriate datasize for output buffer
+      outDatInfo->outputData.clear();
+      outDatInfo->outputData.resize(dataSize);
+      std::memcpy(outDatInfo->outputData.data(), data, dataSize);
     };
 
     Genie_Status_t rc = st->api->Node_getData(
@@ -2551,8 +2557,7 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr
         GENIE_NODE_LM_EXECUTOR_LOGIT_OUTPUT,
         "{}",
         OutputCallback,
-        &outputDataInfo
-      );
+        &outputDataInfo);
 
     OrtValue* out_val = nullptr;
     ort_api->KernelContext_GetOutput(
@@ -2574,10 +2579,8 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr
   return nullptr;
 }
 
-void QnnEp::GenieNodeComputeInfo::ReleaseStateImpl(OrtNodeComputeInfo* this_ptr, 
-                                           void* compute_state) {
-
-
+void QnnEp::GenieNodeComputeInfo::ReleaseStateImpl(OrtNodeComputeInfo* this_ptr,
+                                                   void* compute_state) {
   ORT_UNUSED_PARAMETER(this_ptr);
   auto* st = reinterpret_cast<GenieNodeState*>(compute_state);
   if (!st) return;

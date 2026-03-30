@@ -2180,7 +2180,6 @@ Ort::Status QnnBackendManager::GetPlatformInfo() {
   return Ort::Status();
 }
 
-
 GenieBackendManager::GenieBackendManager(const GenieBackendManagerConfig& config, const Ort::Logger& logger, PrivateConstructorTag)
     : logger_ptr_(&logger), backend_path_(config.backend_path) {
 }
@@ -2213,15 +2212,15 @@ Ort::Status GenieBackendManager::SetupBackend() {
 Ort::Status GenieBackendManager::LoadBackend() {
   std::ostringstream oss;
   oss << "Loading Genie backend library from: "
-        <<  backend_path_.c_str();
+      << backend_path_.c_str();
   ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, oss.str().c_str());
-  
+
   std::string error_msg;
   backend_lib_handle_ = LoadLib(backend_path_.c_str(),
                                 static_cast<int>(DlOpenFlag::DL_NOW) | static_cast<int>(DlOpenFlag::DL_GLOBAL),
                                 error_msg);
 
-  if(nullptr == backend_lib_handle_) {
+  if (nullptr == backend_lib_handle_) {
     std::ostringstream ossMsg;
     ossMsg << "Unable to load Genie backend, error: " << error_msg.c_str();
     MAKE_EP_FAIL(ossMsg.str().c_str());

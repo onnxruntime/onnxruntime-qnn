@@ -542,7 +542,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 };
 
 struct GenieBackendManagerConfig {
-    std::string backend_path;
+  std::string backend_path;
 };
 
 class GenieBackendManager : public std::enable_shared_from_this<GenieBackendManager> {
@@ -566,7 +566,7 @@ class GenieBackendManager : public std::enable_shared_from_this<GenieBackendMana
   // Initializes handles to Genie resources (device, logger, etc.).
   Ort::Status SetupBackend();
 
-  void* GetGenieBackendHandle() {return backend_lib_handle_;}
+  void* GetGenieBackendHandle() { return backend_lib_handle_; }
 
  private:
   Ort::Status LoadBackend();

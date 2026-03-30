@@ -32,18 +32,17 @@ static const std::string EP_CONTEXT_TYPE_BIN = "bin";
 static const std::string EP_CONTEXT_TYPE_DLC = "dlc";
 
 bool GraphHasEpContextNode(const OrtGraph* graph, const OrtApi& ort_api,
-                            const std::string& ep_context_type = EP_CONTEXT_TYPE_BIN);
+                           const std::string& ep_context_type = EP_CONTEXT_TYPE_BIN);
 
 bool GraphHasDlcContextNode(const OrtGraph* graph, const OrtApi& ort_api);
 
 bool IsOrtGraphHasDlcCtxNode(const OrtGraph** graphs, size_t count, const OrtApi& ort_api);
 
 bool IsOrtGraphHasCtxNode(const OrtGraph** graphs, size_t count, const OrtApi& ort_api,
-                        const std::string& ep_context_type = EP_CONTEXT_TYPE_BIN);
-
+                          const std::string& ep_context_type = EP_CONTEXT_TYPE_BIN);
 
 Ort::Status GetEpContextDlcPath(const OrtGraph** graphs, size_t count, const OrtApi& ort_api,
-                            std::string& dlc_path);
+                                std::string& dlc_path);
 
 Ort::Status GetMainContextNode(const OrtGraph** graphs,
                                size_t count,

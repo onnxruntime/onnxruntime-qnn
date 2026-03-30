@@ -32,7 +32,7 @@ class QnnEpFactory;
 namespace qnn {
 class QnnBackendManager;
 class GenieBackendManager;
-}
+}  // namespace qnn
 
 class QnnEp : public OrtEp, public ApiPtrs {
  public:
@@ -128,22 +128,21 @@ class QnnEp : public OrtEp, public ApiPtrs {
     QnnEp& ep;
   };
 
-
   struct GenieNodeComputeInfo : OrtNodeComputeInfo {
-  GenieNodeComputeInfo(QnnEp& ep,
-                                std::shared_ptr<GenieNodeBuilder> builder);
+    GenieNodeComputeInfo(QnnEp& ep,
+                         std::shared_ptr<GenieNodeBuilder> builder);
 
-  static OrtStatus* ORT_API_CALL CreateStateImpl(OrtNodeComputeInfo* this_ptr,
-                                                 OrtNodeComputeContext* compute_context,
-                                                 void** compute_state);
-  static OrtStatus* ORT_API_CALL ComputeImpl(OrtNodeComputeInfo* this_ptr, 
-                                             void* compute_state,
-                                             OrtKernelContext* kernel_context);
-  static void ORT_API_CALL ReleaseStateImpl(OrtNodeComputeInfo* this_ptr, 
-                                            void* compute_state);
+    static OrtStatus* ORT_API_CALL CreateStateImpl(OrtNodeComputeInfo* this_ptr,
+                                                   OrtNodeComputeContext* compute_context,
+                                                   void** compute_state);
+    static OrtStatus* ORT_API_CALL ComputeImpl(OrtNodeComputeInfo* this_ptr,
+                                               void* compute_state,
+                                               OrtKernelContext* kernel_context);
+    static void ORT_API_CALL ReleaseStateImpl(OrtNodeComputeInfo* this_ptr,
+                                              void* compute_state);
 
-  QnnEp& ep;
-  std::shared_ptr<GenieNodeBuilder> builder;
+    QnnEp& ep;
+    std::shared_ptr<GenieNodeBuilder> builder;
   };
 
   // Will return true if any power config options need to be updated
