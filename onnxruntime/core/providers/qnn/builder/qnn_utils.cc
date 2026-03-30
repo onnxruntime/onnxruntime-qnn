@@ -1676,6 +1676,10 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
   }
 }
 
+std::string PtrToString(const void* const ptr) {
+  return (std::ostringstream() << ptr).str();
+}
+
 }  // namespace utils
 }  // namespace qnn
 }  // namespace onnxruntime
