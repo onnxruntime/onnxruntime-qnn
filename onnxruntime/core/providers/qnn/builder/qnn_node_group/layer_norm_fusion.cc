@@ -57,6 +57,10 @@ static std::optional<float> GetConstantFloatScalar(const QnnModelWrapper& qmw,
     return std::nullopt;
   }
 
+  if (tensor_info.GetElementCount() != 1) {
+    return std::nullopt;
+  }
+
   const float* data = ort_value.GetTensorData<float>();
   if (!data) {
     return std::nullopt;
