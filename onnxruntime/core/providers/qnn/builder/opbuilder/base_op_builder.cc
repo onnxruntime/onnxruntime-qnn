@@ -17,6 +17,25 @@ namespace {
 bool IsOptionalOrtNodeUnitIODef(const OrtNodeUnitIODef& node_io_def) {
   return !node_io_def.Exists();
 }
+
+// Mapping of ONNX op types to target QNN data type for int64 tensor casting.
+// Ops not in this map will default to QNN_DATATYPE_INT_32.
+const std::unordered_map<std::string, Qnn_DataType_t>& GetInt64CastTargetTypes() {
+  static const std::unordered_map<std::string, Qnn_DataType_t> op_int64_cast_targets = {
+      {"ScatterND", QNN_DATATYPE_UINT_32}
+  };
+  return op_int64_cast_targets;
+}
+
+Qnn_DataType_t GetInt64CastTargetType(const std::string& op_type) {
+  const auto& cast_targets = GetInt64CastTargetTypes();
+  auto it = cast_targets.find(op_type);
+  if (it != cast_targets.end()) {
+    return it->second;
+  }
+  // Default to INT_32 for ops not in the mapping
+  return QNN_DATATYPE_INT_32;
+}
 }  // namespace
 
 std::string BaseOpBuilder::GetOpBuilderType() const {
@@ -203,18 +222,21 @@ Ort::Status BaseOpBuilder::ProcessInt64Tensors(QnnModelWrapper& qnn_model_wrappe
   if (input_names.size() < 1) {
     return Ort::Status();
   }
+
+  const std::string& op_type = node_unit.OpType();
+  const Qnn_DataType_t target_data_type = GetInt64CastTargetType(op_type);
+
   for (size_t i = 0; i < input_names.size(); i++) {
     if (input_names[i].size() == 0) {
       // For optional inputs, the input_name is empty
       continue;
     }
     auto& input_tensorwrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_names[i]);
-    // Insert cast to int32 if input dtype is int64
+    // Insert cast if input dtype is int64
     if (input_tensorwrapper.GetTensorDataType() == QNN_DATATYPE_INT_64) {
       const Qnn_TensorType_t tensor_type = QNN_TENSOR_TYPE_NATIVE;
       const std::string cast_output_name = utils::UniqueNameGenerator().New(input_names[i], "_cast_int32");
       if (!qnn_model_wrapper.IsQnnTensorWrapperExist(cast_output_name)) {
-        Qnn_DataType_t qnn_data_type = QNN_DATATYPE_INT_32;
         const auto& input_i = node_unit.Inputs()[i];
         std::vector<uint32_t> output_shape;
         RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_i.shape, output_shape),
@@ -223,7 +245,7 @@ Ort::Status BaseOpBuilder::ProcessInt64Tensors(QnnModelWrapper& qnn_model_wrappe
                                                       input_names[i],
                                                       cast_output_name,
                                                       tensor_type,
-                                                      qnn_data_type,
+                                                      target_data_type,
                                                       QnnQuantParamsWrapper(),
                                                       std::move(output_shape),
                                                       false));
