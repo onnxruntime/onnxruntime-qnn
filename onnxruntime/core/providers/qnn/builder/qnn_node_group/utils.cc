@@ -3,6 +3,8 @@
 
 #include "core/providers/qnn/builder/qnn_node_group/utils.h"
 
+#include <algorithm>
+#include <cstring>
 #include <gsl/gsl>
 #include <cstdint>
 #include <optional>
@@ -15,6 +17,58 @@
 
 namespace onnxruntime {
 namespace qnn {
+
+std::optional<std::vector<uint32_t>> GetReduceAxes(const QnnModelWrapper& qmw,
+                                                   const OrtNodeUnit& node_unit) {
+  const auto& inputs = node_unit.Inputs();
+  std::vector<uint32_t> input_shape;
+  if (!qmw.GetOnnxShape(inputs[0].shape, input_shape)) {
+    return std::nullopt;
+  }
+  const size_t input_rank = input_shape.size();
+
+  std::vector<int64_t> raw_axes;
+  OrtNodeAttrHelper node_helper(node_unit);
+
+  const int opset = node_unit.SinceVersion();
+  if (opset < 18) {
+    // Axes is an attribute.
+    raw_axes = node_helper.Get("axes", raw_axes);
+  } else if (inputs.size() > 1) {
+    // Axes is input[1] initializer.
+    const std::string& axes_input_name = inputs[1].name;
+    if (!qmw.IsConstantInput(axes_input_name)) {
+      return std::nullopt;
+    }
+    const auto* axes_tensor = qmw.GetConstantTensor(axes_input_name);
+    if (!axes_tensor) {
+      return std::nullopt;
+    }
+    std::vector<uint8_t> axes_bytes;
+    if (!qmw.UnpackInitializerData(axes_tensor, axes_bytes).IsOK()) {
+      return std::nullopt;
+    }
+    raw_axes.resize(axes_bytes.size() / sizeof(int64_t));
+    std::memcpy(raw_axes.data(), axes_bytes.data(), axes_bytes.size());
+  }
+
+  // Normalize to positive values.
+  std::vector<uint32_t> axes;
+  axes.reserve(raw_axes.size());
+  for (int64_t ax : raw_axes) {
+    int64_t positive_ax = (ax < 0) ? (ax + static_cast<int64_t>(input_rank)) : ax;
+    if (positive_ax < 0 || static_cast<size_t>(positive_ax) >= input_rank) {
+      return std::nullopt;
+    }
+    axes.push_back(static_cast<uint32_t>(positive_ax));
+  }
+
+  // Sort and deduplicate.
+  std::sort(axes.begin(), axes.end());
+  axes.erase(std::unique(axes.begin(), axes.end()), axes.end());
+
+  return axes;
+}
 
 const OrtNodeUnit* GetOnlyChildOfType(const QnnModelWrapper& /*qnn_model_wrapper*/,
                                       const OrtNodeUnit& parent_node_unit,
