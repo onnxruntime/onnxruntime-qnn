@@ -753,19 +753,41 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   // 8 threads provided the best initialization performance from testing
   // Default to max number of supported threads if less than 8. Otherwise default to 8 threads
   uint8_t def_num_graph_prepare_threads = max_num_supported_threads > 8 ? 8 : max_num_supported_threads;
+
+  auto is_valid_number = [this](const std::string& s) {
+    if (s[0] == '0') {
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_ERROR,
+                  "num_graph_prepare_threads cannot be 0 or start with 0");
+      return false;
+    }
+
+    auto it = std::find_if(s.begin(), s.end(), [](const char c) {
+      return !std::isdigit(c);
+    });
+
+    if (it == s.end()) {
+      return true;
+    }
+
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_ERROR,
+                "num_graph_prepare_threads must be a positive number");
+    return true;
+  };
 #endif
 
-  if (!num_graph_prepare_threads_str.empty()) {
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  if (!num_graph_prepare_threads_str.empty() && is_valid_number(num_graph_prepare_threads_str)) {
     uint8_t value = static_cast<uint8_t>(std::stoi(num_graph_prepare_threads_str));
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_VERBOSE,
-                (" User specified num_graph_prepare_threads: " + std::to_string(value)).c_str());
+                ("User specified num_graph_prepare_threads: " + std::to_string(value)).c_str());
 
     if (value > max_num_supported_threads) {
       ORT_CXX_LOG(logger_,
                   ORT_LOGGING_LEVEL_WARNING,
-                  ("Specified number of graph prepare threads (" + std::to_string(value) + ") is outside of the allowable range [1," + std::to_string(max_num_supported_threads) + "]. Defaulting to " + std::to_string(def_num_graph_prepare_threads) + "threads.").c_str());
+                  ("Specified number of graph prepare threads (" + std::to_string(value) + ") is outside of the allowable range [1," + std::to_string(max_num_supported_threads) + "]. Defaulting to " + std::to_string(def_num_graph_prepare_threads) + " threads.").c_str());
       num_graph_prepare_threads_ = def_num_graph_prepare_threads;
     } else {
       num_graph_prepare_threads_ = value;
@@ -775,12 +797,14 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("Using default number threads for graph prepare: " + std::to_string(def_num_graph_prepare_threads)).c_str());
     num_graph_prepare_threads_ = def_num_graph_prepare_threads;
+  }
 #else
+  if (!num_graph_prepare_threads_str.empty()) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 "Multi-threaded graph compilation is currently only supported on Windows devices. Feature will not be enabled.");
-#endif  // _WIN32 && (defined(__aarch64__) || defined(_M_ARM64))
   }
+#endif  // _WIN32 && (defined(__aarch64__) || defined(_M_ARM64))
 
   // Check for conflicts
   if (qnn_context_embed_mode_ && share_ep_contexts_) {
@@ -1913,7 +1937,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
         *res = qnn_model->FinalizeGraphs(logger);
       });
     }
-    tp.WaitForAllJobsToFinish();
+    tp.WaitForQueuedJobsToFinish();
     auto end = std::chrono::high_resolution_clock::now();
     auto total_finalize_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
 

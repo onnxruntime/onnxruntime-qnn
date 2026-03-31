@@ -205,7 +205,7 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 |`"num_graph_prepare_threads"`|Description|
 |---|---|
-|Number (string)|The number of threads to use during model compilation. Must be greater than 1 and no more than the maximum supported concurrency threads as [reported by the hardware](https://en.cppreference.com/w/cpp/thread/thread/hardware_concurrency.html).<br><br>An invalid value will result in a warning and default behavior.<br><br>Defaults to 8 or the maximum supported threads, whichever is lower.<br><br><b>Will only take effect if the model is partitioned into 5+ subgraphs</b>|
+|Number (string)|The number of threads to use during model compilation. Must be greater than 1 and no more than the maximum supported concurrency threads as [reported by the hardware](https://en.cppreference.com/w/cpp/thread/thread/hardware_concurrency.html).<br><br>An invalid value will result in a warning and default behavior.<br><br>Defaults to 8 or the maximum supported threads, whichever is lower.<br><br><b>Will only take effect if the model is partitioned into 5+ subgraphs</b><br><br><b>Currently only supported on Windows ARM64 devices</b>|
 
 For more information, see the [Parallel Graph Preparation](#parallel-graph-preparation) section below.
 
@@ -656,18 +656,18 @@ The process to prepare a model to run on the HTP backend is to do the following 
 2. Finalization into a HTP-friendly binary
 3. Input/Ouput tensor setup
 
-For a typical model, this is done sequentially. However, for larger models, such as LLMS, one model may contain multiple subgraphs of substantial size. If done sequentially, the total time to prepare a model may seem like an eternity, thus resulting in the need for parallelization.
+For a typical model, this is done sequentially. However, for larger models, such as LLMs, one model may contain multiple subgraphs of substantial size. If done sequentially, the total time to prepare a model may seem like an eternity, thus resulting in the need for parallelization.
 
 Parallel graph preparation was implemented to parallelize the prepare process as much as possible, saving a considerable amount of time. The QNN API currently only supports asynchronous graph finalization. As such, parallelized prepare is as follows:
 1. Create and start a thread pool
 2. For each subgraph, compose the QNN graph
 3. For each subgraph, submit a job to finalize the QNN graph into the thread pool
 4. Wait for all jobs to finish
-6. For each subgraph, setup the I/O tensors
+5. For each subgraph, setup the I/O tensors
 
 ### General Usage
 To utilize this feature, set the value of `num_graph_prepare_threads` to the desired number of threads as shown in the example code below:
-```
+```python
 # Python on Windows on Snapdragon device
 import onnxruntime as ort
 import onnxruntime_qnn as qnn_ep

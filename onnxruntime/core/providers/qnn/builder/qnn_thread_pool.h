@@ -21,6 +21,8 @@ class QnnJobThreadPool {
   class QnnJobThread {
    public:
     QnnJobThread(uint8_t thread_num, QnnJobThreadPool* thread_pool_ptr);
+    QnnJobThread::QnnJobThread(QnnJobThread&&) = delete;
+    QnnJobThread& operator=(QnnJobThread&&) = delete;
 
     ~QnnJobThread();
 
@@ -53,7 +55,7 @@ class QnnJobThreadPool {
       thread_activity_change_cv_.notify_all();
     }
 
-    bool IsStopped() {
+    bool IsStopped() const {
       std::unique_lock<std::mutex> lock(thread_state_mutex_);
       return thread_stopped_;
     }
@@ -66,7 +68,7 @@ class QnnJobThreadPool {
     std::condition_variable thread_activity_change_cv_;
 
     std::mutex thread_activity_mutex_;
-    std::mutex thread_state_mutex_;
+    mutable std::mutex thread_state_mutex_;
     bool thread_active_ = false;
     bool thread_stopped_ = true;
 
@@ -79,28 +81,26 @@ class QnnJobThreadPool {
   ~QnnJobThreadPool();
 
   // Creates and starts all job threads
-  void Start();
+  void Start() const;
 
   // Stops all job threads
-  void Stop();
+  void Stop() const;
 
   // Waits for job queue to empty out and all active jobs to finish running
-  void WaitForAllJobsToFinish();
+  void WaitForQueuedJobsToFinish();
 
   // Submits job to queue but job may sit in queue until threadpool starts
   // Notifies one waiting job thread
   void SubmitJob(std::function<void()> job);
 
  private:
-  void StartJobThread();
-
   // Function to be called by job thread waiting for a new job to be available
   // Check interval is currently 200ms
   // thread_num - job thread identifier for debugging purposes
   // exit_predicate - a function that returns true when this function
   //                  must exit regardless of job availability
   // Returns when a job is available or if the exit predicate is met
-  void WaitForJobQueueUpdate(const uint8_t thread_num, std::function<bool()>& exit_predicate);
+  void WaitForJobQueueUpdate(const uint8_t thread_num, const std::function<bool()>& exit_predicate);
 
   // Returns a job if one is available, nullptr otherwise
   std::function<void()> GetJobFromQueueIfExists(const uint8_t thread_num);
@@ -111,7 +111,7 @@ class QnnJobThreadPool {
     job_started_cv_.notify_all();
   }
 
-  bool IsRunning() {
+  bool IsRunning() const {
     std::unique_lock<std::mutex> lock(state_mutex_);
     return running_;
   }
@@ -122,13 +122,10 @@ class QnnJobThreadPool {
   std::mutex queue_mutex_;
   std::queue<std::function<void()>> job_queue_;
 
-  std::mutex thread_pool_mutex_;
   std::vector<std::unique_ptr<QnnJobThread>> thread_pool_;
 
-  const uint8_t max_num_threads_;
-
-  std::mutex state_mutex_;
-  bool running_;
+  mutable std::mutex state_mutex_;
+  mutable bool running_;
 };
 
 }  // namespace thread

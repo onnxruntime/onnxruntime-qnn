@@ -26,11 +26,13 @@ QnnJobThreadPool::QnnJobThread::~QnnJobThread() {
 
 void QnnJobThreadPool::QnnJobThread::Start() {
   // Only created thread if no thread exists and the current state is stopped
-  if (!thread_ && IsStopped()) {
+  {
     std::unique_lock<std::mutex> lock(thread_state_mutex_);
-    thread_stopped_ = false;
-  } else {
-    return;
+    if (!thread_ && thread_stopped_) {
+      thread_stopped_ = false;
+    } else {
+      return;
+    }
   }
 
   thread_ = std::make_unique<std::thread>([this]() {
@@ -56,14 +58,16 @@ void QnnJobThreadPool::QnnJobThread::Start() {
 
 void QnnJobThreadPool::QnnJobThread::Stop() {
   // Only stop if the thread exists and current state is running
-  if (thread_ && !IsStopped()) {
-    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("QnnJobThread: Thread " + std::to_string(thread_num_) + " stopping").c_str());
+  {
     std::unique_lock<std::mutex> lock(thread_state_mutex_);
-    thread_stopped_ = true;
-  } else {
-    return;
+    if (thread_ && !thread_stopped_) {
+      ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
+                  ORT_LOGGING_LEVEL_VERBOSE,
+                  ("QnnJobThread: Thread " + std::to_string(thread_num_) + " stopping").c_str());
+      thread_stopped_ = true;
+    } else {
+      return;
+    }
   }
 
   thread_->join();
@@ -84,31 +88,37 @@ void QnnJobThreadPool::QnnJobThread::WaitUntilInactive() {
 }
 
 QnnJobThreadPool::QnnJobThreadPool(uint8_t max_num_threads)
-    : max_num_threads_(max_num_threads), running_(false) {
-  thread_pool_.reserve(max_num_threads);
+    : thread_pool_(max_num_threads), running_(false) {
+  for (uint8_t thread_num = 0; thread_num < max_num_threads; thread_num++) {
+    thread_pool_[thread_num] = std::make_unique<QnnJobThread>(thread_num, this);
+  }
 }
 
 QnnJobThreadPool::~QnnJobThreadPool() {
-  Stop();
-  WaitForAllJobsToFinish();
+  try {
+    Stop();
+  } catch (const std::exception& e) {
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
+                ORT_LOGGING_LEVEL_ERROR,
+                ("QnnJobThreadPool: Error on destruction: " + std::string(e.what())).c_str());
+  }
 }
 
-void QnnJobThreadPool::Start() {
+void QnnJobThreadPool::Start() const {
   if (IsRunning()) {
     return;
   }
 
   ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, "QnnJobThreadPool: Start");
   std::unique_lock<std::mutex> s_lock(state_mutex_);
-  std::unique_lock<std::mutex> tp_lock(thread_pool_mutex_);
   running_ = true;
 
-  while (thread_pool_.size() < max_num_threads_) {
-    StartJobThread();
+  for (auto& thread : thread_pool_) {
+    thread->Start();
   }
 }
 
-void QnnJobThreadPool::Stop() {
+void QnnJobThreadPool::Stop() const {
   if (!IsRunning()) {
     return;
   }
@@ -122,7 +132,7 @@ void QnnJobThreadPool::Stop() {
   }
 }
 
-void QnnJobThreadPool::WaitForAllJobsToFinish() {
+void QnnJobThreadPool::WaitForQueuedJobsToFinish() {
   ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
               ORT_LOGGING_LEVEL_VERBOSE,
               "QnnJobThreadPool: Waiting for all jobs to finish");
@@ -136,8 +146,8 @@ void QnnJobThreadPool::WaitForAllJobsToFinish() {
     });
   }
 
-  for (auto& t : thread_pool_) {
-    t->WaitUntilInactive();
+  for (auto& thread : thread_pool_) {
+    thread->WaitUntilInactive();
   }
 
   ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, "QnnJobThreadPool: Done waiting on all jobs");
@@ -154,14 +164,7 @@ void QnnJobThreadPool::SubmitJob(std::function<void()> job) {
   job_submitted_cv_.notify_one();
 }
 
-void QnnJobThreadPool::StartJobThread() {
-  uint8_t thread_num = static_cast<uint8_t>(thread_pool_.size());
-  auto job_thread = std::make_unique<QnnJobThread>(thread_num, this);
-  job_thread->Start();
-  thread_pool_.push_back(std::move(job_thread));
-}
-
-void QnnJobThreadPool::WaitForJobQueueUpdate(const uint8_t thread_num, std::function<bool()>& exit_predicate) {
+void QnnJobThreadPool::WaitForJobQueueUpdate(const uint8_t thread_num, const std::function<bool()>& exit_predicate) {
   std::unique_lock<std::mutex> lock(queue_mutex_);
   ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
               ORT_LOGGING_LEVEL_VERBOSE,

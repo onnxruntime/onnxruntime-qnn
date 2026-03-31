@@ -131,7 +131,6 @@ class QnnEp : public OrtEp, public ApiPtrs {
   typedef struct GraphFinalizationInfo {
     std::string model_name;
     std::unique_ptr<qnn::QnnModel> model;
-    std::unique_ptr<std::thread> thread;
     Ort::Status result;
     size_t graph_idx;
 
