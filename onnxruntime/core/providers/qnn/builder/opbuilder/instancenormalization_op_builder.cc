@@ -97,7 +97,7 @@ Ort::Status InstanceNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrap
       input0_info.shape.size() == 3 && input0_info.shape[0] != 1) {
     const std::string& orig_input0_name = inputs[0].name;
     const std::string op_input0_name = input0_info.is_initializer ? orig_input0_name
-                                                                  : utils::GetUniqueName(orig_input0_name, "_reshape");
+                                                                  : utils::UniqueNameGenerator().New(orig_input0_name, "_reshape");
     input_names.push_back(op_input0_name);
 
     std::vector<uint8_t> initializer_data;
@@ -164,7 +164,7 @@ Ort::Status InstanceNormOpBuilder::ProcessScale(QnnModelWrapper& qnn_model_wrapp
     const Qnn_QuantizeParams_t& quant_param = tensor_info.quant_param.Get();
     if (tensor_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8) {
       std::string convert_input_name = input_names.back();
-      std::string convert_output_name = utils::GetUniqueName(convert_input_name, "_convert_s8_to_u8");
+      std::string convert_output_name = utils::UniqueNameGenerator().New(convert_input_name, "_convert_s8_to_u8");
       RETURN_IF_ERROR(utils::InsertConvertOp(
           qnn_model_wrapper,
           convert_input_name,
@@ -225,7 +225,7 @@ Ort::Status InstanceNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& 
   //
 
   const std::string& orig_output_name = outputs[0].name;
-  std::string op_output_name = utils::GetUniqueName(orig_output_name, "_reshape");
+  std::string op_output_name = utils::UniqueNameGenerator().New(orig_output_name, "_reshape");
 
   std::vector<uint32_t> op_output_shape = {
       output_info.shape[0],  // N
@@ -237,7 +237,7 @@ Ort::Status InstanceNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& 
   QnnTensorWrapper output_tensorwrapper(op_output_name, QNN_TENSOR_TYPE_NATIVE, output_info.qnn_data_type,
                                         output_info.quant_param.Copy(), std::vector<uint32_t>(op_output_shape));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit),
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 GetQnnOpType(node_unit.OpType()),
                                                 std::move(input_names),

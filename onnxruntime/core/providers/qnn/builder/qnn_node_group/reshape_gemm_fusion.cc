@@ -162,7 +162,7 @@ bool CheckShape(const QnnModelWrapper& qnn_model_wrapper, const OrtNode& reshape
 Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& reshape_node_unit,
                                   const OrtNodeUnit& gemm_node_unit, const Ort::Logger& logger, bool validate) {
   assert(reshape_node_unit.OpType() == "Reshape" && gemm_node_unit.OpType() == "Gemm");
-  const auto& node_name = utils::GetUniqueName(gemm_node_unit);
+  const auto& node_name = utils::UniqueNameGenerator().New(gemm_node_unit);
   const OrtNodeUnitIODef& input_def = reshape_node_unit.Inputs()[0];
   const OrtNodeUnitIODef& weight_def = gemm_node_unit.Inputs()[1];
   const OrtNodeUnitIODef* bias_def_ptr = nullptr;

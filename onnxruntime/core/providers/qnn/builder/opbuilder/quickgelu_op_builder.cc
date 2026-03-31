@@ -44,16 +44,16 @@ Ort::Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
   const bool skip_alpha_mul = std::abs(alpha - 1.0f) < alpha_epsilon;
 
   std::string sigmoid_input_name;
-  std::string sigmoid_output_name = utils::GetUniqueName(node_unit.Name() + "_sigmoid");
+  std::string sigmoid_output_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_sigmoid");
 
   if (skip_alpha_mul) {
     sigmoid_input_name = input_name;
   } else {
-    const std::string alpha_mul_output_name = utils::GetUniqueName(node_unit.Name() + "_alpha_mul");
+    const std::string alpha_mul_output_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_alpha_mul");
     sigmoid_input_name = alpha_mul_output_name;
 
     // The alpha tensor data type should match the input data type for element-wise multiply
-    std::string alpha_tensor_name = utils::GetUniqueName(node_unit.Name() + "_alpha");
+    std::string alpha_tensor_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_alpha");
     std::vector<uint32_t> alpha_shape{1};
     Qnn_DataType_t alpha_qnn_data_type = input_info.qnn_data_type;
     std::vector<uint8_t> alpha_data;
@@ -84,7 +84,7 @@ Ort::Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
                   "Failed to add alpha_mul_output tensor.");
 
     // Step 1: Create Mul node for alpha * x
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit.Name() + "_alpha_mul"),
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit.Name() + "_alpha_mul"),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_ELEMENT_WISE_MULTIPLY,
                                                   {alpha_tensor_name, input_name},
@@ -112,7 +112,7 @@ Ort::Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
                 "Failed to add output tensor.");
 
   // Step 2: Create Sigmoid node for sigmoid(alpha * x) or sigmoid(x)
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit.Name() + "_sigmoid"),
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit.Name() + "_sigmoid"),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_SIGMOID,
                                                 {sigmoid_input_name},
@@ -122,7 +122,7 @@ Ort::Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
                 "Failed to create sigmoid node.");
 
   // Step 3: Create Mul node for x * sigmoid(alpha * x) or x * sigmoid(x)
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit.Name() + "_final_mul"),
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit.Name() + "_final_mul"),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_MULTIPLY,
                                                 {input_name, sigmoid_output_name},

@@ -416,6 +416,7 @@ void InferenceModel(const std::string& model_data,
 
   session_options.SetLogId(log_id);
   session_options.SetLogSeverityLevel(log_severity);
+
   if (QNNTestEnvironment::GetInstance().verbose()) {
     session_options.SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
   }

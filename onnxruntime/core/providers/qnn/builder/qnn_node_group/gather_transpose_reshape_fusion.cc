@@ -225,9 +225,9 @@ static Ort::Status CreateOrValidateOnQnn(
   const uint32_t factor0 = (index_pattern == GatherIndicesPattern::kColMajor) ? u_idx1 : u_idx0;
   const uint32_t factor1 = (index_pattern == GatherIndicesPattern::kColMajor) ? u_idx0 : u_idx1;
 
-  const std::string r1_out = utils::GetUniqueName(*gather, "_gtr_r1_out");
-  const std::string col_t_out = utils::GetUniqueName(*gather, "_gtr_col_t_out");
-  const std::string main_t_out = utils::GetUniqueName(*gather, "_gtr_main_t_out");
+  const std::string r1_out = utils::UniqueNameGenerator().New(*gather, "_gtr_r1_out");
+  const std::string col_t_out = utils::UniqueNameGenerator().New(*gather, "_gtr_col_t_out");
+  const std::string main_t_out = utils::UniqueNameGenerator().New(*gather, "_gtr_main_t_out");
 
   // Reshape rank-5 input to rank-4: [d0,d1,d2,d3,d4] -> [merged, d3, factor0, factor1]
   const std::vector<uint32_t> r1_shape = {merged, d3, factor0, factor1};

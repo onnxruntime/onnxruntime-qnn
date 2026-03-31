@@ -249,7 +249,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
 
   if (is_4d_input) {
     // Transpose from [B, NH, S, HS] to [B, S, NH, HS]
-    normalized_tensor = utils::GetUniqueName(node_unit, "_transpose_input");
+    normalized_tensor = utils::UniqueNameGenerator().New(node_unit, "_transpose_input");
     std::vector<uint32_t> transpose_perm = {0, 2, 1, 3};
     RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(
         node_unit.Index(), current_tensor, normalized_tensor,
@@ -258,7 +258,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
         false, false));
   } else {
     // Reshape from [B, S, NH*HS] to [B, S, NH, HS]
-    normalized_tensor = utils::GetUniqueName(node_unit, "_reshape_input");
+    normalized_tensor = utils::UniqueNameGenerator().New(node_unit, "_reshape_input");
     RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(
         current_tensor, normalized_tensor,
         input_shape, normalized_shape,
@@ -270,7 +270,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
   // x_rotate = x[..., :rotary_dim]
   // x_tail = x[..., rotary_dim:] (if rotary_dim < head_size)
 
-  std::string x_rotate_name = utils::GetUniqueName(node_unit, "_x_rotate");
+  std::string x_rotate_name = utils::UniqueNameGenerator().New(node_unit, "_x_rotate");
   std::vector<uint32_t> x_rotate_shape = {batch_size, seq_len, num_heads_val, rotary_dim};
 
   // Create StridedSlice for x_rotate: slice last dimension [0:rotary_dim]
@@ -314,7 +314,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
 
     // Create StridedSlice node
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::GetUniqueName(node_unit, "_slice_rotate"),
+                      utils::UniqueNameGenerator().New(node_unit, "_slice_rotate"),
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_STRIDED_SLICE,
                       std::move(slice_input_names),
@@ -327,7 +327,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
   // Create x_tail if rotary_dim < head_size
   std::string x_tail_name;
   if (rotary_dim < head_size) {
-    x_tail_name = utils::GetUniqueName(node_unit, "_x_tail");
+    x_tail_name = utils::UniqueNameGenerator().New(node_unit, "_x_tail");
     std::vector<uint32_t> x_tail_shape = {batch_size, seq_len, num_heads_val, head_size - rotary_dim};
 
     std::vector<std::string> slice_input_names = {normalized_tensor};
@@ -360,7 +360,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
 
     // Create StridedSlice node
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::GetUniqueName(node_unit, "_slice_tail"),
+                      utils::UniqueNameGenerator().New(node_unit, "_slice_tail"),
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_STRIDED_SLICE,
                       std::move(slice_input_names),
@@ -371,8 +371,8 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
   }
 
   // Step 3: Split x_rotate into x1 and x2 based on interleaved flag
-  std::string x1_name = utils::GetUniqueName(node_unit, "_x1");
-  std::string x2_name = utils::GetUniqueName(node_unit, "_x2");
+  std::string x1_name = utils::UniqueNameGenerator().New(node_unit, "_x1");
+  std::string x2_name = utils::UniqueNameGenerator().New(node_unit, "_x2");
   std::vector<uint32_t> x1_x2_shape = {batch_size, seq_len, num_heads_val, rotary_half_dim};
 
   if (interleaved) {
@@ -416,7 +416,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
                     "Failed to add x1 tensor");
 
       RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                        utils::GetUniqueName(node_unit, "_slice_x1"),
+                        utils::UniqueNameGenerator().New(node_unit, "_slice_x1"),
                         QNN_OP_PACKAGE_NAME_QTI_AISW,
                         QNN_OP_STRIDED_SLICE,
                         std::move(slice_input_names),
@@ -465,7 +465,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
                     "Failed to add x2 tensor");
 
       RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                        utils::GetUniqueName(node_unit, "_slice_x2"),
+                        utils::UniqueNameGenerator().New(node_unit, "_slice_x2"),
                         QNN_OP_PACKAGE_NAME_QTI_AISW,
                         QNN_OP_STRIDED_SLICE,
                         std::move(slice_input_names),
@@ -512,7 +512,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
 
     // Create Split node
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::GetUniqueName(node_unit, "_split"),
+                      utils::UniqueNameGenerator().New(node_unit, "_split"),
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_SPLIT,
                       std::move(split_input_names),
@@ -533,7 +533,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
 
     // Gather cos_cache
     {
-      std::string cos_gathered = utils::GetUniqueName(node_unit, "_cos_gathered");
+      std::string cos_gathered = utils::UniqueNameGenerator().New(node_unit, "_cos_gathered");
       std::vector<std::string> gather_input_names = {cos_cache_name, position_ids_name};
       std::vector<std::string> gather_param_names;
 
@@ -555,7 +555,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
                     "Failed to add cos_gathered tensor");
 
       RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                        utils::GetUniqueName(node_unit, "_gather_cos"),
+                        utils::UniqueNameGenerator().New(node_unit, "_gather_cos"),
                         QNN_OP_PACKAGE_NAME_QTI_AISW,
                         QNN_OP_GATHER,
                         std::move(gather_input_names),
@@ -569,7 +569,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
 
     // Gather sin_cache
     {
-      std::string sin_gathered = utils::GetUniqueName(node_unit, "_sin_gathered");
+      std::string sin_gathered = utils::UniqueNameGenerator().New(node_unit, "_sin_gathered");
       std::vector<std::string> gather_input_names = {sin_cache_name, position_ids_name};
       std::vector<std::string> gather_param_names;
 
@@ -589,7 +589,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
                     "Failed to add sin_gathered tensor");
 
       RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                        utils::GetUniqueName(node_unit, "_gather_sin"),
+                        utils::UniqueNameGenerator().New(node_unit, "_gather_sin"),
                         QNN_OP_PACKAGE_NAME_QTI_AISW,
                         QNN_OP_GATHER,
                         std::move(gather_input_names),
@@ -603,8 +603,8 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
   }
 
   // Reshape cos/sin to [B, S, 1, rotary_half_dim] for broadcasting
-  std::string cos_broadcast = utils::GetUniqueName(node_unit, "_cos_broadcast");
-  std::string sin_broadcast = utils::GetUniqueName(node_unit, "_sin_broadcast");
+  std::string cos_broadcast = utils::UniqueNameGenerator().New(node_unit, "_cos_broadcast");
+  std::string sin_broadcast = utils::UniqueNameGenerator().New(node_unit, "_sin_broadcast");
   std::vector<uint32_t> broadcast_shape = {batch_size, seq_len, 1, rotary_half_dim};
 
   // Get cos/sin current shape
@@ -645,7 +645,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
   // imag = sin * x1 + cos * x2
 
   // cos * x1
-  std::string cos_x1 = utils::GetUniqueName(node_unit, "_cos_x1");
+  std::string cos_x1 = utils::UniqueNameGenerator().New(node_unit, "_cos_x1");
   {
     std::vector<std::string> mul_input_names = {cos_broadcast, x1_name};
     QnnTensorWrapper cos_x1_tensor(cos_x1, QNN_TENSOR_TYPE_NATIVE,
@@ -655,7 +655,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
                   "Failed to add cos_x1 tensor");
 
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::GetUniqueName(node_unit, "_mul_cos_x1"),
+                      utils::UniqueNameGenerator().New(node_unit, "_mul_cos_x1"),
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_ELEMENT_WISE_MULTIPLY,
                       std::move(mul_input_names),
@@ -666,7 +666,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
   }
 
   // sin * x2
-  std::string sin_x2 = utils::GetUniqueName(node_unit, "_sin_x2");
+  std::string sin_x2 = utils::UniqueNameGenerator().New(node_unit, "_sin_x2");
   {
     std::vector<std::string> mul_input_names = {sin_broadcast, x2_name};
     QnnTensorWrapper sin_x2_tensor(sin_x2, QNN_TENSOR_TYPE_NATIVE,
@@ -676,7 +676,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
                   "Failed to add sin_x2 tensor");
 
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::GetUniqueName(node_unit, "_mul_sin_x2"),
+                      utils::UniqueNameGenerator().New(node_unit, "_mul_sin_x2"),
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_ELEMENT_WISE_MULTIPLY,
                       std::move(mul_input_names),
@@ -687,7 +687,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
   }
 
   // real = cos * x1 - sin * x2
-  std::string real = utils::GetUniqueName(node_unit, "_real");
+  std::string real = utils::UniqueNameGenerator().New(node_unit, "_real");
   {
     std::vector<std::string> sub_input_names = {cos_x1, sin_x2};
     QnnTensorWrapper real_tensor(real, QNN_TENSOR_TYPE_NATIVE,
@@ -697,7 +697,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
                   "Failed to add real tensor");
 
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::GetUniqueName(node_unit, "_sub_real"),
+                      utils::UniqueNameGenerator().New(node_unit, "_sub_real"),
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_ELEMENT_WISE_SUBTRACT,
                       std::move(sub_input_names),
@@ -708,7 +708,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
   }
 
   // sin * x1
-  std::string sin_x1 = utils::GetUniqueName(node_unit, "_sin_x1");
+  std::string sin_x1 = utils::UniqueNameGenerator().New(node_unit, "_sin_x1");
   {
     std::vector<std::string> mul_input_names = {sin_broadcast, x1_name};
     QnnTensorWrapper sin_x1_tensor(sin_x1, QNN_TENSOR_TYPE_NATIVE,
@@ -718,7 +718,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
                   "Failed to add sin_x1 tensor");
 
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::GetUniqueName(node_unit, "_mul_sin_x1"),
+                      utils::UniqueNameGenerator().New(node_unit, "_mul_sin_x1"),
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_ELEMENT_WISE_MULTIPLY,
                       std::move(mul_input_names),
@@ -729,7 +729,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
   }
 
   // cos * x2
-  std::string cos_x2 = utils::GetUniqueName(node_unit, "_cos_x2");
+  std::string cos_x2 = utils::UniqueNameGenerator().New(node_unit, "_cos_x2");
   {
     std::vector<std::string> mul_input_names = {cos_broadcast, x2_name};
     QnnTensorWrapper cos_x2_tensor(cos_x2, QNN_TENSOR_TYPE_NATIVE,
@@ -739,7 +739,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
                   "Failed to add cos_x2 tensor");
 
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::GetUniqueName(node_unit, "_mul_cos_x2"),
+                      utils::UniqueNameGenerator().New(node_unit, "_mul_cos_x2"),
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_ELEMENT_WISE_MULTIPLY,
                       std::move(mul_input_names),
@@ -750,7 +750,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
   }
 
   // imag = sin * x1 + cos * x2
-  std::string imag = utils::GetUniqueName(node_unit, "_imag");
+  std::string imag = utils::UniqueNameGenerator().New(node_unit, "_imag");
   {
     std::vector<std::string> add_input_names = {sin_x1, cos_x2};
     QnnTensorWrapper imag_tensor(imag, QNN_TENSOR_TYPE_NATIVE,
@@ -760,7 +760,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
                   "Failed to add imag tensor");
 
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::GetUniqueName(node_unit, "_add_imag"),
+                      utils::UniqueNameGenerator().New(node_unit, "_add_imag"),
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_ELEMENT_WISE_ADD,
                       std::move(add_input_names),
@@ -771,19 +771,19 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
   }
 
   // Step 6: Recombine real and imag based on interleaved flag
-  std::string x_rotated = utils::GetUniqueName(node_unit, "_x_rotated");
+  std::string x_rotated = utils::UniqueNameGenerator().New(node_unit, "_x_rotated");
   std::vector<uint32_t> x_rotated_shape = {batch_size, seq_len, num_heads_val, rotary_dim};
 
   if (interleaved) {
     // Interleave real and imag: stack along new axis then reshape
     // Stack to create [..., rotary_half_dim, 2]
-    std::string stacked = utils::GetUniqueName(node_unit, "_stacked");
+    std::string stacked = utils::UniqueNameGenerator().New(node_unit, "_stacked");
     std::vector<uint32_t> stacked_shape = {batch_size, seq_len, num_heads_val, rotary_half_dim, 2};
 
     // QNN doesn't have a direct Stack op, so we'll use Concat with Reshape
     // First reshape real and imag to add a dimension
-    std::string real_reshaped = utils::GetUniqueName(node_unit, "_real_reshaped");
-    std::string imag_reshaped = utils::GetUniqueName(node_unit, "_imag_reshaped");
+    std::string real_reshaped = utils::UniqueNameGenerator().New(node_unit, "_real_reshaped");
+    std::string imag_reshaped = utils::UniqueNameGenerator().New(node_unit, "_imag_reshaped");
     std::vector<uint32_t> reshaped_for_stack = {batch_size, seq_len, num_heads_val, rotary_half_dim, 1};
 
     RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(
@@ -818,7 +818,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
                     "Failed to add stacked tensor");
 
       RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                        utils::GetUniqueName(node_unit, "_concat_stack"),
+                        utils::UniqueNameGenerator().New(node_unit, "_concat_stack"),
                         QNN_OP_PACKAGE_NAME_QTI_AISW,
                         QNN_OP_CONCAT,
                         std::move(concat_input_names),
@@ -855,7 +855,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
                   "Failed to add x_rotated tensor");
 
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::GetUniqueName(node_unit, "_concat_rotated"),
+                      utils::UniqueNameGenerator().New(node_unit, "_concat_rotated"),
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_CONCAT,
                       std::move(concat_input_names),
@@ -868,7 +868,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
   // Step 7: Concatenate x_rotated with x_tail (if exists)
   std::string output_normalized = x_rotated;
   if (rotary_dim < head_size) {
-    output_normalized = utils::GetUniqueName(node_unit, "_output_normalized");
+    output_normalized = utils::UniqueNameGenerator().New(node_unit, "_output_normalized");
     std::vector<std::string> concat_input_names = {x_rotated, x_tail_name};
     std::vector<std::string> concat_param_names;
 
@@ -887,7 +887,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
                   "Failed to add output_normalized tensor");
 
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::GetUniqueName(node_unit, "_concat_tail"),
+                      utils::UniqueNameGenerator().New(node_unit, "_concat_tail"),
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_CONCAT,
                       std::move(concat_input_names),
