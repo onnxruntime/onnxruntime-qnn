@@ -72,6 +72,13 @@ linux_oe_gcc112_toolchain:
   version: 20250402d
   url: http://ort-ep-win-01.na.qualcomm.com:8000/linux-oe-aarch64-gcc11.2-toolchain/linux-oe-aarch64-gcc11.2-toolchain-1-universal-{version}.tar.gz
   sha256: 1031825247827ad60189323aa5530490deae61547f4d9794ef9e0645e9207266
+llvm_linux_x86_64:
+  version: 16.0.4
+  platform_version: ubuntu-22.04
+  url: https://github.com/llvm/llvm-project/releases/download/llvmorg-{version}/clang+llvm-{version}-x86_64-linux-gnu-{platform_version}.tar.xz
+  sha256: fd464333bd55b482eb7385f2f4e18248eb43129a3cda4c0920ad9ac3c12bdacf
+  content_root: clang+llvm-{version}-x86_64-linux-gnu-{platform_version}
+  bindir: bin
 java_linux_x86_64: &java_linux_common
   major_version: 21
   version: 21.0.5

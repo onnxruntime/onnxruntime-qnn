@@ -88,6 +88,13 @@ function get_linux_oe_gcc112_toolchain_root() {
 }
 
 #
+# Get the directory containing LLVM/Clang binaries, installing them if necessary.
+#
+function get_llvm_bindir() {
+    get_package_bindir llvm_$(get_host_platform)
+}
+
+#
 # Get the directory containing ninja, installing it if necessary.
 #
 function get_ninja_bindir() {

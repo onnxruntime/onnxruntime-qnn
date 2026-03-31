@@ -392,6 +392,13 @@ def add_packaging_args(parser: argparse.ArgumentParser) -> None:
         "--zip_asset_name_suffix",
         help="Suffix for zip asset name (used for nightly builds).",
     )
+    parser.add_argument(
+        "--zip_asset_target_arch",
+        type=str,
+        default=None,
+        help="Target architecture for zip asset (e.g., 'aarch64', 'x64'). "
+        "If not specified, the local machine architecture is used.",
+    )
 
 
 def add_java_binding_args(parser: argparse.ArgumentParser) -> None:

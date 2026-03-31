@@ -287,7 +287,9 @@ class PackageManager:
 
     def __format(self, fmt_str: str) -> str:
         """Format a config file string, performing any necessary substitutions."""
-        replacements = {key: self.__config.get(key) for key in ["major_version", "os_arch", "version"]}
+        replacements = {
+            key: self.__config.get(key) for key in ["major_version", "os_arch", "platform_version", "version"]
+        }
         replacements["root_dir"] = self.get_root_dir()
         return fmt_str.format_map(replacements)
 

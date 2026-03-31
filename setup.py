@@ -83,6 +83,8 @@ manylinux_tags = [
     "manylinux_2_34_aarch64",
 ]
 is_manylinux = environ.get("AUDITWHEEL_PLAT", None) in manylinux_tags
+linux_aarch64_tags = ["linux_aarch64"]
+is_linux_aarch64 = environ.get("ONNXRUNTIME_WHEEL_PLAT_NAME", None) in linux_aarch64_tags
 
 
 class build_ext(_build_ext):  # noqa: N801
@@ -102,6 +104,11 @@ try:
             _bdist_wheel.finalize_options(self)
             if not is_manylinux:
                 self.root_is_pure = False
+            # Allow callers to override the wheel platform tag, e.g. when
+            # cross-compiling for a different architecture.
+            plat_name_override = environ.get("ONNXRUNTIME_WHEEL_PLAT_NAME", None)
+            if plat_name_override:
+                self.plat_name = plat_name_override
 
         def run(self):
             _bdist_wheel.run(self)
@@ -158,6 +165,21 @@ if platform.system() == "Linux" or platform.system() == "AIX":
         "libQnnSystem.so",
         "libHtpPrepare.so",
     ]
+    if is_linux_aarch64:
+        qnn_deps.extend(
+            [
+                "libQnnHtpV69Skel.so",
+                "libQnnHtpV69Stub.so",
+                "libQnnHtpV73Skel.so",
+                "libQnnHtpV73Stub.so",
+                "libQnnHtpV75Skel.so",
+                "libQnnHtpV75Stub.so",
+                "libQnnHtpV79Skel.so",
+                "libQnnHtpV79Stub.so",
+                "libQnnHtpV81Skel.so",
+                "libQnnHtpV81Stub.so",
+            ]
+        )
     dl_libs.extend(qnn_deps)
 else:
     # QNN-EP is built as shared libs
@@ -185,7 +207,7 @@ else:
     ]
     libs.extend(qnn_deps)
 
-if is_manylinux:
+if is_manylinux or is_linux_aarch64:
     data = list(dl_libs)
 else:
     data = list(libs)

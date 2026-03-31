@@ -38,8 +38,13 @@ target_py_version=
 use_cache=1
 warnings_as_errors=1
 build_java=
+build_zip=
 for i in "$@"; do
   case $i in
+    --build-zip)
+      build_zip=1
+      shift
+      ;;
     --config=*)
       config="${i#*=}"
       shift
@@ -177,9 +182,15 @@ case "${target_platform}" in
           toolchain_root="$(get_linux_oe_gcc112_toolchain_root)"
           toolchain_cmake="${REPO_ROOT}/qcom/scripts/linux/linux-aarch64-gcc11.toolchain.cmake"
 
-          # We need $toolchain_root from the toolchain.cmake, but the toolchain.cmake is sometimes
-          # evaluated without the project's CMakeCache.txt entries. Pass it through the environment :-/
+          # We need $toolchain_root and $llvm_bindir from the toolchain.cmake, but the toolchain.cmake
+          # is sometimes evaluated without the project's CMakeCache.txt entries. Pass them through
+          # the environment :-/
           export ORT_BUILD_LINUX_TOOLCHAIN_ROOT="${toolchain_root}"
+          export ORT_BUILD_LLVM_BINDIR="$(get_llvm_bindir)"
+
+          # The wheel is built on an x86_64 host but targets aarch64; override the
+          # platform tag so the wheel is correctly named linux_aarch64.
+          export ONNXRUNTIME_WHEEL_PLAT_NAME="linux_aarch64"
 
           platform_args+=(--cmake_extra_defines
                           CMAKE_TOOLCHAIN_FILE:FILEPATH="${toolchain_cmake}"
@@ -283,11 +294,24 @@ else
 
     python "${REPO_ROOT}/qcom/scripts/all/fetch_cmake_deps.py"
 
+    zip_args=()
+    if [ -n "${build_zip}" ]; then
+      log_info "Building zip asset."
+      zip_args+=(--build_zip_asset)
+      if [ -n "${ORT_VERSION_SUFFIX:-}" ]; then
+        zip_args+=(--version_suffix "${ORT_VERSION_SUFFIX}")
+      fi
+      if [ "${target_arch}" == "aarch64_oe_gcc11_2" ]; then
+        zip_args+=(--zip_asset_target_arch "aarch64")
+      fi
+    fi
+
     "${python_for_build}" ${REPO_ROOT}/tools/ci_build/build.py \
       "${action_args[@]}" \
       "${common_args[@]}" \
       "${qnn_args[@]}" \
-      "${platform_args[@]}"
+      "${platform_args[@]}" \
+      "${zip_args[@]}"
   fi
 
   if [ -n "${run_tests}" ]; then

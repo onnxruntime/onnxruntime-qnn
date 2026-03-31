@@ -78,6 +78,7 @@ class BuildEpLinuxTask(BashScriptsWithVenvTask):
         mode: str,
         extra_args: Iterable[str] | None = None,
         env: Mapping[str, str] | None = None,
+        build_zip: bool = False,
     ) -> None:
         cmd = [
             str(REPO_ROOT / "qcom" / "scripts" / "linux" / "build.sh"),
@@ -95,6 +96,9 @@ class BuildEpLinuxTask(BashScriptsWithVenvTask):
 
         if qairt_sdk_root is not None:
             cmd.append(f"--qairt-sdk-root={qairt_sdk_root}")
+
+        if build_zip:
+            cmd.append("--build-zip")
 
         if extra_args is not None:
             cmd.extend(extra_args)

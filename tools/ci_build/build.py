@@ -1101,6 +1101,7 @@ def main():
                 args.zip_asset_name_suffix,
                 args.version_suffix,
                 use_ninja=(args.cmake_generator == "Ninja"),
+                target_arch=args.zip_asset_target_arch,
             )
 
     if args.gen_doc:

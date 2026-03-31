@@ -34,6 +34,10 @@ on:
         description: "JSON list of Python versions to build for aarch64 manylinux_2_34"
         type: string
         default: "['3.10','3.11','3.12','3.13']"
+      linux_aarch64_oe_gcc11_2_target_py_vsns:
+        description: "JSON list of Python versions to build for Linux aarch64 oe gcc 11.2"
+        type: string
+        default: "['3.10','3.11','3.12','3.13']"
       windows_target_archs:
         description: "JSON list of Windows architectures to build"
         type: string
@@ -96,17 +100,25 @@ jobs:
       upload_wheel: false
 
   build-linux-aarch64-oe-gcc11_2:
-      if: ${{ inputs.build_linux_aarch64_oe_gcc11_2 }}
-      uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
-      secrets: inherit
-      with:
-        nightly_build: ${{ inputs.nightly_build }}
-        target_os: linux
-        target_arch: aarch64_oe_gcc11_2
-        target_py_vsn: None
-        run_tests: false
-        upload_test_archive: true
-        upload_wheel: false
+    if: ${{ inputs.build_linux_aarch64_oe_gcc11_2 }}
+    strategy:
+      matrix:
+        target_py_vsn: ${{ fromJSON(inputs.linux_aarch64_oe_gcc11_2_target_py_vsns) }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: linux
+      target_arch: aarch64_oe_gcc11_2
+      target_py_vsn: ${{ matrix.target_py_vsn }}
+      run_tests: false
+      # Upload the test archive with the first Python version we encounter
+      upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_aarch64_oe_gcc11_2_target_py_vsns)[0] }}
+      upload_wheel: true
+      # build Zip with the first python version we encounter
+      build_zip: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_aarch64_oe_gcc11_2_target_py_vsns)[0] }}
+      upload_zip: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_aarch64_oe_gcc11_2_target_py_vsns)[0] }}
 
   build-linux-x86_64:
     if: ${{ inputs.build_linux_x86_64 }}

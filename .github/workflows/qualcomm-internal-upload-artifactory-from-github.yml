@@ -130,6 +130,26 @@ jobs:
         with:
           name: windows-x86_64-py3.14-wheels
 
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_oe_gcc11_2-py3.10-wheels
+
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_oe_gcc11_2-py3.11-wheels
+
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_oe_gcc11_2-py3.12-wheels
+
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_oe_gcc11_2-py3.13-wheels
+
       - name: Consolidate Wheels
         run: |
           mkdir "${{ github.workspace }}/build/dist"
@@ -144,6 +164,10 @@ jobs:
         run: |
           mkdir "${{ github.workspace }}/build/dist/x64"
           cp "${{ github.workspace }}/build/windows-x86_64/Release/dist/"*.whl "${{ github.workspace }}/build/dist/x64"
+
+      - name: Consolidate Wheels
+        run: |
+          cp "${{ github.workspace }}/build/linux-aarch64_oe_gcc11_2/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
 
       - name: Install Dependencies
         run: |

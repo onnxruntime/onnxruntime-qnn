@@ -30,10 +30,11 @@ set(LINUX_TOOLCHAIN_PLATFORM "armv8a-oe-linux")
 
 set(LINUX_TOOLCHAIN_SYSROOT "${LINUX_TOOLCHAIN_ROOT}/sysroots/${LINUX_TOOLCHAIN_PLATFORM}")
 
-if(APPLE)
-  set(LLVM_ROOT "/opt/homebrew/Cellar/llvm@16/16.0.6_1/bin")
-else()
-  set(LLVM_ROOT "/usr/lib/llvm-16/bin")
+# the LLVM bin directory, passed in via the environment since toolchain files are
+# sometimes evaluated without the project's CMakeCache.txt
+set(LLVM_ROOT "$ENV{ORT_BUILD_LLVM_BINDIR}")
+if (NOT IS_DIRECTORY "${LLVM_ROOT}")
+  message(FATAL_ERROR "LLVM_ROOT ${LLVM_ROOT} is not a directory. Set ORT_BUILD_LLVM_BINDIR to the LLVM bin directory.")
 endif()
 
 ##

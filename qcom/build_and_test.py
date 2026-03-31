@@ -337,7 +337,7 @@ class TaskLibrary:
                     "linux",
                     "aarch64_oe_gcc11_2",
                     self.__config,
-                    None,  # target-py_version
+                    self.__target_py_version,
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "archive",
@@ -516,10 +516,11 @@ class TaskLibrary:
                     "linux",
                     "aarch64_oe_gcc11_2",
                     self.__config,
-                    None,  # target-py-version
+                    self.__target_py_version,
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
+                    build_zip=self.__build_zip,
                 )
             )
 

@@ -83,6 +83,16 @@ def get_qnn_asset_file_list():
             "libQnnHtpPrepare.so",
             "libQnnHtpV68Skel.so",
             "libQnnHtpV68Stub.so",
+            "libQnnHtpV69Skel.so",
+            "libQnnHtpV69Stub.so",
+            "libQnnHtpV73Skel.so",
+            "libQnnHtpV73Stub.so",
+            "libQnnHtpV75Skel.so",
+            "libQnnHtpV75Stub.so",
+            "libQnnHtpV79Skel.so",
+            "libQnnHtpV79Stub.so",
+            "libQnnHtpV81Skel.so",
+            "libQnnHtpV81Stub.so",
             "libQnnIr.so",
             "libQnnSaver.so",
             "libQnnSystem.so",
@@ -99,6 +109,7 @@ def build_zip_asset(
     zip_name_suffix=None,
     version_suffix="",
     use_ninja=False,
+    target_arch=None,
 ):
     """
     Build zip asset packages containing QNN EP and dependencies.
@@ -110,6 +121,8 @@ def build_zip_asset(
         zip_name_suffix: Optional suffix for zip filename
         version_suffix: Optional version suffix for zip filename
         use_ninja: Whether Ninja generator was used
+        target_arch: Optional target architecture for cross-compilation (e.g., 'aarch64', 'x64').
+                     If None, the local machine architecture is used.
 
     Returns:
         list[Path]: List of created zip file paths
@@ -138,7 +151,10 @@ def build_zip_asset(
         platform_abbr = {"windows": "win"}
         if platform_name in platform_abbr:
             platform_name = platform_abbr[platform_name]
-        arch = platform.machine().lower()
+        if target_arch is not None:
+            arch = target_arch.lower()
+        else:
+            arch = platform.machine().lower()
         if arch == "amd64":
             arch = "x64"
         elif arch == "x86_64":
@@ -254,6 +270,14 @@ Examples:
 
     parser.add_argument("--use_ninja", action="store_true", help="Whether Ninja generator was used for build")
 
+    parser.add_argument(
+        "--target_arch",
+        type=str,
+        default=None,
+        help="Target architecture for cross-compilation (e.g., 'aarch64', 'x64'). "
+        "If not specified, the local machine architecture is used.",
+    )
+
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
@@ -274,6 +298,7 @@ Examples:
             zip_name_suffix=args.suffix,
             version_suffix=args.version_suffix,
             use_ninja=args.use_ninja,
+            target_arch=args.target_arch,
         )
 
         print(f"Successfully created {len(created_zips)} zip package(s):")
