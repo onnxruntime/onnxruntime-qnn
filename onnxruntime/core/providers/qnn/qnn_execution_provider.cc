@@ -1757,7 +1757,7 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
   return nullptr;
 }
 
-static std::string GetElementTypeString(int onnx_type) {
+static std::string_view GetElementTypeString(int onnx_type) {
   switch (onnx_type) {
     case ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT:
       return "float32";
@@ -2501,7 +2501,7 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr
       dimString += std::to_string(d) + ",";
     }
     dimString.pop_back();
-    std::string input_config = "{\"dimensions\": [" + dimString + "],\"data-type\": \"" + GetElementTypeString(elem_type) + "\"}";
+    std::string input_config = "{\"dimensions\": [" + dimString + "],\"data-type\": \"" + std::string(GetElementTypeString(elem_type)) + "\"}";
     const char* input_config_ptr = input_config.c_str();
     size_t byte_size = static_cast<size_t>(GetElementSizeONNX(elem_type) * numElem);
     Genie_Status_t rc = st->api->Node_setData(
