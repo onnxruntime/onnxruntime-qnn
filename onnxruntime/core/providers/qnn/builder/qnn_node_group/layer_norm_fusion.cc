@@ -484,7 +484,7 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw,
                                          float epsilon,
                                          gsl::span<const uint32_t> axes,
                                          bool validate) {
-  const std::string node_name = utils::GetUniqueName(*node_units[0]);
+  const std::string node_name = utils::UniqueNameGenerator().New(*node_units[0]);
 
   QnnTensorWrapper input_tensor;
   QnnTensorWrapper gamma_tensor;
