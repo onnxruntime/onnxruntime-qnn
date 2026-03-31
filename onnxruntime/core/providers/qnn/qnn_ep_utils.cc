@@ -1134,13 +1134,14 @@ bool OrtGemmNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
                                      const OrtNode* redundant_clip_node,
                                      const std::vector<const OrtNode*>& dq_nodes,
                                      const std::vector<const OrtNode*>& q_nodes) const {
-  if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes, -1 /*num_dq_inputs*/,
-                     true /*is_empty_q_nodes_allowed*/)) {
+  // Gemm's bias may be an unquantized float initializer — require DQ on A and B only.
+  if (dq_nodes.size() < 2) {
     return false;
   }
 
-  // Check if we have at least 2 DQ nodes (A and B inputs)
-  if (dq_nodes.size() < 2) {
+  if (!CheckQDQNodes(graph, ort_api, node, redundant_clip_node, dq_nodes, q_nodes,
+                     static_cast<int>(dq_nodes.size()) /*num_dq_inputs*/,
+                     true /*is_empty_q_nodes_allowed*/)) {
     return false;
   }
 

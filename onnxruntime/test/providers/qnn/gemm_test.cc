@@ -289,6 +289,102 @@ static void RunQDQGemmTestOnHTP(const std::vector<TestInputDef<float>>& input_de
                                     tolerance);
 }
 
+// QDQ Gemm with per-channel weight (axis=1, transB=0) and float bias.
+template <typename InputAQType, typename InputBQType>
+inline GetTestQDQModelFn<InputAQType> BuildQDQGemmPerChannelWeightFloatBiasTestCase(
+    const std::vector<TestInputDef<float>>& input_defs) {
+  return [input_defs](ModelTestBuilder& builder,
+                      std::vector<QuantParams<InputAQType>>& output_qparams) {
+    QNN_ASSERT(input_defs.size() == 3);
+
+    MakeTestInput(builder, "A", input_defs[0]);
+    QuantParams<InputAQType> a_qparams = GetTestInputQuantParams<InputAQType>(input_defs[0]);
+    const std::string a_qdq = AddQDQNodePair<InputAQType>(
+        builder, "qdq_a", "A", a_qparams.scale, a_qparams.zero_point);
+
+    MakeTestInput(builder, "B", input_defs[1]);
+    std::vector<float> b_scales;
+    std::vector<InputBQType> b_zps;
+    GetTestInputQuantParamsPerChannel<InputBQType>(input_defs[1], b_scales, b_zps, 1 /*axis*/, true /*symmetric*/);
+    const std::string b_qdq = AddQDQNodePair<InputBQType>(
+        builder, "qdq_b", "B", b_scales, b_zps,
+        {test::MakeAttribute("axis", static_cast<int64_t>(1))},
+        {test::MakeAttribute("axis", static_cast<int64_t>(1))});
+
+    // C: float bias — no Q/DQ
+    MakeTestInput(builder, "C", input_defs[2]);
+
+    builder.AddNode("Gemm", "Gemm", {a_qdq, b_qdq, "C"}, {"Y"}, "",
+                    {test::MakeAttribute("transB", static_cast<int64_t>(0))});
+
+    AddQDQNodePairWithOutputAsGraphOutput<InputAQType>(
+        builder, "qdq_out", "Y", output_qparams[0].scale, output_qparams[0].zero_point);
+  };
+}
+
+// Same as above but with per-tensor weight (transB=1) for QNN CPU backend.
+template <typename InputAQType, typename InputBQType>
+inline GetTestQDQModelFn<InputAQType> BuildQDQGemmPerTensorWeightFloatBiasTestCase(
+    const std::vector<TestInputDef<float>>& input_defs) {
+  return [input_defs](ModelTestBuilder& builder,
+                      std::vector<QuantParams<InputAQType>>& output_qparams) {
+    QNN_ASSERT(input_defs.size() == 3);
+
+    MakeTestInput(builder, "A", input_defs[0]);
+    QuantParams<InputAQType> a_qparams = GetTestInputQuantParams<InputAQType>(input_defs[0]);
+    const std::string a_qdq = AddQDQNodePair<InputAQType>(
+        builder, "qdq_a", "A", a_qparams.scale, a_qparams.zero_point);
+
+    MakeTestInput(builder, "B", input_defs[1]);
+    QuantParams<InputBQType> b_qparams = GetTestInputQuantParams<InputBQType>(input_defs[1]);
+    const std::string b_qdq = AddQDQNodePair<InputBQType>(
+        builder, "qdq_b", "B", b_qparams.scale, b_qparams.zero_point);
+
+    // C: float bias — no Q/DQ
+    MakeTestInput(builder, "C", input_defs[2]);
+
+    builder.AddNode("Gemm", "Gemm", {a_qdq, b_qdq, "C"}, {"Y"}, "",
+                    {test::MakeAttribute("transB", static_cast<int64_t>(1))});
+
+    AddQDQNodePairWithOutputAsGraphOutput<InputAQType>(
+        builder, "qdq_out", "Y", output_qparams[0].scale, output_qparams[0].zero_point);
+  };
+}
+
+template <typename InputAQType, typename InputBQType>
+static void RunQDQGemmPerChannelWeightFloatBiasOnHTP(
+    const std::vector<TestInputDef<float>>& input_defs,
+    ExpectedEPNodeAssignment expected_ep_assignment,
+    QDQTolerance tolerance = QDQTolerance()) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  auto f32_model_builder = BuildOpTestCase<float>("Gemm_node", "Gemm", input_defs, {},
+                                                  {test::MakeAttribute("transB", static_cast<int64_t>(0))});
+  auto qdq_model_builder =
+      BuildQDQGemmPerChannelWeightFloatBiasTestCase<InputAQType, InputBQType>(input_defs);
+  TestQDQModelAccuracy<InputAQType>(f32_model_builder, qdq_model_builder,
+                                    provider_options, 13, expected_ep_assignment, tolerance);
+}
+
+template <typename InputAQType, typename InputBQType>
+static void RunQDQGemmPerTensorWeightFloatBiasOnCPU(
+    const std::vector<TestInputDef<float>>& input_defs,
+    ExpectedEPNodeAssignment expected_ep_assignment,
+    QDQTolerance tolerance = QDQTolerance()) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  auto f32_model_builder = BuildOpTestCase<float>("Gemm_node", "Gemm", input_defs, {},
+                                                  {test::MakeAttribute("transB", static_cast<int64_t>(1))});
+  auto qdq_model_builder =
+      BuildQDQGemmPerTensorWeightFloatBiasTestCase<InputAQType, InputBQType>(input_defs);
+  TestQDQModelAccuracy<InputAQType>(f32_model_builder, qdq_model_builder,
+                                    provider_options, 13, expected_ep_assignment, tolerance);
+}
+
 // Test 8-bit QDQ Gemm with dynamic inputs A and Bias. The B input is an initializer.
 TEST_F(QnnHTPBackendTests, Gemm_Dynamic_A_Static_B_Dynamic_Bias_U8) {
   std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 6);
@@ -494,6 +590,30 @@ TEST_F(QnnHTPBackendTests, Gemm_TransAB_Dynamic_B_And_Bias) {
                                         {test::MakeAttribute("transA", static_cast<int64_t>(1)),
                                          test::MakeAttribute("transB", static_cast<int64_t>(1))},
                                         ExpectedEPNodeAssignment::All);
+}
+
+// Exercises inline float-bias → INT32 requantization with per-channel weight scales.
+TEST_F(QnnHTPBackendTests, Gemm_QDQ_PerChannelWeight_FloatBias_U8) {
+  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 8);  // A[2, 4]
+  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 32);   // B[4, 8]
+  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 8);    // C[8]
+  RunQDQGemmPerChannelWeightFloatBiasOnHTP<uint8_t, uint8_t>(
+      {TestInputDef<float>({2, 4}, false, input_a_data),
+       TestInputDef<float>({4, 8}, true, input_b_data),
+       TestInputDef<float>({8}, true, input_c_data)},
+      ExpectedEPNodeAssignment::All);
+}
+
+// Same as above but per-tensor weight on CPU backend.
+TEST_F(QnnCPUBackendTests, Gemm_QDQ_PerTensorWeight_FloatBias_U8) {
+  std::vector<float> input_a_data = GetFloatDataInRange(-10.0f, 10.0f, 8);  // A[2, 4]
+  std::vector<float> input_b_data = GetFloatDataInRange(-5.0f, 5.0f, 32);   // B[8, 4]
+  std::vector<float> input_c_data = GetFloatDataInRange(-1.0f, 1.0f, 8);    // C[8]
+  RunQDQGemmPerTensorWeightFloatBiasOnCPU<uint8_t, uint8_t>(
+      {TestInputDef<float>({2, 4}, false, input_a_data),
+       TestInputDef<float>({8, 4}, true, input_b_data),
+       TestInputDef<float>({8}, true, input_c_data)},
+      ExpectedEPNodeAssignment::All);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

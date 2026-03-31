@@ -80,6 +80,28 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   input_trans_flag.at(1) = transB == 0 ? 1 : 0;
 
   const auto& inputs = node_unit.Inputs();
+
+  // QNN FC requires INT32 bias when A and B are quantized. WeightBiasQuantization won't
+  // handle this (it requires a Q on the Gemm output), so compute bias quant scales here.
+  bool requantize_float_bias = false;
+  std::vector<float> bias_quant_scales;
+  if (inputs.size() == 3 && !inputs[2].quant_param.has_value() &&
+      inputs[0].quant_param.has_value() && inputs[1].quant_param.has_value()) {
+    QnnQuantParamsWrapper act_quant, weight_quant;
+    RETURN_IF_ERROR(act_quant.Init(qnn_model_wrapper, inputs[0]));
+    RETURN_IF_ERROR(weight_quant.Init(qnn_model_wrapper, inputs[1]));
+    std::vector<float> act_scales, weight_scales;
+    RETURN_IF_ERROR(act_quant.GetScales(act_scales));
+    RETURN_IF_ERROR(weight_quant.GetScales(weight_scales));
+    if (act_scales.size() == 1) {  // activation must be per-tensor
+      const float act_scale = act_scales[0];
+      bias_quant_scales.resize(weight_scales.size());
+      for (size_t i = 0; i < weight_scales.size(); ++i) {
+        bias_quant_scales[i] = act_scale * weight_scales[i];
+      }
+      requantize_float_bias = true;
+    }
+  }
   for (size_t input_i = 0; input_i < inputs.size(); ++input_i) {
     QnnQuantParamsWrapper quantize_param;
     RETURN_IF_ERROR(quantize_param.Init(qnn_model_wrapper, inputs[input_i]));
@@ -135,6 +157,32 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
     if (2 == input_i && 2 == input_shape.size() && input_shape[0] == 1) {
       input_shape[0] = input_shape[1];
       input_shape.resize(1);
+    }
+
+    if (input_i == 2 && requantize_float_bias) {
+      RETURN_IF_NOT(is_constant_input, "Gemm float bias must be constant for INT32 requantization");
+      RETURN_IF_NOT(input_shape.size() == 1, "Gemm float bias must be 1D for INT32 requantization");
+      const size_t n_channels = input_shape[0];
+      const bool is_per_channel = bias_quant_scales.size() > 1;
+      RETURN_IF(is_per_channel && bias_quant_scales.size() != n_channels,
+                "Bias scale count must match bias channel count for requantization");
+
+      gsl::span<const float> bias_float_span(reinterpret_cast<const float*>(unpacked_tensor.data()), n_channels);
+      std::vector<uint8_t> bias_int32_bytes(n_channels * sizeof(int32_t));
+      std::vector<int32_t> zero_points(bias_quant_scales.size(), 0);
+      RETURN_IF_ERROR(utils::QuantizeData(bias_float_span, input_shape,
+                                          bias_quant_scales, zero_points,
+                                          bias_int32_bytes, QNN_DATATYPE_SFIXED_POINT_32,
+                                          is_per_channel ? std::optional<int64_t>(0) : std::nullopt));
+      unpacked_tensor = std::move(bias_int32_bytes);
+      qnn_data_type = QNN_DATATYPE_SFIXED_POINT_32;
+      if (is_per_channel) {
+        quantize_param = QnnQuantParamsWrapper(gsl::span<const float>(bias_quant_scales),
+                                               gsl::span<const int32_t>(zero_points),
+                                               /*axis=*/0, /*is_int4=*/false);
+      } else {
+        quantize_param = QnnQuantParamsWrapper(bias_quant_scales[0], /*offset=*/0);
+      }
     }
 
     input_names.push_back(input_tensor_name);
