@@ -23,6 +23,17 @@ constexpr size_t QDQ_SCALE_INPUT_IDX = 1;
 constexpr size_t QDQ_ZERO_POINT_INPUT_IDX = 2;
 
 /// <summary>
+/// Extracts and normalizes axes from a Reduce operator (ReduceMean, ReduceSum, etc.).
+/// Handles both attribute-based axes (opset < 18) and input-based axes (opset >= 18).
+/// Returns normalized positive axes, sorted and deduplicated.
+/// </summary>
+/// <param name="qnn_model_wrapper">QnnModelWrapper containing the OrtGraph and OrtApi</param>
+/// <param name="node_unit">The Reduce operator node unit</param>
+/// <returns>Normalized axes as uint32_t vector, or std::nullopt if extraction fails</returns>
+std::optional<std::vector<uint32_t>> GetReduceAxes(const QnnModelWrapper& qnn_model_wrapper,
+                                                   const OrtNodeUnit& node_unit);
+
+/// <summary>
 /// Utility function to get a child NodeUnit. The returned NodeUnit must be the parent's only child, must be
 /// of the expected type, and must not be a part of another IQnnNodeGroup.
 /// </summary>
