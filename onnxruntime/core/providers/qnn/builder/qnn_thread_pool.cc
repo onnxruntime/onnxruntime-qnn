@@ -21,7 +21,13 @@ QnnJobThreadPool::QnnJobThread::QnnJobThread(uint8_t thread_num, QnnJobThreadPoo
 }
 
 QnnJobThreadPool::QnnJobThread::~QnnJobThread() {
-  Stop();
+  try {
+    Stop();
+  } catch (const std::exception& e) {
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
+                ORT_LOGGING_LEVEL_ERROR,
+                ("QnnJobThread: Thread " + std::to_string(thread_num_) + ": Error on destruction: " + std::string(e.what())).c_str());
+  }
 }
 
 void QnnJobThreadPool::QnnJobThread::Start() {

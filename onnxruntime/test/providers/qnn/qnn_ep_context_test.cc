@@ -2931,9 +2931,6 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_OutOfRange
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
 
-  std::string output_model_file_str(output_model_file.string());
-  std::wstring compiled_model_file(output_model_file_str.begin(), output_model_file_str.end());
-
   {
     Ort::Session session_ctx(*ort_env, output_model_file.native().c_str(), so);
     auto outputs = session_ctx.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),

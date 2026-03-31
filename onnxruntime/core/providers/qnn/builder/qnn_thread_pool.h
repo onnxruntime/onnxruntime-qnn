@@ -21,7 +21,7 @@ class QnnJobThreadPool {
   class QnnJobThread {
    public:
     QnnJobThread(uint8_t thread_num, QnnJobThreadPool* thread_pool_ptr);
-    QnnJobThread::QnnJobThread(QnnJobThread&&) = delete;
+    QnnJobThread(QnnJobThread&&) = delete;
     QnnJobThread& operator=(QnnJobThread&&) = delete;
 
     ~QnnJobThread();
