@@ -236,6 +236,12 @@ TEST_F(QnnHTPBackendTests, TestAddEpUsingPublicApi) {
   options["backend_path"] = "libQnnHtp.so";
 #endif
 
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "constant_floats.onnx";
 
   {
@@ -270,6 +276,12 @@ TEST_F(QnnHTPBackendTests, TestConvWithExternalData) {
 #endif
   options["offload_graph_io_quantization"] = "0";
 
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
 
@@ -293,6 +305,12 @@ TEST_F(QnnHTPBackendTests, RunConvInt4Model) {
   options["backend_path"] = "QnnHtp.dll";
 #else
   options["backend_path"] = "libQnnHtp.so";
+#endif
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  options["num_graph_prepare_threads"] = "1";
 #endif
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
@@ -399,6 +417,13 @@ static Ort::Session InitNHWCResizeModel(const ORTCHAR_T* ort_model_path,
 
 #if defined(_WIN32)
   options["backend_path"] = "Qnn" + backend_lib + ".dll";
+
+#if (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
 #else
   options["backend_path"] = "libQnn" + backend_lib + ".so";
 #endif
@@ -738,6 +763,12 @@ TEST_F(QnnHTPBackendTests, MultithreadSessionRun) {
 #endif
   options["offload_graph_io_quantization"] = "0";
 
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
   Ort::SessionOptions session_opts;
   session_opts.SetLogId("logger0");
 
@@ -783,6 +814,12 @@ TEST_F(QnnHTPBackendTests, MultithreadHtpPowerCfgSessionRunOption) {
   options["backend_path"] = "libQnnHtp.so";
 #endif
   options["offload_graph_io_quantization"] = "0";
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  options["num_graph_prepare_threads"] = "1";
+#endif
 
   std::vector<std::string> perf_modes{
       "burst", "balanced", "default", "high_performance", "high_power_saver",
@@ -841,6 +878,12 @@ TEST_F(QnnHTPBackendTests, MultithreadDefaultHtpPowerCfgFromEpOption) {
   options["offload_graph_io_quantization"] = "0";
   options["htp_performance_mode"] = "burst";
 
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
   Ort::SessionOptions session_opts;
   session_opts.SetLogId("logger0");
 
@@ -887,6 +930,12 @@ TEST_F(QnnHTPBackendTests, MultithreadHtpPowerCfgDefaultAndRunOption) {
 #endif
   options["offload_graph_io_quantization"] = "0";
   options["htp_performance_mode"] = "burst";
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  options["num_graph_prepare_threads"] = "1";
+#endif
 
   std::vector<std::string> perf_modes{
       "burst", "balanced", "default", "high_performance", "high_power_saver",
@@ -1346,6 +1395,12 @@ TEST_F(QnnHTPBackendTests, DumpJsonQNNGraph) {
   options["json_qnn_graph_dir"] = dump_dir.string();
   options["dump_json_qnn_graph"] = "1";
 
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
   // Remove pre-existing json files. Note that fs::remove_all() can handle non-existing paths.
   std::filesystem::remove_all(dump_dir);
   ASSERT_TRUE(std::filesystem::create_directory(dump_dir));
@@ -1482,6 +1537,12 @@ TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationTensorNameOverrides) {
   provider_options["json_qnn_graph_dir"] = dump_dir.string();
   provider_options["dump_json_qnn_graph"] = "1";
 
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
   // Remove pre-existing json files. Note that fs::remove_all() can handle non-existing paths.
   std::filesystem::remove_all(dump_dir);
   ASSERT_TRUE(std::filesystem::create_directory(dump_dir));
@@ -1553,6 +1614,12 @@ TEST_F(QnnHTPBackendTests, LoadingAndUnloadingOfQnnLibrary_FixSegFault) {
   onnxruntime::ProviderOptions options;
   options["backend_type"] = "htp";
   options["offload_graph_io_quantization"] = "0";
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  options["num_graph_prepare_threads"] = "1";
+#endif
 
   {
     RegisteredEpDeviceUniquePtr registered_ep_device;
@@ -1720,6 +1787,12 @@ static bool CreateSessionWithQnnEpAndQnnHtpSharedMemoryAllocator(RegisteredEpDev
   onnxruntime::ProviderOptions options;
   options["backend_path"] = backend_path;
   options["enable_htp_shared_memory_allocator"] = "1";
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  options["num_graph_prepare_threads"] = "1";
+#endif
 
   Ort::SessionOptions session_options;
   RegisterQnnEpLibrary(registered_ep_device, session_options, onnxruntime::kQnnExecutionProvider, options);
