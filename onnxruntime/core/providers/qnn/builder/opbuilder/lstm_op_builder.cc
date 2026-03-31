@@ -197,7 +197,7 @@ Ort::Status LSTMOpBuilder::AddStridedSliceOrReshape(QnnModelWrapper& qnn_model_w
                   "Failed to add input tensor for inserted StridedSlice or Reshape.");
 
     // params
-    const std::string node_name = utils::GetUniqueName(node_unit, QNN_OP_STRIDED_SLICE);
+    const std::string node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_STRIDED_SLICE);
 
     // ranges
     std::vector<uint32_t> ranges_data;
@@ -405,10 +405,10 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
     std::vector<uint32_t> qnn_input_indices = {1, 2, 3, 16};
     std::vector<int32_t> begins = {2, 3, 1, 0};
     std::vector<std::string> qnn_lstm_weight_name = {
-        utils::GetUniqueName(input_names[1], "_input_to_forget_gate_weight_" + direction),
-        utils::GetUniqueName(input_names[1], "_input_to_cell_gate_weight_" + direction),
-        utils::GetUniqueName(input_names[1], "_input_to_output_gate_weight_" + direction),
-        utils::GetUniqueName(input_names[1], "_input_to_input_gate_weight_" + direction),
+        utils::UniqueNameGenerator().New(input_names[1], "_input_to_forget_gate_weight_" + direction),
+        utils::UniqueNameGenerator().New(input_names[1], "_input_to_cell_gate_weight_" + direction),
+        utils::UniqueNameGenerator().New(input_names[1], "_input_to_output_gate_weight_" + direction),
+        utils::UniqueNameGenerator().New(input_names[1], "_input_to_input_gate_weight_" + direction),
     };
     for (size_t i = 0; i < 4; i++) {
       std::vector<std::vector<int32_t>> ranges = {{direction_idx, direction_idx + 1, 1},
@@ -448,10 +448,10 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
     std::vector<uint32_t> qnn_input_indices = {4, 5, 6, 17};
     std::vector<int32_t> begins = {2, 3, 1, 0};
     std::vector<std::string> qnn_lstm_weight_name = {
-        utils::GetUniqueName(input_names[2], "_recurrent_to_forget_gate_weight_" + direction),
-        utils::GetUniqueName(input_names[2], "_recurrent_to_cell_gate_weight_" + direction),
-        utils::GetUniqueName(input_names[2], "_recurrent_to_output_gate_weight_" + direction),
-        utils::GetUniqueName(input_names[2], "_recurrent_to_input_gate_weight_" + direction)};
+        utils::UniqueNameGenerator().New(input_names[2], "_recurrent_to_forget_gate_weight_" + direction),
+        utils::UniqueNameGenerator().New(input_names[2], "_recurrent_to_cell_gate_weight_" + direction),
+        utils::UniqueNameGenerator().New(input_names[2], "_recurrent_to_output_gate_weight_" + direction),
+        utils::UniqueNameGenerator().New(input_names[2], "_recurrent_to_input_gate_weight_" + direction)};
     for (size_t i = 0; i < 4; i++) {
       std::vector<std::vector<int32_t>> ranges = {{direction_idx, direction_idx + 1, 1},
                                                   {begins[i] * hidden_size_sign, (begins[i] + 1) * hidden_size_sign, 1},
@@ -489,22 +489,22 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
     uint32_t new_axes_mask = 0b00U;
     std::vector<uint32_t> output_shape = {hidden_size};
     std::vector<std::string> qnn_lstm_bias_name = {
-        utils::GetUniqueName(node_unit, "_forget_gate_bias_" + direction),
-        utils::GetUniqueName(node_unit, "_cell_gate_bias_" + direction),
-        utils::GetUniqueName(node_unit, "_output_gate_bias_" + direction),
-        utils::GetUniqueName(node_unit, "_input_gate_bias_" + direction)};
+        utils::UniqueNameGenerator().New(node_unit, "_forget_gate_bias_" + direction),
+        utils::UniqueNameGenerator().New(node_unit, "_cell_gate_bias_" + direction),
+        utils::UniqueNameGenerator().New(node_unit, "_output_gate_bias_" + direction),
+        utils::UniqueNameGenerator().New(node_unit, "_input_gate_bias_" + direction)};
     std::vector<uint32_t> qnn_input_indices = {7, 8, 9, 21};
     if (onnx_inputs.size() > 3 && onnx_inputs[3].Exists()) {
       std::vector<int32_t> begins = {2, 3, 1, 0, 6, 7, 5, 4};
       std::vector<std::string> onnx_lstm_bias_name = {
-          utils::GetUniqueName(input_names[3], "_input_to_forget_gate_bias_" + direction),
-          utils::GetUniqueName(input_names[3], "_input_to_cell_gate_bias_" + direction),
-          utils::GetUniqueName(input_names[3], "_input_to_output_gate_bias_" + direction),
-          utils::GetUniqueName(input_names[3], "_input_to_input_gate_bias_" + direction),
-          utils::GetUniqueName(input_names[3], "_recurrent_to_forget_gate_bias_" + direction),
-          utils::GetUniqueName(input_names[3], "_recurrent_to_cell_gate_bias_" + direction),
-          utils::GetUniqueName(input_names[3], "_recurrent_to_output_gate_bias_" + direction),
-          utils::GetUniqueName(input_names[3], "_recurrent_to_input_gate_bias_" + direction)};
+          utils::UniqueNameGenerator().New(input_names[3], "_input_to_forget_gate_bias_" + direction),
+          utils::UniqueNameGenerator().New(input_names[3], "_input_to_cell_gate_bias_" + direction),
+          utils::UniqueNameGenerator().New(input_names[3], "_input_to_output_gate_bias_" + direction),
+          utils::UniqueNameGenerator().New(input_names[3], "_input_to_input_gate_bias_" + direction),
+          utils::UniqueNameGenerator().New(input_names[3], "_recurrent_to_forget_gate_bias_" + direction),
+          utils::UniqueNameGenerator().New(input_names[3], "_recurrent_to_cell_gate_bias_" + direction),
+          utils::UniqueNameGenerator().New(input_names[3], "_recurrent_to_output_gate_bias_" + direction),
+          utils::UniqueNameGenerator().New(input_names[3], "_recurrent_to_input_gate_bias_" + direction)};
       for (size_t i = 0; i < 8; i++) {
         std::vector<std::vector<int32_t>> ranges = {{direction_idx, direction_idx + 1, 1},
                                                     {begins[i] * hidden_size_sign, (begins[i] + 1) * hidden_size_sign, 1}};
@@ -532,7 +532,7 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
                                                   input_tensor_infos[3].quant_param.Copy(), std::vector<uint32_t>(output_shape));
         RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(add_output_tensorwrapper)),
                       "QNN EP: Failed to add output tensor for inserted ElementWiseAdd node.");
-        RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit, QNN_OP_ELEMENT_WISE_ADD),
+        RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_ADD),
                                                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                       QNN_OP_ELEMENT_WISE_ADD,
                                                       std::move(add_input_names),
@@ -544,7 +544,7 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
       }
     } else {
       // prepare zero bias
-      std::string zero_bias_name = utils::GetUniqueName(node_unit, "_zero_bias");
+      std::string zero_bias_name = utils::UniqueNameGenerator().New(node_unit, "_zero_bias");
       QnnTensorWrapper zero_bias_tensor_wrapper(zero_bias_name,
                                                 QNN_TENSOR_TYPE_STATIC,
                                                 input_tensor_infos[0].qnn_data_type,
@@ -574,9 +574,9 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
     std::vector<uint32_t> qnn_input_indices = {18, 19, 20};
     std::vector<int32_t> begins = {0, 2, 1};
     std::vector<std::string> qnn_lstm_weight_name = {
-        utils::GetUniqueName(input_names[7], "_cell_to_input_gate_weight_" + direction),
-        utils::GetUniqueName(input_names[7], "_cell_to_forget_gate_weight_" + direction),
-        utils::GetUniqueName(input_names[7], "_cell_to_output_gate_weight_" + direction)};
+        utils::UniqueNameGenerator().New(input_names[7], "_cell_to_input_gate_weight_" + direction),
+        utils::UniqueNameGenerator().New(input_names[7], "_cell_to_forget_gate_weight_" + direction),
+        utils::UniqueNameGenerator().New(input_names[7], "_cell_to_output_gate_weight_" + direction)};
     for (size_t i = 0; i < 3; i++) {
       std::vector<std::vector<int32_t>> ranges = {
           {direction_idx, direction_idx + 1, 1},
@@ -618,7 +618,7 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
     std::vector<uint32_t> output_shape = {batch_size, hidden_size};
     for (size_t i = 0; i < 2; i++) {
       if (onnx_inputs.size() > src_indices[i] && onnx_inputs[src_indices[i]].Exists()) {
-        const std::string qnn_lstm_input_name = utils::GetUniqueName(input_names[src_indices[i]], direction);
+        const std::string qnn_lstm_input_name = utils::UniqueNameGenerator().New(input_names[src_indices[i]], direction);
         RETURN_IF_ERROR(AddStridedSliceOrReshape(/*qnn_model_wrapper=*/qnn_model_wrapper,
                                                  /*node_unit=*/node_unit,
                                                  /*input_name=*/input_names[src_indices[i]],
@@ -638,7 +638,7 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
         qnn_lstm_input_names[qnn_input_indices[i]] = qnn_lstm_input_name;
       } else {
         // prepare zero initial values
-        std::string zero_initial_values_name = utils::GetUniqueName(node_name, std::string("_LSTM_initial_values_") + (i == 0 ? "h" : "c"));
+        std::string zero_initial_values_name = utils::UniqueNameGenerator().New(node_name, std::string("_LSTM_initial_values_") + (i == 0 ? "h" : "c"));
         QnnTensorWrapper zero_bias_tensor_wrapper(zero_initial_values_name,
                                                   QNN_TENSOR_TYPE_STATIC,
                                                   input_tensor_infos[0].qnn_data_type,
@@ -673,7 +673,7 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
       std::vector<std::vector<int32_t>> ranges = {{SafeInt<int32_t>(sequence_idx), SafeInt<int32_t>(sequence_idx + 1), 1},
                                                   {0, SafeInt<int32_t>(batch_size), 1},
                                                   {0, SafeInt<int32_t>(input_size), 1}};
-      std::string qnn_lstm_input_name = utils::GetUniqueName(input_names[0], "_cell_" + std::to_string(sequence_idx) + "_input");
+      std::string qnn_lstm_input_name = utils::UniqueNameGenerator().New(input_names[0], "_cell_" + std::to_string(sequence_idx) + "_input");
       std::vector<uint32_t> output_shape = {batch_size, input_size};
       RETURN_IF_ERROR(AddStridedSliceOrReshape(/*qnn_model_wrapper=*/qnn_model_wrapper,
                                                /*node_unit=*/node_unit,
@@ -698,9 +698,9 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
     std::vector<uint32_t> qnn_lstm_output_shape = {batch_size, hidden_size};
 
     std::vector<std::string> qnn_lstm_output_names = {
-        utils::GetUniqueName(node_unit, "_QNN_LSTM_output_all_hidden_state_" + std::to_string(sequence_idx) + "_" + direction),
-        utils::GetUniqueName(node_unit, "_QNN_LSTM_output_cell_state_" + std::to_string(sequence_idx) + "_" + direction),
-        utils::GetUniqueName(node_unit, "_QNN_LSTM_output_hidden_state_" + std::to_string(sequence_idx) + "_" + direction)};
+        utils::UniqueNameGenerator().New(node_unit, "_QNN_LSTM_output_all_hidden_state_" + std::to_string(sequence_idx) + "_" + direction),
+        utils::UniqueNameGenerator().New(node_unit, "_QNN_LSTM_output_cell_state_" + std::to_string(sequence_idx) + "_" + direction),
+        utils::UniqueNameGenerator().New(node_unit, "_QNN_LSTM_output_hidden_state_" + std::to_string(sequence_idx) + "_" + direction)};
     qnn_lstm_input_names[10] = qnn_lstm_output_names[2];  // update initial_h
     qnn_lstm_input_names[11] = qnn_lstm_output_names[1];  // update initial_c
     qnn_all_hidden_state_names[sequence_idx] = qnn_lstm_output_names[2];
@@ -714,7 +714,7 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)),
                     ("QNN EP: Failed to add " + std::to_string(j) + "th output tensor for QNN LSTM.").c_str());
     }
-    const std::string lstm_node_name = utils::GetUniqueName(node_unit, "_cell" + std::to_string(sequence_idx) + "_" + direction);
+    const std::string lstm_node_name = utils::UniqueNameGenerator().New(node_unit, "_cell" + std::to_string(sequence_idx) + "_" + direction);
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(lstm_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_LSTM,
                                                   std::move(qnn_lstm_input_names_i), std::move(qnn_lstm_output_names),
                                                   std::vector<std::string>(param_names), do_op_validation),
@@ -722,7 +722,7 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
   }
 
   // pack all timestamp outputs together for onnx output[0]
-  const std::string qnn_pack_output_name = utils::GetUniqueName(node_unit, "_QNN_LSTM_output_hidden_state_all_" + direction);
+  const std::string qnn_pack_output_name = utils::UniqueNameGenerator().New(node_unit, "_QNN_LSTM_output_hidden_state_all_" + direction);
 
   // add pack for output[0]
   std::vector<std::string> pack_param_names;
@@ -757,7 +757,7 @@ Ort::Status LSTMOpBuilder::AddUnidirectionLSTM(QnnModelWrapper& qnn_model_wrappe
       {1, batch_size, hidden_size}};
   for (size_t i = 0; i < 3; i++) {
     if (onnx_outputs.size() > i && onnx_outputs[i].Exists()) {
-      const std::string reshape_output_name = is_bidirection ? utils::GetUniqueName(qnn_reshape_input_names[i], "_unsqueeze_" + direction) : onnx_outputs[i].name;
+      const std::string reshape_output_name = is_bidirection ? utils::UniqueNameGenerator().New(qnn_reshape_input_names[i], "_unsqueeze_" + direction) : onnx_outputs[i].name;
       RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(/*input_name=*/qnn_reshape_input_names[i],
                                                        /*output_name=*/reshape_output_name,
                                                        /*input_shape=*/qnn_lstm_output_shapes[i],
@@ -816,7 +816,7 @@ Ort::Status LSTMOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                                      std::vector<uint32_t>(output_info.shape));
         RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(concat_output_tensorwrapper)),
                       "QNN EP: Failed to add output tensor for QNN Concat.");
-        RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit, QNN_OP_CONCAT),
+        RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_CONCAT),
                                                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                       QNN_OP_CONCAT,
                                                       {uni_lstm_output_names_forward[i], uni_lstm_output_names_reverse[i]},

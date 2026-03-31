@@ -141,7 +141,7 @@ Ort::Status GatherNDOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                            std::move(cast_output_shape));
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(indices_cast_tensor)),
                     "Failed to add gather indices cast tensor.");
-      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(indices_tensor_name, QNN_OP_CAST),
+      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(indices_tensor_name, QNN_OP_CAST),
                                                     QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                     QNN_OP_CAST,
                                                     {indices_tensor_name},
@@ -251,8 +251,8 @@ Ort::Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
 
   // If a cast to int64 is needed, add the cast node
   if (needs_int64_cast) {
-    std::string cast_node_name = utils::GetUniqueName(node_unit, "_cast_int64");
-    std::string cast_input_name = utils::GetUniqueName(output_name, "_cast_int64");
+    std::string cast_node_name = utils::UniqueNameGenerator().New(node_unit, "_cast_int64");
+    std::string cast_input_name = utils::UniqueNameGenerator().New(output_name, "_cast_int64");
     std::string cast_output_name = output_name;
 
     // Create the cast input tensor wrapper - use qnn_output_shape for the intermediate tensor
@@ -272,9 +272,9 @@ Ort::Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
 
   std::string gather_output_name = output_name;
   if (reshape_required) {
-    gather_output_name = utils::GetUniqueName(output_name, "_reshape");
+    gather_output_name = utils::UniqueNameGenerator().New(output_name, "_reshape");
   } else if (needs_int64_cast) {
-    gather_output_name = utils::GetUniqueName(output_name, "_cast_int64");
+    gather_output_name = utils::UniqueNameGenerator().New(output_name, "_cast_int64");
   }
 
   Qnn_TensorType_t tensor_type = (!reshape_required && is_graph_output)
@@ -286,7 +286,7 @@ Ort::Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(gather_output_tensor)),
                 "Failed to add GatherND output tensor.");
 
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit),
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_GATHER_ND,
                                                 std::move(input_names),
@@ -304,10 +304,10 @@ Ort::Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
     std::string node_output_name = output_name;
     if (needs_int64_cast) {
       // If needs_int64 is true, the output name should be the input name of the cast node
-      node_output_name = utils::GetUniqueName(output_name, "_cast_int64");
+      node_output_name = utils::UniqueNameGenerator().New(output_name, "_cast_int64");
     }
 
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit, QNN_OP_RESHAPE),
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_RESHAPE),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_RESHAPE,
                                                   {gather_output_name},

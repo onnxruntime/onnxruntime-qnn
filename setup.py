@@ -335,7 +335,7 @@ setup(
     packages=packages,
     ext_modules=ext_modules,
     package_data=package_data,
-    url="https://onnxruntime.ai",
+    url="https://github.com/onnxruntime/onnxruntime-qnn/blob/main/docs/execution_providers/QNN-ExecutionProvider.md",
     download_url="https://github.com/onnxruntime/onnxruntime-qnn/tags",
     data_files=data_files,
     install_requires=install_requires,

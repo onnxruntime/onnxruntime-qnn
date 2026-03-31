@@ -3,6 +3,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <unordered_set>
 #include <string>
 #include <thread>
 
@@ -2399,6 +2400,51 @@ TEST_F(QnnCPUBackendTests, GraphInputOutputOrderMatchesOnnxOffloadGraphIoQuantiz
     EXPECT_EQ(output_names[1], "qdq1_out_dq_out");
     EXPECT_EQ(output_names[2], "qdq3_out_dq_out");
   }
+}
+
+// Verify GetUniqueName counter resets between compilations in the same process.
+TEST_F(QnnCPUBackendTests, GetUniqueNameResetBetweenCompilations) {
+  auto model_fn = BuildOpTestCase<float>(
+      "Sigmoid_node", "Sigmoid",
+      {TestInputDef<float>({1, 2, 3}, false, {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f})},
+      {}, {});
+
+  namespace fs = std::filesystem;
+  auto tmp_dir = fs::temp_directory_path() / "qnn_unique_name_test";
+  fs::create_directories(tmp_dir);
+
+  auto compile_and_get_node_names = [&](const std::string& sub_dir) -> std::unordered_set<std::string> {
+    auto json_dir = tmp_dir / sub_dir;
+    fs::create_directories(json_dir);
+
+    ProviderOptions provider_options;
+    provider_options["backend_type"] = "cpu";
+    provider_options["offload_graph_io_quantization"] = "0";
+    provider_options["dump_json_qnn_graph"] = "1";
+    provider_options["json_qnn_graph_dir"] = json_dir.string();
+
+    RunQnnModelTest(model_fn, provider_options, 13, ExpectedEPNodeAssignment::All);
+
+    std::unordered_set<std::string> node_names;
+    for (const auto& entry : fs::directory_iterator(json_dir)) {
+      if (entry.path().extension() == ".json") {
+        std::ifstream ifs(entry.path());
+        nlohmann::json j;
+        ifs >> j;
+        for (auto& [name, _] : j["graph"]["nodes"].items()) {
+          node_names.insert(name);
+        }
+      }
+    }
+    return node_names;
+  };
+
+  auto names_1 = compile_and_get_node_names("run1");
+  auto names_2 = compile_and_get_node_names("run2");
+  fs::remove_all(tmp_dir);
+
+  ASSERT_FALSE(names_1.empty());
+  EXPECT_EQ(names_1, names_2);
 }
 
 #endif  // !defined(ORT_MINIMAL_BUILD)

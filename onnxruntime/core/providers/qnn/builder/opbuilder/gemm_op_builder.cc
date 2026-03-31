@@ -123,7 +123,7 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
       input_shape[0] = old_input_shape[1];
       input_shape[1] = old_input_shape[0];
       const std::string& node_input_name(input_name);
-      input_tensor_name = utils::GetUniqueName(input_tensor_name, "_transpose");
+      input_tensor_name = utils::UniqueNameGenerator().New(input_tensor_name, "_transpose");
       std::vector<uint32_t> perm{1, 0};
       RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(node_unit.Index(), node_input_name, input_tensor_name,
                                                          old_input_shape, perm, input_shape,
@@ -179,12 +179,12 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     std::vector<std::string> gemm_input_0_1;
     gemm_input_0_1.push_back(input_names[0]);
     gemm_input_0_1.push_back(input_names[1]);
-    const std::string fc_output_name = onnxruntime::qnn::utils::GetUniqueName(org_output_name, "_fc");
+    const std::string fc_output_name = onnxruntime::qnn::utils::UniqueNameGenerator().New(org_output_name, "_fc");
     QnnTensorWrapper fully_connected_output(fc_output_name, QNN_TENSOR_TYPE_NATIVE, input_info.qnn_data_type,
                                             QnnQuantParamsWrapper(), std::vector<uint32_t>(output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fully_connected_output)),
                   "Failed to add FullyConnected output tensor.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit, QNN_OP_FULLY_CONNECTED),
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_FULLY_CONNECTED),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_FULLY_CONNECTED,
                                                   std::move(gemm_input_0_1),
@@ -201,7 +201,7 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                   "Failed to add ElementWiseAdd output tensor.");
     std::string bias_name = input_names[2];
 
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit, QNN_OP_ELEMENT_WISE_ADD),
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_ADD),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_ELEMENT_WISE_ADD,
                                                   {fc_output_name, bias_name},
