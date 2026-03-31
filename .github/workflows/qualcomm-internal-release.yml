@@ -18,11 +18,11 @@ on:
       skip_publish_qa:
         description: "If true, don't publish QA artifacts."
         type: boolean
-        default: false
+        default: true
       skip_publish_wheel:
         description: "If true, don't publish the Wheel."
         type: boolean
-        default: false
+        default: true
       qa_tag:
         description: "Name of the build for QA purposes; leave blank to generate one based on today's date."
         type: string
@@ -39,6 +39,8 @@ jobs:
     secrets: inherit
     with:
       nightly_build: ${{inputs.nightly_build}}
+      build_android_aarch64: true
+      build_linux_aarch64_oe_gcc11_2: true
       linux_aarch64_manylinux_2_34_target_py_vsns: "[]"
       windows_target_archs: "['arm64', 'arm64ec', 'x86_64']"
       windows_target_py_vsns: "['3.11','3.12','3.13','3.14']"
@@ -111,6 +113,10 @@ jobs:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
+      # ---------------
+      # Download wheels
+      # ---------------
+
       - name: Download x86_64 Linux 3.10 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -176,12 +182,50 @@ jobs:
         with:
           name: windows-x86_64-py3.14-wheels
 
-      - name: Download NuGet from Artifactory
+      # ----------------------
+      # Download test archives
+      # ----------------------
+
+      - name: Download aarch64 Android Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: android-aarch64-pyNone-tests
+
+      - name: Download aarch64 OE GCC 11.2 Linux Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_oe_gcc11_2-pyNone-tests
+
+      - name: Download x86_64 Linux Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64-py3.10-tests
+
+      - name: Download arm64 Windows Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64-py3.11-tests
+
+      - name: Download arm64ec Windows Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.11-tests
+
+      - name: Download x86_64 Windows Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.11-tests
+
+      # -----------------------------
+      # Download other distributables
+      # -----------------------------
+
+      - name: Download ARM64 Windows NuGet Package from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.11-nuget
 
-      - name: Download Zip from Artifactory
+      - name: Download ARM64 Windows Zip Package
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.11-zip
@@ -220,11 +264,17 @@ jobs:
           echo "Found $count NuGet package(s)"
           [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 NuGet package, found $count"; exit 1; }
 
+      - name: Verify tarball artifacts
+        run: |
+          count=$(find "${{ github.workspace }}/build" -name "*.tar.bz2" | wc -l)
+          echo "Found $count .tar.bz2 archive(s)"
+          [ "$count" -eq 2 ] || { echo "ERROR: Expected 2 .tar.bz2 archives, found $count"; exit 1; }
+
       - name: Verify Zip artifact
         run: |
           count=$(find "${{ github.workspace }}/build" -name "*.zip" | wc -l)
           echo "Found $count Zip archive(s)"
-          [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 Zip archive, found $count"; exit 1; }
+          [ "$count" -eq 5 ] || { echo "ERROR: Expected 5 Zip archives, found $count"; exit 1; }
 
       - name: Set QA Build Tag
         run: |
