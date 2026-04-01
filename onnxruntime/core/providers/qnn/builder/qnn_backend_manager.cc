@@ -1759,7 +1759,8 @@ Ort::Status QnnBackendManager::SetupBackend(
   bool enable_htp_weight_sharing = false;
   if (share_ep_contexts && !load_from_cached_context) {
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
-    !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
+    (QNN_API_VERSION_MAJOR < 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR < 34))
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, ("FINDME: " + std::to_string(QNN_API_VERSION_MAJOR) + "." + std::to_string(QNN_API_VERSION_MINOR) + "." + std::to_string(QNN_API_VERSION_PATCH)).c_str());
     ORT_CXX_LOG_PTR(logger_ptr_,
                     ORT_LOGGING_LEVEL_WARNING,
                     "Weight sharing on Windows arm64 device requires QNN API version >=2.34. Since Current version is too old, disabling the Weight sharing.");

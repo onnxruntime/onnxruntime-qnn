@@ -1819,7 +1819,12 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   }
 
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
-  auto compile_start = std::chrono::high_resolution_clock::now();
+  // Initialize now for possible reuse in loop
+  auto finalize_start = std::chrono::steady_clock::time_point::min();
+  auto end = std::chrono::steady_clock::time_point::min();
+  std::chrono::milliseconds total_finalize_time{0};
+
+  auto compile_start = std::chrono::steady_clock::now();
   std::vector<GraphFinalizationInfo_t> model_infos;
 
   bool use_multithreaded_prepare = count >= 5 || ep->num_graph_prepare_threads_ > 1;
@@ -1828,7 +1833,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   } else {
     ORT_CXX_LOG(ep->logger_,
                 ORT_LOGGING_LEVEL_VERBOSE,
-                "Graph count is less than 5. Only using single thread for graph prepare.");
+                ("Only using single thread for graph prepare due to graph count (" + std::to_string(count) + ") or user request.").c_str());
   }
 #endif
 
@@ -1914,8 +1919,14 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
       model_info.model = std::move(qnn_model);
       model_info.graph_idx = graph_idx;
     } else {
+      finalize_start = std::chrono::steady_clock::now();
 #endif
       RETURN_IF_NOT_OK(qnn_model->FinalizeGraphs(ep->logger_));
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+      end = std::chrono::steady_clock::now();
+      total_finalize_time += std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
+#endif
+
       RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(ep->logger_));
 
       ep->qnn_models_.emplace(fused_node_name, std::move(qnn_model));
@@ -1931,15 +1942,15 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   if (use_multithreaded_prepare) {
     qnn::thread::QnnJobThreadPool tp(ep->num_graph_prepare_threads_);
     tp.Start();
-    auto finalize_start = std::chrono::high_resolution_clock::now();
+    finalize_start = std::chrono::steady_clock::now();
     for (auto& model_info : model_infos) {
       tp.SubmitJob([qnn_model = model_info.model.get(), &logger = ep->logger_, res = &model_info.result] {
         *res = qnn_model->FinalizeGraphs(logger);
       });
     }
     tp.WaitForQueuedJobsToFinish();
-    auto end = std::chrono::high_resolution_clock::now();
-    auto total_finalize_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
+    end = std::chrono::steady_clock::now();
+    total_finalize_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
 
     for (auto& model_info : model_infos) {
       RETURN_IF_NOT_OK(std::move(model_info.result));
@@ -1952,26 +1963,26 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
       auto node_compute_info = std::make_unique<QnnNodeComputeInfo>(*ep);
       node_compute_infos[model_info.graph_idx] = node_compute_info.release();
     }
+  }
 #endif  // _WIN32
 
-    // Clean up transient GetCapability→Compile state.
-    ep->onnx_graph_io_names_.reset();
-    ep->tensor_name_overrides_.clear();
+  // Clean up transient GetCapability→Compile state.
+  ep->onnx_graph_io_names_.reset();
+  ep->tensor_name_overrides_.clear();
 
-    if (ep->context_cache_enabled_) {
-      RETURN_IF_NOT_NULL(ep->CreateEPContextNodes(graphs[0], fused_nodes, count, ep_context_nodes));
-    }
-#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
-    end = std::chrono::high_resolution_clock::now();
-    auto total_compile_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - compile_start);
-
-    ORT_CXX_LOG(ep->logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Total finalize time for all fused nodes: " + std::to_string(total_finalize_time.count()) + " ms").c_str());
-    ORT_CXX_LOG(ep->logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Total compile time for all fused nodes: " + std::to_string(total_compile_time.count()) + " ms").c_str());
+  if (ep->context_cache_enabled_) {
+    RETURN_IF_NOT_NULL(ep->CreateEPContextNodes(graphs[0], fused_nodes, count, ep_context_nodes));
   }
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  end = std::chrono::steady_clock::now();
+  auto total_compile_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - compile_start);
+
+  ORT_CXX_LOG(ep->logger_,
+              ORT_LOGGING_LEVEL_VERBOSE,
+              ("Total finalize time for all fused nodes: " + std::to_string(total_finalize_time.count()) + " ms").c_str());
+  ORT_CXX_LOG(ep->logger_,
+              ORT_LOGGING_LEVEL_VERBOSE,
+              ("Total compile time for all fused nodes: " + std::to_string(total_compile_time.count()) + " ms").c_str());
 #endif
 
   return nullptr;
