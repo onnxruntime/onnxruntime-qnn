@@ -94,7 +94,7 @@ class QnnIrConfig : public QnnSerializerConfig {
     dlc_path_custom_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
     dlc_path_custom_config->customConfig = dlc_path_config;
 
-    std::filesystem::create_directories(dlc_path);
+    std::filesystem::create_directories(dlc_path.parent_path());
 
     // Keep the pointer to dlc_path_str's null-terminated string alive.
     std::swap(dlc_path_str, dlc_path_str_);
