@@ -1852,7 +1852,7 @@ void QnnBackendManager::ReleaseTimerThread() {
   if (status != Ort::Status()) {
     ORT_CXX_LOG(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Not able to set Power config to release");
   }*/
-  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, ("Not able to set Power config to release " + std::to_string(htp_power_config_client_id)).c_str());
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Not able to set Power config to release ");
 }
 
 
