@@ -1145,6 +1145,18 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
     void* buffer;
     RETURN_IF_ERROR(file_mapper_->GetContextBinMappedMemoryPtr(context_bin_filepath, &buffer));
 
+    Qnn_Version_t blob_version;
+    RETURN_IF_ERROR(GetGraphInfoAndBinVersion(buffer, buffer_size,
+                                              blob_version,
+                                              graph_count,
+                                              graphs_info));
+
+    // Cannot use contextCreateFromBinaryWithCallback() unless context bin version is >= 3.3.3
+    if (!MinVersionMet(blob_version, {3,3,3}) {
+      std::string version_str(std::to_string(blob_version.major) + "." + std::to_string(blob_version.minor) + "." + std::to_string(blob_version.patch));
+      return MAKE_EP_FAIL(("Context binary of " + context_bin_filepath + " is v" + version_str + ". File mapping is only supported for versions >= 3.3.3. Disabling file mapping for this node.").c_str());
+    }
+
     auto notify_param_ptr = std::make_unique<FileMappingCallbackInfo_t>(buffer, buffer_size, this);
 
     Qnn_ContextBinaryCallback_t context_file_map_callbacks;
@@ -1441,70 +1453,19 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   bin_buffer = static_cast<void*>(buffer);
 #endif
 
-  QnnSystemContext_Handle_t sys_ctx_handle = nullptr;
-  auto rt = qnn_sys_interface_.systemContextCreate(&sys_ctx_handle);
-  RETURN_IF(QNN_SUCCESS != rt, "Failed to create system handle.");
-
-  auto sys_ctx_handle_deleter = [&qnn_sys_interface = qnn_sys_interface_](void* handle) {
-    qnn_sys_interface.systemContextFree(reinterpret_cast<QnnSystemContext_Handle_t>(handle));
-  };
-
-  std::unique_ptr<void, decltype(sys_ctx_handle_deleter)> sys_ctx_handle_uptr(sys_ctx_handle, sys_ctx_handle_deleter);
-
-  const QnnSystemContext_BinaryInfo_t* binary_info = nullptr;
-  Qnn_ContextBinarySize_t binary_info_size{0};
-  rt = qnn_sys_interface_.systemContextGetBinaryInfo(sys_ctx_handle_uptr.get(),
-                                                     bin_buffer,
-                                                     buffer_length,
-                                                     &binary_info,
-                                                     &binary_info_size);
-  RETURN_IF(QNN_SUCCESS != rt, "Failed to get context binary info.");
-
-  // binary_info life cycle is here
-  // Binary info to graph info
-  // retrieve Qnn graph info from binary info
-  RETURN_IF(nullptr == binary_info, "Qnn cached binary info is nullptr.");
-
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-  Qnn_Version_t blob_version = {0, 0, 0};
-#endif
-
   uint32_t graph_count = 0;
+  Qnn_Version_t blob_version;
   QnnSystemContext_GraphInfo_t* graphs_info = nullptr;
-  if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_1) {
-    graph_count = binary_info->contextBinaryInfoV1.numGraphs;
-    graphs_info = binary_info->contextBinaryInfoV1.graphs;
+  RETURN_IF_ERROR(GetGraphInfoAndBinVersion(buffer, buffer_length,
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-    blob_version = binary_info->contextBinaryInfoV1.contextBlobVersion;
+                                            blob_version,
 #endif
-  }
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 15)  // starts from 2.22
-  else if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_2) {
-    graph_count = binary_info->contextBinaryInfoV2.numGraphs;
-    graphs_info = binary_info->contextBinaryInfoV2.graphs;
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-    blob_version = binary_info->contextBinaryInfoV2.contextBlobVersion;
-#endif
-  }
-#endif
-#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)  // starts from 2.28
-  else if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_3) {
-    graph_count = binary_info->contextBinaryInfoV3.numGraphs;
-    graphs_info = binary_info->contextBinaryInfoV3.graphs;
-#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
-    blob_version = binary_info->contextBinaryInfoV3.contextBlobVersion;
-#endif
-  }
-#endif
-  else {
-    return MAKE_EP_FAIL("Unsupported context binary info version.");
-  }
+                                            graph_count,
+                                            graphs_info));
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   // Cannot use contextCreateFromBinaryWithCallback() unless context bin version is >= 3.3.3
-  if (use_file_mapping && (blob_version.major < 3 ||
-                           (blob_version.major == 3 && blob_version.minor < 3) ||
-                           (blob_version.major == 3 && blob_version.minor == 3 && blob_version.patch < 3))) {
+  if (use_file_mapping && !MinVersionMet(blob_version, {3,3,3}) {
     std::string version_str(std::to_string(blob_version.major) + "." + std::to_string(blob_version.minor) + "." + std::to_string(blob_version.patch));
     ORT_CXX_LOG_PTR(logger_ptr_,
                     ORT_LOGGING_LEVEL_WARNING,
@@ -1560,6 +1521,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
     RETURN_IF(nullptr == qnn_interface_.contextCreateFromBinary,
               "Invalid function pointer for contextCreateFromBinary.");
 
+    Qnn_ErrorHandle_t rt = QNN_SUCCESS;
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
     Qnn_ContextBinaryCallback_t callbacks;
     if (use_file_mapping && file_mapper_) {
@@ -2528,6 +2490,75 @@ Ort::Status QnnBackendManager::GetPlatformInfo() {
   }
 
   RETURN_IF(htp_arch_internal_ == QNN_HTP_DEVICE_ARCH_NONE, "Failed to get HTP arch.");
+
+  return Ort::Status();
+}
+
+Ort::Status GetGraphInfoAndBinVersion(void* buffer, size_t buffer_length,
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+                                      Qnn_Version_t& blob_version,
+#endif
+                                      uint32_t& graph_count,
+                                      QnnSystemContext_GraphInfo_t* graphs_info) {
+
+  QnnSystemContext_Handle_t sys_ctx_handle = nullptr;
+  auto rt = qnn_sys_interface_.systemContextCreate(&sys_ctx_handle);
+  RETURN_IF(QNN_SUCCESS != rt, "Failed to create system handle.");
+
+  auto sys_ctx_handle_deleter = [&qnn_sys_interface = qnn_sys_interface_](void* handle) {
+    qnn_sys_interface.systemContextFree(reinterpret_cast<QnnSystemContext_Handle_t>(handle));
+  };
+
+  std::unique_ptr<void, decltype(sys_ctx_handle_deleter)> sys_ctx_handle_uptr(sys_ctx_handle, sys_ctx_handle_deleter);
+
+  const QnnSystemContext_BinaryInfo_t* binary_info = nullptr;
+  Qnn_ContextBinarySize_t binary_info_size{0};
+  rt = qnn_sys_interface_.systemContextGetBinaryInfo(sys_ctx_handle_uptr.get(),
+                                                     bin_buffer,
+                                                     buffer_length,
+                                                     &binary_info,
+                                                     &binary_info_size);
+  RETURN_IF(QNN_SUCCESS != rt, "Failed to get context binary info.");
+
+  // binary_info life cycle is here
+  // Binary info to graph info
+  // retrieve Qnn graph info from binary info
+  RETURN_IF(nullptr == binary_info, "Qnn cached binary info is nullptr.");
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  Qnn_Version_t blob_version = {0, 0, 0};
+#endif
+
+  uint32_t graph_count = 0;
+  QnnSystemContext_GraphInfo_t* graphs_info = nullptr;
+  if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_1) {
+    graph_count = binary_info->contextBinaryInfoV1.numGraphs;
+    graphs_info = binary_info->contextBinaryInfoV1.graphs;
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+    blob_version = binary_info->contextBinaryInfoV1.contextBlobVersion;
+#endif
+  }
+#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 15)  // starts from 2.22
+  else if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_2) {
+    graph_count = binary_info->contextBinaryInfoV2.numGraphs;
+    graphs_info = binary_info->contextBinaryInfoV2.graphs;
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+    blob_version = binary_info->contextBinaryInfoV2.contextBlobVersion;
+#endif
+  }
+#endif
+#if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)  // starts from 2.28
+  else if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_3) {
+    graph_count = binary_info->contextBinaryInfoV3.numGraphs;
+    graphs_info = binary_info->contextBinaryInfoV3.graphs;
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+    blob_version = binary_info->contextBinaryInfoV3.contextBlobVersion;
+#endif
+  }
+#endif
+  else {
+    return MAKE_EP_FAIL("Unsupported context binary info version.");
+  }
 
   return Ort::Status();
 }
