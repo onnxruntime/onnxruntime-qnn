@@ -212,7 +212,7 @@ Ort::Status BaseOpBuilder::ProcessInt64Tensors(QnnModelWrapper& qnn_model_wrappe
     // Insert cast to int32 if input dtype is int64
     if (input_tensorwrapper.GetTensorDataType() == QNN_DATATYPE_INT_64) {
       const Qnn_TensorType_t tensor_type = QNN_TENSOR_TYPE_NATIVE;
-      const std::string cast_output_name = utils::GetUniqueName(input_names[i], "_cast_int32");
+      const std::string cast_output_name = utils::UniqueNameGenerator().New(input_names[i], "_cast_int32");
       if (!qnn_model_wrapper.IsQnnTensorWrapperExist(cast_output_name)) {
         Qnn_DataType_t qnn_data_type = QNN_DATATYPE_INT_32;
         const auto& input_i = node_unit.Inputs()[i];
@@ -296,8 +296,8 @@ Ort::Status BaseOpBuilder::ProcessOutputs(QnnModelWrapper& qnn_model_wrapper,
     }
 
     if (needs_int64_cast) {
-      const std::string cast_node_name = utils::GetUniqueName(node_unit, "_cast_int64");
-      const std::string cast_input_name = utils::GetUniqueName(output_name, "_cast_int64");
+      const std::string cast_node_name = utils::UniqueNameGenerator().New(node_unit, "_cast_int64");
+      const std::string cast_input_name = utils::UniqueNameGenerator().New(output_name, "_cast_int64");
       QnnQuantParamsWrapper quant_params = output_info.quant_param.Copy();
       std::vector<uint32_t> cast_output_shape = output_info.shape;
 
@@ -312,8 +312,8 @@ Ort::Status BaseOpBuilder::ProcessOutputs(QnnModelWrapper& qnn_model_wrapper,
       // Store the cast node information for later addition
       cast_node_info_vec.emplace_back(CastNodeInfo{cast_node_name, cast_input_name, output_name});
     } else if (supported_qnn_data_type != output_info.qnn_data_type && is_graph_output && !do_op_validation) {
-      const std::string cast_node_name = utils::GetUniqueName(node_unit, "_cast");
-      const std::string cast_input_name = utils::GetUniqueName(output_name, "_cast");
+      const std::string cast_node_name = utils::UniqueNameGenerator().New(node_unit, "_cast");
+      const std::string cast_input_name = utils::UniqueNameGenerator().New(output_name, "_cast");
       std::vector<uint32_t> cast_output_shape = output_info.shape;
       QnnTensorWrapper cast_input_tensorwrapper(cast_input_name,
                                                 QNN_TENSOR_TYPE_NATIVE,
@@ -337,7 +337,7 @@ Ort::Status BaseOpBuilder::ProcessOutputs(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
   }
 
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit),
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 qnn_op_type,
                                                 std::move(input_names),

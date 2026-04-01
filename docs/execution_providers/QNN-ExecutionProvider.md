@@ -203,6 +203,13 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |'0'|Default. Version check enabled.|
 |'1'|Skip QNN API interface version check to use other QNN library versions.|
 
+|`"num_graph_prepare_threads"`|Description|
+|---|---|
+|Number (string)|The number of threads to use during model compilation. Must be greater than 1 and no more than the maximum supported concurrency threads as [reported by the hardware](https://en.cppreference.com/w/cpp/thread/thread/hardware_concurrency.html).<br><br>An invalid value will result in a warning and default behavior.<br><br>Defaults to 8 or the maximum supported threads, whichever is lower.<br><br><b>Will only take effect if the model is partitioned into 5+ subgraphs</b><br><br><b>Currently only supported on Windows ARM64 devices</b>|
+
+For more information, see the [Parallel Graph Preparation](#parallel-graph-preparation) section below.
+
+
 ### Run Options
 
 Run options can be set dynamically at runtime using the ORT Run API. These options allow you to configure QNN EP behavior on a per-inference basis.
@@ -639,6 +646,70 @@ g_ort->AddSessionConfigEntry(session_options, kOrtSessionOptionEpContextEmbedMod
 # Python
 options.add_session_config_entry("ep.context_embed_mode", "1")
 ```
+
+## Parallel Graph Preparation
+For general context, please read the [QNN context binary cache feature](#qnn-context-binary-cache-feature) section above.
+
+The process to prepare a model to run on the HTP backend is to do the following for each subgraph:
+
+1. Compilation/composition into a QNN Graph
+2. Finalization into a HTP-friendly binary
+3. Input/Ouput tensor setup
+
+For a typical model, this is done sequentially. However, for larger models, such as LLMs, one model may contain multiple subgraphs of substantial size. If done sequentially, the total time to prepare a model may seem like an eternity, thus resulting in the need for parallelization.
+
+Parallel graph preparation was implemented to parallelize the prepare process as much as possible, saving a considerable amount of time. The QNN API currently only supports asynchronous graph finalization. As such, parallelized prepare is as follows:
+1. Create and start a thread pool
+2. For each subgraph, compose the QNN graph
+3. For each subgraph, submit a job to finalize the QNN graph into the thread pool
+4. Wait for all jobs to finish
+5. For each subgraph, setup the I/O tensors
+
+### General Usage
+To utilize this feature, set the value of `num_graph_prepare_threads` to the desired number of threads as shown in the example code below:
+```python
+# Python on Windows on Snapdragon device
+import onnxruntime as ort
+import onnxruntime_qnn as qnn_ep
+
+# General setup
+# ...
+
+# Configure EP options with optrace profiling
+ep_options = {
+    "backend_type": "htp",
+    "htp_performance_mode": "burst",
+    "num_graph_prepare_threads": "8" # Use 8 threads to graph preparation
+}
+
+sess_options = ort.SessionOptions()
+
+# Enable context bin generation (not required)
+sess_options.add_session_config_entry("ep.context_embed_mode", "0")
+sess_options.add_session_config_entry("ep.context_enable", "1")
+
+sess_options.add_provider_for_devices(selected_ep_devices, ep_options)
+
+session = ort.InferenceSession("model.onnx", sess_options=sess_options)
+```
+
+
+### Important Considerations
+#### Feature Disabled if Number of Subgraphs is Less Than 5
+While graph composition is responsible for the majority of the preparation time, asynchronously finalizing the subgraphs cuts the total time down by a considerable amount, depending on the graph. For smaller models or models with only a few subgraphs, the overhead of setting up for parallel graph preparation will negate any possible performance gains and may actually result in worse performance. 
+
+#### Feature Disabled if `num_graph_prepare_threads` is 1
+This defeats the purpose of the feature, and enabling the feature will only add additional overhead from thread pool creation.
+
+#### Number of Supported Concurrency Threads by Hardware
+The range of `num_graph_prepare_threads` is restricted to the maximum supported as reported by the hardware via [`std::thread::hardware_concurrency`](https://en.cppreference.com/w/cpp/thread/thread/hardware_concurrency.html).
+
+If `std::thread::hardware_concurrency` fails, then the allowable range will be restricted to 4.
+
+#### Default Behavior
+If `num_graph_prepare_threads` is never set or set to a value outside of the allowable range, then the default number of threads will be 8.
+
+If `std::thread::hardware_concurrency` returns a value less than 8, then the default number of threads will be the lower value rather than 8. This applies when `num_graph_prepare_threads` is set to an invalid value.
 
 ## QNN EP Profiling
 Profiling data is available with the HTP backend. Enabling QNN profiling will generate a user-readable .csv file that will contain information from initialization, execution, and de-initialization.

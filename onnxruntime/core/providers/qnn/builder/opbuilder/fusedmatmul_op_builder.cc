@@ -205,7 +205,7 @@ Ort::Status FusedMatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
                                    std::vector<uint32_t>(output_info.shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)), "Failed to add final output tensor.");
 
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit.Name() + "_matmul"),
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit.Name() + "_matmul"),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_MAT_MUL,
                                                   {input_a_for_matmul, input_b_for_matmul},
@@ -216,7 +216,7 @@ Ort::Status FusedMatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
   } else {
     // When alpha is not 1.0f, we need an intermediate tensor for MatMul output
     // and then apply alpha scaling
-    std::string matmul_output_name = utils::GetUniqueName(node_unit.Name() + "_matmul_output");
+    std::string matmul_output_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_matmul_output");
 
     QnnTensorWrapper matmul_output_tensor(matmul_output_name,
                                           QNN_TENSOR_TYPE_NATIVE,
@@ -235,7 +235,7 @@ Ort::Status FusedMatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
                                    std::vector<uint32_t>(output_info.shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)), "Failed to add output tensor.");
 
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit.Name() + "_matmul"),
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit.Name() + "_matmul"),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_MAT_MUL,
                                                   {input_a_for_matmul, input_b_for_matmul},
@@ -244,7 +244,7 @@ Ort::Status FusedMatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
                                                   do_op_validation),
                   "Failed to create MatMul node for FusedMatMul.");
 
-    std::string alpha_tensor_name = utils::GetUniqueName(node_unit.Name() + "_alpha");
+    std::string alpha_tensor_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_alpha");
     std::vector<uint32_t> alpha_shape{1};
     Qnn_DataType_t alpha_qnn_data_type = output_info.qnn_data_type;
     std::vector<uint8_t> alpha_data;
@@ -267,7 +267,7 @@ Ort::Status FusedMatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& q
                                           std::move(alpha_data));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(alpha_tensor_wrapper)), "Failed to add alpha tensor.");
 
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit.Name() + "_alpha_scale"),
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit.Name() + "_alpha_scale"),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_ELEMENT_WISE_MULTIPLY,
                                                   {matmul_output_name, alpha_tensor_name},
@@ -319,7 +319,7 @@ Ort::Status FusedMatMulOpBuilder::HandleBatchTranspose(QnnModelWrapper& qnn_mode
                                                        std::string& transposed_name,
                                                        bool trans_mat,
                                                        bool do_op_validation) const {
-  transposed_name = utils::GetUniqueName(node_unit.Name() + "_transposed_" + input_name.substr(input_name.find_last_of('/') + 1));
+  transposed_name = utils::UniqueNameGenerator().New(node_unit.Name() + "_transposed_" + input_name.substr(input_name.find_last_of('/') + 1));
 
   // Create perm vector for batch transpose
   std::vector<uint32_t> perm;
@@ -342,7 +342,7 @@ Ort::Status FusedMatMulOpBuilder::HandleBatchTranspose(QnnModelWrapper& qnn_mode
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(transposed_tensor)), "Failed to add transposed tensor.");
 
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                    utils::GetUniqueName(node_unit.Name() + "_transpose_" + input_name.substr(input_name.find_last_of('/') + 1)),
+                    utils::UniqueNameGenerator().New(node_unit.Name() + "_transpose_" + input_name.substr(input_name.find_last_of('/') + 1)),
                     QNN_OP_PACKAGE_NAME_QTI_AISW,
                     QNN_OP_TRANSPOSE,
                     {input_name},

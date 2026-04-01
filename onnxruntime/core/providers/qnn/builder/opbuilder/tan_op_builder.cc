@@ -66,21 +66,21 @@ Ort::Status TanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], output_info));
 
   // Create intermediate tensor for Sin output
-  std::string sin_output_name = utils::GetUniqueName(node_unit, "_sin_out");
+  std::string sin_output_name = utils::UniqueNameGenerator().New(node_unit, "_sin_out");
   QnnTensorWrapper sin_output_tensor_wrapper(sin_output_name, QNN_TENSOR_TYPE_NATIVE, input_info.qnn_data_type,
                                              input_info.quant_param.Copy(), std::vector<uint32_t>(input_info.shape));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sin_output_tensor_wrapper)),
                 "Failed to add Sin output tensor.");
 
   // Create intermediate tensor for Cos output
-  std::string cos_output_name = utils::GetUniqueName(node_unit, "_cos_out");
+  std::string cos_output_name = utils::UniqueNameGenerator().New(node_unit, "_cos_out");
   QnnTensorWrapper cos_output_tensor_wrapper(cos_output_name, QNN_TENSOR_TYPE_NATIVE, input_info.qnn_data_type,
                                              input_info.quant_param.Copy(), std::vector<uint32_t>(input_info.shape));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(cos_output_tensor_wrapper)),
                 "Failed to add Cos output tensor.");
 
   // Create Sin node: input -> sin_out
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit, "_Sin"),
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_Sin"),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_SIN,
                                                 {input_names[0]},
@@ -90,7 +90,7 @@ Ort::Status TanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
                 "Failed to create Sin node.");
 
   // Create Cos node: input -> cos_out
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit, "_Cos"),
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_Cos"),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_COS,
                                                 {input_names[0]},
@@ -108,7 +108,7 @@ Ort::Status TanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
                 "Failed to add output tensor.");
 
   // Create Div node: sin_out / cos_out -> output
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit, "_Div"),
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_Div"),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_DIVIDE,
                                                 {sin_output_name, cos_output_name},

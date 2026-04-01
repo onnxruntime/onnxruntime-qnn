@@ -325,6 +325,12 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
     provider_options["json_qnn_graph_dir"] = output_dir.string();
   }
 
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
   // Run with QNN.
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = "QNNExecutionProvider";
@@ -412,10 +418,12 @@ void InferenceModel(const std::string& model_data,
   if (graph_optimization_level.has_value()) {
     session_options.SetGraphOptimizationLevel(*graph_optimization_level);
   }
+
   RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
 
   session_options.SetLogId(log_id);
   session_options.SetLogSeverityLevel(log_severity);
+
   if (QNNTestEnvironment::GetInstance().verbose()) {
     session_options.SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
   }

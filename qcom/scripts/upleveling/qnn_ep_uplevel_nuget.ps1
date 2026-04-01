@@ -34,6 +34,38 @@ function Set-NuGetCredentials {
         $source_name = "testnuget.org"
     } elseif ($server -eq "nuget") {
         $source_name = "nuget.org"
+
+        # qnn_ep_uplevel.py (called later) runs "nuget sources Add" with credentials.
+        # If nuget.org already exists under any name, the Add command fails with a duplicate URL error.
+        # Remove it here so it can be re-added with credentials.
+        # Get a list of all NuGet sources
+        $nugetSources = nuget sources list
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to get the list of NuGet sources"
+        }
+
+        # Parse sources
+        for ($i = 0; $i -lt $nugetSources.Count; $i++) {
+            $line = $nugetSources[$i].Trim()
+            # Match lines that start with a number (source name lines)
+            if ($line -match '^\d+\.\s+(.+?)\s+\[') {
+                $existedSourceName = $matches[1]
+                # The next line should contain the URL/path
+                if ($i + 1 -lt $nugetSources.Count) {
+                    $url = $nugetSources[$i + 1].Trim()
+                    if ($url -eq "https://api.nuget.org/v3/index.json") {
+                        # Remove the nuget.org source; it will be added back later in the script.
+                        Write-Host "nuget.org source exists with name: $existedSourceName, URL: $url. Remove it first."
+                        nuget sources Remove -Name $existedSourceName -NonInteractive
+                        if ($LASTEXITCODE -ne 0) {
+                            throw "Failed to remove NuGet source: $existedSourceName"
+                        }
+                        Write-Output "NuGet source '$existedSourceName' removed."
+                        break
+                    }
+                }
+            }
+        }
     } else {
         $source_name = "re-artifactory-nuget-$server-$version"
     }

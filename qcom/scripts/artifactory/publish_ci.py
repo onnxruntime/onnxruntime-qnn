@@ -12,14 +12,13 @@ REPO_ROOT = Path(__file__).parent.parent.parent.parent.absolute()
 
 class PublishCiArtifact:
     def __init__(self, name: str, build_dir: Path, src_pattern: str) -> None:
-        self.__name = name
         self.__build_dir = build_dir
         self.__src_pattern = src_pattern
-        self.__client = CiArtifactory()
+        self.__client = CiArtifactory(name)
 
     @property
     def destination(self) -> str:
-        return f"{self.__client.artifact_root}/{self.__name}/"
+        return f"{self.__client.artifact_root}/"
 
     def run(self) -> None:
         self.__client.upload(self.__build_dir, self.__src_pattern, self.destination)

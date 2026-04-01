@@ -341,7 +341,7 @@ bool QnnModelWrapper::ProcessBF16OutputConversion(const std::string& qnn_node_na
     if (IsGraphOutput(output_name) &&
         (tensor_dtype == QNN_DATATYPE_FLOAT_32 || tensor_dtype == QNN_DATATYPE_BFLOAT_16)) {
       // For FP32 graph outputs, insert Cast node to convert BF16 back to FP32
-      std::string bf16_output_name = utils::GetUniqueName(output_name, "_bf16_intermediate");
+      std::string bf16_output_name = utils::UniqueNameGenerator().New(output_name, "_bf16_intermediate");
 
       if (!IsQnnTensorWrapperExist(bf16_output_name)) {
         std::vector<uint32_t> shape = tensor_wrapper.GetTensorDims();
@@ -884,7 +884,7 @@ Ort::Status QnnModelWrapper::AddReshapeNode(const std::string& input_name, const
   RETURN_IF_NOT(AddTensorWrapper(std::move(output_tensorwrapper)),
                 "QNN EP: Failed to add output tensor for inserted Reshape.");
 
-  RETURN_IF_NOT(CreateQnnNode(utils::GetUniqueName(output_name, QNN_OP_RESHAPE),
+  RETURN_IF_NOT(CreateQnnNode(utils::UniqueNameGenerator().New(output_name, QNN_OP_RESHAPE),
                               QNN_OP_PACKAGE_NAME_QTI_AISW,
                               QNN_OP_RESHAPE,
                               {input_name},
@@ -950,7 +950,7 @@ Ort::Status QnnModelWrapper::AddTransposeNode(size_t node_index,
                                         quantize_param.Copy(),
                                         std::move(output_shape_copy));
   RETURN_IF_NOT(AddTensorWrapper(std::move(output_tensorwrapper)), "Failed to add tensor.");
-  RETURN_IF_NOT(CreateQnnNode(utils::GetUniqueName(output_name, QNN_OP_TRANSPOSE),
+  RETURN_IF_NOT(CreateQnnNode(utils::UniqueNameGenerator().New(output_name, QNN_OP_TRANSPOSE),
                               QNN_OP_PACKAGE_NAME_QTI_AISW,
                               QNN_OP_TRANSPOSE,
                               {input_name},
@@ -979,7 +979,7 @@ Ort::Status QnnModelWrapper::AddNoopReshapeNode(const std::string& node_name,
   std::string output_name = output_tensor_wrapper.GetName();
   RETURN_IF_NOT(AddTensorWrapper(std::move(output_tensor_wrapper)), "Failed to add no-op output tensor.");
 
-  RETURN_IF_NOT(CreateQnnNode(utils::GetUniqueName(node_name),
+  RETURN_IF_NOT(CreateQnnNode(utils::UniqueNameGenerator().New(node_name),
                               QNN_OP_PACKAGE_NAME_QTI_AISW,
                               QNN_OP_RESHAPE,
                               {input_name},

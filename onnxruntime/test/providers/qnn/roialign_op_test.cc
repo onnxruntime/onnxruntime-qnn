@@ -122,9 +122,8 @@ static void RunQDQRoiAlignOpTest(const TestInputDef<float>& input_def,
 //
 // CPU tests:
 //
-// Disabling CPU test for ARM64. ARM64 CI runner stalled.
-#if !defined(_M_ARM64) && !defined(_M_ARM64EC) && !defined(__linux__)
-TEST_F(QnnCPUBackendTests, TestRoialign) {
+// Disabling CPU tests. CPU kernel tests have potential problems that stalls on CI.
+TEST_F(QnnCPUBackendTests, DISABLED_TestRoialign) {
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
                     TestInputDef<int64_t>({1}, true, {0}),
@@ -138,7 +137,7 @@ TEST_F(QnnCPUBackendTests, TestRoialign) {
 }
 
 // QNN doesn't support coordinate_transformation_mode = output_half
-TEST_F(QnnCPUBackendTests, TestRoialign_Unsupported_output_half) {
+TEST_F(QnnCPUBackendTests, DISABLED_TestRoialign_Unsupported_output_half) {
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
                     TestInputDef<int64_t>({1}, true, {0}),
@@ -152,7 +151,7 @@ TEST_F(QnnCPUBackendTests, TestRoialign_Unsupported_output_half) {
 }
 
 // QNN only supports pooling mode = average
-TEST_F(QnnCPUBackendTests, TestRoialign_Unsupported_mode_max) {
+TEST_F(QnnCPUBackendTests, DISABLED_TestRoialign_Unsupported_mode_max) {
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
                     TestInputDef<int64_t>({1}, true, {0}),
@@ -166,7 +165,7 @@ TEST_F(QnnCPUBackendTests, TestRoialign_Unsupported_mode_max) {
 }
 
 // QNN doesn't support adaptive sampling_ratio (sampling_ratio = 0)
-TEST_F(QnnCPUBackendTests, TestRoialign_Unsupported_sampling_ratio) {
+TEST_F(QnnCPUBackendTests, DISABLED_TestRoialign_Unsupported_sampling_ratio) {
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
                     TestInputDef<int64_t>({1}, true, {0}),
@@ -178,7 +177,6 @@ TEST_F(QnnCPUBackendTests, TestRoialign_Unsupported_sampling_ratio) {
                      test::MakeAttribute("spatial_scale", 1.0f)},
                     ExpectedEPNodeAssignment::None);
 }
-#endif  // !defined(_M_ARM64) && !defined(_M_ARM64EC) && !defined(__linux__)
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 

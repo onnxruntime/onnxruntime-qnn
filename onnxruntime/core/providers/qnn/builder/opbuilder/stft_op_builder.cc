@@ -112,7 +112,7 @@ Ort::Status STFTOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 
     // Create the ExpandDims node
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::GetUniqueName(signal_input_name, "_expand_dims"),
+                      utils::UniqueNameGenerator().New(signal_input_name, "_expand_dims"),
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_EXPAND_DIMS,
                       {signal_input_name},
@@ -294,7 +294,7 @@ Ort::Status STFTOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   qnn_model_wrapper.AddParamWrapper(std::move(onesided_param_wrapper));
 
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                    utils::GetUniqueName(node_unit),
+                    utils::UniqueNameGenerator().New(node_unit),
                     QNN_OP_PACKAGE_NAME_QTI_AISW,
                     QNN_OP_STFT,
                     std::move(input_names),

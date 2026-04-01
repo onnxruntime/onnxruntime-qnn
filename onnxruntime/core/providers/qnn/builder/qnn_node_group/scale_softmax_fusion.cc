@@ -235,7 +235,7 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(mul_input_other, fused_softmax_input));
   RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(softmax_output, fused_softmax_output));
 
-  const std::string node_name = onnxruntime::qnn::utils::GetUniqueName(softmax_node_unit);
+  const std::string node_name = onnxruntime::qnn::utils::UniqueNameGenerator().New(softmax_node_unit);
   if (validate) {
     RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(node_name,
                                                       QNN_OP_PACKAGE_NAME_QTI_AISW,
