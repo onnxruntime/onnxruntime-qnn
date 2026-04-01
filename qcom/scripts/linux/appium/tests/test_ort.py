@@ -78,7 +78,6 @@ class TestOrt(TestBase):
         self.__assert_passes(self.__get_test_cmd(test_cmd))
 
     @pytest.mark.parametrize("test_def", MODEL_TEST_DEFINITIONS, ids=MODEL_TEST_IDS)
-    @pytest.mark.skip("[AISW-167043] [ORT ABI] Build plugin for Android")
     def test_onnx_models(self, test_def: ModelTestDef) -> None:
         runner_exe = Path(CONFIG.device_build_root) / "onnxruntime_plugin_ep_onnx_test"
 
