@@ -1454,14 +1454,18 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 #endif
 
   uint32_t graph_count = 0;
-  Qnn_Version_t blob_version;
   QnnSystemContext_GraphInfo_t* graphs_info = nullptr;
-  RETURN_IF_ERROR(GetGraphInfoAndBinVersion(buffer, buffer_length,
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  Qnn_Version_t blob_version;
+  RETURN_IF_ERROR(GetGraphInfoAndBinVersion(buffer, buffer_length,
                                             blob_version,
-#endif
                                             graph_count,
                                             graphs_info));
+#else
+  RETURN_IF_ERROR(GetGraphInfoAndBinVersion(buffer, buffer_length,
+                                            graph_count,
+                                            graphs_info));
+#endif
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   // Cannot use contextCreateFromBinaryWithCallback() unless context bin version is >= 3.3.3
