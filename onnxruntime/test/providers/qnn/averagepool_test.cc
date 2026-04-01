@@ -122,6 +122,40 @@ TEST_F(QnnCPUBackendTests, GlobalAveragePool_3D) {
                        ExpectedEPNodeAssignment::All);
 }
 
+TEST_F(QnnCPUBackendTests, GlobalAveragePoolRank3) {
+  RunAveragePoolOpTest("GlobalAveragePool",
+                       {TestInputDef<float>({1, 8, 5}, false, -10.0f, 10.0f)},
+                       {},
+                       ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnCPUBackendTests, AveragePoolRank3) {
+  RunAveragePoolOpTest("AveragePool",
+                       {TestInputDef<float>({1, 3, 5}, false, -10.0f, 10.0f)},
+                       {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
+                        test::MakeAttribute("strides", std::vector<int64_t>{1}),
+                        test::MakeAttribute("pads", std::vector<int64_t>{1, 1})},
+                       ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnCPUBackendTests, AveragePoolRank3AutopadSameUpper) {
+  RunAveragePoolOpTest("AveragePool",
+                       {TestInputDef<float>({1, 3, 4}, false, -10.0f, 10.0f)},
+                       {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
+                        test::MakeAttribute("strides", std::vector<int64_t>{2}),
+                        test::MakeAttribute("auto_pad", "SAME_UPPER")},
+                       ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnCPUBackendTests, AveragePoolRank3AutopadSameLower) {
+  RunAveragePoolOpTest("AveragePool",
+                       {TestInputDef<float>({1, 3, 4}, false, -10.0f, 10.0f)},
+                       {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
+                        test::MakeAttribute("strides", std::vector<int64_t>{2}),
+                        test::MakeAttribute("auto_pad", "SAME_LOWER")},
+                       ExpectedEPNodeAssignment::All);
+}
+
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 //
 // HTP tests:
@@ -210,6 +244,86 @@ TEST_F(QnnHTPBackendTests, AveragePool_3D_AutoPad_SAME_LOWER_u8) {
   RunQDQAveragePoolOpTest<uint8_t>("AveragePool",
                                    {TestInputDef<float>({1, 2, 8, 8, 8}, false, -10.0f, 10.0f)},
                                    {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2, 2}),
+                                    test::MakeAttribute("auto_pad", "SAME_LOWER")},
+                                   ExpectedEPNodeAssignment::All);
+}
+
+// Covers the NHWC reshape-back path in pool_op_builder.
+TEST_F(QnnHTPBackendTests, GlobalAveragePoolRank3U8) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 1 * 8 * 5);
+  RunQDQAveragePoolOpTest<uint8_t>("GlobalAveragePool",
+                                   {TestInputDef<float>({1, 8, 5}, false, input_data)},
+                                   {},
+                                   ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, AveragePool1DFusedQnnNodePresent) {
+  auto build_test_case = [](ModelTestBuilder& builder) {
+    MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 9)));
+    builder.MakeOutput("output");
+
+    builder.AddNode("avgpool", "AveragePool",
+                    {"input"},
+                    {"output"},
+                    "",
+                    {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
+                     test::MakeAttribute("strides", std::vector<int64_t>{3}),
+                     test::MakeAttribute("pads", std::vector<int64_t>{0, 0}),
+                     test::MakeAttribute("auto_pad", "NOTSET")});
+  };
+
+  ProviderOptions options;
+  options["backend_type"] = "htp";
+
+  std::function<void(const Graph&)> check_num_nodes = [](const Graph& graph) {
+    int number_of_nodes = graph.NumberOfNodes();
+    EXPECT_EQ(number_of_nodes, 1) << "Expected 1 fused QNN node for AveragePool rank-3 input.";
+  };
+
+  RunQnnModelTest(build_test_case,
+                  options,
+                  18,
+                  ExpectedEPNodeAssignment::All,
+                  1e-5,
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  true,
+                  &check_num_nodes);
+}
+
+TEST_F(QnnHTPBackendTests, AveragePoolRank3U8) {
+  RunQDQAveragePoolOpTest<uint8_t>("AveragePool",
+                                   {TestInputDef<float>({1, 3, 5}, false, -10.0f, 10.0f)},
+                                   {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
+                                    test::MakeAttribute("strides", std::vector<int64_t>{1}),
+                                    test::MakeAttribute("pads", std::vector<int64_t>{1, 1})},
+                                   ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, AveragePoolRank3CountIncludePadU8) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 1 * 3 * 5);
+  RunQDQAveragePoolOpTest<uint8_t>("AveragePool",
+                                   {TestInputDef<float>({1, 3, 5}, false, input_data)},
+                                   {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
+                                    test::MakeAttribute("strides", std::vector<int64_t>{1}),
+                                    test::MakeAttribute("pads", std::vector<int64_t>{1, 1}),
+                                    test::MakeAttribute("count_include_pad", static_cast<int64_t>(1))},
+                                   ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, AveragePoolRank3AutoPadSameUpperU8) {
+  RunQDQAveragePoolOpTest<uint8_t>("AveragePool",
+                                   {TestInputDef<float>({1, 3, 4}, false, -10.0f, 10.0f)},
+                                   {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
+                                    test::MakeAttribute("strides", std::vector<int64_t>{2}),
+                                    test::MakeAttribute("auto_pad", "SAME_UPPER")},
+                                   ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, AveragePoolRank3AutoPadSameLowerU8) {
+  RunQDQAveragePoolOpTest<uint8_t>("AveragePool",
+                                   {TestInputDef<float>({1, 3, 4}, false, -10.0f, 10.0f)},
+                                   {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
+                                    test::MakeAttribute("strides", std::vector<int64_t>{2}),
                                     test::MakeAttribute("auto_pad", "SAME_LOWER")},
                                    ExpectedEPNodeAssignment::All);
 }

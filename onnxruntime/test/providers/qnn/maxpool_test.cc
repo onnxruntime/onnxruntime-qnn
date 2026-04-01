@@ -182,6 +182,13 @@ TEST_F(QnnCPUBackendTests, GlobalMaxPool_3D) {
                 ExpectedEPNodeAssignment::All);
 }
 
+TEST_F(QnnCPUBackendTests, GlobalMaxPoolRank3) {
+  RunPoolOpTest("GlobalMaxPool",
+                TestInputDef<float>({1, 8, 5}, false, -10.0f, 10.0f),
+                {},
+                ExpectedEPNodeAssignment::All);
+}
+
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 //
 // HTP tests:
@@ -474,6 +481,32 @@ TEST_F(QnnHTPBackendTests, GlobalMaxPool_LargeInput2_u8) {
                             TestInputDef<float>({1, 64, 384, 576}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                             {},
                             ExpectedEPNodeAssignment::All);
+}
+
+// Covers the NHWC reshape-back path in pool_op_builder.
+TEST_F(QnnHTPBackendTests, GlobalMaxPoolRank3U8) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 1 * 8 * 5);
+  RunQDQPoolOpTest<uint8_t>("GlobalMaxPool",
+                            TestInputDef<float>({1, 8, 5}, false, input_data),
+                            {},
+                            ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, GlobalMaxPoolRank3LargeInputU8) {
+  RunQDQPoolOpTest<uint8_t>("GlobalMaxPool",
+                            TestInputDef<float>({1, 8400, 80}, false, -10.0f, 10.0f),
+                            {},
+                            ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, GlobalMaxPoolRank3U16) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 1 * 8 * 5);
+  RunQDQPoolOpTest<uint16_t>("GlobalMaxPool",
+                             TestInputDef<float>({1, 8, 5}, false, input_data),
+                             {},
+                             ExpectedEPNodeAssignment::All,
+                             /*opset=*/18,
+                             /*use_contrib_qdq_ops=*/true);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
