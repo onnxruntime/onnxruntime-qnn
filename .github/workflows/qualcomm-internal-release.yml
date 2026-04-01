@@ -176,19 +176,34 @@ jobs:
         with:
           name: windows-x86_64-py3.14-wheels
 
-      # TODO(mbadnara): Switch to download-ci-artifact
-      - name: Download Artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: ORT windows arm64 Python 3.11 QNN NuGet Package
-          path: ${{ github.workspace }}/build/nuget
+      - name: Verify wheel artifacts
+        run: |
+          count=$(find "${{ github.workspace }}/build" -name "*.whl" | wc -l)
+          echo "Found $count wheel(s)"
+          # 1 linux x86_64 + 3 win archs × 4 py versions = 13 expected
+          [ "$count" -ge 13 ] || { echo "ERROR: Expected at least 13 wheels, found $count"; exit 1; }
 
-      # TODO(mbadnara): Switch to download-ci-artifact
-      - name: Download Artifact
-        uses: actions/download-artifact@v8
+      - name: Download NuGet from Artifactory
+        uses: ./.github/actions/download-ci-artifact
         with:
-          name: ORT windows arm64 Python 3.11 Zip Asset
-          path: ${{ github.workspace }}/build/zip
+          name: windows-arm64-py3.11-nuget
+
+      - name: Verify NuGet artifact
+        run: |
+          count=$(find "${{ github.workspace }}/build/windows-arm64/Release" -maxdepth 1 -name "*.nupkg" | wc -l)
+          echo "Found $count NuGet package(s)"
+          [ "$count" -ge 1 ] || { echo "ERROR: Expected at least 1 NuGet package, found $count"; exit 1; }
+
+      - name: Download Zip from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64-py3.11-zip
+
+      - name: Verify Zip artifact
+        run: |
+          count=$(find "${{ github.workspace }}/build/windows-arm64/Release/dist" -maxdepth 1 -name "*.zip" | wc -l)
+          echo "Found $count Zip archive(s)"
+          [ "$count" -ge 1 ] || { echo "ERROR: Expected at least 1 Zip archive, found $count"; exit 1; }
 
       - name: Merge AMD Wheels
         run: |
