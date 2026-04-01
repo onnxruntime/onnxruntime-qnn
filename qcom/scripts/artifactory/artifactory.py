@@ -38,16 +38,12 @@ class Artifactory:
             logging.info(f"Copying everything under {Path(tmpdir) / relpath} to {destination}.")
             shutil.copytree(Path(tmpdir) / relpath, destination, dirs_exist_ok=True)
 
-    def upload(self, cwd: Path, src_pattern: str, destination: str) -> None:
-        self.__run(
-            [
-                "rt",
-                "upload",
-                src_pattern,
-                destination,
-            ],
-            cwd,
-        )
+    def upload(self, cwd: Path, src_pattern: str, destination: str, flat: bool = False) -> None:
+        cmd = ["rt", "upload"]
+        if flat:
+            cmd.append("--flat")
+        cmd.extend([src_pattern, destination])
+        self.__run(cmd, cwd)
 
     def __run(self, args: Iterable[str], cwd: Path | None) -> None:
         cmd = ["jf", *args]
@@ -56,8 +52,9 @@ class Artifactory:
 
 
 class CiArtifactory(Artifactory):
-    def __init__(self) -> None:
+    def __init__(self, name: str) -> None:
         super().__init__()
+        self.__name = name
         self.__commit_hash = os.environ["GITHUB_SHA"]
         actor = os.environ["GITHUB_ACTOR"] if os.environ["GITHUB_ACTOR"] != "" else "main"
         run_id = os.environ["GITHUB_RUN_ID"]
@@ -65,7 +62,17 @@ class CiArtifactory(Artifactory):
 
     @property
     def artifact_root(self) -> str:
-        return f"{super().repo_path}/ci/{self.__ref}/{self.__commit_hash[:10]}"
+        return f"{super().repo_path}/ci/{self.__ref}/{self.__commit_hash[:10]}/{self.__name}"
+
+
+class QaArtifactory(Artifactory):
+    def __init__(self, tag: str) -> None:
+        super().__init__()
+        self.__tag = tag
+
+    @property
+    def artifact_root(self) -> str:
+        return f"{super().repo_path}/qa/{self.__tag}"
 
 
 def initialize_logging(name: str) -> None:

@@ -19,6 +19,14 @@ on:
         description: "Version suffix for released package. If set, the specified suffix will be appended to the version string."
         type: string
         default: ""
+      windows_target_archs:
+        description: "JSON list of Windows architectures to build"
+        type: string
+        default: "['arm64', 'arm64ec', 'x86_64']"
+      windows_target_py_vsns:
+        description: "JSON list of Python versions to build for Windows"
+        type: string
+        default: "['3.11','3.12','3.13','3.14']"
       skip_publish:
         type: boolean
         default: false
@@ -28,9 +36,15 @@ env:
 
 jobs:
   build-artifacts:
-    uses: ./.github/workflows/qualcomm-internal-build-wheels-nugets-zips.yml
+    uses: ./.github/workflows/qualcomm-internal-build-artifacts.yml
     secrets: inherit
     with:
+      build_linux_x86_64: false
+      linux_aarch64_manylinux_2_34_target_py_vsns: "[]"
+      windows_target_archs: ${{ inputs.windows_target_archs }}
+      windows_target_py_vsns: ${{ inputs.windows_target_py_vsns }}
+      windows_arm64_build_nuget: true
+      windows_arm64_build_zip: true
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
 
@@ -42,10 +56,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Dependencies
-        run: |
-          ./qcom/scripts/upleveling/create_uplevel_venv.sh
-
       - name: Setup JFrog CLI
         uses: jfrog/setup-jfrog-cli@v5
         with:
@@ -55,7 +65,7 @@ jobs:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
-      # Upload Python wheel to Artifactory
+      # Download Python wheels from Artifactory
       - name: Download Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -131,7 +141,11 @@ jobs:
           mkdir "${{ github.workspace }}/build/dist/x64"
           cp "${{ github.workspace }}/build/windows-x86_64/Release/dist/"*.whl "${{ github.workspace }}/build/dist/x64"
 
-      - name: Merge AMD wheel
+      - name: Install Dependencies
+        run: |
+          ./qcom/scripts/upleveling/create_uplevel_venv.sh
+
+      - name: Merge AMD Wheels
         run: |
           # Merge AMD wheels using the merge script
           source uplevel_venv/bin/activate
@@ -140,7 +154,7 @@ jobs:
             "${{ github.workspace }}/build/dist/arm64ec" \
             "${{ github.workspace }}/build/dist"
 
-      - name: Check wheel
+      - name: Check Wheels
         run: |
           source uplevel_venv/bin/activate
           twine check ${{ github.workspace }}/build/dist/*.whl
@@ -158,18 +172,18 @@ jobs:
             ${{ github.workspace }}/build/dist/*.whl
 
   upload-nuget-workflow:
-    name: "Upload nuget artifatcs to Artifactory"
+    name: "Upload nuget artifacts to Artifactory"
     runs-on: [Windows, self-hosted, Build, X64]
     needs: [build-artifacts]
 
     steps:
       - uses: actions/checkout@v6
 
-      # Upload Nuget package to Artifactory
+      # Download Nuget package from Artifactory
       - name: Download Artifact
         uses: actions/download-artifact@v4
         with:
-          name: ORT windows arm64 Python 3.12 QNN NuGet Package
+          name: ORT windows arm64 Python 3.11 QNN NuGet Package
           path: ${{ github.workspace }}/build/nuget
 
       - name: Publish
@@ -199,11 +213,11 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # Upload Zip package to Artifactory
+      # Download Zip package from Artifactory
       - name: Download Artifact
         uses: actions/download-artifact@v4
         with:
-          name: ORT windows arm64 Python 3.12 Zip Asset
+          name: ORT windows arm64 Python 3.11 Zip Asset
           path: ${{ github.workspace }}/build/zip
 
       - name: Publish
