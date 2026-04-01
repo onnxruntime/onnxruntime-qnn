@@ -67,7 +67,7 @@ _ep_registered = False
 def load_qnn_ep() -> tuple[types.ModuleType, types.ModuleType]:
     """Import onnxruntime_qnn and onnxruntime, exiting with a clear message if unavailable."""
     try:
-        import onnxruntime_qnn as qnn_ep
+        import onnxruntime_qnn as qnn_ep  # noqa: PLC0415
     except ImportError:
         print(
             "ERROR: onnxruntime_qnn is not installed.\nInstall the QNN EP wheel:\n  pip install onnxruntime_qnn-*.whl",
@@ -76,7 +76,7 @@ def load_qnn_ep() -> tuple[types.ModuleType, types.ModuleType]:
         sys.exit(1)
 
     try:
-        import onnxruntime as ort
+        import onnxruntime as ort  # noqa: PLC0415
     except ImportError:
         print(
             "ERROR: onnxruntime is not installed.\nInstall it with:\n  pip install onnxruntime",
