@@ -939,6 +939,12 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   TryEnableQNNSaver(qnn_options);
 
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  qnn_options["num_graph_prepare_threads"] = "1";
+#endif
+
   // Run with QNN.
   std::vector<Ort::Value> qnn_qdq_outputs;
   if (!qnn_ctx_model_path.empty()) {
@@ -1179,6 +1185,12 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     qnn_options["dump_json_qnn_graph"] = "1";
     qnn_options["json_qnn_graph_dir"] = output_dir.string();
   }
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  qnn_options["num_graph_prepare_threads"] = "1";
+#endif
 
   TryEnableQNNSaver(qnn_options);
 
@@ -1452,19 +1464,26 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
     const std::string& op_domain = kOnnxDomain,
     bool use_contrib_qdq = false,
-    AllocatorPtr input_allocator = nullptr) {
+    AllocatorPtr input_allocator = nullptr,
+    bool combine_quant_inputs_qparams = false) {
   return [node_name, op_type, quant_input_defs, non_quant_input_defs, quant_input_defs_2, attrs, op_domain,
-          use_contrib_qdq, input_allocator](
+          use_contrib_qdq, input_allocator, combine_quant_inputs_qparams](
              ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
     std::vector<std::string> op_input_names;
 
     op_input_names.reserve(quant_input_defs.size() + non_quant_input_defs.size() + quant_input_defs_2.size());
 
+    std::vector<TestInputDef<float>> combined_input_defs;
+    combined_input_defs.reserve(quant_input_defs.size() + quant_input_defs_2.size());
+    combined_input_defs.insert(combined_input_defs.end(), quant_input_defs.begin(), quant_input_defs.end());
+    combined_input_defs.insert(combined_input_defs.end(), quant_input_defs_2.begin(), quant_input_defs_2.end());
+    QuantParams<QuantType> combined_input_qparams = GetTestInputsQuantParams<QuantType>(combined_input_defs);
+
     // Create QDQ inputs
     for (size_t i = 0; i < quant_input_defs.size(); i++) {
       const std::string tmp_name = "quant_input_defs_" + std::to_string(i);
       MakeTestInput<float>(builder, tmp_name, quant_input_defs[i], input_allocator);
-      QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(quant_input_defs[i]);
+      QuantParams<QuantType> input_qparams = combine_quant_inputs_qparams ? combined_input_qparams : GetTestInputQuantParams<QuantType>(quant_input_defs[i]);
 
       op_input_names.push_back(
           AddQDQNodePair<QuantType>(builder, "qdq_in" + std::to_string(i), tmp_name, input_qparams.scale,
@@ -1482,7 +1501,7 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     for (size_t i = 0; i < quant_input_defs_2.size(); i++) {
       const std::string tmp_name = "quant_input_defs_2_" + std::to_string(i);
       MakeTestInput<float>(builder, tmp_name, quant_input_defs_2[i], input_allocator);
-      QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(quant_input_defs_2[i]);
+      QuantParams<QuantType> input_qparams = combine_quant_inputs_qparams ? combined_input_qparams : GetTestInputQuantParams<QuantType>(quant_input_defs_2[i]);
 
       op_input_names.push_back(
           AddQDQNodePair<QuantType>(builder, "qdq2_in" + std::to_string(i), tmp_name, input_qparams.scale,

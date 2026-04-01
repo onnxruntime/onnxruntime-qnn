@@ -234,7 +234,7 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnitIODef& final_output,
                                          bool validate) {
   assert(node_units.size() >= 4);
-  const auto& node_name = utils::GetUniqueName(*node_units[0]);
+  const auto& node_name = utils::UniqueNameGenerator().New(*node_units[0]);
 
   QnnTensorWrapper input_tensor;
   QnnTensorWrapper output_tensor;

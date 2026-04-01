@@ -44,7 +44,7 @@ Ort::Status RandomUniformLikeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_tensor.shape, input_shape),
                 ("Failed to get shape for input tensor: " + input_tensor_name).c_str());
 
-  const std::string shape_tensor_name = utils::GetUniqueName(input_tensor_name, "_shape");
+  const std::string shape_tensor_name = utils::UniqueNameGenerator().New(input_tensor_name, "_shape");
   std::vector<uint8_t> shape_data(input_shape.size() * sizeof(uint32_t));
   memcpy(shape_data.data(), input_shape.data(), shape_data.size());
   std::vector<uint32_t> shape_tensor_shape = {static_cast<uint32_t>(input_shape.size())};
@@ -69,7 +69,7 @@ Ort::Status RandomUniformLikeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model
     std::vector<uint8_t> seed_data(sizeof(float));
     memcpy(seed_data.data(), &seed_value, sizeof(float));
 
-    const std::string seed_tensor_name = utils::GetUniqueName(input_tensor_name, "_ort_qnn_ep_seed");
+    const std::string seed_tensor_name = utils::UniqueNameGenerator().New(input_tensor_name, "_ort_qnn_ep_seed");
 
     QnnTensorWrapper seed_tensor(seed_tensor_name, QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_FLOAT_32,
                                  QnnQuantParamsWrapper(), std::move(scalar_shape), std::move(seed_data));
@@ -133,7 +133,7 @@ Ort::Status RandomUniformLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrap
 
   if (need_dequantize) {
     // Create an intermediate tensor with UFIXED_POINT_8 data type
-    const std::string intermediate_output_name = utils::GetUniqueName(output_name, "_uint8");
+    const std::string intermediate_output_name = utils::UniqueNameGenerator().New(output_name, "_uint8");
 
     // Calculate quantization parameters based on low and high values
     QnnQuantParamsWrapper quantize_param;
@@ -152,7 +152,7 @@ Ort::Status RandomUniformLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrap
 
     // Create the RandomUniformLike node with uint8 output
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::GetUniqueName(node_unit),
+                      utils::UniqueNameGenerator().New(node_unit),
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_RANDOM_UNIFORM_LIKE,
                       std::move(input_names),
@@ -173,7 +173,7 @@ Ort::Status RandomUniformLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrap
 
     // Create a Dequantize node to convert from uint8 to float32
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::GetUniqueName(node_unit, "_dequantize"),
+                      utils::UniqueNameGenerator().New(node_unit, "_dequantize"),
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_DEQUANTIZE,
                       {intermediate_output_name},
@@ -194,7 +194,7 @@ Ort::Status RandomUniformLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrap
 
     // Create the RandomUniformLike node with the original data type output
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::GetUniqueName(node_unit),
+                      utils::UniqueNameGenerator().New(node_unit),
                       QNN_OP_PACKAGE_NAME_QTI_AISW,
                       QNN_OP_RANDOM_UNIFORM_LIKE,
                       std::move(input_names),

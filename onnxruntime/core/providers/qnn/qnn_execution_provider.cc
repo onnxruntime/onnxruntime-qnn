@@ -29,6 +29,7 @@
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
+#include "core/providers/qnn/builder/qnn_thread_pool.h"
 #include "core/providers/qnn/qnn_ep_utils.h"
 
 // Forward declarations for NodeUnit-related classes
@@ -636,7 +637,26 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 #endif
 
-  // Device ID
+  std::string disable_file_mapped_weights_str;
+  GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("disabl_file_mapped_weights"), "0", disable_file_mapped_weights_str);
+  if (disable_file_mapped_weights_str == "1") {
+    enable_file_mapped_weights_ = false;
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING, ("User specified disable_file_mapped_weights: " + std::to_string(enable_file_mapped_weights_)).c_str());
+  }
+
+#ifndef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  enable_file_mapped_weights_ = false;
+  ORT_CXX_LOG(logger_,
+              ORT_LOGGING_LEVEL_WARNING, "File mapped weights feature is only available on Windows arm64 devices for QNN API versions >= 2.32. Feature will be disabled by default");
+#else
+  if (qnn_context_embed_mode_ && enable_file_mapped_weights_) {
+    enable_file_mapped_weights_ = false;
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_WARNING, "File mapped weights feature is incompatible with embedded EP contexts. Feature will be disabled by default.");
+  }
+#endif
+
   std::string device_id_str;
   GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("device_id"), "0", device_id_str);
   if (!device_id_str.empty()) {
@@ -711,6 +731,80 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   ORT_CXX_LOG(logger_,
               ORT_LOGGING_LEVEL_VERBOSE,
               ("User specified enable_htp_fp16_precision: " + enable_htp_fp16_precision_str).c_str());
+
+  std::string num_graph_prepare_threads_str;
+  GetSessionConfigEntryOrDefault(ort_api,
+                                 session_options_,
+                                 FormatEPConfigKey("num_graph_prepare_threads"),
+                                 "",
+                                 num_graph_prepare_threads_str);
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  uint8_t max_num_supported_threads = static_cast<uint8_t>(std::thread::hardware_concurrency());
+  if (max_num_supported_threads) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("Number of supported concurrent threads: " + std::to_string(max_num_supported_threads)).c_str());
+  } else {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                "Unable to retrieve number of supported concurrent threads from hardware. Setting max to default value of 4.");
+    max_num_supported_threads = 4;
+  }
+  // 8 threads provided the best initialization performance from testing
+  // Default to max number of supported threads if less than 8. Otherwise default to 8 threads
+  uint8_t def_num_graph_prepare_threads = max_num_supported_threads > 8 ? 8 : max_num_supported_threads;
+
+  auto is_valid_number = [this](const std::string& s) {
+    if (s[0] == '0') {
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_ERROR,
+                  "num_graph_prepare_threads cannot be 0 or start with 0");
+      return false;
+    }
+
+    auto it = std::find_if(s.begin(), s.end(), [](const char c) {
+      return !std::isdigit(c);
+    });
+
+    if (it == s.end()) {
+      return true;
+    }
+
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_ERROR,
+                "num_graph_prepare_threads must be a positive number");
+    return true;
+  };
+#endif
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  if (!num_graph_prepare_threads_str.empty() && is_valid_number(num_graph_prepare_threads_str)) {
+    uint8_t value = static_cast<uint8_t>(std::stoi(num_graph_prepare_threads_str));
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("User specified num_graph_prepare_threads: " + std::to_string(value)).c_str());
+
+    if (value > max_num_supported_threads) {
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_WARNING,
+                  ("Specified number of graph prepare threads (" + std::to_string(value) + ") is outside of the allowable range [1," + std::to_string(max_num_supported_threads) + "]. Defaulting to " + std::to_string(def_num_graph_prepare_threads) + " threads.").c_str());
+      num_graph_prepare_threads_ = def_num_graph_prepare_threads;
+    } else {
+      num_graph_prepare_threads_ = value;
+    }
+  } else {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("Using default number threads for graph prepare: " + std::to_string(def_num_graph_prepare_threads)).c_str());
+    num_graph_prepare_threads_ = def_num_graph_prepare_threads;
+  }
+#else
+  if (!num_graph_prepare_threads_str.empty()) {
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                "Multi-threaded graph compilation is currently only supported on Windows devices. Feature will not be enabled.");
+  }
+#endif  // _WIN32 && (defined(__aarch64__) || defined(_M_ARM64))
 
   // Check for conflicts
   if (qnn_context_embed_mode_ && share_ep_contexts_) {
@@ -801,6 +895,18 @@ QnnEp::QnnEp(QnnEpFactory& factory,
       rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
     }
     model_settings_.htp_shared_memory = true;
+  }
+
+  if (enable_file_mapped_weights_ && !rpcmem_library_) {
+    // Attempt to init rpcmem_library_ if needed. If this fails, then
+    // disable file mapped weights and proceed with normal operation
+    try {
+      rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
+    } catch (const std::exception& e) {
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_WARNING, ("Unable to load RPCMem library: " + std::string(e.what()) + " - Disabling file mapped weights.").c_str());
+      enable_file_mapped_weights_ = false;
+    }
   }
 
   dump_json_qnn_graph_ = ParseBoolOption(ort_api,
@@ -1326,6 +1432,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                           ep->context_cache_enabled_,
                                                           ep->share_ep_contexts_,
                                                           ep->enable_vtcm_backup_buffer_sharing_,
+                                                          ep->enable_file_mapped_weights_,
+                                                          ep->rpcmem_library_,
                                                           context_bin_map);
 
   context_bin_map.clear();
@@ -1713,6 +1821,25 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     return ep->CompileContextModel(graphs, fused_nodes, count, node_compute_infos);
   }
 
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // Initialize now for possible reuse in loop
+  auto finalize_start = std::chrono::steady_clock::time_point::min();
+  auto end = std::chrono::steady_clock::time_point::min();
+  std::chrono::milliseconds total_finalize_time{0};
+
+  auto compile_start = std::chrono::steady_clock::now();
+  std::vector<GraphFinalizationInfo_t> model_infos;
+
+  bool use_multithreaded_prepare = count >= 5 || ep->num_graph_prepare_threads_ > 1;
+  if (use_multithreaded_prepare) {
+    model_infos.reserve(count);
+  } else {
+    ORT_CXX_LOG(ep->logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("Only using single thread for graph prepare due to graph count (" + std::to_string(count) + ") or user request.").c_str());
+  }
+#endif
+
   for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
     const OrtGraph* graph = graphs[graph_idx];
     const OrtNode* fused_node = fused_nodes[graph_idx];
@@ -1788,14 +1915,59 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     }
 
     RETURN_IF_NOT_OK(qnn_model->ComposeGraph(context));
-    RETURN_IF_NOT_OK(qnn_model->FinalizeGraphs(ep->logger_));
-    RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(ep->logger_));
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+    if (use_multithreaded_prepare) {
+      auto& model_info = model_infos.emplace_back();
+      model_info.model_name = fused_node_name;
+      model_info.model = std::move(qnn_model);
+      model_info.graph_idx = graph_idx;
+    } else {
+      finalize_start = std::chrono::steady_clock::now();
+#endif
+      RETURN_IF_NOT_OK(qnn_model->FinalizeGraphs(ep->logger_));
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+      end = std::chrono::steady_clock::now();
+      total_finalize_time += std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
+#endif
 
-    ep->qnn_models_.emplace(fused_node_name, std::move(qnn_model));
+      RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(ep->logger_));
 
-    auto node_compute_info = std::make_unique<QnnNodeComputeInfo>(*ep);
-    node_compute_infos[graph_idx] = node_compute_info.release();
+      ep->qnn_models_.emplace(fused_node_name, std::move(qnn_model));
+
+      auto node_compute_info = std::make_unique<QnnNodeComputeInfo>(*ep);
+      node_compute_infos[graph_idx] = node_compute_info.release();
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+    }
+#endif
   }
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  if (use_multithreaded_prepare) {
+    qnn::thread::QnnJobThreadPool tp(ep->num_graph_prepare_threads_);
+    tp.Start();
+    finalize_start = std::chrono::steady_clock::now();
+    for (auto& model_info : model_infos) {
+      tp.SubmitJob([qnn_model = model_info.model.get(), &logger = ep->logger_, res = &model_info.result] {
+        *res = qnn_model->FinalizeGraphs(logger);
+      });
+    }
+    tp.WaitForQueuedJobsToFinish();
+    end = std::chrono::steady_clock::now();
+    total_finalize_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
+
+    for (auto& model_info : model_infos) {
+      RETURN_IF_NOT_OK(std::move(model_info.result));
+
+      auto qnn_model = std::move(model_info.model);
+      RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(ep->logger_));
+
+      ep->qnn_models_.emplace(model_info.model_name, std::move(qnn_model));
+
+      auto node_compute_info = std::make_unique<QnnNodeComputeInfo>(*ep);
+      node_compute_infos[model_info.graph_idx] = node_compute_info.release();
+    }
+  }
+#endif  // _WIN32
 
   // Clean up transient GetCapability→Compile state.
   ep->onnx_graph_io_names_.reset();
@@ -1804,6 +1976,17 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   if (ep->context_cache_enabled_) {
     RETURN_IF_NOT_NULL(ep->CreateEPContextNodes(graphs[0], fused_nodes, count, ep_context_nodes));
   }
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  end = std::chrono::steady_clock::now();
+  auto total_compile_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - compile_start);
+
+  ORT_CXX_LOG(ep->logger_,
+              ORT_LOGGING_LEVEL_VERBOSE,
+              ("Total finalize time for all fused nodes: " + std::to_string(total_finalize_time.count()) + " ms").c_str());
+  ORT_CXX_LOG(ep->logger_,
+              ORT_LOGGING_LEVEL_VERBOSE,
+              ("Total compile time for all fused nodes: " + std::to_string(total_compile_time.count()) + " ms").c_str());
+#endif
 
   return nullptr;
 }
@@ -2096,7 +2279,7 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
   bool is_backend_setup = qnn_backend_manager_->IsBackendSetup();
   if (!is_backend_setup) {
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-    qnn_backend_manager_->SetupBackend(true, true, false, false, dummy_map);
+    qnn_backend_manager_->SetupBackend(true, true, false, false, false, nullptr, dummy_map);
   }
 
   Ort::Status status = qnn_cache_compatibility_manager_->ValidateCompatibilityInfo(info, *model_compatibility);
@@ -2107,6 +2290,55 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
   }
 
   return status.release();
+}
+
+OrtStatus* QnnEp::GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevice* /*hw*/,
+                                                          OrtDeviceEpIncompatibilityDetails* details) noexcept {
+  // This function is always called by temporary QnnEp, so no need to check if backend is already setup.
+  std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
+  Ort::Status status = qnn_backend_manager_->SetupBackend(true, true, false, false, false, nullptr, dummy_map);
+
+  if (!status.IsOK()) {
+    const std::string error_message = status.GetErrorMessage();
+    OrtDeviceEpIncompatibilityReason reasons = OrtDeviceEpIncompatibility_UNKNOWN;
+    int32_t error_code = QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED;
+
+    // Classify the failure based on the error message produced by each SetupBackend step.
+    if (error_message.find("Unable to load backend") != std::string::npos ||
+        error_message.find("Failed to get QNN providers") != std::string::npos) {
+      // LoadBackend: GetQnnInterfaceProvider() failed.
+      // The QNN backend shared library (e.g., QnnHtp.dll) or one of its dependencies could
+      // not be found or loaded, or the required symbol was not present in the library.
+      reasons = OrtDeviceEpIncompatibility_MISSING_DEPENDENCY;
+    } else if (error_message.find("Unable to find a valid interface") != std::string::npos) {
+      // LoadBackend: GetQnnInterfaceProvider() failed.
+      // The library was loaded but no interface version compatible with the required QNN
+      // API version was found. The installed QNN driver is too old or too new relative to this build of ORT.
+      reasons = OrtDeviceEpIncompatibility_DRIVER_INCOMPATIBLE;
+    } else if (error_message.find("Failed to initialize backend") != std::string::npos) {
+      // InitializeBackend: QNN backendCreate() failed.
+      // The backend library loaded successfully but the driver could not be initialised.
+      reasons = OrtDeviceEpIncompatibility_DRIVER_INCOMPATIBLE;
+    } else if (error_message.find("Failed to create device") != std::string::npos) {
+      // CreateDevice: QNN deviceCreate() failed.
+      // The hardware device is not present, not accessible, or not supported by the driver.
+      reasons = OrtDeviceEpIncompatibility_DEVICE_INCOMPATIBLE;
+    }
+
+    return ep_api.DeviceEpIncompatibilityDetails_SetDetails(
+        details,
+        reasons,
+        error_code,
+        error_message.c_str());
+  }
+
+  // Since this function is always called by temporary QnnEp, so no need to release resource.
+
+  return ep_api.DeviceEpIncompatibilityDetails_SetDetails(
+      details,
+      OrtDeviceEpIncompatibility_NONE,
+      QNN_SUCCESS,
+      nullptr);
 }
 
 bool QnnEp::GetHtpPowerConfigId(uint32_t& htp_power_config_id) {

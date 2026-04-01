@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import logging
 import os
+import platform
 import shutil
 import ssl
 import subprocess
@@ -42,6 +43,10 @@ DEFAULT_MAX_CACHE_SIZE_BYTES = int(
 DEFAULT_TOOLS_DIR = Path(os.environ.get("ORT_BUILD_TOOLS_PATH", REPO_ROOT / "build" / "tools"))
 
 CAFILE = os.environ.get("REQUESTS_CA_BUNDLE", certifi.where())
+
+
+def is_host_windows():
+    return platform.uname().system == "Windows"
 
 
 class FileCache:
@@ -230,7 +235,8 @@ class PackageManager:
             return
         package_path = self.__fetch()
 
-        if package_path.suffix == ".exe":
+        on_win = is_host_windows()
+        if (on_win and package_path.suffix == ".exe") or (not on_win and package_path.suffix == ""):
             if self.__config.get("is_installer", True):
                 self.__run_installer(package_path)
             else:
@@ -239,6 +245,8 @@ class PackageManager:
                 tool_dir.mkdir(parents=True, exist_ok=True)
                 tools_path = tool_dir / package_path.name
                 shutil.copyfile(package_path, tools_path)
+                if not on_win:
+                    tools_path.chmod(0o755)
         else:
             # Similar to downloads, we extract to a temporary directory and rename on
             # success to avoid partial extractions if we get killed.
@@ -279,7 +287,7 @@ class PackageManager:
 
     def __format(self, fmt_str: str) -> str:
         """Format a config file string, performing any necessary substitutions."""
-        replacements = {key: self.__config.get(key) for key in ["major_version", "version"]}
+        replacements = {key: self.__config.get(key) for key in ["major_version", "os_arch", "version"]}
         replacements["root_dir"] = self.get_root_dir()
         return fmt_str.format_map(replacements)
 
