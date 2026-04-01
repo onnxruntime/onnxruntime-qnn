@@ -1836,7 +1836,7 @@ void QnnBackendManager::CreateTimerThread(uint32_t htp_power_config_client_id) {
 }
 
 void QnnBackendManager::ReleaseTimerThread() {
-  std::lock_guard<std::mutex> lk(state_mutex_);
+  //std::lock_guard<std::mutex> lk(state_mutex_);
   /*if (timer_ != nullptr) {
     timer_->DeInitialize();
     //graph_state_ = GraphState::NONE;
