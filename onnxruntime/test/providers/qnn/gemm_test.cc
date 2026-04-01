@@ -542,8 +542,8 @@ TEST_F(QnnHTPBackendTests, GemmFromMatMulAddNonStaticBias) {
   RunQnnModelTest(BuildGemmFromMatMulAddTestCase(/*K=*/4, /*N=*/3),
                   provider_options,
                   /*opset=*/18,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f);
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/2e-3f);
 }
 
 TEST_F(QnnCPUBackendTests, GemmFromMatMulAddNonStaticBias) {
@@ -554,8 +554,7 @@ TEST_F(QnnCPUBackendTests, GemmFromMatMulAddNonStaticBias) {
   RunQnnModelTest(BuildGemmFromMatMulAddTestCase(/*K=*/4, /*N=*/3),
                   provider_options,
                   /*opset=*/18,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-3f);
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
