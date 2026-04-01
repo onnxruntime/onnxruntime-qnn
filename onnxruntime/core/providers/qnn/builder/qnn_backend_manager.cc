@@ -1806,7 +1806,7 @@ void QnnBackendManager::TimerCallback(void* user_data) {
   QnnBackendManager* instance = args->instance_;
   //auto rt = instance->SetState(GraphState::TIMEOUT, args->power_config_id_, qnn::HtpPerformanceMode::kHtpSustainedHighPerformance, 0, 0);
   //if (!rt.IsOK()) {
-    ORT_CXX_LOG(instance->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, ("State update failed " + std::to_string(args->power_config_id_)).c_str());
+    ORT_CXX_LOG_PTR(instance->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, ("State update failed " + std::to_string(args->power_config_id_)).c_str());
   //}
 }
 
@@ -1818,20 +1818,20 @@ void QnnBackendManager::CreateTimerThread(uint32_t htp_power_config_client_id) {
       timer_ = std::move(temp);
       timer_callback_arg_ = std::make_unique<TimerCallbackArg>(htp_power_config_client_id, this);
       if (timer_callback_arg_ == nullptr) {
-        ORT_CXX_LOG(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Failed to create Timer argument");
+        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Failed to create Timer argument");
         timer_.reset();
         return;
       }
       if (!timer_->Initialize(TimerCallback, timer_callback_arg_.get())) {
-        ORT_CXX_LOG(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Failed to create timer to set performance");
+        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Failed to create timer to set performance");
         timer_callback_arg_.reset();
         timer_.reset();
       }
     } else {
-      ORT_CXX_LOG(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Failed: Timer is nullptr");
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Failed: Timer is nullptr");
     }
   } else {
-    ORT_CXX_LOG(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Timer already created");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Timer already created");
   }
 }
 
@@ -1852,7 +1852,7 @@ void QnnBackendManager::ReleaseTimerThread() {
   if (status != Ort::Status()) {
     ORT_CXX_LOG(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Not able to set Power config to release");
   }*/
-  ORT_CXX_LOG(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, ("Not able to set Power config to release " + std::to_string(htp_power_config_client_id)).c_str());
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, ("Not able to set Power config to release " + std::to_string(htp_power_config_client_id)).c_str());
 }
 
 
