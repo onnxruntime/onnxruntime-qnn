@@ -73,7 +73,7 @@ Ort::Status GetEpContextDlcPath(const OrtGraph** graphs, size_t count, const Ort
         const char* op_type = nullptr;
         ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetOperatorType(node, &op_type));
 
-        if (op_type == EPCONTEXT_OP) {
+        if (op_type != nullptr && std::string(op_type) == EPCONTEXT_OP) {
           OrtNodeAttrHelper node_helper(*node);
           dlc_path = qnn::utils::GetLowercaseString(node_helper.Get("ep_dlc_context", ""));
           if (dlc_path != "") {

@@ -53,9 +53,9 @@ struct GenieNodeState {
   const GenieApi* api = nullptr;
   GenieNodeConfig_Handle_t config = nullptr;
   GenieNode_Handle_t node = nullptr;
-  GenieLog_Handle_t genieLogger = nullptr;
-  GenieDlc_Handle_t dlcHandle = nullptr;
-  GenieDlcConfig_Handle_t dlcConfigHandle = nullptr;
+  GenieLog_Handle_t genie_logger = nullptr;
+  GenieDlc_Handle_t dlc_handle = nullptr;
+  GenieDlcConfig_Handle_t dlc_config_handle = nullptr;
   size_t num_inputs = 0;
   size_t num_outputs = 0;
   std::mutex mu;
