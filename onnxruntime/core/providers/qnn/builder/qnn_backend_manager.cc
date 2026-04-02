@@ -1883,9 +1883,9 @@ Ort::Status QnnBackendManager::CreateHtpPowerCfgId(uint32_t device_id,
 
 Ort::Status QnnBackendManager::InitializePowerCfgId(uint32_t device_id, uint32_t core_id, uint32_t& htp_power_config_id) {
   auto status = CreateHtpPowerCfgId(device_id, core_id, htp_power_config_id);
-  if (status.IsOK()) {
+  /*if (status.IsOK()) {
     CreateTimerThread(htp_power_config_id);
-  }
+  }*/
   return status;
 }
 
