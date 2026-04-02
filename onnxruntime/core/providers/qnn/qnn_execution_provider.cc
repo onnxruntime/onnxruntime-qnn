@@ -1482,10 +1482,13 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   }
 
   // Genie Pathway
-
-
   if (qnn::GraphHasDlcContextNode(graph, ep->ort_api)) {
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
     return ep->GetGenieCapability(this_ptr, graph, graph_support_info);
+#else
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL,
+                                    "Genie execution pathway is unsupported on this platform.");
+#endif
   }
 
   bool is_qnn_ctx_model = qnn::GraphHasEpContextNode(graph, ep->ort_api);
@@ -1915,6 +1918,7 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
   return nullptr;
 }
 
+
 OrtStatus* QnnEp::CompileDlcContextModel(OrtEp* this_ptr,
                                           const OrtGraph** graphs,
                                           const OrtNode** fused_nodes,
@@ -1928,10 +1932,7 @@ OrtStatus* QnnEp::CompileDlcContextModel(OrtEp* this_ptr,
 
   // Extract the DLC information
   std::string dlc_path;
-  auto st = qnn::GetEpContextDlcPath(graphs, count, ep->ort_api, dlc_path);
-  if (!st.IsOK()) {
-    return ep->ort_api.CreateStatus(ORT_EP_FAIL, st.GetErrorMessage().c_str());
-  }
+  RETURN_IF_NOT_OK(qnn::GetEpContextDlcPath(graphs, count, ep->ort_api, dlc_path));
   std::filesystem::path dlc_extracted_path(parent_path / dlc_path);
 
   // Populate the Genie APIs
@@ -1945,8 +1946,8 @@ OrtStatus* QnnEp::CompileDlcContextModel(OrtEp* this_ptr,
     auto builder = std::make_shared<GenieNodeBuilder>();
     builder->api = &genie_api_;
     builder->dlc_path = dlc_extracted_path.string();
-    ep->ort_api.Node_GetNumInputs(fused_node, &(builder->num_inputs));
-    ep->ort_api.Node_GetNumOutputs(fused_node, &(builder->num_outputs));
+    RETURN_IF_NOT_NULL(ep->ort_api.Node_GetNumInputs(fused_node, &(builder->num_inputs)));
+    RETURN_IF_NOT_NULL(ep->ort_api.Node_GetNumOutputs(fused_node, &(builder->num_outputs)));
 
     auto node_compute_info = std::make_unique<GenieNodeComputeInfo>(*ep, builder);
     node_compute_infos[graph_idx] = node_compute_info.release();
@@ -2626,7 +2627,6 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this
 
   // Temporary fix to search for the backend extension and pass that as part of the config
   std::string extension_path;
-  bool found_extension = false;
   try {
     for (const auto& entry : std::filesystem::directory_iterator(parent_folder_path)) {
       if (entry.is_regular_file()) {
@@ -2636,7 +2636,6 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this
             filename.substr(0, 3) == "tmp" &&
             filename.substr(filename.size() - 5) == ".json") {
           extension_path = entry.path().string();
-          found_extension = true;
           break;
         }
       }
@@ -2715,9 +2714,10 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr
   OrtKernelContext* ctx = kernel_context;
   auto ort_api = &(ep.ort_api);
 
-  if (!(*st)) return ort_api->CreateStatus(ORT_EP_FAIL, "Null GenieNodeState");
-  if (!(*st)->api) return ort_api->CreateStatus(ORT_EP_FAIL, "Null GenieApi");
-  if (!(*st)->node) return ort_api->CreateStatus(ORT_EP_FAIL, "Null GenieDialog node handle");
+  RETURN_IF(!(*st), "Null GenieNodeState");
+  RETURN_IF(!(*st)->api, "Null GenieApi");
+  RETURN_IF(!(*st)->node, "Null GenieDialog node handle");
+
   std::lock_guard<std::mutex> guard((*st)->mu);
 
   // Reset KV-Cache if required
@@ -2731,22 +2731,22 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr
   // 1) Set inputs
   for (size_t i = 0; i < (*st)->num_inputs; ++i) {
     const OrtValue* in_val = nullptr;
-    ort_api->KernelContext_GetInput(ctx, i, &in_val);
-    if (!in_val) return ort_api->CreateStatus(ORT_EP_FAIL, "ORT input is null");
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api->KernelContext_GetInput(ctx, i, &in_val));
+    RETURN_IF(!in_val, "ORT input is null");
 
     const void* in_data = nullptr;
-    ort_api->GetTensorData(in_val, &in_data);
-    if (!in_data) return ort_api->CreateStatus(ORT_EP_FAIL, "ORT input data is null");
+    RETURN_IF_NOT_NULL(ort_api->GetTensorData(in_val, &in_data));
+    RETURN_IF(!in_data, "ORT input data is null");
 
     OrtTensorTypeAndShapeInfo* info = nullptr;
-    ort_api->GetTensorTypeAndShape(in_val, &info);
+    RETURN_IF_NOT_NULL(ort_api->GetTensorTypeAndShape(in_val, &info));
     ONNXTensorElementDataType elem_type;
-    ort_api->GetTensorElementType(info, &elem_type);
+    RETURN_IF_NOT_NULL(ort_api->GetTensorElementType(info, &elem_type));
 
     size_t dim_count = 0;
-    ort_api->GetDimensionsCount(info, &dim_count);
+    RETURN_IF_NOT_NULL(ort_api->GetDimensionsCount(info, &dim_count));
     std::vector<int64_t> dims(dim_count);
-    ort_api->GetDimensions(info, dims.data(), dim_count);
+    RETURN_IF_NOT_NULL(ort_api->GetDimensions(info, dims.data(), dim_count));
 
     std::ostringstream dim_stream;
     size_t num_elem = 1;
@@ -2817,20 +2817,19 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr
         &output_data_info);
 
     OrtValue* out_val = nullptr;
-    ort_api->KernelContext_GetOutput(
-        ctx, i, output_data_info.output_shape.data(), output_data_info.output_shape.size(), &out_val);
-
-    if (!out_val) return ort_api->CreateStatus(ORT_EP_FAIL, "ORT output is null");
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api->KernelContext_GetOutput(
+        ctx, i, output_data_info.output_shape.data(), output_data_info.output_shape.size(), &out_val));
+    RETURN_IF(!out_val, "ORT output is null");
 
     void* out_data = nullptr;
-    ort_api->GetTensorMutableData(out_val, &out_data);
-    if (!out_data) return ort_api->CreateStatus(ORT_EP_FAIL, "ORT output data is null");
+    RETURN_IF_NOT_NULL(ort_api->GetTensorMutableData(out_val, &out_data));
+    RETURN_IF(!out_data, "ORT output data is null");
 
     std::memcpy(out_data, output_data_info.output_data.data(), output_data_info.output_data.size());
     output_data_info.output_shape.clear();
     output_data_info.output_data.clear();
 
-    if (rc != 0) return ort_api->CreateStatus(ORT_EP_FAIL, "GenieNode_getData failed");
+    RETURN_IF(rc != 0, "GenieNode_getData failed");
   }
 
   return nullptr;
