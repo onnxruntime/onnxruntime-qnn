@@ -38,6 +38,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateMatMulNBitsOpBuilder("MatMulNBits", *this);
   CreateMeanOpBuilder("Mean", *this);
   CreateModOpBuilder("Mod", *this);
+  CreateNonZeroOpBuilder("NonZero", *this);
   CreatePadOpBuilder("Pad", *this);
   CreatePoolOpBuilder("AveragePool", *this);
   CreatePoolOpBuilder("GlobalAveragePool", *this);
