@@ -152,7 +152,9 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                                        std::vector<std::string>&& input_names,
                                                        const Ort::Logger& logger,
                                                        bool do_op_validation) const {
-  // FullyConnected dosen't support 2d bias with shape [N, M], In this case, decompose Gemm into FullyConnected + Add for compatibility.
+  // Decompose Gemm into FullyConnected + Add when:
+  // 1. Bias (input C) has 2D shape [N, M] where N != 1 (FC doesn't support this shape), OR
+  // 2. Bias is an intermediate (NATIVE) tensor produced by another op (QNN FC requires static bias).
   bool split_gemm = false;
   if (node_unit.Inputs().size() == 3) {
     auto& input_c = node_unit.Inputs()[2];
@@ -161,6 +163,12 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
 
     // Split when input_c has 2d shape and not [1, M]
     split_gemm = (input_c_shape.size() == 2 && input_c_shape.at(0) != 1);
+
+    // Split when bias is an intermediate (NATIVE) tensor produced by another op.
+    // ORT's MatMulAddFusion can fuse MatMul+Add->Gemm where the Add's other input
+    // is an intermediate tensor (e.g., output of another MatMul). QNN FC requires
+    // bias to be either STATIC (constant) or APP_WRITE (graph input), not NATIVE.
+    split_gemm = split_gemm || qnn_model_wrapper.GetTensorType(input_c.name) == QNN_TENSOR_TYPE_NATIVE;
   }
 
   if (split_gemm) {
