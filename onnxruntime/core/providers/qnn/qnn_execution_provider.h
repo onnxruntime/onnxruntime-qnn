@@ -128,6 +128,14 @@ class QnnEp : public OrtEp, public ApiPtrs {
     QnnEp& ep;
   };
 
+  typedef struct GraphFinalizationInfo {
+    std::string model_name;
+    std::unique_ptr<qnn::QnnModel> model;
+    Ort::Status result;
+    size_t graph_idx;
+
+  } GraphFinalizationInfo_t;
+
   // Will return true if any power config options need to be updated
   bool GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
                                    const ::OrtRunOptions* run_options);
@@ -158,6 +166,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool enable_spill_fill_buffer_ = false;
   bool enable_file_mapped_weights_ = true;
 #if defined(_WIN32)
+  uint8_t num_graph_prepare_threads_ = 8;
   qnn::QnnTelemetry::EtwInternalCallback callback_ETWSink_provider_ = nullptr;
 #endif
 
