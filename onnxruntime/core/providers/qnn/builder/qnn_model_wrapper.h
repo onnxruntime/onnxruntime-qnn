@@ -80,6 +80,9 @@ class QnnModelWrapper {
                                 const std::string& tensor_name,
                                 QnnTensorWrapper& tensor_wrapper) const;
 
+  // Sets the QNN tensor memory type based on model settings and whether the tensor is a graph input/output.
+  void SetTensorMemTypeFromSettings(QnnTensorWrapper& tensor_wrapper, const std::string& tensor_name);
+
   // Add to internal tensor wrapper table
   bool AddTensorWrapper(QnnTensorWrapper&& tensor_wrapper);
 
@@ -192,7 +195,7 @@ class QnnModelWrapper {
   }
 
   // static bool GetOnnxShape(const NodeArg& node_arg, std::vector<uint32_t>& shape);
-  static bool GetOnnxShape(const std::vector<int64_t>& onnx_shape, std::vector<uint32_t>& shape);
+  static bool GetOnnxShape(const std::optional<std::vector<int64_t>>& onnx_shape, std::vector<uint32_t>& shape);
 
   bool IsQnnTensorWrapperExist(const std::string& tensor_name) const;
 

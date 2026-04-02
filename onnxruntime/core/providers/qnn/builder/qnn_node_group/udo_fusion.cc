@@ -117,7 +117,7 @@ static Ort::Status CreateOrValidateOnQnn(
   ORT_UNUSED_PARAMETER(do_op_validation);
 
   const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
-  const std::string node_name = utils::GetUniqueName(node_unit);
+  const std::string node_name = utils::UniqueNameGenerator().New(node_unit);
 
   // get qnn inputs
   const auto& inputs = node_unit.Inputs();

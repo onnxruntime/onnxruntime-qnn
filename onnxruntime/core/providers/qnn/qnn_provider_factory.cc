@@ -7,6 +7,8 @@
 #include <iostream>
 #include <optional>
 
+#include "QnnCommon.h"
+
 #include "core/framework/error_code_helper.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_allocator.h"
@@ -28,6 +30,12 @@ static const std::unordered_map<OrtHardwareDeviceType, std::string> kDefaultBack
 #endif
 };
 
+static const std::unordered_map<OrtHardwareDeviceType, std::string> kSupportedBackendTypes = {
+    {OrtHardwareDeviceType_CPU, "cpu"},
+    {OrtHardwareDeviceType_NPU, "htp"},
+    {OrtHardwareDeviceType_GPU, "gpu"},
+};
+
 namespace onnxruntime {
 
 // OrtEpApi infrastructure to be able to use the QNN EP as an OrtEpFactory for auto EP selection.
@@ -46,6 +54,7 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   CreateDataTransfer = CreateDataTransferImpl;
   IsStreamAware = IsStreamAwareImpl;
   ValidateCompiledModelCompatibilityInfo = ValidateCompiledModelCompatibilityInfoImpl;
+  GetHardwareDeviceIncompatibilityDetails = GetHardwareDeviceIncompatibilityDetailsImpl;
 
   // HOST_ACCESSIBLE memory.
   OrtMemoryInfo* mem_info = nullptr;
@@ -129,6 +138,14 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
                                                    _Out_ OrtEp** ep) noexcept {
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
   *ep = nullptr;
+
+  // Check if logger is nullptr and get default logger if available
+  if (logger == nullptr) {
+    if (!OrtLoggingManager::HasDefaultLogger()) {
+      return factory->ort_api.CreateStatus(ORT_FAIL, "Logger is nullptr and OrtLoggingManager does not have a default logger.");
+    }
+    logger = OrtLoggingManager::GetDefaultLoggerPtr();
+  }
 
   // Create the execution provider
   RETURN_IF_NOT_NULL(factory->ort_api.Logger_LogMessage(logger,
@@ -286,6 +303,66 @@ OrtStatus* ORT_API_CALL QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl
                                                                   num_devices,
                                                                   compatibility_info,
                                                                   model_compatibility);
+}
+
+OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImpl(
+    _In_ OrtEpFactory* this_ptr,
+    _In_ const OrtHardwareDevice* hw,
+    _Inout_ OrtDeviceEpIncompatibilityDetails* details) noexcept {
+  auto* factory = static_cast<QnnEpFactory*>(this_ptr);
+  const auto provider_prefix = GetProviderOptionPrefix(factory->ep_name_);
+
+  // Check if the device type is supported by QNN EP
+  auto device_type = factory->ort_api.HardwareDevice_Type(hw);
+  auto vendor_id = factory->ort_api.HardwareDevice_VendorId(hw);
+
+  // QNN EP supports general CPU devices and NPU/GPU devices with Qualcomm vendor ID
+  auto supported_backend_types_it = kSupportedBackendTypes.find(device_type);
+  if (supported_backend_types_it == kSupportedBackendTypes.end() || (vendor_id != factory->vendor_id_ && device_type != OrtHardwareDeviceType_CPU)) {
+    OrtDeviceEpIncompatibilityReason reasons = OrtDeviceEpIncompatibility_DEVICE_INCOMPATIBLE;
+    return factory->ep_api.DeviceEpIncompatibilityDetails_SetDetails(
+        details,
+        reasons,
+        QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED,
+        "QNN EP only supports general CPU devices and Qualcomm NPU and GPU devices");
+  }
+
+  // Create a temporary QNN EP and to check device compatibility
+  // Create minimal session options for backend setup
+  using SessionOptionsUniquePtr = std::unique_ptr<OrtSessionOptions, std::function<void(OrtSessionOptions*)>>;
+  OrtSessionOptions* temp_session_options = nullptr;
+  RETURN_IF_NOT_NULL(factory->ort_api.CreateSessionOptions(&temp_session_options));
+  SessionOptionsUniquePtr session_options(temp_session_options, factory->ort_api.ReleaseSessionOptions);
+
+  // Determine backend type based on device type
+  std::string backend_type = supported_backend_types_it->second;
+  RETURN_IF_NOT_NULL(factory->ort_api.AddSessionConfigEntry(session_options.get(), (provider_prefix + "backend_type").c_str(), backend_type.c_str()));
+
+  // Use default logger for the compatibility check
+  if (!OrtLoggingManager::HasDefaultLogger()) {
+    return factory->ort_api.CreateStatus(ORT_FAIL, "Default logger is not available for device compatibility check.");
+  }
+  const OrtLogger* logger = OrtLoggingManager::GetDefaultLoggerPtr();
+
+  // Try to create a temporary QNN EP to test backend setup
+  std::unique_ptr<QnnEp> temp_qnn_ep;
+  OrtDeviceEpIncompatibilityDetails compat_details;
+  try {
+    temp_qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *session_options.get(), logger);
+    RETURN_IF_NOT_NULL(temp_qnn_ep->GetHardwareDeviceIncompatibilityDetails(hw, &compat_details));
+    return factory->ep_api.DeviceEpIncompatibilityDetails_SetDetails(
+        details,
+        compat_details.reasons_bitmask,
+        compat_details.error_code,
+        compat_details.notes.c_str());
+  } catch (...) {
+    OrtDeviceEpIncompatibilityReason reasons = OrtDeviceEpIncompatibility_UNKNOWN;
+    return factory->ep_api.DeviceEpIncompatibilityDetails_SetDetails(
+        details,
+        reasons,
+        QNN_COMMON_ERROR_UNDEFINED,
+        "Unknown exception occurred while creating QNN EP for compatibility check");
+  }
 }
 
 }  // namespace onnxruntime

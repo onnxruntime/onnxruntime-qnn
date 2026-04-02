@@ -150,22 +150,22 @@ Ort::Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
 
   // 1. Greater
   // Create alpha tensor.
-  float negtive_alpha = node_helper.Get("alpha", static_cast<float>(0)) * 1;
+  float alpha = node_helper.Get("alpha", static_cast<float>(0)) * 1;
   std::vector<uint8_t> alpha_bytes;
-  RETURN_IF_ERROR(SetAlphaByte(input_info.qnn_data_type, alpha_bytes, negtive_alpha));
+  RETURN_IF_ERROR(SetAlphaByte(input_info.qnn_data_type, alpha_bytes, alpha));
 
-  std::string negtive_alpha_tensor_name = utils::GetUniqueName(node_unit, "_alpha");
-  QnnTensorWrapper negtive_alpha_tensorwrapper(negtive_alpha_tensor_name,
-                                               QNN_TENSOR_TYPE_STATIC,
-                                               input_info.qnn_data_type,
-                                               QnnQuantParamsWrapper(),
-                                               std::vector<uint32_t>({1}),
-                                               std::move(alpha_bytes));
-  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(negtive_alpha_tensorwrapper)), "Failed to add alpha tensor.");
+  std::string alpha_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_alpha");
+  QnnTensorWrapper alpha_tensorwrapper(alpha_tensor_name,
+                                       QNN_TENSOR_TYPE_STATIC,
+                                       input_info.qnn_data_type,
+                                       QnnQuantParamsWrapper(),
+                                       std::vector<uint32_t>({1}),
+                                       std::move(alpha_bytes));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(alpha_tensorwrapper)), "Failed to add alpha tensor.");
 
   // Create Greater Node.
-  std::string greater_name = utils::GetUniqueName(node_unit, "_Greater");
-  std::string greater_output_name = utils::GetUniqueName(node_unit, "_Greater_output");
+  std::string greater_name = utils::UniqueNameGenerator().New(node_unit, "_Greater");
+  std::string greater_output_name = utils::UniqueNameGenerator().New(node_unit, "_Greater_output");
   QnnTensorWrapper greater_output(greater_output_name,
                                   QNN_TENSOR_TYPE_NATIVE,
                                   QNN_DATATYPE_BOOL_8,
@@ -177,7 +177,7 @@ Ort::Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(greater_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_ELEMENT_WISE_GREATER,
-                                                {input_name, negtive_alpha_tensor_name},
+                                                {input_name, alpha_tensor_name},
                                                 {greater_output_name},
                                                 {},
                                                 do_op_validation),
@@ -189,7 +189,7 @@ Ort::Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
   std::vector<uint8_t> zero_bytes;
   RETURN_IF_ERROR(SetAlphaByte(input_info.qnn_data_type, zero_bytes, zero));
 
-  std::string zero_tensor_name = utils::GetUniqueName(node_unit, "_zero");
+  std::string zero_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_zero");
   QnnTensorWrapper zero_tensorwrapper(zero_tensor_name,
                                       QNN_TENSOR_TYPE_STATIC,
                                       input_info.qnn_data_type,
@@ -199,7 +199,7 @@ Ort::Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(zero_tensorwrapper)), "Failed to add zero tensor.");
 
   // Create Select Node.
-  std::string select_name = utils::GetUniqueName(node_unit, "_Select");
+  std::string select_name = utils::UniqueNameGenerator().New(node_unit, "_Select");
   QnnTensorWrapper select_output(org_output_name,
                                  op_output_tensor_type,
                                  output_info.qnn_data_type,
