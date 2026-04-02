@@ -496,6 +496,67 @@ TEST_F(QnnHTPBackendTests, Gemm_TransAB_Dynamic_B_And_Bias) {
                                         ExpectedEPNodeAssignment::All);
 }
 
+// Reproduces the CLIP text projection averaging pattern where ORT's MatMulAddFusion
+// creates Gemm nodes with intermediate (NATIVE) bias:
+//   A1 -> MatMul(W) -> mm1  (stays as MatMul)
+//   A2 -> Gemm(W, C=mm1)   -> add1  (C is NATIVE)
+//   A3 -> Gemm(W, C=add1)  -> add2  (C is NATIVE)
+//   A4 -> Gemm(W, C=add2)  -> add3  (C is NATIVE)
+namespace {
+GetTestModelFn BuildGemmFromMatMulAddTestCase(int64_t K, int64_t N) {
+  return [K, N](ModelTestBuilder& builder) {
+    constexpr int64_t batch = 1;
+    const std::vector<int64_t> input_shape = {batch, K};
+    const std::vector<int64_t> weight_shape = {K, N};
+
+    // 4 dynamic inputs
+    builder.MakeInput<float>("A1", input_shape, -1.0f, 1.0f);
+    builder.MakeInput<float>("A2", input_shape, -1.0f, 1.0f);
+    builder.MakeInput<float>("A3", input_shape, -1.0f, 1.0f);
+    builder.MakeInput<float>("A4", input_shape, -1.0f, 1.0f);
+
+    // Shared static weight
+    builder.MakeInitializer<float>("W", weight_shape, -1.0f, 1.0f);
+
+    // 4 MatMul nodes
+    builder.AddNode("matmul_1", "MatMul", {"A1", "W"}, {"mm1"});
+    builder.AddNode("matmul_2", "MatMul", {"A2", "W"}, {"mm2"});
+    builder.AddNode("matmul_3", "MatMul", {"A3", "W"}, {"mm3"});
+    builder.AddNode("matmul_4", "MatMul", {"A4", "W"}, {"mm4"});
+
+    // Chain of Adds: add1 = mm1 + mm2, add2 = add1 + mm3, add3 = add2 + mm4
+    builder.AddNode("add_1", "Add", {"mm1", "mm2"}, {"add1"});
+    builder.AddNode("add_2", "Add", {"add1", "mm3"}, {"add2"});
+    builder.AddNode("add_3", "Add", {"add2", "mm4"}, {"add3"});
+
+    builder.MakeOutput("add3");
+  };
+}
+}  // namespace
+
+TEST_F(QnnHTPBackendTests, GemmFromMatMulAddNonStaticBias) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildGemmFromMatMulAddTestCase(/*K=*/4, /*N=*/3),
+                  provider_options,
+                  /*opset=*/18,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/2e-3f);
+}
+
+TEST_F(QnnCPUBackendTests, GemmFromMatMulAddNonStaticBias) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildGemmFromMatMulAddTestCase(/*K=*/4, /*N=*/3),
+                  provider_options,
+                  /*opset=*/18,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 #if defined(_M_ARM64)
