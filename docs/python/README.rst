@@ -1,8 +1,9 @@
-ONNX Runtime
+ONNX Runtime QNN
 ============
 
-ONNX Runtime is a performance-focused scoring engine for Open Neural Network Exchange (ONNX) models.
-For more information on ONNX Runtime, please see `aka.ms/onnxruntime <https://aka.ms/onnxruntime/>`_ or the `Github project <https://github.com/onnxruntime/onnxruntime-qnn/>`_.
+ONNX Runtime QNN is a plugin execution provider that brings Qualcomm hardware acceleration to ONNX Runtime — enabling high-performance AI inference on Qualcomm Snapdragon SoCs via the `Qualcomm AI Runtime SDK (QAIRT) <https://qpm.qualcomm.com/#/main/tools/details/Qualcomm_AI_Runtime_SDK>`_.
+
+This repository is maintained by Qualcomm. For the general ONNX Runtime project, visit `microsoft/onnxruntime <https://github.com/microsoft/onnxruntime>`_.
 
 
 Changes
