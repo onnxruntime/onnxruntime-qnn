@@ -675,55 +675,6 @@ TEST_F(QnnHTPBackendTests, Pad_Noop_QDQ) {
                            has_constant_value_input);
 }
 
-TEST_F(QnnHTPBackendTests, DumpDlcTest) {
-  const std::string path{"/local/mnt/workspace/issue_18253.onnx"};
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-  provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = "/local/mnt/workspace/onnxruntime_mlg_1/";
-  provider_options["dump_qnn_ir_dlc"] = "1";
-  provider_options["dump_qnn_ir_dlc_dir"] = "/local/mnt/workspace/onnxruntime_mlg_1/";
-#if defined(_WIN32)
-    provider_options["qnn_ir_backend_path"] = "QnnIr.dll";
-#else
-    provider_options["qnn_ir_backend_path"] = "libQnnIr.so";
-#endif  // defined(_WIN32)
-  TryEnableQNNSaver(provider_options);
-  EPVerificationParams verification_params;
-  verification_params.ep_node_assignment = ExpectedEPNodeAssignment::All;
-  verification_params.fp32_abs_err = 1e-2f;
-  verification_params.graph_verifier = nullptr;
-
-
-  std::unordered_map<std::string, Ort::Value> feeds;
-  const std::vector<int64_t> input_shape{1, 16, 112, 112, 3};
-  Ort::Value input_value;
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
-  auto input_tokens = rand_gen_.Uniform<float>(input_shape, 0.0f, 10000.0f);
-  CreateMLValue<float>(nullptr,
-                        input_shape,
-                        input_tokens,
-                        input_value);
-  feeds.emplace("input", std::move(input_value));
-
-  Ort::SessionOptions session_options;
-  session_options.SetLogSeverityLevel(0);
-  session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
-  const std::string& registration_name = onnxruntime::kQnnExecutionProvider;   
-
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
-
-  RunAndVerifyOutputsWithEP(/*model_path_or_bytes=*/path,
-                               /*ort_so=*/session_options,
-                               /*provider_type=*/registration_name,
-                               "QNN_EP_ABI_TestLogID",
-                               /*feeds=*/feeds,
-                               /*params=*/verification_params,
-                               /*verify_outputs=*/false);
-} 
-
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 #if defined(_M_ARM64)
