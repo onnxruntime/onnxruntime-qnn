@@ -60,6 +60,10 @@ class CiArtifactory(Artifactory):
         run_id = os.environ["GITHUB_RUN_ID"]
         self.__ref = os.environ.get("GITHUB_REF", f"{actor}/{run_id}")
 
+        # If this is an ad hoc job, avoid clobbering artifacts from earlier runs.
+        if os.environ["GITHUB_EVENT_NAME"] in ("schedule", "workflow_dispatch"):
+            self.__ref = f"{self.__ref}/{os.environ['GITHUB_RUN_ID']}"
+
     @property
     def artifact_root(self) -> str:
         return f"{super().repo_path}/ci/{self.__ref}/{self.__commit_hash[:10]}/{self.__name}"
