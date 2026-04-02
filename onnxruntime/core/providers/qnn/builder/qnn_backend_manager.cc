@@ -1842,11 +1842,12 @@ void QnnBackendManager::ReleaseTimerThread() {
     //graph_state_ = GraphState::NONE;
     timer_resource_.caller_busy_ = false;
   }*/
-  if (timer_ != nullptr) {}
+  if (timer_ != nullptr) {
     timer_resource_.caller_busy_ = false;
     timer_callback_arg_.reset();
     timer_.reset();
   }
+  
   /*Ort::Status status = Ort::Status();
   QnnHtpPerfInfrastructure_PowerConfig_t htp_performance_cfg{};
   htp_power_config_manager_.SetReleasedPerfPowerConfig(htp_performance_cfg, htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
