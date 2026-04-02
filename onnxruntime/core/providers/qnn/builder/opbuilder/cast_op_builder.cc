@@ -68,7 +68,7 @@ Ort::Status CastOpBuilder::ProcessExtraInputForNotEqual(QnnModelWrapper& qnn_mod
   }
 
   // Build additional static input with value 0.
-  const std::string& input_name = utils::GetUniqueName(node_unit, "_notequal_zero");
+  const std::string& input_name = utils::UniqueNameGenerator().New(node_unit, "_notequal_zero");
 
   Qnn_DataType_t qnn_data_type = QNN_DATATYPE_UNDEFINED;
   ONNXTensorElementDataType input_type = input.type;
@@ -184,7 +184,7 @@ Ort::Status CastOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   const std::string qnn_op_type = IsFpToBoolCast(node_unit)
                                       ? QNN_OP_ELEMENT_WISE_NOT_EQUAL
                                       : GetQnnOpType(node_unit.OpType());
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(node_unit),
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 qnn_op_type,
                                                 std::move(input_names),

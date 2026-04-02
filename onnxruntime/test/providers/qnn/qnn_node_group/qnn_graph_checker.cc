@@ -45,5 +45,30 @@ void AssertOpInQnnGraph(const std::filesystem::path& dump_dir,
       << " occurrence(s), found " << actual_count << " in " << json_path;
 }
 
+void AssertNodeNotInQnnGraph(const std::filesystem::path& dump_dir,
+                             const std::string& node_name) {
+  std::filesystem::path json_path;
+  for (const auto& entry : std::filesystem::directory_iterator{dump_dir}) {
+    if (entry.is_regular_file() && entry.path().extension() == ".json" &&
+        entry.path().filename().string().find("_tensor_log") == std::string::npos) {
+      json_path = entry.path();
+      break;
+    }
+  }
+  ASSERT_FALSE(json_path.empty()) << "No QNN JSON graph file found in " << dump_dir;
+
+  std::ifstream json_file(json_path);
+  ASSERT_TRUE(json_file.is_open()) << "Failed to open QNN JSON graph: " << json_path;
+
+  nlohmann::json root;
+  json_file >> root;
+
+  ASSERT_TRUE(root.contains("graph") && root["graph"].contains("nodes"))
+      << "JSON missing 'graph.nodes' field in: " << json_path;
+
+  EXPECT_FALSE(root["graph"]["nodes"].contains(node_name))
+      << "Unexpected QNN node found: '" << node_name << "' in " << json_path;
+}
+
 }  // namespace test
 }  // namespace onnxruntime
