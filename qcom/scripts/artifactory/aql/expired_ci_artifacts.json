@@ -6,7 +6,7 @@
                     "repo": "${repo}",
                     "$and": [
                         {
-                            "created": { "$before": "1d" },
+                            "created": { "$before": "1080minutes" },
                             "path": { "$match": "ci/*" }
                         }
                     ]
