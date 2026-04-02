@@ -1153,7 +1153,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
     Qnn_Version_t blob_version = {0, 0, 0};
     RETURN_IF_ERROR(GetGraphInfoAndBinVersion(sys_ctx_handle.get(),
                                               buffer,
-                                              buffer_size,
+                                              static_cast<Qnn_ContextBinarySize_t>(buffer_size),
                                               blob_version,
                                               graph_count,
                                               &graphs_info));
@@ -1359,15 +1359,15 @@ Ort::Status QnnBackendManager::GetMaxSpillFillBufferSize(unsigned char* buffer,
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   Qnn_Version_t blob_version = {0, 0, 0};
   RETURN_IF_ERROR(GetGraphInfoAndBinVersion(sys_ctx_handle.get(),
-                                            buffer,
-                                            buffer_length,
+                                            static_cast<void*>(buffer),
+                                            static_cast<Qnn_ContextBinarySize_t>(buffer_length),
                                             blob_version,
                                             graph_count,
                                             &graphs_info));
 #else
   RETURN_IF_ERROR(GetGraphInfoAndBinVersion(sys_ctx_handle.get(),
-                                            buffer,
-                                            buffer_length,
+                                            static_cast<void*>(buffer),
+                                            static_cast<Qnn_ContextBinarySize_t>(buffer_length),
                                             graph_count,
                                             &graphs_info));
 #endif
@@ -1445,14 +1445,14 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   Qnn_Version_t blob_version = {0, 0, 0};
   RETURN_IF_ERROR(GetGraphInfoAndBinVersion(sys_ctx_handle.get(),
                                             bin_buffer,
-                                            buffer_length,
+                                            static_cast<Qnn_ContextBinarySize_t>(buffer_length),
                                             blob_version,
                                             graph_count,
                                             &graphs_info));
 #else
   RETURN_IF_ERROR(GetGraphInfoAndBinVersion(sys_ctx_handle.get(),
                                             bin_buffer,
-                                            buffer_length,
+                                            static_cast<Qnn_ContextBinarySize_t>(buffer_length),
                                             graph_count,
                                             &graphs_info));
 #endif
@@ -2508,13 +2508,17 @@ std::unique_ptr<void, std::function<void(void*)>> QnnBackendManager::GetSystemCo
 }
 
 Ort::Status QnnBackendManager::GetGraphInfoAndBinVersion(QnnSystemContext_Handle_t sys_ctx_handle,
-                                                         void* buffer, size_t buffer_length,
+                                                         void* buffer,
+                                                         Qnn_ContextBinarySize_t buffer_length,
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
                                                          Qnn_Version_t& blob_version,
 #endif
                                                          uint32_t& graph_count,
                                                          QnnSystemContext_GraphInfo_t** graphs_info) {
+  RETURN_IF(sys_ctx_handle == nullptr, "System context handle is null.");
 
+  // The lifetime of binary_info's contents is tied to the lifetime of
+  // the obj pointed to by sys_ctx_handle (owned by caller)
   Qnn_ContextBinarySize_t binary_info_size{0};
   const QnnSystemContext_BinaryInfo_t* binary_info = nullptr;
   auto rt = qnn_sys_interface_.systemContextGetBinaryInfo(sys_ctx_handle,
@@ -2524,11 +2528,9 @@ Ort::Status QnnBackendManager::GetGraphInfoAndBinVersion(QnnSystemContext_Handle
                                                           &binary_info_size);
 
   RETURN_IF(QNN_SUCCESS != rt, "Failed to get context binary info.");
-  // binary_info life cycle is here
-  // Binary info to graph info
-  // retrieve Qnn graph info from binary info
   RETURN_IF(nullptr == binary_info, "Qnn cached binary info is nullptr.");
 
+  // Extract graph info and context bin version from binary_info
   if (binary_info->version == QNN_SYSTEM_CONTEXT_BINARY_INFO_VERSION_1) {
     graph_count = binary_info->contextBinaryInfoV1.numGraphs;
     *graphs_info = binary_info->contextBinaryInfoV1.graphs;
