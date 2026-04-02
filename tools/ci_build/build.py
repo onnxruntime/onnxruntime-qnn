@@ -216,6 +216,7 @@ def generate_build_tree(
         "-DPython_EXECUTABLE=" + sys.executable,
         "-Donnxruntime_USE_VCPKG=" + ("ON" if args.use_vcpkg else "OFF"),
         "-Donnxruntime_USE_MIMALLOC=" + ("ON" if args.use_mimalloc else "OFF"),
+        "-Donnxruntime_BUILD_JAVA=" + ("ON" if args.build_java else "OFF"),
         "-Donnxruntime_BUILD_SHARED_LIB=" + ("ON" if args.build_shared_lib else "OFF"),
         "-Donnxruntime_USE_QNN_INTERFACE=" + ("ON" if args.enable_generic_interface else "OFF"),
         "-Donnxruntime_DISABLE_RTTI=" + ("ON" if args.disable_rtti or args.minimal_build is not None else "OFF"),
@@ -394,8 +395,6 @@ def generate_build_tree(
 
         if args.use_qnn == "static_lib":
             cmake_args += ["-Donnxruntime_BUILD_QNN_EP_STATIC_LIB=ON"]
-        if args.android and args.use_qnn != "static_lib":
-            raise BuildError("Only support Android + QNN builds with QNN EP built as a static library.")
         if args.use_qnn == "static_lib" and args.enable_generic_interface:
             raise BuildError("Generic ORT interface only supported with QNN EP built as a shared library.")
 
@@ -937,6 +936,9 @@ def main():
                 )
 
     cmake_extra_defines = list(args.cmake_extra_defines)
+
+    if args.build_nuget or args.build_java:
+        args.build_shared_lib = True
 
     if args.code_coverage and not args.android:
         raise BuildError("Using --code_coverage requires --android")

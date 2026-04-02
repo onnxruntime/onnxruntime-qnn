@@ -222,11 +222,13 @@ set(ONNXRUNTIME_APPLICATION_INCLUDE_ROOT "${ORT_SOURCE_DIR}/include/onnxruntime"
 
 # Create imported target for ONNX Runtime
 add_library(onnxruntime SHARED IMPORTED GLOBAL)
-add_library(onnxruntime_providers_shared SHARED IMPORTED GLOBAL)
-
-# Add dependency on the external projects to ensure they're downloaded first
 add_dependencies(onnxruntime ort_core_target)
-add_dependencies(onnxruntime_providers_shared ort_core_target)
+
+# onnxruntime_providers_shared is not built for Android as shown on line 252.
+if(NOT ANDROID)
+    add_library(onnxruntime_providers_shared SHARED IMPORTED GLOBAL)
+    add_dependencies(onnxruntime_providers_shared ort_core_target)
+endif()
 
 # Hack since cmake check the existence of INTERFACE_INCLUDE_DIRECTORIES
 file(MAKE_DIRECTORY ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT})
