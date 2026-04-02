@@ -84,17 +84,12 @@ Ort::Status QnnModelWrapper::MakeTensorWrapper(const OrtNodeUnitIODef& tensor, Q
     RETURN_IF_ERROR(UnpackInitializerData(tensor_info.initializer_tensor, unpacked_tensor));
   }
 
-  Qnn_TensorMemType_t mem_type = QNN_TENSORMEMTYPE_RAW;
-  if (true == model_settings_.htp_shared_memory && (IsGraphInput(tensor_name) || IsGraphOutput(tensor_name))) {
-    mem_type = QNN_TENSORMEMTYPE_MEMHANDLE;
-  }
   tensor_wrapper = QnnTensorWrapper(tensor_name,
                                     GetTensorType(tensor_name),
                                     tensor_info.qnn_data_type,
                                     std::move(tensor_info.quant_param),
                                     std::move(tensor_info.shape),
-                                    std::move(unpacked_tensor),
-                                    mem_type);
+                                    std::move(unpacked_tensor));
   return Ort::Status();
 }
 
@@ -112,6 +107,15 @@ Ort::Status QnnModelWrapper::MakeTensorWrapper(const TensorInfo& tensor_info,
   return Ort::Status();
 }
 
+void QnnModelWrapper::SetTensorMemTypeFromSettings(QnnTensorWrapper& tensor_wrapper,
+                                                   const std::string& tensor_name) {
+  Qnn_TensorMemType_t mem_type = QNN_TENSORMEMTYPE_RAW;
+  if (true == model_settings_.htp_shared_memory && (IsGraphInput(tensor_name) || IsGraphOutput(tensor_name))) {
+    mem_type = QNN_TENSORMEMTYPE_MEMHANDLE;
+  }
+  SetQnnTensorMemType(tensor_wrapper.GetQnnTensor(), mem_type);
+}
+
 bool QnnModelWrapper::AddTensorWrapper(QnnTensorWrapper&& tensor_wrapper) {
   // Keep a copy of tensor name sine it will be moved with the wrapper into model_tensors_map_
   std::string tensor_name = tensor_wrapper.GetName();
@@ -124,6 +128,8 @@ bool QnnModelWrapper::AddTensorWrapper(QnnTensorWrapper&& tensor_wrapper) {
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor exist already: " + tensor_name).c_str());
     return true;
   }
+
+  SetTensorMemTypeFromSettings(tensor_wrapper, tensor_name);
 
   model_tensors_map_.emplace(tensor_name, std::move(tensor_wrapper));
 
