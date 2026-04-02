@@ -67,8 +67,8 @@ struct GenieNodeStateDeleter {
 };
 
 struct GenieNodeBuilder {
-  const GenieApi* api;
+  const GenieApi* api = nullptr;
   std::string dlc_path;
-  size_t num_inputs;
-  size_t num_outputs;
+  size_t num_inputs = 0;
+  size_t num_outputs = 0;
 };

@@ -1,4 +1,3 @@
-//
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
@@ -179,7 +178,6 @@ void GenieBackendManager::ReleaseResources() {
   }
 
   backend_setup_completed_ = false;
-
   return;
 }
 

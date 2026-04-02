@@ -2625,7 +2625,7 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this
   // Generate the Backend Extension json
   auto parent_folder_path = std::filesystem::path(builder->dlc_path).parent_path();
 
-  // Temporary fix to search for the backend extension and pass that as part of the config
+  // Search for the backend extension overrides and pass that as part of the config
   std::string extension_path;
   try {
     for (const auto& entry : std::filesystem::directory_iterator(parent_folder_path)) {
@@ -2728,7 +2728,7 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr
     ep.genie_kv_cache_rewind_.store(1, std::memory_order_release);
   }
 
-  // 1) Set inputs
+  // Set inputs to Genie node
   for (size_t i = 0; i < (*st)->num_inputs; ++i) {
     const OrtValue* in_val = nullptr;
     ORT_CXX_RETURN_ON_API_FAIL(ort_api->KernelContext_GetInput(ctx, i, &in_val));
@@ -2768,16 +2768,16 @@ OrtStatus* QnnEp::GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr
         byte_size,
         input_config_ptr);
 
-    if (rc != 0) return ort_api->CreateStatus(ORT_EP_FAIL, "GenieNode_setData failed");
+    RETURN_IF(rc != 0, "GenieNode_setData failed");
   }
 
-  // 2) Execute
+  // Execute the genie node
   {
     Genie_Status_t rc = (*st)->api->Node_execute((*st)->node, "{}" /*executionConfig*/, nullptr /*userData*/);
-    if (rc != 0) return ort_api->CreateStatus(ORT_EP_FAIL, "GenieNode_execute failed");
+    RETURN_IF(rc != 0, "GenieNode_execute failed");
   }
 
-  // 3) Get outputs
+  // Get output data from the genie node
   for (size_t i = 0; i < (*st)->num_outputs; ++i) {
     struct OutputDataInfo {
       std::vector<std::byte> output_data;
