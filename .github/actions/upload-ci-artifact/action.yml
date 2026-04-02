@@ -22,5 +22,5 @@ runs:
       run: >
         "${{ runner.os == 'Windows' && 'python.exe' || 'python3' }}"
         qcom/scripts/artifactory/publish_ci.py
-        --src-pattern ${{ inputs.src_pattern }}
+        --src-pattern "${{ inputs.src_pattern }}"
         --name "${{ inputs.name }}"

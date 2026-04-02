@@ -939,6 +939,12 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   TryEnableQNNSaver(qnn_options);
 
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  qnn_options["num_graph_prepare_threads"] = "1";
+#endif
+
   // Run with QNN.
   std::vector<Ort::Value> qnn_qdq_outputs;
   if (!qnn_ctx_model_path.empty()) {
@@ -1179,6 +1185,12 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
     qnn_options["dump_json_qnn_graph"] = "1";
     qnn_options["json_qnn_graph_dir"] = output_dir.string();
   }
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  qnn_options["num_graph_prepare_threads"] = "1";
+#endif
 
   TryEnableQNNSaver(qnn_options);
 

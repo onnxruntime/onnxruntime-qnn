@@ -314,14 +314,14 @@ Ort::Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
       pad_output_shape.push_back(input_shape[i] + pad_amount[2 * i] + pad_amount[2 * i + 1]);
     }
 
-    std::string pad_output_name = utils::GetUniqueName(node_unit, "_Pad_output");
+    std::string pad_output_name = utils::UniqueNameGenerator().New(node_unit, "_Pad_output");
 
     if (has_positive) {
       // Step 1. Add Pad to handle any positive values
       TensorInfo input_info = {};
       RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
 
-      std::string pad_name = utils::GetUniqueName(node_unit, "_Pad");
+      std::string pad_name = utils::UniqueNameGenerator().New(node_unit, "_Pad");
       QnnTensorWrapper pad_output(pad_output_name,
                                   QNN_TENSOR_TYPE_NATIVE,
                                   input_info.qnn_data_type,
@@ -385,7 +385,7 @@ Ort::Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
 
     // Create Slice Node
     std::vector<std::string> slice_input_name = has_positive ? std::vector<std::string>{pad_output_name} : input_names;
-    std::string slice_name = utils::GetUniqueName(node_unit, "_Slice");
+    std::string slice_name = utils::UniqueNameGenerator().New(node_unit, "_Slice");
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(slice_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                   QNN_OP_STRIDED_SLICE,

@@ -224,7 +224,7 @@ Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
          act_dql_node_unit.OpType() == "DequantizeLinear" &&
          gemm_node_unit.OpType() == "Gemm" &&
          output_ql_node_unit.OpType() == "QuantizeLinear");
-  const auto& node_name = utils::GetUniqueName(gemm_node_unit);
+  const auto& node_name = utils::UniqueNameGenerator().New(gemm_node_unit);
   const OrtNodeUnitIODef& act_dql_input_1_def = act_dql_node_unit.Inputs()[0];
   const OrtNodeUnitIODef& w_dql_input_1_def = w_dql_node_unit.Inputs()[0];
   const OrtNodeUnitIODef& output_def = output_ql_node_unit.Outputs()[0];

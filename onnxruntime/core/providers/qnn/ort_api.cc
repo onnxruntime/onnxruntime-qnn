@@ -21,6 +21,10 @@
 #include <errno.h>
 #endif
 
+#ifdef _WIN32
+extern "C" IMAGE_DOS_HEADER __ImageBase;
+#endif
+
 namespace onnxruntime {
 
 namespace {
@@ -724,7 +728,6 @@ std::basic_string<ORTCHAR_T> GetDynamicLibraryLocationByAddress(const void* addr
 // QNN-EP COPY START
 std::basic_string<ORTCHAR_T> OrtGetRuntimePath() {
 #ifdef _WIN32
-  IMAGE_DOS_HEADER __ImageBase;
   wchar_t buffer[MAX_PATH];
   if (!GetModuleFileNameW(reinterpret_cast<HINSTANCE>(&__ImageBase), buffer, _countof(buffer))) {
     return ORT_TSTR("");

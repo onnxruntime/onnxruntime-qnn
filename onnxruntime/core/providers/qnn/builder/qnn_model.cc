@@ -184,6 +184,8 @@ const OrtNodeUnit& QnnModel::GetNodeUnit(const OrtNode* node,
 }
 
 Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
+  utils::UniqueNameGenerator().Reset();
+
   RETURN_IF(context.onnx_input_names == nullptr, "onnx_input_names is required for ComposeGraph");
   RETURN_IF(context.onnx_output_names == nullptr, "onnx_output_names is required for ComposeGraph");
   RETURN_IF(context.model_settings == nullptr, "model_settings is required for ComposeGraph");

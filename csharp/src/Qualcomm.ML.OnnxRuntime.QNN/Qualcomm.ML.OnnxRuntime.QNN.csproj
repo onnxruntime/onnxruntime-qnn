@@ -4,6 +4,7 @@
     <LangVersion>latest</LangVersion>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageId>Qualcomm.ML.OnnxRuntime.QNN</PackageId>
+    <Version>$([System.IO.File]::ReadAllText('$(MSBuildThisFileDirectory)..\..\..\VERSION_NUMBER').Trim())</Version>
     <Description>Helper utilities for QNN Execution Provider - provides GetLibraryPath(), GetEpNames() and GetEpName() functions</Description>
     <Authors>Qualcomm</Authors>
     <Company>Qualcomm</Company>

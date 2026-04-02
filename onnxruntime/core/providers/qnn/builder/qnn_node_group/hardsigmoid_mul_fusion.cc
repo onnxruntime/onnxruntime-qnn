@@ -108,7 +108,7 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& mul_node_unit,
                                          bool validate) {
   assert(hardsigmoid_node_unit.OpType() == "HardSigmoid" && mul_node_unit.OpType() == "Mul");
-  const auto& node_name = utils::GetUniqueName(hardsigmoid_node_unit);
+  const auto& node_name = utils::UniqueNameGenerator().New(hardsigmoid_node_unit);
   const OrtNodeUnitIODef& input_def = hardsigmoid_node_unit.Inputs()[0];
   const OrtNodeUnitIODef& output_def = mul_node_unit.Outputs()[0];
 

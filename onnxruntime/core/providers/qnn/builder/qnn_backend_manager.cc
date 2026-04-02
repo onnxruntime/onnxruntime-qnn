@@ -94,7 +94,7 @@ class QnnIrConfig : public QnnSerializerConfig {
     dlc_path_custom_config->option = QNN_GRAPH_CONFIG_OPTION_CUSTOM;
     dlc_path_custom_config->customConfig = dlc_path_config;
 
-    std::filesystem::create_directories(dlc_path);
+    std::filesystem::create_directories(dlc_path.parent_path());
 
     // Keep the pointer to dlc_path_str's null-terminated string alive.
     std::swap(dlc_path_str, dlc_path_str_);
@@ -711,8 +711,9 @@ Ort::Status QnnBackendManager::ReleaseDevice() {
 
 Ort::Status QnnBackendManager::InitializeProfiling() {
   profiling_level_merge_ = profiling_level_;
-  // use profiling level from ETW if ETW is enabled
-  if (profiling_level_etw_ != ProfilingLevel::INVALID) {
+  // Only use ETW level if it provides higher fidelity
+  if (profiling_level_etw_ != ProfilingLevel::INVALID &&
+      profiling_level_etw_ > profiling_level_) {
     profiling_level_merge_ = profiling_level_etw_;
   }
 
@@ -1724,7 +1725,8 @@ Ort::Status QnnBackendManager::SetupBackend(
   bool enable_htp_weight_sharing = false;
   if (share_ep_contexts && !load_from_cached_context) {
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
-    !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
+    (QNN_API_VERSION_MAJOR < 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR < 34))
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, ("FINDME: " + std::to_string(QNN_API_VERSION_MAJOR) + "." + std::to_string(QNN_API_VERSION_MINOR) + "." + std::to_string(QNN_API_VERSION_PATCH)).c_str());
     ORT_CXX_LOG_PTR(logger_ptr_,
                     ORT_LOGGING_LEVEL_WARNING,
                     "Weight sharing on Windows arm64 device requires QNN API version >=2.34. Since Current version is too old, disabling the Weight sharing.");
