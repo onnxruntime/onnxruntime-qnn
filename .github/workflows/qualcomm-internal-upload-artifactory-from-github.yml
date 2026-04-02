@@ -129,13 +129,6 @@ jobs:
         with:
           name: windows-x86_64-py3.14-wheels
 
-      - name: Verify wheel artifacts
-        run: |
-          count=$(find "${{ github.workspace }}/build" -name "*.whl" | wc -l)
-          echo "Found $count wheel(s)"
-          # 3 win archs × 4 py versions = 12 expected
-          [ "$count" -ge 12 ] || { echo "ERROR: Expected at least 12 wheels, found $count"; exit 1; }
-
       - name: Consolidate Wheels
         run: |
           mkdir "${{ github.workspace }}/build/dist"
@@ -163,6 +156,13 @@ jobs:
             "${{ github.workspace }}/build/dist/x64" \
             "${{ github.workspace }}/build/dist/arm64ec" \
             "${{ github.workspace }}/build/dist"
+
+      - name: Verify wheel artifacts
+        run: |
+          # After merge: 4 arm64 + 4 merged AMD wheels in build/dist/
+          count=$(find "${{ github.workspace }}/build/dist" -name "*.whl" | wc -l)
+          echo "Found $count wheel(s) in build/dist"
+          [ "$count" -eq 8 ] || { echo "ERROR: Expected 8 wheels in build/dist, found $count"; exit 1; }
 
       - name: Check Wheels
         run: |
@@ -206,9 +206,9 @@ jobs:
       - name: Verify NuGet artifact
         shell: powershell
         run: |
-          $count = (Get-ChildItem -Path "${{ github.workspace }}\build\windows-arm64\Release" -Filter "*.nupkg").Count
+          $count = (Get-ChildItem -Path "${{ github.workspace }}\build" -Recurse -Filter "*.nupkg").Count
           Write-Host "Found $count NuGet package(s)"
-          if ($count -lt 1) { Write-Error "Expected at least 1 NuGet package, found $count"; exit 1 }
+          if ($count -ne 1) { Write-Error "Expected 1 NuGet package, found $count"; exit 1 }
 
       - name: Publish
         if: ${{ !inputs.skip_publish }}
@@ -253,9 +253,9 @@ jobs:
 
       - name: Verify Zip artifact
         run: |
-          count=$(find "${{ github.workspace }}/build/windows-arm64/Release/dist" -maxdepth 1 -name "*.zip" | wc -l)
+          count=$(find "${{ github.workspace }}/build" -name "*.zip" | wc -l)
           echo "Found $count Zip archive(s)"
-          [ "$count" -ge 1 ] || { echo "ERROR: Expected at least 1 Zip archive, found $count"; exit 1; }
+          [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 Zip archive, found $count"; exit 1; }
 
       - name: Publish
         if: ${{ !inputs.skip_publish }}
