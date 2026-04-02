@@ -1422,6 +1422,48 @@ static void GetContextOnnxModelFilePath(const std::string& user_context_cache_pa
   }
 }
 
+OrtStatus* ORT_API_CALL QnnEp::GetGenieCapability(OrtEp* this_ptr,
+                                      const OrtGraph* graph,
+                                      OrtEpGraphSupportInfo* graph_support_info) {
+  // CREATE GENIE_BACKEND_MANAGER
+  QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+  if (!ep->genie_backend_manager_) {
+    ep->genie_backend_manager_ = qnn::GenieBackendManager::Create(
+        qnn::GenieBackendManagerConfig{kDefaultGenieBackendPath}, ep->logger_);
+    auto setup_st = ep->genie_backend_manager_->SetupBackend();
+    if (!setup_st.IsOK()) {
+      return ep->ort_api.CreateStatus(ORT_EP_FAIL, setup_st.GetErrorMessage().c_str());
+    }
+  }
+  ep->genie_api_loader_ = std::make_shared<GenieApiLoader>((ep->genie_backend_manager_)->GetGenieBackendHandle());
+  // Get all nodes from the graph
+  size_t num_nodes = 0;
+  if (ep->ort_api.Graph_GetNumNodes(graph, &num_nodes) != nullptr) {
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Graph_GetNumNodes failed");
+  }
+  if (num_nodes != 1) {
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Number of nodes must be 1 for Genie");
+  }
+  std::vector<const OrtNode*> graph_nodes(num_nodes);
+  if (ep->ort_api.Graph_GetNodes(graph, graph_nodes.data(), graph_nodes.size()) != nullptr) {
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Graph Creation error");
+  }
+
+  // Identify the single node in the graph (which should be the only node)
+  const OrtNode* node = graph_nodes[0];
+  std::vector<const OrtNode*> supported_group{node};
+  OrtNodeFusionOptions node_fusion_options = {};
+  node_fusion_options.ort_version_supported = ORT_API_VERSION;
+  auto add_status = ep->ep_api.EpGraphSupportInfo_AddNodesToFuse(graph_support_info,
+                                                                  supported_group.data(),
+                                                                  supported_group.size(),
+                                                                  &node_fusion_options);
+  if (add_status != nullptr) {
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Error adding Node.");
+  }
+  return nullptr;
+}
+
 OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                  const OrtGraph* graph,
                                                  OrtEpGraphSupportInfo* graph_support_info) noexcept {
@@ -1440,43 +1482,10 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
   }
 
   // Genie Pathway
-  if (qnn::GraphHasDlcContextNode(graph, ep->ort_api)) {
-    // CREATE GENIE_BACKEND_MANAGER
-    if (!ep->genie_backend_manager_) {
-      ep->genie_backend_manager_ = qnn::GenieBackendManager::Create(
-          qnn::GenieBackendManagerConfig{kDefaultGenieBackendPath}, ep->logger_);
-      auto setup_st = ep->genie_backend_manager_->SetupBackend();
-      if (!setup_st.IsOK()) {
-        return ep->ort_api.CreateStatus(ORT_EP_FAIL, setup_st.GetErrorMessage().c_str());
-      }
-    }
-    ep->genie_api_loader_ = std::make_shared<GenieApiLoader>((ep->genie_backend_manager_)->GetGenieBackendHandle());
-    // Get all nodes from the graph
-    size_t num_nodes = 0;
-    if (ep->ort_api.Graph_GetNumNodes(graph, &num_nodes) != nullptr) {
-      return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Graph_GetNumNodes failed");
-    }
-    if (num_nodes != 1) {
-      return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Number of nodes must be 1 for Genie");
-    }
-    std::vector<const OrtNode*> graph_nodes(num_nodes);
-    if (ep->ort_api.Graph_GetNodes(graph, graph_nodes.data(), graph_nodes.size()) != nullptr) {
-      return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Graph Creation error");
-    }
 
-    // Identify the single node in the graph (which should be the only node)
-    const OrtNode* node = graph_nodes[0];
-    std::vector<const OrtNode*> supported_group{node};
-    OrtNodeFusionOptions node_fusion_options = {};
-    node_fusion_options.ort_version_supported = ORT_API_VERSION;
-    auto add_status = ep->ep_api.EpGraphSupportInfo_AddNodesToFuse(graph_support_info,
-                                                                   supported_group.data(),
-                                                                   supported_group.size(),
-                                                                   &node_fusion_options);
-    if (add_status != nullptr) {
-      return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Error adding Node.");
-    }
-    return nullptr;
+
+  if (qnn::GraphHasDlcContextNode(graph, ep->ort_api)) {
+    return ep->GetGenieCapability(this_ptr, graph, graph_support_info);
   }
 
   bool is_qnn_ctx_model = qnn::GraphHasEpContextNode(graph, ep->ort_api);
@@ -1906,6 +1915,45 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
   return nullptr;
 }
 
+OrtStatus* QnnEp::CompileDlcContextModel(OrtEp* this_ptr,
+                                          const OrtGraph** graphs,
+                                          const OrtNode** fused_nodes,
+                                          size_t count,
+                                          OrtNodeComputeInfo** node_compute_infos) {
+  QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+  std::basic_string<ORTCHAR_T> model_path = GetModelPathString(graphs[0], ep->ort_api);
+  std::basic_string<ORTCHAR_T> context_model_path;
+  GetContextOnnxModelFilePath(ep->context_cache_path_cfg_, model_path, context_model_path);
+  std::filesystem::path parent_path = std::filesystem::path(context_model_path).parent_path();
+
+  // Extract the DLC information
+  std::string dlc_path;
+  auto st = qnn::GetEpContextDlcPath(graphs, count, ep->ort_api, dlc_path);
+  if (!st.IsOK()) {
+    return ep->ort_api.CreateStatus(ORT_EP_FAIL, st.GetErrorMessage().c_str());
+  }
+  std::filesystem::path dlc_extracted_path(parent_path / dlc_path);
+
+  // Populate the Genie APIs
+  const GenieApi& genie_api_ = ep->genie_api_loader_->Get();
+
+  // NOTE: We will have only one node in the fused graph --> Ep_context_node
+  for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
+    const OrtNode* fused_node = fused_nodes[graph_idx];
+
+    // Build everything you can at compile time
+    auto builder = std::make_shared<GenieNodeBuilder>();
+    builder->api = &genie_api_;
+    builder->dlc_path = dlc_extracted_path.string();
+    ep->ort_api.Node_GetNumInputs(fused_node, &(builder->num_inputs));
+    ep->ort_api.Node_GetNumOutputs(fused_node, &(builder->num_outputs));
+
+    auto node_compute_info = std::make_unique<GenieNodeComputeInfo>(*ep, builder);
+    node_compute_infos[graph_idx] = node_compute_info.release();
+  }
+  return nullptr;
+}
+
 OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
                                            _In_ const OrtGraph** graphs,
                                            _In_ const OrtNode** fused_nodes,
@@ -1917,37 +1965,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   if (qnn::IsOrtGraphHasCtxNode(graphs, count, ep->ort_api)) {
     return ep->CompileContextModel(graphs, fused_nodes, count, node_compute_infos);
   } else if (qnn::IsOrtGraphHasDlcCtxNode(graphs, count, ep->ort_api)) {
-    std::basic_string<ORTCHAR_T> model_path = GetModelPathString(graphs[0], ep->ort_api);
-    std::basic_string<ORTCHAR_T> context_model_path;
-    GetContextOnnxModelFilePath(ep->context_cache_path_cfg_, model_path, context_model_path);
-    std::filesystem::path parent_path = std::filesystem::path(context_model_path).parent_path();
-
-    // Extract the DLC information
-    std::string dlc_path;
-    auto st = qnn::GetEpContextDlcPath(graphs, count, ep->ort_api, dlc_path);
-    if (!st.IsOK()) {
-      return ep->ort_api.CreateStatus(ORT_EP_FAIL, st.GetErrorMessage().c_str());
-    }
-    std::filesystem::path dlc_extracted_path(parent_path / dlc_path);
-
-    // Populate the Genie APIs
-    const GenieApi& genie_api_ = ep->genie_api_loader_->Get();
-
-    // NOTE: We will have only one node in the fused graph --> Ep_context_node
-    for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
-      const OrtNode* fused_node = fused_nodes[graph_idx];
-
-      // Build everything you can at compile time
-      auto builder = std::make_shared<GenieNodeBuilder>();
-      builder->api = &genie_api_;
-      builder->dlc_path = dlc_extracted_path.string();
-      ep->ort_api.Node_GetNumInputs(fused_node, &(builder->num_inputs));
-      ep->ort_api.Node_GetNumOutputs(fused_node, &(builder->num_outputs));
-
-      auto node_compute_info = std::make_unique<GenieNodeComputeInfo>(*ep, builder);
-      node_compute_infos[graph_idx] = node_compute_info.release();
-    }
-    return nullptr;
+    return ep->CompileDlcContextModel(this_ptr, graphs, fused_nodes, count, node_compute_infos);
   }
 
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
