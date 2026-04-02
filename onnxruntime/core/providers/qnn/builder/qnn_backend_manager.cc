@@ -1880,14 +1880,14 @@ Ort::Status QnnBackendManager::CreateHtpPowerCfgId(uint32_t device_id,
 }
 
 Ort::Status QnnBackendManager::InitializePowerCfgId(uint32_t device_id, uint32_t core_id, uint32_t& htp_power_config_id) {
-  RETURN_IF_ERROR(CreateHtpPowerCfgId(device_id, core_id, htp_power_config_id));
+  RETURN_IF_NOT_OK(CreateHtpPowerCfgId(device_id, core_id, htp_power_config_id));
   CreateTimerThread(htp_power_config_id);
   return Ort::Status();
 }
 
 Ort::Status QnnBackendManager::DeInitializePowerCfgId(uint32_t htp_power_config_id) {
   //ReleaseTimerThread(htp_power_config_id);
-  RETURN_IF_ERROR(DestroyHTPPowerConfigID(htp_power_config_id));
+  RETURN_IF_NOT_OK(DestroyHTPPowerConfigID(htp_power_config_id));
   return Ort::Status();
 }
 
