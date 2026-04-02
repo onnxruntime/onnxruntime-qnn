@@ -61,6 +61,11 @@ struct GenieNodeState {
   std::mutex mu;
 };
 
+// Custom deleter for GenieNodeState
+struct GenieNodeStateDeleter {
+  void operator()(GenieNodeState* st);
+};
+
 struct GenieNodeBuilder {
   const GenieApi* api;
   std::string dlc_path;

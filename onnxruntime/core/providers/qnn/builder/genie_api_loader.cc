@@ -75,3 +75,18 @@ void GenieApiLoader::Init() {
     throw;
   }
 }
+
+// Implement the custom deleter
+void GenieNodeStateDeleter::operator()(GenieNodeState* st) {
+  if (!st) return;
+  
+  auto* api = st->api;
+  if (api) {
+    if (st->node) api->Node_free(st->node);
+    if (st->genieLogger && api->Log_free) api->Log_free(st->genieLogger);
+    if (st->config) api->NodeConfig_free(st->config);
+    if (st->dlcHandle) api->Dlc_free(st->dlcHandle);
+    if (st->dlcConfigHandle) api->DlcConfig_free(st->dlcConfigHandle);
+  }
+  delete st;
+}
