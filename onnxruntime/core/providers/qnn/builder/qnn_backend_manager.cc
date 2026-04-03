@@ -1763,7 +1763,7 @@ Ort::Status QnnBackendManager::SetupBackend(
     ORT_CXX_LOG_PTR(logger_ptr_,
                     ORT_LOGGING_LEVEL_WARNING,
                     "Weight sharing on Windows arm64 device requires QNN API version >=2.34. Since Current version is too old, disabling the Weight sharing.");
-#elif !defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+#elif defined(__ANDROID__) && (defined(__aarch64__) || defined(_M_ARM64))
     ORT_CXX_LOG_PTR(logger_ptr_,
                     ORT_LOGGING_LEVEL_WARNING,
                     "Weight sharing on Android devices is disabled");

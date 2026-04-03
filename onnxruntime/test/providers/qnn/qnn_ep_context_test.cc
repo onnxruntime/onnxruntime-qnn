@@ -2159,8 +2159,8 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
-#elif !defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
-  GTEST_SKIP() << "Weight sharing on Android devices is disabled");
+#elif defined(__ANDROID__) && (defined(__aarch64__) || defined(_M_ARM64))
+  GTEST_SKIP() << "Weight sharing on Android devices is disabled";
 #endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -2275,8 +2275,8 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
-#elif !defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
-  GTEST_SKIP() << "Weight sharing on Android devices is disabled");
+#elif defined(__ANDROID__) && (defined(__aarch64__) || defined(_M_ARM64))
+  GTEST_SKIP() << "Weight sharing on Android devices is disabled";
 #endif
 
   // Disable the test on test-android job in Qualcomm CI here while we investigate
@@ -2393,8 +2393,8 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
-#elif !defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
-  GTEST_SKIP() << "Weight sharing on Android devices is disabled");
+#elif defined(__ANDROID__) && (defined(__aarch64__) || defined(_M_ARM64))
+  GTEST_SKIP() << "Weight sharing on Android devices is disabled";
 #endif
 
   ProviderOptions provider_options;
@@ -2518,8 +2518,8 @@ TEST_F(QnnHTPBackendTests, QnnContextGenWeightSharingSessionAPI) {
 #if (defined(__aarch64__) || defined(_M_ARM64)) && \
     !(QNN_API_VERSION_MAJOR > 2 || (QNN_API_VERSION_MAJOR == 2 && QNN_API_VERSION_MINOR >= 34))
   GTEST_SKIP() << "HTP weight sharing on ARM64 requires QNN API version >= 2.34.";
-#elif !defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
-  GTEST_SKIP() << "Weight sharing on Android devices is disabled");
+#elif defined(__ANDROID__) && (defined(__aarch64__) || defined(_M_ARM64))
+  GTEST_SKIP() << "Weight sharing on Android devices is disabled";
 #endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
