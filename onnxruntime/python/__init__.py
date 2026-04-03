@@ -4,6 +4,7 @@
 # --------------------------------------------------------------------------
 
 import os
+import sys
 
 from . import build_and_package_info  # noqa: F401
 from .build_and_package_info import __version__  # noqa: F401
@@ -23,6 +24,13 @@ except ImportError:
     pass
 
 
+def _lib_name(base):
+    if sys.platform == "win32":
+        return f"{base}.dll"
+    else:  # linux / android
+        return f"lib{base}.so"
+
+
 def get_ep_names():
     return [EP_NAME]
 
@@ -32,16 +40,16 @@ def get_ep_name():
 
 
 def get_library_path():
-    return os.path.join(LIB_DIR_FULL_PATH, "onnxruntime_providers_qnn.dll")
+    return os.path.join(LIB_DIR_FULL_PATH, _lib_name("onnxruntime_providers_qnn"))
 
 
 def get_qnn_cpu_path():
-    return os.path.join(LIB_DIR_FULL_PATH, "QnnCpu.dll")
+    return os.path.join(LIB_DIR_FULL_PATH, _lib_name("QnnCpu"))
 
 
 def get_qnn_gpu_path():
-    return os.path.join(LIB_DIR_FULL_PATH, "QnnGpu.dll")
+    return os.path.join(LIB_DIR_FULL_PATH, _lib_name("QnnGpu"))
 
 
 def get_qnn_htp_path():
-    return os.path.join(LIB_DIR_FULL_PATH, "QnnHtp.dll")
+    return os.path.join(LIB_DIR_FULL_PATH, _lib_name("QnnHtp"))
