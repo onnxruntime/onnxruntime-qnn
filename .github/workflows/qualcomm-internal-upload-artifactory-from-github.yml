@@ -10,7 +10,7 @@ permissions:
 
 on:
   workflow_call:
-    inputs:
+    inputs: &common_inputs
       nightly_build:
         description: "If true, include a verbose version string in file names."
         type: boolean
@@ -28,8 +28,11 @@ on:
         type: string
         default: "['3.11','3.12','3.13','3.14']"
       skip_publish:
+        description: "If true, skip publishing artifacts (dry run)."
         type: boolean
         default: false
+  workflow_dispatch:
+    inputs: *common_inputs
 
 env:
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
@@ -154,6 +157,13 @@ jobs:
             "${{ github.workspace }}/build/dist/arm64ec" \
             "${{ github.workspace }}/build/dist"
 
+      - name: Verify wheel artifacts
+        run: |
+          # After merge: 4 arm64 + 4 merged AMD wheels in build/dist/
+          count=$(find "${{ github.workspace }}/build/dist" -name "*.whl" | wc -l)
+          echo "Found $count wheel(s) in build/dist"
+          [ "$count" -eq 8 ] || { echo "ERROR: Expected 8 wheels in build/dist, found $count"; exit 1; }
+
       - name: Check Wheels
         run: |
           source uplevel_venv/bin/activate
@@ -179,12 +189,26 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # Download Nuget package from Artifactory
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v5
         with:
-          name: ORT windows arm64 Python 3.11 QNN NuGet Package
-          path: ${{ github.workspace }}/build/nuget
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Download NuGet from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64-py3.11-nuget
+
+      - name: Verify NuGet artifact
+        shell: powershell
+        run: |
+          $count = (Get-ChildItem -Path "${{ github.workspace }}\build" -Recurse -Filter "*.nupkg").Count
+          Write-Host "Found $count NuGet package(s)"
+          if ($count -ne 1) { Write-Error "Expected 1 NuGet package, found $count"; exit 1 }
 
       - name: Publish
         if: ${{ !inputs.skip_publish }}
@@ -203,7 +227,7 @@ jobs:
           uv pip install -r .\qcom\requirements.txt
 
           . ".\qcom\scripts\upleveling\upload_nupkg_to_artifactory.ps1" `
-            -InputDir "${{ github.workspace }}\build\nuget"
+            -InputDir "${{ github.workspace }}\build\windows-arm64\Release"
 
   upload-zip-workflow:
     name: "Upload zip artifatcs to Artifactory"
@@ -213,12 +237,25 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # Download Zip package from Artifactory
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v5
         with:
-          name: ORT windows arm64 Python 3.11 Zip Asset
-          path: ${{ github.workspace }}/build/zip
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Download Zip from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64-py3.11-zip
+
+      - name: Verify Zip artifact
+        run: |
+          count=$(find "${{ github.workspace }}/build" -name "*.zip" | wc -l)
+          echo "Found $count Zip archive(s)"
+          [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 Zip archive, found $count"; exit 1; }
 
       - name: Publish
         if: ${{ !inputs.skip_publish }}
@@ -237,7 +274,7 @@ jobs:
 
           # Upload files using the upload script
           ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
-            "${{ github.workspace }}/build/zip" \
+            "${{ github.workspace }}/build/windows-arm64/Release/dist" \
             "$NETRC_FILE"
 
           # Clean up the temporary .netrc file
