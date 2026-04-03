@@ -17,13 +17,14 @@
 namespace onnxruntime {
 namespace test {
 
-// Runs an AveragePool model on the QNN CPU backend. Checks the graph node assignment, and that inference
+// Runs an AveragePool model through QNN. Checks the graph node assignment, and that inference
 // outputs for QNN and CPU match.
 static void RunAveragePoolOpTest(const std::string& op_type,
                                  const std::vector<TestInputDef<float>>& input_defs,
                                  const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                  ExpectedEPNodeAssignment expected_ep_assignment,
-                                 const std::string& backend_name = "cpu", int opset = 18) {
+                                 const std::string& backend_name = "cpu",
+                                 int opset = 18) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
@@ -266,6 +267,33 @@ TEST_F(QnnGPUBackendTests, AveragePool_AutopadSameLower) {
                         test::MakeAttribute("auto_pad", "SAME_LOWER")},
                        ExpectedEPNodeAssignment::All, "gpu");
 }
+
+// AveragePool that uses ceil_mode 1
+TEST_F(QnnGPUBackendTests, AveragePool_Ceil) {
+  RunAveragePoolOpTest("AveragePool",
+                       {TestInputDef<float>({1, 2, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 2 * 3 * 3))},
+                       {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
+                        test::MakeAttribute("strides", std::vector<int64_t>{3, 3}),
+                        test::MakeAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}),
+                        test::MakeAttribute("ceil_mode", static_cast<int64_t>(1)),
+                        test::MakeAttribute("auto_pad", "NOTSET")},
+                       ExpectedEPNodeAssignment::All,
+                       "gpu");
+}
+
+// AveragePool that uses ceil_mode 1 with large input
+TEST_F(QnnGPUBackendTests, AveragePool_Large_Input2_Ceil) {
+  RunAveragePoolOpTest("AveragePool",
+                       {TestInputDef<float>({1, 128, 16, 113}, false, GetFloatDataInRange(-10.0f, 10.0f, 128 * 16 * 113))},
+                       {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
+                        test::MakeAttribute("strides", std::vector<int64_t>{2, 2}),
+                        test::MakeAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}),
+                        test::MakeAttribute("ceil_mode", static_cast<int64_t>(1)),
+                        test::MakeAttribute("auto_pad", "NOTSET")},
+                       ExpectedEPNodeAssignment::All,
+                       "gpu");
+}
+
 
 #endif  // defined(_M_ARM64) GPU tests
 

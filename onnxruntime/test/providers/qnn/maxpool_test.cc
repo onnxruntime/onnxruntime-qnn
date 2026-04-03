@@ -44,15 +44,16 @@ GetTestQDQModelFn<QuantType> BuildPoolQDQTestCase(const std::string& op_type,
   };
 }
 
-// Runs an MaxPool model on the QNN CPU backend. Checks the graph node assignment, and that inference
-// outputs for QNN and CPU match.
+// Runs a MaxPool model through QNN. Checks the graph node assignment, and that inference outputs for
+// QNN and CPU match.
 static void RunPoolOpTest(const std::string& op_type,
                           const TestInputDef<float>& input_def,
                           const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                           ExpectedEPNodeAssignment expected_ep_assignment,
+                          const std::string& backend_name = "cpu",
                           int opset = 18) {
   ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
+  provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
 
   RunQnnModelTest(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, attrs),
@@ -98,7 +99,8 @@ TEST_F(QnnCPUBackendTests, MaxPool_Global) {
                  test::MakeAttribute("ceil_mode", static_cast<int64_t>(0)),
                  test::MakeAttribute("storage_order", static_cast<int64_t>(0)),
                  test::MakeAttribute("auto_pad", "NOTSET")},
-                ExpectedEPNodeAssignment::All);
+                ExpectedEPNodeAssignment::All,
+                "cpu");
 }
 
 TEST_F(QnnCPUBackendTests, MaxPool_Rank3) {
@@ -111,7 +113,8 @@ TEST_F(QnnCPUBackendTests, MaxPool_Rank3) {
                  test::MakeAttribute("ceil_mode", static_cast<int64_t>(0)),
                  test::MakeAttribute("storage_order", static_cast<int64_t>(0)),
                  test::MakeAttribute("auto_pad", "NOTSET")},
-                ExpectedEPNodeAssignment::All);
+                ExpectedEPNodeAssignment::All,
+                "cpu");
 }
 
 TEST_F(QnnCPUBackendTests, MaxPool_Large_Input) {
@@ -124,7 +127,8 @@ TEST_F(QnnCPUBackendTests, MaxPool_Large_Input) {
                  test::MakeAttribute("ceil_mode", static_cast<int64_t>(0)),
                  test::MakeAttribute("storage_order", static_cast<int64_t>(0)),
                  test::MakeAttribute("auto_pad", "NOTSET")},
-                ExpectedEPNodeAssignment::All);
+                ExpectedEPNodeAssignment::All,
+                "cpu");
 }
 
 // QNN CPU doesn't support ceil rounding mode. Enable this UT when QNN CPU support this case.
@@ -138,7 +142,8 @@ TEST_F(QnnCPUBackendTests, DISABLED_MaxPool_Ceil) {
                  test::MakeAttribute("ceil_mode", static_cast<int64_t>(1)),
                  test::MakeAttribute("storage_order", static_cast<int64_t>(0)),
                  test::MakeAttribute("auto_pad", "NOTSET")},
-                ExpectedEPNodeAssignment::All);
+                ExpectedEPNodeAssignment::All,
+                "cpu");
 }
 
 // QNN CPU doesn't support ceil rounding mode. Enable this UT when QNN CPU support this case.
@@ -152,7 +157,8 @@ TEST_F(QnnCPUBackendTests, DISABLED_MaxPool_Large_Input2_Ceil) {
                  test::MakeAttribute("ceil_mode", static_cast<int64_t>(1)),
                  test::MakeAttribute("storage_order", static_cast<int64_t>(0)),
                  test::MakeAttribute("auto_pad", "NOTSET")},
-                ExpectedEPNodeAssignment::All);
+                ExpectedEPNodeAssignment::All,
+                "cpu");
 }
 
 TEST_F(QnnCPUBackendTests, MaxPool_3D) {
@@ -172,14 +178,16 @@ TEST_F(QnnCPUBackendTests, GlobalMaxPoolTest) {
   RunPoolOpTest("GlobalMaxPool",
                 TestInputDef<float>({1, 2, 3, 3}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                 {},
-                ExpectedEPNodeAssignment::All);
+                ExpectedEPNodeAssignment::All,
+                "cpu");
 }
 
 TEST_F(QnnCPUBackendTests, GlobalMaxPool_3D) {
   RunPoolOpTest("GlobalMaxPool",
                 TestInputDef<float>({1, 2, 3, 3, 3}, false, -10.0f, 10.0f),
                 {},
-                ExpectedEPNodeAssignment::All);
+                ExpectedEPNodeAssignment::All,
+                "cpu");
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -477,6 +485,113 @@ TEST_F(QnnHTPBackendTests, GlobalMaxPool_LargeInput2_u8) {
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+
+#if defined(_M_ARM64)
+//
+// GPU tests
+//
+
+// MaxPool with kernel size equal to the spatial dimension of input tensor.
+TEST_F(QnnGPUBackendTests, MaxPool_Global) {
+  RunPoolOpTest("MaxPool",
+                TestInputDef<float>({1, 2, 3, 3}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
+                {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
+                 test::MakeAttribute("strides", std::vector<int64_t>{3, 3}),
+                 test::MakeAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}),
+                 test::MakeAttribute("dilations", std::vector<int64_t>{1, 1}),
+                 test::MakeAttribute("ceil_mode", static_cast<int64_t>(0)),
+                 test::MakeAttribute("storage_order", static_cast<int64_t>(0)),
+                 test::MakeAttribute("auto_pad", "NOTSET")},
+                ExpectedEPNodeAssignment::All,
+                "gpu");
+}
+
+TEST_F(QnnGPUBackendTests, MaxPool_Rank3) {
+  RunPoolOpTest("MaxPool",
+                TestInputDef<float>({1, 16, 120}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
+                {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
+                 test::MakeAttribute("strides", std::vector<int64_t>{1}),
+                 test::MakeAttribute("pads", std::vector<int64_t>{1, 1}),
+                 test::MakeAttribute("dilations", std::vector<int64_t>{1}),
+                 test::MakeAttribute("ceil_mode", static_cast<int64_t>(0)),
+                 test::MakeAttribute("storage_order", static_cast<int64_t>(0)),
+                 test::MakeAttribute("auto_pad", "NOTSET")},
+                ExpectedEPNodeAssignment::All,
+                "gpu");
+}
+
+TEST_F(QnnGPUBackendTests, MaxPool_Large_Input) {
+  RunPoolOpTest("MaxPool",
+                TestInputDef<float>({1, 125, 8, 56}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
+                {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
+                 test::MakeAttribute("strides", std::vector<int64_t>{2, 2}),
+                 test::MakeAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}),
+                 test::MakeAttribute("dilations", std::vector<int64_t>{1, 1}),
+                 test::MakeAttribute("ceil_mode", static_cast<int64_t>(0)),
+                 test::MakeAttribute("storage_order", static_cast<int64_t>(0)),
+                 test::MakeAttribute("auto_pad", "NOTSET")},
+                ExpectedEPNodeAssignment::All,
+                "gpu");
+}
+
+TEST_F(QnnGPUBackendTests, MaxPool_Ceil) {
+  RunPoolOpTest("MaxPool",
+                TestInputDef<float>({1, 2, 3, 3}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
+                {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
+                 test::MakeAttribute("strides", std::vector<int64_t>{3, 3}),
+                 test::MakeAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}),
+                 test::MakeAttribute("dilations", std::vector<int64_t>{1, 1}),
+                 test::MakeAttribute("ceil_mode", static_cast<int64_t>(1)),
+                 test::MakeAttribute("storage_order", static_cast<int64_t>(0)),
+                 test::MakeAttribute("auto_pad", "NOTSET")},
+                ExpectedEPNodeAssignment::All,
+                "gpu");
+}
+
+TEST_F(QnnGPUBackendTests, MaxPool_Large_Input2_Ceil) {
+  RunPoolOpTest("MaxPool",
+                TestInputDef<float>({1, 128, 16, 113}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
+                {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
+                 test::MakeAttribute("strides", std::vector<int64_t>{2, 2}),
+                 test::MakeAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}),
+                 test::MakeAttribute("dilations", std::vector<int64_t>{1, 1}),
+                 test::MakeAttribute("ceil_mode", static_cast<int64_t>(1)),
+                 test::MakeAttribute("storage_order", static_cast<int64_t>(0)),
+                 test::MakeAttribute("auto_pad", "NOTSET")},
+                ExpectedEPNodeAssignment::All,
+                "gpu");
+}
+
+TEST_F(QnnGPUBackendTests, MaxPool_3D) {
+  RunPoolOpTest("MaxPool",
+                TestInputDef<float>({1, 2, 3, 3, 3}, false, -10.0f, 10.0f),
+                {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3, 3}),
+                 test::MakeAttribute("strides", std::vector<int64_t>{3, 3, 3}),
+                 test::MakeAttribute("pads", std::vector<int64_t>{0, 0, 0, 0, 0, 0}),
+                 test::MakeAttribute("dilations", std::vector<int64_t>{1, 1, 1}),
+                 test::MakeAttribute("ceil_mode", static_cast<int64_t>(0)),
+                 test::MakeAttribute("auto_pad", "NOTSET")},
+                ExpectedEPNodeAssignment::All);
+}
+
+// GlobalMaxPool test
+TEST_F(QnnGPUBackendTests, GlobalMaxPoolTest) {
+  RunPoolOpTest("GlobalMaxPool",
+                TestInputDef<float>({1, 2, 3, 3}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
+                {},
+                ExpectedEPNodeAssignment::All,
+                "gpu");
+}
+
+TEST_F(QnnGPUBackendTests, GlobalMaxPool_3D) {
+  RunPoolOpTest("GlobalMaxPool",
+                TestInputDef<float>({1, 2, 3, 3, 3}, false, -10.0f, 10.0f),
+                {},
+                ExpectedEPNodeAssignment::All,
+                "gpu");
+}
+
+#endif // defined(_M_ARM64) GPU tests
 
 }  // namespace test
 }  // namespace onnxruntime
