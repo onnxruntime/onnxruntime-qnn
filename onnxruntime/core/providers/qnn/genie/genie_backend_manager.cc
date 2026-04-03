@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "core/providers/qnn/builder/genie_backend_manager.h"
+#include "core/providers/qnn/genie/genie_backend_manager.h"
 
 #include <filesystem>
 #include <fstream>

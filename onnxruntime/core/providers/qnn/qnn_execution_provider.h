@@ -23,7 +23,8 @@
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
 #include "core/providers/qnn/qnn_telemetry.h"
 #include "core/providers/qnn/rpcmem_library.h"
-#include "core/providers/qnn/builder/genie_api_loader.h"
+#include "core/providers/qnn/genie/genie_api_loader.h"
+#include "core/providers/qnn/genie/genie_node.h"
 
 namespace onnxruntime {
 class QnnEpFactory;

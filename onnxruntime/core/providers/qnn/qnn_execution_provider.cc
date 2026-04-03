@@ -25,7 +25,7 @@
 #include "core/providers/qnn/shared_context.h"
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
-#include "core/providers/qnn/builder/genie_backend_manager.h"
+#include "core/providers/qnn/genie/genie_backend_manager.h"
 #include "core/providers/qnn/builder/qnn_cache_compatibility_manager.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_model.h"
@@ -102,7 +102,7 @@ static bool ParseBackendTypeName(std::string_view backend_type_name,
   return false;
 }
 
-static GenieLog_Level_t ResolveGenieLogLevel(const std::string& lvl) {
+static GenieLog_Level_t ResolveGenieLogLevel(std::string_view lvl) {
   if (lvl == "warn") return GENIE_LOG_LEVEL_WARN;
   if (lvl == "verbose") return GENIE_LOG_LEVEL_VERBOSE;
   if (lvl == "info") return GENIE_LOG_LEVEL_INFO;
