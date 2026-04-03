@@ -74,7 +74,7 @@ index ad6f6eb790..7ba7e3c0b1 100644
  file(GLOB onnxruntime_test_common_src CONFIGURE_DEPENDS
    "${TEST_SRC_DIR}/common/*.cc"
    "${TEST_SRC_DIR}/common/*.h"
-@@ -620,6 +628,7 @@ set (onnxruntime_webgpu_delay_load_test_SRC
+@@ -625,6 +633,7 @@ set (onnxruntime_webgpu_delay_load_test_SRC
 
  set(onnxruntime_test_common_libs
    onnxruntime_unittest_utils
@@ -82,7 +82,7 @@ index ad6f6eb790..7ba7e3c0b1 100644
    onnxruntime_common
  )
 
-@@ -842,6 +851,21 @@ target_include_directories(onnxruntime_test_utils PUBLIC "${TEST_SRC_DIR}/util/i
+@@ -847,6 +856,21 @@ target_include_directories(onnxruntime_test_utils PUBLIC "${TEST_SRC_DIR}/util/i
  set_target_properties(onnxruntime_test_utils PROPERTIES FOLDER "ONNXRuntimeTest")
  source_group(TREE ${TEST_SRC_DIR} FILES ${onnxruntime_test_utils_src})
 
@@ -104,7 +104,7 @@ index ad6f6eb790..7ba7e3c0b1 100644
  # onnxruntime_unittest_utils
  # This is static library containing utilities that are specifically for unit tests.
  # Unlike onnxruntime_test_utils, the source files here may have dependencies on internal onnxruntime code.
-@@ -898,9 +922,11 @@ if(NOT IOS)
+@@ -903,9 +927,11 @@ if(NOT IOS)
      set(onnx_test_runner_src_dir ${TEST_SRC_DIR}/onnx)
      file(GLOB onnx_test_runner_common_srcs CONFIGURE_DEPENDS
          ${onnx_test_runner_src_dir}/*.h
@@ -118,7 +118,7 @@ index ad6f6eb790..7ba7e3c0b1 100644
 
      onnxruntime_add_static_library(onnx_test_runner_common ${onnx_test_runner_common_srcs})
      if(MSVC)
-@@ -951,7 +977,7 @@ if (onnxruntime_ENABLE_CUDA_EP_INTERNAL_TESTS)
+@@ -956,7 +982,7 @@ if (onnxruntime_ENABLE_CUDA_EP_INTERNAL_TESTS)
    onnxruntime_add_include_to_target(onnxruntime_providers_cuda_ut GTest::gtest GTest::gmock)
    add_dependencies(onnxruntime_providers_cuda_ut onnxruntime_test_utils onnxruntime_common)
    target_include_directories(onnxruntime_providers_cuda_ut PRIVATE ${ONNXRUNTIME_ROOT}/core/mickey)
@@ -127,7 +127,7 @@ index ad6f6eb790..7ba7e3c0b1 100644
    if (MSVC)
      # Cutlass code has an issue with the following:
      # warning C4100: 'magic': unreferenced formal parameter
-@@ -1298,6 +1324,7 @@ endif()
+@@ -1310,6 +1336,7 @@ endif()
 
  set(onnx_test_libs
    onnxruntime_test_utils
@@ -135,7 +135,7 @@ index ad6f6eb790..7ba7e3c0b1 100644
    ${ONNXRUNTIME_TEST_LIBS}
    onnx_test_data_proto
    ${onnxruntime_EXTERNAL_LIBRARIES})
-@@ -1331,6 +1358,60 @@ if (NOT IOS)
+@@ -1343,6 +1370,60 @@ if (NOT IOS)
              RUNTIME  DESTINATION ${CMAKE_INSTALL_BINDIR})
  endif()
 
@@ -2005,7 +2005,7 @@ index e21120e62e..cb583812e1 100644
 
  #ifdef _MSC_VER
  #pragma warning(push)
-@@ -233,8 +233,8 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
+@@ -235,8 +235,8 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
    absl::SetFlagsUsageConfig(config);
    absl::SetProgramUsageMessage(CustomUsageMessage());
 
@@ -2016,7 +2016,7 @@ index e21120e62e..cb583812e1 100644
    auto positional = absl::ParseCommandLine(static_cast<int>(utf8_argv.size()), utf8_argv.data());
 
    // -f
-@@ -245,7 +245,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
+@@ -247,7 +247,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
        // To preserve the previous usage of '-f', where users may specify it multiple times to override different dimension names,
        // we need to manually parse argv.
        std::string option = "f";
@@ -2025,7 +2025,7 @@ index e21120e62e..cb583812e1 100644
          return false;
        }
      }
-@@ -257,7 +257,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
+@@ -259,7 +259,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
      if (!dim_override_str.empty()) {
        // Same reason as '-f' above to manully parse argv.
        std::string option = "F";
@@ -2034,7 +2034,7 @@ index e21120e62e..cb583812e1 100644
          return false;
        }
      }
-@@ -493,7 +493,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
+@@ -495,7 +495,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
      const auto& session_configs = absl::GetFlag(FLAGS_C);
      if (!session_configs.empty()) {
        ORT_TRY {
@@ -2043,7 +2043,7 @@ index e21120e62e..cb583812e1 100644
        }
        ORT_CATCH(const std::exception& ex) {
          ORT_HANDLE_EXCEPTION([&]() {
-@@ -537,7 +537,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
+@@ -539,7 +539,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
    // --plugin_eps
    {
      const auto& plugin_eps = absl::GetFlag(FLAGS_plugin_eps);
@@ -2052,7 +2052,7 @@ index e21120e62e..cb583812e1 100644
    }
 
    // --plugin_ep_options
-@@ -563,7 +563,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
+@@ -565,7 +565,7 @@ bool CommandLineParser::ParseArguments(PerformanceTestConfig& test_config, int a
      const auto& filter_ep_devices = absl::GetFlag(FLAGS_filter_ep_devices);
      if (!filter_ep_devices.empty()) {
        ORT_TRY {
@@ -2229,7 +2229,7 @@ index 71f9050730..1e879bf5df 100644
 
  #ifdef USE_OPENVINO
  #include "nlohmann/json.hpp"
-@@ -252,13 +252,13 @@ OnnxRuntimeTestSession::OnnxRuntimeTestSession(Ort::Env& env, std::random_device
+@@ -252,14 +252,14 @@ OnnxRuntimeTestSession::OnnxRuntimeTestSession(Ort::Env& env, std::random_device
  #else
      std::string option_string = performance_test_config.run_config.ep_runtime_config_string;
  #endif
@@ -2240,16 +2240,17 @@ index 71f9050730..1e879bf5df 100644
 -                         "qnn_saver_path", "htp_graph_finalization_optimization_mode", "qnn_context_priority",
 -                         "htp_arch", "enable_htp_fp16_precision", "offload_graph_io_quantization",
 -                         "enable_htp_spill_fill_buffer", "enable_htp_shared_memory_allocator", "dump_json_qnn_graph",
--                         "json_qnn_graph_dir", "disable_file_mapped_weights", "htp_bf16_enable", "enable_vtcm_backup_buffer_sharing"});
+-                         "json_qnn_graph_dir", "disable_file_mapped_weights", "htp_bf16_enable", "enable_vtcm_backup_buffer_sharing", "extended_udma"});
 +                              "rpc_control_latency", "vtcm_mb", "soc_model", "device_id", "htp_performance_mode", "op_packages",
 +                             "qnn_saver_path", "htp_graph_finalization_optimization_mode", "qnn_context_priority",
 +                             "htp_arch", "enable_htp_fp16_precision", "offload_graph_io_quantization",
 +                             "enable_htp_spill_fill_buffer", "enable_htp_shared_memory_allocator", "dump_json_qnn_graph",
-+                             "json_qnn_graph_dir", "disable_file_mapped_weights", "htp_bf16_enable", "enable_vtcm_backup_buffer_sharing"});
++                             "json_qnn_graph_dir", "disable_file_mapped_weights", "htp_bf16_enable", "enable_vtcm_backup_buffer_sharing", "extended_udma"});
+
      for (const auto& provider_option : provider_options) {
        const std::string& key = provider_option.first;
        const std::string& value = provider_option.second;
-@@ -427,7 +427,7 @@ select from 'TF8', 'TF16', 'UINT8', 'FLOAT', 'ITENSOR'. \n)");
+@@ -429,7 +429,7 @@ select from 'TF8', 'TF16', 'UINT8', 'FLOAT', 'ITENSOR'. \n)");
                                                                     kCoremlProviderOption_ProfileComputePlan,
                                                                     kCoremlProviderOption_AllowLowPrecisionAccumulationOnGPU,
                                                                     kCoremlProviderOption_ModelCacheDirectory};

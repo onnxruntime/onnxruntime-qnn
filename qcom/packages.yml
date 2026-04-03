@@ -125,7 +125,7 @@ onnx_models:
   sha256: 5c877a633970248e181018ccdabb280cec22e1b113f3068b6585d3f55cac3fb2
   content_root: onnx-models-{version}
 ort_prebuilt_windows_x64: &ort_prebuilt_common
-  version: 1.24.1
+  version: 1.24.4
   url: https://github.com/microsoft/onnxruntime/releases/download/v{version}/onnxruntime-win-x64-{version}.zip
   content_root: onnxruntime-win-x64-{version}
 ort_prebuilt_windows_arm64:

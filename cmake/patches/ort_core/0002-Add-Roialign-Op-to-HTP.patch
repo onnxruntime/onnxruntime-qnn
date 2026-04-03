@@ -25,7 +25,7 @@ diff --git a/onnxruntime/test/onnx/main.cc b/onnxruntime/test/onnx/main.cc
 index 8446f88639..f08b974d60 100644
 --- a/onnxruntime/test/onnx/main.cc
 +++ b/onnxruntime/test/onnx/main.cc
-@@ -915,7 +915,12 @@ select from 'TF8', 'TF16', 'UINT8', 'FLOAT', 'ITENSOR'. \n)");
+@@ -917,7 +917,12 @@ select from 'TF8', 'TF16', 'UINT8', 'FLOAT', 'ITENSOR'. \n)");
          ORT_TSTR("mod_mixed_sign_int16"),
          ORT_TSTR("mod_mixed_sign_int8"),
          ORT_TSTR("mod_uint16"),
