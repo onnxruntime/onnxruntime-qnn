@@ -10,7 +10,7 @@ permissions:
 
 on:
   workflow_call:
-    inputs:
+    inputs: &common_inputs
       nightly_build:
         description: "If true, include a verbose version string in file names."
         type: boolean
@@ -19,18 +19,35 @@ on:
         description: "Version suffix for released package. If set, the specified suffix will be appended to the version string."
         type: string
         default: ""
+      windows_target_archs:
+        description: "JSON list of Windows architectures to build"
+        type: string
+        default: "['arm64', 'arm64ec', 'x86_64']"
+      windows_target_py_vsns:
+        description: "JSON list of Python versions to build for Windows"
+        type: string
+        default: "['3.11','3.12','3.13','3.14']"
       skip_publish:
+        description: "If true, skip publishing artifacts (dry run)."
         type: boolean
         default: false
+  workflow_dispatch:
+    inputs: *common_inputs
 
 env:
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
 
 jobs:
   build-artifacts:
-    uses: ./.github/workflows/qualcomm-internal-build-wheels-nugets-zips.yml
+    uses: ./.github/workflows/qualcomm-internal-build-artifacts.yml
     secrets: inherit
     with:
+      build_linux_x86_64: false
+      linux_aarch64_manylinux_2_34_target_py_vsns: "[]"
+      windows_target_archs: ${{ inputs.windows_target_archs }}
+      windows_target_py_vsns: ${{ inputs.windows_target_py_vsns }}
+      windows_arm64_build_nuget: true
+      windows_arm64_build_zip: true
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
 
@@ -42,10 +59,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Install Dependencies
-        run: |
-          ./qcom/scripts/upleveling/create_uplevel_venv.sh
-
       - name: Setup JFrog CLI
         uses: jfrog/setup-jfrog-cli@v5
         with:
@@ -55,7 +68,7 @@ jobs:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
-      # Upload Python wheel to Artifactory
+      # Download Python wheels from Artifactory
       - name: Download Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -131,7 +144,11 @@ jobs:
           mkdir "${{ github.workspace }}/build/dist/x64"
           cp "${{ github.workspace }}/build/windows-x86_64/Release/dist/"*.whl "${{ github.workspace }}/build/dist/x64"
 
-      - name: Merge AMD wheel
+      - name: Install Dependencies
+        run: |
+          ./qcom/scripts/upleveling/create_uplevel_venv.sh
+
+      - name: Merge AMD Wheels
         run: |
           # Merge AMD wheels using the merge script
           source uplevel_venv/bin/activate
@@ -140,7 +157,14 @@ jobs:
             "${{ github.workspace }}/build/dist/arm64ec" \
             "${{ github.workspace }}/build/dist"
 
-      - name: Check wheel
+      - name: Verify wheel artifacts
+        run: |
+          # After merge: 4 arm64 + 4 merged AMD wheels in build/dist/
+          count=$(find "${{ github.workspace }}/build/dist" -name "*.whl" | wc -l)
+          echo "Found $count wheel(s) in build/dist"
+          [ "$count" -eq 8 ] || { echo "ERROR: Expected 8 wheels in build/dist, found $count"; exit 1; }
+
+      - name: Check Wheels
         run: |
           source uplevel_venv/bin/activate
           twine check ${{ github.workspace }}/build/dist/*.whl
@@ -158,19 +182,33 @@ jobs:
             ${{ github.workspace }}/build/dist/*.whl
 
   upload-nuget-workflow:
-    name: "Upload nuget artifatcs to Artifactory"
+    name: "Upload nuget artifacts to Artifactory"
     runs-on: [Windows, self-hosted, Build, X64]
     needs: [build-artifacts]
 
     steps:
       - uses: actions/checkout@v6
 
-      # Upload Nuget package to Artifactory
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v5
         with:
-          name: ORT windows arm64 Python 3.12 QNN NuGet Package
-          path: ${{ github.workspace }}/build/nuget
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Download NuGet from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64-py3.11-nuget
+
+      - name: Verify NuGet artifact
+        shell: powershell
+        run: |
+          $count = (Get-ChildItem -Path "${{ github.workspace }}\build" -Recurse -Filter "*.nupkg").Count
+          Write-Host "Found $count NuGet package(s)"
+          if ($count -ne 1) { Write-Error "Expected 1 NuGet package, found $count"; exit 1 }
 
       - name: Publish
         if: ${{ !inputs.skip_publish }}
@@ -189,7 +227,7 @@ jobs:
           uv pip install -r .\qcom\requirements.txt
 
           . ".\qcom\scripts\upleveling\upload_nupkg_to_artifactory.ps1" `
-            -InputDir "${{ github.workspace }}\build\nuget"
+            -InputDir "${{ github.workspace }}\build\windows-arm64\Release"
 
   upload-zip-workflow:
     name: "Upload zip artifatcs to Artifactory"
@@ -199,12 +237,25 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # Upload Zip package to Artifactory
-      - name: Download Artifact
-        uses: actions/download-artifact@v4
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v5
         with:
-          name: ORT windows arm64 Python 3.12 Zip Asset
-          path: ${{ github.workspace }}/build/zip
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      - name: Download Zip from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64-py3.11-zip
+
+      - name: Verify Zip artifact
+        run: |
+          count=$(find "${{ github.workspace }}/build" -name "*.zip" | wc -l)
+          echo "Found $count Zip archive(s)"
+          [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 Zip archive, found $count"; exit 1; }
 
       - name: Publish
         if: ${{ !inputs.skip_publish }}
@@ -223,7 +274,7 @@ jobs:
 
           # Upload files using the upload script
           ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
-            "${{ github.workspace }}/build/zip" \
+            "${{ github.workspace }}/build/windows-arm64/Release/dist" \
             "$NETRC_FILE"
 
           # Clean up the temporary .netrc file

@@ -12,13 +12,12 @@ REPO_ROOT = Path(__file__).parent.parent.parent.parent.absolute()
 
 class DownloadCiArtifact:
     def __init__(self, name: str, destination: Path) -> None:
-        self.__name = name
         self.__destination = destination
-        self.__client = CiArtifactory()
+        self.__client = CiArtifactory(name)
 
     @property
     def source(self) -> str:
-        return f"{self.__client.artifact_root}/{self.__name}/"
+        return f"{self.__client.artifact_root}/"
 
     def run(self) -> None:
         self.__client.download(self.source, self.__destination)

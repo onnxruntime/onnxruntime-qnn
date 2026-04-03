@@ -1,0 +1,17 @@
+{
+    "files": [
+        {
+            "aql": {
+                "items.find": {
+                    "repo": "${repo}",
+                    "$and": [
+                        {
+                            "created": { "$before": "30d" },
+                            "path": { "$match": "qa/*" }
+                        }
+                    ]
+                }
+            }
+        }
+    ]
+}
