@@ -106,6 +106,12 @@ else {
     }
 }
 
+$BinDir = Join-Path $BuildDir $Config
+if ($CMakeGenerator -ne "Ninja") {
+    # Multi-config generators add an extra config directory.
+    $BinDir = Join-Path $BinDir $Config
+}
+
 $ArchArgs = @()
 if ($CMakeGenerator -eq "Ninja") {
     # We don't have Visual Studio to set up the build environment so do it
@@ -313,6 +319,14 @@ else {
                             $BuildBatPath = (Join-Path $RepoRoot "build.bat")
                             Assert-Success -ErrorMessage "Failed to build nuget" {
                                 & $BuildBatPath --skip_tests $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg
+
+                                $DistDir = Join-Path $BinDir "dist"
+                                if (-not (Test-Path $DistDir)) {
+                                    New-Item -ItemType Directory -Path $DistDir | Out-Null
+                                }
+                                foreach ($Pkg in (Get-ChildItem -File -Recurse -Path $BinDir -Filter "Qualcomm.ML.OnnxRuntime.QNN*.nupkg")) {
+                                    Copy-Item -Path $Pkg.FullName -Destination $DistDir
+                                }
                             }
                         }
                     }
