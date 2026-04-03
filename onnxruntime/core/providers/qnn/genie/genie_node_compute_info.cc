@@ -24,8 +24,6 @@ GenieNodeComputeInfo::GenieNodeComputeInfo(QnnEp& ep,
 OrtStatus* GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_ptr,
                                                  OrtNodeComputeContext* compute_context,
                                                  void** compute_state) {
-  ORT_UNUSED_PARAMETER(this_ptr);
-
   auto* node_compute_info = static_cast<GenieNodeComputeInfo*>(this_ptr);
   auto& ep = node_compute_info->ep;
   auto& builder = node_compute_info->builder;
@@ -44,7 +42,7 @@ OrtStatus* GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_ptr,
   st->dlc_config_handle = dlc_config_handle;
 
   // Genie DLC Create
-  GenieDlc_Handle_t genie_dlc_handle;
+  GenieDlc_Handle_t genie_dlc_handle = nullptr;
   if (st->api->Dlc_create(dlc_config_handle, &genie_dlc_handle) != 0) {
     return ep.ort_api.CreateStatus(ORT_EP_FAIL, "Error creating DLC");
   }
@@ -162,6 +160,10 @@ OrtStatus* GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr,
 
     OrtTensorTypeAndShapeInfo* info = nullptr;
     RETURN_IF_NOT_NULL(ort_api->GetTensorTypeAndShape(in_val, &info));
+    DeferOrtRelease<OrtTensorTypeAndShapeInfo> defer_info(
+        &info, [ort_api](OrtTensorTypeAndShapeInfo* p) {
+          ort_api->ReleaseTensorTypeAndShapeInfo(p);
+        });
     ONNXTensorElementDataType elem_type;
     RETURN_IF_NOT_NULL(ort_api->GetTensorElementType(info, &elem_type));
 
@@ -173,6 +175,7 @@ OrtStatus* GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr,
     std::ostringstream dim_stream;
     size_t num_elem = 1;
     for (size_t d_idx = 0; d_idx < dims.size(); ++d_idx) {
+      RETURN_IF(dims[d_idx] < 0, "Negative tensor dimension");
       num_elem *= static_cast<size_t>(dims[d_idx]);
       dim_stream << dims[d_idx];
       if (d_idx < dims.size() - 1) {

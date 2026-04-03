@@ -16,8 +16,6 @@
 #include "core/providers/qnn/builder/qnn_cache_compatibility_manager.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_def.h"
-#include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
-#include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
