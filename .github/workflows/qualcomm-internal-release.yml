@@ -176,19 +176,15 @@ jobs:
         with:
           name: windows-x86_64-py3.14-wheels
 
-      # TODO(mbadnara): Switch to download-ci-artifact
-      - name: Download Artifact
-        uses: actions/download-artifact@v8
+      - name: Download NuGet from Artifactory
+        uses: ./.github/actions/download-ci-artifact
         with:
-          name: ORT windows arm64 Python 3.11 QNN NuGet Package
-          path: ${{ github.workspace }}/build/nuget
+          name: windows-arm64-py3.11-nuget
 
-      # TODO(mbadnara): Switch to download-ci-artifact
-      - name: Download Artifact
-        uses: actions/download-artifact@v8
+      - name: Download Zip from Artifactory
+        uses: ./.github/actions/download-ci-artifact
         with:
-          name: ORT windows arm64 Python 3.11 Zip Asset
-          path: ${{ github.workspace }}/build/zip
+          name: windows-arm64-py3.11-zip
 
       - name: Merge AMD Wheels
         run: |
@@ -209,6 +205,26 @@ jobs:
           rm -fr "${{ github.workspace }}/build/dist/x86_64/" "${{ github.workspace }}/build/dist/arm64ec/"
           find "${{ github.workspace }}/build/windows-arm64ec" -name "*.whl" -delete
           find "${{ github.workspace }}/build/windows-x86_64" -name "*.whl" -delete
+
+      - name: Verify wheel artifacts
+        run: |
+          # After merge: 1 linux x86_64 + 4 arm64 + 4 merged AMD = 9 wheels
+          # (arm64ec and x86_64 originals are deleted by the merge step above)
+          count=$(find "${{ github.workspace }}/build" -name "*.whl" | wc -l)
+          echo "Found $count wheel(s)"
+          [ "$count" -eq 9 ] || { echo "ERROR: Expected 9 wheels, found $count"; exit 1; }
+
+      - name: Verify NuGet artifact
+        run: |
+          count=$(find "${{ github.workspace }}/build" -name "*.nupkg" | wc -l)
+          echo "Found $count NuGet package(s)"
+          [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 NuGet package, found $count"; exit 1; }
+
+      - name: Verify Zip artifact
+        run: |
+          count=$(find "${{ github.workspace }}/build" -name "*.zip" | wc -l)
+          echo "Found $count Zip archive(s)"
+          [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 Zip archive, found $count"; exit 1; }
 
       - name: Set QA Build Tag
         run: |
