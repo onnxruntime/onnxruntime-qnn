@@ -56,7 +56,6 @@ static bool ParseBackendTypeName(std::string_view backend_type_name,
                                  std::string& backend_path,
                                  const Ort::Logger& logger) {
   constexpr std::string_view kCpuBackendTypeName{"cpu"};
-  constexpr std::string_view kGenieBackendTypeName{"genie"};
   constexpr std::string_view kGpuBackendTypeName{"gpu"};
   constexpr std::string_view kHtpBackendTypeName{"htp"};
   constexpr std::string_view kSaverBackendTypeName{"saver"};
@@ -75,8 +74,6 @@ static bool ParseBackendTypeName(std::string_view backend_type_name,
     associated_backend_path = kDefaultCpuBackendPath;
   } else if (backend_type_name == kGpuBackendTypeName) {
     associated_backend_path = kDefaultGpuBackendPath;
-  } else if (backend_type_name == kGenieBackendTypeName) {
-    associated_backend_path = kDefaultGenieBackendPath;
   } else if (backend_type_name == kHtpBackendTypeName) {
     associated_backend_path = kDefaultHtpBackendPath;
   } else if (backend_type_name == kSaverBackendTypeName) {
@@ -1423,8 +1420,8 @@ static void GetContextOnnxModelFilePath(const std::string& user_context_cache_pa
 }
 
 OrtStatus* ORT_API_CALL QnnEp::GetGenieCapability(OrtEp* this_ptr,
-                                      const OrtGraph* graph,
-                                      OrtEpGraphSupportInfo* graph_support_info) {
+                                                  const OrtGraph* graph,
+                                                  OrtEpGraphSupportInfo* graph_support_info) {
   // CREATE GENIE_BACKEND_MANAGER
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
   if (!ep->genie_backend_manager_) {
@@ -1455,9 +1452,9 @@ OrtStatus* ORT_API_CALL QnnEp::GetGenieCapability(OrtEp* this_ptr,
   OrtNodeFusionOptions node_fusion_options = {};
   node_fusion_options.ort_version_supported = ORT_API_VERSION;
   auto add_status = ep->ep_api.EpGraphSupportInfo_AddNodesToFuse(graph_support_info,
-                                                                  supported_group.data(),
-                                                                  supported_group.size(),
-                                                                  &node_fusion_options);
+                                                                 supported_group.data(),
+                                                                 supported_group.size(),
+                                                                 &node_fusion_options);
   if (add_status != nullptr) {
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Error adding Node.");
   }
@@ -1918,12 +1915,11 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
   return nullptr;
 }
 
-
 OrtStatus* QnnEp::CompileDlcContextModel(OrtEp* this_ptr,
-                                          const OrtGraph** graphs,
-                                          const OrtNode** fused_nodes,
-                                          size_t count,
-                                          OrtNodeComputeInfo** node_compute_infos) {
+                                         const OrtGraph** graphs,
+                                         const OrtNode** fused_nodes,
+                                         size_t count,
+                                         OrtNodeComputeInfo** node_compute_infos) {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
   std::basic_string<ORTCHAR_T> model_path = GetModelPathString(graphs[0], ep->ort_api);
   std::basic_string<ORTCHAR_T> context_model_path;

@@ -59,9 +59,6 @@ Ort::Status GenieBackendManager::LoadBackend() {
     return MAKE_EP_FAIL(ossMsg.str().c_str());
   }
 
-  // TODO: Initialize Genie interface here
-  // This would involve getting the appropriate function pointers from the loaded library
-
   return Ort::Status();
 }
 
