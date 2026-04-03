@@ -25,6 +25,7 @@
 #include "core/providers/qnn/rpcmem_library.h"
 #include "core/providers/qnn/genie/genie_api_loader.h"
 #include "core/providers/qnn/genie/genie_node.h"
+#include "core/providers/qnn/genie/genie_node_compute_info.h"
 
 namespace onnxruntime {
 class QnnEpFactory;
@@ -49,6 +50,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                                     OrtCompiledModelCompatibility* model_compatibility) noexcept;
   OrtStatus* GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevice* hw,
                                                      OrtDeviceEpIncompatibilityDetails* details) noexcept;
+
+ friend struct GenieNodeComputeInfo;
 
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEp* this_ptr) noexcept;
@@ -138,23 +141,6 @@ class QnnEp : public OrtEp, public ApiPtrs {
     static void ORT_API_CALL ReleaseStateImpl(OrtNodeComputeInfo* this_ptr, void* compute_state);
 
     QnnEp& ep;
-  };
-
-  struct GenieNodeComputeInfo : OrtNodeComputeInfo {
-    GenieNodeComputeInfo(QnnEp& ep,
-                         std::shared_ptr<GenieNodeBuilder> builder);
-
-    static OrtStatus* ORT_API_CALL CreateStateImpl(OrtNodeComputeInfo* this_ptr,
-                                                   OrtNodeComputeContext* compute_context,
-                                                   void** compute_state);
-    static OrtStatus* ORT_API_CALL ComputeImpl(OrtNodeComputeInfo* this_ptr,
-                                               void* compute_state,
-                                               OrtKernelContext* kernel_context);
-    static void ORT_API_CALL ReleaseStateImpl(OrtNodeComputeInfo* this_ptr,
-                                              void* compute_state);
-
-    QnnEp& ep;
-    std::shared_ptr<GenieNodeBuilder> builder;
   };
 
   typedef struct GraphFinalizationInfo {

@@ -1,6 +1,8 @@
 // Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 // SPDX-License-Identifier: MIT
 
+#pragma once
+
 #include "core/providers/qnn/genie/genie_api_loader.h"
 
 // Per-node runtime state used by ONNX Runtime during execution
