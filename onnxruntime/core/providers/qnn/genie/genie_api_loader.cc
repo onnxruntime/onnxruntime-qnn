@@ -2,9 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 #include "core/providers/qnn/genie/genie_api_loader.h"
-#include <iostream>
 #include <stdexcept>
-#include <cstring>
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -49,29 +47,22 @@ const GenieApi& GenieApiLoader::Get() {
 #define LOAD_GENIE_SYMBOL(name) \
   api_.name = must_dlsym<decltype(api_.name)>(handle_, STRINGIFY(Genie##name))
 
-// Init(): Resolve all symbols exactly once
 void GenieApiLoader::Init() {
-  try {
-    LOAD_GENIE_SYMBOL(NodeConfig_createFromJson);
-    LOAD_GENIE_SYMBOL(DlcConfig_create);
-    LOAD_GENIE_SYMBOL(DlcConfig_free);
-    LOAD_GENIE_SYMBOL(Dlc_create);
-    LOAD_GENIE_SYMBOL(Dlc_free);
-    LOAD_GENIE_SYMBOL(Dlc_getUseCases);
-    LOAD_GENIE_SYMBOL(NodeConfig_createFromDlc);
-    LOAD_GENIE_SYMBOL(Node_create);
-    LOAD_GENIE_SYMBOL(Node_setData);
-    LOAD_GENIE_SYMBOL(Node_getData);
-    LOAD_GENIE_SYMBOL(Node_execute);
-    LOAD_GENIE_SYMBOL(Node_reset);
-    LOAD_GENIE_SYMBOL(Node_free);
-    LOAD_GENIE_SYMBOL(NodeConfig_free);
-    LOAD_GENIE_SYMBOL(Log_create);
-    LOAD_GENIE_SYMBOL(NodeConfig_bindLogger);
-    LOAD_GENIE_SYMBOL(Log_free);
-
-  } catch (const std::exception& ex) {
-    std::cerr << "[GenieApiLoader] Initialization failed: " << ex.what() << "\n";
-    throw;
-  }
+  LOAD_GENIE_SYMBOL(NodeConfig_createFromJson);
+  LOAD_GENIE_SYMBOL(DlcConfig_create);
+  LOAD_GENIE_SYMBOL(DlcConfig_free);
+  LOAD_GENIE_SYMBOL(Dlc_create);
+  LOAD_GENIE_SYMBOL(Dlc_free);
+  LOAD_GENIE_SYMBOL(Dlc_getUseCases);
+  LOAD_GENIE_SYMBOL(NodeConfig_createFromDlc);
+  LOAD_GENIE_SYMBOL(Node_create);
+  LOAD_GENIE_SYMBOL(Node_setData);
+  LOAD_GENIE_SYMBOL(Node_getData);
+  LOAD_GENIE_SYMBOL(Node_execute);
+  LOAD_GENIE_SYMBOL(Node_reset);
+  LOAD_GENIE_SYMBOL(Node_free);
+  LOAD_GENIE_SYMBOL(NodeConfig_free);
+  LOAD_GENIE_SYMBOL(Log_create);
+  LOAD_GENIE_SYMBOL(NodeConfig_bindLogger);
+  LOAD_GENIE_SYMBOL(Log_free);
 }
