@@ -56,7 +56,6 @@ static bool ParseBackendTypeName(std::string_view backend_type_name,
                                  std::string& backend_path,
                                  const Ort::Logger& logger) {
   constexpr std::string_view kCpuBackendTypeName{"cpu"};
-  constexpr std::string_view kGenieBackendTypeName{"genie"};
   constexpr std::string_view kGpuBackendTypeName{"gpu"};
   constexpr std::string_view kHtpBackendTypeName{"htp"};
   constexpr std::string_view kSaverBackendTypeName{"saver"};
@@ -75,8 +74,6 @@ static bool ParseBackendTypeName(std::string_view backend_type_name,
     associated_backend_path = kDefaultCpuBackendPath;
   } else if (backend_type_name == kGpuBackendTypeName) {
     associated_backend_path = kDefaultGpuBackendPath;
-  } else if (backend_type_name == kGenieBackendTypeName) {
-    associated_backend_path = kDefaultGenieBackendPath;
   } else if (backend_type_name == kHtpBackendTypeName) {
     associated_backend_path = kDefaultHtpBackendPath;
   } else if (backend_type_name == kSaverBackendTypeName) {
