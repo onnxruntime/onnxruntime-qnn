@@ -171,6 +171,7 @@ else:
         "QnnIr.dll",
         "QnnSaver.dll",
         "QnnSystem.dll",
+        "QnnHtpNetRunExtensions.dll",
         "QnnHtpPrepare.dll",
         "HtpPrepare.dll",
         "QnnHtpV81Stub.dll",

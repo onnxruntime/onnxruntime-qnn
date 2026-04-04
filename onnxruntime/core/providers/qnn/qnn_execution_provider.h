@@ -16,21 +16,23 @@
 #include "core/providers/qnn/builder/qnn_cache_compatibility_manager.h"
 #include "core/providers/qnn/builder/qnn_configs_helper.h"
 #include "core/providers/qnn/builder/qnn_def.h"
-#include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
-#include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
 #include "core/providers/qnn/qnn_telemetry.h"
 #include "core/providers/qnn/rpcmem_library.h"
+#include "core/providers/qnn/genie/genie_api_loader.h"
+#include "core/providers/qnn/genie/genie_node.h"
+#include "core/providers/qnn/genie/genie_node_compute_info.h"
 
 namespace onnxruntime {
 class QnnEpFactory;
 
-// Forward declaration for QnnBackendManager
+// Forward declaration for QnnBackendManager, GenieBackendManager
 namespace qnn {
 class QnnBackendManager;
-}
+class GenieBackendManager;
+}  // namespace qnn
 
 class QnnEp : public OrtEp, public ApiPtrs {
  public:
@@ -47,11 +49,16 @@ class QnnEp : public OrtEp, public ApiPtrs {
   OrtStatus* GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevice* hw,
                                                      OrtDeviceEpIncompatibilityDetails* details) noexcept;
 
+  friend struct GenieNodeComputeInfo;
+
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEp* this_ptr) noexcept;
   static OrtStatus* ORT_API_CALL GetCapabilityImpl(OrtEp* this_ptr,
                                                    const OrtGraph* graph,
                                                    OrtEpGraphSupportInfo* graph_support_info) noexcept;
+  static OrtStatus* ORT_API_CALL GetGenieCapability(OrtEp* this_ptr,
+                                                    const OrtGraph* graph,
+                                                    OrtEpGraphSupportInfo* graph_support_info);
   static OrtStatus* ORT_API_CALL CompileImpl(_In_ OrtEp* this_ptr,
                                              _In_ const OrtGraph** graphs,
                                              _In_ const OrtNode** fused_nodes,
@@ -93,6 +100,12 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                  const OrtNode** fused_nodes,
                                  size_t count,
                                  OrtNodeComputeInfo** node_compute_infos);
+
+  OrtStatus* CompileDlcContextModel(OrtEp* this_ptr,
+                                    const OrtGraph** graphs,
+                                    const OrtNode** fused_nodes,
+                                    size_t count,
+                                    OrtNodeComputeInfo** node_compute_infos);
 
   OrtStatus* CreateEPContextNodes(const OrtGraph* graph,
                                   const OrtNode** fused_nodes,
@@ -207,6 +220,12 @@ class QnnEp : public OrtEp, public ApiPtrs {
   mutable std::unordered_map<std::string, std::string> tensor_name_overrides_;
   // ONNX graph I/O names in declaration order: {input_names, output_names}.
   mutable std::optional<std::pair<std::vector<std::string>, std::vector<std::string>>> onnx_graph_io_names_;
+
+  // Genie pathway-specific variables
+  std::shared_ptr<qnn::GenieBackendManager> genie_backend_manager_;
+  mutable std::shared_ptr<GenieApiLoader> genie_api_loader_;
+  GenieLog_Level_t genie_log_level_ = GENIE_LOG_LEVEL_ERROR;
+  mutable std::atomic<uint64_t> genie_kv_cache_rewind_{1};
 };
 
 }  // namespace onnxruntime

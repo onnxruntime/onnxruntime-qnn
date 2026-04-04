@@ -18,6 +18,7 @@ class QnnBackendManager;
 using QnnModelLookupTable = std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>;
 
 static const std::string EPCONTEXT_OP = "EPContext";
+static const std::string EP_CONTEXT_TYPE = "ep_context_type";
 static const std::string MAIN_CONTEXT = "main_context";
 static const std::string EMBED_MODE = "embed_mode";
 static const std::string EP_CACHE_CONTEXT = "ep_cache_context";
@@ -26,9 +27,22 @@ static const std::string PARTITION_NAME = "partition_name";
 static const std::string SOURCE = "source";
 static const std::string MAX_SIZE = "max_size";
 
-bool GraphHasEpContextNode(const OrtGraph* graph, const OrtApi& ort_api);
+// EP_CONTEXT_TYPES
+static const std::string EP_CONTEXT_TYPE_BIN = "bin";
+static const std::string EP_CONTEXT_TYPE_DLC = "dlc";
 
-bool IsOrtGraphHasCtxNode(const OrtGraph** graphs, size_t count, const OrtApi& ort_api);
+bool GraphHasEpContextNode(const OrtGraph* graph, const OrtApi& ort_api,
+                           const std::string& ep_context_type = EP_CONTEXT_TYPE_BIN);
+
+bool GraphHasDlcContextNode(const OrtGraph* graph, const OrtApi& ort_api);
+
+bool IsOrtGraphHasDlcCtxNode(const OrtGraph** graphs, size_t count, const OrtApi& ort_api);
+
+bool IsOrtGraphHasCtxNode(const OrtGraph** graphs, size_t count, const OrtApi& ort_api,
+                          const std::string& ep_context_type = EP_CONTEXT_TYPE_BIN);
+
+Ort::Status GetEpContextDlcPath(const OrtGraph** graphs, size_t count, const OrtApi& ort_api,
+                                std::string& dlc_path);
 
 Ort::Status GetMainContextNode(const OrtGraph** graphs,
                                size_t count,
