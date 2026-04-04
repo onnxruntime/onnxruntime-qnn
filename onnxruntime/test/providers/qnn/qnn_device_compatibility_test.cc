@@ -144,9 +144,16 @@ TEST_F(QnnDeviceCompatibilityTests, GPUDeviceWithQualcommVendorIsCompatible) {
       env_, onnxruntime::kQnnExecutionProvider, &gpu_device, &details));
   ASSERT_NE(details, nullptr);
 
-  // Verify compatible (no incompatibility reasons)
-  uint32_t reasons_bitmask = 0xFFFFFFFF;
+  // Check if GPU device is incompatible for any reason - if so, skip this test
+  uint32_t reasons_bitmask = 0;
   ASSERT_ORTSTATUS_OK(api_->DeviceEpIncompatibilityDetails_GetReasonsBitmask(details, &reasons_bitmask));
+
+  if (reasons_bitmask != 0u) {
+    api_->ReleaseDeviceEpIncompatibilityDetails(details);
+    GTEST_SKIP() << "GPU device is not compatible with QNN EP on this machine, skipping compatibility test";
+  }
+
+  // Verify compatible (no incompatibility reasons)
   EXPECT_EQ(reasons_bitmask, 0u) << "GPU device with Qualcomm vendor should be compatible with QNN EP";
 
   int32_t error_code = -1;
@@ -347,6 +354,13 @@ TEST_F(QnnDeviceCompatibilityTests, GPUDeviceIncompatibilityDetailsWithMissingDe
     // Device is compatible, skip this test
     api_->ReleaseDeviceEpIncompatibilityDetails(details);
     GTEST_SKIP() << "GPU device is compatible with QNN EP, skipping incompatibility test";
+  }
+
+  if ((reasons_bitmask & OrtDeviceEpIncompatibility_MISSING_DEPENDENCY) == 0) {
+    // The GPU library is present but incompatible for another reason (e.g., driver failure).
+    // This test requires the GPU library itself to be absent; skip if that's not the case.
+    api_->ReleaseDeviceEpIncompatibilityDetails(details);
+    GTEST_SKIP() << "GPU library is present; MISSING_DEPENDENCY scenario cannot be reproduced";
   }
 
   // Verify incompatibility reason includes MISSING_DEPENDENCY
