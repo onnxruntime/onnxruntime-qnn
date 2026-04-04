@@ -94,9 +94,9 @@ java_windows_x86_64:
   content_root: jdk-{version}
   bindir: bin
 model_zoo:
-  version: 2026-01-13
+  version: 2026-04-03
   url: http://ort-ep-win-01.na.qualcomm.com:8000/model-zoo/model-zoo-{version}.zip
-  sha256: 32853861b80c1ba913591a870dad2d1626ddb1683ac4750b65b1f0148ec9c7a7
+  sha256: 3a870c41c7b1aa8e8e2d7f2fd6dcc6c47de73da57ca3dc26b4f37d436c05a29e
   content_root: model-zoo
 ninja_linux_aarch64:
   version: 1.12.1
@@ -177,7 +177,7 @@ python_314_windows_arm64:
   version: 3.14.3
   md5: 1183951d055ef6c0ae1fb686b3342a6f
 qairt:
-  version: 2.44.0.260225
+  version: 2.45.0.260326
   url: https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/{version}/v{version}.zip
   content_root: qairt/{version}
   bindir: bin
