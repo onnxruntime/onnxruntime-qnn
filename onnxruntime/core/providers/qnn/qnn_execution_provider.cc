@@ -978,6 +978,13 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     }
   }
 
+  static const std::string QNN_HTP_EXTENDED_UDMA_MODE = "extended_udma";
+  enable_htp_extended_udma_mode_ = ParseBoolOption(ort_api,
+                                                   session_options_,
+                                                   FormatEPConfigKey(QNN_HTP_EXTENDED_UDMA_MODE),
+                                                   false,
+                                                   logger_);
+
   // Option to skip QNN API interface version check to use other QNN library other than default.
   static const std::string SKIP_QNN_VERSION_CHECK = "skip_qnn_version_check";
   auto skip_qnn_version_check = ParseBoolOption(ort_api,
@@ -1540,7 +1547,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                           ep->enable_vtcm_backup_buffer_sharing_,
                                                           ep->enable_file_mapped_weights_,
                                                           ep->rpcmem_library_,
-                                                          context_bin_map);
+                                                          context_bin_map,
+                                                          ep->enable_htp_extended_udma_mode_);
 
   context_bin_map.clear();
 
