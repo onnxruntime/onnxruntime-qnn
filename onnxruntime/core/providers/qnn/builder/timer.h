@@ -59,6 +59,7 @@ class Timer {
   std::thread bkg_thread_;
   void BkgTimer();
   std::mutex mtx_;
+  std::mutex new_mtx_;
   std::condition_variable cv_;
   std::function<void(void*)> timeout_fn_;
   void* timeout_arg_{nullptr};

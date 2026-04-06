@@ -17,7 +17,7 @@ Timer::~Timer() { this->DeInitialize(); }
 
 void Timer::BkgTimer() {
   {
-    std::unique_lock<std::mutex> lk(mtx_);
+    std::unique_lock<std::mutex> lk(new_mtx_);
     thread_status_ = threadState::IDLE;
     std::cerr << "Timer background thread is launched." << std::endl;
     cv_.notify_all();
