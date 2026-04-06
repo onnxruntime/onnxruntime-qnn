@@ -16,12 +16,13 @@ void Timer::DeInitialize() {
 Timer::~Timer() { this->DeInitialize(); }
 
 void Timer::BkgTimer() {
-  {
-    std::unique_lock<std::mutex> lk(new_mtx_);
+  
+    //std::unique_lock<std::mutex> lk(new_mtx_);
+    std::cerr << "Timer background thread is launched. 1" << std::endl;
     thread_status_ = threadState::IDLE;
-    std::cerr << "Timer background thread is launched." << std::endl;
+    std::cerr << "Timer background thread is launched. 2" << std::endl;
     cv_.notify_all();
-  }
+  
   while (true) {
     std::unique_lock<std::mutex> lk(mtx_);
 
@@ -70,6 +71,7 @@ bool Timer::Initialize(std::function<void(void*)> callbackFn, void* callbackArg)
   bkg_thread_ = std::thread(&Timer::BkgTimer, this);
   std::cerr << "mid of  bkg thread" << std::endl;
   std::unique_lock<std::mutex> lk(mtx_);
+  std::cerr << "mid of initialize" << std::endl;
   cv_.wait(lk, [&] { return thread_status_ == threadState::IDLE; });
   std::cerr << "after bkg thread" << std::endl;
   return true;
