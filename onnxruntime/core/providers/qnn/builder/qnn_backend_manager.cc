@@ -1207,7 +1207,7 @@ Ort::Status QnnBackendManager::ResetContextPriority() {
   return SetContextPriority(context_priority_);
 }
 
-Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing) {
+Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing, bool enable_htp_extended_udma_mode) {
   if (true == context_created_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Context created already.");
     return Ort::Status();
@@ -1223,8 +1223,16 @@ Ort::Status QnnBackendManager::CreateContext(bool enable_htp_weight_sharing) {
   QnnContext_Config_t context_priority_config = QNN_CONTEXT_CONFIG_INIT;
   RETURN_IF_ERROR(SetQnnContextConfig(context_priority_, context_priority_config));
 
+  QnnContext_Config_t context_config_extended_udma = QNN_CONTEXT_CONFIG_INIT;
+  QnnHtpContext_CustomConfig_t udma_custom_config;
+  udma_custom_config.option = QNN_HTP_CONTEXT_CONFIG_OPTION_USE_EXTENDED_UDMA;
+  udma_custom_config.useExtendedUdma = enable_htp_extended_udma_mode;
+  context_config_extended_udma.option = QNN_CONTEXT_CONFIG_OPTION_CUSTOM;
+  context_config_extended_udma.customConfig = &udma_custom_config;
+
   const QnnContext_Config_t* npu_context_configs[] = {&context_priority_config,
                                                       &context_config_weight_sharing,
+                                                      &context_config_extended_udma,
                                                       nullptr};
 
   const QnnContext_Config_t* empty_context_configs[] = {nullptr};
@@ -1659,7 +1667,8 @@ Ort::Status QnnBackendManager::SetupBackend(
     bool enable_vtcm_backup_buffer_sharing,
     bool enable_file_mapped_weights,
     std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
-    std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map) {
+    std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
+    bool enable_htp_extended_udma_mode) {
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
   if (backend_setup_completed_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Backend setup already!");
@@ -1774,7 +1783,7 @@ Ort::Status QnnBackendManager::SetupBackend(
 
   if (status.IsOK() && (vtcm_backup_buffer_sharing_enabled_ || !load_from_cached_context)) {
     status = vtcm_backup_buffer_sharing_enabled_ ? CreateContextVtcmBackupBufferSharingEnabled(context_bin_map)
-                                                 : CreateContext(enable_htp_weight_sharing);
+                                                 : CreateContext(enable_htp_weight_sharing, enable_htp_extended_udma_mode);
 
     if (status.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "CreateContext succeed.");

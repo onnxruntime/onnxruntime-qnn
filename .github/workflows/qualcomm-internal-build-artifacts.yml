@@ -18,6 +18,14 @@ on:
         description: "Version suffix for released package. If set, the specified suffix will be appended to the version string."
         type: string
         default: ""
+      build_android_aarch64:
+        description: "If true, build for Android"
+        type: boolean
+        default: false
+      build_linux_aarch64_oe_gcc11_2:
+        description: "If true, build for aarch64 OpenEmbedded Linux using GCC 11.2"
+        type: boolean
+        default: false
       build_linux_x86_64:
         description: "If true, build for x86_64 Linux"
         type: boolean
@@ -47,6 +55,21 @@ on:
     inputs: *common_inputs
 
 jobs:
+  build-android-aarch64:
+    if: ${{ inputs.build_android_aarch64 }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      build_runner_os: linux
+      target_os: android
+      target_arch: aarch64
+      target_py_vsn: None
+      run_tests: false
+      upload_test_archive: true
+      upload_wheel: false
+
   build-linux-aarch64-manylinux_2_34:
     if: ${{ toJSON(fromJSON(inputs.linux_aarch64_manylinux_2_34_target_py_vsns)) != '[]' }}
     strategy:
@@ -61,8 +84,22 @@ jobs:
       target_arch: aarch64_manylinux_2_34
       target_py_vsn: ${{ matrix.target_py_vsn }}
       run_tests: false
-      upload_test_archive: false
+      # Upload the test archive with the first Python version we encounter
+      upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_aarch64_manylinux_2_34_target_py_vsns)[0] }}
       upload_wheel: false
+
+  build-linux-aarch64-oe-gcc11_2:
+      if: ${{ inputs.build_linux_aarch64_oe_gcc11_2 }}
+      uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+      secrets: inherit
+      with:
+        nightly_build: ${{ inputs.nightly_build }}
+        target_os: linux
+        target_arch: aarch64_oe_gcc11_2
+        target_py_vsn: None
+        run_tests: false
+        upload_test_archive: true
+        upload_wheel: false
 
   build-linux-x86_64:
     if: ${{ inputs.build_linux_x86_64 }}
@@ -78,7 +115,7 @@ jobs:
       # version of cpython that's installed on our Linux build machines.
       target_py_vsn: "3.10"
       run_tests: false
-      upload_test_archive: false
+      upload_test_archive: true
       upload_wheel: true
 
   build-windows:
@@ -99,7 +136,8 @@ jobs:
       test_runner_arch: ARM64
       run_tests: false
       test_wheel: false
-      upload_test_archive: false
+      # For each arch, upload the test archive with the first Python version we encounter
+      upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       # On ARM64, build NuGet/Zip with the first python version we encounter
       build_nuget: ${{ inputs.windows_arm64_build_nuget && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       upload_nuget: ${{ inputs.windows_arm64_build_nuget && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
