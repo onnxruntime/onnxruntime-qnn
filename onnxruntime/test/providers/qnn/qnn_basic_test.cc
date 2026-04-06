@@ -2520,6 +2520,32 @@ TEST_F(QnnCPUBackendTests, GetUniqueNameResetBetweenCompilations) {
   EXPECT_EQ(names_1, names_2);
 }
 
+// Test extended UDMA mode on supported hardware (should run successfully)
+#if defined(_WIN32)
+TEST_F(QnnHTPBackendTests, ExtendedUdmaModeTest) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V79)) {
+    GTEST_SKIP() << "Test requires HTP arch >= V81 for extended UDMA support.";
+  }
+  // Create provider options with extended UDMA mode enabled
+  ProviderOptions options;
+  options["backend_type"] = "htp";
+  options["offload_graph_io_quantization"] = "0";
+  options["htp_arch"] = "81";
+  options["extended_udma"] = "1";
+
+  // Define a simple model with Add operation
+  auto input_defs = {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
+                     TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f)};
+
+  // Run the test - this should succeed because v81 supports extended UDMA
+  RunQnnModelTest(BuildOpTestCase<float>("Add_node", "Add", input_defs, {}, {}, kOnnxDomain),
+                  options,
+                  13,
+                  ExpectedEPNodeAssignment::All,
+                  0.008f);
+}
+#endif  // defined(_WIN32)
+
 #endif  // !defined(ORT_MINIMAL_BUILD)
 
 }  // namespace test
