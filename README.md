@@ -20,7 +20,7 @@ ONNX Runtime supports hardware acceleration through **Execution Providers (EPs)*
 |---|---|---|
 | Distribution | Bundled with ORT | Separate package |
 | ORT build required | Yes | No |
-| Install | `pip install onnxruntime-qnn==1.x.x` | `pip install onnxruntime-qnn==`**`2.0.0`** |
+| Install | `pip install onnxruntime-qnn==1.x.x` | `pip install onnxruntime-qnn==`**`2.x.x`** |
 
 ---
 
