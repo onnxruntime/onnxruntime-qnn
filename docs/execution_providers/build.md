@@ -20,7 +20,7 @@ See more information on the QNN execution provider [here](./QNN-ExecutionProvide
   * [Visual Studio & VS Code Downloads for Windows, Mac, Linux](https://visualstudio.microsoft.com/downloads/)
 
 * **Qualcomm AI Engine Direct SDK (QAIRT)** (optional): Download from [Qualcomm Package Manager](https://qpm.qualcomm.com/main/tools/details/qualcomm_ai_engine_direct)
-  * **Note**: The build will fetch the appropriate QAIRT version automatically. If you have a local copy, specify its location using `--qairt-sdk-path` argument or `QAIRT_SDK_PATH` environment variable. The SDK must be version 2.17.0 or higher. For older versions, see [Build Instructions for QNN EP v1.x](https://onnxruntime.ai/docs/build/eps.html#qnn) for details.
+  * **Note**: The build will fetch the appropriate QAIRT version automatically. If you have a local copy, specify its location using `--qairt-sdk` argument or `QAIRT_SDK_PATH` environment variable. The SDK must be version 2.17.0 or higher. For older versions, see [Build Instructions for QNN EP v1.x](https://onnxruntime.ai/docs/build/eps.html#qnn) for details.
 
 * **Pre-built ONNX Runtime Release** (Optional): Download from [Microsoft ONNX Runtime Releases](https://github.com/microsoft/onnxruntime/releases)
   * **Note**: The build will fetch the appropriate ORT version automaticall. If you have a local copy, extract the release package and set the path via `--ort-prebuilt` argument or `ORT_PREBUILT_ROOT` environment variable to specify the root directory of the prebuilt ORT package.
