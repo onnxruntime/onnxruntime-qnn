@@ -5,11 +5,14 @@
 
 void Timer::DeInitialize() {
   std::unique_lock<std::mutex> lk(mtx_);
+  std::cerr << "Timer::DeInitialize is called." << std::endl;
   is_timer_deinit_ = true;
   cv_.notify_all();
   lk.unlock();
   if (bkg_thread_.joinable()) {
+    std::cerr << "Joining timer background thread." << std::endl;
     bkg_thread_.join();
+    std::cerr << "Timer background thread is joined." << std::endl;
   }
 }
 
