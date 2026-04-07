@@ -74,6 +74,7 @@ bool Timer::Initialize(std::function<void(void*)> callbackFn, void* callbackArg)
   try {
     bkg_thread_ = std::thread(&Timer::BkgTimer, this);
   } catch (const std::system_error& e) {
+    ORT_UNUSED_PARAMETER(e);
     return false;
   }
   //bkg_thread_ = std::thread(&Timer::BkgTimer, this);
