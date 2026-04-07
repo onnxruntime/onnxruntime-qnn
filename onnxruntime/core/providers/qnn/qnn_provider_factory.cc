@@ -57,7 +57,7 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   ValidateCompiledModelCompatibilityInfo = ValidateCompiledModelCompatibilityInfoImpl;
   GetHardwareDeviceIncompatibilityDetails = GetHardwareDeviceIncompatibilityDetailsImpl;
 
-  // HOST_ACCESSIBLE memory.
+  // HOST_ACCESSIBLE memory for HTP backend.
   OrtMemoryInfo* mem_info = nullptr;
   auto* status = ort_api.CreateMemoryInfo_V2("QnnHtpShared",
                                              OrtMemoryInfoDeviceType_CPU,
@@ -71,6 +71,21 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
     ort_api.ReleaseMemoryInfo(mem_info);
   }
   host_accessible_memory_info_ = MemoryInfoUniquePtr(mem_info, ort_api.ReleaseMemoryInfo);
+
+  // HOST_ACCESSIBLE DX12 memory for GPU backend.
+  OrtMemoryInfo* dx12_mem_info = nullptr;
+  auto* dx12_status = ort_api.CreateMemoryInfo_V2("QnnGpuShared",
+                                                  OrtMemoryInfoDeviceType_GPU,
+                                                  /*vendor*/ 0x5143,
+                                                  /*device_id*/ 0,
+                                                  OrtDeviceMemoryType_HOST_ACCESSIBLE,
+                                                  /*alignment*/ 0,
+                                                  OrtAllocatorType::OrtDeviceAllocator,
+                                                  &dx12_mem_info);
+  if (dx12_status != nullptr) {
+    ort_api.ReleaseMemoryInfo(dx12_mem_info);
+  }
+  dx12_memory_info_ = MemoryInfoUniquePtr(dx12_mem_info, ort_api.ReleaseMemoryInfo);
 }
 
 // Returns the name for the EP. Each unique factory configuration must have a unique name.
@@ -203,7 +218,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
   const auto provider_prefix = GetProviderOptionPrefix(factory->ep_name_);
 
   // Setting allocator info is delayed from GetSupportedDevices to here as QNN-EP relies on provider options to
-  // determine whether to use HTP shared memory but they are not available until now. This workaround works since
+  // determine whether to use shared memory but they are not available until now. This workaround works since
   // PluginExecutionProvider collects the allocator infos after creating the EP (refer to
   // ep_plugin_provider_interfaces.cc for the detail flow).
   std::string enable_htp_shared_memory_allocator_str;
@@ -212,9 +227,19 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
                                  provider_prefix + "enable_htp_shared_memory_allocator",
                                  "0",
                                  enable_htp_shared_memory_allocator_str);
-  if (enable_htp_shared_memory_allocator_str == "1") {
-    for (OrtEpDevice* ep_device : factory->ep_devices_) {
-      RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->host_accessible_memory_info_.get()));
+
+  for (OrtEpDevice* ep_device : factory->ep_devices_) {
+    switch (factory->ort_api.HardwareDevice_Type(factory->ort_api.EpDevice_Device(ep_device))) {
+    case OrtHardwareDeviceType_NPU:
+      if (enable_htp_shared_memory_allocator_str == "1") {
+        RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->host_accessible_memory_info_.get()));
+      }
+      break;
+    case OrtHardwareDeviceType_GPU:
+      RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->dx12_memory_info_.get()));
+      break;
+    default:
+      break;
     }
   }
 

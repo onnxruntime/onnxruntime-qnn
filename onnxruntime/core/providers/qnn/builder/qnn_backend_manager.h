@@ -330,9 +330,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void ResetLogger(const Ort::Logger& logger) { logger_ptr_ = &logger; }
 
- private:
   Ort::Status LoadBackend();
 
+ private:
   Ort::Status InitializeBackend();
 
   Ort::Status CreateDevice();

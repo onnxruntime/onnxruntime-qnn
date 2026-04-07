@@ -2331,12 +2331,22 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
   *allocator = nullptr;
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
-  if (ep->IsHtpSharedMemoryAllocatorAvailable()) {
+  ep->qnn_backend_manager_->LoadBackend();
+  const auto backend_type = ep->qnn_backend_manager_->GetQnnBackendType();
+
+  if (IsNpuBackend(backend_type) && ep->IsHtpSharedMemoryAllocatorAvailable()) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating HtpSharedMemoryAllocator.");
 
     auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, ep->rpcmem_library_);
     *allocator = htp_allocator.release();
   }
+#ifdef _WIN32
+  else if (IsGpuBackend(backend_type)) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating Dx12SharedMemoryAllocator.");
+    auto dx12_allocator = std::make_unique<qnn::Dx12SharedMemoryAllocator>(memory_info, ep->logger_);
+    *allocator = dx12_allocator.release();
+  }
+#endif  // _WIN32
   return nullptr;
 }
 

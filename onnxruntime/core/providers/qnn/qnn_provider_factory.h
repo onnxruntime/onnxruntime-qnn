@@ -57,6 +57,7 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   // CPU allocator so we can control the arena behavior. optional as ORT always provides a CPU allocator if needed.
   using MemoryInfoUniquePtr = std::unique_ptr<OrtMemoryInfo, std::function<void(OrtMemoryInfo*)>>;
   MemoryInfoUniquePtr host_accessible_memory_info_;
+  MemoryInfoUniquePtr dx12_memory_info_;  // QnnGpuShared: DX12 shared memory for GPU backend
 
   QnnEp* qnn_ep_ = nullptr;
   std::vector<OrtEpDevice*> ep_devices_;
