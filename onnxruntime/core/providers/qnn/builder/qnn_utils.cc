@@ -109,6 +109,30 @@ size_t GetElementSizeByType(ONNXTensorElementDataType elem_type) {
   return pos->second;
 }
 
+std::string_view GetElementNameByType(ONNXTensorElementDataType elem_type) {
+  const static std::unordered_map<ONNXTensorElementDataType, std::string_view> elem_type_to_name = {
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4, "int4_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4, "uint4_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, "int8_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16, "int16_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32, "int32_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT64, "int64_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8, "uint8_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT16, "uint16_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT32, "uint32_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT64, "uint64_t"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16, "float16"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, "float32"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE, "double"},
+      {ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL, "bool"}};
+
+  auto pos = elem_type_to_name.find(elem_type);
+  if (pos == elem_type_to_name.end()) {
+    ORT_CXX_API_THROW("Unknown element type " + std::to_string(elem_type), ORT_EP_FAIL);
+  }
+  return pos->second;
+}
+
 size_t GetQnnTensorDataSizeInBytes(size_t num_elements, Qnn_DataType_t element_type) {
   SafeInt<size_t> safe_num_elements = num_elements;
   if (element_type == QNN_DATATYPE_SFIXED_POINT_4 || element_type == QNN_DATATYPE_UFIXED_POINT_4) {

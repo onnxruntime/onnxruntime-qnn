@@ -15,7 +15,7 @@
 namespace onnxruntime {
 namespace qnn {
 
-bool GraphHasEpContextNode(const OrtGraph* graph, const OrtApi& ort_api) {
+bool GraphHasEpContextNode(const OrtGraph* graph, const OrtApi& ort_api, const std::string& ep_context_type) {
   // It's an Onnx model with Qnn context cache binary if it has a node with EPContext type
   // and the source is QNN or QNNExecutionProvider.
   size_t num_nodes = 0;
@@ -31,7 +31,8 @@ bool GraphHasEpContextNode(const OrtGraph* graph, const OrtApi& ort_api) {
     if (op_type == EPCONTEXT_OP) {
       OrtNodeAttrHelper node_helper(*node);
       std::string cache_source = qnn::utils::GetLowercaseString(node_helper.Get(SOURCE, ""));
-      if (cache_source == "qnnexecutionprovider" || cache_source == "qnn") {
+      std::string ep_context_type_of_node = qnn::utils::GetLowercaseString(node_helper.Get(EP_CONTEXT_TYPE, EP_CONTEXT_TYPE_BIN));
+      if ((cache_source == "qnnexecutionprovider" || cache_source == "qnn" || cache_source == "qairtexport") && ep_context_type == ep_context_type_of_node) {
         return true;
       }
     }
@@ -40,13 +41,49 @@ bool GraphHasEpContextNode(const OrtGraph* graph, const OrtApi& ort_api) {
   return false;
 }
 
-bool IsOrtGraphHasCtxNode(const OrtGraph** graphs, size_t count, const OrtApi& ort_api) {
+bool GraphHasDlcContextNode(const OrtGraph* graph, const OrtApi& ort_api) {
+  return GraphHasEpContextNode(graph, ort_api, EP_CONTEXT_TYPE_DLC);
+}
+
+bool IsOrtGraphHasCtxNode(const OrtGraph** graphs, size_t count, const OrtApi& ort_api,
+                          const std::string& ep_context_type) {
   for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
-    if (GraphHasEpContextNode(graphs[graph_idx], ort_api)) {
+    if (GraphHasEpContextNode(graphs[graph_idx], ort_api, ep_context_type)) {
       return true;
     }
   }
   return false;
+}
+
+bool IsOrtGraphHasDlcCtxNode(const OrtGraph** graphs, size_t count, const OrtApi& ort_api) {
+  return IsOrtGraphHasCtxNode(graphs, count, ort_api, EP_CONTEXT_TYPE_DLC);
+}
+
+Ort::Status GetEpContextDlcPath(const OrtGraph** graphs, size_t count, const OrtApi& ort_api,
+                                std::string& dlc_path) {
+  for (size_t graph_idx = 0; graph_idx < count; ++graph_idx) {
+    if (GraphHasEpContextNode(graphs[graph_idx], ort_api, EP_CONTEXT_TYPE_DLC)) {
+      size_t num_nodes = 0;
+      ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNumNodes(graphs[graph_idx], &num_nodes));
+
+      std::vector<const OrtNode*> nodes(num_nodes);
+      ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNodes(graphs[graph_idx], nodes.data(), nodes.size()));
+
+      for (const OrtNode* node : nodes) {
+        const char* op_type = nullptr;
+        ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetOperatorType(node, &op_type));
+
+        if (op_type != nullptr && std::string(op_type) == EPCONTEXT_OP) {
+          OrtNodeAttrHelper node_helper(*node);
+          dlc_path = qnn::utils::GetLowercaseString(node_helper.Get("ep_dlc_context", ""));
+          if (dlc_path != "") {
+            return Ort::Status();
+          }
+        }
+      }
+    }
+  }
+  return MAKE_EP_FAIL("Failed to extract dlc_path from EP_CONTEXT node");
 }
 
 Ort::Status GetMainContextNode(const OrtGraph** graphs,

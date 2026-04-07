@@ -186,7 +186,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       bool enable_vtcm_backup_buffer_sharing,
       bool enable_file_mapped_weights,
       std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
-      std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map);
+      std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
+      bool enable_htp_extended_udma_mode = false);
 
   Ort::Status CreateHtpPowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
 
@@ -342,7 +343,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status ReleaseProfilehandle();
 
-  Ort::Status CreateContext(bool enable_htp_weight_sharing);
+  Ort::Status CreateContext(bool enable_htp_weight_sharing, bool enable_htp_extended_udma_mode);
 
   Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
 

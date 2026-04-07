@@ -79,6 +79,8 @@ size_t GetElementSizeByType(const Qnn_DataType_t& data_type);
 
 size_t GetElementSizeByType(ONNXTensorElementDataType elem_type);
 
+std::string_view GetElementNameByType(ONNXTensorElementDataType elem_type);
+
 // Class that allows building a JSON representation of a QNN graph.
 // The JSON graph is built in a format that can be loaded with Qualcomm's QNN Netron visualizer.
 class QnnJSONGraph {
