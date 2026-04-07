@@ -129,9 +129,6 @@ if [ -n "${target_py_version}" ]; then
   build_venv="${build_dir}/venv-${target_py_version}"
   if [ ! -d "${build_venv}" ]; then
     log_debug "Creating venv for build in ${build_venv}"
-
-    # TODO: [AISW-156088]: Adopt uvx for POSIX-like builds
-    #  - Also consider dropping 3.10 support to match upstream.
     "python${target_py_version}" -m venv "${build_venv}"
   fi
 
