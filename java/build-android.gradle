@@ -1,0 +1,126 @@
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
+
+apply plugin: 'com.android.library'
+apply plugin: 'maven-publish'
+
+def minSdkVer = System.properties['minSdkVer']
+
+def aarPath = System.properties['aarPath']
+
+// When publishing a pre-built AAR (aarPath mode), VERSION_NUMBER may not be present.
+// Allow overriding via -Dversion=x.y.z in that case.
+def project_version = System.properties['version'] ?:
+    rootProject.file('../VERSION_NUMBER').text.trim()
+project.version = project_version
+project.group = 'com.qualcomm.qti'
+
+buildscript {
+	repositories {
+		google()
+		mavenCentral()
+	}
+	dependencies {
+		classpath 'com.android.tools.build:gradle:7.4.2'
+		classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:1.6.21"
+
+		// NOTE: Do not place your application dependencies here; they belong
+		// in the individual module build.gradle files
+	}
+}
+
+allprojects {
+	repositories {
+		google()
+		mavenCentral()
+	}
+}
+
+android {
+	compileSdkVersion 34
+
+	defaultConfig {
+		minSdkVersion minSdkVer
+	}
+
+	android {
+		lintOptions {
+			abortOnError false
+		}
+	}
+
+	buildTypes {
+		release {
+			minifyEnabled false
+			debuggable false
+			proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+		}
+	}
+
+	compileOptions {
+		sourceCompatibility = JavaVersion.VERSION_11
+		targetCompatibility = JavaVersion.VERSION_11
+	}
+
+	namespace 'ai.onnxruntime'
+}
+
+def qnnEpJniLibsDir = System.properties['qnnEpJniLibsDir']
+
+if (aarPath != null || qnnEpJniLibsDir != null) {
+	publishing {
+		repositories {
+			mavenLocal()
+			mavenCentral()
+		}
+		publications {
+			qnnEp(MavenPublication) {
+				groupId    = project.group
+				artifactId = 'onnxruntime-android-qnn'
+				version    = project.version
+				if (aarPath != null) {
+					// Publish a pre-built AAR directly — no source tree or CMake needed.
+					artifact(file(aarPath)) {
+						extension = 'aar'
+					}
+				}
+				pom {
+					name        = 'onnxruntime-android-qnn'
+					description = 'QNN Execution Provider plugin for ONNX Runtime Android.'
+					url = 'https://github.com/onnxruntime/onnxruntime-qnn/blob/main/docs/execution_providers/QNN-ExecutionProvider.md'
+					licenses {
+						license {
+							name = 'MIT License'
+							url = 'https://opensource.org/licenses/MIT'
+						}
+					}
+					organization {
+						name = 'Qualcomm'
+						url = 'https://www.qualcomm.com'
+					}
+					scm {
+						connection = 'scm:git:git://github.com/onnxruntime/onnxruntime-qnn.git'
+						developerConnection = 'scm:git:ssh://github.com/onnxruntime/onnxruntime-qnn.git'
+						url = 'https://github.com/onnxruntime/onnxruntime-qnn'
+					}
+					developers {
+						developer {
+							id = 'onnxruntime-qnn'
+							name = 'ONNX Runtime QNN'
+						}
+					}
+				}
+			}
+		}
+	}
+
+	if (qnnEpJniLibsDir != null) {
+		// Defer wiring the bundleReleaseAar task until all projects (including :qnnpluginep)
+		// have been evaluated and AGP has registered its tasks.
+		gradle.projectsEvaluated {
+			publishing.publications.qnnEp.artifact(
+				project(':qnnpluginep').tasks.named('bundleReleaseAar')
+			)
+		}
+	}
+}

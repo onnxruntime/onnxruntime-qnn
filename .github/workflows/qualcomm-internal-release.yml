@@ -44,6 +44,7 @@ jobs:
       linux_aarch64_manylinux_2_34_target_py_vsns: "[]"
       windows_target_archs: "['arm64', 'arm64ec', 'x86_64']"
       windows_target_py_vsns: "['3.11','3.12','3.13','3.14']"
+      build_android_aar: true
 
   publish-wheel-workflow:
     name: "Publish distribution to PyPI"
@@ -220,6 +221,11 @@ jobs:
       # Download other distributables
       # -----------------------------
 
+      - name: Download Android AAR from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: android-aarch64-aar
+
       - name: Download ARM64 Windows NuGet Package from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -275,6 +281,12 @@ jobs:
           count=$(find "${{ github.workspace }}/build" -name "*.zip" | wc -l)
           echo "Found $count Zip archive(s)"
           [ "$count" -eq 5 ] || { echo "ERROR: Expected 5 Zip archives, found $count"; exit 1; }
+
+      - name: Verify AAR artifact
+        run: |
+          count=$(find "${{ github.workspace }}/build" -name "*.aar" | wc -l)
+          echo "Found $count AAR package(s)"
+          [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 AAR package, found $count"; exit 1; }
 
       - name: Set QA Build Tag
         run: |
