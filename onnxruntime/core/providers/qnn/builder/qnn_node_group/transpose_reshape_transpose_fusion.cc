@@ -86,7 +86,7 @@ std::optional<std::array<const OrtNodeUnit*, 3>> MatchTransposeReshapeTransposeP
   // Get Reshape child
   const std::array<std::string_view, 1> reshape_types{kOpReshape};
   const OrtNodeUnit* reshape = GetOnlyChildOfType(qnn_model_wrapper, *transpose1, reshape_types,
-                                                   node_to_node_unit, node_unit_to_qnn_node_group);
+                                                  node_to_node_unit, node_unit_to_qnn_node_group);
   if (reshape == nullptr || reshape->UnitType() != OrtNodeUnit::Type::SingleNode) {
     return std::nullopt;
   }
@@ -94,7 +94,7 @@ std::optional<std::array<const OrtNodeUnit*, 3>> MatchTransposeReshapeTransposeP
   // Get second Transpose child
   const std::array<std::string_view, 1> transpose_types{kOpTranspose};
   const OrtNodeUnit* transpose2 = GetOnlyChildOfType(qnn_model_wrapper, *reshape, transpose_types,
-                                                      node_to_node_unit, node_unit_to_qnn_node_group);
+                                                     node_to_node_unit, node_unit_to_qnn_node_group);
   if (transpose2 == nullptr || transpose2->UnitType() != OrtNodeUnit::Type::SingleNode) {
     return std::nullopt;
   }
@@ -129,7 +129,7 @@ bool CanFuseToReshape(
     const std::vector<int64_t>& intermediate_shape,  // output of first transpose (before reshape)
     const std::vector<int64_t>& reshape_shape,       // output of reshape
     const std::vector<int64_t>& perm2,
-    const std::vector<int64_t>& output_shape,        // final output shape
+    const std::vector<int64_t>& output_shape,  // final output shape
     std::vector<int64_t>& fused_shape) {
   const size_t input_rank = input_shape.size();
   const size_t output_rank = output_shape.size();

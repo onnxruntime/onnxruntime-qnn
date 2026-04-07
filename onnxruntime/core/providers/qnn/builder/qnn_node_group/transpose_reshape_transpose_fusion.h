@@ -22,7 +22,7 @@ class QnnModelWrapper;
 class TransposeReshapeTransposeFusion : public IQnnNodeGroup {
  public:
   TransposeReshapeTransposeFusion(gsl::span<const OrtNodeUnit* const> node_units,
-                                   std::vector<int64_t> fused_output_shape)
+                                  std::vector<int64_t> fused_output_shape)
       : fused_output_shape_(std::move(fused_output_shape)) {
     if (node_units.size() != 3) {
       ORT_CXX_API_THROW("TransposeReshapeTransposeFusion expects exactly 3 NodeUnits.", ORT_EP_FAIL);
