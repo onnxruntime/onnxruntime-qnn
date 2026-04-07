@@ -290,7 +290,8 @@ Ort::Status CreateOrValidateOnQnn(
                 "Failed to add output tensor for TransposeReshapeTransposeFusion.");
 
   // Create the fused Reshape node
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::GetUniqueName(*transpose1),
+  const auto& node_name = utils::UniqueNameGenerator().New(*transpose1);
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_RESHAPE,
                                                 {input_def.name},

@@ -95,7 +95,7 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"ReduceMean", {LayerNormFusion::TryFusion}},
     {"Einsum", {ReshapeEinsumReshapeNodeGroup::TryFusion}},
     {"Reshape", {SpaceToDepthFusion::TryFusion, Rank6ToRank5Fusion::TryFusion}},
-    {"Transpose", {ChannelShuffleFusion::TryFusion}}};
+    {"Transpose", {ChannelShuffleFusion::TryFusion, TransposeReshapeTransposeFusion::TryFusion}}};
 
 void registerUDO(const std::string& node_type, const std::string& op_package) {
   std::function<std::unique_ptr<IQnnNodeGroup>(QnnModelWrapper & qnn_model_wrapper,
