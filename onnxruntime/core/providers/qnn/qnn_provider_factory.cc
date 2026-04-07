@@ -57,7 +57,7 @@ QnnEpFactory::QnnEpFactory(const char* ep_name,
   ValidateCompiledModelCompatibilityInfo = ValidateCompiledModelCompatibilityInfoImpl;
   GetHardwareDeviceIncompatibilityDetails = GetHardwareDeviceIncompatibilityDetailsImpl;
 
-  // HOST_ACCESSIBLE memory.
+  // HOST_ACCESSIBLE memory for HTP and GPU backends.
   OrtMemoryInfo* mem_info = nullptr;
   auto* status = ort_api.CreateMemoryInfo_V2("QnnHtpShared",
                                              OrtMemoryInfoDeviceType_CPU,
@@ -203,7 +203,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
   const auto provider_prefix = GetProviderOptionPrefix(factory->ep_name_);
 
   // Setting allocator info is delayed from GetSupportedDevices to here as QNN-EP relies on provider options to
-  // determine whether to use HTP shared memory but they are not available until now. This workaround works since
+  // determine whether to use shared memory but they are not available until now. This workaround works since
   // PluginExecutionProvider collects the allocator infos after creating the EP (refer to
   // ep_plugin_provider_interfaces.cc for the detail flow).
   std::string enable_htp_shared_memory_allocator_str;
@@ -212,7 +212,14 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
                                  provider_prefix + "enable_htp_shared_memory_allocator",
                                  "0",
                                  enable_htp_shared_memory_allocator_str);
-  if (enable_htp_shared_memory_allocator_str == "1") {
+  std::string enable_dx12_shared_memory_allocator_str;
+  GetSessionConfigEntryOrDefault(factory->ort_api,
+                                 *session_options,
+                                 provider_prefix + "enable_dx12_shared_memory_allocator",
+                                 "0",
+                                 enable_dx12_shared_memory_allocator_str);
+
+  if (enable_htp_shared_memory_allocator_str == "1" || enable_dx12_shared_memory_allocator_str == "1") {
     for (OrtEpDevice* ep_device : factory->ep_devices_) {
       RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->host_accessible_memory_info_.get()));
     }

@@ -949,6 +949,23 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     model_settings_.htp_shared_memory = true;
   }
 
+  static const std::string QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED = "enable_dx12_shared_memory_allocator";
+  if (ParseBoolOption(ort_api,
+                      session_options_,
+                      FormatEPConfigKey(QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED),
+                      false,
+                      logger_)) {
+    if (IsHtpSharedMemoryAllocatorAvailable()) {
+      ORT_CXX_LOGF(logger_,
+                   ORT_LOGGING_LEVEL_WARNING,
+                   "%s is already set. %s will be ignored.",
+                   QNN_HTP_SHARED_MEMORY_ALLOCATOR_ENABLED.c_str(),
+                   QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED.c_str());
+    } else {
+      enable_dx12_shared_memory_allocator_ = true;
+    }
+  }
+
   if (enable_file_mapped_weights_ && !rpcmem_library_) {
     // Attempt to init rpcmem_library_ if needed. If this fails, then
     // disable file mapped weights and proceed with normal operation
@@ -2344,6 +2361,14 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
     auto htp_allocator = std::make_unique<qnn::HtpSharedMemoryAllocator>(memory_info, ep->rpcmem_library_);
     *allocator = htp_allocator.release();
   }
+#ifdef _WIN32
+  else if (ep->IsDx12SharedMemoryAllocatorAvailable()) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating Dx12SharedMemoryAllocator.");
+
+    auto dx12_allocator = std::make_unique<qnn::Dx12SharedMemoryAllocator>(memory_info, ep->logger_);
+    *allocator = dx12_allocator.release();
+  }
+#endif  // _WIN32
   return nullptr;
 }
 

@@ -195,6 +195,11 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |'0'|Default. Disabled.|
 |'1'|Enable the QNN HTP shared memory allocator. Requires libcdsprpc.so/dll to be available. [Code example](https://github.com/microsoft/onnxruntime/blob/544bdd60730270f49f6a5baafdff54065f626776/onnxruntime/test/shared_lib/test_inference.cc#L2262-L2354)|
 
+|`"enable_dx12_shared_memory_allocator"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Enable the QNN DX12 shared memory allocator. Requires a D3D12 capable system, and only available on Windows.
+
 |`"op_packages"`|Description|
 |---|---|
 |Op package config (string)|Register custom op packages. Format: `<OpType>:<PackagePath>:<InterfaceSymbolName>[:<Target>]`. Multiple packages can be separated by commas.|
