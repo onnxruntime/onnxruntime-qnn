@@ -1,11 +1,11 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License
 
-#include "core/providers/qnn/qnn_provider_factory.h"
-
 #include <cassert>
 #include <iostream>
 #include <optional>
+
+#include "onnxruntime_c_api.h"
 
 #include "QnnCommon.h"
 
@@ -14,6 +14,7 @@
 #include "core/providers/qnn/soc_utils.h"
 #include "core/session/abi_devices.h"
 #include "core/session/onnxruntime_ep_device_ep_metadata_keys.h"
+#include "core/providers/qnn/qnn_provider_factory.h"
 
 // We allow `backend_type` (e.g., `htp`) or `backend_path` in relative path (e.g., `QnnHtp.dll`) for configurations,
 // and QnnBackendManager will later find the appropriate library and load it relative to the OnnxRuntime library.
@@ -238,8 +239,12 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
     } else if (num_devices == 1) {
       device_to_use = devices[0];
     } else {
-      const auto is_npu = [](const OrtHardwareDevice* device) { return device->type == OrtHardwareDeviceType_NPU; };
-      const auto is_gpu = [](const OrtHardwareDevice* device) { return device->type == OrtHardwareDeviceType_GPU; };
+      const auto is_npu = [factory](const OrtHardwareDevice* device) {
+        return factory->ort_api.HardwareDevice_Type(device) == OrtHardwareDeviceType_NPU;
+      };
+      const auto is_gpu = [factory](const OrtHardwareDevice* device) {
+        return factory->ort_api.HardwareDevice_Type(device) == OrtHardwareDeviceType_GPU;
+      };
 
       auto device_it = std::find_if(devices, devices + num_devices, is_npu);
       if (device_it != devices + num_devices) {
@@ -266,7 +271,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
     }
     assert(device_to_use != nullptr);
 
-    auto default_backends_it = kDefaultBackends.find(device_to_use->type);
+    auto default_backends_it = kDefaultBackends.find(factory->ort_api.HardwareDevice_Type(device_to_use));
     if (default_backends_it == kDefaultBackends.end()) {
       return factory->ort_api.CreateStatus(ORT_FAIL, "Could not determine default backend path for device");
     }
@@ -394,15 +399,9 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
 
   // Try to create a temporary QNN EP to test backend setup
   std::unique_ptr<QnnEp> temp_qnn_ep;
-  OrtDeviceEpIncompatibilityDetails compat_details;
   try {
     temp_qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *session_options.get(), logger);
-    RETURN_IF_NOT_NULL(temp_qnn_ep->GetHardwareDeviceIncompatibilityDetails(hw, &compat_details));
-    return factory->ep_api.DeviceEpIncompatibilityDetails_SetDetails(
-        details,
-        compat_details.reasons_bitmask,
-        compat_details.error_code,
-        compat_details.notes.c_str());
+    RETURN_IF_NOT_NULL(temp_qnn_ep->GetHardwareDeviceIncompatibilityDetails(hw, details));
   } catch (...) {
     OrtDeviceEpIncompatibilityReason reasons = OrtDeviceEpIncompatibility_UNKNOWN;
     return factory->ep_api.DeviceEpIncompatibilityDetails_SetDetails(
@@ -411,6 +410,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImp
         QNN_COMMON_ERROR_UNDEFINED,
         "Unknown exception occurred while creating QNN EP for compatibility check");
   }
+  return nullptr;
 }
 
 }  // namespace onnxruntime
