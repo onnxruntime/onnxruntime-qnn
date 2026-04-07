@@ -230,9 +230,9 @@ Ort::Status ProcessAlphaAttributeAsInput(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input_info));
     // QNN requires alpha is fp16 when input is fp16
     if (input_info.qnn_data_type == QNN_DATATYPE_FLOAT_16) {
-      tensor_data.alpha_fp16 = MLFloat16(tensor_data.alpha).val;
+      tensor_data.alpha_fp16 = Ort::Float16_t(tensor_data.alpha).val;
       qnn_data_type = QNN_DATATYPE_FLOAT_16;
-      unpacked_data.assign(tensor_data.unpack, tensor_data.unpack + sizeof(MLFloat16));
+      unpacked_data.assign(tensor_data.unpack, tensor_data.unpack + sizeof(Ort::Float16_t));
     } else {
       unpacked_data.assign(tensor_data.unpack, tensor_data.unpack + sizeof(float));
     }

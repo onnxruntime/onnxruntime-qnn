@@ -111,7 +111,7 @@ Ort::Status ExpandOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
         break;
       }
       case QNN_DATATYPE_FLOAT_16: {
-        FillShapeInputData(shape_data, shape_size, static_cast<MLFloat16>(1.0f));
+        FillShapeInputData(shape_data, shape_size, static_cast<Ort::Float16_t>(1.0f));
         break;
       }
       case QNN_DATATYPE_INT_64: {

@@ -85,8 +85,8 @@ class BatchNormalizationOpBuilder : public BaseOpBuilder {
         break;
       }
       case QNN_DATATYPE_FLOAT_16: {
-        value = static_cast<double>(reinterpret_cast<const MLFloat16*>(raw_ptr)->ToFloat());
-        offset += sizeof(MLFloat16);
+        value = static_cast<double>(reinterpret_cast<const Ort::Float16_t*>(raw_ptr)->ToFloat());
+        offset += sizeof(Ort::Float16_t);
         break;
       }
       case QNN_DATATYPE_BOOL_8:
@@ -153,7 +153,7 @@ class BatchNormalizationOpBuilder : public BaseOpBuilder {
         break;
       }
       case QNN_DATATYPE_FLOAT_16: {
-        RETURN_IF_NOT(channel == static_cast<uint32_t>(raw_ptr_length / sizeof(MLFloat16)),
+        RETURN_IF_NOT(channel == static_cast<uint32_t>(raw_ptr_length / sizeof(Ort::Float16_t)),
                       "initializer size not match Qnn data type.");
         break;
       }
@@ -242,10 +242,10 @@ class BatchNormalizationOpBuilder : public BaseOpBuilder {
         break;
       }
       case QNN_DATATYPE_FLOAT_16: {
-        raw_tensor.resize(double_tensor.size() * sizeof(MLFloat16));
-        MLFloat16* raw_ptr = reinterpret_cast<MLFloat16*>(raw_tensor.data());
+        raw_tensor.resize(double_tensor.size() * sizeof(Ort::Float16_t));
+        Ort::Float16_t* raw_ptr = reinterpret_cast<Ort::Float16_t*>(raw_tensor.data());
         for (size_t i = 0; i < double_tensor.size(); ++i) {
-          raw_ptr[i] = MLFloat16(static_cast<float>(double_tensor[i]));
+          raw_ptr[i] = Ort::Float16_t(static_cast<float>(double_tensor[i]));
         }
         break;
       }

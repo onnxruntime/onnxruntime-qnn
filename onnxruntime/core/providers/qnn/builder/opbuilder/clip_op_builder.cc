@@ -129,7 +129,7 @@ static Ort::Status ProcessClipMinMax(QnnModelWrapper& qnn_model_wrapper,
         break;
       }
       case QNN_DATATYPE_FLOAT_16: {
-        MLFloat16 fp16_value = *reinterpret_cast<const MLFloat16*>(val_bytes.data());
+        Ort::Float16_t fp16_value = *reinterpret_cast<const Ort::Float16_t*>(val_bytes.data());
         float_value = fp16_value.ToFloat();
         break;
       }

@@ -293,8 +293,8 @@ Ort::Status PadOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model
       // Fail validation when a fp16 pad_constant_value is not 0.
       std::vector<uint8_t> unpacked_pad_constant_tensor;
       RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(input_info.initializer_tensor, unpacked_pad_constant_tensor));
-      MLFloat16 fp16_value = *reinterpret_cast<const MLFloat16*>(unpacked_pad_constant_tensor.data());
-      RETURN_IF_NOT(0 == fp16_value, "pad_constant_value only support 0 when dtype = QNN_DATATYPE_FLOAT_16.");
+      Ort::Float16_t fp16_value = *reinterpret_cast<const Ort::Float16_t*>(unpacked_pad_constant_tensor.data());
+      RETURN_IF_NOT(0 == static_cast<float>(fp16_value), "pad_constant_value only support 0 when dtype = QNN_DATATYPE_FLOAT_16.");
     }
   }
 

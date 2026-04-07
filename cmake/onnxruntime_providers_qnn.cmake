@@ -9,11 +9,6 @@
        "${ONNXRUNTIME_ROOT}/core/providers/qnn/*.cc"
   )
 
-  # Exclude the simulation EP factory files from the build
-  list(REMOVE_ITEM onnxruntime_providers_qnn_ep_srcs
-       "${ONNXRUNTIME_ROOT}/core/providers/qnn/qnn_provider_factory_simulation.h"
-       "${ONNXRUNTIME_ROOT}/core/providers/qnn/qnn_provider_factory_simulation.cc")
-
   function(extract_qnn_sdk_version_from_yaml QNN_SDK_YAML_FILE QNN_VERSION_OUTPUT)
     file(READ "${QNN_SDK_YAML_FILE}" QNN_SDK_YAML_CONTENT)
     # Match a line of text like "version: 1.33.2"
@@ -54,6 +49,7 @@
   target_include_directories(onnxruntime_providers_qnn PRIVATE ${CMAKE_CURRENT_BINARY_DIR}
                                                                   ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT}
                                                                   ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}
+                                                                  ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session
                                                                   ${onnxruntime_QNN_HOME}/include/QNN
                                                                   ${onnxruntime_QNN_HOME}/include)
 

@@ -6,6 +6,7 @@
 #include <functional>
 #include <gsl/gsl>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -18,15 +19,15 @@
 // Includes when building QNN EP as a shared library
 // #include "core/providers/shared_library/provider_api.h"
 #define ORT_API_MANUAL_INIT
-#include "core/session/onnxruntime_cxx_api.h"
+#include "onnxruntime_cxx_api.h"
 
-#include "core/session/onnxruntime_c_api.h"
+#include "onnxruntime_c_api.h"
 
 #include "core/common/inlined_containers.h"
 #include "core/common/float16.h"
 #include "core/framework/int4.h"
-#include "core/session/onnxruntime_session_options_config_keys.h"
-#include "core/session/onnxruntime_run_options_config_keys.h"
+#include "onnxruntime_session_options_config_keys.h"
+#include "onnxruntime_run_options_config_keys.h"
 
 namespace onnxruntime {
 
