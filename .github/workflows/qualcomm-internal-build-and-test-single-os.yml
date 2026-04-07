@@ -9,61 +9,7 @@ permissions:
 
 on:
   workflow_call:
-    inputs:
-      target_os:
-        default: windows
-        type: string
-      target_arch:
-        default: arm64
-        type: string
-      target_py_vsn:
-        default: "3.12"
-        type: string
-      nightly_build:
-        description: "If true, include a verbose version string in wheel file names."
-        type: boolean
-        default: true
-      version_suffix:
-        description: "Version suffix. If set, the specified suffix will be appended to the version string."
-        type: string
-        default: ""
-      build_runner_arch:
-        description: "The architecture of the build machine to use. X64 Windows are faster, but ARM64 can produce ARM64 wheels."
-        default: "X64"
-        type: string
-      build_test_same_runner:
-        description: "If true, run tests on the same runner that built them."
-        default: true
-        type: boolean
-      test_runner_arch:
-        default: "X64"
-        type: string
-      run_tests:
-        default: true
-        type: boolean
-      test_wheel:
-        default: false
-        type: boolean
-      upload_test_archive:
-        default: false
-        type: boolean
-      upload_wheel:
-        default: true
-        type: boolean
-      build_nuget:
-        default: false
-        type: boolean
-      upload_nuget:
-        default: false
-        type: boolean
-      build_zip:
-        default: false
-        type: boolean
-      upload_zip:
-        default: false
-        type: boolean
-  workflow_dispatch:
-    inputs:
+    inputs: &common_inputs
       target_os:
         description: "The OS for which to build: windows or linux"
         default: windows
@@ -76,13 +22,21 @@ on:
         default: arm64
         type: string
       target_py_vsn:
-        description: "Build a wheel for this version of Python (3.11, 3.12, 3.13, None)"
+        description: "Build a wheel for this version of Python (3.11, 3.12, 3.13, 3.14, None)"
         default: "3.12"
         type: string
       nightly_build:
         description: "If true, include a verbose version string in wheel file names."
         type: boolean
         default: true
+      version_suffix:
+        description: "Version suffix. If set, the specified suffix will be appended to the version string."
+        type: string
+        default: ""
+      build_runner_os:
+        description: "The OS of the build machine to use. Leave blank to use target_os."
+        type: string
+        default: ""
       build_runner_arch:
         description: "The architecture of the build machine to use. X64 Windows are faster, but ARM64 can produce ARM64 wheels."
         default: "X64"
@@ -109,8 +63,22 @@ on:
         type: boolean
       upload_wheel:
         description: "If true, include the wheel as a workflow artifact."
+        default: true
+        type: boolean
+      build_nuget:
         default: false
         type: boolean
+      upload_nuget:
+        default: false
+        type: boolean
+      build_zip:
+        default: false
+        type: boolean
+      upload_zip:
+        default: false
+        type: boolean
+  workflow_dispatch:
+    inputs: *common_inputs
 
 env:
   ORT_NIGHTLY_BUILD: "${{ inputs.nightly_build == true && '1' || '0' }}"
@@ -130,7 +98,7 @@ env:
 jobs:
   build:
     name: "build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
-    runs-on: ["self-hosted", "${{inputs.target_os}}", "${{ inputs.build_runner_arch }}", "Build"]
+    runs-on: ["self-hosted", "${{ inputs.build_runner_os != '' && inputs.build_runner_os || inputs.target_os }}", "${{ inputs.build_runner_arch }}", "Build"]
     defaults:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
