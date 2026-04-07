@@ -1823,9 +1823,9 @@ void QnnBackendManager::CreateTimerThread(uint32_t htp_power_config_client_id) {
         return;
       }
       if (!timer_->Initialize(TimerCallback, timer_callback_arg_.get())) {
-        /*ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Failed to create timer to set performance");
+        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Failed to create timer to set performance");
         timer_callback_arg_.reset();
-        timer_.reset();*/
+        timer_.reset();
       }
     } else {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Failed: Timer is nullptr");

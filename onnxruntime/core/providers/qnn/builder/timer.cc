@@ -71,7 +71,12 @@ bool Timer::Initialize(std::function<void(void*)> callbackFn, void* callbackArg)
     timeout_fn_ = callbackFn;
   }
   std::cerr << "before bkg thread" << std::endl;
-  bkg_thread_ = std::thread(&Timer::BkgTimer, this);
+  try {
+    bkg_thread_ = std::thread(&Timer::BkgTimer, this);
+  } catch (const std::system_error& e) {
+    return false;
+  }
+  //bkg_thread_ = std::thread(&Timer::BkgTimer, this);
   std::cerr << "mid of  bkg thread" << std::endl;
   std::unique_lock<std::mutex> lk(mtx_);
   std::cerr << "mid of initialize" << std::endl;
