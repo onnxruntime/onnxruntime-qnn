@@ -7,6 +7,7 @@
 #include <functional>
 #include <condition_variable>
 #include <atomic>
+#include "core/providers/qnn/ort_api.h"
 
 class Timer {
  public:
