@@ -3,7 +3,6 @@
 
 #pragma once
 
-#include "core/framework/error_code_helper.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_execution_provider.h"
 

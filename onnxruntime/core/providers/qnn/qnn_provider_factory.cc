@@ -9,7 +9,6 @@
 
 #include "QnnCommon.h"
 
-#include "core/framework/error_code_helper.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/soc_utils.h"
