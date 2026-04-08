@@ -1675,10 +1675,10 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
 //          _M_ARM64EC    (MSVC — Windows ARM64EC, x64-compatible ABI on ARM64 hw)
 // Uses AlwaysTrue() guard to prevent MSVC C4702 (unreachable code) after the skip.
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(_M_ARM64EC)
-#define QNN_SKIP_TEST_ON_ARM64(reason)                    \
-  if (::testing::internal::AlwaysTrue()) {                \
-    GTEST_SKIP() << (reason);                             \
-  } else                                                  \
+#define QNN_SKIP_TEST_ON_ARM64(reason)     \
+  if (::testing::internal::AlwaysTrue()) { \
+    GTEST_SKIP() << (reason);              \
+  } else                                   \
     static_assert(true, "")
 #else
 #define QNN_SKIP_TEST_ON_ARM64(reason) \
@@ -1690,10 +1690,10 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
 // Does NOT skip on MSVC Windows ARM64 (_M_ARM64 / _M_ARM64EC).
 // Use QNN_SKIP_TEST_ON_ARM64 instead if the test should also skip on Windows ARM64.
 #if defined(__aarch64__)
-#define QNN_SKIP_TEST_ON_AARCH64(reason)                  \
-  if (::testing::internal::AlwaysTrue()) {                \
-    GTEST_SKIP() << (reason);                             \
-  } else                                                  \
+#define QNN_SKIP_TEST_ON_AARCH64(reason)   \
+  if (::testing::internal::AlwaysTrue()) { \
+    GTEST_SKIP() << (reason);              \
+  } else                                   \
     static_assert(true, "")
 #else
 #define QNN_SKIP_TEST_ON_AARCH64(reason) \
@@ -1703,10 +1703,10 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
 
 // Skips the test on any Linux platform (__linux__), including both x86_64 and AArch64.
 #if defined(__linux__)
-#define QNN_SKIP_TEST_ON_LINUX(reason)                    \
-  if (::testing::internal::AlwaysTrue()) {                \
-    GTEST_SKIP() << (reason);                             \
-  } else                                                  \
+#define QNN_SKIP_TEST_ON_LINUX(reason)     \
+  if (::testing::internal::AlwaysTrue()) { \
+    GTEST_SKIP() << (reason);              \
+  } else                                   \
     static_assert(true, "")
 #else
 #define QNN_SKIP_TEST_ON_LINUX(reason) \
@@ -1718,10 +1718,10 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
 // Targets the HTP simulator environment (x86_64 host running Linux).
 // Does NOT skip on Linux AArch64 (real HTP hardware) or Android.
 #if defined(__linux__) && !defined(__aarch64__)
-#define QNN_SKIP_TEST_ON_LINUX_X86_64(reason)             \
-  if (::testing::internal::AlwaysTrue()) {                \
-    GTEST_SKIP() << (reason);                             \
-  } else                                                  \
+#define QNN_SKIP_TEST_ON_LINUX_X86_64(reason) \
+  if (::testing::internal::AlwaysTrue()) {    \
+    GTEST_SKIP() << (reason);                 \
+  } else                                      \
     static_assert(true, "")
 #else
 #define QNN_SKIP_TEST_ON_LINUX_X86_64(reason) \
