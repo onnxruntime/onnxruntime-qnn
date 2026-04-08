@@ -244,7 +244,7 @@ else:
     BASH_EXECUTABLE = run_and_get_output(["which", "bash"], quiet=True)
 
 
-DEFAULT_PYTHON_LINUX = Path("python3.10")
+DEFAULT_PYTHON_LINUX = Path("python3")
 
 DEFAULT_PYTHON_WINDOWS = Path("python.exe")
 

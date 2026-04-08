@@ -3,17 +3,21 @@
 
 import functools
 import operator
+import os
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from ..task import RunExecutablesTask
 from ..typing import TargetPyVersionT
-from ..util import DEFAULT_PYTHON_LINUX
+from ..util import DEFAULT_PYTHON_LINUX, REPO_ROOT
 
 DOCKER_BUILD_USER = "ortqnnep"
 DOCKER_REPO_ROOT = Path("/ort")
 MANYLINUX_2_34_AARCH64_TAG = "ort-manylinux_2_34_aarch64"
+UBUNTU_22_04_X86_64_TAG = "ort-ubuntu_22_04_x86_64"
+
+DockerPlatformT = Literal["linux/aarch64", "linux/x86_64"]
 
 
 def _argify(arg: str, sep: str, args: Mapping[Any, Any]) -> list[str]:
@@ -26,9 +30,17 @@ class DockerBuildTask(RunExecutablesTask):
         group_name: str | None,
         dockerfile: Path,
         image_name: str,
+        platform: DockerPlatformT,
         build_args: Mapping[str, str] | None = None,
     ) -> None:
-        build_args_list: list[str] = ["--build-arg", f"BUILD_USER={DOCKER_BUILD_USER}"]
+        build_args_list: list[str] = [
+            "--build-arg",
+            f"BUILD_USER={DOCKER_BUILD_USER}",
+            "--build-arg",
+            f"BUILD_UID={os.getuid()!s}",
+            "--build-arg",
+            f"BUILD_GID={os.getgid()!s}",
+        ]
         if build_args is not None:
             build_args_list.extend(_argify("--build-arg", "=", build_args))
         # fmt: off
@@ -36,7 +48,7 @@ class DockerBuildTask(RunExecutablesTask):
             group_name,
             [
                 [
-                    "docker", "build", "--platform", "linux/aarch64",
+                    "docker", "build", "--platform", platform,
                     "--file", str(dockerfile), "--tag", image_name,
                     *build_args_list,
                     str(dockerfile.parent),
@@ -51,6 +63,7 @@ class DockerRunTask(RunExecutablesTask):
         self,
         group_name: str | None,
         image_name: str,
+        platform: DockerPlatformT,
         command: Iterable[str] | Callable[[], Iterable[str]],
         working_dir: Path | None = None,
         volumes: Mapping[Path, Path] | None = None,
@@ -58,7 +71,7 @@ class DockerRunTask(RunExecutablesTask):
         remove: bool = True,
     ) -> None:
         def make_cmd() -> list[list[str]]:
-            cmd = ["docker", "run", "--platform", "linux/aarch64", "--user", DOCKER_BUILD_USER]
+            cmd = ["docker", "run", "--platform", platform, "--user", DOCKER_BUILD_USER]
             if working_dir is not None:
                 cmd.extend(["--workdir", str(working_dir)])
             if volumes is not None:
@@ -83,6 +96,7 @@ class DockerBuildAndTestTask(DockerRunTask):
         tasks: Iterable[str],
         target_py_version: TargetPyVersionT | None,
         image_name: str,
+        platform: DockerPlatformT,
         volumes: Mapping[Path, Path] | None = None,
         remove: bool = True,
         venv_path: Path | None = None,
@@ -105,6 +119,10 @@ class DockerBuildAndTestTask(DockerRunTask):
         volumes_with_caches[get_package_dir()] = Path("/ort_caches/packages")
         volumes_with_caches[get_tools_dir()] = Path("/ort_caches/tools")
 
+        docker_home = REPO_ROOT / "build" / "docker-homes" / image_name
+        docker_home.mkdir(parents=True, exist_ok=True)
+        volumes_with_caches[docker_home] = Path("/home/ortqnnep")
+
         env: dict[str, str] = {
             "ORT_BUILD_PACKAGE_CACHE_PATH": "/ort_caches/packages",
             "ORT_BUILD_TOOLS_PATH": "/ort_caches/tools",
@@ -122,6 +140,7 @@ class DockerBuildAndTestTask(DockerRunTask):
         super().__init__(
             group_name,
             image_name,
+            platform,
             cmd,
             DOCKER_REPO_ROOT,
             volumes_with_caches,
