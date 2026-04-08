@@ -15,7 +15,8 @@ class Timer {
     IDLE,     // Timer is created
     LAUNCH,   // Timer starts counting down
     CALLING,  // Callback function is called
-    DEINIT    // Timer is deinit
+    DEINIT,   // Timer is deinit
+    FAILED    // Timer failed to launch
   };
   // constructor
   Timer() = default;

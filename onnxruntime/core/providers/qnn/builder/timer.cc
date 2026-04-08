@@ -21,10 +21,17 @@ Timer::~Timer() { this->DeInitialize(); }
 void Timer::BkgTimer() {
   
     //std::unique_lock<std::mutex> lk(new_mtx_);
-    std::cerr << "Timer background thread is launched. 1" << std::endl;
-    thread_status_ = threadState::IDLE;
-    std::cerr << "Timer background thread is launched. 2" << std::endl;
-    cv_.notify_all();
+    try {
+      std::cerr << "Timer background thread is launched. 1" << std::endl;
+      thread_status_ = threadState::IDLE;
+      std::cerr << "Timer background thread is launched. 2" << std::endl;
+      cv_.notify_all();
+    } catch (const std::system_error& e) {
+      ORT_UNUSED_PARAMETER(e);
+      std::cerr << "Failed to launch timer background thread." << std::endl;
+      thread_status_ = threadState::FAILED;
+      cv_.notify_all();
+    }
   
   while (true) {
     std::unique_lock<std::mutex> lk(mtx_);
@@ -71,18 +78,23 @@ bool Timer::Initialize(std::function<void(void*)> callbackFn, void* callbackArg)
     timeout_fn_ = callbackFn;
   }
   std::cerr << "before bkg thread" << std::endl;
-  try {
-    bkg_thread_ = std::thread(&Timer::BkgTimer, this);
-  } catch (const std::system_error& e) {
+  //try {
+  bkg_thread_ = std::thread(&Timer::BkgTimer, this);
+  /*} catch (const std::system_error& e) {
     ORT_UNUSED_PARAMETER(e);
     return false;
-  }
+  }*/
   //bkg_thread_ = std::thread(&Timer::BkgTimer, this);
   std::cerr << "mid of  bkg thread" << std::endl;
   std::unique_lock<std::mutex> lk(mtx_);
   std::cerr << "mid of initialize" << std::endl;
-  cv_.wait(lk, [&] { return thread_status_ == threadState::IDLE; });
+  cv_.wait(lk, [&] { return thread_status_ == threadState::IDLE || thread_status_ == threadState::FAILED; });
   std::cerr << "after bkg thread" << std::endl;
+  if (thread_status_ == threadState::FAILED) {
+    std::cerr<< "failed to create the timer thread" << std::endl;
+    return false;
+  }
+  std::cerr << "after failing if condition" << std::endl;
   return true;
 }
 
