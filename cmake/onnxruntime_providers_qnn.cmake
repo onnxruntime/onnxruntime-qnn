@@ -57,6 +57,14 @@
                                                                   ${onnxruntime_QNN_HOME}/include/QNN
                                                                   ${onnxruntime_QNN_HOME}/include)
 
+  # Check if GenieDlc.h is available (introduced in QAIRT SDK 2.45.x)
+  if(EXISTS "${onnxruntime_QNN_HOME}/include/Genie/GenieDlc.h")
+    target_compile_definitions(onnxruntime_providers_qnn PRIVATE GENIE_DLC_HEADER_AVAILABLE)
+    message(STATUS "GenieDlc.h found - DLC support enabled")
+  else()
+    message(STATUS "GenieDlc.h not found - DLC support disabled (older QAIRT SDK)")
+  endif()
+
   # Set preprocessor definitions used in onnxruntime_providers_qnn.rc
   if(WIN32)
     if(NOT QNN_SDK_VERSION)

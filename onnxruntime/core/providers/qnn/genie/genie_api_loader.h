@@ -10,23 +10,27 @@
 #include "../Genie/GenieCommon.h"
 #include "../Genie/GenieLog.h"
 #include "../Genie/GenieNode.h"
+#ifdef GENIE_DLC_HEADER_AVAILABLE
 #include "../Genie/GenieDlc.h"
+#endif
 
 // GenieApi: holds all resolved function pointers
 struct GenieApi {
   decltype(&GenieNodeConfig_createFromJson) NodeConfig_createFromJson;
+#ifdef GENIE_DLC_HEADER_AVAILABLE
   decltype(&GenieDlcConfig_create) DlcConfig_create;
   decltype(&GenieDlcConfig_free) DlcConfig_free;
   decltype(&GenieDlc_create) Dlc_create;
   decltype(&GenieDlc_free) Dlc_free;
   decltype(&GenieDlc_getUseCases) Dlc_getUseCases;
   decltype(&GenieNodeConfig_createFromDlc) NodeConfig_createFromDlc;
-  decltype(&GenieNode_create) Node_create;
-  decltype(&GenieNode_setData) Node_setData;
   decltype(&GenieNode_getData) Node_getData;
   decltype(&GenieNode_execute) Node_execute;
-  decltype(&GenieNode_free) Node_free;
   decltype(&GenieNode_reset) Node_reset;
+#endif
+  decltype(&GenieNode_create) Node_create;
+  decltype(&GenieNode_setData) Node_setData;
+  decltype(&GenieNode_free) Node_free;
   decltype(&GenieNodeConfig_free) NodeConfig_free;
   decltype(&GenieLog_create) Log_create;
   decltype(&GenieNodeConfig_bindLogger) NodeConfig_bindLogger;
