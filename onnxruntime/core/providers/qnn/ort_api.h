@@ -24,7 +24,7 @@
 #include "onnxruntime_c_api.h"
 
 #include "core/providers/qnn/inlined_containers.h"
-#include "core/framework/int4.h"
+#include "core/providers/qnn/int4.h"
 #include "onnxruntime_session_options_config_keys.h"
 #include "onnxruntime_run_options_config_keys.h"
 

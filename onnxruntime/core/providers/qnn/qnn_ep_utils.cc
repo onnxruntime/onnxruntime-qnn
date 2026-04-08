@@ -1692,6 +1692,18 @@ std::vector<OrtNodeGroup> OrtSelectorManager::GetOrtQDQSelections(const OrtGraph
 
 namespace utils {
 
+// QNN-EP COPY START
+// Below implementations are directly copied from "core/common/common.h"
+// Returns whether `key` is in `container`.
+// Like C++20's map/set contains() member function.
+template <typename Key, typename... OtherContainerArgs,
+          template <typename...> typename AssociativeContainer,
+          typename LookupKey>
+inline bool Contains(const AssociativeContainer<Key, OtherContainerArgs...>& container, LookupKey&& key) {
+  return container.find(std::forward<LookupKey>(key)) != container.end();
+}
+// QNN-EP COPY END
+
 std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
     const OrtGraph* graph,
     const OrtApi& ort_api,

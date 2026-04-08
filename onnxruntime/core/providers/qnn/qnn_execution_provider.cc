@@ -33,6 +33,7 @@
 #include "core/providers/qnn/builder/qnn_thread_pool.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/qnn_ep_utils.h"
+#include "core/providers/qnn/make_string.h"
 
 // Forward declarations for NodeUnit-related classes
 namespace onnxruntime {
