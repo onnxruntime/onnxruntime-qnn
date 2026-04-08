@@ -45,7 +45,8 @@ jobs:
       nightly_build: ${{ inputs.nightly_build }}
       target_os: linux
       target_arch: x86_64
-      target_py_vsn: ${{ inputs.target_py_vsn }}
+      # CI machines only have Python 3.10 so we cannot test using other versions.
+      target_py_vsn: "3.10"
 
   build-linux-aarch64-oe-gcc11_2:
       if: ${{ inputs.do_all }}

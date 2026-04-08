@@ -154,7 +154,7 @@ Environment variables
     parser.add_argument(
         "--target-py-version",
         choices=["3.10", "3.11", "3.12", "3.13", "3.14", "None"],
-        default="3.12",
+        default="3.10" if is_host_linux() else "3.12",
         help="[Windows only] Build a wheel for this version of Python",
     )
     parser.add_argument(
@@ -376,7 +376,7 @@ class TaskLibrary:
     if is_host_linux() and is_host_x86_64():
 
         @task
-        @depends(["build_ort_linux_x86_64"])
+        @depends(["build_ort_linux_x86_64", "create_venv"])
         def archive_ort_linux_x86_64(self, plan: Plan) -> str:
             return plan.add_step(
                 BuildEpLinuxTask(
@@ -569,21 +569,9 @@ class TaskLibrary:
     if is_host_linux() and is_host_x86_64():
 
         @task
-        @depends(["create_venv"])
+        @depends(["build_ort_linux_x86_64_ubuntu_22_04"])
         def build_ort_linux_x86_64(self, plan: Plan) -> str:
-            return plan.add_step(
-                BuildEpLinuxTask(
-                    "Building ONNX Runtime for Linux on x86_64",
-                    self.__venv_path,
-                    "linux",
-                    "x86_64",
-                    self.__config,
-                    self.__target_py_version,
-                    self.__ort_prebuilt_root,
-                    self.__qairt_sdk_root,
-                    "build",
-                )
-            )
+            return plan.add_step(NoOpTask())
 
     @task
     @depends(["docker_build_ubuntu_22_04_x86_64"])
