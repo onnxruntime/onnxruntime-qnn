@@ -1285,7 +1285,7 @@ bool OrtBatchNormalizationNodeGroupSelector::Check(const OrtGraph* graph, const 
   // BatchNormalization has 5 inputs: x, scale, bias, mean, var.
   // Require DQ on x and scale (indices 0,1). mean, var may optionally have DQ.
   const int num_dq_nodes = gsl::narrow_cast<int>(dq_nodes.size());
-  if (num_dq_nodes < 3 || num_dq_nodes > 5) {
+  if (num_dq_nodes < 2 || num_dq_nodes > 5) {
     return false;
   }
 

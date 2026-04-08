@@ -50,6 +50,7 @@ jobs:
       windows_arm64_build_zip: true
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
+      build_android_aar: true
 
   upload-wheel-workflow:
     name: "Upload python wheel artifatcs to Artifactory"
@@ -279,3 +280,28 @@ jobs:
 
           # Clean up the temporary .netrc file
           rm -f "$NETRC_FILE"
+
+  upload-android-aar-workflow:
+    name: "Upload Android AAR artifacts to Artifactory"
+    runs-on: [Linux, self-hosted, Build]
+    needs: [build-artifacts]
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup JFrog CLI
+        uses: jfrog/setup-jfrog-cli@v5
+        with:
+          disable-auto-build-publish: true
+          disable-job-summary: true
+        env:
+          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
+          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
+
+      # Download Android AAR package from Artifactory
+      - name: Download AAR from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: android-aarch64-aar
+
+      # TODO: add Publish phase

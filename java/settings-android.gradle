@@ -1,0 +1,16 @@
+rootProject.name = 'onnxruntime-qnn'
+rootProject.buildFileName = 'build-android.gradle'
+
+include ':qnnpluginep'
+project(':qnnpluginep').projectDir = new File('src/main/qnnpluginep')
+
+// Redirect :qnnpluginep build output out of the source tree.
+// CMake passes -DqnnpluginepBuildDir=<path> to avoid polluting src/main/qnnpluginep/build/.
+def qnnpluginepBuildDir = System.properties['qnnpluginepBuildDir']
+if (qnnpluginepBuildDir) {
+    gradle.beforeProject { proj ->
+        if (proj.name == 'qnnpluginep') {
+            proj.buildDir = qnnpluginepBuildDir
+        }
+    }
+}

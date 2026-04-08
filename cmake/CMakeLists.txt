@@ -66,6 +66,7 @@ option(onnxruntime_REDIRECT_STATIC_ANALYSIS_OUTPUTS_TO_FILE "Use a custom SDL Ru
 option(onnxruntime_ENABLE_MEMLEAK_CHECKER "Experimental: Enable memory leak checker in Windows debug build" OFF)
 option(onnxruntime_ENABLE_CONVSYMKERNELAVX2_SAT_CHECKER "Experimental: Enable ConvSymKernelAvx2 assembly saturation checker in build" OFF)
 
+option(onnxruntime_BUILD_JAVA "Build Java bindings." OFF)
 option(onnxruntime_BUILD_UNIT_TESTS "Build ONNXRuntime unit tests" ON)
 option(onnxruntime_USE_PREINSTALLED_EIGEN "Use pre-installed EIGEN. Need to provide eigen_SOURCE_PATH if turn this on." OFF)
 
@@ -824,7 +825,20 @@ endif()
 # From this point on, onnxruntime_EXTERNAL_LIBRARIES should be no longer be modified. It will be used in
 # onnxruntime.cmake which will be included next.
 
-if (onnxruntime_BUILD_UNIT_TESTS)
+# Extract QNN SDK version early so it is available when onnxruntime_java.cmake
+# generates Gradle commands that embed -DqnnVersion=${QNN_SDK_VERSION}.
+# (onnxruntime_providers_qnn.cmake sets this later, too late for java.cmake.)
+if(NOT QNN_SDK_VERSION AND EXISTS "${onnxruntime_QNN_HOME}/sdk.yaml")
+  file(READ "${onnxruntime_QNN_HOME}/sdk.yaml" _qnn_sdk_yaml)
+  string(REGEX MATCH "(^|\n|\r)version: ([0-9]+\\.[0-9]+\\.[0-9]+)" _qnn_ver_match "${_qnn_sdk_yaml}")
+  if(_qnn_ver_match)
+    set(QNN_SDK_VERSION "${CMAKE_MATCH_2}")
+    message(STATUS "QNN SDK version (early extraction): ${QNN_SDK_VERSION}")
+  endif()
+endif()
+
+# onnxruntime_providers_shared is not built for Android target, which is required by UT.
+if (NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Android" AND onnxruntime_BUILD_UNIT_TESTS)
   list(APPEND ONNXRUNTIME_CMAKE_FILES onnxruntime_unittests)
 endif()
 
@@ -839,6 +853,11 @@ if (WIN32 AND NOT GDK_PLATFORM AND NOT CMAKE_CROSSCOMPILING)
 endif()
 
 include(onnxruntime_providers_qnn.cmake)
+
+if (onnxruntime_BUILD_JAVA)
+  message(STATUS "Java Build is enabled")
+  include(onnxruntime_java.cmake)
+endif()
 
 if (UNIX)
   option(BUILD_PKGCONFIG_FILES "Build and install pkg-config files" ON)
@@ -917,7 +936,8 @@ if(DEFINED BUILD_AS_ARM64X)
     include("${CMAKE_CURRENT_SOURCE_DIR}/arm64x.cmake")
 endif()
 
-if(onnxruntime_BUILD_UNIT_TESTS)
+# onnxruntime_providers_shared is not built for Android target, which is required by UT.
+if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Android" AND onnxruntime_BUILD_UNIT_TESTS)
   include(onnxruntime_unittests.cmake)
   include("${CMAKE_CURRENT_SOURCE_DIR}/onnxruntime_test_pch.cmake")
 endif()

@@ -37,6 +37,7 @@ qnn_arch_abi=
 target_py_version=
 use_cache=1
 warnings_as_errors=1
+build_java=
 for i in "$@"; do
   case $i in
     --config=*)
@@ -53,6 +54,10 @@ for i in "$@"; do
       ;;
     --no-warnings-as-errors)
       warnings_as_errors=
+      shift
+      ;;
+    --build-java)
+      build_java=1
       shift
       ;;
     --ort-home=*)
@@ -124,9 +129,6 @@ if [ -n "${target_py_version}" ]; then
   build_venv="${build_dir}/venv-${target_py_version}"
   if [ ! -d "${build_venv}" ]; then
     log_debug "Creating venv for build in ${build_venv}"
-
-    # TODO: [AISW-156088]: Adopt uvx for POSIX-like builds
-    #  - Also consider dropping 3.10 support to match upstream.
     "python${target_py_version}" -m venv "${build_venv}"
   fi
 
@@ -203,7 +205,13 @@ case "${target_platform}" in
       rm -fr "${build_dir}/${config}"
     fi
 
-    PATH="$(get_java_bindir):${PATH}"
+    # JDK 21's jlink is not compatible with Android 34's core modules,
+    # so Java 17 is used instead.
+    PATH="$(get_java17_bindir):${PATH}"
+    if [ -n "${build_java}" ]; then
+      export JAVA_HOME="$(get_java17_contentdir)"
+      export GRADLE_USER_HOME="${build_root}/gradle-home"
+    fi
 
     if [ -n "${ANDROID_HOME:-}" -a -n "${ANDROID_NDK_HOME:-}" ]; then
       android_sdk_path="${ANDROID_HOME}"
@@ -223,6 +231,9 @@ case "${target_platform}" in
                    --android_ndk_path "${android_ndk_path}" \
                    --android_abi "arm64-v8a" \
                    --android_api "27")
+    if [ -n "${build_java}" ]; then
+      platform_args+=(--build_java)
+    fi
     case "${mode}" in
       build)
         action_args+=("--android")
