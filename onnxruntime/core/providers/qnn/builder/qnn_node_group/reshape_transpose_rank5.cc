@@ -13,7 +13,6 @@
 #include <vector>
 #include <sstream>
 
-#include "core/common/inlined_containers.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/builder/op_builder_factory.h"
