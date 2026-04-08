@@ -285,6 +285,27 @@ class TaskLibrary:
             else:
                 raise NotImplementedError("Archiving for Android on this host is not supported.")
 
+        @task
+        @depends(["build_ort_android_aarch64_aar"])
+        def archive_ort_android_aarch64_aar(self, plan: Plan) -> str:
+            if is_host_linux() or is_host_mac():
+                return plan.add_step(
+                    BuildEpLinuxTask(
+                        "Archiving ONNX Runtime for Android AAR",
+                        self.__venv_path,
+                        "android",
+                        "aarch64",
+                        self.__config,
+                        None,  # target_py_version
+                        self.__ort_prebuilt_root,
+                        self.__qairt_sdk_root,
+                        "archive",
+                        extra_args=["--build-java"],
+                    )
+                )
+            else:
+                raise NotImplementedError("Archiving for Android AAR on this host is not supported.")
+
     if is_host_linux() or is_host_mac():
 
         @task
@@ -447,6 +468,27 @@ class TaskLibrary:
                 )
             else:
                 raise NotImplementedError("Building for Android on this host is not supported.")
+
+        @task
+        @depends(["create_venv"])
+        def build_ort_android_aarch64_aar(self, plan: Plan) -> str:
+            if is_host_linux() or is_host_mac():
+                return plan.add_step(
+                    BuildEpLinuxTask(
+                        "Building ONNX Runtime for Android AAR",
+                        self.__venv_path,
+                        "android",
+                        "aarch64",
+                        self.__config,
+                        None,  # target_py_version
+                        self.__ort_prebuilt_root,
+                        self.__qairt_sdk_root,
+                        "build",
+                        extra_args=["--no-warnings-as-errors", "--build-java"],
+                    )
+                )
+            else:
+                raise NotImplementedError("Building for Android AAR on this host is not supported.")
 
     @task
     @depends(["docker_build_manylinux_2_34_aarch64"])

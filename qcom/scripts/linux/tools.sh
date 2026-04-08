@@ -69,6 +69,20 @@ function get_java_bindir() {
   fi
 }
 
+#
+# Get the directory containing java 17, installing it if necessary.
+#
+function get_java17_bindir() {
+  get_package_bindir java17_$(get_host_platform)
+}
+
+#
+# Get the root of the java 17 installation, installing it if necessary.
+#
+function get_java17_contentdir() {
+  get_package_contentdir java17_$(get_host_platform)
+}
+
 function get_linux_oe_gcc112_toolchain_root() {
     get_package_contentdir "linux_oe_gcc112_toolchain"
 }

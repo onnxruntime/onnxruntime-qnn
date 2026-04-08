@@ -1,0 +1,54 @@
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
+
+apply plugin: 'com.android.library'
+apply plugin: 'kotlin-android'
+
+// Directory containing the ABI subdirectory with libonnxruntime_providers_qnn.so.
+// Passed from CMake via -DqnnEpJniLibsDir=<path>.
+def qnnEpJniLibsDir = System.properties['qnnEpJniLibsDir']
+
+android {
+	compileSdkVersion 34
+
+	defaultConfig {
+		minSdkVersion System.properties.get("minSdkVer") ?: 24
+		targetSdkVersion 34
+		consumerProguardFiles 'consumer-rules.pro'
+	}
+
+	buildTypes {
+		release {
+			minifyEnabled false
+			proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+		}
+	}
+
+	compileOptions {
+		sourceCompatibility JavaVersion.VERSION_11
+		targetCompatibility JavaVersion.VERSION_11
+	}
+
+	kotlinOptions {
+		jvmTarget = '11'
+	}
+
+	sourceSets {
+		main {
+			// Bundle libonnxruntime_providers_qnn.so directly into this AAR.
+			// qnnEpJniLibsDir contains ABI subdirectories (e.g. arm64-v8a/).
+			if (qnnEpJniLibsDir != null) {
+				jniLibs.srcDirs += [qnnEpJniLibsDir]
+			}
+		}
+	}
+
+	namespace 'ai.onnxruntime.qnnpluginep'
+}
+
+// Rename the output AAR to onnxruntime-android-qnn
+android.libraryVariants.configureEach { variant ->
+	variant.outputs.configureEach { output ->
+		outputFileName = "onnxruntime-android-qnn.aar"
+	}
+}

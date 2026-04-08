@@ -1,0 +1,97 @@
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
+
+plugins {
+	id 'com.android.application'
+	id 'kotlin-android'
+}
+
+def minSdkVer = System.properties.get("minSdkVer")?:24
+def qnnVersion = System.properties['qnnVersion']
+def ortVersion = System.properties['ortVersion']
+
+android {
+	compileSdkVersion 34
+
+	defaultConfig {
+		applicationId "ai.onnxruntime.example.javavalidator"
+		minSdkVersion minSdkVer
+		targetSdkVersion 34
+		versionCode 1
+		versionName "1.0"
+
+		testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+
+		buildConfigField "boolean", "IS_QNN_BUILD", "true"
+	}
+
+	buildTypes {
+		release {
+			minifyEnabled false
+			proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+		}
+	}
+	compileOptions {
+		sourceCompatibility JavaVersion.VERSION_11
+		targetCompatibility JavaVersion.VERSION_11
+	}
+	kotlinOptions {
+		jvmTarget = '11'
+	}
+	packagingOptions {
+		jniLibs {
+			useLegacyPackaging = true
+		}
+	}
+	sourceSets {
+		main {
+			manifest.srcFile 'src/main/AndroidManifestQnn.xml'
+		}
+	}
+	namespace 'ai.onnxruntime.example.javavalidator'
+}
+
+// Check if the requested ORT version exists in Maven repository
+// If version 1.24.4 is not available, fallback to 1.24.3
+def getAvailableOrtVersion(String requestedVersion) {
+	// Only check for version 1.24.4, return other versions as-is
+	if (requestedVersion != '1.24.4') {
+		return requestedVersion
+	}
+	
+	try {
+		// Attempt to resolve version 1.24.4 from Maven repository
+		def config = configurations.detachedConfiguration(
+			dependencies.create("com.microsoft.onnxruntime:onnxruntime-android:${requestedVersion}")
+		)
+		config.resolve()
+		logger.info("Version ${requestedVersion} found in Maven repository")
+		return requestedVersion
+	} catch (Exception e) {
+		logger.warn("Version ${requestedVersion} not found in Maven repository, falling back to 1.24.3")
+		return '1.24.3'
+	}
+}
+
+dependencies {
+	implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
+	implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
+	implementation 'androidx.core:core-ktx:1.3.2'
+	implementation 'androidx.appcompat:appcompat:1.2.0'
+	implementation 'com.google.android.material:material:1.3.0'
+	implementation 'androidx.constraintlayout:constraintlayout:2.0.4'
+	testImplementation 'junit:junit:4.+'
+	androidTestImplementation "androidx.test.ext:junit:1.1.5"
+	androidTestImplementation "androidx.test.espresso:espresso-core:3.5.0"
+
+	androidTestImplementation "androidx.test:runner:1.5.2"
+	androidTestImplementation "androidx.test:rules:1.5.0"
+	androidTestImplementation 'com.microsoft.appcenter:espresso-test-extension:1.4'
+
+	// ORT core, QNN EP (includes libonnxruntime_providers_qnn.so + Kotlin helpers), and QNN runtime
+	// Dynamically check and use available version from Maven repository
+	def resolvedOrtVersion = getAvailableOrtVersion(ortVersion)
+	implementation "com.microsoft.onnxruntime:onnxruntime-android:${resolvedOrtVersion}"
+	implementation(name: 'onnxruntime-android-qnn', ext: 'aar')
+	implementation "com.qualcomm.qti:qnn-runtime:$qnnVersion"
+}
