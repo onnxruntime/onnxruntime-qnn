@@ -83,6 +83,10 @@ jobs:
         if: always() # always run even if the previous step fails
         with:
           check_name: ${{inputs.target_os}}-${{inputs.target_arch}}-pynone-test-results
+          group_reports: false
+          include_passed: true
+          detailed_summary: true
+          verbose_summary:  false
           report_paths: |
             ${{ github.workspace }}/build/qdc-${{ env.QDC_RESULTS_ARCH }}/*.results.xml
 
