@@ -8,8 +8,6 @@
 #include <gsl/gsl_util>
 #include "gtest/gtest.h"
 
-#include "core/graph/graph.h"
-#include "core/graph/node_attr_utils.h"
 #include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 

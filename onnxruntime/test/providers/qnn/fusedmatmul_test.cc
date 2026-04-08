@@ -4,7 +4,6 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <string>
-#include "core/graph/constants.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 
 #include "gtest/gtest.h"

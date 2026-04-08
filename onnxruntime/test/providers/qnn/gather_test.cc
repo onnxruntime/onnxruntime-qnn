@@ -4,8 +4,6 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <string>
-#include "core/graph/graph.h"
-#include "core/graph/node_attr_utils.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
 
