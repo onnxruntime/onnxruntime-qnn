@@ -49,6 +49,8 @@ class QnnModelWrapper {
                   const Ort::Logger& logger,
                   const QNN_INTERFACE_VER_TYPE& qnn_interface,
                   const Qnn_BackendHandle_t& backend_handle,
+                  const QNN_INTERFACE_VER_TYPE& qnn_validator_interface,
+                  const Qnn_BackendHandle_t& backend_validator_handle,
                   const GraphInputOutputInfo& graph_inputs,
                   const GraphInputOutputInfo& graph_outputs,
                   QnnBackendType qnn_backend_type,
@@ -58,6 +60,8 @@ class QnnModelWrapper {
         logger_(logger),
         qnn_interface_(qnn_interface),
         backend_handle_(backend_handle),
+        qnn_validator_interface_(qnn_validator_interface),
+        backend_validator_handle_(backend_validator_handle),
         graph_inputs_(graph_inputs),
         graph_outputs_(graph_outputs),
         qnn_backend_type_(qnn_backend_type),
@@ -99,6 +103,9 @@ class QnnModelWrapper {
                               std::vector<Qnn_Tensor_t>&& input_tensors,
                               std::vector<Qnn_Tensor_t>&& output_tensors,
                               std::vector<Qnn_Param_t>&& params) const;
+
+  Ort::Status ValidateQnnNode(QnnOpConfigWrapper& op_config_wrapper,
+                              std::string& error_msg) const;
 
   bool CreateQnnNode(const std::string& name,
                      const std::string& package_name,
@@ -479,6 +486,8 @@ class QnnModelWrapper {
   const Ort::Logger& logger_;
   const QNN_INTERFACE_VER_TYPE& qnn_interface_;
   const Qnn_BackendHandle_t& backend_handle_;
+  const QNN_INTERFACE_VER_TYPE& qnn_validator_interface_;
+  const Qnn_BackendHandle_t& backend_validator_handle_;
   Qnn_GraphHandle_t graph_ = nullptr;
   std::string graph_name_ = "";
   // QNN context that holds the QNN graph referenced by `graph_`

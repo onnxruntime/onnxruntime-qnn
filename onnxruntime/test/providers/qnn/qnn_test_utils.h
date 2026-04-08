@@ -1657,7 +1657,10 @@ class QnnCPUBackendTests : public ::testing::Test {
  protected:
   void SetUp() override;
 
+  [[nodiscard]] BackendSupport IsIRBackendSupported() const;
+
   static BackendSupport cached_cpu_support_;  // Set by the first test using this fixture.
+  static BackendSupport cached_ir_support_;   // Set by the first test using this fixture.
 };
 
 // Testing fixture class for Genie backend tests. Checks if the Genie backend is available before the test

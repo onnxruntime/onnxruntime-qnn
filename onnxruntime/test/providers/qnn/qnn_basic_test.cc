@@ -979,14 +979,18 @@ TEST_F(QnnHTPBackendTests, TestNHWCResizeShapeInference_qdq_sizes_opset18) {
   RunNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx", TestBackend::Htp);
 }
 
-// Test that QNN Ir generates the expected file for a model meant to run on the QNN HTP backend.
-
-TEST_F(QnnHTPBackendTests, QnnIr_OutputFiles) {
+// Test that QNN Ir generates the expected DLC file for a model meant to run on the QNN HTP backend,
+// using the HTP backend's validator.
+TEST_F(QnnHTPBackendTests, QnnIr_HtpValidator_OutputFiles) {
   BackendSupport ir_backend_support = IsIRBackendSupported();
   if (ir_backend_support == BackendSupport::UNSUPPORTED) {
     GTEST_SKIP() << "QNN IR backend is not available! Skipping test.";
   }
   ASSERT_NE(ir_backend_support, BackendSupport::SUPPORT_ERROR) << "Failed to check if QNN IR backend is available.";
+
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "HTP validator backend is not fully supported on V68 architecture. Skipping test.";
+  }
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
@@ -996,7 +1000,7 @@ TEST_F(QnnHTPBackendTests, QnnIr_OutputFiles) {
   ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
 
   InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
-                      TestBackend::Htp,      // backend
+                      TestBackend::Htp,      // backend (also used as the validator)
                       registered_ep_device,  // registered_ep_device
                       TestBackend::Ir);      // serializer backend
 
@@ -2079,8 +2083,15 @@ TEST_F(QnnCPUBackendTests, DISABLED_TestSimulatedQnnEp) {
 }
 #endif  // !BUILD_QNN_EP_STATIC_LIB
 
-// Test that QNN Ir generates the expected files for a model meant to run on any QNN backend.
-TEST_F(QnnIRBackendTests, QnnIr_OutputFiles) {
+// Test that QNN Ir generates the expected DLC file for a model meant to run on the QNN CPU backend,
+// using the CPU backend's validator.
+TEST_F(QnnCPUBackendTests, QnnIr_CpuValidator_OutputFiles) {
+  BackendSupport ir_backend_support = IsIRBackendSupported();
+  if (ir_backend_support == BackendSupport::UNSUPPORTED) {
+    GTEST_SKIP() << "QNN IR backend is not available! Skipping test.";
+  }
+  ASSERT_NE(ir_backend_support, BackendSupport::SUPPORT_ERROR) << "Failed to check if QNN IR backend is available.";
+
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
 
@@ -2089,7 +2100,34 @@ TEST_F(QnnIRBackendTests, QnnIr_OutputFiles) {
   ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
 
   InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
-                      TestBackend::Ir,       // backend
+                      TestBackend::Cpu,      // backend (also used as the validator)
+                      registered_ep_device,  // registered_ep_device
+                      TestBackend::Ir);      // serializer backend
+
+  ASSERT_TRUE(std::filesystem::exists(qnn_dlc_dir));
+
+  int file_count = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(qnn_dlc_dir)) {
+    EXPECT_TRUE(entry.is_regular_file());
+    EXPECT_EQ(entry.path().extension(), ".dlc");
+    ++file_count;
+  }
+  EXPECT_EQ(file_count, 1);
+}
+
+// Test that QNN Ir generates the expected DLC file using the QnnIr backend itself as the validator.
+// Only requires host-side compilation capability (backendCreate + backendValidateOpConfig) and does
+// NOT require inference hardware, so it can run on Windows x64 development hosts.
+TEST_F(QnnIRBackendTests, QnnIr_IrValidator_OutputFiles) {
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
+
+  // Remove pre-existing QNN Ir output files. Note that fs::remove_all() can handle non-existing paths.
+  std::filesystem::remove_all(qnn_dlc_dir);
+  ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
+
+  InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
+                      TestBackend::Ir,       // backend (also used as the validator)
                       registered_ep_device,  // registered_ep_device
                       TestBackend::Ir);      // serializer backend
 

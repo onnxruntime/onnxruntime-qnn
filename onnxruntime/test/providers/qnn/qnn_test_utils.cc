@@ -578,6 +578,14 @@ BackendSupport QnnHTPBackendTests::IsIRBackendSupported() const {
   return cached_ir_support_;
 }
 
+BackendSupport QnnCPUBackendTests::IsIRBackendSupported() const {
+  if (cached_ir_support_ == BackendSupport::SUPPORT_UNKNOWN) {
+    cached_ir_support_ = test::GetIRSupport();
+  }
+
+  return cached_ir_support_;
+}
+
 // TODO: Consider using public DeviceCompatibility API for this function
 static BackendSupport GetCPUSupport() {
   return BackendSupport::SUPPORTED;
@@ -647,6 +655,7 @@ BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORT
 #endif  // defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
 
 BackendSupport QnnHTPBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
+BackendSupport QnnCPUBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnIRBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnGPUBackendTests::cached_gpu_support_ = BackendSupport::SUPPORT_UNKNOWN;
 
