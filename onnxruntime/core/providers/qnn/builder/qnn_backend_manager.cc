@@ -1147,6 +1147,7 @@ Ort::Status QnnBackendManager::CreateContextFromListAsyncWithCallback(const QnnC
     RETURN_IF_ERROR(file_mapper_->GetContextBinMappedMemoryPtr(context_bin_filepath, &buffer));
 
     auto sys_ctx_handle = GetSystemContextHandle();
+    RETURN_IF(sys_ctx_handle == nullptr, "System context handle is null.");
 
     uint32_t graph_count = 0;
     QnnSystemContext_GraphInfo_t* graphs_info = nullptr;
@@ -1354,6 +1355,7 @@ Ort::Status QnnBackendManager::GetMaxSpillFillBufferSize(unsigned char* buffer,
   // spill fill starts from 2.28
 #if QNN_API_VERSION_MAJOR == 2 && (QNN_API_VERSION_MINOR >= 21)
   auto sys_ctx_handle = GetSystemContextHandle();
+  RETURN_IF(sys_ctx_handle == nullptr, "System context handle is null.");
 
   uint32_t graph_count = 0;
   QnnSystemContext_GraphInfo_t* graphs_info = nullptr;
@@ -1439,6 +1441,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
 #endif
 
   auto sys_ctx_handle = GetSystemContextHandle();
+  RETURN_IF(sys_ctx_handle == nullptr, "System context handle is null.");
 
   uint32_t graph_count = 0;
   QnnSystemContext_GraphInfo_t* graphs_info = nullptr;
