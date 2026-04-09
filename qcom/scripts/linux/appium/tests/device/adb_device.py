@@ -17,7 +17,7 @@ class AdbDevice(DeviceBase):
     def run_adb(self, adb_args: list[str], check: bool, capture_output: bool = False) -> list[str] | None:
         res = self.__run_adb(adb_args, check, capture_output=capture_output)
         if capture_output:
-            return res.stdout.decode("utf-8").split("\n")
+            return [x.strip("\r") for x in res.stdout.decode("utf-8").split("\n")]
         return None
 
     def logcat(self, regex: str | None) -> str:

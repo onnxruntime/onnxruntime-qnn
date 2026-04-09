@@ -1,7 +1,9 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
-from pathlib import Path
+import subprocess
+import tempfile
+from pathlib import Path, PurePosixPath
 
 from device import DeviceBase, device_from_url
 from ort_test_config import OrtTestConfig, default_test_config
@@ -54,6 +56,27 @@ class TestBase:
         self.device.shell([f"sh -c 'chmod +x {self.config().device_build_root}/*'"])
 
     def copy_logs(self):
-        self.device.shell(
-            [f"sh -c 'cp {self.config().test_results_device_glob} {self.config().qdc_log_path}'"],
+        results_glob = self.config().test_results_device_glob
+        copy_results_cmd = f'find {PurePosixPath(results_glob).parent} -path "{results_glob}" -print -exec cp "{{}}" {self.config().qdc_log_path} ";"'
+        self.device.shell([f"sh -c '{copy_results_cmd}'"])
+
+        # This is a bit convoluted, but we need to convert our model test logs to JUnit XML files and
+        # then have those included in the QDC job's artifacts. Therefore, we pull relevant logs, process
+        # them on the host, and then put them back on the device where QDC will find them.
+        device_results_log_glob = (
+            f"{self.config().device_results_root}/{self.config().model_test_results_filename_glob}"
         )
+        find_logs_cmd = f'find {PurePosixPath(device_results_log_glob).parent} -path "{device_results_log_glob}" -print'
+        log_files = self.device.shell([f"sh -c '{find_logs_cmd}'"], capture_output=True)
+        assert log_files is not None
+        log_files = [x for x in log_files if x != ""]
+        log_to_xml = Path(self.config().host_qcom_scripts_path) / "all" / "model_test_log_to_junit_xml.py"
+        with tempfile.TemporaryDirectory(prefix="ModelTestLogToXml-") as tmpdir:
+            tmppath = Path(tmpdir)
+            for log_filename in log_files:
+                host_log_path = tmppath / Path(log_filename).name
+                host_xml_path = host_log_path.with_suffix(".xml")
+                self.device.pull(Path(log_filename), host_log_path)
+                with open(host_xml_path, "w") as results_xml:
+                    subprocess.run([log_to_xml, host_log_path], stdout=results_xml, check=True)
+                self.device.push(host_xml_path, Path(self.config().qdc_log_path))

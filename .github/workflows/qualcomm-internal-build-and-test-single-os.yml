@@ -129,7 +129,20 @@ jobs:
         if: ${{ always() && inputs.run_tests && inputs.build_test_same_runner }} # always run even if the previous step fails
         with:
           check_name: ${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-test-results
+          group_reports: false
+          include_passed: true
+          detailed_summary: true
+          verbose_summary:  false
           report_paths: |
+            ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v7
+        if: ${{ always() && inputs.run_tests && inputs.build_test_same_runner }} # always run even if the previous step fails
+        with:
+          name: ORT ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Test Results
+          retention-days: 7
+          path: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
       - name: Setup JFrog CLI
@@ -209,10 +222,15 @@ jobs:
         if: always() # always run even if the previous step fails
         with:
           check_name: ${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-test-results
+          group_reports: false
+          include_passed: true
+          detailed_summary: true
+          verbose_summary:  false
           report_paths: |
             ${{ github.workspace }}/build/${{inputs.target_os}}-${{inputs.target_arch}}/${{ env.BUILD_CONFIG_DIR }}/*.results.xml
 
-      - uses: actions/upload-artifact@v7
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v7
         if: always() # always run even if the previous step fails
         with:
           name: ORT ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Test Results
