@@ -1,7 +1,7 @@
 # ONNX Runtime QNN Execution Provider v2.1.0
 
-**ONNX Runtime Compatibility:** v1.24.4
-**QAIRT SDK Compatibility:** 2.45.0 (>= 2.34 required for HTP weight sharing on ARM64)
+**ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.24.4)
+**QAIRT SDK Compatibility:** 2.45.0
 
 ```
 pip install onnxruntime
@@ -28,7 +28,7 @@ Enabled extended UDMA (Unified DMA) mode for v81+ hardware via the `extended_udm
 Enabled Windows file mapping of weights and context binaries on ARM64. Multiple ORT sessions can share a single loaded context binary, eliminating per-session heap allocation. Significantly improves memory efficiency and initialization time for LLM-scale deployments. Automatically disabled when `context_embed_mode=1`.
 
 ### HTP Weight Sharing on ARM64
-Enabled HTP weight sharing on ARM64 when QNN API version >= 2.34. A warning is logged on unsupported platforms or older API versions.
+Enabled HTP weight sharing on ARM64. A warning is logged on unsupported platforms.
 
 ### Parallelized Graph Prepare
 Introduced `QnnJobThreadPool` to parallelize graph finalization during `ComposeGraph`. Reduces ORT session creation time for models with many subgraphs.
@@ -93,42 +93,22 @@ Various correctness and stability fixes across the EP.
 ## Infrastructure & Packaging
 
 - **Unified x64 + ARM64EC wheel** — Single Python wheel supports both Windows x64 and Windows ARM64 targets
-- **Qualcomm Device Cloud SDK** migrated to Qualcomm Software Center (v0.3.0)
-- **NuGet package** — Fixed broken manifest links and added Artifactory upload error handling
 
 ---
 
-## Dependencies
-
-| Component | v2.0.0 | v2.1.0 |
-|---|---|---|
-| **ONNX Runtime** | 1.24.1 | 1.24.4 |
-| **QAIRT SDK** | 2.42.0 | 2.45.0 |
-
 ### Platform Support
 
-| Package | Windows ARM64 | Windows x64 | Linux x64 | Linux AArch64 |
-|---|---|---|---|---|
-| Python Wheel | Inference | AOT compilation + Inference | AOT compilation | Inference |
-| NuGet | Inference | — | — | — |
-| ZIP | Inference | — | — | — |
+| Package | Windows ARM64 | Windows x64 |
+|---|---|---|
+| Python Wheel | Inference | AOT compilation + Inference |
+| NuGet | Inference | — |
+| ZIP | Inference | — |
 
 ---
 
 ## Known Issues
 
-- **SpaceToDepth FP32 accuracy** — FP32 tests for SpaceToDepth are disabled due to known accuracy issues. Investigation ongoing.
-
----
-
-## Resources
-
-| Topic | Link |
-|---|---|
-| QNN EP documentation | [QNN-ExecutionProvider.md](execution_providers/QNN-ExecutionProvider.md) |
-| Build from source | [Build Guide](execution_providers/build.md) |
-| Development guide | [Development Guide](execution_providers/development.md) |
-| Plugin EP overview | [Plugin EP Libraries](https://onnxruntime.ai/docs/execution-providers/plugin-ep-libraries/) |
+- **SpaceToDepth FP32 accuracy** — FP32 tests for SpaceToDepth are disabled due to known accuracy issues. Will be fixed in the next release.
 
 ---
 
