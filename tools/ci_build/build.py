@@ -354,10 +354,10 @@ def generate_build_tree(
                 add_default_definition(cmake_extra_defines, "gtest_force_shared_crt", "ON")
 
     if qnn_home and os.path.exists(qnn_home):
-        cmake_args += ["-Donnxruntime_QNN_HOME=" + qnn_home]
+        cmake_args += ["-Donnxruntime_QNN_HOME=" + Path(qnn_home).as_posix()]
 
     if ort_home and os.path.exists(ort_home):
-        cmake_args += ["-Donnxruntime_ORT_HOME=" + ort_home]
+        cmake_args += ["-Donnxruntime_ORT_HOME=" + Path(ort_home).as_posix()]
 
     if args.use_full_protobuf or args.gen_doc or args.enable_generic_interface:
         cmake_args += ["-Donnxruntime_USE_FULL_PROTOBUF=ON", "-DProtobuf_USE_STATIC_LIBS=ON"]

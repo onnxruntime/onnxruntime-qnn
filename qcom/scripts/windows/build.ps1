@@ -89,7 +89,7 @@ else {
 $QairtSdkVersion = Get-QairtSdkVersion -QairtSdkRoot $QairtSdkRoot
 
 if ($Mode -eq "generate_sln") {
-    $CMakeGenerator = "Visual Studio 17 2022"
+    $CMakeGenerator = (Get-InstalledVsGenerator).Generator
     $BuildIsDirty = $true
 }
 else {
@@ -284,7 +284,7 @@ else {
                     & cmake --build $BuildOutputDir --config $Config
                 }
 
-                if ($CMakeGenerator -eq "Visual Studio 17 2022") {
+                if ($CMakeGenerator -in @("Visual Studio 17 2022", "Visual Studio 18 2026")) {
                     $BuildOutputDir = (Join-Path $BuildOutputDir $Config)
                 }
 

@@ -32,9 +32,8 @@ function Enter-MsvcEnv() {
         default { throw "Unknown target arch $TargetArch." }
     }
 
-    & "$env:ProgramW6432\Microsoft Visual Studio\2022\Professional\Common7\Tools\Launch-VsDevShell.ps1" `
-        -Arch $MsvcArch `
-        -SkipAutomaticLocation
+    $VsInstall = Get-InstalledVsGenerator
+    & $VsInstall.DevShell -Arch $MsvcArch -SkipAutomaticLocation
 
     if (-not $?) {
         throw "Could not activate MSVC environment for target arch $TargetArch"
@@ -79,6 +78,23 @@ function Exit-PyVenv() {
     $env:Path = $PathNoVenv
 }
 
+function Get-InstalledVsGenerator() {
+    $VsInstalls = @(
+        @{ Dir = "18"; Generator = "Visual Studio 18 2026" },
+        @{ Dir = "2022"; Generator = "Visual Studio 17 2022" }
+    )
+    $Editions = @("Enterprise", "Professional", "Community", "Preview")
+    foreach ($vs in $VsInstalls) {
+        foreach ($edition in $Editions) {
+            $DevShell = "$env:ProgramW6432\Microsoft Visual Studio\$($vs.Dir)\$edition\Common7\Tools\Launch-VsDevShell.ps1"
+            if (Test-Path $DevShell) {
+                return [PSCustomObject]@{ Generator = $vs.Generator; DevShell = $DevShell }
+            }
+        }
+    }
+    throw "No supported Visual Studio installation found (2026 or 2022)."
+}
+
 function Get-DefaultCMakeGenerator() {
     param (
         [Parameter(Mandatory = $true)]
@@ -92,7 +108,7 @@ function Get-DefaultCMakeGenerator() {
         "Ninja"
     } else {
         Write-Host "Cross compiling for $Arch on $HostArch host. Cannot use Ninja."
-        "Visual Studio 17 2022"
+        (Get-InstalledVsGenerator).Generator
     }
 }
 
