@@ -1,3 +1,144 @@
+# ONNX Runtime QNN Execution Provider v2.1.0
+
+**ONNX Runtime Compatibility:** v1.24.4
+**QAIRT SDK Compatibility:** 2.45.0 (>= 2.34 required for HTP weight sharing on ARM64)
+
+```
+pip install onnxruntime
+pip install onnxruntime-qnn==2.1.0
+```
+
+---
+
+## Highlights
+
+QNN EP 2.1.0 adds Genie backend support for on-device LLM inference, 64-bit UDMA for next-gen hardware, seven new operators, four graph-level fusions, and significant memory and startup performance improvements for large model deployments on ARM64 Windows.
+
+---
+
+## New Features
+
+### Genie Backend Support
+Added Genie backend integration for ONNX Runtime, enabling on-device LLM inference through the Qualcomm Genie runtime. Genie operates on pre-compiled context binaries and provides optimized execution for generative AI workloads.
+
+### 64-bit Extended UDMA Mode
+Enabled extended UDMA (Unified DMA) mode for v81+ hardware via the `extended_udma` provider option. Allows far-mapping of weights and spill/fill buffers, expanding addressable memory for large models on next-generation Qualcomm devices.
+
+### File-Mapped Weights on ARM64 Windows
+Enabled Windows file mapping of weights and context binaries on ARM64. Multiple ORT sessions can share a single loaded context binary, eliminating per-session heap allocation. Significantly improves memory efficiency and initialization time for LLM-scale deployments. Automatically disabled when `context_embed_mode=1`.
+
+### HTP Weight Sharing on ARM64
+Enabled HTP weight sharing on ARM64 when QNN API version >= 2.34. A warning is logged on unsupported platforms or older API versions.
+
+### Parallelized Graph Prepare
+Introduced `QnnJobThreadPool` to parallelize graph finalization during `ComposeGraph`. Reduces ORT session creation time for models with many subgraphs.
+
+### Runtime Version Query
+Added `__version__` attribute to the QNN EP Python package:
+```python
+import onnxruntime_qnn as qnn_ep
+print(qnn_ep.__version__)
+```
+
+### GetHardwareDeviceIncompatibilityDetails API
+Implemented the `GetHardwareDeviceIncompatibilityDetails` API for the QNN ABI EP, enabling callers to retrieve structured details about hardware incompatibilities at runtime.
+
+### Offline x64 Compilation with MEMHANDLE IO Type
+Extended offline compilation support to x64 platforms for graphs using MEMHANDLE IO type (previously ARM64-only).
+
+---
+
+## New Operator Support (7 new ops)
+
+| Operator | Backends | Notes |
+|---|---|---|
+| **Softplus** | CPU, HTP | U8/U16 quantized on HTP; ranks > 4 on CPU only |
+| **RotaryEmbedding** | HTP | QNN_OP_ROPE via new RopeOpBuilder |
+| **Tan** | CPU, HTP | Standard trigonometric op |
+| **IsNaN** | CPU, HTP | Boolean output |
+| **GroupNormalization** | HTP | Group normalization |
+| **SimplifiedLayerNormalization** | HTP | RMSNorm-style normalization |
+| **RoiAlign** | HTP | Region of interest alignment |
+
+### Improved Operators
+
+- **LSTM** — Changed from unrolled multi-op representation to a single monolithic QNN LSTM op on HTP. Exposed as `monolithic_lstm` session option. May significantly reduce graph finalization time for LSTM-heavy models.
+- **SpaceToDepth** — Added DCR (Depth-Column-Row) mode attribute.
+- **Resize** — Added cubic interpolation mode.
+
+---
+
+## Graph Optimizations & Fusions
+
+### Reshape-Transpose-Reshape → SpaceToDepth Fusion
+Folds Reshape-Transpose-Reshape sequences (including surrounding pre/post transpose ops) into a single SpaceToDepth op. Resolves context binary failures caused by 6D transpose/reshape graphs and brings parity with QAIRT converter behavior.
+
+### LayerNorm Decomposed Pattern Fusion
+Detects decomposed LayerNorm subgraphs in ONNX models and fuses them into a single `QNN_OP_LAYER_NORM` operator.
+
+### Gemm Decomposition for Dynamic Bias
+Extended Gemm handling for cases where the bias tensor is an intermediate (NATIVE) tensor. Decomposes Gemm into FC + ElementWiseAdd, fixing compatibility with models where ORT's MatMulAddFusion produces Gemm ops with dynamic bias (e.g., CLIP-style text projection layers).
+
+### 6D Reshape-Einsum-Reshape Pattern
+Added handling for 6D Reshape-Einsum-Reshape patterns that previously caused compilation failures.
+
+---
+
+## Bug Fixes
+
+Various correctness and stability fixes across the EP.
+
+---
+
+## Infrastructure & Packaging
+
+- **Unified x64 + ARM64EC wheel** — Single Python wheel supports both Windows x64 and Windows ARM64 targets
+- **Qualcomm Device Cloud SDK** migrated to Qualcomm Software Center (v0.3.0)
+- **NuGet package** — Fixed broken manifest links and added Artifactory upload error handling
+
+---
+
+## Dependencies
+
+| Component | v2.0.0 | v2.1.0 |
+|---|---|---|
+| **ONNX Runtime** | 1.24.1 | 1.24.4 |
+| **QAIRT SDK** | 2.42.0 | 2.45.0 |
+
+### Platform Support
+
+| Package | Windows ARM64 | Windows x64 | Linux x64 | Linux AArch64 |
+|---|---|---|---|---|
+| Python Wheel | Inference | AOT compilation + Inference | AOT compilation | Inference |
+| NuGet | Inference | — | — | — |
+| ZIP | Inference | — | — | — |
+
+---
+
+## Known Issues
+
+- **SpaceToDepth FP32 accuracy** — FP32 tests for SpaceToDepth are disabled due to known accuracy issues. Investigation ongoing.
+
+---
+
+## Resources
+
+| Topic | Link |
+|---|---|
+| QNN EP documentation | [QNN-ExecutionProvider.md](execution_providers/QNN-ExecutionProvider.md) |
+| Build from source | [Build Guide](execution_providers/build.md) |
+| Development guide | [Development Guide](execution_providers/development.md) |
+| Plugin EP overview | [Plugin EP Libraries](https://onnxruntime.ai/docs/execution-providers/plugin-ep-libraries/) |
+
+---
+
+## Contributors
+
+This release includes contributions from the Qualcomm engineering teams.
+
+---
+---
+
 # ONNX Runtime QNN Execution Provider v2.0.0 (Preview)
 
 **v2.0.0 is the first Plugin QNN EP (Preview) release** — a standalone package that brings Qualcomm hardware acceleration to any standard ONNX Runtime installation, with no custom ORT build required.
