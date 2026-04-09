@@ -127,7 +127,7 @@ std::optional<T> ParseEnvironmentVariable(const std::string& name) {
     return {};
   }
 
-  T parsed_value;
+  T parsed_value{};
   bool parse_res = TryParseStringWithClassicLocale(value_str, parsed_value);
   if (!parse_res) {
     std::cerr << "Failed to parse environment variable - name: \"" + name + "\", value: \"" + value_str + "\"" << std::endl;
