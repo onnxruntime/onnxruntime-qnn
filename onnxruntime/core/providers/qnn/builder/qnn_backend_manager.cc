@@ -1838,17 +1838,18 @@ void QnnBackendManager::CreateTimerThread(uint32_t htp_power_config_client_id) {
 void QnnBackendManager::ReleaseTimerThread() {
   //std::lock_guard<std::mutex> lk(state_mutex_);
   if (timer_ != nullptr) {
+    std::lock_guard<std::mutex> lk(state_mutex_);
     timer_->DeInitialize();
-    //graph_state_ = GraphState::NONE;
+    graph_state_ = GraphState::NONE;
     timer_resource_.caller_busy_ = false;
     timer_callback_arg_.reset();
     timer_.reset();
   }
   /*if (timer_ != nullptr) {
     timer_resource_.caller_busy_ = false;
-    
+
   }*/
-  
+
   /*Ort::Status status = Ort::Status();
   QnnHtpPerfInfrastructure_PowerConfig_t htp_performance_cfg{};
   htp_power_config_manager_.SetReleasedPerfPowerConfig(htp_performance_cfg, htp_power_config_client_id, onnxruntime::qnn::DcvsState_t::DCVS_DEFAULT);
