@@ -29,11 +29,11 @@ class ThresholdedReluOpBuilder : public BaseOpBuilder {
                                           bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
  private:
-  Ort::Status ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const;
+  Ort::Status ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const;
 };
 
-Ort::Status ThresholdedReluOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper,
-                                                     const OrtNodeUnit& node_unit) const {
+Ort::Status ThresholdedReluOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
+                                                      const OrtNodeUnit& node_unit) const {
   TensorInfo input_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
 
@@ -114,7 +114,7 @@ Ort::Status ThresholdedReluOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_w
                                                     std::vector<std::string>& input_names,
                                                     bool do_op_validation) const {
   if (do_op_validation) {
-    RETURN_IF_ERROR(ExplictOpCheck(qnn_model_wrapper, node_unit));
+    RETURN_IF_ERROR(ExplicitOpCheck(qnn_model_wrapper, node_unit));
   }
   OrtNodeAttrHelper node_helper(node_unit);
   const auto& inputs = node_unit.Inputs();
@@ -145,12 +145,12 @@ Ort::Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
   std::vector<uint32_t> output_shape = output_info.shape;
   Qnn_TensorType_t op_output_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
 
-  // input -> greater -> select -> output
-  // --------------------------/
+  // input --+--> greater(alpha) --> select --> output
+  //    \______________________________/
 
   // 1. Greater
   // Create alpha tensor.
-  float alpha = node_helper.Get("alpha", static_cast<float>(0)) * 1;
+  float alpha = node_helper.Get("alpha", static_cast<float>(0));
   std::vector<uint8_t> alpha_bytes;
   RETURN_IF_ERROR(SetAlphaByte(input_info.qnn_data_type, alpha_bytes, alpha));
 
