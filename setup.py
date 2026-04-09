@@ -100,16 +100,19 @@ try:
 
         def finalize_options(self):
             _bdist_wheel.finalize_options(self)
-            if not is_manylinux:
-                self.root_is_pure = False
+            # Insist that this wheel contains more than Python source
+            self.root_is_pure = False
 
         def run(self):
+            qnn_dependencies = ["libcdsprpc.so"]
             _bdist_wheel.run(self)
-            if is_manylinux and not disable_auditwheel_repair and not is_qnn:
+            if is_manylinux and not disable_auditwheel_repair:
                 assert self.dist_dir is not None
                 file = glob(path.join(self.dist_dir, "*linux*.whl"))[0]
                 logger.info("repairing %s for manylinux1", file)
                 auditwheel_cmd = ["auditwheel", "-v", "repair", "-w", self.dist_dir, file]
+                for dep in qnn_dependencies:
+                    auditwheel_cmd.extend(["--exclude", dep])
                 logger.info("Running %s", " ".join([shlex.quote(arg) for arg in auditwheel_cmd]))
                 try:
                     subprocess.run(auditwheel_cmd, check=True, stdout=subprocess.PIPE)
