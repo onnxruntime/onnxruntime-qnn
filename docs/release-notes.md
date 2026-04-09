@@ -114,7 +114,9 @@ Various correctness and stability fixes across the EP.
 
 ## Contributors
 
-This release includes contributions from the Qualcomm engineering teams.
+This release includes contributions from:
+
+Arnav Deshpande, Ashwath Shankarnarayan, derdeljan-msft, huaychou, Jeff Kilpatrick, kuanyul-qti, Kyle Romero, Mike Hsu, minfhong-qti, qti-chenweng, qti-chuteng, qti-hungjuiw, qti-mattsinc, qti-mbadnara, qti-shubham, qti-yuduo, quic-calvnguy, Samrat Dutta, tirupath-qti, Yathindra Kota, yuhuchua-qti
 
 ---
 ---
