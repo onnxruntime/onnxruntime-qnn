@@ -9,16 +9,9 @@
 
 #include "nlohmann/json.hpp"
 
-#include "core/graph/constants.h"
-#include "core/graph/node_attr_utils.h"
-#include "core/providers/cpu/cpu_provider_factory.h"  // For OrtSessionOptionsAppendExecutionProvider_CPU
-#include "core/session/abi_devices.h"
-#include "core/session/abi_session_options_impl.h"
-#include "core/session/inference_session.h"
-#include "core/session/onnxruntime_cxx_api.h"
-#include "core/session/onnxruntime_session_options_config_keys.h"
-#include "core/session/onnxruntime_run_options_config_keys.h"
-#include "core/session/utils.h"
+#include "cpu_provider_factory.h"  // For OrtSessionOptionsAppendExecutionProvider_CPU
+#include "onnxruntime_cxx_api.h"
+#include "onnxruntime_session_options_config_keys.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/util/include/api_asserts.h"
@@ -179,7 +172,7 @@ TEST(QnnEP, TestDisableCPUFallback_ConflictingConfig) {
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
 
   // Invalid! Adds CPU EP to session, but also disables CPU fallback.
-  Ort::Status status(OrtSessionOptionsAppendExecutionProvider_CPU(so, 1));
+  so.AppendExecutionProvider_CPU(1);
 
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "constant_floats.onnx";
 
@@ -286,7 +279,7 @@ TEST_F(QnnHTPBackendTests, TestConvWithExternalData) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
 
-  Ort::Status status(OrtSessionOptionsAppendExecutionProvider_CPU(so, 1));
+  so.AppendExecutionProvider_CPU(1);
 
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "conv_qdq_external_ini.onnx";
 
@@ -2096,39 +2089,6 @@ TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationContextBinaryRoundTrip) {
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
-
-#if !BUILD_QNN_EP_STATIC_LIB
-// TODO: check if we can remove this
-// Tests that both the actual QNN EP and the simulated QNN EP can be registered for ABI compatibility.
-// Tests that the simulated QNN EP is equal to the actual QNN EP.
-TEST_F(QnnCPUBackendTests, DISABLED_TestSimulatedQnnEp) {
-  // Run with QNN.
-  onnxruntime::ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-
-  // Register actual EP factory.
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::string& registration_name = onnxruntime::kQnnExecutionProvider;
-  Ort::SessionOptions session_options;
-  RegisterQnnEpLibrary(registered_ep_device, session_options, registration_name, provider_options);
-
-  // Register simulated EP factory.
-  RegisteredEpDeviceUniquePtr registered_ep_device_sim;
-  const std::string& registration_name_sim = "QnnTestProviderSimulation";
-  Ort::SessionOptions session_options_sim;
-  RegisterQnnEpLibrary(registered_ep_device_sim, session_options_sim, registration_name_sim, provider_options,
-                       /*simulated*/ true);
-
-  // Compare the EP factories.
-  OrtEpFactory* ep_factory = registered_ep_device.get()->ep_factory;
-  OrtEpFactory* ep_factory_sim = registered_ep_device_sim.get()->ep_factory;
-
-  EXPECT_STRNE(ep_factory->GetName(ep_factory), ep_factory_sim->GetName(ep_factory_sim));
-  EXPECT_STREQ(ep_factory->GetVendor(ep_factory), ep_factory_sim->GetVendor(ep_factory_sim));
-  EXPECT_EQ(ep_factory->GetVendorId(ep_factory), ep_factory_sim->GetVendorId(ep_factory_sim));
-  EXPECT_STRNE(ep_factory->GetVersion(ep_factory), ep_factory_sim->GetVersion(ep_factory_sim));
-}
-#endif  // !BUILD_QNN_EP_STATIC_LIB
 
 // Test that QNN Ir generates the expected DLC file for a model meant to run on the QNN CPU backend,
 // using the CPU backend's validator.

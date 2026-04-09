@@ -355,6 +355,9 @@ block()
   # For onnxruntime_cxx_api.h
   target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session)
 
+  # For cpu_provider_factory.h
+  target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/providers/cpu)
+
   add_custom_command(
     TARGET onnxruntime_provider_test POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
