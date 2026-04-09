@@ -1840,7 +1840,7 @@ void QnnBackendManager::ReleaseTimerThread() {
   if (timer_ != nullptr) {
     std::lock_guard<std::mutex> lk(state_mutex_);
     timer_->DeInitialize();
-    graph_state_ = GraphState::NONE;
+    //graph_state_ = GraphState::NONE;
     timer_resource_.caller_busy_ = false;
     timer_callback_arg_.reset();
     timer_.reset();
