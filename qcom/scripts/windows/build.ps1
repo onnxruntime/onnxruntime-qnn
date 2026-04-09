@@ -117,6 +117,11 @@ if ($CMakeGenerator -eq "Ninja") {
     # We don't have Visual Studio to set up the build environment so do it
     # manually with somthing akin to vcvarsall.bat.
     Enter-MsvcEnv -TargetArch $Arch
+    # When building ARM64X, build.py needs --$Arch to set BUILD_AS_ARM64X
+    # in cmake (controls LINKREPRO capture and arm64x merge).
+    if ($BuildAsX -and $Arch -ne "x86_64") {
+        $ArchArgs += "--$Arch"
+    }
 } elseif ($Arch -ne "x86_64") {
     # Tell the EP build that we're cross-compiling to ARM64.
     # We do not do this when using Ninja because our fake vcvars handles
