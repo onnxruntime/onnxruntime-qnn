@@ -13,12 +13,6 @@
 #include <type_traits>
 #include <unordered_map>
 
-#include "core/framework/provider_options.h"
-#include "core/framework/tensor_shape.h"
-#include "core/common/float16.h"
-#include "core/optimizer/graph_transformer_level.h"
-#include "core/session/onnxruntime_session_options_config_keys.h"
-#include "core/util/qmath.h"
 #include "test/util/env_var_utils.h"
 
 #include "test/unittest_util/qdq_test_utils.h"
@@ -49,11 +43,20 @@ inline bool ConditionalCheckAndSkipTestOnLinuxARM64(const ProviderOptions& qnn_o
 
 // Signature for function that builds a float32 model.
 using GetTestModelFn = std::function<void(ModelTestBuilder& builder)>;
+using ProviderOptions = std::unordered_map<std::string, std::string>;
 
 size_t SizeHelper(std::vector<int64_t> shape, size_t start, size_t end);
 size_t SizeToDimension(std::vector<int64_t> shape, size_t dimension);
 size_t SizeFromDimension(std::vector<int64_t> shape, size_t dimension);
 size_t SizeOfShape(std::vector<int64_t> shape);
+
+inline float RoundHalfToEven(float input) {
+  if (!std::isfinite(input)) {
+    return input;
+  }
+  // std::remainder returns x - n, where n is the integral value nearest to x. When |x - n| = 0.5, n is chosen to be even
+  return input - std::remainderf(input, 1.f);
+}
 
 // Class that stores quantization params (scale, zero point).
 // Has a static function that computes quantization parameters from a floating-point range.
