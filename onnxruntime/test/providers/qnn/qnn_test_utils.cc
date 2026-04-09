@@ -2,6 +2,8 @@
 // Licensed under the MIT License.
 
 #include "onnxruntime_c_api.h"
+#include "onnxruntime_cxx_api.h"
+#include "onnxruntime_session_options_config_keys.h"
 #include "test/unittest_util/graph_transform_test_builder.h"
 #if !defined(ORT_MINIMAL_BUILD)
 
@@ -13,16 +15,6 @@
 #include "test/util/include/test/test_environment.h"
 
 #include "test/util/env_var_utils.h"
-#include "core/common/span_utils.h"
-#include "core/framework/compute_capability.h"
-#include "core/framework/error_code_helper.h"
-#include "core/graph/ep_api_types.h"
-#include "core/graph/constants.h"
-#include "core/session/abi_devices.h"
-#include "core/session/abi_ep_types.h"
-#include "core/session/onnxruntime_cxx_api.h"
-#include "core/session/onnxruntime_session_options_config_keys.h"
-#include "core/optimizer/graph_optimizer_registry.h"
 
 // Platform-specific includes for dynamic library loading
 #if defined(_WIN32)
