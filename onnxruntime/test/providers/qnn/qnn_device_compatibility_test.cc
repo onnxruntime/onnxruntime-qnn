@@ -8,9 +8,8 @@
 #include <vector>
 #include <iostream>
 
-#include "core/session/abi_devices.h"
-#include "core/session/onnxruntime_cxx_api.h"
-#include "core/session/onnxruntime_session_options_config_keys.h"
+#include "onnxruntime_cxx_api.h"
+#include "onnxruntime_session_options_config_keys.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/util/include/api_asserts.h"
@@ -35,20 +34,34 @@ class QnnDeviceCompatibilityTests : public ::testing::Test {
     api_ = &Ort::GetApi();
     ASSERT_NE(api_, nullptr);
 
+    // Get the ORT EP API
+    ep_api_ = &Ort::GetEpApi();
+    ASSERT_NE(ep_api_, nullptr);
+
     env_ = static_cast<OrtEnv*>(*ort_env);
     ASSERT_NE(env_, nullptr);
   }
 
-  // Helper function to create a mock hardware device
-  OrtHardwareDevice CreateMockDevice(OrtHardwareDeviceType type, uint32_t vendor_id) {
-    OrtHardwareDevice device{};
-    device.type = type;
-    device.vendor_id = vendor_id;
-    device.device_id = 0;
-    return device;
+  void TearDown() override { 
+    if (mock_hw_device != nullptr) {
+      ep_api_->ReleaseHardwareDevice(mock_hw_device);
+    }
   }
 
+  // Helper function to set a mock hardware device
+  OrtStatus* SetMockDevice(OrtHardwareDeviceType type, uint32_t vendor_id) {
+    return ep_api_->CreateHardwareDevice(
+      type,
+      vendor_id,
+      0 /* device_id */,
+      "QCOM" /* vendor_name */,
+      nullptr /* metadata */,
+      &mock_hw_device);
+  }
+
+  OrtHardwareDevice* mock_hw_device{};
   const OrtApi* api_ = nullptr;
+  const OrtEpApi* ep_api_ = nullptr;
   OrtEnv* env_ = nullptr;
 };
 
@@ -64,12 +77,12 @@ TEST_F(QnnDeviceCompatibilityTests, CPUDeviceIsCompatible) {
   ASSERT_NE(registered_ep_device, nullptr);
 
   // Create a mock CPU device
-  OrtHardwareDevice cpu_device = CreateMockDevice(OrtHardwareDeviceType_CPU, 0);
+  ASSERT_ORTSTATUS_OK(SetMockDevice(OrtHardwareDeviceType_CPU, 0));
 
   // Check compatibility using the ORT C API
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, &cpu_device, &details));
+      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   // Verify compatible (no incompatibility reasons)
@@ -94,18 +107,22 @@ TEST_F(QnnDeviceCompatibilityTests, NPUDeviceWithQualcommVendorIsCompatible) {
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
 
   ASSERT_NE(registered_ep_device, nullptr);
-  ASSERT_NE(registered_ep_device->ep_factory, nullptr);
 
   // Get the Qualcomm vendor ID from the factory
-  uint32_t qualcomm_vendor_id = registered_ep_device->ep_factory->GetVendorId(registered_ep_device->ep_factory);
+  std::vector<Ort::ConstEpDevice> ep_devices = GetOrtEnv()->GetEpDevices();
+  auto qcom_device = std::find_if(ep_devices.begin(), ep_devices.end(),
+                                  [](Ort::ConstEpDevice& ep_device) {
+                                    return strcmp(ep_device.EpName(), "QNNExecutionProvider") == 0;
+                                  });
+  uint32_t qualcomm_vendor_id = qcom_device->Device().VendorId();
 
   // Create a mock NPU device with Qualcomm vendor ID
-  OrtHardwareDevice npu_device = CreateMockDevice(OrtHardwareDeviceType_NPU, qualcomm_vendor_id);
+  ASSERT_ORTSTATUS_OK(SetMockDevice(OrtHardwareDeviceType_NPU, qualcomm_vendor_id));
 
   // Check compatibility using the ORT C API
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, &npu_device, &details));
+      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   // Verify compatible (no incompatibility reasons)
@@ -130,18 +147,22 @@ TEST_F(QnnDeviceCompatibilityTests, GPUDeviceWithQualcommVendorIsCompatible) {
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
 
   ASSERT_NE(registered_ep_device, nullptr);
-  ASSERT_NE(registered_ep_device->ep_factory, nullptr);
 
   // Get the Qualcomm vendor ID from the factory
-  uint32_t qualcomm_vendor_id = registered_ep_device->ep_factory->GetVendorId(registered_ep_device->ep_factory);
+  std::vector<Ort::ConstEpDevice> ep_devices = GetOrtEnv()->GetEpDevices();
+  auto qcom_device = std::find_if(ep_devices.begin(), ep_devices.end(),
+                                  [](Ort::ConstEpDevice& ep_device) {
+                                    return strcmp(ep_device.EpName(), "QNNExecutionProvider") == 0;
+                                  });
+  uint32_t qualcomm_vendor_id = qcom_device->Device().VendorId();
 
   // Create a mock GPU device with Qualcomm vendor ID
-  OrtHardwareDevice gpu_device = CreateMockDevice(OrtHardwareDeviceType_GPU, qualcomm_vendor_id);
+  ASSERT_ORTSTATUS_OK(SetMockDevice(OrtHardwareDeviceType_GPU, qualcomm_vendor_id));
 
   // Check compatibility using the ORT C API
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, &gpu_device, &details));
+      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   // Check if GPU device is incompatible for any reason - if so, skip this test
@@ -173,19 +194,23 @@ TEST_F(QnnDeviceCompatibilityTests, NPUDeviceWithNonQualcommVendorIsIncompatible
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
 
   ASSERT_NE(registered_ep_device, nullptr);
-  ASSERT_NE(registered_ep_device->ep_factory, nullptr);
 
   // Get the Qualcomm vendor ID from the factory
-  uint32_t qualcomm_vendor_id = registered_ep_device->ep_factory->GetVendorId(registered_ep_device->ep_factory);
+  std::vector<Ort::ConstEpDevice> ep_devices = GetOrtEnv()->GetEpDevices();
+  auto qcom_device = std::find_if(ep_devices.begin(), ep_devices.end(),
+                                  [](Ort::ConstEpDevice& ep_device) {
+                                    return strcmp(ep_device.EpName(), "QNNExecutionProvider") == 0;
+                                  });
+  uint32_t qualcomm_vendor_id = qcom_device->Device().VendorId();
 
   // Create a mock NPU device with a different vendor ID (not Qualcomm)
   uint32_t non_qualcomm_vendor_id = qualcomm_vendor_id + 1;
-  OrtHardwareDevice npu_device = CreateMockDevice(OrtHardwareDeviceType_NPU, non_qualcomm_vendor_id);
+  ASSERT_ORTSTATUS_OK(SetMockDevice(OrtHardwareDeviceType_NPU, non_qualcomm_vendor_id));
 
   // Check compatibility using the ORT C API
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, &npu_device, &details));
+      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   // Verify incompatible (should have incompatibility reasons)
@@ -206,19 +231,23 @@ TEST_F(QnnDeviceCompatibilityTests, GPUDeviceWithNonQualcommVendorIsIncompatible
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
 
   ASSERT_NE(registered_ep_device, nullptr);
-  ASSERT_NE(registered_ep_device->ep_factory, nullptr);
 
   // Get the Qualcomm vendor ID from the factory
-  uint32_t qualcomm_vendor_id = registered_ep_device->ep_factory->GetVendorId(registered_ep_device->ep_factory);
+  std::vector<Ort::ConstEpDevice> ep_devices = GetOrtEnv()->GetEpDevices();
+  auto qcom_device = std::find_if(ep_devices.begin(), ep_devices.end(),
+                                  [](Ort::ConstEpDevice& ep_device) {
+                                    return strcmp(ep_device.EpName(), "QNNExecutionProvider") == 0;
+                                  });
+  uint32_t qualcomm_vendor_id = qcom_device->Device().VendorId();
 
   // Create a mock GPU device with a different vendor ID (not Qualcomm)
   uint32_t non_qualcomm_vendor_id = qualcomm_vendor_id + 1;
-  OrtHardwareDevice gpu_device = CreateMockDevice(OrtHardwareDeviceType_GPU, non_qualcomm_vendor_id);
+  ASSERT_ORTSTATUS_OK(SetMockDevice(OrtHardwareDeviceType_GPU, non_qualcomm_vendor_id));
 
   // Check compatibility using the ORT C API
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, &gpu_device, &details));
+      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   // Verify incompatible (should have incompatibility reasons)
@@ -242,12 +271,12 @@ TEST_F(QnnDeviceCompatibilityTests, CPUDeviceIncompatibilityDetailsWithMissingDe
   ASSERT_NE(registered_ep_device, nullptr);
 
   // Create a mock CPU device
-  OrtHardwareDevice cpu_device = CreateMockDevice(OrtHardwareDeviceType_CPU, 0);
+  ASSERT_ORTSTATUS_OK(SetMockDevice(OrtHardwareDeviceType_CPU, 0));
 
   // Check compatibility using the ORT C API
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, &cpu_device, &details));
+      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   // Check if device is compatible - if so, skip this test
@@ -284,18 +313,22 @@ TEST_F(QnnDeviceCompatibilityTests, NPUDeviceIncompatibilityDetailsWithMissingDe
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
 
   ASSERT_NE(registered_ep_device, nullptr);
-  ASSERT_NE(registered_ep_device->ep_factory, nullptr);
 
   // Get the Qualcomm vendor ID from the factory
-  uint32_t qualcomm_vendor_id = registered_ep_device->ep_factory->GetVendorId(registered_ep_device->ep_factory);
+  std::vector<Ort::ConstEpDevice> ep_devices = GetOrtEnv()->GetEpDevices();
+  auto qcom_device = std::find_if(ep_devices.begin(), ep_devices.end(),
+                                  [](Ort::ConstEpDevice& ep_device) {
+                                    return strcmp(ep_device.EpName(), "QNNExecutionProvider") == 0;
+                                  });
+  uint32_t qualcomm_vendor_id = qcom_device->Device().VendorId();
 
   // Create a mock NPU device with Qualcomm vendor ID
-  OrtHardwareDevice npu_device = CreateMockDevice(OrtHardwareDeviceType_NPU, qualcomm_vendor_id);
+  ASSERT_ORTSTATUS_OK(SetMockDevice(OrtHardwareDeviceType_NPU, qualcomm_vendor_id));
 
   // Check compatibility using the ORT C API
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, &npu_device, &details));
+      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   // Check if device is compatible - if so, skip this test
@@ -332,18 +365,22 @@ TEST_F(QnnDeviceCompatibilityTests, GPUDeviceIncompatibilityDetailsWithMissingDe
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
 
   ASSERT_NE(registered_ep_device, nullptr);
-  ASSERT_NE(registered_ep_device->ep_factory, nullptr);
-
+  
   // Get the Qualcomm vendor ID from the factory
-  uint32_t qualcomm_vendor_id = registered_ep_device->ep_factory->GetVendorId(registered_ep_device->ep_factory);
+  std::vector<Ort::ConstEpDevice> ep_devices = GetOrtEnv()->GetEpDevices();
+  auto qcom_device = std::find_if(ep_devices.begin(), ep_devices.end(),
+                                  [](Ort::ConstEpDevice& ep_device) {
+                                    return strcmp(ep_device.EpName(), "QNNExecutionProvider") == 0;
+                                  });
+  uint32_t qualcomm_vendor_id = qcom_device->Device().VendorId();
 
   // Create a mock GPU device with Qualcomm vendor ID
-  OrtHardwareDevice gpu_device = CreateMockDevice(OrtHardwareDeviceType_GPU, qualcomm_vendor_id);
+  ASSERT_ORTSTATUS_OK(SetMockDevice(OrtHardwareDeviceType_GPU, qualcomm_vendor_id));
 
   // Check compatibility using the ORT C API
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, &gpu_device, &details));
+      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   // Check if device is compatible - if so, skip this test
@@ -389,14 +426,20 @@ TEST_F(QnnDeviceCompatibilityTests, GPUDeviceIncompatibilityDetailsWithDriverInc
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
 
   ASSERT_NE(registered_ep_device, nullptr);
-  ASSERT_NE(registered_ep_device->ep_factory, nullptr);
 
-  uint32_t qualcomm_vendor_id = registered_ep_device->ep_factory->GetVendorId(registered_ep_device->ep_factory);
-  OrtHardwareDevice gpu_device = CreateMockDevice(OrtHardwareDeviceType_GPU, qualcomm_vendor_id);
+  // Get the Qualcomm vendor ID from the factory
+  std::vector<Ort::ConstEpDevice> ep_devices = GetOrtEnv()->GetEpDevices();
+  auto qcom_device = std::find_if(ep_devices.begin(), ep_devices.end(),
+                                  [](Ort::ConstEpDevice& ep_device) {
+                                    return strcmp(ep_device.EpName(), "QNNExecutionProvider") == 0;
+                                  });
+  uint32_t qualcomm_vendor_id = qcom_device->Device().VendorId();
+
+  ASSERT_ORTSTATUS_OK(SetMockDevice(OrtHardwareDeviceType_GPU, qualcomm_vendor_id));
 
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, &gpu_device, &details));
+      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   uint32_t reasons_bitmask = 0;
@@ -441,14 +484,20 @@ TEST_F(QnnDeviceCompatibilityTests, NPUDeviceIncompatibilityDetailsWithDeviceInc
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
 
   ASSERT_NE(registered_ep_device, nullptr);
-  ASSERT_NE(registered_ep_device->ep_factory, nullptr);
 
-  uint32_t qualcomm_vendor_id = registered_ep_device->ep_factory->GetVendorId(registered_ep_device->ep_factory);
-  OrtHardwareDevice npu_device = CreateMockDevice(OrtHardwareDeviceType_NPU, qualcomm_vendor_id);
+  // Get the Qualcomm vendor ID from the factory
+  std::vector<Ort::ConstEpDevice> ep_devices = GetOrtEnv()->GetEpDevices();
+  auto qcom_device = std::find_if(ep_devices.begin(), ep_devices.end(),
+                                  [](Ort::ConstEpDevice& ep_device) {
+                                    return strcmp(ep_device.EpName(), "QNNExecutionProvider") == 0;
+                                  });
+  uint32_t qualcomm_vendor_id = qcom_device->Device().VendorId();
+
+  ASSERT_ORTSTATUS_OK(SetMockDevice(OrtHardwareDeviceType_NPU, qualcomm_vendor_id));
 
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, &npu_device, &details));
+      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   uint32_t reasons_bitmask = 0;
