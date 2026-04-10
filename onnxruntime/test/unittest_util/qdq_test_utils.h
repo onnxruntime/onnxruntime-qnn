@@ -10,11 +10,6 @@
 
 #include "graph_transform_test_builder.h"
 
-#include "core/framework/int4.h"
-#include "core/common/span_utils.h"
-#include "core/optimizer/qdq_transformer/selectors_actions/qdq_selector_action_transformer.h"
-#include "core/session/inference_session.h"
-
 #include "test/util/include/asserts.h"
 #include "test/util/include/inference_session_wrapper.h"
 

@@ -4,9 +4,6 @@
 #include "qdq_test_utils.h"
 #include <type_traits>
 #include <utility>
-#include "core/common/common.h"
-#include "core/common/inlined_containers_fwd.h"
-#include "core/common/span_utils.h"
 
 namespace onnxruntime {
 namespace test {
