@@ -64,10 +64,10 @@ const ONNX_NAMESPACE::TensorProto* ModelTestBuilder::MakeInitializer(const std::
   ONNX_NAMESPACE::TensorProto* tensor_proto = graph_->add_initializer();
   tensor_proto->set_name(name);
   tensor_proto->set_data_type(elem_type);
-  utils::SetRawDataInTensorProto(
-      *tensor_proto,
-      raw_data.data(),
-      raw_data.size());
+  SetRawDataInTensorProto(
+    *tensor_proto,
+    raw_data.data(),
+    raw_data.size());
 
   for (auto& dim : shape) {
     tensor_proto->add_dims(dim);
