@@ -42,7 +42,7 @@ jobs:
     uses: ./.github/workflows/qualcomm-internal-build-artifacts.yml
     secrets: inherit
     with:
-      build_linux_x86_64: false
+      linux_x86_64_target_py_vsns: "[]"
       linux_aarch64_manylinux_2_34_target_py_vsns: "[]"
       windows_target_archs: ${{ inputs.windows_target_archs }}
       windows_target_py_vsns: ${{ inputs.windows_target_py_vsns }}

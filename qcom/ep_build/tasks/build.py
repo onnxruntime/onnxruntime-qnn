@@ -19,7 +19,7 @@ from ..task import (
 )
 from ..typing import BuildConfigT, TargetArchLinuxT, TargetArchWindowsT, TargetPyVersionT
 from ..util import REPO_ROOT, git_head_sha
-from .docker import DOCKER_REPO_ROOT, MANYLINUX_2_34_AARCH64_TAG, DockerBuildAndTestTask
+from .docker import DOCKER_REPO_ROOT, DockerBuildAndTestTask, DockerPlatformT
 from .windows import RunPowershellScriptsTask
 
 
@@ -34,6 +34,8 @@ class BuildEpDockerTask(CompositeTask):
         self,
         group_name: str | None,
         target_arch: TargetArchLinuxT,
+        image_name: str,
+        platform: DockerPlatformT,
         config: BuildConfigT,
         target_py_version: TargetPyVersionT | None,
         qairt_sdk_root: Path | None,
@@ -50,11 +52,12 @@ class BuildEpDockerTask(CompositeTask):
                 ),
                 DockerBuildAndTestTask(
                     "Building ONNX Runtime inside a container",
-                    ["_build_ort_linux_aarch64_manylinux_2_34"],
+                    [f"_build_ort_linux_{target_arch}"],
                     target_py_version,
-                    MANYLINUX_2_34_AARCH64_TAG,
+                    image_name,
+                    platform,
                     volumes={REPO_ROOT: DOCKER_REPO_ROOT},
-                    venv_path=DOCKER_REPO_ROOT / "build" / "venv.build",
+                    venv_path=DOCKER_REPO_ROOT / "build" / f"venv.build-{target_arch}",
                     qairt_sdk_root=qairt_sdk_root,
                     ccache_root=ccache_root,
                 ),

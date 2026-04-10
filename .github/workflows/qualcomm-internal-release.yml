@@ -41,6 +41,7 @@ jobs:
       nightly_build: ${{inputs.nightly_build}}
       build_android_aarch64: true
       build_linux_aarch64_oe_gcc11_2: true
+      linux_x86_64_target_py_vsns: "['3.10']"
       linux_aarch64_manylinux_2_34_target_py_vsns: "[]"
       windows_target_archs: "['arm64', 'arm64ec', 'x86_64']"
       windows_target_py_vsns: "['3.11','3.12','3.13','3.14']"

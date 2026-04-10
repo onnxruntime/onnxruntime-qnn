@@ -38,7 +38,7 @@ from ep_build.tasks.build import (
     BuildEpWindowsTask,
     QdcTestsTask,
 )
-from ep_build.tasks.docker import MANYLINUX_2_34_AARCH64_TAG, DockerBuildTask
+from ep_build.tasks.docker import MANYLINUX_2_34_AARCH64_TAG, UBUNTU_22_04_X86_64_TAG, DockerBuildTask
 from ep_build.tasks.python import (
     CreateOrtVenvTask,
     CreateQdcVenvTask,
@@ -263,6 +263,35 @@ class TaskLibrary:
             )
         )
 
+    @implementation_detail
+    @depends(["create_venv"])
+    def _build_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+        """In-container build steps for Ubunto 22.04 on x86_64. Not to be used outside of Docker."""
+        extra_args: list[str] = []
+
+        env = os.environ.copy()
+        if self.__docker_ccache_root is not None:
+            ccache_dir = self.__docker_ccache_root / "linux-x86_64-ubuntu-22_04"
+            env["CCACHE_DIR"] = str(ccache_dir)
+        else:
+            extra_args.append("--no-use-cache")
+
+        return plan.add_step(
+            BuildEpLinuxTask(
+                None,
+                self.__venv_path,
+                "linux",
+                "x86_64",
+                self.__config,
+                self.__target_py_version,
+                self.__ort_prebuilt_root,
+                self.__qairt_sdk_root,
+                "build",
+                extra_args=extra_args,
+                env=env,
+            )
+        )
+
     if is_host_linux() or is_host_mac():
 
         @task
@@ -347,7 +376,7 @@ class TaskLibrary:
     if is_host_linux() and is_host_x86_64():
 
         @task
-        @depends(["build_ort_linux_x86_64"])
+        @depends(["build_ort_linux_x86_64", "create_venv"])
         def archive_ort_linux_x86_64(self, plan: Plan) -> str:
             return plan.add_step(
                 BuildEpLinuxTask(
@@ -497,6 +526,8 @@ class TaskLibrary:
             BuildEpDockerTask(
                 "Building ONNX Runtime for Linux on AArch64 manylinux_2_34",
                 "aarch64_manylinux_2_34",
+                MANYLINUX_2_34_AARCH64_TAG,
+                "linux/aarch64",
                 self.__config,
                 self.__target_py_version,
                 self.__qairt_sdk_root,
@@ -538,21 +569,25 @@ class TaskLibrary:
     if is_host_linux() and is_host_x86_64():
 
         @task
-        @depends(["create_venv"])
+        @depends(["build_ort_linux_x86_64_ubuntu_22_04"])
         def build_ort_linux_x86_64(self, plan: Plan) -> str:
-            return plan.add_step(
-                BuildEpLinuxTask(
-                    "Building ONNX Runtime for Linux on x86_64",
-                    self.__venv_path,
-                    "linux",
-                    "x86_64",
-                    self.__config,
-                    self.__target_py_version,
-                    self.__ort_prebuilt_root,
-                    self.__qairt_sdk_root,
-                    "build",
-                )
-            )
+            return plan.add_step(NoOpTask())
+
+    @task
+    @depends(["docker_build_ubuntu_22_04_x86_64"])
+    def build_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+        return plan.add_step(
+            BuildEpDockerTask(
+                "Building ONNX Runtime for Linux on x86_64 Ubuntu 22.04",
+                "x86_64_ubuntu_22_04",
+                UBUNTU_22_04_X86_64_TAG,
+                "linux/x86_64",
+                self.__config,
+                self.__target_py_version,
+                self.__qairt_sdk_root,
+                self.__docker_ccache_root,
+            ),
+        )
 
     if is_host_windows():
 
@@ -673,10 +708,18 @@ class TaskLibrary:
                 "Building manylinux_2_34 Docker image",
                 REPO_ROOT / "qcom" / "scripts" / "linux" / "manylinux_2_34" / "Dockerfile",
                 MANYLINUX_2_34_AARCH64_TAG,
-                build_args={
-                    "BUILD_UID": str(os.getuid()),
-                    "BUILD_GID": str(os.getgid()),
-                },
+                "linux/aarch64",
+            )
+        )
+
+    @task
+    def docker_build_ubuntu_22_04_x86_64(self, plan: Plan) -> str:
+        return plan.add_step(
+            DockerBuildTask(
+                "Building Ubuntu 22.04 Docker image",
+                REPO_ROOT / "qcom" / "scripts" / "linux" / "ubuntu_22_04-x86_64" / "Dockerfile",
+                UBUNTU_22_04_X86_64_TAG,
+                "linux/x86_64",
             )
         )
 
