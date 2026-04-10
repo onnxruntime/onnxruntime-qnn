@@ -10,14 +10,6 @@
 #include <memory>
 
 #include "core/common/inlined_containers_fwd.h"
-#include "core/common/span_utils.h"
-#include "core/graph/model.h"
-#include "core/session/inference_session.h"
-#include "test/compare_ortvalue.h"
-#include "test/test_environment.h"
-#include "test/util/include/asserts.h"
-#include "test/util/include/inference_session_wrapper.h"
-#include "test/util/include/test_utils.h"
 
 // enable to dump model for debugging
 #define SAVE_TEST_GRAPH 0
