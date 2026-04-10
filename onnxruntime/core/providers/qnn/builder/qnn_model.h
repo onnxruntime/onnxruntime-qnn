@@ -139,6 +139,8 @@ class QnnModel {
     return graph_outputs_.tensors;
   }
 
+  const std::unique_ptr<GraphInfo>& GetGraphInfo() const { return graph_info_; }
+
   const std::string& Name() const { return graph_info_->Name(); }
 
  private:

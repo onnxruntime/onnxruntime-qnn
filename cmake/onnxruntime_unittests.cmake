@@ -203,6 +203,16 @@ if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_RED
   list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn)
   if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
     list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_shared)
+
+    # Mock QNN API to test SSR
+    onnxruntime_add_shared_library_module(QnnMockSSR
+      ${TEST_SRC_DIR}/providers/qnn/ssr/qnn_mock_ssr.cc
+      ${TEST_SRC_DIR}/providers/qnn/ssr/qnn_mock_ssr.def
+    )
+
+    target_link_libraries(QnnMockSSR onnxruntime)
+    target_include_directories(QnnMockSSR PRIVATE ${onnxruntime_QNN_HOME}/include/QNN
+                                                  ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT})
   endif()
 endif()
 

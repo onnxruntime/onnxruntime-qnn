@@ -16,37 +16,31 @@
 namespace onnxruntime {
 namespace qnn {
 
-bool QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
-                                     const std::string& graph_name,
-                                     const QnnGraph_Config_t** graph_configs) {
-  if (!graph_name_.empty()) {
-    // only one graph is allowed per QnnModel
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Graph" + graph_name + " already initialized.").c_str());
-    return false;
-  }
-  if (context == nullptr) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Invalid Qnn context.");
-    return false;
-  }
-  if (graph_name.length() == 0) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Empty graph name.");
-    return false;
-  }
+Ort::Status QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
+                                       const std::string& graph_name,
+                                       const QnnGraph_Config_t** graph_configs) {
+  // only one graph is allowed per QnnModel
+  RETURN_IF(!graph_name_.empty(), ("Graph" + graph_name + "already initialized.").c_str());
+
+  RETURN_IF(context == nullptr, "Invalid Qnn context.");
+
+  RETURN_IF(graph_name.length() == 0, "Empty graph name.");
 
   auto rt = qnn_interface_.graphCreate(context, graph_name.c_str(), graph_configs, &graph_);
+
+  // SSR detected, just return the error code and run recover routine
+  RETURN_IF(rt == QNN_COMMON_ERROR_SYSTEM_COMMUNICATION, std::to_string(rt).c_str());
+
   if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
     rt = qnn_interface_.graphRetrieve(context, graph_name.c_str(), &graph_);
-    if (rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Failed to create Qnn graph: " + graph_name).c_str());
-      return false;
-    }
+    RETURN_IF(rt != QNN_GRAPH_NO_ERROR || graph_ == nullptr, ("Failed to create Qnn graph:" + graph_name + std::to_string(rt)).c_str());
   }
 
   ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Created Qnn graph: " + graph_name).c_str());
 
   graph_name_ = graph_name;
   graph_context_ = context;
-  return true;
+  return Ort::Status();
 }
 
 bool QnnModelWrapper::IsQnnTensorWrapperExist(const std::string& name) const {
@@ -163,16 +157,14 @@ const QnnTensorWrapper& QnnModelWrapper::GetQnnTensorWrapper(const std::string& 
   ORT_CXX_API_THROW("Qnn tensor not exist: " + tensor_name, ORT_EP_FAIL);
 }
 
-bool QnnModelWrapper::CreateQnnInputOutputTensors(const std::string& qnn_node_name,
-                                                  const std::vector<std::string>& tensor_names,
-                                                  std::vector<Qnn_Tensor_t>& qnn_tensors,
-                                                  bool do_op_validation) {
+Ort::Status QnnModelWrapper::CreateQnnInputOutputTensors(const std::string& qnn_node_name,
+                                                         const std::vector<std::string>& tensor_names,
+                                                         std::vector<Qnn_Tensor_t>& qnn_tensors,
+                                                         bool do_op_validation) {
   for (const auto& tensor_name : tensor_names) {
     auto it = model_tensors_map_.find(tensor_name);
-    if (it == model_tensors_map_.end()) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Input name not exist: " + tensor_name).c_str());
-      return false;
-    }
+
+    RETURN_IF(it == model_tensors_map_.end(), ("Input name not exist: " + tensor_name).c_str());
 
     // During graph partitioning, we only need to do op validation, it's not required to create Qnn graph tensor
     // We only need to create the Qnn graph tensor during Compile to create Qnn graph
@@ -184,44 +176,35 @@ bool QnnModelWrapper::CreateQnnInputOutputTensors(const std::string& qnn_node_na
       }
       std::string error_string;
       auto rt = it->second.CreateQnnGraphTensor(qnn_interface_, graph_, qnn_node_name, tensor_created_map_, error_string);
-      if (!rt) {
-        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, error_string.c_str());
-        return false;
-      }
+      RETURN_IF_NOT(rt, error_string.c_str());
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor: " + tensor_name + " created. " + error_string).c_str());
     }
 
     qnn_tensors.push_back(it->second.GetQnnTensor());
   }
-  return true;
+  return Ort::Status();
 }
 
-bool QnnModelWrapper::CreateQnnParamTensors(const std::string& qnn_node_name,
-                                            const std::vector<std::string>& param_tensor_names,
-                                            std::vector<Qnn_Param_t>& qnn_params,
-                                            bool do_op_validation) {
+Ort::Status QnnModelWrapper::CreateQnnParamTensors(const std::string& qnn_node_name,
+                                                   const std::vector<std::string>& param_tensor_names,
+                                                   std::vector<Qnn_Param_t>& qnn_params,
+                                                   bool do_op_validation) {
   for (const auto& param_tensor_name : param_tensor_names) {
     auto it = model_params_map_.find(param_tensor_name);
-    if (it == model_params_map_.end()) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, ("Parameter name not exist: " + param_tensor_name).c_str());
-      return false;
-    }
+    RETURN_IF(it == model_params_map_.end(), ("Parameter name not exist: " + param_tensor_name).c_str());
 
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Add parameter tensor: " + it->second.GetName()).c_str());
     if (!do_op_validation) {
       std::string error_string;
       auto rt = it->second.CreateQnnGraphParam(qnn_interface_, graph_, qnn_node_name, tensor_created_map_, error_string);
-      if (!rt) {
-        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, error_string.c_str());
-        return false;
-      }
+      RETURN_IF_NOT(rt, error_string.c_str());
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor: " + param_tensor_name + " created. " + error_string).c_str());
     }
 
     qnn_params.push_back(it->second.GetQnnParam());
   }
 
-  return true;
+  return Ort::Status();
 }
 
 Ort::Status QnnModelWrapper::ValidateQnnNode(const std::string& node_name,
@@ -467,9 +450,9 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
     }
 
     // Create tensors for validation
-    if (!CreateQnnInputOutputTensors(qnn_node_name, validation_input_names, input_tensors, do_op_validation) ||
-        !CreateQnnInputOutputTensors(qnn_node_name, validation_output_names, output_tensors, do_op_validation) ||
-        !CreateQnnParamTensors(qnn_node_name, param_tensor_names, params, do_op_validation)) {
+    if (!CreateQnnInputOutputTensors(qnn_node_name, validation_input_names, input_tensors, do_op_validation).IsOK() ||
+        !CreateQnnInputOutputTensors(qnn_node_name, validation_output_names, output_tensors, do_op_validation).IsOK() ||
+        !CreateQnnParamTensors(qnn_node_name, param_tensor_names, params, do_op_validation).IsOK()) {
       return false;
     }
 
@@ -619,14 +602,14 @@ bool QnnModelWrapper::RegisterGraphInputOutputInOrder() {
          run(graph_outputs_.names, QNN_TENSOR_TYPE_APP_READ, "output");
 }
 
-bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
+Ort::Status QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
   ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Compose Qnn Graph.");
   if (qnn_op_property_list_.empty()) {
-    return false;
+    return MAKE_EP_FAIL("Qnn op property list is empty");;
   }
 
   if (!RegisterGraphInputOutputInOrder()) {
-    return false;
+    return MAKE_EP_FAIL("Not Register Graph Input Output In Order");
   }
 
   // Determine which ops to process
@@ -635,7 +618,7 @@ bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
 
   if (IsBF16ConversionEnabled()) {
     if (!ProcessBF16Conversions(bf16_processed_ops)) {
-      return false;
+      return MAKE_EP_FAIL("Process BF16 Conversions failed");
     }
     ops_to_process = &bf16_processed_ops;
   }
@@ -645,17 +628,12 @@ bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
     std::vector<Qnn_Tensor_t> input_tensors;
     std::vector<Qnn_Tensor_t> output_tensors;
     std::vector<Qnn_Param_t> params;
-    if (!CreateQnnInputOutputTensors(op_property.GetNodeName(), op_property.GetInputNames(), input_tensors)) {
-      return false;
-    }
 
-    if (!CreateQnnInputOutputTensors(op_property.GetNodeName(), op_property.GetOutputNames(), output_tensors)) {
-      return false;
-    }
+    RETURN_IF_ERROR(CreateQnnInputOutputTensors(op_property.GetNodeName(), op_property.GetInputNames(), input_tensors));
 
-    if (!CreateQnnParamTensors(op_property.GetNodeName(), op_property.GetParamTensorNames(), params)) {
-      return false;
-    }
+    RETURN_IF_ERROR(CreateQnnInputOutputTensors(op_property.GetNodeName(), op_property.GetOutputNames(), output_tensors));
+
+    RETURN_IF_ERROR(CreateQnnParamTensors(op_property.GetNodeName(), op_property.GetParamTensorNames(), params));
 
     QnnOpConfigWrapper op_config_wrapper(op_property.GetNodeName(),
                                          op_property.GetPackageName(),
@@ -672,17 +650,14 @@ bool QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
 
     std::string error_msg;
     bool rt = op_config_wrapper.CreateQnnGraphOp(qnn_interface_, graph_, error_msg);
-    if (!rt) {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, error_msg.c_str());
-      return false;
-    }
+    RETURN_IF_NOT(rt, error_msg.c_str());
 
     if (build_json_qnn_graph) {
       json_qnn_graph_.AddOp(op_config_wrapper);
     }
   }
 
-  return true;
+  return Ort::Status();
 }
 
 bool QnnModelWrapper::GetOnnxShape(const std::optional<std::vector<int64_t>>& onnx_shape, std::vector<uint32_t>& shape) {
