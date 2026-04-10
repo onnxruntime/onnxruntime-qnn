@@ -237,7 +237,7 @@ class TaskLibrary:
         """In-container build steps for aarch64-manylinux_2_34. Not to be used outside of Docker."""
         extra_args = [
             "--no-warnings-as-errors",
-            "--qnn-arch-abi=aarch64-ubuntu-gcc9.4",
+            "--qnn-arch-abi=aarch64-oe-linux-gcc11.2",
         ]
 
         env = os.environ.copy()
