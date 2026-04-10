@@ -88,7 +88,7 @@ static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"Gather", {GatherTransposeReshapeFusion::TryFusion}},
     {"HardSigmoid", {HardSigmoidMulFusion::TryFusion}},
     {"MatMul", {LowPowerBlockQuantizedMatMulFusion::TryFusion}},
-    {"Gemm", {LowPowerBlockQuantizedGemmFusion::TryFusion, ReshapeGemmFusion::TryFusion}},
+    {"Gemm", {LowPowerBlockQuantizedGemmFusion::TryFusion, ReshapeGemmReshapeReshapeFusion::TryFusion, ReshapeGemmReshapeFusion::TryFusion, ReshapeGemmFusion::TryFusion}},
     {"Mul", {ScaleSoftmaxFusion::TryFusion}},
     {"Cast", {CastLoneQFusion::TryFusion}},
     {"Erf", {GeluFusion::TryFusion}},
