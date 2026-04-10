@@ -4,6 +4,7 @@
 #pragma once
 
 #include <memory>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
@@ -32,7 +33,14 @@ class QnnModelWrapper;
 ///             [root] --> Div -----> Erf  --> Add --> Mul -->Mul ==>
 ///                       (B=1.4142...)        (1)            (0.5)
 ///
-/// Both patterns are translated into a QNN Gelu operator.
+///   Pattern 3:
+///                +---------------------------------------------+
+///                |                                             |
+///                |                                             v
+///             [root] --> Div -----> Erf  --> Add --> Mul --> Mul ==>
+///                       (B=1.4142...)        (1)     (0.5)
+///
+/// All patterns are translated into a QNN Gelu operator.
 /// The contained NodeUnits can be of type SingleNode or QDQGroup (with Q-DQ nodes).
 /// The second inputs to Div, Add, and Mul Node Units should be constant.
 /// </summary>
