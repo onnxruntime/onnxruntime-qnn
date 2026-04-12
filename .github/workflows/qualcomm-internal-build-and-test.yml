@@ -147,8 +147,7 @@ jobs:
           name: "android-aarch64-pyNone-tests"
           src_pattern: onnxruntime-tests-android-aarch64.zip
 
- # Intentionally not "test-android-aarch64" to avoid breaking required PR checks
-  test-android:
+  test-android-aarch64:
     if: ${{ inputs.do_all }}
     needs: [build-android-aarch64]
     uses: ./.github/workflows/qualcomm-internal-qdc-test.yml

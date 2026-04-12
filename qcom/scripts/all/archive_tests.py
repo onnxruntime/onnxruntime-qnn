@@ -42,13 +42,23 @@ _QAIRT_ACCEPT_PATTERNS = [".*/aarch64-android/.*", r".*/hexagon-v.+/.*"]
 _QAIRT_ACCEPT_RE = re.compile("|".join(_QAIRT_ACCEPT_PATTERNS))
 
 
-def _add_node_models(add_file: Callable[[Path, Path], None]) -> None:
-    node_tests_root = REPO_ROOT / "cmake" / "external" / "onnx" / "onnx" / "backend" / "test" / "data" / "node"
-    logging.debug(f"Adding node model tests from ONNX submodule in {node_tests_root}")
-    for filename in node_tests_root.glob("**/*"):
+def _add_directory(add_file: Callable[[Path, Path], None], root: Path) -> None:
+    for filename in root.glob("**/*"):
         if _should_archive(filename, reject=_ORT_REJECT_RE):
             arcname = filename.relative_to(REPO_ROOT)
             add_file(filename, arcname)
+
+
+def _add_node_models(add_file: Callable[[Path, Path], None]) -> None:
+    node_tests_root = REPO_ROOT / "cmake" / "external" / "onnx" / "onnx" / "backend" / "test" / "data" / "node"
+    logging.debug(f"Adding node model tests from ONNX submodule in {node_tests_root}")
+    _add_directory(add_file, node_tests_root)
+
+
+def _add_qcom_scripts(add_file: Callable[[Path, Path], None]) -> None:
+    qcom_scripts_root = REPO_ROOT / "qcom" / "scripts"
+    logging.debug(f"Adding {qcom_scripts_root}")
+    _add_directory(add_file, qcom_scripts_root)
 
 
 def _should_archive(path: Path, accept: re.Pattern | None = None, reject: re.Pattern | None = None) -> bool:
@@ -84,6 +94,7 @@ def archive_android(target_platform: str, config: str, qairt_sdk_root: Path) -> 
                 archive.write(filename, arcname)
 
         _add_node_models(archive.write)
+        _add_qcom_scripts(archive.write)
 
 
 def archive_linux(target_platform: str, config: str) -> None:
@@ -101,6 +112,7 @@ def archive_linux(target_platform: str, config: str) -> None:
                 arcname = filename.relative_to(REPO_ROOT)
                 archive.add(filename, arcname)
         _add_node_models(archive.add)
+        _add_qcom_scripts(archive.add)
 
 
 def archive_windows(target_platform: str, config: str) -> None:
@@ -129,6 +141,7 @@ def archive_windows(target_platform: str, config: str) -> None:
                 arcname = str(filename.relative_to(REPO_ROOT))
                 archive.write(filename, arcname)
         _add_node_models(archive.write)
+        _add_qcom_scripts(archive.write)
 
 
 if __name__ == "__main__":
