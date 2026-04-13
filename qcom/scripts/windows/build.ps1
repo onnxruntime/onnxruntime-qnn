@@ -134,7 +134,8 @@ $CommonArgs = `
     "--build_shared_lib", `
     "--cmake_generator", $CMakeGenerator, `
     "--config", $Config, `
-    "--parallel"
+    "--parallel", `
+    "--enable_msvc_static_runtime"
 
 $QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot"
 if ($OrtPrebuiltRoot -ne "") {
