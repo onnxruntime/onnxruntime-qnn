@@ -96,6 +96,13 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   void PartitionCtxModel(const OrtGraph* graph, OrtEpGraphSupportInfo* graph_support_info);
 
+  OrtStatus* CompileUtil(OrtEp* this_ptr,
+                         const OrtGraph** graphs,
+                         const OrtNode** fused_nodes,
+                         size_t count,
+                         OrtNodeComputeInfo** node_compute_infos,
+                         OrtNode** ep_context_nodes);
+
   OrtStatus* CompileContextModel(const OrtGraph** graphs,
                                  const OrtNode** fused_nodes,
                                  size_t count,

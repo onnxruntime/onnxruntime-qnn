@@ -1984,6 +1984,26 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
                                            _Out_writes_all_(count) OrtNodeComputeInfo** node_compute_infos,
                                            _Out_writes_(count) OrtNode** ep_context_nodes) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+  Ort::Status rt = ep->qnn_backend_manager_->InvokeWithSSRHandle(
+      [&]() {
+        return Ort::Status(ep->CompileUtil(this_ptr, graphs, fused_nodes, count, node_compute_infos, ep_context_nodes));
+      },
+      [&]() {
+        std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> recovered_qnn_models;
+        return Ort::Status(ep->qnn_backend_manager_->SSRCleanUp(recovered_qnn_models));
+      },
+      "CompileUtil"
+  );
+  return rt.release();
+}
+
+OrtStatus* QnnEp::CompileUtil(OrtEp* this_ptr,
+                              const OrtGraph** graphs,
+                              const OrtNode** fused_nodes,
+                              size_t count,
+                              OrtNodeComputeInfo** node_compute_infos,
+                              OrtNode** ep_context_nodes) {
+  QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
   if (qnn::IsOrtGraphHasCtxNode(graphs, count, ep->ort_api)) {
     return ep->CompileContextModel(graphs, fused_nodes, count, node_compute_infos);
