@@ -1524,6 +1524,8 @@ static GetTestModelFn QDQBuildSigmoidForTensorNameTest(const TestInputDef<float>
 }
 
 // Test that DLC I/O tensor names match original ONNX names when offload_graph_io_quantization=1.
+// Disabled: tensor_name_overrides mapping was removed to fix a crash when offload_graph_io_quantization is enabled.
+// Re-enable once tensor name override support is re-implemented.
 TEST_F(QnnHTPBackendTests, DISABLED_OffloadGraphIoQuantizationTensorNameOverrides) {
   ProviderOptions provider_options;
 #if defined(_WIN32)
@@ -2169,6 +2171,8 @@ static GetTestModelFn BuildPartitionAddedInputQDQModel() {
 // Verifies the same as PartitionAddedInputRegisteredAsGraphInput but via the
 // tensor_name_overrides code path: with offload_graph_io_quantization=1,
 // QuantizeLinear stays on CPU and causes a tensor name remap (q_input <-> input).
+// Disabled: tensor_name_overrides mapping was removed to fix a crash when offload_graph_io_quantization is enabled.
+// Re-enable once tensor name override support is re-implemented.
 TEST_F(QnnCPUBackendTests, DISABLED_PartitionAddedInputRegisteredAsGraphInputOffloadGraphIoQuantization) {
   // Build model using public API
   std::unique_ptr<ModelAndBuilder> model;
@@ -2375,6 +2379,8 @@ static GetTestModelFn BuildMultiSigmoidQDQModelForIOOrderTest() {
 }
 
 // Verifies QNN graph I/O order matches ONNX declaration order with offload_graph_io_quantization=1.
+// Disabled: tensor_name_overrides mapping was removed to fix a crash when offload_graph_io_quantization is enabled.
+// Re-enable once tensor name override support is re-implemented.
 TEST_F(QnnCPUBackendTests, DISABLED_GraphInputOutputOrderMatchesOnnxOffloadGraphIoQuantization) {
   ProviderOptions provider_options;
 #if defined(_WIN32)
