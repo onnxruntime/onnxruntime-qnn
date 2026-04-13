@@ -7,7 +7,7 @@
                     "$and": [
                         {
                             "created": { "$before": "30d" },
-                            "path": { "$match": "qa/*" }
+                            "path": { "$match": "qa/**" }
                         }
                     ]
                 }
