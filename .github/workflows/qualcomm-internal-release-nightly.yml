@@ -21,3 +21,6 @@ jobs:
       nightly_build: true
       skip_publish_qa: false
       skip_publish_wheel: false
+      skip_arm64x: true
+      skip_arm64_debug: true
+      skip_arm64_relwithdebinfo: true
