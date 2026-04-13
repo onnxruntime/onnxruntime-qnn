@@ -70,13 +70,15 @@ class CiArtifactory(Artifactory):
 
 
 class QaArtifactory(Artifactory):
-    def __init__(self, tag: str) -> None:
+    def __init__(self, date: str, branch: str, commit: str) -> None:
         super().__init__()
-        self.__tag = tag
+        self.__date = date      # MM_DD_YY format
+        self.__branch = branch  # branch name (e.g. "main")
+        self.__commit = commit  # first 10 chars of SHA
 
     @property
     def artifact_root(self) -> str:
-        return f"{super().repo_path}/qa/{self.__tag}"
+        return f"{super().repo_path}/qa/{self.__date}/{self.__branch}/{self.__commit}"
 
 
 def initialize_logging(name: str) -> None:
