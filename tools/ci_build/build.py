@@ -976,12 +976,20 @@ def main():
             cpu_arch = platform.architecture()[0]
             if args.cmake_generator == "Ninja":
                 if cpu_arch == "32bit" or args.arm or args.arm64 or args.arm64ec:
-                    raise BuildError(
-                        "To cross-compile with Ninja, load the toolset "
-                        "environment for the target processor (e.g. Cross "
-                        "Tools Command Prompt for VS)"
-                    )
+                    # Allow Ninja with --arm64/--arm64ec when building ARM64X
+                    # on a native ARM64 host (not cross-compiling).
+                    if not (args.buildasx and platform.machine() == "ARM64"):
+                        raise BuildError(
+                            "To cross-compile with Ninja, load the toolset "
+                            "environment for the target processor (e.g. Cross "
+                            "Tools Command Prompt for VS)"
+                        )
                 cmake_extra_args = ["-G", args.cmake_generator]
+                if args.buildasx:
+                    if args.arm64:
+                        cmake_extra_args += ["-D", "BUILD_AS_ARM64X=ARM64"]
+                    elif args.arm64ec:
+                        cmake_extra_args += ["-D", "BUILD_AS_ARM64X=ARM64EC"]
             elif args.arm or args.arm64 or args.arm64ec:
                 if args.arm:
                     cmake_extra_args = ["-A", "ARM"]
