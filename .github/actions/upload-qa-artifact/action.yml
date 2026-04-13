@@ -2,16 +2,29 @@
 # SPDX-License-Identifier: MIT
 
 name: "Upload QA Artifact"
-description: "Upload a QA artifact to Artifactory"
+description: "Upload a QA artifact to Artifactory under a date/branch/commit hierarchy"
 
 inputs:
   src_pattern:
     description: Pattern of files to upload, relative to build/
     required: true
     type: string
-  qa_tag:
-    description: Name of the QA release
+  date:
+    description: "Date in DD_MM_YY_HH_MM_SS format (e.g. 10_04_26_02_00_05)"
     required: true
+    type: string
+  branch:
+    description: "Branch name (e.g. main)"
+    required: true
+    type: string
+  commit:
+    description: "First 10 characters of the commit SHA"
+    required: true
+    type: string
+  dest_subpath:
+    description: "Subdirectory within the QA root to upload into (e.g. wheels/windows-arm64). Leave blank to upload to the root."
+    required: false
+    default: ""
     type: string
 
 runs:
@@ -23,4 +36,7 @@ runs:
         "${{ runner.os == 'Windows' && 'python.exe' || 'python3' }}"
         qcom/scripts/artifactory/publish_qa.py
         --src-pattern "${{ inputs.src_pattern }}"
-        --tag "${{ inputs.qa_tag }}"
+        --date "${{ inputs.date }}"
+        --branch "${{ inputs.branch }}"
+        --commit "${{ inputs.commit }}"
+        --dest-subpath "${{ inputs.dest_subpath }}"
