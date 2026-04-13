@@ -25,6 +25,10 @@ on:
         description: "Build a wheel for this version of Python (3.11, 3.12, 3.13, 3.14, None)"
         default: "3.12"
         type: string
+      build_config:
+        description: "The build configuration: Release, Debug, or RelWithDebInfo."
+        type: string
+        default: "Release"
       nightly_build:
         description: "If true, include a verbose version string in wheel file names."
         type: boolean
@@ -84,7 +88,7 @@ env:
   ORT_NIGHTLY_BUILD: "${{ inputs.nightly_build == true && '1' || '0' }}"
 
   # Cross compilation on Windows adds a folder to the build directory.
-  BUILD_CONFIG_DIR: "${{ (inputs.target_os == 'windows' && ((inputs.build_runner_arch == 'X64' && inputs.target_arch != 'x86_64') || (inputs.build_runner_arch == 'ARM64' && inputs.target_arch != 'arm64'))) && 'Release/Release' || 'Release' }}"
+  BUILD_CONFIG_DIR: "${{ (inputs.target_os == 'windows' && ((inputs.build_runner_arch == 'X64' && inputs.target_arch != 'x86_64') || (inputs.build_runner_arch == 'ARM64' && inputs.target_arch != 'arm64'))) && format('{0}/{0}', inputs.build_config || 'Release') || (inputs.build_config || 'Release') }}"
 
   TEST_ARCHIVE_EXT: "${{ inputs.target_os == 'linux' && 'tar.bz2' || 'zip' }}"
 
@@ -111,6 +115,7 @@ jobs:
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
+          --config ${{ inputs.build_config || 'Release' }}
           --target-py-version ${{inputs.target_py_vsn}}
           ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
           ${{ inputs.build_zip == true && '--build-zip' || '' }}
@@ -179,7 +184,7 @@ jobs:
         if: ${{ inputs.upload_zip }}
         uses: ./.github/actions/upload-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-zip"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-${{ inputs.build_config || 'Release' }}-py${{ inputs.target_py_vsn }}-zip"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime-qnn*.zip"
 
   test:
