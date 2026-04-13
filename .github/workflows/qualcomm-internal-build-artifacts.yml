@@ -175,6 +175,7 @@ jobs:
       target_py_vsn: "3.11"
       build_config: "Release"
       build_runner_arch: "X64"
+      build_test_same_runner: false
       test_runner_arch: ARM64
       run_tests: true
       test_wheel: false
