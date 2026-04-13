@@ -8,6 +8,7 @@
 #include <cassert>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -69,7 +70,7 @@ static const OrtNodeUnit* GetProducerForInput(const OrtNodeUnit& consumer_node_u
                           ctx.node_unit_to_qnn_node_group);
 }
 
-static bool TryMatchPattern1(
+static bool TryMatchGeluMulPattern1(
     const OrtNodeUnit* div_node_unit,
     const OrtNodeUnit& erf_node_unit,
     const OrtNodeUnit* add_node_unit,
@@ -110,7 +111,7 @@ static bool TryMatchPattern1(
   return false;
 }
 
-static bool TryMatchPattern2(
+static bool TryMatchGeluMulPattern2(
     const OrtNodeUnit* div_node_unit,
     const OrtNodeUnit& erf_node_unit,
     const OrtNodeUnit* add_node_unit,
@@ -149,7 +150,7 @@ static bool TryMatchPattern2(
   return true;
 }
 
-static bool TryMatchPattern3(
+static bool TryMatchGeluMulPattern3(
     const OrtNodeUnit* div_node_unit,
     const OrtNodeUnit& erf_node_unit,
     const OrtNodeUnit* add_node_unit,
@@ -192,30 +193,30 @@ static bool TryMatchPattern3(
   return true;
 }
 
-static bool TryMatchGeluPattern(const OrtNodeUnit* div_node_unit,
-                                const OrtNodeUnit& erf_node_unit,
-                                const OrtNodeUnit* add_node_unit,
-                                const OrtNodeUnit* mul_after_add_node_unit,
-                                const GeluPatternMatchContext& ctx,
-                                GeluPatternMatchResult& result) {
-  return TryMatchPattern1(div_node_unit,
-                          erf_node_unit,
-                          add_node_unit,
-                          mul_after_add_node_unit,
-                          ctx,
-                          result) ||
-         TryMatchPattern2(div_node_unit,
-                          erf_node_unit,
-                          add_node_unit,
-                          mul_after_add_node_unit,
-                          ctx,
-                          result) ||
-         TryMatchPattern3(div_node_unit,
-                          erf_node_unit,
-                          add_node_unit,
-                          mul_after_add_node_unit,
-                          ctx,
-                          result);
+static bool TryMatchGeluMulPattern(const OrtNodeUnit* div_node_unit,
+                                   const OrtNodeUnit& erf_node_unit,
+                                   const OrtNodeUnit* add_node_unit,
+                                   const OrtNodeUnit* mul_after_add_node_unit,
+                                   const GeluPatternMatchContext& ctx,
+                                   GeluPatternMatchResult& result) {
+  return TryMatchGeluMulPattern1(div_node_unit,
+                                 erf_node_unit,
+                                 add_node_unit,
+                                 mul_after_add_node_unit,
+                                 ctx,
+                                 result) ||
+         TryMatchGeluMulPattern2(div_node_unit,
+                                 erf_node_unit,
+                                 add_node_unit,
+                                 mul_after_add_node_unit,
+                                 ctx,
+                                 result) ||
+         TryMatchGeluMulPattern3(div_node_unit,
+                                 erf_node_unit,
+                                 add_node_unit,
+                                 mul_after_add_node_unit,
+                                 ctx,
+                                 result);
 }
 
 }  // namespace
@@ -308,12 +309,12 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
                                           root_input_name};
 
   GeluPatternMatchResult pattern_match;
-  const bool is_match = TryMatchGeluPattern(div_node_unit,
-                                            erf_node_unit,
-                                            add_node_unit,
-                                            mul_node_unit,
-                                            match_ctx,
-                                            pattern_match);
+  const bool is_match = TryMatchGeluMulPattern(div_node_unit,
+                                               erf_node_unit,
+                                               add_node_unit,
+                                               mul_node_unit,
+                                               match_ctx,
+                                               pattern_match);
 
   if (!is_match) {
     return nullptr;
@@ -331,7 +332,7 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
     return nullptr;
   }
 
-  return std::unique_ptr<IQnnNodeGroup>(new GeluFusion(std::move(pattern_match.node_units), &erf_node_unit));
+  return std::make_unique<GeluFusion>(std::move(pattern_match.node_units), &erf_node_unit);
 }
 
 GeluFusion::GeluFusion(std::vector<const OrtNodeUnit*>&& node_units, const OrtNodeUnit* target_node_unit)
