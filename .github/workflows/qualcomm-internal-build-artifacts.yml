@@ -54,6 +54,18 @@ on:
         description: "If true, build the Android AAR"
         type: boolean
         default: true
+      build_windows_arm64x:
+        description: "If true, build Windows ARM64x (Release) with NuGet and test archive."
+        type: boolean
+        default: false
+      build_windows_arm64_debug:
+        description: "If true, build Windows ARM64 Debug with zip archive."
+        type: boolean
+        default: false
+      build_windows_arm64_relwithdebinfo:
+        description: "If true, build Windows ARM64 RelWithDebInfo with zip archive."
+        type: boolean
+        default: false
 
   workflow_dispatch:
     inputs: *common_inputs
@@ -150,6 +162,70 @@ jobs:
       upload_nuget: ${{ inputs.windows_arm64_build_nuget && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       build_zip: ${{ inputs.windows_arm64_build_zip && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       upload_zip: ${{ inputs.windows_arm64_build_zip && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+
+  build-windows-arm64x:
+    if: ${{ inputs.build_windows_arm64x }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: windows
+      target_arch: arm64x
+      target_py_vsn: "3.11"
+      build_config: "Release"
+      build_runner_arch: "X64"
+      test_runner_arch: ARM64
+      run_tests: true
+      test_wheel: false
+      upload_test_archive: true
+      upload_wheel: false
+      build_nuget: true
+      upload_nuget: true
+      build_zip: false
+      upload_zip: false
+
+  build-windows-arm64-debug:
+    if: ${{ inputs.build_windows_arm64_debug }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: windows
+      target_arch: arm64
+      target_py_vsn: "3.11"
+      build_config: "Debug"
+      build_runner_arch: "ARM64"
+      run_tests: false
+      test_wheel: false
+      upload_test_archive: false
+      upload_wheel: false
+      build_nuget: false
+      upload_nuget: false
+      build_zip: true
+      upload_zip: true
+
+  build-windows-arm64-relwithdebinfo:
+    if: ${{ inputs.build_windows_arm64_relwithdebinfo }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_os: windows
+      target_arch: arm64
+      target_py_vsn: "3.11"
+      build_config: "RelWithDebInfo"
+      build_runner_arch: "ARM64"
+      run_tests: false
+      test_wheel: false
+      upload_test_archive: false
+      upload_wheel: false
+      build_nuget: false
+      upload_nuget: false
+      build_zip: true
+      upload_zip: true
 
   build-android-aarch64-aar:
     if: ${{ inputs.build_android_aar }}
