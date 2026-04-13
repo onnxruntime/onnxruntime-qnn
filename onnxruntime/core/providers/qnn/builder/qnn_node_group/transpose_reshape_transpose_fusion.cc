@@ -1,7 +1,5 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
-
-#include "core/providers/qnn/builder/qnn_node_group/transpose_reshape_transpose_fusion.h"
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 #include <array>
 #include <gsl/gsl>
@@ -14,6 +12,7 @@
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn/builder/qnn_node_group/transpose_reshape_transpose_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/utils.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/ort_api.h"
@@ -29,35 +28,6 @@ constexpr char kOpReshape[] = "Reshape";
 using MapNodeToNodeUnit = std::unordered_map<const OrtNode*, const OrtNodeUnit*>;
 using MapNodeUnitToGroup = std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>;
 
-/// @brief Get the shape of a tensor from its OrtValueInfo
-std::optional<std::vector<int64_t>> GetTensorShape(const OrtApi& ort_api, const OrtValueInfo* value_info) {
-  if (value_info == nullptr) {
-    return std::nullopt;
-  }
-
-  const OrtTypeInfo* type_info = nullptr;
-  if (ort_api.GetValueInfoTypeInfo(value_info, &type_info) != nullptr) {
-    return std::nullopt;
-  }
-
-  const OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
-  if (ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info) != nullptr) {
-    return std::nullopt;
-  }
-
-  size_t dims_count = 0;
-  if (ort_api.GetDimensionsCount(tensor_info, &dims_count) != nullptr) {
-    return std::nullopt;
-  }
-
-  std::vector<int64_t> dims(dims_count);
-  if (ort_api.GetDimensions(tensor_info, dims.data(), dims_count) != nullptr) {
-    return std::nullopt;
-  }
-
-  return dims;
-}
-
 /// @brief Get transpose permutation attribute
 std::optional<std::vector<int64_t>> GetTransposePerm(const OrtNodeUnit& transpose) {
   if (transpose.OpType() != kOpTranspose) {
@@ -67,7 +37,7 @@ std::optional<std::vector<int64_t>> GetTransposePerm(const OrtNodeUnit& transpos
   return helper.Get(kAttrTransposePerm, std::vector<int64_t>());
 }
 
-/// @brief Match pattern: Transpose -> Reshape -> Transpose
+// Match pattern: Transpose -> Reshape -> Transpose
 std::optional<std::array<const OrtNodeUnit*, 3>> MatchTransposeReshapeTransposePattern(
     const QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnit* transpose1,
@@ -78,31 +48,23 @@ std::optional<std::array<const OrtNodeUnit*, 3>> MatchTransposeReshapeTransposeP
     return std::nullopt;
   }
 
-  // Only handle SingleNode type (not QDQ groups for now)
-  if (transpose1->UnitType() != OrtNodeUnit::Type::SingleNode) {
+  // Get Reshape child (allow QDQ nodes in between)
+  const OrtNodeUnit* reshape = GetChildNodeUnitAllowQdq(qnn_model_wrapper, *transpose1, kOpReshape,
+                                                        node_to_node_unit, node_unit_to_qnn_node_group);
+  if (reshape == nullptr) {
     return std::nullopt;
   }
 
-  // Get Reshape child
-  const std::array<std::string_view, 1> reshape_types{kOpReshape};
-  const OrtNodeUnit* reshape = GetOnlyChildOfType(qnn_model_wrapper, *transpose1, reshape_types,
-                                                  node_to_node_unit, node_unit_to_qnn_node_group);
-  if (reshape == nullptr || reshape->UnitType() != OrtNodeUnit::Type::SingleNode) {
-    return std::nullopt;
-  }
-
-  // Get second Transpose child
-  const std::array<std::string_view, 1> transpose_types{kOpTranspose};
-  const OrtNodeUnit* transpose2 = GetOnlyChildOfType(qnn_model_wrapper, *reshape, transpose_types,
-                                                     node_to_node_unit, node_unit_to_qnn_node_group);
-  if (transpose2 == nullptr || transpose2->UnitType() != OrtNodeUnit::Type::SingleNode) {
+  // Get second Transpose child (allow QDQ nodes in between)
+  const OrtNodeUnit* transpose2 = GetChildNodeUnitAllowQdq(qnn_model_wrapper, *reshape, kOpTranspose,
+                                                           node_to_node_unit, node_unit_to_qnn_node_group);
+  if (transpose2 == nullptr) {
     return std::nullopt;
   }
 
   return std::array<const OrtNodeUnit*, 3>{transpose1, reshape, transpose2};
 }
 
-/// @brief Check if the combined Transpose->Reshape->Transpose is equivalent to a single Reshape.
 /// This is true when original dimensions appear in their natural order in the output (only merged, not reordered).
 /// Fusable example:
 ///  Input: [2, 3, 4] (dims: A=2, B=3, C=4)
@@ -117,12 +79,6 @@ std::optional<std::array<const OrtNodeUnit*, 3>> MatchTransposeReshapeTransposeP
 ///      │
 ///      ▼ Transpose perm2=[1,0]
 ///  [2,12]  (A, B*C)
-/// @param input_shape Shape of the input tensor.
-/// @param perm1 Permutation of the first Transpose.
-/// @param reshape_shape Target shape of the Reshape (output of Reshape).
-/// @param perm2 Permutation of the second Transpose.
-/// @param[out] fused_shape The equivalent reshape shape if fusion is valid.
-/// @return true if fusion is valid, false otherwise.
 bool CanFuseToReshape(
     const std::vector<int64_t>& input_shape,
     const std::vector<int64_t>& perm1,
@@ -133,14 +89,6 @@ bool CanFuseToReshape(
     std::vector<int64_t>& fused_shape) {
   const size_t input_rank = input_shape.size();
   const size_t output_rank = output_shape.size();
-
-  // Basic validation
-  if (perm1.size() != input_rank) {
-    return false;
-  }
-  if (perm2.size() != reshape_shape.size()) {
-    return false;
-  }
 
   // Analyze reshape: determine how dimensions are merged
   // Build mapping: reshape_output_dim -> list of input dims (indices into intermediate_shape)
@@ -171,8 +119,12 @@ bool CanFuseToReshape(
       return false;
     }
 
-    // If reshape_mapping is empty for this output, add current intermediate index
-    if (reshape_mapping[out_idx].empty() && intermediate_idx < intermediate_shape.size()) {
+    // If reshape_mapping is empty (target_size == 1), the corresponding intermediate dimension must also be 1
+    if (reshape_mapping[out_idx].empty()) {
+      if (intermediate_idx >= intermediate_shape.size() ||
+          intermediate_shape[intermediate_idx] != 1) {
+        return false;
+      }
       reshape_mapping[out_idx].push_back(intermediate_idx);
       intermediate_idx++;
     }
@@ -187,13 +139,8 @@ bool CanFuseToReshape(
   std::vector<std::vector<size_t>> final_mapping(output_rank);
   for (size_t i = 0; i < output_rank; ++i) {
     size_t src_idx = static_cast<size_t>(perm2[i]);
-    if (src_idx >= reshape_mapping.size()) {
-      return false;
-    }
     for (size_t intermediate_dim : reshape_mapping[src_idx]) {
-      if (intermediate_dim < perm1.size()) {
-        final_mapping[i].push_back(static_cast<size_t>(perm1[intermediate_dim]));
-      }
+      final_mapping[i].push_back(static_cast<size_t>(perm1[intermediate_dim]));
     }
   }
 
@@ -332,7 +279,7 @@ std::unique_ptr<IQnnNodeGroup> TransposeReshapeTransposeFusion::TryFusion(
   RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(&transpose1->GetNode(), t1_inputs.data(), t1_inputs.size()),
                              ort_api, nullptr);
 
-  auto input_shape = GetTensorShape(ort_api, t1_inputs[0]);
+  auto input_shape = GetTensorShape(qnn_model_wrapper, t1_inputs[0]);
   if (!input_shape.has_value()) {
     return nullptr;
   }
@@ -344,7 +291,7 @@ std::unique_ptr<IQnnNodeGroup> TransposeReshapeTransposeFusion::TryFusion(
   RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(&transpose1->GetNode(), t1_outputs.data(), t1_outputs.size()),
                              ort_api, nullptr);
 
-  auto intermediate_shape = GetTensorShape(ort_api, t1_outputs[0]);
+  auto intermediate_shape = GetTensorShape(qnn_model_wrapper, t1_outputs[0]);
   if (!intermediate_shape.has_value()) {
     return nullptr;
   }
@@ -356,7 +303,7 @@ std::unique_ptr<IQnnNodeGroup> TransposeReshapeTransposeFusion::TryFusion(
   RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(&reshape->GetNode(), reshape_outputs.data(), reshape_outputs.size()),
                              ort_api, nullptr);
 
-  auto reshape_shape = GetTensorShape(ort_api, reshape_outputs[0]);
+  auto reshape_shape = GetTensorShape(qnn_model_wrapper, reshape_outputs[0]);
   if (!reshape_shape.has_value()) {
     return nullptr;
   }
@@ -368,7 +315,7 @@ std::unique_ptr<IQnnNodeGroup> TransposeReshapeTransposeFusion::TryFusion(
   RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(&transpose2->GetNode(), t2_outputs.data(), t2_outputs.size()),
                              ort_api, nullptr);
 
-  auto output_shape = GetTensorShape(ort_api, t2_outputs[0]);
+  auto output_shape = GetTensorShape(qnn_model_wrapper, t2_outputs[0]);
   if (!output_shape.has_value()) {
     return nullptr;
   }

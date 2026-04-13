@@ -1,5 +1,5 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 #if !defined(ORT_MINIMAL_BUILD)
 
@@ -216,7 +216,41 @@ TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_IdentityTransposes) {
   AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 0);
 }
 
-// Test Case 5: Non-fusable pattern (dimensions out of order after transformation)
+// Test Case 5: Merge first two dimensions
+// Input: [2, 3, 4] (A=2, B=3, C=4)
+// Transpose1 perm=[0, 1, 2] (identity) -> [2, 3, 4]
+// Reshape -> [6, 4] (A*B, C)
+// Transpose2 perm=[0, 1] (identity) -> [6, 4]
+// Equivalent to Reshape [2, 3, 4] -> [6, 4]
+TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_MergeFirstTwoDims) {
+  const std::filesystem::path json_qnn_graph_dir = "TransposeReshapeTransposeFusion_MergeFirstTwoDims";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  std::vector<int64_t> input_shape = {2, 3, 4};
+  auto input_def = TestInputDef<float>(input_shape, false, -1.0f, 1.0f);
+
+  std::vector<int64_t> perm1 = {0, 1, 2};
+  std::vector<int64_t> reshape_shape = {6, 4};
+  std::vector<int64_t> perm2 = {0, 1};
+
+  RunQnnModelTest(BuildTransposeReshapeTransposeTestCase(input_def, perm1, reshape_shape, perm2),
+                  provider_options,
+                  13,  // opset
+                  ExpectedEPNodeAssignment::All,
+                  1e-2f);
+
+  // Verify fusion: should have Reshape, no Transpose
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 0);
+}
+
+// Test Case 6: Non-fusable pattern (dimensions out of order after transformation)
 // Input: [2, 3, 4] (A=2, B=3, C=4)
 // Transpose1 perm=[2, 0, 1] -> [4, 2, 3] (C, A, B)
 // Reshape -> [4, 6] (keep C, merge A*B)
@@ -250,7 +284,7 @@ TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_NotFusable_Reordered)
   AssertOpInQnnGraph(json_qnn_graph_dir, "Transpose", 2);
 }
 
-// Test Case 6: Larger tensor with batch dimension
+// Test Case 7: Larger tensor with batch dimension
 // Input: [8, 16, 32] (batch=8, height=16, width=32)
 // Transpose1 perm=[1, 2, 0] -> [16, 32, 8]
 // Reshape -> [512, 8]
