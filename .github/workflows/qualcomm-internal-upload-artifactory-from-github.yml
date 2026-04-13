@@ -51,6 +51,7 @@ jobs:
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
       build_android_aar: true
+      build_windows_arm64x: true
 
   upload-wheel-workflow:
     name: "Upload python wheel artifatcs to Artifactory"
@@ -199,19 +200,24 @@ jobs:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
-      - name: Download NuGet from Artifactory
+      - name: Download ARM64 NuGet from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.11-nuget
 
-      - name: Verify NuGet artifact
+      - name: Download ARM64x NuGet from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64x-py3.11-nuget
+
+      - name: Verify NuGet artifacts
         shell: powershell
         run: |
           $count = (Get-ChildItem -Path "${{ github.workspace }}\build" -Recurse -Filter "*.nupkg").Count
           Write-Host "Found $count NuGet package(s)"
-          if ($count -ne 1) { Write-Error "Expected 1 NuGet package, found $count"; exit 1 }
+          if ($count -ne 2) { Write-Error "Expected 2 NuGet packages (arm64 + arm64x), found $count"; exit 1 }
 
-      - name: Publish
+      - name: Publish ARM64 NuGet
         if: ${{ !inputs.skip_publish }}
         shell: powershell
         env:
@@ -229,6 +235,18 @@ jobs:
 
           . ".\qcom\scripts\upleveling\upload_nupkg_to_artifactory.ps1" `
             -InputDir "${{ github.workspace }}\build\windows-arm64\Release"
+
+      - name: Publish ARM64x NuGet
+        if: ${{ !inputs.skip_publish }}
+        shell: powershell
+        env:
+          ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+        run: |
+          .\uplevel_venv\Scripts\activate
+
+          . ".\qcom\scripts\upleveling\upload_nupkg_to_artifactory.ps1" `
+            -InputDir "${{ github.workspace }}\build\windows-arm64x\Release"
 
   upload-zip-workflow:
     name: "Upload zip artifatcs to Artifactory"
