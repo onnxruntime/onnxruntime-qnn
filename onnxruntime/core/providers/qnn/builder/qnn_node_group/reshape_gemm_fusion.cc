@@ -128,9 +128,8 @@ const OrtNodeUnit* GetOutputReshapeNodeUnit(
     const OrtNodeUnit& gemm_node_unit,
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group) {
-  const std::array<std::string_view, 1> reshape_types = {"Reshape"};
-  return GetOnlyChildOfType(qnn_model_wrapper, gemm_node_unit, reshape_types,
-                            node_to_node_unit, node_unit_to_qnn_node_group);
+  return GetChildNodeUnitAllowQdq(qnn_model_wrapper, gemm_node_unit, "Reshape",
+                                  node_to_node_unit, node_unit_to_qnn_node_group);
 }
 
 // Get the second output Reshape node unit that consumes reshape1's output (reshape2)
@@ -139,9 +138,8 @@ const OrtNodeUnit* GetOutputReshape2NodeUnit(
     const OrtNodeUnit& reshape1_node_unit,
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group) {
-  const std::array<std::string_view, 1> reshape_types = {"Reshape"};
-  return GetOnlyChildOfType(qnn_model_wrapper, reshape1_node_unit, reshape_types,
-                            node_to_node_unit, node_unit_to_qnn_node_group);
+  return GetChildNodeUnitAllowQdq(qnn_model_wrapper, reshape1_node_unit, "Reshape",
+                                  node_to_node_unit, node_unit_to_qnn_node_group);
 }
 
 Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& reshape_node_unit,
