@@ -288,7 +288,7 @@ Ort::Status QnnBackendManager::SetPerformance(uint32_t htp_power_config_client_i
 
 Ort::Status QnnBackendManager::SetState(GraphState state, uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode, uint32_t rpc_polling_time, uint32_t rpc_control_latency) {
   std::lock_guard<std::mutex> lk(state_mutex_);
-  RETURN_IF(timer_resource_.timer_active_ = false, "Timer is not active. Cannot set state.");
+  RETURN_IF(timer_resource_.timer_active_ == false, "Timer is not active. Cannot set state.");
   if (state != graph_state_) {
     graph_state_ = state;
     if (perfMode == qnn::HtpPerformanceMode::kHtpSustainedHighPerformance || perfMode == qnn::HtpPerformanceMode::kHtpBurst) {
