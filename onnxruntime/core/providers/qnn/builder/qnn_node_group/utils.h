@@ -90,14 +90,5 @@ const OrtNodeUnit* GetParentOfInputByName(const QnnModelWrapper& qnn_model_wrapp
 std::optional<std::vector<int64_t>> GetInitializerDataAsInt64(const QnnModelWrapper& qnn_model_wrapper,
                                                               const OrtNodeUnitIODef& shape_input);
 
-/// <summary>
-/// Get the shape of a tensor from its OrtValueInfo.
-/// </summary>
-/// <param name="qnn_model_wrapper">QnnModelWrapper (unused, for API consistency)</param>
-/// <param name="value_info">The OrtValueInfo to get shape from</param>
-/// <returns>Vector of dimension sizes, or std::nullopt if shape cannot be determined</returns>
-std::optional<std::vector<int64_t>> GetTensorShape(const QnnModelWrapper& qnn_model_wrapper,
-                                                   const OrtValueInfo* value_info);
-
 }  // namespace qnn
 }  // namespace onnxruntime

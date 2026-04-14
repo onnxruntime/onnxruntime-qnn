@@ -443,24 +443,6 @@ const OrtNodeUnit* GetOnlyChildOfOutput(const QnnModelWrapper& /*qnn_model_wrapp
   return nullptr;
 }
 
-std::optional<std::vector<int64_t>> GetTensorShape(const QnnModelWrapper& /*qnn_model_wrapper*/,
-                                                   const OrtValueInfo* value_info) {
-  if (value_info == nullptr) {
-    return std::nullopt;
-  }
-
-  try {
-    const Ort::ConstValueInfo tensor_info(value_info);
-    const Ort::ConstTensorTypeAndShapeInfo shape_info = tensor_info.TypeInfo().GetTensorTypeAndShapeInfo();
-    if (!shape_info.HasShape()) {
-      return std::nullopt;
-    }
-    return shape_info.GetShape();
-  } catch (const Ort::Exception&) {
-    return std::nullopt;
-  }
-}
-
 const OrtNodeUnit* GetParentOfInputByName(const QnnModelWrapper& /*qnn_model_wrapper*/,
                                           const OrtNodeUnit& node_unit,
                                           const std::string& input_name,
