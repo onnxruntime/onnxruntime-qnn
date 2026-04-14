@@ -364,9 +364,10 @@ jobs:
             mv "$f" "${{ github.workspace }}/build/onnxruntime_qnn-${VERSION}-${suffix}"
           done
 
-          # Rename AAR
+          # Rename AAR (into android/ subfolder so it uploads separately from test_archives)
+          mkdir -p "${{ github.workspace }}/build/android"
           mv "${{ github.workspace }}/build/android-aarch64/Release/java/build/android-qnn-ep/outputs/aar/onnxruntime-android-qnn.aar" \
-             "${{ github.workspace }}/build/onnxruntime_qnn-${VERSION}-android.aar"
+             "${{ github.workspace }}/build/android/onnxruntime_qnn-${VERSION}-android.aar"
 
           # Rename Debug zip (from build/windows-arm64/Debug/dist/)
           if [ "${{ inputs.skip_arm64_debug }}" == "false" ]; then
@@ -426,7 +427,7 @@ jobs:
           date: ${{ env.QA_DATE }}
           branch: ${{ env.QA_BRANCH }}
           commit: ${{ env.QA_COMMIT }}
-          dest_subpath: "nuget"
+          dest_subpath: "nuget/arm64"
 
       - name: Upload ARM64x NuGet to QA Artifactory
         if: ${{ !inputs.skip_publish_qa && !inputs.skip_arm64x }}
@@ -436,7 +437,7 @@ jobs:
           date: ${{ env.QA_DATE }}
           branch: ${{ env.QA_BRANCH }}
           commit: ${{ env.QA_COMMIT }}
-          dest_subpath: "nuget"
+          dest_subpath: "nuget/arm64x"
 
       - name: Upload Release Zip to QA Artifactory
         if: ${{ !inputs.skip_publish_qa }}
@@ -447,6 +448,16 @@ jobs:
           branch: ${{ env.QA_BRANCH }}
           commit: ${{ env.QA_COMMIT }}
           dest_subpath: "zip"
+
+      - name: Upload Android AAR to QA Artifactory
+        if: ${{ !inputs.skip_publish_qa }}
+        uses: ./.github/actions/upload-qa-artifact
+        with:
+          src_pattern: "android/onnxruntime_qnn-*"
+          date: ${{ env.QA_DATE }}
+          branch: ${{ env.QA_BRANCH }}
+          commit: ${{ env.QA_COMMIT }}
+          dest_subpath: "android"
 
       - name: Upload Test Archives to QA Artifactory
         if: ${{ !inputs.skip_publish_qa }}
