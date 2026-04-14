@@ -11,8 +11,10 @@ struct GenieNodeState {
   GenieNodeConfig_Handle_t config = nullptr;
   GenieNode_Handle_t node = nullptr;
   GenieLog_Handle_t genie_logger = nullptr;
+#if (GENIE_API_VERSION_MAJOR > 1) || (GENIE_API_VERSION_MAJOR == 1 && GENIE_API_VERSION_MINOR >= 17)
   GenieDlc_Handle_t dlc_handle = nullptr;
   GenieDlcConfig_Handle_t dlc_config_handle = nullptr;
+#endif
   size_t num_inputs = 0;
   size_t num_outputs = 0;
   std::mutex mu;
