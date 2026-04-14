@@ -10,14 +10,15 @@
 #include "../Genie/GenieCommon.h"
 #include "../Genie/GenieLog.h"
 #include "../Genie/GenieNode.h"
-#ifdef GENIE_DLC_HEADER_AVAILABLE
+// Genie DLC support requires Genie API version in GenieCommon.h to be >= 1.17 (QAIRT >= 2.45.0)
+#if (GENIE_API_VERSION_MAJOR > 1) || (GENIE_API_VERSION_MAJOR == 1 && GENIE_API_VERSION_MINOR >= 17)
 #include "../Genie/GenieDlc.h"
 #endif
 
 // GenieApi: holds all resolved function pointers
 struct GenieApi {
   decltype(&GenieNodeConfig_createFromJson) NodeConfig_createFromJson;
-#ifdef GENIE_DLC_HEADER_AVAILABLE
+#if (GENIE_API_VERSION_MAJOR > 1) || (GENIE_API_VERSION_MAJOR == 1 && GENIE_API_VERSION_MINOR >= 17)
   decltype(&GenieDlcConfig_create) DlcConfig_create;
   decltype(&GenieDlcConfig_free) DlcConfig_free;
   decltype(&GenieDlc_create) Dlc_create;

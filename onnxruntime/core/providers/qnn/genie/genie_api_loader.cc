@@ -49,7 +49,7 @@ const GenieApi& GenieApiLoader::Get() {
 
 void GenieApiLoader::Init() {
   LOAD_GENIE_SYMBOL(NodeConfig_createFromJson);
-#ifdef GENIE_DLC_HEADER_AVAILABLE
+#if (GENIE_API_VERSION_MAJOR > 1) || (GENIE_API_VERSION_MAJOR == 1 && GENIE_API_VERSION_MINOR >= 17)
   LOAD_GENIE_SYMBOL(DlcConfig_create);
   LOAD_GENIE_SYMBOL(DlcConfig_free);
   LOAD_GENIE_SYMBOL(Dlc_create);

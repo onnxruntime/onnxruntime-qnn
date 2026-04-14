@@ -35,7 +35,7 @@ OrtStatus* GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_ptr,
   st->num_inputs = builder->num_inputs;
   st->num_outputs = builder->num_outputs;
 
-#ifdef GENIE_DLC_HEADER_AVAILABLE
+#if (GENIE_API_VERSION_MAJOR > 1) || (GENIE_API_VERSION_MAJOR == 1 && GENIE_API_VERSION_MINOR >= 17)
   GenieDlcConfig_Handle_t dlc_config_handle = nullptr;
   if (st->api->DlcConfig_create(builder->dlc_path.c_str(), nullptr, &dlc_config_handle) != 0) {
     return ep.ort_api.CreateStatus(ORT_EP_FAIL, "Error creating DLC Config");
@@ -100,7 +100,7 @@ OrtStatus* GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_ptr,
     return ep.ort_api.CreateStatus(ORT_EP_FAIL, "Error creating Node config from dlc");
   }
   st->config = cfg;
-#endif  // GENIE_DLC_HEADER_AVAILABLE
+#endif  // GENIE_API_VERSION_MAJOR > 1 || GENIE_API_VERSION_MINOR >= 17
 
   GenieLog_Handle_t g_logger = nullptr;
   const GenieLogConfig_Handle_t cfg_handle = nullptr;
@@ -112,7 +112,7 @@ OrtStatus* GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_ptr,
   }
   st->genie_logger = g_logger;
 
-#ifdef GENIE_DLC_HEADER_AVAILABLE
+#if (GENIE_API_VERSION_MAJOR > 1) || (GENIE_API_VERSION_MAJOR == 1 && GENIE_API_VERSION_MINOR >= 17)
   if (st->api->NodeConfig_bindLogger(cfg, g_logger) != 0) {
     return ep.ort_api.CreateStatus(ORT_EP_FAIL, "Failed to bind Logger");
   }
@@ -123,7 +123,7 @@ OrtStatus* GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_ptr,
     return ep.ort_api.CreateStatus(ORT_EP_FAIL, "Error creating node");
   }
   st->node = dlg;
-#endif  // GENIE_DLC_HEADER_AVAILABLE
+#endif  // GENIE_API_VERSION_MAJOR > 1 || GENIE_API_VERSION_MINOR >= 17
   *compute_state = static_cast<void*>(st.release());
 
   return nullptr;
@@ -132,7 +132,7 @@ OrtStatus* GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_ptr,
 OrtStatus* GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr,
                                              void* compute_state,
                                              OrtKernelContext* kernel_context) {
-#ifdef GENIE_DLC_HEADER_AVAILABLE
+#if (GENIE_API_VERSION_MAJOR > 1) || (GENIE_API_VERSION_MAJOR == 1 && GENIE_API_VERSION_MINOR >= 17)
   auto* node_compute_info = static_cast<GenieNodeComputeInfo*>(this_ptr);
   auto& ep = node_compute_info->ep;
   auto* st = static_cast<GenieNodeState*>(compute_state);
@@ -284,7 +284,7 @@ OrtStatus* GenieNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr,
   ORT_UNUSED_PARAMETER(compute_state);
   ORT_UNUSED_PARAMETER(kernel_context);
   return nullptr;
-#endif  // GENIE_DLC_HEADER_AVAILABLE
+#endif  // GENIE_API_VERSION_MAJOR > 1 || GENIE_API_VERSION_MINOR >= 17
 }
 
 void GenieNodeComputeInfo::ReleaseStateImpl(OrtNodeComputeInfo* this_ptr,
