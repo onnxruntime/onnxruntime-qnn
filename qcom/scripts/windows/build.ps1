@@ -134,8 +134,7 @@ $CommonArgs = `
     "--build_shared_lib", `
     "--cmake_generator", $CMakeGenerator, `
     "--config", $Config, `
-    "--parallel", `
-    "--enable_msvc_static_runtime"
+    "--parallel"
 
 # Use static MSVC runtime for ARM64 builds to eliminate MSVCP140.dll and
 # VCRUNTIME140.dll dependencies from the shipping QNN EP DLL.
