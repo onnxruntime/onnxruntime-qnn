@@ -260,6 +260,7 @@ class TaskLibrary:
                 "build",
                 extra_args=extra_args,
                 env=env,
+                build_zip=self.__build_zip,
             )
         )
 
@@ -501,6 +502,7 @@ class TaskLibrary:
                 self.__target_py_version,
                 self.__qairt_sdk_root,
                 self.__docker_ccache_root,
+                self.__build_zip,
             ),
         )
 

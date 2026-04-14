@@ -38,8 +38,13 @@ target_py_version=
 use_cache=1
 warnings_as_errors=1
 build_java=
+build_zip=
 for i in "$@"; do
   case $i in
+    --build-zip)
+      build_zip=1
+      shift
+      ;;
     --config=*)
       config="${i#*=}"
       shift
@@ -283,11 +288,21 @@ else
 
     python "${REPO_ROOT}/qcom/scripts/all/fetch_cmake_deps.py"
 
+    zip_args=()
+    if [ -n "${build_zip}" ]; then
+      log_info "Building zip asset."
+      zip_args+=(--build_zip_asset)
+      if [ -n "${ORT_VERSION_SUFFIX:-}" ]; then
+        zip_args+=(--version_suffix "${ORT_VERSION_SUFFIX}")
+      fi
+    fi
+
     "${python_for_build}" ${REPO_ROOT}/tools/ci_build/build.py \
       "${action_args[@]}" \
       "${common_args[@]}" \
       "${qnn_args[@]}" \
-      "${platform_args[@]}"
+      "${platform_args[@]}" \
+      "${zip_args[@]}"
   fi
 
   if [ -n "${run_tests}" ]; then
