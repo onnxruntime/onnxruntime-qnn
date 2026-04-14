@@ -107,14 +107,7 @@ bool CanFuseToReshape(
     }
 
     // Handle case where dimensions match exactly
-    if (accumulated_size == target_size) {
-      // Good, this output dim is complete
-    } else if (intermediate_idx < intermediate_shape.size() &&
-               accumulated_size * intermediate_shape[intermediate_idx] == target_size) {
-      // Need one more dimension
-      reshape_mapping[out_idx].push_back(intermediate_idx);
-      intermediate_idx++;
-    } else {
+    if (accumulated_size != target_size) {
       // Reshape is not a simple merge - can't fuse
       return false;
     }
@@ -270,52 +263,26 @@ std::unique_ptr<IQnnNodeGroup> TransposeReshapeTransposeFusion::TryFusion(
   const OrtNodeUnit* reshape = pattern->at(1);
   const OrtNodeUnit* transpose2 = pattern->at(2);
 
-  const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
-
   // Get input shape of first Transpose
-  size_t num_t1_inputs = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(&transpose1->GetNode(), &num_t1_inputs), ort_api, nullptr);
-  std::vector<const OrtValueInfo*> t1_inputs(num_t1_inputs);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetInputs(&transpose1->GetNode(), t1_inputs.data(), t1_inputs.size()),
-                             ort_api, nullptr);
-
-  auto input_shape = GetTensorShape(qnn_model_wrapper, t1_inputs[0]);
+  const auto& input_shape = transpose1->Inputs()[0].shape;
   if (!input_shape.has_value()) {
     return nullptr;
   }
 
   // Get output shape of first Transpose (= input to Reshape)
-  size_t num_t1_outputs = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(&transpose1->GetNode(), &num_t1_outputs), ort_api, nullptr);
-  std::vector<const OrtValueInfo*> t1_outputs(num_t1_outputs);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(&transpose1->GetNode(), t1_outputs.data(), t1_outputs.size()),
-                             ort_api, nullptr);
-
-  auto intermediate_shape = GetTensorShape(qnn_model_wrapper, t1_outputs[0]);
+  const auto& intermediate_shape = transpose1->Outputs()[0].shape;
   if (!intermediate_shape.has_value()) {
     return nullptr;
   }
 
   // Get output shape of Reshape
-  size_t num_reshape_outputs = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(&reshape->GetNode(), &num_reshape_outputs), ort_api, nullptr);
-  std::vector<const OrtValueInfo*> reshape_outputs(num_reshape_outputs);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(&reshape->GetNode(), reshape_outputs.data(), reshape_outputs.size()),
-                             ort_api, nullptr);
-
-  auto reshape_shape = GetTensorShape(qnn_model_wrapper, reshape_outputs[0]);
+  const auto& reshape_shape = reshape->Outputs()[0].shape;
   if (!reshape_shape.has_value()) {
     return nullptr;
   }
 
   // Get output shape of second Transpose (final output)
-  size_t num_t2_outputs = 0;
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(&transpose2->GetNode(), &num_t2_outputs), ort_api, nullptr);
-  std::vector<const OrtValueInfo*> t2_outputs(num_t2_outputs);
-  RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetOutputs(&transpose2->GetNode(), t2_outputs.data(), t2_outputs.size()),
-                             ort_api, nullptr);
-
-  auto output_shape = GetTensorShape(qnn_model_wrapper, t2_outputs[0]);
+  const auto& output_shape = transpose2->Outputs()[0].shape;
   if (!output_shape.has_value()) {
     return nullptr;
   }
