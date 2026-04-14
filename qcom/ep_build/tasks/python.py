@@ -314,16 +314,17 @@ class OrtWheelModelTestTask(OrtWheelTestTask):
            a wheel that was built on a different machine, the file was just emplaced here and we don't have a way to
            reliabily predict its name (e.g., if the wheel was built yesterday).
         """
-        package_name = "onnxruntime_qnn_qcom_internal"
+        # Either onnxruntime_qnn or onnxruntime_qnn_qcom_internal, depending on whether this is a "nightly" build.
+        package_name = "onnxruntime_qnn*"
         py_vsn = f"cp{self.__py_version.replace('.', '')}"
         if is_host_windows():
             pe_arches = {
                 "arm64": "arm64",
-                "arm64ec": "x86_64",
-                "x86_64": "x86_64",
+                "arm64ec": "amd64",
+                "x86_64": "amd64",
             }
             wheel_pe_arch = pe_arches[self.__target_arch]
-            build_root = REPO_ROOT / "build" / f"windows-{wheel_pe_arch}"
+            build_root = REPO_ROOT / "build" / f"windows-{self.__target_arch}"
             wheel_arch = "amd64" if wheel_pe_arch in ["arm64ec", "arm64x"] else wheel_pe_arch
             filename_glob = f"{package_name}-{get_ort_version()}*-{py_vsn}-{py_vsn}-win_{wheel_arch}.whl"
         elif is_host_linux():

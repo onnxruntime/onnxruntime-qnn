@@ -828,9 +828,9 @@ class TaskLibrary:
             assert self.__target_py_version is not None
             return plan.add_step(
                 OrtWheelGpuModelTestTask(
-                    "Running GPU model tests on ARM64ec",
+                    "Running GPU model tests on aarch64",
                     self.__venv_path,
-                    "arm64",
+                    "aarch64_manylinux_2_34",
                     self.__config,
                     self.__target_py_version,
                 )
@@ -844,7 +844,7 @@ class TaskLibrary:
             assert self.__target_py_version is not None
             return plan.add_step(
                 OrtWheelSmokeTestTask(
-                    "Smoke testing ARM64 wheel",
+                    "Smoke testing aarch64 wheel",
                     self.__venv_path,
                     "aarch64_manylinux_2_34",
                     self.__config,

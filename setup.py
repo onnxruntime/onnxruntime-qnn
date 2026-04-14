@@ -51,7 +51,6 @@ if parse_arg_remove_boolean(sys.argv, "--nightly_build"):
 wheel_name_suffix = parse_arg_remove_string(sys.argv, "--wheel_name_suffix=")
 version_suffix = parse_arg_remove_string(sys.argv, "--version_suffix=")
 
-is_qnn = True
 package_name = "onnxruntime-qnn"
 qnn_version = parse_arg_remove_string(sys.argv, "--qnn_version=")
 
