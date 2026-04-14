@@ -72,7 +72,7 @@ class CiArtifactory(Artifactory):
 class QaArtifactory(Artifactory):
     def __init__(self, date: str, branch: str, commit: str) -> None:
         super().__init__()
-        self.__date = date      # MM_DD_YY format
+        self.__date = date  # MM_DD_YY format
         self.__branch = branch  # branch name (e.g. "main")
         self.__commit = commit  # first 10 chars of SHA
 
