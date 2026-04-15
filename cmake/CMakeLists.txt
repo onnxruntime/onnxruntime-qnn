@@ -478,6 +478,7 @@ if (MSVC OR ${CMAKE_SYSTEM_NAME} STREQUAL "Linux")
                                 "${onnxruntime_QNN_HOME}/lib/hexagon-v69/unsigned/libQnnHtpV69Skel.so"
                                 "${onnxruntime_QNN_HOME}/lib/hexagon-v73/unsigned/libQnnHtpV73Skel.so"
                                 "${onnxruntime_QNN_HOME}/lib/hexagon-v75/unsigned/libQnnHtpV75Skel.so"
+                                "${onnxruntime_QNN_HOME}/lib/hexagon-v79/unsigned/libQnnHtpV79Skel.so"
                                 "${onnxruntime_QNN_HOME}/lib/hexagon-v81/unsigned/libQnnHtpV81Skel.so")
     endif()
     message(STATUS "QNN lib files: " ${QNN_LIB_FILES})

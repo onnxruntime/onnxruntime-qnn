@@ -325,8 +325,7 @@ class OrtWheelModelTestTask(OrtWheelTestTask):
             }
             wheel_pe_arch = pe_arches[self.__target_arch]
             build_root = REPO_ROOT / "build" / f"windows-{self.__target_arch}"
-            wheel_arch = "amd64" if wheel_pe_arch in ["arm64ec", "arm64x"] else wheel_pe_arch
-            filename_glob = f"{package_name}-{get_ort_version()}*-{py_vsn}-{py_vsn}-win_{wheel_arch}.whl"
+            filename_glob = f"{package_name}-{get_ort_version()}*-{py_vsn}-{py_vsn}-win_{wheel_pe_arch}.whl"
         elif is_host_linux():
             build_root = REPO_ROOT / "build" / f"linux-{self.__target_arch}"
             filename_glob = f"{package_name}-{get_ort_version()}*-{py_vsn}-{py_vsn}-manylinux*_aarch64.whl"
