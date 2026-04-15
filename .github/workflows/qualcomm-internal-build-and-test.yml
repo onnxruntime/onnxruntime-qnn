@@ -72,6 +72,22 @@ jobs:
      target_os: linux
      target_arch: aarch64_oe_gcc11_2
 
+  build-and-test-linux-arm64:
+    if: ${{ inputs.do_all }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      target_os: linux
+      target_arch: aarch64_manylinux_2_34
+      target_py_vsn: ${{ inputs.target_py_vsn }}
+      upload_test_archive: true
+      upload_wheel: true
+      test_wheel: false  # Fails because the HTP is not discovered
+      run_tests: true
+      build_test_same_runner: false
+      test_runner_arch: arm64
+
   build-and-test-windows-arm64:
     if: ${{ inputs.do_all || inputs.do_windows_arm64 }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
