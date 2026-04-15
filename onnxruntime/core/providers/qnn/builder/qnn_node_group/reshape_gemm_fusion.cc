@@ -528,6 +528,11 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusion::TryFusion(
     const Ort::Logger& logger) {
   ORT_UNUSED_PARAMETER(logger);
 
+  // Skip fusion for GPU backend
+  if (IsGpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    return nullptr;
+  }
+
   // Only handle standalone Gemm nodes (not QDQ-wrapped)
   if (gemm_node_unit.OpType() != "Gemm" || gemm_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode) {
     return nullptr;
