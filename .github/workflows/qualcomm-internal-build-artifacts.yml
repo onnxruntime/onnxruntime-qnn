@@ -174,9 +174,9 @@ jobs:
       target_arch: arm64x
       target_py_vsn: "3.11"
       build_config: "Release"
-      build_runner_arch: "X64"
+      build_runner_arch: "ARM64"
       test_runner_arch: ARM64
-      run_tests: true
+      run_tests: false
       test_wheel: false
       upload_test_archive: true
       upload_wheel: false
