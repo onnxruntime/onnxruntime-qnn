@@ -337,7 +337,7 @@ void QnnBackendManager::CreateTimerThread(uint32_t htp_power_config_client_id) {
         timer_callback_arg_.reset();
         timer_.reset();
       } else {
-        timer_resource_.timer_active_ = false;
+        timer_resource_.timer_active_ = true;
       }
     } else {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Failed: Timer is nullptr");
