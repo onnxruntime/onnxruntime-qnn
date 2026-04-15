@@ -16,23 +16,23 @@ class RandomNormalLikeOpBuilder : public BaseOpBuilder {
 
  protected:
   Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                       const OrtNodeUnit& node_unit,
-                       const Ort::Logger& logger,
-                       std::vector<std::string>& input_names,
-                       bool do_op_validation) const override;
+                            const OrtNodeUnit& node_unit,
+                            const Ort::Logger& logger,
+                            std::vector<std::string>& input_names,
+                            bool do_op_validation) const override;
 
   Ort::Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                     const OrtNodeUnit& node_unit,
-                                     std::vector<std::string>&& input_names,
-                                     const Ort::Logger& logger,
-                                     bool do_op_validation) const override;
+                                          const OrtNodeUnit& node_unit,
+                                          std::vector<std::string>&& input_names,
+                                          const Ort::Logger& logger,
+                                          bool do_op_validation) const override;
 };
 
 Ort::Status RandomNormalLikeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                                 const OrtNodeUnit& node_unit,
-                                                 const Ort::Logger& logger,
-                                                 std::vector<std::string>& input_names,
-                                                 bool do_op_validation) const {
+                                                     const OrtNodeUnit& node_unit,
+                                                     const Ort::Logger& logger,
+                                                     std::vector<std::string>& input_names,
+                                                     bool do_op_validation) const {
   ORT_UNUSED_PARAMETER(do_op_validation);
   ORT_UNUSED_PARAMETER(logger);
   OrtNodeAttrHelper node_helper(node_unit);
@@ -58,7 +58,7 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
 
   std::vector<uint32_t> input_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(input_tensor.shape, input_shape),
-                    ("Failed to get shape for input tensor: " + input_tensor_name).c_str());
+                ("Failed to get shape for input tensor: " + input_tensor_name).c_str());
 
   // Create a static shape tensor from the input's shape for the QNN RandomNormalLike node
   const std::string shape_tensor_name = utils::UniqueNameGenerator().New(input_tensor_name, "_shape");
@@ -74,7 +74,7 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
                                         std::move(shape_data));
 
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(shape_tensor_wrapper)),
-                    "Failed to add shape tensor.");
+                "Failed to add shape tensor.");
 
   input_names.push_back(shape_tensor_name);
 
@@ -92,7 +92,7 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
                                  QnnQuantParamsWrapper(), std::move(scalar_shape), std::move(seed_data));
 
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(seed_tensor)),
-                      "Failed to add seed tensor");
+                  "Failed to add seed tensor");
 
     input_names.push_back(seed_tensor_name);  // Seed is always second
   }
@@ -100,10 +100,10 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
 }
 
 Ort::Status RandomNormalLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                               const OrtNodeUnit& node_unit,
-                                                               std::vector<std::string>&& input_names,
-                                                               const Ort::Logger& logger,
-                                                               bool do_op_validation) const {
+                                                                   const OrtNodeUnit& node_unit,
+                                                                   std::vector<std::string>&& input_names,
+                                                                   const Ort::Logger& logger,
+                                                                   bool do_op_validation) const {
   ORT_UNUSED_PARAMETER(logger);
   OrtNodeAttrHelper node_helper(node_unit);
   std::vector<std::string> param_names;
@@ -114,9 +114,9 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
   mean_param.dataType = QNN_DATATYPE_FLOAT_32;
   mean_param.floatValue = mean;
   QnnParamWrapper mean_param_wrapper(node_unit.Index(),
-                                    node_unit.Name(),
-                                    QNN_OP_RANDOM_NORMAL_LIKE_PARAM_MEAN,
-                                    mean_param);
+                                     node_unit.Name(),
+                                     QNN_OP_RANDOM_NORMAL_LIKE_PARAM_MEAN,
+                                     mean_param);
 
   param_names.push_back(mean_param_wrapper.GetParamTensorName());
   qnn_model_wrapper.AddParamWrapper(std::move(mean_param_wrapper));
@@ -127,9 +127,9 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
   scale_param.dataType = QNN_DATATYPE_FLOAT_32;
   scale_param.floatValue = scale;
   QnnParamWrapper scale_param_wrapper(node_unit.Index(),
-                                     node_unit.Name(),
-                                     QNN_OP_RANDOM_NORMAL_LIKE_PARAM_SCALE,
-                                     scale_param);
+                                      node_unit.Name(),
+                                      QNN_OP_RANDOM_NORMAL_LIKE_PARAM_SCALE,
+                                      scale_param);
 
   param_names.push_back(scale_param_wrapper.GetParamTensorName());
   qnn_model_wrapper.AddParamWrapper(std::move(scale_param_wrapper));
@@ -168,18 +168,18 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
                                                  std::vector<uint32_t>(output_info.shape));
 
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(intermediate_output_wrapper)),
-                      "Failed to add intermediate output tensor.");
+                  "Failed to add intermediate output tensor.");
 
     // Create the RandomNormalLike node with uint8 output
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                          utils::UniqueNameGenerator().New(node_unit),
-                          QNN_OP_PACKAGE_NAME_QTI_AISW,
-                          QNN_OP_RANDOM_NORMAL_LIKE,
-                          std::move(input_names),
-                          {intermediate_output_name},
-                          std::move(param_names),
-                          do_op_validation),
-                      "Failed to create RandomNormalLike node.");
+                      utils::UniqueNameGenerator().New(node_unit),
+                      QNN_OP_PACKAGE_NAME_QTI_AISW,
+                      QNN_OP_RANDOM_NORMAL_LIKE,
+                      std::move(input_names),
+                      {intermediate_output_name},
+                      std::move(param_names),
+                      do_op_validation),
+                  "Failed to create RandomNormalLike node.");
 
     // Create the final output tensor with the original data type
     QnnTensorWrapper output_wrapper(output_name,
@@ -189,18 +189,18 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
                                     std::vector<uint32_t>(output_info.shape));
 
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_wrapper)),
-                      "Failed to add output tensor.");
+                  "Failed to add output tensor.");
 
     // Create a Dequantize node to convert from uint8 to float32
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                          utils::UniqueNameGenerator().New(node_unit, "_dequantize"),
-                          QNN_OP_PACKAGE_NAME_QTI_AISW,
-                          QNN_OP_DEQUANTIZE,
-                          {intermediate_output_name},
-                          {output_name},
-                          {},
-                          do_op_validation),
-                      "Failed to create Dequantize node.");
+                      utils::UniqueNameGenerator().New(node_unit, "_dequantize"),
+                      QNN_OP_PACKAGE_NAME_QTI_AISW,
+                      QNN_OP_DEQUANTIZE,
+                      {intermediate_output_name},
+                      {output_name},
+                      {},
+                      do_op_validation),
+                  "Failed to create Dequantize node.");
   } else {
     // For non-NPU backends, use the original data type directly
     QnnTensorWrapper output_wrapper(output_name,
@@ -210,18 +210,18 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
                                     std::vector<uint32_t>(output_info.shape));
 
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_wrapper)),
-                      "Failed to add output tensor.");
+                  "Failed to add output tensor.");
 
     // Create the RandomNormalLike node with the original data type output
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                          utils::UniqueNameGenerator().New(node_unit),
-                          QNN_OP_PACKAGE_NAME_QTI_AISW,
-                          QNN_OP_RANDOM_NORMAL_LIKE,
-                          std::move(input_names),
-                          {output_name},
-                          std::move(param_names),
-                          do_op_validation),
-                      "Failed to create RandomNormalLike node.");
+                      utils::UniqueNameGenerator().New(node_unit),
+                      QNN_OP_PACKAGE_NAME_QTI_AISW,
+                      QNN_OP_RANDOM_NORMAL_LIKE,
+                      std::move(input_names),
+                      {output_name},
+                      std::move(param_names),
+                      do_op_validation),
+                  "Failed to create RandomNormalLike node.");
   }
 
   return Ort::Status();
