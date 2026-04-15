@@ -153,6 +153,7 @@ if platform.system() == "Linux" or platform.system() == "AIX":
         "libQnnGpu.so",
         "libQnnHtp.so",
         "libQnnHtpPrepare.so",
+        "libQnnHtpNetRunExtensions.so",
         "libQnnHtpV68Skel.so",
         "libQnnHtpV68Stub.so",
         "libQnnIr.so",
