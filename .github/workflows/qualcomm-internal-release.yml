@@ -384,6 +384,19 @@ jobs:
               mv "$RWDI_ZIP" "${{ github.workspace }}/build/onnxruntime_qnn-${VERSION}-windows-arm64-relwithdebinfo.zip"
             fi
           fi
+          ARM64_NUGET=$(find "${{ github.workspace }}/build/windows-arm64/Release/dist" -name "Qualcomm.ML.OnnxRuntime.QNN.*.nupkg" | head -1)
+          if [ -n "$ARM64_NUGET" ]; then
+            NUGET_VER=$(basename "$ARM64_NUGET" | sed 's/Qualcomm\.ML\.OnnxRuntime\.QNN\.\(.*\)\.nupkg/\1/')
+            mv "$ARM64_NUGET" "$(dirname "$ARM64_NUGET")/Qualcomm.ML.OnnxRuntime.QNN.arm64.${NUGET_VER}.nupkg"
+          fi
+
+          if [ "${{ inputs.skip_arm64x }}" == "false" ]; then
+            ARM64X_NUGET=$(find "${{ github.workspace }}/build/windows-arm64x/Release/Release/dist" -name "Qualcomm.ML.OnnxRuntime.QNN.*.nupkg" | head -1)
+            if [ -n "$ARM64X_NUGET" ]; then
+              NUGET_VER=$(basename "$ARM64X_NUGET" | sed 's/Qualcomm\.ML\.OnnxRuntime\.QNN\.\(.*\)\.nupkg/\1/')
+              mv "$ARM64X_NUGET" "$(dirname "$ARM64X_NUGET")/Qualcomm.ML.OnnxRuntime.QNN.arm64_arm64x.${NUGET_VER}.nupkg"
+            fi
+          fi
 
       # --------------------------------
       # Upload to QA Artifactory
