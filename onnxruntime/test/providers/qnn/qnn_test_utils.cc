@@ -628,7 +628,7 @@ void QnnIRBackendTests::SetUp() {
   }
 }
 
-#if defined(_WIN32)
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
 // TODO: Remove or set to SUPPORTED once HTP emulation is supported on win arm64.
 BackendSupport QnnHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORT_UNKNOWN;
 

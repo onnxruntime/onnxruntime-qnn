@@ -1165,11 +1165,9 @@ TEST_F(QnnHTPBackendTests, ProfilingTest) {
 
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32)
   if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
@@ -1200,11 +1198,9 @@ TEST_F(QnnHTPBackendTests, OptraceTest) {
 
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32)
   if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
@@ -1290,11 +1286,9 @@ TEST_F(QnnHTPBackendTests, Float32ModelWithFP16PrecisionTest) {
 #else
   provider_options["backend_path"] = "libQnnHtp.so";
 #endif
-#if defined(_WIN32)
   if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
@@ -1361,11 +1355,9 @@ TEST_F(QnnHTPBackendTests, EPRejectsDynamicShapesF32) {
   provider_options["backend_path"] = "libQnnHtp.so";
 #endif
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32)
   if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
@@ -2527,7 +2519,7 @@ TEST_F(QnnCPUBackendTests, GetUniqueNameResetBetweenCompilations) {
 }
 
 // Test extended UDMA mode on supported hardware (should run successfully)
-#if defined(_WIN32)
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
 TEST_F(QnnHTPBackendTests, ExtendedUdmaModeTest) {
   if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V79)) {
     GTEST_SKIP() << "Test requires HTP arch >= V81 for extended UDMA support.";
@@ -2550,7 +2542,7 @@ TEST_F(QnnHTPBackendTests, ExtendedUdmaModeTest) {
                   ExpectedEPNodeAssignment::All,
                   0.008f);
 }
-#endif  // defined(_WIN32)
+#endif  // defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
 
 #endif  // !defined(ORT_MINIMAL_BUILD)
 

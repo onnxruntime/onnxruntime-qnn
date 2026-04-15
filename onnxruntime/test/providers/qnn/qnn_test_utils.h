@@ -1586,8 +1586,12 @@ class QnnHTPBackendTests : public ::testing::Test {
 
   // Returns true if the test should be skipped because HTP architecture is less than or equal to the provided arch.
   // Example: if (QnnHTPBackendTests::ShouldSkipIfHTPArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) { GTEST_SKIP() << "..."; }
-  static bool ShouldSkipIfHtpArchIsLessThanOrEqualTo(QnnHtpDevice_Arch_t arch) {
+  static bool ShouldSkipIfHtpArchIsLessThanOrEqualTo([[maybe_unused]] QnnHtpDevice_Arch_t arch) {
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
     return HasPlatformAttributes() && GetPlatformAttributes().htp_arch <= arch;
+#else
+    return false;
+#endif
   }
 
   // Query QNN platform attributes by directly calling QNN APIs
@@ -1595,20 +1599,14 @@ class QnnHTPBackendTests : public ::testing::Test {
 
   // Returns true if the test should be skipped because HTP FP16 is not supported on this platform.
   static bool ShouldSkipIfHtpFp16Unsupported() {
-#if defined(_WIN32)  // On Windows ARM64, FP16 is not supported if the HTP architecture is v68.
+    // On ARM64 platforms, FP16 is not supported if the HTP architecture is v68 or below.
     return ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68);
-#else
-    return false;
-#endif
   }
 
   // Returns true if the test should be skipped because AutoEP is not supported on this platform.
   static bool ShouldSkipIfAutoEpNpuUnsupported() {
-#if defined(_WIN32)  // V68 device (Makena) on win-arm64 doesn't support NPU device discovery with dxcore.dll.
+    // V68 device (Makena) on ARM64 platforms doesn't support NPU device discovery.
     return ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68);
-#else
-    return false;
-#endif
   }
 
   static std::optional<QnnHTPBackendTests::QnnPlatformAttributes> cached_platform_attrs_;  // Set by the first test using this fixture.

@@ -104,11 +104,9 @@ static void RunCastOpTest(const std::vector<int64_t>& shape, ONNX_NAMESPACE::Ten
                           const std::string& backend_name = "cpu",
                           bool enable_fp16_precision = true) {
   if (backend_name == "htp" && enable_fp16_precision) {
-#if defined(_WIN32)
     if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
       GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
     }
-#endif
   }
 
   RunQnnModelTest(BuildCastTestCase<InputType>(shape, dst_type),
@@ -120,11 +118,9 @@ static void RunCastOpTest(const std::vector<int64_t>& shape, ONNX_NAMESPACE::Ten
 static void RunCastFP64OpTest(const std::vector<int64_t>& shape,
                               ExpectedEPNodeAssignment expected_ep_assignment,
                               const std::string& backend_name = "cpu") {
-#if defined(_WIN32)
   if (backend_name == "htp" && QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
 
   RunQnnModelTest(BuildCastFP64TestCase(shape),
                   GetProviderOption(backend_name, true),
@@ -136,11 +132,9 @@ static void RunCastFP64OpTest(const std::vector<int64_t>& shape,
 static void RunCastFP16HTPTest(const std::vector<int64_t>& shape,
                                ONNX_NAMESPACE::TensorProto_DataType dst_type,
                                ExpectedEPNodeAssignment expected_ep_assignment) {
-#if defined(_WIN32)
   if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
   ProviderOptions provider_options;
 #if defined(_WIN32)
   provider_options["backend_path"] = "QnnHtp.dll";
