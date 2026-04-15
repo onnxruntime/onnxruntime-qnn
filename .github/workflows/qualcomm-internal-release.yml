@@ -350,53 +350,12 @@ jobs:
 
       - name: Rename artifacts for QA
         run: |
-          # Read version from VERSION_NUMBER file
-          VERSION=$(cat "${{ github.workspace }}/VERSION_NUMBER")
-          echo "Version: ${VERSION}"
-          echo "QA_VERSION=${VERSION}" >> ${GITHUB_ENV}
-
-          # Rename test archives: onnxruntime-tests-{os}-{arch}.ext → onnxruntime_qnn-{ver}-{os}-{arch}.ext
-          # e.g. onnxruntime-tests-windows-arm64.zip → onnxruntime_qnn-2.2.0-windows-arm64.zip
-          for f in "${{ github.workspace }}/build"/onnxruntime-tests-*; do
-            [ -f "$f" ] || continue
-            filename=$(basename "$f")
-            suffix="${filename#onnxruntime-tests-}"
-            mv "$f" "${{ github.workspace }}/build/onnxruntime_qnn-${VERSION}-${suffix}"
-          done
-
-          # Rename AAR (into android/ subfolder so it uploads separately from test_archives)
-          mkdir -p "${{ github.workspace }}/build/android"
-          mv "${{ github.workspace }}/build/android-aarch64/Release/java/build/android-qnn-ep/outputs/aar/onnxruntime-android-qnn.aar" \
-             "${{ github.workspace }}/build/android/onnxruntime_qnn-${VERSION}-android.aar"
-
-          # Rename Debug zip (from build/windows-arm64/Debug/dist/)
-          if [ "${{ inputs.skip_arm64_debug }}" == "false" ]; then
-            DEBUG_ZIP=$(find "${{ github.workspace }}/build/windows-arm64/Debug/dist" -name "onnxruntime-qnn*.zip" | head -1)
-            if [ -n "$DEBUG_ZIP" ]; then
-              mv "$DEBUG_ZIP" "${{ github.workspace }}/build/onnxruntime_qnn-${VERSION}-windows-arm64-debug.zip"
-            fi
-          fi
-
-          # Rename RelWithDebInfo zip (from build/windows-arm64/RelWithDebInfo/dist/)
-          if [ "${{ inputs.skip_arm64_relwithdebinfo }}" == "false" ]; then
-            RWDI_ZIP=$(find "${{ github.workspace }}/build/windows-arm64/RelWithDebInfo/dist" -name "onnxruntime-qnn*.zip" | head -1)
-            if [ -n "$RWDI_ZIP" ]; then
-              mv "$RWDI_ZIP" "${{ github.workspace }}/build/onnxruntime_qnn-${VERSION}-windows-arm64-relwithdebinfo.zip"
-            fi
-          fi
-          ARM64_NUGET=$(find "${{ github.workspace }}/build/windows-arm64/Release/dist" -name "Qualcomm.ML.OnnxRuntime.QNN.*.nupkg" | head -1)
-          if [ -n "$ARM64_NUGET" ]; then
-            NUGET_VER=$(basename "$ARM64_NUGET" | sed 's/Qualcomm\.ML\.OnnxRuntime\.QNN\.\(.*\)\.nupkg/\1/')
-            mv "$ARM64_NUGET" "$(dirname "$ARM64_NUGET")/Qualcomm.ML.OnnxRuntime.QNN.arm64.${NUGET_VER}.nupkg"
-          fi
-
-          if [ "${{ inputs.skip_arm64x }}" == "false" ]; then
-            ARM64X_NUGET=$(find "${{ github.workspace }}/build/windows-arm64x/Release/Release/dist" -name "Qualcomm.ML.OnnxRuntime.QNN.*.nupkg" | head -1)
-            if [ -n "$ARM64X_NUGET" ]; then
-              NUGET_VER=$(basename "$ARM64X_NUGET" | sed 's/Qualcomm\.ML\.OnnxRuntime\.QNN\.\(.*\)\.nupkg/\1/')
-              mv "$ARM64X_NUGET" "$(dirname "$ARM64X_NUGET")/Qualcomm.ML.OnnxRuntime.QNN.arm64_arm64x.${NUGET_VER}.nupkg"
-            fi
-          fi
+          bash qcom/scripts/artifactory/rename_qa_artifacts.sh \
+            "${{ github.workspace }}/build" \
+            "${{ github.workspace }}/VERSION_NUMBER" \
+            "${{ inputs.skip_arm64_debug }}" \
+            "${{ inputs.skip_arm64_relwithdebinfo }}" \
+            "${{ inputs.skip_arm64x }}"
 
       # --------------------------------
       # Upload to QA Artifactory
