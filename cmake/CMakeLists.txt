@@ -837,11 +837,6 @@ if(NOT QNN_SDK_VERSION AND EXISTS "${onnxruntime_QNN_HOME}/sdk.yaml")
   endif()
 endif()
 
-# onnxruntime_providers_shared is not built for Android target, which is required by UT.
-if (NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Android" AND onnxruntime_BUILD_UNIT_TESTS)
-  list(APPEND ONNXRUNTIME_CMAKE_FILES onnxruntime_unittests)
-endif()
-
 # When GDK_PLATFORM is set then WINAPI_FAMILY is defined in gdk_toolchain.cmake (along with other relevant flags/definitions).
 if (WIN32 AND NOT GDK_PLATFORM AND NOT CMAKE_CROSSCOMPILING)
   if (NOT CMAKE_CXX_STANDARD_LIBRARIES MATCHES kernel32.lib)
@@ -936,8 +931,7 @@ if(DEFINED BUILD_AS_ARM64X)
     include("${CMAKE_CURRENT_SOURCE_DIR}/arm64x.cmake")
 endif()
 
-# onnxruntime_providers_shared is not built for Android target, which is required by UT.
-if(NOT ${CMAKE_SYSTEM_NAME} STREQUAL "Android" AND onnxruntime_BUILD_UNIT_TESTS)
+if(onnxruntime_BUILD_UNIT_TESTS)
   include(onnxruntime_unittests.cmake)
   include("${CMAKE_CURRENT_SOURCE_DIR}/onnxruntime_test_pch.cmake")
 endif()

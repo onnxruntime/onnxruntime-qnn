@@ -24,8 +24,10 @@ $CTestExe = (Join-Path $RootDir "ctest.exe")
 # of the rest of the ONNX Runtime build.
 if (Test-Path (Join-Path $RootDir "onnxruntime_plugin_ep_onnx_test.exe")) {
     $OnnxEpTestRunnerExe = (Join-Path $RootDir "onnxruntime_plugin_ep_onnx_test.exe")
+    $ResultsXmlDir = $RootDir
 } else {
     $OnnxEpTestRunnerExe = (Join-Path (Join-Path $RootDir $Config) "onnxruntime_plugin_ep_onnx_test.exe")
+    $ResultsXmlDir = (Join-Path $RootDir $Config)
 }
 
 $CTestTestFile = (Join-Path $RootDir "CTestTestfile.cmake")
@@ -138,13 +140,27 @@ $TestModelsViaEpPlugin = {
     )
 
     Write-Host "--=-=-=- Running ONNX model $Suite tests with the ABI-stable EP plugin -=--=-=-"
+
+    $ModelLog = Join-Path $ResultsXmlDir "${Suite}_model_tests.log"
+    $ModelXml = Join-Path $ResultsXmlDir "${Suite}_model_tests.results.xml"
+
+    if (Test-Path $ModelLog) { Remove-Item $ModelLog }
+    if (Test-Path $ModelXml) { Remove-Item -Force $ModelXml }
+
     & $OnnxEpTestRunnerExe `
         -j 1 `
         --plugin_ep_libs "qnn|onnxruntime_providers_qnn.dll" `
         --plugin_eps qnn `
         -i "backend_type|$Backend" `
-        $TestPath | Write-Host
-    if (-not $?) {
+        $TestPath | Tee-Object -FilePath $ModelLog | Write-Host
+    $TestResult = $?
+
+    if (Test-Path $ModelLog) {
+        py "${RepoRoot}\qcom\scripts\all\model_test_log_to_junit_xml.py" `
+            $ModelLog | Out-File -FilePath $ModelXml -Encoding utf8
+    }
+
+    if (-not $TestResult) {
         return $true
     }
     return $false
