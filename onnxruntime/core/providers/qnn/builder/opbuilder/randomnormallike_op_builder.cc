@@ -43,7 +43,12 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
   // Explicitly reject dynamic (symbolic/unknown) input shapes.
   // This builder materializes a static shape tensor at compile time, so all dimensions
   // must be statically known. Dynamic shapes would bake incorrect values into the graph.
-  for (const auto& dim : input_tensor.shape) {
+  if (!input_tensor.shape.has_value()) {
+    return MAKE_EP_FAIL(
+        "QNN EP RandomNormalLike requires static input dimensions. "
+        "Input shape is unknown.");
+  }
+  for (const auto& dim : *input_tensor.shape) {
     if (dim < 0) {
       return MAKE_EP_FAIL(
           "QNN EP RandomNormalLike requires static input dimensions. "
@@ -56,7 +61,7 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
                     ("Failed to get shape for input tensor: " + input_tensor_name).c_str());
 
   // Create a static shape tensor from the input's shape for the QNN RandomNormalLike node
-  const std::string shape_tensor_name = utils::GetUniqueName(input_tensor_name, "_shape");
+  const std::string shape_tensor_name = utils::UniqueNameGenerator().New(input_tensor_name, "_shape");
   std::vector<uint8_t> shape_data(input_shape.size() * sizeof(uint32_t));
   memcpy(shape_data.data(), input_shape.data(), shape_data.size());
   std::vector<uint32_t> shape_tensor_shape = {static_cast<uint32_t>(input_shape.size())};
@@ -81,7 +86,7 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_
     std::vector<uint8_t> seed_data(sizeof(float));
     memcpy(seed_data.data(), &seed_value, sizeof(float));
 
-    const std::string seed_tensor_name = utils::GetUniqueName(input_tensor_name, "_ort_qnn_ep_seed");
+    const std::string seed_tensor_name = utils::UniqueNameGenerator().New(input_tensor_name, "_ort_qnn_ep_seed");
 
     QnnTensorWrapper seed_tensor(seed_tensor_name, QNN_TENSOR_TYPE_STATIC, QNN_DATATYPE_FLOAT_32,
                                  QnnQuantParamsWrapper(), std::move(scalar_shape), std::move(seed_data));
@@ -145,7 +150,7 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
 
   if (need_dequantize) {
     // Create an intermediate tensor with UFIXED_POINT_8 data type
-    const std::string intermediate_output_name = utils::GetUniqueName(output_name, "_uint8");
+    const std::string intermediate_output_name = utils::UniqueNameGenerator().New(output_name, "_uint8");
 
     // Calculate quantization parameters based on the expected range of the normal distribution.
     // Use mean ± 3*scale (std_dev) to cover ~99.7% of values.
@@ -167,7 +172,7 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
 
     // Create the RandomNormalLike node with uint8 output
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                          utils::GetUniqueName(node_unit),
+                          utils::UniqueNameGenerator().New(node_unit),
                           QNN_OP_PACKAGE_NAME_QTI_AISW,
                           QNN_OP_RANDOM_NORMAL_LIKE,
                           std::move(input_names),
@@ -188,7 +193,7 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
 
     // Create a Dequantize node to convert from uint8 to float32
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                          utils::GetUniqueName(node_unit, "_dequantize"),
+                          utils::UniqueNameGenerator().New(node_unit, "_dequantize"),
                           QNN_OP_PACKAGE_NAME_QTI_AISW,
                           QNN_OP_DEQUANTIZE,
                           {intermediate_output_name},
@@ -209,7 +214,7 @@ Ort::Status RandomNormalLikeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapp
 
     // Create the RandomNormalLike node with the original data type output
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                          utils::GetUniqueName(node_unit),
+                          utils::UniqueNameGenerator().New(node_unit),
                           QNN_OP_PACKAGE_NAME_QTI_AISW,
                           QNN_OP_RANDOM_NORMAL_LIKE,
                           std::move(input_names),
