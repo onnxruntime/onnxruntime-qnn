@@ -601,6 +601,29 @@ void QnnCPUBackendTests::SetUp() {
   }
 }
 
+static BackendSupport GetGenieSupport() {
+  return BackendSupport::SUPPORTED;
+}
+
+void GenieBackendTests::SetUp() {
+  if (cached_genie_support_ == BackendSupport::SUPPORTED) {
+    return;
+  }
+
+  Ort::Logger logger = Ort::Logger();
+
+  if (cached_genie_support_ == BackendSupport::SUPPORT_UNKNOWN) {
+    cached_genie_support_ = GetGenieSupport();
+  }
+
+  if (cached_genie_support_ == BackendSupport::UNSUPPORTED) {
+    GTEST_SKIP();
+  } else if (cached_genie_support_ == BackendSupport::SUPPORT_ERROR) {
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, "Failed to check if Genie backend is available.");
+    FAIL();
+  }
+}
+
 static BackendSupport GetIRSupport() {
   // QnnIr should be able to serialize any model supported by the QNN reference spec.
   // Use a model that works on QnnCpu to verify QnnIr availability.
@@ -642,6 +665,7 @@ BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORT
 BackendSupport QnnHTPBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnIRBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnGPUBackendTests::cached_gpu_support_ = BackendSupport::SUPPORT_UNKNOWN;
+BackendSupport GenieBackendTests::cached_genie_support_ = BackendSupport::SUPPORTED;
 
 std::optional<QnnHTPBackendTests::QnnPlatformAttributes> QnnHTPBackendTests::cached_platform_attrs_ = std::nullopt;
 
