@@ -217,6 +217,56 @@ jobs:
           Write-Host "Found $count NuGet package(s)"
           if ($count -ne 2) { Write-Error "Expected 2 NuGet packages (arm64 + arm64x), found $count"; exit 1 }
 
+      - name: Repackage ARM64x NuGet with distinct package ID
+        shell: powershell
+        run: |
+          # NuGet best practice: use a separate package ID for each architecture variant
+          # so NuGet treats them as distinct packages and users can install the right one.
+          #
+          # ARM64  → Qualcomm.ML.OnnxRuntime.QNN        (standard ARM64 binary)
+          # ARM64x → Qualcomm.ML.OnnxRuntime.QNN.ARM64X (merged ARM64 + ARM64EC binary)
+          #
+          # This requires modifying the .nuspec inside the .nupkg (which is a zip file).
+
+          $arm64xDistDir = "${{ github.workspace }}\build\windows-arm64x\Release\Release\dist"
+          $nupkg = Get-ChildItem -Path $arm64xDistDir -Filter "Qualcomm.ML.OnnxRuntime.QNN.*.nupkg" |
+                   Where-Object { $_.Name -notmatch "ARM64X" } |
+                   Select-Object -First 1
+          if (-not $nupkg) {
+            Write-Error "ARM64x NuGet package not found in $arm64xDistDir"
+            exit 1
+          }
+
+          $version = $nupkg.BaseName -replace "^Qualcomm\.ML\.OnnxRuntime\.QNN\.", ""
+          $newPackageId = "Qualcomm.ML.OnnxRuntime.QNN.ARM64X"
+          $newNupkgName = "$newPackageId.$version.nupkg"
+          $newNupkgPath = Join-Path $arm64xDistDir $newNupkgName
+
+          # Extract, patch .nuspec, repack
+          $extractDir = Join-Path $env:TEMP "nupkg_arm64x_repack"
+          if (Test-Path $extractDir) { Remove-Item $extractDir -Recurse -Force }
+          New-Item -ItemType Directory -Path $extractDir | Out-Null
+
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::ExtractToDirectory($nupkg.FullName, $extractDir)
+
+          # Patch the .nuspec: change <id> and rename the file
+          $nuspecFile = Get-ChildItem -Path $extractDir -Filter "*.nuspec" | Select-Object -First 1
+          $nuspecContent = Get-Content $nuspecFile.FullName -Raw
+          $nuspecContent = $nuspecContent -replace '<id>Qualcomm\.ML\.OnnxRuntime\.QNN</id>', "<id>$newPackageId</id>"
+          Set-Content -Path $nuspecFile.FullName -Value $nuspecContent -NoNewline
+
+          # Rename the .nuspec file to match the new package ID
+          $newNuspecName = "$newPackageId.nuspec"
+          Rename-Item -Path $nuspecFile.FullName -NewName $newNuspecName
+
+          # Repack into a new .nupkg
+          [System.IO.Compression.ZipFile]::CreateFromDirectory($extractDir, $newNupkgPath)
+          Remove-Item $extractDir -Recurse -Force
+          Remove-Item $nupkg.FullName -Force
+
+          Write-Host "Repackaged: $($nupkg.Name) → $newNupkgName (package ID: $newPackageId)"
+
       - name: Publish ARM64 NuGet
         if: ${{ !inputs.skip_publish }}
         shell: powershell
