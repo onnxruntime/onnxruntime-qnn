@@ -26,9 +26,12 @@ from ..tools import (
     get_python_executable,
     get_qualcomm_device_cloud_sdk_root,
 )
+from ..typing import TargetArchT
 from ..util import (
     MSFT_CI_REQUIREMENTS_RELPATH,
     REPO_ROOT,
+    is_host_linux,
+    is_host_windows,
 )
 from .build import BuildConfigT, TargetPyVersionT, get_ort_version
 
@@ -221,14 +224,14 @@ class OrtWheelTestTask(RunInTempDirectoryTask):
         self,
         group_name: str | None,
         build_venv: Path | None,
-        wheel_pe_arch: WheelPeArchT,
+        target_arch: TargetArchT,
         py_version: TargetPyVersionT,
         get_wheel: Callable[[], Path],
         test_files_or_dirs: list[str],
         get_test_env: Callable[[], Mapping[str, str]] | None = None,
     ) -> None:
         self.__build_venv = build_venv
-        self.__wheel_pe_arch = wheel_pe_arch
+        self.__target_arch = target_arch
         self.__target_py_version: TargetPyVersionT = py_version
         self.__get_wheel = get_wheel
         self.__test_files_or_dirs = test_files_or_dirs
@@ -237,11 +240,16 @@ class OrtWheelTestTask(RunInTempDirectoryTask):
 
     @property
     def __python_exe_arch(self) -> PythonExecutableArchT:
-        if self.__wheel_pe_arch in ["arm64ec", "arm64x"]:
-            return "x86_64"
-        elif self.__wheel_pe_arch == "arm64":
-            return "arm64"
-        raise ValueError(f"Unknown wheel PE arch {self.__wheel_pe_arch}.")
+        target_arches: dict[str, PythonExecutableArchT] = {
+            "arm64": "arm64",
+            "arm64ec": "x86_64",
+            "arm64x": "x86_64",
+            "aarch64_manylinux_2_34": "arm64",
+        }
+        py_arch = target_arches.get(self.__target_arch, None)
+        if py_arch is not None:
+            return py_arch
+        raise ValueError(f"Unknown wheel target arch {self.__target_arch}.")
 
     def make_wheel_test(self, tmpdir: Path) -> Task:
         venv_path = tmpdir / "venv"
@@ -277,20 +285,20 @@ class OrtWheelModelTestTask(OrtWheelTestTask):
         self,
         group_name: str | None,
         venv: Path | None,
-        wheel_pe_arch: WheelPeArchT,
+        target_arch: TargetArchT,
         config: BuildConfigT,
         py_version: TargetPyVersionT,
         test_files_or_dirs: list[str],
         get_test_env: Callable[[], Mapping[str, str]],
     ) -> None:
-        self.__wheel_pe_arch = wheel_pe_arch
+        self.__target_arch = target_arch
         self.__config = config
         self.__py_version = py_version
 
         super().__init__(
             group_name,
             venv,
-            wheel_pe_arch,
+            target_arch,
             py_version,
             self.__find_wheel,
             test_files_or_dirs,
@@ -306,11 +314,23 @@ class OrtWheelModelTestTask(OrtWheelTestTask):
            a wheel that was built on a different machine, the file was just emplaced here and we don't have a way to
            reliabily predict its name (e.g., if the wheel was built yesterday).
         """
-        build_root = REPO_ROOT / "build" / f"windows-{self.__wheel_pe_arch}"
-        package_name = "onnxruntime_qnn_qcom_internal"
+        # Either onnxruntime_qnn or onnxruntime_qnn_qcom_internal, depending on whether this is a "nightly" build.
+        package_name = "onnxruntime_qnn*"
         py_vsn = f"cp{self.__py_version.replace('.', '')}"
-        wheel_arch = "amd64" if self.__wheel_pe_arch in ["arm64ec", "arm64x"] else self.__wheel_pe_arch
-        filename_glob = f"{package_name}-{get_ort_version()}*-{py_vsn}-{py_vsn}-win_{wheel_arch}.whl"
+        if is_host_windows():
+            pe_arches = {
+                "arm64": "arm64",
+                "arm64ec": "amd64",
+                "x86_64": "amd64",
+            }
+            wheel_pe_arch = pe_arches[self.__target_arch]
+            build_root = REPO_ROOT / "build" / f"windows-{self.__target_arch}"
+            filename_glob = f"{package_name}-{get_ort_version()}*-{py_vsn}-{py_vsn}-win_{wheel_pe_arch}.whl"
+        elif is_host_linux():
+            build_root = REPO_ROOT / "build" / f"linux-{self.__target_arch}"
+            filename_glob = f"{package_name}-{get_ort_version()}*-{py_vsn}-{py_vsn}-manylinux*_aarch64.whl"
+        else:
+            raise ValueError("Unknown OS")
 
         # The wheel has a date in its filename, was produced by a Visual Studio build, or both.
         dist_dirs = [
@@ -332,14 +352,14 @@ class OrtWheelSmokeTestTask(OrtWheelModelTestTask):
         self,
         group_name: str | None,
         venv: Path | None,
-        wheel_pe_arch: WheelPeArchT,
+        target_arch: TargetArchT,
         config: BuildConfigT,
         py_version: TargetPyVersionT,
     ) -> None:
         super().__init__(
             group_name,
             venv,
-            wheel_pe_arch,
+            target_arch,
             config,
             py_version,
             [
@@ -360,14 +380,14 @@ class OrtWheelGpuModelTestTask(OrtWheelModelTestTask):
         self,
         group_name: str | None,
         venv: Path | None,
-        wheel_pe_arch: WheelPeArchT,
+        target_arch: TargetArchT,
         config: BuildConfigT,
         py_version: TargetPyVersionT,
     ) -> None:
         super().__init__(
             group_name,
             venv,
-            wheel_pe_arch,
+            target_arch,
             config,
             py_version,
             [
