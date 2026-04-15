@@ -11,6 +11,7 @@
 #include <string>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
+#include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_node_group/utils.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -599,6 +600,11 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmReshapeFusion::TryFusion(
     const Ort::Logger& logger) {
   ORT_UNUSED_PARAMETER(logger);
 
+  // Skip fusion for GPU backend
+  if (IsGpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    return nullptr;
+  }
+
   // Only handle standalone Gemm nodes (not QDQ-wrapped)
   if (gemm_node_unit.OpType() != "Gemm" || gemm_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode) {
     return nullptr;
@@ -676,6 +682,11 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmReshapeReshapeFusion::TryFusion(
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
   ORT_UNUSED_PARAMETER(logger);
+
+  // Skip fusion for GPU backend
+  if (IsGpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    return nullptr;
+  }
 
   // Only handle Gemm nodes (MatMul+Add gets fused to Gemm)
   if (gemm_node_unit.OpType() != "Gemm" || gemm_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode) {
