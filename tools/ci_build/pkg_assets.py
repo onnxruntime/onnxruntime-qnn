@@ -197,6 +197,16 @@ def build_archive_asset(
         asset_files.extend(doc_md_files)
         asset_files.extend(doc_png_files)
 
+        necessary_files_dict = {
+            "windows": [
+                "onnxruntime_providers_qnn.dll",
+            ],
+            "others": [
+                "libonnxruntime_providers_qnn.so",
+            ],
+        }
+        necessary_files = necessary_files_dict["windows"] if is_windows() else necessary_files_dict["others"]
+
         # Collect and verify files exist
         missing_files = []
         found_files = []
@@ -218,6 +228,8 @@ def build_archive_asset(
         if missing_files:
             log.warning(f"Missing asset files in {cwd}:")
             for missing in missing_files:
+                if missing in necessary_files:
+                    raise FileNotFoundError(f"Required file missing: {missing}")
                 log.warning(f"  - {missing}")
             log.warning("Continuing with available files...")
 

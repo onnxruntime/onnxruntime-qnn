@@ -170,7 +170,7 @@ else {
     $FakeClCcacheDir = $BuildDir.Replace("\", "/")
     $CommonArgs += `
         "--cmake_extra_defines", "CMAKE_VS_GLOBALS=CLToolExe=cl.exe;CLToolPath=$FakeClCcacheDir;UseMultiToolTask=true", `
-        "--cmake_extra_defines", 'CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=$"<"$"<"CONFIG:Debug,RelWithDebInfo">":Embedded">"'
+        "--cmake_extra_defines", 'CMAKE_MSVC_DEBUG_INFORMATION_FORMAT=$"<"$"<"CONFIG:Debug,Release,RelWithDebInfo">":Embedded">"'
 }
 
 $TargetPyExe = $null

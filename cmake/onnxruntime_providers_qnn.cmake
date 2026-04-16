@@ -79,6 +79,14 @@
   elseif(WIN32)
     set_property(TARGET onnxruntime_providers_qnn APPEND_STRING PROPERTY LINK_FLAGS
                   "-DEF:${ONNXRUNTIME_ROOT}/core/providers/qnn/symbols.def")
+    # Generate PDB for Release builds.
+    # /DEBUG tells the linker to emit a .pdb; /OPT:REF and /OPT:ICF re-enable
+    # linker optimizations that /DEBUG implicitly turns off via /OPT:NOREF /OPT:NOICF.
+    # Note: When developers use this PDB for crash analysis,
+    # please be aware that ICF may cause symbol aliasing.
+    target_link_options(onnxruntime_providers_qnn PRIVATE
+      "$<$<CONFIG:Release>:/DEBUG;/OPT:REF;/OPT:ICF>"
+    )
   else()
     message(FATAL_ERROR "onnxruntime_providers_qnn unknown platform, need to specify shared library exports for it")
   endif()

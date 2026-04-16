@@ -424,7 +424,7 @@ def generate_build_tree(
                 add_default_definition(
                     cmake_extra_defines,
                     "CMAKE_MSVC_DEBUG_INFORMATION_FORMAT",
-                    "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>",
+                    "$<$<CONFIG:Debug,Release,RelWithDebInfo>:Embedded>",
                 )
             else:
                 # Always enable debug info even in release build. The debug information is in separated *.pdb files that
