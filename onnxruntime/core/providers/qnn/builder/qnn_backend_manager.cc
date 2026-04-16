@@ -2476,15 +2476,15 @@ Ort::Status QnnBackendManager::SetPerThreadHtpPowerConfigs(const std::thread::id
   if (pre_run) {
     // add in htp_power_configs the default power config id also so to run when we execute
     if (htp_power_configs.pre_run_perf_mode.has_value()) {
-      RETURN_IF_NOT_OK(SetState(onnxruntime::qnn::GraphState::RUN_START, htp_power_config_id, *htp_power_configs.pre_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
+      RETURN_IF_ERROR(SetState(onnxruntime::qnn::GraphState::RUN_START, htp_power_config_id, *htp_power_configs.pre_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
     } else if (htp_power_configs.default_perf_mode.has_value()) {
-      RETURN_IF_NOT_OK(SetState(onnxruntime::qnn::GraphState::RUN_START, htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
+      RETURN_IF_ERROR(SetState(onnxruntime::qnn::GraphState::RUN_START, htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
     }
   } else {
     if (htp_power_configs.post_run_perf_mode.has_value()) {
-      RETURN_IF_NOT_OK(SetState(onnxruntime::qnn::GraphState::RUN_DONE, htp_power_config_id, *htp_power_configs.post_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
+      RETURN_IF_ERROR(SetState(onnxruntime::qnn::GraphState::RUN_DONE, htp_power_config_id, *htp_power_configs.post_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
     } else if (htp_power_configs.default_perf_mode.has_value()) {
-      RETURN_IF_NOT_OK(SetState(onnxruntime::qnn::GraphState::RUN_DONE, htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
+      RETURN_IF_ERROR(SetState(onnxruntime::qnn::GraphState::RUN_DONE, htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
     }
   }
   return Ort::Status();
