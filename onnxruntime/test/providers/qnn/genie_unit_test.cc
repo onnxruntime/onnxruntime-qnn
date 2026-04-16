@@ -14,7 +14,6 @@
 #include "core/providers/qnn/genie/genie_backend_manager.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
-#include "test/util/include/test_environment.h"
 
 namespace onnxruntime {
 namespace test {
@@ -417,10 +416,11 @@ TEST_F(GenieApiLoaderTest, NonNullHandle_ConstructsWithoutThrowing) {
 
 namespace {
 
-// Returns a valid Ort::Logger backed by the test environment's default logger.
+// Returns an Ort::Logger suitable for use in unit tests that exercise error paths.
+// Uses the null-sink default constructor (same pattern as GenieBackendTests::SetUp()),
+// avoiding any dependency on the unexported onnxruntime::GetStackTrace symbol.
 Ort::Logger GetTestLogger() {
-  const onnxruntime::logging::Logger& raw = DefaultLoggingManager().DefaultLogger();
-  return Ort::Logger(reinterpret_cast<const OrtLogger*>(&raw));
+  return Ort::Logger();
 }
 
 }  // namespace

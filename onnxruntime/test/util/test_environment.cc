@@ -9,6 +9,7 @@
 #include "gtest/gtest.h"
 #include "google/protobuf/stubs/common.h"
 
+#include "core/common/logging/logging.h"
 #include "core/session/ort_env.h"
 #include "core/session/environment.h"
 
@@ -19,6 +20,10 @@ namespace test {
 
 const ::onnxruntime::Environment& GetEnvironment() {
   return ((OrtEnv*)*ort_env.get())->GetEnvironment();
+}
+
+::onnxruntime::logging::LoggingManager& DefaultLoggingManager() {
+  return *((OrtEnv*)*ort_env.get())->GetEnvironment().GetLoggingManager();
 }
 
 Ort::Env* GetOrtEnv() {

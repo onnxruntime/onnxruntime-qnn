@@ -304,6 +304,20 @@ block()
     ${onnxruntime_test_framework_src}
   )
 
+  if(onnxruntime_USE_QNN)
+    # Genie implementation files are compiled into onnxruntime_providers_qnn.so with hidden
+    # visibility, so they cannot be linked by external binaries. Re-compile them directly
+    # into the test binary so that genie_unit_test.cc can access the internal classes.
+    # Note: genie_node_compute_info.cc is intentionally excluded because it depends on
+    # qnn_utils.cc symbols that are not available to the test binary and none of the
+    # unit tests in genie_unit_test.cc exercise GenieNodeComputeInfo.
+    list(APPEND onnxruntime_provider_test_srcs
+      ${ONNXRUNTIME_ROOT}/core/providers/qnn/genie/genie_api_loader.cc
+      ${ONNXRUNTIME_ROOT}/core/providers/qnn/genie/genie_backend_manager.cc
+      ${ONNXRUNTIME_ROOT}/core/providers/qnn/genie/genie_node.cc
+    )
+  endif()
+
   set(onnxruntime_provider_test_libs
     ${onnxruntime_test_providers_libs}
     ${onnxruntime_test_common_libs}
