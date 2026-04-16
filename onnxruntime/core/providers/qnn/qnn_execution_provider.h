@@ -197,7 +197,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   };
 
   // Will return true if any power config options need to be updated
-  bool GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
+  void GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
                                    const ::OrtRunOptions* run_options);
 
   void CreateHtpPowerConfigId() const;
@@ -222,7 +222,6 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   bool disable_cpu_ep_fallback_ = false;  // True if CPU EP fallback has been disabled for this session.
   bool qnn_context_embed_mode_ = true;
-
   bool stop_share_ep_contexts_ = false;
   bool prepare_only_ = false;
   bool enable_spill_fill_buffer_ = false;

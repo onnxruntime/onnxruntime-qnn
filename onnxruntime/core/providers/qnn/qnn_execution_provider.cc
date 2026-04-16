@@ -2903,12 +2903,10 @@ OrtStatus* ORT_API_CALL QnnEp::ShouldConvertDataLayoutForOpImpl(_In_ OrtEp* this
   return nullptr;
 }
 
-bool QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
+void QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thread_htp_power_configs,
                                         const ::OrtRunOptions* run_options) {
   qnn::HtpPerformanceMode pre_run_htp_performance_mode = qnn::HtpPerformanceMode::kHtpDefault;
   qnn::HtpPerformanceMode post_run_htp_performance_mode = qnn::HtpPerformanceMode::kHtpDefault;
-
-  bool configs_set = false;
 
   const char* htp_perf_mode = nullptr;
   htp_perf_mode = ort_api.GetRunConfigEntry(run_options, kOrtRunOptionsConfigQnnPerfMode);
@@ -2928,43 +2926,33 @@ bool QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thr
   if (rpc_latency != nullptr) {
     rpc_control_latency = static_cast<uint32_t>(std::stoul(rpc_latency));
     per_thread_htp_power_configs.rpc_control_latency = rpc_control_latency;
-    configs_set = true;
 
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, (std::string("rpc_control_latency: ") + rpc_latency).c_str());
   } else {
     per_thread_htp_power_configs.rpc_control_latency = default_rpc_control_latency_;
-    configs_set = true;
   }
 
   if (qnn::HtpPerformanceMode::kHtpBurst == pre_run_htp_performance_mode) {
     per_thread_htp_power_configs.rpc_polling_time = 9999;
-    configs_set = true;
   } else {
     per_thread_htp_power_configs.rpc_polling_time = default_rpc_polling_time_;
-    configs_set = true;
   }
 
   if (qnn::HtpPerformanceMode::kHtpDefault != dynamic_htp_performance_mode_) {
     // reset perf mode, rpc control latency and rpc polling time to dynamic perf mode values
     per_thread_htp_power_configs.default_perf_mode = dynamic_htp_performance_mode_;
-    configs_set = true;
   } else if (qnn::HtpPerformanceMode::kHtpDefault != default_htp_performance_mode_) {
     per_thread_htp_power_configs.default_perf_mode = default_htp_performance_mode_;
-    configs_set = true;
   }
 
   if (qnn::HtpPerformanceMode::kHtpDefault != pre_run_htp_performance_mode) {
     per_thread_htp_power_configs.pre_run_perf_mode = pre_run_htp_performance_mode;
     // rpc polling time will only be updated with perf mode changes
-    configs_set = true;
   }
 
   if (qnn::HtpPerformanceMode::kHtpDefault != post_run_htp_performance_mode) {
     per_thread_htp_power_configs.post_run_perf_mode = post_run_htp_performance_mode;
-    configs_set = true;
   }
-
-  return configs_set;
 }
 
 OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const ::OrtRunOptions* run_options) noexcept {
@@ -2985,11 +2973,10 @@ OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const :
   if (ep->GetHtpPowerConfigId(htp_power_config_id)) {
     auto thread_id = std::this_thread::get_id();
     qnn::PerThreadHtpPowerConfigs_t per_thread_htp_power_configs;
-    if (ep->GetPerThreadHtpPowerConfigs(per_thread_htp_power_configs, run_options)) {
-      per_thread_htp_power_configs.power_config_id = htp_power_config_id;
-      RETURN_IF_ERROR(ep->qnn_backend_manager_->AddPerThreadHtpPowerConfigMapping(thread_id,
-                                                                                  per_thread_htp_power_configs));
-    }
+    ep->GetPerThreadHtpPowerConfigs(per_thread_htp_power_configs, run_options);
+    per_thread_htp_power_configs.power_config_id = htp_power_config_id;
+    RETURN_IF_ERROR(ep->qnn_backend_manager_->AddPerThreadHtpPowerConfigMapping(thread_id,
+                                                                                per_thread_htp_power_configs));
   }
 
   const char* lora_config = nullptr;
