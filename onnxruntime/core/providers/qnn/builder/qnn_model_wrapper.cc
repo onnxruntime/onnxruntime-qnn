@@ -17,8 +17,8 @@ namespace onnxruntime {
 namespace qnn {
 
 Ort::Status QnnModelWrapper::CreateQnnGraph(const Qnn_ContextHandle_t& context,
-                                       const std::string& graph_name,
-                                       const QnnGraph_Config_t** graph_configs) {
+                                            const std::string& graph_name,
+                                            const QnnGraph_Config_t** graph_configs) {
   // only one graph is allowed per QnnModel
   RETURN_IF(!graph_name_.empty(), ("Graph" + graph_name + "already initialized.").c_str());
 
@@ -605,7 +605,8 @@ bool QnnModelWrapper::RegisterGraphInputOutputInOrder() {
 Ort::Status QnnModelWrapper::ComposeQnnGraph(bool build_json_qnn_graph) {
   ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Compose Qnn Graph.");
   if (qnn_op_property_list_.empty()) {
-    return MAKE_EP_FAIL("Qnn op property list is empty");;
+    return MAKE_EP_FAIL("Qnn op property list is empty");
+    ;
   }
 
   if (!RegisterGraphInputOutputInOrder()) {

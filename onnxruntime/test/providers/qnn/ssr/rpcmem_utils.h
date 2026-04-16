@@ -24,7 +24,6 @@ inline std::string WideToUTF8(std::wstring_view s) {
 }
 }  // namespace
 
-
 Ort::Status ReadEnvironmentVariable(const wchar_t* name, std::wstring& value_out) {
   const DWORD value_size = ::GetEnvironmentVariableW(name, nullptr, 0);
   if (value_size == 0) {
