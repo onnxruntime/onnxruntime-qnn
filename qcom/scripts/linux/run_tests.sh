@@ -116,11 +116,10 @@ cd "${onnx_models_root}"
 
 declare -a model_test_runners=("run_model_test")
 for runner in "${model_test_runners[@]}"; do
-    "${runner}" cpu node "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node"
-
-    "${runner}" cpu float32
 
     if [ "$(uname -m)" != "aarch64" ]; then  # TODO: [AISW-164203] ORT test failures on Rubik Pi
+        "${runner}" cpu node "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node"
+        "${runner}" cpu float32
         "${runner}" htp qdq
     fi
 

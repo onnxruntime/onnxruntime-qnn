@@ -2316,7 +2316,7 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
         ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_ERROR, ("Invalid EP Workload Type: " + value).c_str());
         return ep->ort_api.CreateStatus(ORT_INVALID_ARGUMENT, "Genie Execution Not Set.");
       }
-      ep->genie_kv_cache_rewind_.store(rewind_value, std::memory_order_acq_rel);
+      ep->genie_kv_cache_rewind_.store(rewind_value, std::memory_order_release);
     } else if (key == kOrtEpDynamicOptionsWorkloadType) {
       if (value == "Default") {
         RETURN_IF_NOT_OK(ep->qnn_backend_manager_->ResetContextPriority());
