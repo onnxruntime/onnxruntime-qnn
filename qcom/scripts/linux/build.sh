@@ -163,7 +163,7 @@ case "${target_platform}" in
       qnn_args+=("--ort_home")
       qnn_args+=("${ort_prebuilt_root}")
     fi
-    platform_args=(--build_shared_lib)
+    platform_args=(--build_shared_lib --cmake_extra_defines CMAKE_BUILD_RPATH_USE_ORIGIN:BOOL=TRUE)
 
     test_runner="${REPO_ROOT}/qcom/scripts/linux/run_tests.sh"
 

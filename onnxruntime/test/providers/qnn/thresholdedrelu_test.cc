@@ -50,6 +50,33 @@ TEST_F(QnnCPUBackendTests, ThresholdedRelu) {
                                 ExpectedEPNodeAssignment::All);
 }
 
+// Case 1: alpha=0, equivalent to ReLU (output = input > 0 ? input : 0).
+TEST_F(QnnCPUBackendTests, ThresholdedRelu_Alpha0) {
+  std::vector<float> input = {-3.0f, -1.0f, 0.0f, 1.0f, 2.0f, -0.5f, 0.5f, 3.0f, -2.0f, 4.0f,
+                              -1.5f, 0.1f, -0.1f, 5.0f, -4.0f, 2.5f, -2.5f, 1.5f, -3.5f, 0.2f};
+  RunThresholdedReluTest<float>({TestInputDef<float>({1, 4, 5}, false, input)},
+                                {test::MakeAttribute("alpha", 0.0f)},
+                                ExpectedEPNodeAssignment::All);
+}
+
+// Case 2: alpha=-1, values <= -1 are zeroed out (output = input > -1 ? input : 0).
+TEST_F(QnnCPUBackendTests, ThresholdedRelu_AlphaNeg1) {
+  std::vector<float> input = {-3.0f, -1.0f, 0.0f, 1.0f, 2.0f, -0.5f, 0.5f, 3.0f, -2.0f, 4.0f,
+                              -1.5f, 0.1f, -0.1f, 5.0f, -4.0f, 2.5f, -2.5f, 1.5f, -3.5f, 0.2f};
+  RunThresholdedReluTest<float>({TestInputDef<float>({1, 4, 5}, false, input)},
+                                {test::MakeAttribute("alpha", -1.0f)},
+                                ExpectedEPNodeAssignment::All);
+}
+
+// Case 3: alpha=x (arbitrary positive threshold, output = input > x ? input : 0).
+TEST_F(QnnCPUBackendTests, ThresholdedRelu_AlphaX) {
+  std::vector<float> input = {-3.0f, -1.0f, 0.0f, 1.0f, 2.0f, -0.5f, 0.5f, 3.0f, -2.0f, 4.0f,
+                              -1.5f, 0.1f, -0.1f, 5.0f, -4.0f, 2.5f, -2.5f, 1.5f, -3.5f, 0.2f};
+  RunThresholdedReluTest<float>({TestInputDef<float>({1, 4, 5}, false, input)},
+                                {test::MakeAttribute("alpha", 2.0f)},
+                                ExpectedEPNodeAssignment::All);
+}
+
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 //
 // HTP tests:
@@ -119,6 +146,33 @@ TEST_F(QnnHTPBackendTests, ThresholdedRelu_qdq) {
   std::vector<float> input = GetFloatDataInRange(-10.0f, 10.0f, 20);
   RunQDQThresholdedReluTestOnHTP<uint8_t, uint8_t>({TestInputDef<float>({1, 4, 5}, false, input)},
                                                    {test::MakeAttribute("alpha", 4.5f)},
+                                                   ExpectedEPNodeAssignment::All);
+}
+
+// Case 1: alpha=0, equivalent to ReLU (output = input > 0 ? input : 0).
+TEST_F(QnnHTPBackendTests, ThresholdedRelu_Alpha0) {
+  std::vector<float> input = {-3.0f, -1.0f, 0.0f, 1.0f, 2.0f, -0.5f, 0.5f, 3.0f, -2.0f, 4.0f,
+                              -1.5f, 0.1f, -0.1f, 5.0f, -4.0f, 2.5f, -2.5f, 1.5f, -3.5f, 0.2f};
+  RunQDQThresholdedReluTestOnHTP<uint8_t, uint8_t>({TestInputDef<float>({1, 4, 5}, false, input)},
+                                                   {test::MakeAttribute("alpha", 0.0f)},
+                                                   ExpectedEPNodeAssignment::All);
+}
+
+// Case 2: alpha=-1, values <= -1 are zeroed out (output = input > -1 ? input : 0).
+TEST_F(QnnHTPBackendTests, ThresholdedRelu_AlphaNeg1) {
+  std::vector<float> input = {-3.0f, -1.0f, 0.0f, 1.0f, 2.0f, -0.5f, 0.5f, 3.0f, -2.0f, 4.0f,
+                              -1.5f, 0.1f, -0.1f, 5.0f, -4.0f, 2.5f, -2.5f, 1.5f, -3.5f, 0.2f};
+  RunQDQThresholdedReluTestOnHTP<uint8_t, uint8_t>({TestInputDef<float>({1, 4, 5}, false, input)},
+                                                   {test::MakeAttribute("alpha", -1.0f)},
+                                                   ExpectedEPNodeAssignment::All);
+}
+
+// Case 3: alpha=x (arbitrary positive threshold, output = input > x ? input : 0).
+TEST_F(QnnHTPBackendTests, ThresholdedRelu_AlphaX) {
+  std::vector<float> input = {-3.0f, -1.0f, 0.0f, 1.0f, 2.0f, -0.5f, 0.5f, 3.0f, -2.0f, 4.0f,
+                              -1.5f, 0.1f, -0.1f, 5.0f, -4.0f, 2.5f, -2.5f, 1.5f, -3.5f, 0.2f};
+  RunQDQThresholdedReluTestOnHTP<uint8_t, uint8_t>({TestInputDef<float>({1, 4, 5}, false, input)},
+                                                   {test::MakeAttribute("alpha", 2.0f)},
                                                    ExpectedEPNodeAssignment::All);
 }
 

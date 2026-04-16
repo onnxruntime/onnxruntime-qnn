@@ -29,11 +29,11 @@ class ThresholdedReluOpBuilder : public BaseOpBuilder {
                                           bool do_op_validation) const override ORT_MUST_USE_RESULT;
 
  private:
-  Ort::Status ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const;
+  Ort::Status ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& node_unit) const;
 };
 
-Ort::Status ThresholdedReluOpBuilder::ExplictOpCheck(QnnModelWrapper& qnn_model_wrapper,
-                                                     const OrtNodeUnit& node_unit) const {
+Ort::Status ThresholdedReluOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
+                                                      const OrtNodeUnit& node_unit) const {
   TensorInfo input_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
 
@@ -114,7 +114,7 @@ Ort::Status ThresholdedReluOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_w
                                                     std::vector<std::string>& input_names,
                                                     bool do_op_validation) const {
   if (do_op_validation) {
-    RETURN_IF_ERROR(ExplictOpCheck(qnn_model_wrapper, node_unit));
+    RETURN_IF_ERROR(ExplicitOpCheck(qnn_model_wrapper, node_unit));
   }
   OrtNodeAttrHelper node_helper(node_unit);
   const auto& inputs = node_unit.Inputs();
@@ -145,102 +145,77 @@ Ort::Status ThresholdedReluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrappe
   std::vector<uint32_t> output_shape = output_info.shape;
   Qnn_TensorType_t op_output_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
 
+  // input --+--> greater(alpha) --> select --> output
+  //    \______________________________/
+
+  // 1. Greater
   // Create alpha tensor.
-  // QNN sub gives memory error, use input + (-alpha) as input - alpha's work around.
-  float negtive_alpha = node_helper.Get("alpha", static_cast<float>(0)) * -1;
+  float alpha = node_helper.Get("alpha", static_cast<float>(0));
   std::vector<uint8_t> alpha_bytes;
-  RETURN_IF_ERROR(SetAlphaByte(input_info.qnn_data_type, alpha_bytes, negtive_alpha));
+  RETURN_IF_ERROR(SetAlphaByte(input_info.qnn_data_type, alpha_bytes, alpha));
 
-  std::string negtive_alpha_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_alpha");
-  QnnTensorWrapper negtive_alpha_tensorwrapper(negtive_alpha_tensor_name,
-                                               QNN_TENSOR_TYPE_STATIC,
-                                               input_info.qnn_data_type,
-                                               QnnQuantParamsWrapper(),
-                                               std::vector<uint32_t>({1}),
-                                               std::move(alpha_bytes));
-  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(negtive_alpha_tensorwrapper)), "Failed to add tensor.");
+  std::string alpha_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_alpha");
+  QnnTensorWrapper alpha_tensorwrapper(alpha_tensor_name,
+                                       QNN_TENSOR_TYPE_STATIC,
+                                       input_info.qnn_data_type,
+                                       QnnQuantParamsWrapper(),
+                                       std::vector<uint32_t>({1}),
+                                       std::move(alpha_bytes));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(alpha_tensorwrapper)), "Failed to add alpha tensor.");
 
-  // input -> add -> relu -> sign -> mul -> output
-  //       --------------------------/
-  // 1. Add
-  std::string add_name = utils::UniqueNameGenerator().New(node_unit, "_Add");
-  std::string add_output_name = utils::UniqueNameGenerator().New(node_unit, "_Add_output");
-  QnnTensorWrapper add_output(add_output_name,
-                              QNN_TENSOR_TYPE_NATIVE,
-                              input_info.qnn_data_type,
-                              QnnQuantParamsWrapper(),
-                              std::vector<uint32_t>(output_shape));
-  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(add_output)),
-                "Failed to add ThresholdRelu - Sub output tensor.");
+  // Create Greater Node.
+  std::string greater_name = utils::UniqueNameGenerator().New(node_unit, "_Greater");
+  std::string greater_output_name = utils::UniqueNameGenerator().New(node_unit, "_Greater_output");
+  QnnTensorWrapper greater_output(greater_output_name,
+                                  QNN_TENSOR_TYPE_NATIVE,
+                                  QNN_DATATYPE_BOOL_8,
+                                  QnnQuantParamsWrapper(),
+                                  std::vector<uint32_t>(output_shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(greater_output)),
+                "Failed to add ThresholdRelu - Greater output tensor.");
 
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(add_name,
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(greater_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_ELEMENT_WISE_ADD,
-                                                {input_name, negtive_alpha_tensor_name},
-                                                {add_output_name},
+                                                QNN_OP_ELEMENT_WISE_GREATER,
+                                                {input_name, alpha_tensor_name},
+                                                {greater_output_name},
                                                 {},
                                                 do_op_validation),
-                "Failed to add ThresholdRelu - Sub node.");
+                "Failed to add ThresholdRelu - Greater node.");
 
-  // 2. Relu
-  std::string relu_name = utils::UniqueNameGenerator().New(node_unit, "_Relu");
-  std::string relu_output_name = utils::UniqueNameGenerator().New(node_unit, "_Relu_output");
+  // 2. Select
+  // Create zero tensor.
+  float zero = 0.0f;
+  std::vector<uint8_t> zero_bytes;
+  RETURN_IF_ERROR(SetAlphaByte(input_info.qnn_data_type, zero_bytes, zero));
 
-  QnnTensorWrapper relu_output(relu_output_name,
-                               QNN_TENSOR_TYPE_NATIVE,
-                               input_info.qnn_data_type,
-                               QnnQuantParamsWrapper(),
-                               std::vector<uint32_t>(output_shape));
-  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(relu_output)),
-                "Failed to add ThresholdRelu - Relu output tensor.");
+  std::string zero_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_zero");
+  QnnTensorWrapper zero_tensorwrapper(zero_tensor_name,
+                                      QNN_TENSOR_TYPE_STATIC,
+                                      input_info.qnn_data_type,
+                                      QnnQuantParamsWrapper(),
+                                      std::vector<uint32_t>({1}),
+                                      std::move(zero_bytes));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(zero_tensorwrapper)), "Failed to add zero tensor.");
 
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(relu_name,
+  // Create Select Node.
+  std::string select_name = utils::UniqueNameGenerator().New(node_unit, "_Select");
+  QnnTensorWrapper select_output(org_output_name,
+                                 op_output_tensor_type,
+                                 output_info.qnn_data_type,
+                                 output_info.quant_param.Copy(),
+                                 std::vector<uint32_t>(output_shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(select_output)),
+                "Failed to add ThresholdRelu - Select output tensor.");
+
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(select_name,
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_RELU,
-                                                {add_output_name},
-                                                {relu_output_name},
-                                                {},
-                                                do_op_validation),
-                "Failed to add ThresholdRelu - Relu node.");
-
-  // 3. Sign
-  std::string sign_name = utils::UniqueNameGenerator().New(node_unit, "_Sign");
-  std::string sign_output_name = utils::UniqueNameGenerator().New(node_unit, "_Sign_output");
-  QnnTensorWrapper sign_output(sign_output_name,
-                               QNN_TENSOR_TYPE_NATIVE,
-                               input_info.qnn_data_type,
-                               QnnQuantParamsWrapper(),
-                               std::vector<uint32_t>(output_shape));
-  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sign_output)),
-                "Failed to add ThresholdRelu - Sign output tensor.");
-
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(sign_name,
-                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_ELEMENT_WISE_SIGN,
-                                                {relu_output_name},
-                                                {sign_output_name},
-                                                {},
-                                                do_op_validation),
-                "Failed to add ThresholdRelu - Sign node.");
-
-  // 4. Mul
-  std::string mul_name = utils::UniqueNameGenerator().New(node_unit, "_Mul");
-  QnnTensorWrapper mul_output(org_output_name,
-                              op_output_tensor_type,
-                              output_info.qnn_data_type,
-                              output_info.quant_param.Copy(),
-                              std::vector<uint32_t>(output_shape));
-  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(mul_output)),
-                "Failed to add ThresholdRelu - Mul output tensor.");
-
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(mul_name,
-                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_ELEMENT_WISE_MULTIPLY,
-                                                {input_name, sign_output_name},
+                                                QNN_OP_ELEMENT_WISE_SELECT,
+                                                {greater_output_name, input_name, zero_tensor_name},
                                                 {org_output_name},
                                                 {},
                                                 do_op_validation),
-                "Failed to add ThresholdRelu - Mul node.");
+                "Failed to add ThresholdRelu - Select node.");
 
   return Ort::Status();
 }
