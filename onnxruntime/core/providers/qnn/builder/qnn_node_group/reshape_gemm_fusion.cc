@@ -143,121 +143,76 @@ const OrtNodeUnit* GetOutputReshape2NodeUnit(
                                   node_to_node_unit, node_unit_to_qnn_node_group);
 }
 
-Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& reshape_node_unit,
-                                  const OrtNodeUnit& gemm_node_unit, const Ort::Logger& logger, bool validate) {
-  assert(reshape_node_unit.OpType() == "Reshape" && gemm_node_unit.OpType() == "Gemm");
-  const auto& node_name = utils::UniqueNameGenerator().New(gemm_node_unit);
-  const OrtNodeUnitIODef& input_def = reshape_node_unit.Inputs()[0];
-  const OrtNodeUnitIODef& weight_def = gemm_node_unit.Inputs()[1];
-  const OrtNodeUnitIODef* bias_def_ptr = nullptr;
-  bool has_bias = gemm_node_unit.Inputs().size() == 3;
-  if (has_bias) {
-    bias_def_ptr = &gemm_node_unit.Inputs()[2];
-  }
-  const OrtNodeUnitIODef& output_def = gemm_node_unit.Outputs()[0];
-
-  QnnTensorWrapper input_tensor;
-  QnnTensorWrapper bias_tensor;
-  QnnTensorWrapper output_tensor;
-
-  // Create input tensor wrapper
-  RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(input_def, input_tensor));
-
-  // Process weight tensor
-  std::vector<uint32_t> weight_shape;
-  std::vector<uint8_t> unpacked_tensor;
-  std::string weight_tensor_name = weight_def.name;
-
-  // Get weight shape and validate
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(weight_def.shape, weight_shape), "Failed to get weight shape");
-
-  // Get tensor type for weight
-  Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(weight_tensor_name);
-  Qnn_DataType_t data_type = QNN_DATATYPE_FLOAT_32;
-  RETURN_IF_ERROR(utils::GetQnnDataType(false, weight_def.type, data_type));
-
-  // Get weight tensor proto and perform 2D transpose
-  const auto* weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
-  // Transpose the weight tensor (2D matrix transpose)
-  RETURN_IF_ERROR(utils::TwoDimensionTranspose(qnn_model_wrapper, weight_shape, weight_tensor_proto, unpacked_tensor, logger, validate));
-  QnnTensorWrapper weight_tensor(weight_tensor_name, tensor_type, data_type, QnnQuantParamsWrapper(),
-                                 std::move(weight_shape), std::move(unpacked_tensor));
-  if (has_bias) {
-    RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(*bias_def_ptr, bias_tensor));
+// Common validation for Gemm node in fusion patterns.
+// Returns true if the Gemm node is valid for fusion, false otherwise.
+// Checks: GPU backend skip, standalone Gemm, no transpose, constant non-quantized weight.
+bool IsValidGemmForFusion(const QnnModelWrapper& qnn_model_wrapper,
+                          const OrtNodeUnit& gemm_node_unit,
+                          bool check_quantized_weight = true) {
+  // Skip fusion for GPU backend
+  if (IsGpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    return false;
   }
 
-  // Create output tensor wrapper
-  RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(output_def, output_tensor));
-
-  if (validate) {
-    std::vector<Qnn_Tensor_t> input_tensors = {input_tensor.GetQnnTensor(), weight_tensor.GetQnnTensor()};
-    if (has_bias) {
-      input_tensors.emplace_back(bias_tensor.GetQnnTensor());
-    }
-
-    // Validate the QNN node
-    RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(node_name, QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                      QNN_OP_FULLY_CONNECTED, std::move(input_tensors),
-                                                      {output_tensor.GetQnnTensor()}, {}));
-  } else {
-    // For creation, add all tensor wrappers to the model
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensor)), "Failed to add input");
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(weight_tensor)), "Failed to add weight");
-
-    // Add bias tensor if it exists
-    if (has_bias) {
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(bias_tensor)), "Failed to add bias");
-    }
-
-    // Add output tensor
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)), "Failed to add output");
-
-    // Create input names vector
-    std::vector<std::string> input_names = {input_def.name, weight_tensor_name};
-    if (has_bias) {
-      input_names.emplace_back(bias_def_ptr->name);
-    }
-
-    // Create the QNN node for fully connected operation
-    RETURN_IF_NOT(
-        qnn_model_wrapper.CreateQnnNode(node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_FULLY_CONNECTED,
-                                        std::move(input_names), {output_def.name}, {}, validate),
-        "Failed to add fused Gemm node.");
+  // Only handle standalone Gemm nodes (not QDQ-wrapped)
+  if (gemm_node_unit.OpType() != "Gemm" || gemm_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode) {
+    return false;
   }
 
-  return Ort::Status();
+  // Check transA and transB - we only handle the default case (no transpose)
+  OrtNodeAttrHelper attr_helper(gemm_node_unit);
+  int64_t transA = attr_helper.Get("transA", static_cast<int64_t>(0));
+  int64_t transB = attr_helper.Get("transB", static_cast<int64_t>(0));
+  if (transA != 0 || transB != 0) {
+    return false;
+  }
+
+  // Weight must be constant
+  const OrtNodeUnitIODef& weight_input = gemm_node_unit.Inputs()[1];
+  if (!qnn_model_wrapper.IsConstantInput(weight_input.name)) {
+    return false;
+  }
+
+  // Optionally check that weight is not quantized (pattern is from MatMul->Add fusion)
+  if (check_quantized_weight && weight_input.quant_param.has_value()) {
+    return false;
+  }
+
+  return true;
 }
 
-// For ReshapeGemmReshapeReshapeFusion
-Ort::Status CreateOrValidateOnQnn4Node(QnnModelWrapper& qnn_model_wrapper,
-                                       const OrtNodeUnit& input_reshape_node_unit,
-                                       const OrtNodeUnit& fc_node_unit,
-                                       const OrtNodeUnit& output_reshape1_node_unit,
-                                       const OrtNodeUnit& output_reshape2_node_unit,
-                                       const Ort::Logger& logger,
-                                       bool validate) {
-  ORT_UNUSED_PARAMETER(logger);
-  ORT_UNUSED_PARAMETER(output_reshape1_node_unit);
-
-  const auto& fc_node_name = utils::UniqueNameGenerator().New(fc_node_unit);
-  const auto& reshape_node_name = utils::UniqueNameGenerator().New(output_reshape2_node_unit);
+// Common implementation for CreateOrValidateOnQnn with optional output reshape.
+// When output_reshape_node_unit is nullptr, creates FC node only (2-node fusion).
+// When output_reshape_node_unit is provided, creates FC + Reshape nodes (3-node and 4-node fusion).
+Ort::Status CreateOrValidateFusedFCOnQnn(QnnModelWrapper& qnn_model_wrapper,
+                                         const OrtNodeUnit& input_reshape_node_unit,
+                                         const OrtNodeUnit& gemm_node_unit,
+                                         const OrtNodeUnit* output_reshape_node_unit,
+                                         const Ort::Logger& logger,
+                                         bool validate) {
+  const auto& fc_node_name = utils::UniqueNameGenerator().New(gemm_node_unit);
 
   // Get input from the input reshape's input (original ND tensor)
   const OrtNodeUnitIODef& input_def = input_reshape_node_unit.Inputs()[0];
-  // Get weight from FC's input[1]
-  const OrtNodeUnitIODef& weight_def = fc_node_unit.Inputs()[1];
-  // Check for bias
+  const OrtNodeUnitIODef& weight_def = gemm_node_unit.Inputs()[1];
   const OrtNodeUnitIODef* bias_def_ptr = nullptr;
-  bool has_bias = fc_node_unit.Inputs().size() > 2;
+  bool has_bias = gemm_node_unit.Inputs().size() > 2;
   if (has_bias) {
-    bias_def_ptr = &fc_node_unit.Inputs()[2];
+    bias_def_ptr = &gemm_node_unit.Inputs()[2];
   }
-  // FC output: use Gemm's 2D output shape (QNN FC requires 2D output)
-  const OrtNodeUnitIODef& fc_output_def = fc_node_unit.Outputs()[0];
-  const std::string fc_output_name = fc_node_name + "_fc_out";
+  // FC output definition (from Gemm node)
+  const OrtNodeUnitIODef& fc_output_def = gemm_node_unit.Outputs()[0];
 
-  // Reshape2 output: final output from reshape2
-  const OrtNodeUnitIODef& final_output_def = output_reshape2_node_unit.Outputs()[0];
+  // Determine if we have an output reshape
+  const bool has_output_reshape = (output_reshape_node_unit != nullptr);
+
+  // FC output name: intermediate if we have reshape, final otherwise
+  const std::string fc_output_name = has_output_reshape ? (fc_node_name + "_fc_out") : fc_output_def.name;
+
+  // Final output: from reshape if present, otherwise from FC
+  const OrtNodeUnitIODef& final_output_def = has_output_reshape
+                                                 ? output_reshape_node_unit->Outputs()[0]
+                                                 : fc_output_def;
   const std::string& final_output_name = final_output_def.name;
 
   // Create input tensor wrapper
@@ -304,26 +259,41 @@ Ort::Status CreateOrValidateOnQnn4Node(QnnModelWrapper& qnn_model_wrapper,
   QnnQuantParamsWrapper fc_output_quant_param;
   RETURN_IF_ERROR(fc_output_quant_param.Init(qnn_model_wrapper, fc_output_def));
 
-  QnnTensorWrapper fc_output_tensor(fc_output_name, QNN_TENSOR_TYPE_NATIVE, fc_output_data_type,
+  // FC output tensor type: native if intermediate, check graph output if final
+  Qnn_TensorType_t fc_output_tensor_type = QNN_TENSOR_TYPE_NATIVE;
+  if (!has_output_reshape) {
+    const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(fc_output_name);
+    fc_output_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+  }
+
+  QnnTensorWrapper fc_output_tensor(fc_output_name, fc_output_tensor_type, fc_output_data_type,
                                     std::move(fc_output_quant_param), std::move(fc_output_shape),
                                     std::vector<uint8_t>());
 
-  // Create Reshape2 output tensor (final output)
-  std::vector<uint32_t> final_output_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(final_output_def.shape, final_output_shape), "Failed to get final output shape");
+  // Create final output tensor (reshape output) if we have output reshape
+  QnnTensorWrapper final_output_tensor;
+  std::string reshape_node_name;
+  if (has_output_reshape) {
+    reshape_node_name = utils::UniqueNameGenerator().New(*output_reshape_node_unit);
 
-  Qnn_DataType_t final_output_data_type = QNN_DATATYPE_FLOAT_32;
-  RETURN_IF_ERROR(utils::GetQnnDataType(final_output_def.quant_param.has_value(), final_output_def.type, final_output_data_type));
+    std::vector<uint32_t> final_output_shape;
+    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(final_output_def.shape, final_output_shape),
+                  "Failed to get final output shape");
 
-  const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(final_output_name);
-  Qnn_TensorType_t final_output_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+    Qnn_DataType_t final_output_data_type = QNN_DATATYPE_FLOAT_32;
+    RETURN_IF_ERROR(utils::GetQnnDataType(final_output_def.quant_param.has_value(), final_output_def.type,
+                                          final_output_data_type));
 
-  QnnQuantParamsWrapper final_output_quant_param;
-  RETURN_IF_ERROR(final_output_quant_param.Init(qnn_model_wrapper, final_output_def));
+    const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(final_output_name);
+    Qnn_TensorType_t final_output_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
 
-  QnnTensorWrapper final_output_tensor(final_output_name, final_output_tensor_type, final_output_data_type,
-                                       std::move(final_output_quant_param), std::move(final_output_shape),
-                                       std::vector<uint8_t>());
+    QnnQuantParamsWrapper final_output_quant_param;
+    RETURN_IF_ERROR(final_output_quant_param.Init(qnn_model_wrapper, final_output_def));
+
+    final_output_tensor = QnnTensorWrapper(final_output_name, final_output_tensor_type, final_output_data_type,
+                                           std::move(final_output_quant_param), std::move(final_output_shape),
+                                           std::vector<uint8_t>());
+  }
 
   if (validate) {
     // Validate FC node
@@ -335,10 +305,12 @@ Ort::Status CreateOrValidateOnQnn4Node(QnnModelWrapper& qnn_model_wrapper,
                                                       QNN_OP_FULLY_CONNECTED, std::move(fc_input_tensors),
                                                       {fc_output_tensor.GetQnnTensor()}, {}));
 
-    // Validate Reshape node
-    RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(reshape_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                      QNN_OP_RESHAPE, {fc_output_tensor.GetQnnTensor()},
-                                                      {final_output_tensor.GetQnnTensor()}, {}));
+    // Validate Reshape node if present
+    if (has_output_reshape) {
+      RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(reshape_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                        QNN_OP_RESHAPE, {fc_output_tensor.GetQnnTensor()},
+                                                        {final_output_tensor.GetQnnTensor()}, {}));
+    }
   } else {
     // Add tensors to model
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensor)), "Failed to add input");
@@ -347,7 +319,9 @@ Ort::Status CreateOrValidateOnQnn4Node(QnnModelWrapper& qnn_model_wrapper,
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(bias_tensor)), "Failed to add bias");
     }
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fc_output_tensor)), "Failed to add FC output");
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(final_output_tensor)), "Failed to add final output");
+    if (has_output_reshape) {
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(final_output_tensor)), "Failed to add final output");
+    }
 
     // Create FC input names
     std::vector<std::string> fc_input_names = {input_def.name, weight_tensor_name};
@@ -355,165 +329,59 @@ Ort::Status CreateOrValidateOnQnn4Node(QnnModelWrapper& qnn_model_wrapper,
       fc_input_names.emplace_back(bias_def_ptr->name);
     }
 
-    // Create the QNN FullyConnected node (ND input -> 2D output)
+    // Create the QNN FullyConnected node
     RETURN_IF_NOT(
         qnn_model_wrapper.CreateQnnNode(fc_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_FULLY_CONNECTED,
                                         std::move(fc_input_names), {fc_output_name},
                                         {}, validate),
         "Failed to create FullyConnected node.");
 
-    // Create the QNN Reshape node (2D -> final shape)
-    RETURN_IF_NOT(
-        qnn_model_wrapper.CreateQnnNode(reshape_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_RESHAPE,
-                                        {fc_output_name}, {final_output_name},
-                                        {}, validate),
-        "Failed to create Reshape node.");
+    // Create the QNN Reshape node if present
+    if (has_output_reshape) {
+      RETURN_IF_NOT(
+          qnn_model_wrapper.CreateQnnNode(reshape_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_RESHAPE,
+                                          {fc_output_name}, {final_output_name},
+                                          {}, validate),
+          "Failed to create Reshape node.");
+    }
   }
 
   return Ort::Status();
 }
 
-// For ReshapeGemmReshapeFusion
+// For ReshapeGemmFusion (2-node: Reshape -> Gemm)
+Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
+                                  const OrtNodeUnit& reshape_node_unit,
+                                  const OrtNodeUnit& gemm_node_unit,
+                                  const Ort::Logger& logger,
+                                  bool validate) {
+  return CreateOrValidateFusedFCOnQnn(qnn_model_wrapper, reshape_node_unit, gemm_node_unit,
+                                      nullptr, logger, validate);
+}
+
+// For ReshapeGemmReshapeFusion (3-node: Reshape -> Gemm -> Reshape)
 Ort::Status CreateOrValidateOnQnn3Node(QnnModelWrapper& qnn_model_wrapper,
                                        const OrtNodeUnit& input_reshape_node_unit,
-                                       const OrtNodeUnit& fc_node_unit,
+                                       const OrtNodeUnit& gemm_node_unit,
                                        const OrtNodeUnit& output_reshape_node_unit,
                                        const Ort::Logger& logger,
                                        bool validate) {
-  ORT_UNUSED_PARAMETER(logger);
+  return CreateOrValidateFusedFCOnQnn(qnn_model_wrapper, input_reshape_node_unit, gemm_node_unit,
+                                      &output_reshape_node_unit, logger, validate);
+}
 
-  const auto& fc_node_name = utils::UniqueNameGenerator().New(fc_node_unit);
-  const auto& reshape_node_name = utils::UniqueNameGenerator().New(output_reshape_node_unit);
-
-  // Get input from the input reshape's input (original ND tensor)
-  const OrtNodeUnitIODef& input_def = input_reshape_node_unit.Inputs()[0];
-  // Get weight from FC's input[1]
-  const OrtNodeUnitIODef& weight_def = fc_node_unit.Inputs()[1];
-  // Check for bias
-  const OrtNodeUnitIODef* bias_def_ptr = nullptr;
-  bool has_bias = fc_node_unit.Inputs().size() > 2;
-  if (has_bias) {
-    bias_def_ptr = &fc_node_unit.Inputs()[2];
-  }
-  // FC output: intermediate 2D output
-  const OrtNodeUnitIODef& fc_output_def = fc_node_unit.Outputs()[0];
-  const std::string fc_output_name = fc_node_name + "_fc_out";
-
-  // Reshape output: final output from output_reshape
-  const OrtNodeUnitIODef& final_output_def = output_reshape_node_unit.Outputs()[0];
-  const std::string& final_output_name = final_output_def.name;
-
-  // Create input tensor wrapper
-  QnnTensorWrapper input_tensor;
-  RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(input_def, input_tensor));
-
-  // Process weight tensor - need to transpose for FullyConnected
-  std::vector<uint32_t> weight_shape;
-  std::vector<uint8_t> unpacked_tensor;
-  std::string weight_tensor_name = weight_def.name;
-
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(weight_def.shape, weight_shape), "Failed to get weight shape");
-
-  Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(weight_tensor_name);
-  Qnn_DataType_t weight_data_type = QNN_DATATYPE_FLOAT_32;
-  RETURN_IF_ERROR(utils::GetQnnDataType(weight_def.quant_param.has_value(), weight_def.type, weight_data_type));
-
-  // Get weight tensor and transpose (Gemm weight is [K, N], FC expects [N, K])
-  const auto* weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
-  RETURN_IF_ERROR(utils::TwoDimensionTranspose(qnn_model_wrapper, weight_shape, weight_tensor_proto,
-                                               unpacked_tensor, logger, validate));
-
-  QnnQuantParamsWrapper weight_quant_param;
-  RETURN_IF_ERROR(weight_quant_param.Init(qnn_model_wrapper, weight_def));
-  RETURN_IF_ERROR(weight_quant_param.HandleTranspose<uint32_t>(std::vector<uint32_t>({1, 0})));
-
-  QnnTensorWrapper weight_tensor(weight_tensor_name, tensor_type, weight_data_type,
-                                 std::move(weight_quant_param), std::move(weight_shape),
-                                 std::move(unpacked_tensor));
-
-  // Process bias if present
-  QnnTensorWrapper bias_tensor;
-  if (has_bias) {
-    RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(*bias_def_ptr, bias_tensor));
-  }
-
-  // Create FC output tensor (2D intermediate)
-  std::vector<uint32_t> fc_output_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(fc_output_def.shape, fc_output_shape), "Failed to get FC output shape");
-
-  Qnn_DataType_t fc_output_data_type = QNN_DATATYPE_FLOAT_32;
-  RETURN_IF_ERROR(utils::GetQnnDataType(fc_output_def.quant_param.has_value(), fc_output_def.type, fc_output_data_type));
-
-  QnnQuantParamsWrapper fc_output_quant_param;
-  RETURN_IF_ERROR(fc_output_quant_param.Init(qnn_model_wrapper, fc_output_def));
-
-  QnnTensorWrapper fc_output_tensor(fc_output_name, QNN_TENSOR_TYPE_NATIVE, fc_output_data_type,
-                                    std::move(fc_output_quant_param), std::move(fc_output_shape),
-                                    std::vector<uint8_t>());
-
-  // Create Reshape output tensor (final output)
-  std::vector<uint32_t> final_output_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(final_output_def.shape, final_output_shape), "Failed to get final output shape");
-
-  Qnn_DataType_t final_output_data_type = QNN_DATATYPE_FLOAT_32;
-  RETURN_IF_ERROR(utils::GetQnnDataType(final_output_def.quant_param.has_value(), final_output_def.type, final_output_data_type));
-
-  const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(final_output_name);
-  Qnn_TensorType_t final_output_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
-
-  QnnQuantParamsWrapper final_output_quant_param;
-  RETURN_IF_ERROR(final_output_quant_param.Init(qnn_model_wrapper, final_output_def));
-
-  QnnTensorWrapper final_output_tensor(final_output_name, final_output_tensor_type, final_output_data_type,
-                                       std::move(final_output_quant_param), std::move(final_output_shape),
-                                       std::vector<uint8_t>());
-
-  if (validate) {
-    // Validate FC node
-    std::vector<Qnn_Tensor_t> fc_input_tensors = {input_tensor.GetQnnTensor(), weight_tensor.GetQnnTensor()};
-    if (has_bias) {
-      fc_input_tensors.emplace_back(bias_tensor.GetQnnTensor());
-    }
-    RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(fc_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                      QNN_OP_FULLY_CONNECTED, std::move(fc_input_tensors),
-                                                      {fc_output_tensor.GetQnnTensor()}, {}));
-
-    // Validate Reshape node
-    RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(reshape_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                      QNN_OP_RESHAPE, {fc_output_tensor.GetQnnTensor()},
-                                                      {final_output_tensor.GetQnnTensor()}, {}));
-  } else {
-    // Add tensors to model
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensor)), "Failed to add input");
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(weight_tensor)), "Failed to add weight");
-    if (has_bias) {
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(bias_tensor)), "Failed to add bias");
-    }
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(fc_output_tensor)), "Failed to add FC output");
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(final_output_tensor)), "Failed to add final output");
-
-    // Create FC input names
-    std::vector<std::string> fc_input_names = {input_def.name, weight_tensor_name};
-    if (has_bias) {
-      fc_input_names.emplace_back(bias_def_ptr->name);
-    }
-
-    // Create the QNN FullyConnected node (ND input -> 2D output)
-    RETURN_IF_NOT(
-        qnn_model_wrapper.CreateQnnNode(fc_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_FULLY_CONNECTED,
-                                        std::move(fc_input_names), {fc_output_name},
-                                        {}, validate),
-        "Failed to create FullyConnected node.");
-
-    // Create the QNN Reshape node (2D -> final shape)
-    RETURN_IF_NOT(
-        qnn_model_wrapper.CreateQnnNode(reshape_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_RESHAPE,
-                                        {fc_output_name}, {final_output_name},
-                                        {}, validate),
-        "Failed to create Reshape node.");
-  }
-
-  return Ort::Status();
+// For ReshapeGemmReshapeReshapeFusion (4-node: Reshape -> Gemm -> Reshape1 -> Reshape2)
+// Note: Reshape1 is skipped; we fuse directly to Reshape2's output shape
+Ort::Status CreateOrValidateOnQnn4Node(QnnModelWrapper& qnn_model_wrapper,
+                                       const OrtNodeUnit& input_reshape_node_unit,
+                                       const OrtNodeUnit& gemm_node_unit,
+                                       const OrtNodeUnit& output_reshape1_node_unit,
+                                       const OrtNodeUnit& output_reshape2_node_unit,
+                                       const Ort::Logger& logger,
+                                       bool validate) {
+  ORT_UNUSED_PARAMETER(output_reshape1_node_unit);
+  return CreateOrValidateFusedFCOnQnn(qnn_model_wrapper, input_reshape_node_unit, gemm_node_unit,
+                                      &output_reshape2_node_unit, logger, validate);
 }
 
 }  // namespace
@@ -528,27 +396,7 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusion::TryFusion(
     const Ort::Logger& logger) {
   ORT_UNUSED_PARAMETER(logger);
 
-  // Skip fusion for GPU backend
-  if (IsGpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
-    return nullptr;
-  }
-
-  // Only handle standalone Gemm nodes (not QDQ-wrapped)
-  if (gemm_node_unit.OpType() != "Gemm" || gemm_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode) {
-    return nullptr;
-  }
-
-  // Check transA and transB - we only handle the default case (no transpose)
-  OrtNodeAttrHelper attr_helper(gemm_node_unit);
-  int64_t transA = attr_helper.Get("transA", static_cast<int64_t>(0));
-  int64_t transB = attr_helper.Get("transB", static_cast<int64_t>(0));
-  if (transA != 0 || transB != 0) {
-    return nullptr;
-  }
-
-  // Weight must be constant and not quantized (pattern is from MatMul->Add fusion)
-  const OrtNodeUnitIODef& weight_input = gemm_node_unit.Inputs()[1];
-  if (!qnn_model_wrapper.IsConstantInput(weight_input.name) || weight_input.quant_param.has_value()) {
+  if (!IsValidGemmForFusion(qnn_model_wrapper, gemm_node_unit)) {
     return nullptr;
   }
 
@@ -560,6 +408,7 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusion::TryFusion(
   }
 
   // Get weight's input channel (K dimension)
+  const OrtNodeUnitIODef& weight_input = gemm_node_unit.Inputs()[1];
   int64_t weight_k = GetWeightInputChannel(qnn_model_wrapper, weight_input);
   if (weight_k <= 0) {
     return nullptr;
@@ -605,27 +454,7 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmReshapeFusion::TryFusion(
     const Ort::Logger& logger) {
   ORT_UNUSED_PARAMETER(logger);
 
-  // Skip fusion for GPU backend
-  if (IsGpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
-    return nullptr;
-  }
-
-  // Only handle standalone Gemm nodes (not QDQ-wrapped)
-  if (gemm_node_unit.OpType() != "Gemm" || gemm_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode) {
-    return nullptr;
-  }
-
-  // Check transA and transB - we only handle the default case (no transpose)
-  OrtNodeAttrHelper attr_helper(gemm_node_unit);
-  int64_t transA = attr_helper.Get("transA", static_cast<int64_t>(0));
-  int64_t transB = attr_helper.Get("transB", static_cast<int64_t>(0));
-  if (transA != 0 || transB != 0) {
-    return nullptr;
-  }
-
-  // Weight must be constant
-  const OrtNodeUnitIODef& weight_input = gemm_node_unit.Inputs()[1];
-  if (!qnn_model_wrapper.IsConstantInput(weight_input.name)) {
+  if (!IsValidGemmForFusion(qnn_model_wrapper, gemm_node_unit)) {
     return nullptr;
   }
 
@@ -642,15 +471,19 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmReshapeFusion::TryFusion(
   if (!output_reshape) {
     return nullptr;
   }
+
   // Get weight's input channel (K dimension)
+  const OrtNodeUnitIODef& weight_input = gemm_node_unit.Inputs()[1];
   int64_t weight_k = GetWeightInputChannel(qnn_model_wrapper, weight_input);
   if (weight_k <= 0) {
     return nullptr;
   }
+
   // Validate input reshape pattern (ND -> 2D with last dim = weight's K)
   if (!CheckShape(qnn_model_wrapper, input_reshape->GetNode(), weight_k)) {
     return nullptr;
   }
+
   return std::make_unique<ReshapeGemmReshapeFusion>(*input_reshape, gemm_node_unit, *output_reshape);
 }
 
@@ -688,27 +521,7 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmReshapeReshapeFusion::TryFusion(
     const Ort::Logger& logger) {
   ORT_UNUSED_PARAMETER(logger);
 
-  // Skip fusion for GPU backend
-  if (IsGpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
-    return nullptr;
-  }
-
-  // Only handle Gemm nodes (MatMul+Add gets fused to Gemm)
-  if (gemm_node_unit.OpType() != "Gemm" || gemm_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode) {
-    return nullptr;
-  }
-
-  // Check transA and transB - we only handle the default case (no transpose)
-  OrtNodeAttrHelper attr_helper(gemm_node_unit);
-  int64_t transA = attr_helper.Get("transA", static_cast<int64_t>(0));
-  int64_t transB = attr_helper.Get("transB", static_cast<int64_t>(0));
-  if (transA != 0 || transB != 0) {
-    return nullptr;
-  }
-
-  // Weight must be constant
-  const OrtNodeUnitIODef& weight_input = gemm_node_unit.Inputs()[1];
-  if (!qnn_model_wrapper.IsConstantInput(weight_input.name)) {
+  if (!IsValidGemmForFusion(qnn_model_wrapper, gemm_node_unit)) {
     return nullptr;
   }
 
@@ -726,6 +539,12 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmReshapeReshapeFusion::TryFusion(
     return nullptr;
   }
 
+  // Reshape1's output must not be a graph output (we need Reshape2 to consume it)
+  const OrtNodeUnitIODef& reshape1_output = output_reshape1->Outputs()[0];
+  if (qnn_model_wrapper.IsGraphOutput(reshape1_output.name)) {
+    return nullptr;
+  }
+
   // Find output Reshape2 (after Reshape1)
   const OrtNodeUnit* output_reshape2 = GetOutputReshape2NodeUnit(
       qnn_model_wrapper, *output_reshape1, node_to_node_unit, node_unit_to_qnn_node_group);
@@ -734,6 +553,7 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmReshapeReshapeFusion::TryFusion(
   }
 
   // Get weight's input channel (K dimension)
+  const OrtNodeUnitIODef& weight_input = gemm_node_unit.Inputs()[1];
   int64_t weight_k = GetWeightInputChannel(qnn_model_wrapper, weight_input);
   if (weight_k <= 0) {
     return nullptr;
