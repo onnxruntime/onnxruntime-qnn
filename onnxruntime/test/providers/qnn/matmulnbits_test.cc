@@ -5,8 +5,8 @@
 
 #include "gtest/gtest.h"
 
-#include "core/session/ort_env.h"
 #include "test/providers/qnn/qnn_test_utils.h"
+#include "test/unittest_util/qdq_test_utils.h"
 
 namespace onnxruntime {
 namespace test {
