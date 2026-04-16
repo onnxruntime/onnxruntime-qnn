@@ -287,26 +287,30 @@ Ort::Status QnnBackendManager::SetPerformance(uint32_t htp_power_config_client_i
 }
 
 Ort::Status QnnBackendManager::SetState(GraphState state, uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode, uint32_t rpc_polling_time, uint32_t rpc_control_latency) {
-  std::lock_guard<std::mutex> lk(state_mutex_);
-  if (state != graph_state_) {
-    graph_state_ = state;
-    if (perfMode == qnn::HtpPerformanceMode::kHtpSustainedHighPerformance || perfMode == qnn::HtpPerformanceMode::kHtpBurst) {
-      RETURN_IF(timer_resource_.timer_active_ == false, "Timer is not active. Cannot set state.");
-      RETURN_IF(timer_ == nullptr, "timer is not started");
-      return SetSustainedPerformance(htp_power_config_client_id, perfMode, rpc_polling_time, rpc_control_latency);
-    } else if (perfMode == qnn::HtpPerformanceMode::kHtpDefault) {
-      if (timer_ && timer_->TimerInUse()) {
-        timer_->AbortTimer();
-      }
-      return Ort::Status();
+  {
+    std::lock_guard<std::mutex> lk(state_mutex_);
+    if (state != graph_state_) {
+      graph_state_ = state;
     } else {
-      if (timer_ && timer_->TimerInUse()) {
-        timer_->AbortTimer();
-      }
-      return SetPerformance(htp_power_config_client_id, perfMode, rpc_polling_time, rpc_control_latency);
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "State is the same as current. Ignoring request.");
+      return Ort::Status();
     }
   }
-  return Ort::Status();
+  if (perfMode == qnn::HtpPerformanceMode::kHtpSustainedHighPerformance || perfMode == qnn::HtpPerformanceMode::kHtpBurst) {
+    RETURN_IF(timer_resource_.timer_active_ == false, "Timer is not active. Cannot set state.");
+    RETURN_IF(timer_ == nullptr, "timer is not started");
+    return SetSustainedPerformance(htp_power_config_client_id, perfMode, rpc_polling_time, rpc_control_latency);
+  } else if (perfMode == qnn::HtpPerformanceMode::kHtpDefault) {
+    if (timer_ && timer_->TimerInUse()) {
+      timer_->AbortTimer();
+    }
+    return Ort::Status();
+  } else {
+    if (timer_ && timer_->TimerInUse()) {
+      timer_->AbortTimer();
+    }
+    return SetPerformance(htp_power_config_client_id, perfMode, rpc_polling_time, rpc_control_latency);
+  }
 }
 
 void QnnBackendManager::TimerCallback(void* user_data) {
@@ -348,17 +352,19 @@ void QnnBackendManager::CreateTimerThread(uint32_t htp_power_config_client_id) {
 }
 
 void QnnBackendManager::ReleaseTimerThread() {
-  std::lock_guard<std::mutex> lk(state_mutex_);
-  if (timer_ != nullptr) {
-    {
-      timer_resource_.timer_active_ = false;
-      graph_state_ = GraphState::NONE;
-      timer_resource_.caller_busy_ = false;
+  {
+    std::lock_guard<std::mutex> lk(state_mutex_);
+    if (timer_ != nullptr) {
+      {
+        timer_resource_.timer_active_ = false;
+        graph_state_ = GraphState::NONE;
+        timer_resource_.caller_busy_ = false;
+      }
     }
-    timer_->DeInitialize();
-    timer_callback_arg_.reset();
-    timer_.reset();
   }
+  timer_->DeInitialize();
+  timer_callback_arg_.reset();
+  timer_.reset();
 }
 
 Ort::Status QnnBackendManager::ParseLoraConfig(std::string lora_config_path) {
@@ -2470,15 +2476,15 @@ Ort::Status QnnBackendManager::SetPerThreadHtpPowerConfigs(const std::thread::id
   if (pre_run) {
     // add in htp_power_configs the default power config id also so to run when we execute
     if (htp_power_configs.pre_run_perf_mode.has_value()) {
-      RETURN_IF_ERROR(SetState(onnxruntime::qnn::GraphState::RUN_START, htp_power_config_id, *htp_power_configs.pre_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
+      RETURN_IF_NOT_OK(SetState(onnxruntime::qnn::GraphState::RUN_START, htp_power_config_id, *htp_power_configs.pre_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
     } else if (htp_power_configs.default_perf_mode.has_value()) {
-      RETURN_IF_ERROR(SetState(onnxruntime::qnn::GraphState::RUN_START, htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
+      RETURN_IF_NOT_OK(SetState(onnxruntime::qnn::GraphState::RUN_START, htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
     }
   } else {
     if (htp_power_configs.post_run_perf_mode.has_value()) {
-      RETURN_IF_ERROR(SetState(onnxruntime::qnn::GraphState::RUN_DONE, htp_power_config_id, *htp_power_configs.post_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
+      RETURN_IF_NOT_OK(SetState(onnxruntime::qnn::GraphState::RUN_DONE, htp_power_config_id, *htp_power_configs.post_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
     } else if (htp_power_configs.default_perf_mode.has_value()) {
-      RETURN_IF_ERROR(SetState(onnxruntime::qnn::GraphState::RUN_DONE, htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
+      RETURN_IF_NOT_OK(SetState(onnxruntime::qnn::GraphState::RUN_DONE, htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
     }
   }
   return Ort::Status();

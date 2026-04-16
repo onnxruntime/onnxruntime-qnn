@@ -58,6 +58,7 @@ void Timer::BkgTimer() {
         timeout_fn_(timeout_arg_);
         lk.lock();
         thread_status_ = threadState::IDLE;
+        cv_.notify_all();
       }
       is_timer_launched_ = false;
     }
