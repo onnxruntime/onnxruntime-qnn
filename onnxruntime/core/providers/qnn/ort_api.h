@@ -6,10 +6,35 @@
 #include <functional>
 #include <gsl/gsl>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
-#include "core/common/safeint.h"
+// Define the SafeInt exception handler before including SafeInt.hpp.
+// We intentionally do NOT use core/common/safeint.h (which uses ORT_THROW → ORT_WHERE_WITH_STACK →
+// GetStackTrace()) because onnxruntime::GetStackTrace is a LOCAL symbol in libonnxruntime.so and is
+// not available to plugin EPs at runtime. Using std::runtime_error here avoids the
+// undefined-symbol dependency while still throwing on integer overflow/divide-by-zero.
+class SafeIntExceptionHandler : public std::exception {
+ public:
+  [[noreturn]] static void SafeIntOnOverflow() { throw std::runtime_error("Integer overflow"); }
+  [[noreturn]] static void SafeIntOnDivZero() { throw std::runtime_error("Divide by zero"); }
+};
+
+#define SAFEINT_EXCEPTION_HANDLER_CPP 1
+#define SafeIntDefaultExceptionHandler SafeIntExceptionHandler
+
+#if defined(__GNUC__)
+#include "onnxruntime_config.h"
+#pragma GCC diagnostic push
+#ifdef HAS_UNUSED_BUT_SET_PARAMETER
+#pragma GCC diagnostic ignored "-Wunused-but-set-parameter"
+#endif
+#endif
+#include "SafeInt.hpp"
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 // This compilation unit (ort_api.h/.cc) encapsulates the interface between the EP and ORT in a manner
 // that allows QNN EP to built either as a static library or a dynamic shared library.
