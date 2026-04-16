@@ -54,7 +54,7 @@ struct MockFreeCallTracker {
   }
 };
 
-// Global tracker — reset before each test that uses it.
+// Global tracker — reset by GenieNodeStateDeleterTest::SetUp() before each test.
 static MockFreeCallTracker g_mock_tracker;
 
 // Mock free functions that record calls to the global tracker.
@@ -121,15 +121,29 @@ GenieApi MakeMockGenieApi() {
 
 }  // namespace
 
+// Resets g_mock_tracker before each test so no manual Reset() calls are needed in test bodies.
+class GenieNodeStateDeleterTest : public GenieBackendTests {
+ protected:
+  void SetUp() override {
+    GenieBackendTests::SetUp();
+    g_mock_tracker.Reset();
+  }
+};
+
+// No extra setup needed; GenieApiLoader construction behavior is self-contained.
+class GenieApiLoaderTest : public GenieBackendTests {};
+
+// "Unit" suffix distinguishes from the integration fixture in genie_integration_test.cc.
+class GenieBackendManagerUnitTest : public GenieBackendTests {};
+
 // Passing nullptr to the deleter should not crash.
-TEST_F(GenieBackendTests, NullState_DoesNothing) {
+TEST_F(GenieNodeStateDeleterTest, NullState_DoesNothing) {
   GenieNodeStateDeleter deleter;
   EXPECT_NO_FATAL_FAILURE(deleter(nullptr));
 }
 
 // A state with a null api pointer should be deleted without invoking any free functions.
-TEST_F(GenieBackendTests, NullApi_NoFreeFunctionsCalled) {
-  g_mock_tracker.Reset();
+TEST_F(GenieNodeStateDeleterTest, NullApi_NoFreeFunctionsCalled) {
   auto* st = new GenieNodeState();
   st->api = nullptr;
   // Set non-null handles to ensure they would be freed if api were valid.
@@ -146,8 +160,7 @@ TEST_F(GenieBackendTests, NullApi_NoFreeFunctionsCalled) {
 }
 
 // When all handles in the state are null, no free functions should be called.
-TEST_F(GenieBackendTests, AllHandlesNull_NoFreeFunctionsCalled) {
-  g_mock_tracker.Reset();
+TEST_F(GenieNodeStateDeleterTest, AllHandlesNull_NoFreeFunctionsCalled) {
   GenieApi mock_api = MakeMockGenieApi();
   auto* st = new GenieNodeState();
   st->api = &mock_api;
@@ -166,8 +179,7 @@ TEST_F(GenieBackendTests, AllHandlesNull_NoFreeFunctionsCalled) {
 }
 
 // When only the node handle is set, only Node_free should be called.
-TEST_F(GenieBackendTests, NodeSet_NodeFreeCalled) {
-  g_mock_tracker.Reset();
+TEST_F(GenieNodeStateDeleterTest, NodeSet_NodeFreeCalled) {
   GenieApi mock_api = MakeMockGenieApi();
   auto* st = new GenieNodeState();
   st->api = &mock_api;
@@ -182,8 +194,7 @@ TEST_F(GenieBackendTests, NodeSet_NodeFreeCalled) {
 }
 
 // When only the logger handle is set, only Log_free should be called.
-TEST_F(GenieBackendTests, LoggerSet_LogFreeCalled) {
-  g_mock_tracker.Reset();
+TEST_F(GenieNodeStateDeleterTest, LoggerSet_LogFreeCalled) {
   GenieApi mock_api = MakeMockGenieApi();
   auto* st = new GenieNodeState();
   st->api = &mock_api;
@@ -198,8 +209,7 @@ TEST_F(GenieBackendTests, LoggerSet_LogFreeCalled) {
 }
 
 // When only the config handle is set, only NodeConfig_free should be called.
-TEST_F(GenieBackendTests, ConfigSet_NodeConfigFreeCalled) {
-  g_mock_tracker.Reset();
+TEST_F(GenieNodeStateDeleterTest, ConfigSet_NodeConfigFreeCalled) {
   GenieApi mock_api = MakeMockGenieApi();
   auto* st = new GenieNodeState();
   st->api = &mock_api;
@@ -215,8 +225,7 @@ TEST_F(GenieBackendTests, ConfigSet_NodeConfigFreeCalled) {
 
 // When api->Log_free is null, the logger handle should not be freed.
 // genie_node.cc guards: if (st->genie_logger && api->Log_free) api->Log_free(...)
-TEST_F(GenieBackendTests, LogFreeNullInApi_LoggerSkipped) {
-  g_mock_tracker.Reset();
+TEST_F(GenieNodeStateDeleterTest, LogFreeNullInApi_LoggerSkipped) {
   GenieApi mock_api = MakeMockGenieApi();
   mock_api.Log_free = nullptr;  // Explicitly null — should be guarded by the deleter.
   auto* st = new GenieNodeState();
@@ -229,10 +238,39 @@ TEST_F(GenieBackendTests, LogFreeNullInApi_LoggerSkipped) {
   EXPECT_EQ(g_mock_tracker.log_free_count, 0);
 }
 
+// When api->Node_free is null, the node handle should not be freed.
+// genie_node.cc guards: if (st->node && api->Node_free) api->Node_free(...)
+TEST_F(GenieNodeStateDeleterTest, NodeFreeNullInApi_NodeNotFreed) {
+  GenieApi mock_api = MakeMockGenieApi();
+  mock_api.Node_free = nullptr;  // Explicitly null — should be guarded by the deleter.
+  auto* st = new GenieNodeState();
+  st->api = &mock_api;
+  st->node = kFakeNode;
+
+  GenieNodeStateDeleter deleter;
+  EXPECT_NO_FATAL_FAILURE(deleter(st));
+
+  EXPECT_EQ(g_mock_tracker.node_free_count, 0);
+}
+
+// When api->NodeConfig_free is null, the config handle should not be freed.
+// genie_node.cc guards: if (st->config && api->NodeConfig_free) api->NodeConfig_free(...)
+TEST_F(GenieNodeStateDeleterTest, ConfigFreeNullInApi_ConfigNotFreed) {
+  GenieApi mock_api = MakeMockGenieApi();
+  mock_api.NodeConfig_free = nullptr;  // Explicitly null — should be guarded by the deleter.
+  auto* st = new GenieNodeState();
+  st->api = &mock_api;
+  st->config = kFakeConfig;
+
+  GenieNodeStateDeleter deleter;
+  EXPECT_NO_FATAL_FAILURE(deleter(st));
+
+  EXPECT_EQ(g_mock_tracker.config_free_count, 0);
+}
+
 // When all core handles (node, logger, config) are set, all three free functions
 // should each be called exactly once.
-TEST_F(GenieBackendTests, AllCoreHandlesSet_CoreFreesCalled) {
-  g_mock_tracker.Reset();
+TEST_F(GenieNodeStateDeleterTest, AllCoreHandlesSet_CoreFreesCalled) {
   GenieApi mock_api = MakeMockGenieApi();
   auto* st = new GenieNodeState();
   st->api = &mock_api;
@@ -250,8 +288,7 @@ TEST_F(GenieBackendTests, AllCoreHandlesSet_CoreFreesCalled) {
 
 // Core handles must be freed in the order documented in genie_node.cc:
 // node → log → config
-TEST_F(GenieBackendTests, AllCoreHandlesSet_FreeOrderIsNodeLogConfig) {
-  g_mock_tracker.Reset();
+TEST_F(GenieNodeStateDeleterTest, AllCoreHandlesSet_FreeOrderIsNodeLogConfig) {
   GenieApi mock_api = MakeMockGenieApi();
   auto* st = new GenieNodeState();
   st->api = &mock_api;
@@ -273,8 +310,7 @@ TEST_F(GenieBackendTests, AllCoreHandlesSet_FreeOrderIsNodeLogConfig) {
 // which is when GenieDlc.h and DLC-related GenieNodeState fields were introduced.
 
 // When only the DLC handle is set, only Dlc_free should be called.
-TEST_F(GenieBackendTests, DlcHandleSet_DlcFreeCalled) {
-  g_mock_tracker.Reset();
+TEST_F(GenieNodeStateDeleterTest, DlcHandleSet_DlcFreeCalled) {
   GenieApi mock_api = MakeMockGenieApi();
   auto* st = new GenieNodeState();
   st->api = &mock_api;
@@ -288,8 +324,7 @@ TEST_F(GenieBackendTests, DlcHandleSet_DlcFreeCalled) {
 }
 
 // When only the DLC config handle is set, only DlcConfig_free should be called.
-TEST_F(GenieBackendTests, DlcConfigSet_DlcConfigFreeCalled) {
-  g_mock_tracker.Reset();
+TEST_F(GenieNodeStateDeleterTest, DlcConfigSet_DlcConfigFreeCalled) {
   GenieApi mock_api = MakeMockGenieApi();
   auto* st = new GenieNodeState();
   st->api = &mock_api;
@@ -303,8 +338,7 @@ TEST_F(GenieBackendTests, DlcConfigSet_DlcConfigFreeCalled) {
 }
 
 // When all five handles are set, all five free functions should each be called once.
-TEST_F(GenieBackendTests, AllHandlesSet_AllFivesFreesCalled) {
-  g_mock_tracker.Reset();
+TEST_F(GenieNodeStateDeleterTest, AllHandlesSet_AllFiveHandlesFreesCalled) {
   GenieApi mock_api = MakeMockGenieApi();
   auto* st = new GenieNodeState();
   st->api = &mock_api;
@@ -326,8 +360,7 @@ TEST_F(GenieBackendTests, AllHandlesSet_AllFivesFreesCalled) {
 
 // All five handles must be freed in the order documented in genie_node.cc:
 // node → log → config → dlc → dlc_config
-TEST_F(GenieBackendTests, AllHandlesSet_FreeOrderIsCorrect) {
-  g_mock_tracker.Reset();
+TEST_F(GenieNodeStateDeleterTest, AllHandlesSet_FreeOrderIsCorrect) {
   GenieApi mock_api = MakeMockGenieApi();
   auto* st = new GenieNodeState();
   st->api = &mock_api;
@@ -360,18 +393,18 @@ TEST_F(GenieBackendTests, AllHandlesSet_FreeOrderIsCorrect) {
 
 // Constructing with a null handle should throw std::runtime_error.
 // See genie_api_loader.cc: throws "GenieApiLoader: Null library handle".
-TEST_F(GenieBackendTests, NullHandle_ThrowsRuntimeError) {
+TEST_F(GenieApiLoaderTest, NullHandle_ThrowsRuntimeError) {
   EXPECT_THROW(GenieApiLoader(nullptr), std::runtime_error);
 }
 
 // Constructing with a non-null handle should not throw.
 // dlsym is not called until Get() is invoked (lazy initialization via std::call_once).
-TEST_F(GenieBackendTests, NonNullHandle_ConstructsWithoutThrowing) {
+TEST_F(GenieApiLoaderTest, NonNullHandle_ConstructsWithoutThrowing) {
   EXPECT_NO_THROW(GenieApiLoader(reinterpret_cast<void*>(uintptr_t{1})));
 }
 
 // ==============================================================================
-// GenieBackendManagerTest
+// GenieBackendManagerUnitTest
 //
 // Unit tests for GenieBackendManager, verifying initialization state and
 // error handling. These tests exercise failure paths that do not require
@@ -393,7 +426,7 @@ Ort::Logger GetTestLogger() {
 }  // namespace
 
 // GetGenieBackendHandle() should return null before SetupBackend() is called.
-TEST_F(GenieBackendTests, InitialState_HandleIsNull) {
+TEST_F(GenieBackendManagerUnitTest, InitialState_HandleIsNull) {
   Ort::Logger logger = GetTestLogger();
   auto mgr = qnn::GenieBackendManager::Create(
       qnn::GenieBackendManagerConfig{"nonexistent_genie.so"}, logger);
@@ -401,7 +434,7 @@ TEST_F(GenieBackendTests, InitialState_HandleIsNull) {
 }
 
 // SetupBackend() with a nonexistent library path should return a failure status.
-TEST_F(GenieBackendTests, SetupBackend_InvalidPath_ReturnsError) {
+TEST_F(GenieBackendManagerUnitTest, SetupBackend_InvalidPath_ReturnsError) {
   Ort::Logger logger = GetTestLogger();
   auto mgr = qnn::GenieBackendManager::Create(
       qnn::GenieBackendManagerConfig{"nonexistent_genie.so"}, logger);
@@ -412,7 +445,7 @@ TEST_F(GenieBackendTests, SetupBackend_InvalidPath_ReturnsError) {
 }
 
 // The error message from a failed SetupBackend() should be non-empty.
-TEST_F(GenieBackendTests, SetupBackend_InvalidPath_ErrorMessageNotEmpty) {
+TEST_F(GenieBackendManagerUnitTest, SetupBackend_InvalidPath_ErrorMessageNotEmpty) {
   Ort::Logger logger = GetTestLogger();
   auto mgr = qnn::GenieBackendManager::Create(
       qnn::GenieBackendManagerConfig{"nonexistent_genie.so"}, logger);

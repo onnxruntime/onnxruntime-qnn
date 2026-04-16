@@ -215,7 +215,10 @@
 
   # ---------------------------------------------------------------------------
   # MockGenie shared library
-  # GenieBackendManager loads it via backend_path="MockGenie.dll".
+  # GenieBackendManager loads it via backend_path="MockGenie.dll". Currently
+  # only built on Windows because the Genie execution pathway in the QNN EP
+  # has not been validated on Linux. When Linux support is confirmed, remove
+  # the if(WIN32) guard and enable the else() branch for the version script.
   # ---------------------------------------------------------------------------
   if(WIN32)
     add_library(MockGenie SHARED
@@ -232,8 +235,13 @@
       CXX_STANDARD_REQUIRED ON
       FOLDER "ONNXRuntimeTest"
     )
-      set_property(TARGET MockGenie APPEND_STRING PROPERTY LINK_FLAGS
-        " -DEF:${ONNXRUNTIME_ROOT}/test/providers/qnn/genie/mock_genie_symbols.def")
+
+    set_property(TARGET MockGenie APPEND_STRING PROPERTY LINK_FLAGS
+      " -DEF:${ONNXRUNTIME_ROOT}/test/providers/qnn/genie/mock_genie_symbols.def")
+
+    # else()
+    #   target_link_options(MockGenie PRIVATE
+    #     "-Wl,--version-script=${ONNXRUNTIME_ROOT}/test/providers/qnn/genie/mock_genie_version_script.lds")
 
     # Copy MockGenie next to the test executable so GenieBackendManager
     # finds it by name when backend_path="MockGenie.dll".

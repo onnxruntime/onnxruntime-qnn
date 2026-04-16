@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include <SafeInt.hpp>
+#include "core/common/safeint.h"
 
 // This compilation unit (ort_api.h/.cc) encapsulates the interface between the EP and ORT in a manner
 // that allows QNN EP to built either as a static library or a dynamic shared library.
@@ -27,6 +27,9 @@
 #include "core/framework/int4.h"
 #include "core/session/onnxruntime_session_options_config_keys.h"
 #include "core/session/onnxruntime_run_options_config_keys.h"
+
+#include "core/common/span_utils.h"
+#include "core/graph/constants.h"
 
 namespace onnxruntime {
 
@@ -128,22 +131,6 @@ namespace onnxruntime {
 #else
 #define FILEPATH_TO_STRING(filepath) (filepath).string();
 #endif
-
-// QNN-EP COPY START
-// Below are GSL utilities copied from core/common/span_utils.h directly.
-template <class U, class T>
-[[nodiscard]] inline gsl::span<U> ReinterpretAsSpan(gsl::span<T> src) {
-  // adapted from gsl-lite span::as_span():
-  // https://github.com/gsl-lite/gsl-lite/blob/4720a2980a30da085b4ddb4a0ea2a71af7351a48/include/gsl/gsl-lite.hpp#L4102-L4108
-  Expects(src.size_bytes() % sizeof(U) == 0);
-  return gsl::span<U>(reinterpret_cast<U*>(src.data()), src.size_bytes() / sizeof(U));
-}
-
-// Below are constants copied from core/graph/constants.h directly.
-inline constexpr const char* kOnnxDomain = "";
-inline constexpr const char* kMSDomain = "com.microsoft";
-inline constexpr const char* kMSInternalNHWCDomain = "com.ms.internal.nhwc";
-// QNN-EP COPY END
 
 class OrtLoggingManager {
  public:

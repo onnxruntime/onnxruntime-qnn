@@ -20,22 +20,27 @@
 #include <atomic>
 #include <string>
 #include <mutex>
-#include <iostream>
 
+// ---------------------------------------------------------------------------
+// Platform-portable export macro.
+// ---------------------------------------------------------------------------
+#if defined(_WIN32)
+#  define MOCK_EXPORT __declspec(dllexport)
+#else
+#  define MOCK_EXPORT __attribute__((visibility("default")))
+#endif
 
 // ---------------------------------------------------------------------------
 // Call tracking — one counter per Genie API function.
 // Exported so the test EXE can read them after session creation.
 // ---------------------------------------------------------------------------
 
-
 static std::unordered_map<std::string, std::atomic<int>> g_calls;
 static std::mutex g_call_mutex;
 
 extern "C" {
 
-
-__declspec(dllexport)
+MOCK_EXPORT
 int GetMockGenieCallCount(const char* api_name) {
   if (!api_name) return 0;
   std::lock_guard<std::mutex> lock(g_call_mutex);
@@ -44,7 +49,7 @@ int GetMockGenieCallCount(const char* api_name) {
   return it->second.load();
 }
 
-__declspec(dllexport)
+MOCK_EXPORT
 void ResetMockGenieCalls() {
   std::lock_guard<std::mutex> lock(g_call_mutex);
   g_calls.clear();
