@@ -1990,7 +1990,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
       },
       [&]() {
         std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> recovered_qnn_models;
-        return Ort::Status(ep->qnn_backend_manager_->SSRCleanUp(recovered_qnn_models));
+        return Ort::Status(ep->qnn_backend_manager_->SSRCleanUp(__FUNCTION__, recovered_qnn_models));
       },
       "CompileUtil");
   return rt.release();

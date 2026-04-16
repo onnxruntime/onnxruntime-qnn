@@ -303,7 +303,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       const std::function<Ort::Status()>& ssr_recover,
       const std::string& operation_name) const;
 
-  Ort::Status SSRCleanUp(std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models);
+  Ort::Status SSRCleanUp(std::string caller_name, std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models);
 
   // Handler to be called upon successful context creation via contextCreateFromBinaryListAsync()
   // This handler is expected to be called in the callback ContextCreateAsyncCallback() in the .cc file
@@ -590,6 +590,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool context_created_ = false;
   bool backend_setup_completed_ = false;
   bool vtcm_backup_buffer_sharing_enabled_ = false;
+  bool enable_htp_extended_udma_mode_ = false;
 
   uint32_t backend_id_ = QNN_BACKEND_ID_CPU;
   bool file_mapped_weights_enabled_ = false;

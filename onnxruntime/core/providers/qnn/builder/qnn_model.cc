@@ -536,7 +536,7 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
         [&]() {
           std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> recovered_qnn_models;
           // Cleanup after SSR capture and recover model state
-          RETURN_IF_ERROR(qnn_backend_manager_->SSRCleanUp(recovered_qnn_models));
+          RETURN_IF_ERROR(qnn_backend_manager_->SSRCleanUp(__FUNCTION__, recovered_qnn_models));
           RETURN_IF_NOT(recovered_qnn_models.find(Name()) != recovered_qnn_models.end(),
                         ("Failed to recover model: " + Name() + ". Model not found in recovered models map.").c_str());
           graph_info_->SetGraphContext(recovered_qnn_models[Name()]->GetGraphInfo()->GraphContext());

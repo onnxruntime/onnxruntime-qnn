@@ -1803,6 +1803,7 @@ Ort::Status QnnBackendManager::SetupBackend(
   }
 
   vtcm_backup_buffer_sharing_enabled_ = enable_vtcm_backup_buffer_sharing;
+  enable_htp_extended_udma_mode_ = enable_htp_extended_udma_mode;
   enable_ssr_handling_ = enable_ssr_handling;
 
   auto status = Ort::Status();
@@ -2676,7 +2677,7 @@ Ort::Status QnnBackendManager::InvokeWithSSRHandle(
       }
     } else if (retry_state == SSRHandleState::Retry) {
       // Log the result of the retry attempt
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, ("[SSR Handle during " + operation_name + "] " + result.GetErrorMessage()).c_str());
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, ("[SSR Handle during " + operation_name + "] " + result.GetErrorMessage()).c_str());
       retry_state = SSRHandleState::End;  // Always exit after one retry
     }
   } while (retry_state != SSRHandleState::End);  // Continue until we reach End state
@@ -2684,14 +2685,14 @@ Ort::Status QnnBackendManager::InvokeWithSSRHandle(
   return result;  // Return final status (success or error)
 }
 
-Ort::Status QnnBackendManager::SSRCleanUp(std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models) {
-  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "[SSR Handle] SSRCleanUp");
+Ort::Status QnnBackendManager::SSRCleanUp(std::string caller_name, std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models) {
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, ("[SSR Handle] SSRCleanUp for " + caller_name).c_str());
   // Customer Recover Routines
   // ReleaseContext helps contextFree with custom deleter
   RETURN_IF_ERROR(ReleaseContext());
-  if (qnn_save_buffer_size_ == 0) {
-    RETURN_IF_ERROR(CreateContext(false, false));
-  } else {
+  if (caller_name.find("CompileImpl") != std::string::npos) {
+    RETURN_IF_ERROR(CreateContext(false, enable_htp_extended_udma_mode_));
+  } else if (caller_name.find("ExecuteGraph") != std::string::npos) {
     uint64_t max_spill_fill_buffer_size = 0;
     RETURN_IF_ERROR(GetMaxSpillFillBufferSize(
         qnn_save_buffer_.get(),
@@ -2706,6 +2707,8 @@ Ort::Status QnnBackendManager::SSRCleanUp(std::unordered_map<std::string, std::u
         "", /* node_name */
         qnn_models,
         max_spill_fill_buffer_size));
+  } else {
+    return MAKE_EP_FAIL(("Not Implementation of SSRCleanUp in " + caller_name).c_str());
   }
   return Ort::Status();
 }
