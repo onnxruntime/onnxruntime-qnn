@@ -121,6 +121,7 @@ inline void QuantizeBlockwise(
 
       if (symmetric) {
         // Symmetric quantization: map to [-8, 7]
+        // Negative scale follows MLAS convention: q in [-8,7] maps to [abs_max, -(7/8)*abs_max]
         const float abs_max = std::max(std::abs(min_val), std::abs(max_val));
         scales[scale_idx] = static_cast<T>(-abs_max / 8.0f);
       } else {
