@@ -154,7 +154,7 @@ jobs:
         run: |
           mkdir "${{ github.workspace }}/build/dist"
           cp "${{ github.workspace }}/build/windows-arm64/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
-          find "${{ github.workspace }}/build/linux-aarch64_manylinux_2_34" -name "*.whl" -exec cp '{}' "${{ github.workspace }}/build/dist" ';'
+          cp "${{ github.workspace }}/build/linux-aarch64_manylinux_2_34/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
 
       - name: Consolidate Wheels
         run: |
@@ -178,6 +178,11 @@ jobs:
             "${{ github.workspace }}/build/dist/x64" \
             "${{ github.workspace }}/build/dist/arm64ec" \
             "${{ github.workspace }}/build/dist"
+
+      - name: Remove intermediate wheels before verification
+        run: |
+          rm -rf "${{ github.workspace }}/build/dist/x64"
+          rm -rf "${{ github.workspace }}/build/dist/arm64ec"
 
       - name: Verify wheel artifacts
         run: |

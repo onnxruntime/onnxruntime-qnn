@@ -292,9 +292,9 @@ else
     if [ -n "${build_zip}" ]; then
       log_info "Building zip asset."
       zip_args+=(--build_zip_asset)
-      if [ -n "${ORT_VERSION_SUFFIX:-}" ]; then
-        zip_args+=(--version_suffix "${ORT_VERSION_SUFFIX}")
-      fi
+    fi
+    if [ -n "${ORT_VERSION_SUFFIX:-}" ]; then
+      zip_args+=(--version_suffix "${ORT_VERSION_SUFFIX}")
     fi
 
     "${python_for_build}" ${REPO_ROOT}/tools/ci_build/build.py \

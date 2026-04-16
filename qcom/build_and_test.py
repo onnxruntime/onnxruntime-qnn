@@ -678,6 +678,8 @@ class TaskLibrary:
                 build_args={
                     "BUILD_UID": str(os.getuid()),
                     "BUILD_GID": str(os.getgid()),
+                    "ORT_NIGHTLY_BUILD": os.environ.get("ORT_NIGHTLY_BUILD", "0"),
+                    "ORT_VERSION_SUFFIX": os.environ.get("ORT_VERSION_SUFFIX", ""),
                 },
             )
         )
