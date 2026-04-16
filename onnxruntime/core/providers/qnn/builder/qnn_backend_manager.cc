@@ -362,9 +362,11 @@ void QnnBackendManager::ReleaseTimerThread() {
       }
     }
   }
-  timer_->DeInitialize();
-  timer_callback_arg_.reset();
-  timer_.reset();
+  if (timer_ != nullptr) {
+    timer_->DeInitialize();
+    timer_callback_arg_.reset();
+    timer_.reset();
+  }
 }
 
 Ort::Status QnnBackendManager::ParseLoraConfig(std::string lora_config_path) {
