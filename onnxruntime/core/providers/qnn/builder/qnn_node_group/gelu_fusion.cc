@@ -10,6 +10,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
 #include "core/providers/qnn/ort_api.h"
@@ -48,16 +49,16 @@ struct GeluPatternMatchContext {
 };
 
 /* Checks if the given NodeUnit has an input tensor with the specified name. */
-static bool HasInputWithName(const OrtNodeUnit& node_unit, const std::string& input_name) {
+bool HasInputWithName(const OrtNodeUnit& node_unit, std::string_view input_name) {
   const auto& inputs = node_unit.Inputs();
-  return std::any_of(inputs.begin(), inputs.end(), [input_name](const OrtNodeUnitIODef& input) {
+  return std::any_of(inputs.begin(), inputs.end(), [&input_name](const OrtNodeUnitIODef& input) {
     return input.name == input_name;
   });
 }
 
-static const OrtNodeUnit* GetProducerForInput(const OrtNodeUnit& consumer_node_unit,
-                                              size_t input_index,
-                                              const GeluPatternMatchContext& ctx) {
+const OrtNodeUnit* GetProducerForInput(const OrtNodeUnit& consumer_node_unit,
+                                       size_t input_index,
+                                       const GeluPatternMatchContext& ctx) {
   const auto& inputs = consumer_node_unit.Inputs();
   if (input_index >= inputs.size()) {
     return nullptr;
@@ -70,7 +71,7 @@ static const OrtNodeUnit* GetProducerForInput(const OrtNodeUnit& consumer_node_u
                           ctx.node_unit_to_qnn_node_group);
 }
 
-static bool TryMatchErfAddPattern1(
+bool TryMatchErfAddPattern1(
     const OrtNodeUnit* div_node_unit,
     const OrtNodeUnit& erf_node_unit,
     const OrtNodeUnit* add_node_unit,
@@ -111,7 +112,7 @@ static bool TryMatchErfAddPattern1(
   return false;
 }
 
-static bool TryMatchErfAddPattern2(
+bool TryMatchErfAddPattern2(
     const OrtNodeUnit* div_node_unit,
     const OrtNodeUnit& erf_node_unit,
     const OrtNodeUnit* add_node_unit,
@@ -150,7 +151,7 @@ static bool TryMatchErfAddPattern2(
   return true;
 }
 
-static bool TryMatchErfMulPattern(
+bool TryMatchErfMulPattern(
     const OrtNodeUnit* div_node_unit,
     const OrtNodeUnit& erf_node_unit,
     const GeluPatternMatchContext& ctx,
@@ -221,12 +222,12 @@ static bool TryMatchErfMulPattern(
   return true;
 }
 
-static bool TryMatchErfAddPatterns(const OrtNodeUnit* div_node_unit,
-                                   const OrtNodeUnit& erf_node_unit,
-                                   const OrtNodeUnit* add_node_unit,
-                                   const OrtNodeUnit* mul_after_add_node_unit,
-                                   const GeluPatternMatchContext& ctx,
-                                   GeluPatternMatchResult& result) {
+bool TryMatchErfAddPatterns(const OrtNodeUnit* div_node_unit,
+                            const OrtNodeUnit& erf_node_unit,
+                            const OrtNodeUnit* add_node_unit,
+                            const OrtNodeUnit* mul_after_add_node_unit,
+                            const GeluPatternMatchContext& ctx,
+                            GeluPatternMatchResult& result) {
   return TryMatchErfAddPattern1(div_node_unit,
                                 erf_node_unit,
                                 add_node_unit,
