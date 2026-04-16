@@ -139,18 +139,17 @@ GetTestModelFn BuildGeluPattern2TestCase(const TestInputDef<float>& input_def) {
   };
 }
 
-// Helper function to build GELU Pattern 3: Mul(0.5) on Add output, then skip Mul with root
+// Helper function to build GELU Pattern 3 (ErfMul Pattern)
 // Pattern 3:
-//                   +---------------------------------------------+
-//                   |                                             |
-//                   |                                             v
-//                [root] --> Div -----> Erf  --> Add --> Mul --> Mul ==>
-//                          (B=1.4142...)        (1)     (0.5)
+//                   +-------------------------------------------+
+//                   |                                           |
+//                   |                                           v
+//                [root] --> Div -----> Erf --> Mul --> Add --> Mul ==>
+//                          (B=1.4142...)      (0.5)   (0.5)
 GetTestModelFn BuildGeluPattern3TestCase(const TestInputDef<float>& input_def) {
   return [input_def](ModelTestBuilder& builder) -> void {
     constexpr float sqrt_2 = 1.4142135381698608f;
     constexpr float half = 0.5f;
-    constexpr float one = 1.0f;
 
     builder.graph_->set_name("gelu_pattern3_graph");
 
@@ -172,26 +171,26 @@ GetTestModelFn BuildGeluPattern3TestCase(const TestInputDef<float>& input_def) {
                     {"erf_out"},
                     kOnnxDomain);
 
-    // erf_out -> Add(1.0) -> add_out
-    builder.MakeScalarInitializer<float>("one", one);
-    builder.AddNode("Add_one",
-                    "Add",
-                    {"erf_out", "one"},
-                    {"add_out"},
-                    kOnnxDomain);
-
-    // add_out * 0.5 -> mul_half_out
+    // erf_out * 0.5 -> mul_out
     builder.MakeScalarInitializer<float>("half", half);
     builder.AddNode("Mul_half",
                     "Mul",
-                    {"add_out", "half"},
-                    {"mul_half_out"},
+                    {"erf_out", "half"},
+                    {"mul_out"},
                     kOnnxDomain);
 
-    // input * mul_half_out -> output
+    // mul_out + 0.5 -> add_out
+    builder.MakeScalarInitializer<float>("half2", half);
+    builder.AddNode("Add_half",
+                    "Add",
+                    {"mul_out", "half2"},
+                    {"add_out"},
+                    kOnnxDomain);
+
+    // input * add_out -> output
     builder.AddNode("Mul_out",
                     "Mul",
-                    {"input", "mul_half_out"},
+                    {"input", "add_out"},
                     {"output"},
                     kOnnxDomain);
 
@@ -364,13 +363,12 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPattern2TestCase(const TestInputDef<flo
   };
 }
 
-// Helper function to build QDQ GELU Pattern 3
+// Helper function to build QDQ GELU Pattern 3 (ErfMul Pattern)
 template <typename QuantType>
 GetTestQDQModelFn<QuantType> BuildQDQGeluPattern3TestCase(const TestInputDef<float>& input_def) {
   return [input_def](ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) -> void {
     constexpr float sqrt_2 = 1.4142135381698608f;
     constexpr float half = 0.5f;
-    constexpr float one = 1.0f;
 
     builder.graph_->set_name("qdq_gelu_pattern3_graph");
 
@@ -381,17 +379,17 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPattern3TestCase(const TestInputDef<flo
         AddQDQNodePair<QuantType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
 
     builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
-    builder.MakeScalarInitializer<float>("one", one);
     builder.MakeScalarInitializer<float>("half", half);
+    builder.MakeScalarInitializer<float>("half2", half);
 
     const std::string sqrt2_qdq =
         AddQDQNodePair<QuantType>(builder, "qdq_sqrt2", "sqrt2", input_qparams.scale, input_qparams.zero_point);
-    const std::string one_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_one", "one", input_qparams.scale, input_qparams.zero_point);
     const std::string half_qdq =
         AddQDQNodePair<QuantType>(builder, "qdq_half", "half", input_qparams.scale, input_qparams.zero_point);
+    const std::string half2_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_half2", "half2", input_qparams.scale, input_qparams.zero_point);
 
-    // input -> Div(sqrt2) -> Erf -> Add(one)
+    // input -> Div(sqrt2) -> Erf -> Mul(0.5) -> Add(0.5)
     builder.AddNode("Div_sqrt2",
                     "Div",
                     {input_qdq, sqrt2_qdq},
@@ -410,29 +408,28 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPattern3TestCase(const TestInputDef<flo
     const std::string erf_out_qdq =
         AddQDQNodePair<QuantType>(builder, "qdq_erf_out", "erf_out", input_qparams.scale, input_qparams.zero_point);
 
-    builder.AddNode("Add_one",
+    // ErfMul Pattern: Mul(erf_out, 0.5) -> Add(0.5) -> Mul(input)
+    builder.AddNode("Mul_half",
+                    "Mul",
+                    {erf_out_qdq, half_qdq},
+                    {"mul_out"},
+                    kOnnxDomain);
+
+    const std::string mul_out_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_mul_out", "mul_out", input_qparams.scale, input_qparams.zero_point);
+
+    builder.AddNode("Add_half",
                     "Add",
-                    {erf_out_qdq, one_qdq},
+                    {mul_out_qdq, half2_qdq},
                     {"add_out"},
                     kOnnxDomain);
 
     const std::string add_out_qdq =
         AddQDQNodePair<QuantType>(builder, "qdq_add_out", "add_out", input_qparams.scale, input_qparams.zero_point);
 
-    // Pattern 3: Mul(add_out, half) then Mul(root, previous)
-    builder.AddNode("Mul_half",
-                    "Mul",
-                    {add_out_qdq, half_qdq},
-                    {"mul_half_out"},
-                    kOnnxDomain);
-
-    const std::string mul_half_out_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_mul_half_out", "mul_half_out",
-                                  input_qparams.scale, input_qparams.zero_point);
-
     builder.AddNode("Mul_out",
                     "Mul",
-                    {input_qdq, mul_half_out_qdq},
+                    {input_qdq, add_out_qdq},
                     {"Y"},
                     kOnnxDomain);
 
@@ -495,7 +492,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_Float32) {
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 }
 
-// Test GELU Pattern 3 with float32 model (for fp16-derived graph topology)
+// Test GELU Pattern 3 (ErfMul Pattern) with float32 model
 TEST_F(QnnHTPBackendTests, GeluFusionPattern3_Float32) {
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern3_Float32";
   std::filesystem::remove_all(json_qnn_graph_dir);
