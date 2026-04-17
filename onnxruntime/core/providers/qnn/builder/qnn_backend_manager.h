@@ -862,5 +862,76 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   std::unique_ptr<TimerCallbackArg> timer_callback_arg_;
 };
 
+// RAII guard for QnnBackendManager::SetState.
+//
+// Calls SetState(start_state, ...) on construction and SetState(done_state, ...)
+// on destruction, ensuring the done state is always reached even on early returns.
+//
+// Typical usage (INIT_START / INIT_DONE pair):
+//
+//   uint32_t htp_power_config_id = 0;
+//   QnnBackendManager* mgr = ep->GetHtpPowerConfigId(htp_power_config_id)
+//                                ? ep->qnn_backend_manager_.get() : nullptr;
+//   ScopedGraphState state_guard(mgr, GraphState::INIT_START, GraphState::INIT_DONE,
+//                                htp_power_config_id, perf_mode, rpc_poll, rpc_latency);
+//   RETURN_IF_NOT_OK(state_guard.SetPreRunHtpPerfStatus());
+//   auto status = DoWork(...);
+//   RETURN_IF_NOT_OK(state_guard.SetPostRunHtpPerf());  // optional: capture post-run perf error
+//   return status;
+//
+// Passing nullptr as manager creates a no-op guard (all calls succeed immediately).
+class ScopedGraphState {
+ public:
+  ScopedGraphState(QnnBackendManager* manager,
+                   GraphState start_state,
+                   GraphState done_state,
+                   uint32_t htp_power_config_client_id,
+                   qnn::HtpPerformanceMode perf_mode,
+                   uint32_t rpc_polling_time,
+                   uint32_t rpc_control_latency)
+      : manager_(manager),
+        done_state_(done_state),
+        htp_power_config_client_id_(htp_power_config_client_id),
+        perf_mode_(perf_mode),
+        rpc_polling_time_(rpc_polling_time),
+        rpc_control_latency_(rpc_control_latency),
+        finalized_(false) {
+    if (manager_) {
+      start_status_ = manager_->SetState(start_state, htp_power_config_client_id_,
+                                         perf_mode_, rpc_polling_time_, rpc_control_latency_);
+    }
+  }
+  ~ScopedGraphState() {
+    if (!finalized_ && manager_) {
+      // Error cannot be propagated from a destructor; silently ignore.
+      manager_->SetState(done_state_, htp_power_config_client_id_,
+                         perf_mode_, rpc_polling_time_, rpc_control_latency_);
+    }
+  }
+  // Returns (by move) the status of setting HTP performance before work begins.
+  // Should be checked immediately after construction.
+  Ort::Status SetPreRunHtpPerfStatus() { return std::move(start_status_); }
+  // Explicitly sets HTP performance after work is done and returns its status.
+  // After this call the destructor will not invoke SetState again.
+  Ort::Status SetPostRunHtpPerf() {
+    finalized_ = true;
+    if (manager_) {
+      return manager_->SetState(done_state_, htp_power_config_client_id_,
+                                perf_mode_, rpc_polling_time_, rpc_control_latency_);
+    }
+    return Ort::Status();
+  }
+  ScopedGraphState(const ScopedGraphState&) = delete;
+  ScopedGraphState& operator=(const ScopedGraphState&) = delete;
+ private:
+  QnnBackendManager* manager_;
+  GraphState done_state_;
+  uint32_t htp_power_config_client_id_;
+  qnn::HtpPerformanceMode perf_mode_;
+  uint32_t rpc_polling_time_;
+  uint32_t rpc_control_latency_;
+  Ort::Status start_status_;
+  bool finalized_;
+};
 }  // namespace qnn
 }  // namespace onnxruntime
