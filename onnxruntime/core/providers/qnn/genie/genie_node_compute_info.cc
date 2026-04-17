@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <regex>
 #include <sstream>
 
 #include "core/providers/qnn/qnn_execution_provider.h"
@@ -61,14 +62,12 @@ OrtStatus* GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_ptr,
                                     std::filesystem::is_directory(parent_folder_path, dir_ec) &&
                                     !dir_ec;
   if (parent_is_searchable) {
+    static const std::regex kExtensionPattern{"tmp.*\\.json"};
     try {
       for (const auto& entry : std::filesystem::directory_iterator(parent_folder_path)) {
         if (entry.is_regular_file()) {
-          std::string filename = entry.path().filename().string();
-          // Check if filename matches pattern tmp**.json
-          if (filename.size() >= 8 &&  // "tmp" + some random number + ".json"
-              filename.substr(0, 3) == "tmp" &&
-              filename.substr(filename.size() - 5) == ".json") {
+          const std::string filename = entry.path().filename().string();
+          if (std::regex_match(filename, kExtensionPattern)) {
             extension_path = entry.path().string();
             break;
           }
@@ -78,6 +77,11 @@ OrtStatus* GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_ptr,
       std::string error_msg = std::string("Error searching for extension file: ") + e.what();
       return ep.ort_api.CreateStatus(ORT_EP_FAIL, error_msg.c_str());
     }
+  } else {
+    ORT_CXX_LOG(ep.logger_, ORT_LOGGING_LEVEL_WARNING,
+                ("HTP extension file not found in '" + parent_folder_path.string() +
+                 "'; continuing without HTP extensions.")
+                    .c_str());
   }
   // Replace single backslashes with double backslashes for JSON
   std::string escaped_extension_path;

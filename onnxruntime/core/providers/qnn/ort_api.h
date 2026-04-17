@@ -12,38 +12,10 @@
 #include <string>
 #include <vector>
 
-// Define the SafeInt exception handler before including SafeInt.hpp.
-// We intentionally do NOT use core/common/safeint.h (which uses ORT_THROW → ORT_WHERE_WITH_STACK →
-// GetStackTrace()) because onnxruntime::GetStackTrace is a LOCAL symbol in libonnxruntime.so and is
-// not available to plugin EPs at runtime. Using std::runtime_error here avoids the
-// undefined-symbol dependency while still throwing on integer overflow/divide-by-zero.
-//
-// In test builds, core/common/safeint.h may be included transitively before this header. In that
-// case SafeIntDefaultExceptionHandler is already defined (using ORT_THROW), so we skip our
-// definition to avoid a redefinition conflict. The ORT_THROW-based handler is safe in tests
-// because GetStackTrace is available when linking against ort_core.
-#ifndef SafeIntDefaultExceptionHandler
-class SafeIntExceptionHandler : public std::exception {
- public:
-  [[noreturn]] static void SafeIntOnOverflow() { throw std::runtime_error("Integer overflow"); }
-  [[noreturn]] static void SafeIntOnDivZero() { throw std::runtime_error("Divide by zero"); }
-};
-
-#define SAFEINT_EXCEPTION_HANDLER_CPP 1
-#define SafeIntDefaultExceptionHandler SafeIntExceptionHandler
-#endif  // !defined(SafeIntDefaultExceptionHandler)
-
-#if defined(__GNUC__)
-#include "onnxruntime_config.h"
-#pragma GCC diagnostic push
-#ifdef HAS_UNUSED_BUT_SET_PARAMETER
-#pragma GCC diagnostic ignored "-Wunused-but-set-parameter"
-#endif
-#endif
-#include "SafeInt.hpp"
-#if defined(__GNUC__)
-#pragma GCC diagnostic pop
-#endif
+// SafeInt wrapper that avoids the GetStackTrace dependency from core/common/safeint.h.
+// See qnn_safeint.h for details.
+#include <stdexcept>
+#include "core/providers/qnn/qnn_safeint.h"
 
 // This compilation unit (ort_api.h/.cc) encapsulates the interface between the EP and ORT in a manner
 // that allows QNN EP to built either as a static library or a dynamic shared library.

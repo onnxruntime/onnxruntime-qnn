@@ -304,9 +304,11 @@ block()
   )
 
   if(onnxruntime_USE_QNN)
-    # Genie implementation files are compiled into onnxruntime_providers_qnn.so with hidden
-    # visibility, so they cannot be linked by external binaries. Re-compile them directly
-    # into the test binary so that genie_unit_test.cc can access the internal classes.
+    # Unlike other QNN tests that link against onnxruntime_providers_qnn.so via the provider
+    # interface, the Genie implementation classes (GenieBackendManager, GenieApiLoader,
+    # GenieNode) are compiled with hidden symbol visibility and are not exported from the
+    # shared library. Re-compiling them directly here is the least-invasive way to make
+    # those symbols accessible to genie_unit_test.cc without changing the EP's public ABI.
     # Note: genie_node_compute_info.cc is intentionally excluded because it depends on
     # qnn_utils.cc symbols that are not available to the test binary and none of the
     # unit tests in genie_unit_test.cc exercise GenieNodeComputeInfo.
@@ -359,6 +361,43 @@ block()
   # there are some in builds where sizeof(size_t) != sizeof(int64_t), e.g., in 'ONNX Runtime Web CI Pipeline'
   if (HAS_SHORTEN_64_TO_32 AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     target_compile_options(onnxruntime_provider_test PRIVATE -Wno-error=shorten-64-to-32)
+  endif()
+
+  if(onnxruntime_USE_QNN AND WIN32)
+    # ---------------------------------------------------------------------------
+    # MockGenie shared library — test double for the Genie backend.
+    # GenieBackendManager loads it via backend_path="MockGenie.dll". Currently
+    # only built on Windows because the Genie execution pathway in the QNN EP
+    # has not been validated on Linux. When Linux support is confirmed, remove
+    # the WIN32 guard and enable the version-script path for Linux.
+    # ---------------------------------------------------------------------------
+    add_library(MockGenie SHARED
+      ${ONNXRUNTIME_ROOT}/test/providers/qnn/genie/genie_mock_dll.cc
+    )
+
+    target_include_directories(MockGenie PRIVATE
+      ${onnxruntime_QNN_HOME}/include
+      ${onnxruntime_QNN_HOME}/include/QNN
+    )
+
+    set_target_properties(MockGenie PROPERTIES
+      CXX_STANDARD 17
+      CXX_STANDARD_REQUIRED ON
+      FOLDER "ONNXRuntimeTest"
+    )
+
+    set_property(TARGET MockGenie APPEND_STRING PROPERTY LINK_FLAGS
+      " -DEF:${ONNXRUNTIME_ROOT}/test/providers/qnn/genie/mock_genie_symbols.def")
+
+    # Copy MockGenie next to the test executable so GenieBackendManager
+    # finds it by name when backend_path="MockGenie.dll".
+    add_custom_command(
+      TARGET MockGenie POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:MockGenie>
+        $<TARGET_FILE_DIR:onnxruntime_provider_test>
+      COMMENT "Copying MockGenie to test output directory"
+    )
   endif()
 endblock()
 endif()

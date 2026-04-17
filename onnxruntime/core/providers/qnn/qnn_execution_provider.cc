@@ -52,6 +52,8 @@ const std::string kDefaultHtpBackendPath = MakeSharedLibraryPath("QnnHtp");
 const std::string kDefaultSaverBackendPath = MakeSharedLibraryPath("QnnSaver");
 const std::string kDefaultIrBackendPath = MakeSharedLibraryPath("QnnIr");
 
+// File-scope (unlike the other backend type name constants defined inside ParseBackendTypeName)
+// because kGenieBackendTypeName is also referenced from other call sites in this file.
 constexpr std::string_view kGenieBackendTypeName{"genie"};
 
 static bool ParseBackendTypeName(std::string_view backend_type_name,

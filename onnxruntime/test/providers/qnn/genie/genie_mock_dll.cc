@@ -31,27 +31,33 @@
 
 // ---------------------------------------------------------------------------
 // Call tracking — one pre-allocated atomic counter per Genie API function.
-// Pre-allocation avoids map mutations at call time, so no mutex is needed.
-// Exported so the test EXE can read and reset them after session creation.
+// GENIE_MOCK_APIS is the single source of truth for all tracked names.
+// Add a new X(Name) entry here whenever a new stub is added below.
 // ---------------------------------------------------------------------------
+// clang-format off
+#define GENIE_MOCK_APIS(X)         \
+  X(DlcConfig_create)              \
+  X(DlcConfig_free)                \
+  X(Dlc_create)                    \
+  X(Dlc_free)                      \
+  X(Dlc_getUseCases)               \
+  X(Log_create)                    \
+  X(Log_free)                      \
+  X(Node_create)                   \
+  X(Node_execute)                  \
+  X(Node_free)                     \
+  X(Node_getData)                  \
+  X(Node_reset)                    \
+  X(Node_setData)                  \
+  X(NodeConfig_bindLogger)         \
+  X(NodeConfig_createFromDlc)      \
+  X(NodeConfig_createFromJson)     \
+  X(NodeConfig_free)
+// clang-format on
 
-static std::atomic<int> g_NodeConfig_createFromJson{0};
-static std::atomic<int> g_DlcConfig_create{0};
-static std::atomic<int> g_DlcConfig_free{0};
-static std::atomic<int> g_Dlc_create{0};
-static std::atomic<int> g_Dlc_free{0};
-static std::atomic<int> g_Dlc_getUseCases{0};
-static std::atomic<int> g_NodeConfig_createFromDlc{0};
-static std::atomic<int> g_Node_create{0};
-static std::atomic<int> g_Node_setData{0};
-static std::atomic<int> g_Node_getData{0};
-static std::atomic<int> g_Node_execute{0};
-static std::atomic<int> g_Node_free{0};
-static std::atomic<int> g_Node_reset{0};
-static std::atomic<int> g_NodeConfig_free{0};
-static std::atomic<int> g_Log_create{0};
-static std::atomic<int> g_NodeConfig_bindLogger{0};
-static std::atomic<int> g_Log_free{0};
+#define X(name) static std::atomic<int> g_##name{0};
+GENIE_MOCK_APIS(X)
+#undef X
 
 extern "C" {
 
@@ -59,23 +65,9 @@ MOCK_EXPORT
 int GetMockGenieCallCount(const char* api_name) {
   if (!api_name) return 0;
   static const std::unordered_map<std::string, std::atomic<int>*> kCounters = {
-      {"NodeConfig_createFromJson", &g_NodeConfig_createFromJson},
-      {"DlcConfig_create", &g_DlcConfig_create},
-      {"DlcConfig_free", &g_DlcConfig_free},
-      {"Dlc_create", &g_Dlc_create},
-      {"Dlc_free", &g_Dlc_free},
-      {"Dlc_getUseCases", &g_Dlc_getUseCases},
-      {"NodeConfig_createFromDlc", &g_NodeConfig_createFromDlc},
-      {"Node_create", &g_Node_create},
-      {"Node_setData", &g_Node_setData},
-      {"Node_getData", &g_Node_getData},
-      {"Node_execute", &g_Node_execute},
-      {"Node_free", &g_Node_free},
-      {"Node_reset", &g_Node_reset},
-      {"NodeConfig_free", &g_NodeConfig_free},
-      {"Log_create", &g_Log_create},
-      {"NodeConfig_bindLogger", &g_NodeConfig_bindLogger},
-      {"Log_free", &g_Log_free},
+#define X(name) {#name, &g_##name},
+      GENIE_MOCK_APIS(X)
+#undef X
   };
   auto it = kCounters.find(api_name);
   return it != kCounters.end() ? it->second->load() : 0;
@@ -83,23 +75,9 @@ int GetMockGenieCallCount(const char* api_name) {
 
 MOCK_EXPORT
 void ResetMockGenieCallCounts() {
-  g_NodeConfig_createFromJson = 0;
-  g_DlcConfig_create = 0;
-  g_DlcConfig_free = 0;
-  g_Dlc_create = 0;
-  g_Dlc_free = 0;
-  g_Dlc_getUseCases = 0;
-  g_NodeConfig_createFromDlc = 0;
-  g_Node_create = 0;
-  g_Node_setData = 0;
-  g_Node_getData = 0;
-  g_Node_execute = 0;
-  g_Node_free = 0;
-  g_Node_reset = 0;
-  g_NodeConfig_free = 0;
-  g_Log_create = 0;
-  g_NodeConfig_bindLogger = 0;
-  g_Log_free = 0;
+#define X(name) g_##name = 0;
+  GENIE_MOCK_APIS(X)
+#undef X
 }
 
 // ---------------------------------------------------------------------------
