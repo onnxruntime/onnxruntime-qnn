@@ -183,7 +183,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       bool load_from_cached_context,
       bool need_load_system_lib,
       bool share_ep_contexts,
-      bool htp_share_resource_optimization,
+      int htp_share_resource_optimization,
       bool enable_file_mapped_weights,
       std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
