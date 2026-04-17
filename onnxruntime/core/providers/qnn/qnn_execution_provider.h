@@ -223,6 +223,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   mutable std::optional<std::pair<std::vector<std::string>, std::vector<std::string>>> onnx_graph_io_names_;
 
   // Genie pathway-specific variables
+  std::string genie_backend_path_;
   std::shared_ptr<qnn::GenieBackendManager> genie_backend_manager_;
   mutable std::shared_ptr<GenieApiLoader> genie_api_loader_;
   GenieLog_Level_t genie_log_level_ = GENIE_LOG_LEVEL_ERROR;

@@ -3,13 +3,46 @@
 
 #pragma once
 
+#include <cstring>
 #include <functional>
 #include <gsl/gsl>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
-#include <SafeInt.hpp>
+// Define the SafeInt exception handler before including SafeInt.hpp.
+// We intentionally do NOT use core/common/safeint.h (which uses ORT_THROW → ORT_WHERE_WITH_STACK →
+// GetStackTrace()) because onnxruntime::GetStackTrace is a LOCAL symbol in libonnxruntime.so and is
+// not available to plugin EPs at runtime. Using std::runtime_error here avoids the
+// undefined-symbol dependency while still throwing on integer overflow/divide-by-zero.
+//
+// In test builds, core/common/safeint.h may be included transitively before this header. In that
+// case SafeIntDefaultExceptionHandler is already defined (using ORT_THROW), so we skip our
+// definition to avoid a redefinition conflict. The ORT_THROW-based handler is safe in tests
+// because GetStackTrace is available when linking against ort_core.
+#ifndef SafeIntDefaultExceptionHandler
+class SafeIntExceptionHandler : public std::exception {
+ public:
+  [[noreturn]] static void SafeIntOnOverflow() { throw std::runtime_error("Integer overflow"); }
+  [[noreturn]] static void SafeIntOnDivZero() { throw std::runtime_error("Divide by zero"); }
+};
+
+#define SAFEINT_EXCEPTION_HANDLER_CPP 1
+#define SafeIntDefaultExceptionHandler SafeIntExceptionHandler
+#endif  // !defined(SafeIntDefaultExceptionHandler)
+
+#if defined(__GNUC__)
+#include "onnxruntime_config.h"
+#pragma GCC diagnostic push
+#ifdef HAS_UNUSED_BUT_SET_PARAMETER
+#pragma GCC diagnostic ignored "-Wunused-but-set-parameter"
+#endif
+#endif
+#include "SafeInt.hpp"
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 // This compilation unit (ort_api.h/.cc) encapsulates the interface between the EP and ORT in a manner
 // that allows QNN EP to built either as a static library or a dynamic shared library.
@@ -27,6 +60,9 @@
 #include "core/framework/int4.h"
 #include "core/session/onnxruntime_session_options_config_keys.h"
 #include "core/session/onnxruntime_run_options_config_keys.h"
+
+#include "core/common/span_utils.h"
+#include "core/graph/constants.h"
 
 namespace onnxruntime {
 
@@ -89,10 +125,25 @@ namespace onnxruntime {
     }                                                   \
   } while (0)
 
-// Convenient macro for logging with an Ort::Logger pointer, espeically in QnnBackendManager.
+// Returns true if an Ort::Logger has a null internal OrtLogger pointer (i.e., was default-constructed
+// and never initialized). Ort::Logger is standard-layout and trivially copyable; its first member
+// (const OrtLogger* logger_) is at offset 0, so memcpy is well-defined here.
+inline bool IsNullLogger(const Ort::Logger& logger) {
+  const OrtLogger* ptr = nullptr;
+  std::memcpy(&ptr, &logger, sizeof(ptr));
+  return ptr == nullptr;
+}
+
+// Convenient macro for logging with an Ort::Logger pointer, especially in QnnBackendManager.
 // This macro avoids the necessity of parentheses (i.e., (*logger_ptr)) in every ORT_CXX_LOG call.
+// Guards against a null-constructed Ort::Logger (no-op when logger is uninitialized).
 // This macro can be removed once ORT_CXX_LOG is fixed to properly wrap given logger with parentheses.
-#define ORT_CXX_LOG_PTR(logger_ptr, message_severity, message) ORT_CXX_LOG((*logger_ptr), message_severity, message)
+#define ORT_CXX_LOG_PTR(logger_ptr, message_severity, message) \
+  do {                                                         \
+    if ((logger_ptr) && !IsNullLogger(*logger_ptr)) {          \
+      ORT_CXX_LOG((*logger_ptr), message_severity, message);   \
+    }                                                          \
+  } while (false)
 
 // QNN-EP COPY START
 // Below are macors copied from core/common/common.h directly.
@@ -128,22 +179,6 @@ namespace onnxruntime {
 #else
 #define FILEPATH_TO_STRING(filepath) (filepath).string();
 #endif
-
-// QNN-EP COPY START
-// Below are GSL utilities copied from core/common/span_utils.h directly.
-template <class U, class T>
-[[nodiscard]] inline gsl::span<U> ReinterpretAsSpan(gsl::span<T> src) {
-  // adapted from gsl-lite span::as_span():
-  // https://github.com/gsl-lite/gsl-lite/blob/4720a2980a30da085b4ddb4a0ea2a71af7351a48/include/gsl/gsl-lite.hpp#L4102-L4108
-  Expects(src.size_bytes() % sizeof(U) == 0);
-  return gsl::span<U>(reinterpret_cast<U*>(src.data()), src.size_bytes() / sizeof(U));
-}
-
-// Below are constants copied from core/graph/constants.h directly.
-inline constexpr const char* kOnnxDomain = "";
-inline constexpr const char* kMSDomain = "com.microsoft";
-inline constexpr const char* kMSInternalNHWCDomain = "com.ms.internal.nhwc";
-// QNN-EP COPY END
 
 class OrtLoggingManager {
  public:

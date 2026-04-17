@@ -56,6 +56,7 @@ static bool ParseBackendTypeName(std::string_view backend_type_name,
                                  std::string& backend_path,
                                  const Ort::Logger& logger) {
   constexpr std::string_view kCpuBackendTypeName{"cpu"};
+  constexpr std::string_view kGenieBackendTypeName{"genie"};
   constexpr std::string_view kGpuBackendTypeName{"gpu"};
   constexpr std::string_view kHtpBackendTypeName{"htp"};
   constexpr std::string_view kSaverBackendTypeName{"saver"};
@@ -63,6 +64,7 @@ static bool ParseBackendTypeName(std::string_view backend_type_name,
 
   constexpr std::array kAllowedBackendTypeNames{
       kCpuBackendTypeName,
+      kGenieBackendTypeName,
       kGpuBackendTypeName,
       kHtpBackendTypeName,
       kSaverBackendTypeName,
@@ -72,6 +74,8 @@ static bool ParseBackendTypeName(std::string_view backend_type_name,
   std::optional<std::string> associated_backend_path{};
   if (backend_type_name == kCpuBackendTypeName) {
     associated_backend_path = kDefaultCpuBackendPath;
+  } else if (backend_type_name == kGenieBackendTypeName) {
+    associated_backend_path = kDefaultGenieBackendPath;
   } else if (backend_type_name == kGpuBackendTypeName) {
     associated_backend_path = kDefaultGpuBackendPath;
   } else if (backend_type_name == kHtpBackendTypeName) {
@@ -492,6 +496,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 
   std::string backend_path = kDefaultHtpBackendPath;
+  genie_backend_path_ = kDefaultGenieBackendPath;  // Default; may be overridden below.
   {
     std::optional<std::string> backend_path_from_options{};
 
@@ -528,6 +533,15 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     }
 
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Using backend path: " + backend_path).c_str());
+
+    // If the resolved path is the Genie library (either via backend_type="genie" or a direct
+    // backend_path pointing to the Genie library), store it for use in GetGenieCapability().
+    // Otherwise, keep the default Genie path so the Genie pathway always has a valid path.
+    if (backend_path == kDefaultGenieBackendPath ||
+        (!backend_path_option.empty() && backend_path == backend_path_option &&
+         backend_path.find("Genie") != std::string::npos)) {
+      genie_backend_path_ = backend_path;
+    }
   }
 
   std::unique_ptr<qnn::QnnSerializerConfig> qnn_serializer_config = InitQnnSerializerConfig();
@@ -1433,7 +1447,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetGenieCapability(OrtEp* this_ptr,
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
   if (!ep->genie_backend_manager_) {
     ep->genie_backend_manager_ = qnn::GenieBackendManager::Create(
-        qnn::GenieBackendManagerConfig{kDefaultGenieBackendPath}, ep->logger_);
+        qnn::GenieBackendManagerConfig{ep->genie_backend_path_}, ep->logger_);
     auto setup_st = ep->genie_backend_manager_->SetupBackend();
     if (!setup_st.IsOK()) {
       return ep->ort_api.CreateStatus(ORT_EP_FAIL, setup_st.GetErrorMessage().c_str());

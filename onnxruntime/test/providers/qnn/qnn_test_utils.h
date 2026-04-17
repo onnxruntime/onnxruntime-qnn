@@ -1635,6 +1635,15 @@ class QnnCPUBackendTests : public ::testing::Test {
   static BackendSupport cached_cpu_support_;  // Set by the first test using this fixture.
 };
 
+// Testing fixture class for Genie backend tests. Checks if the Genie backend is available before the test
+// begins. The test is skipped if the Genie backend is unavailable.
+class GenieBackendTests : public ::testing::Test {
+ protected:
+  void SetUp() override;
+
+  static BackendSupport cached_genie_support_;  // Set by the first test using this fixture.
+};
+
 // Testing fixture class for tests that require the QNN Ir backend. Checks if QNN IR is available before the test
 // begins. The test is skipped if the IR backend is unavailable (may occur with certain QNN versions).
 class QnnIRBackendTests : public ::testing::Test {
