@@ -9,11 +9,15 @@
 #include <string>
 #include <vector>
 
+// Include qnn_test_utils before genie headers so that core/common/safeint.h
+// (pulled in transitively) sets up SafeIntDefaultExceptionHandler first. This
+// lets ort_api.h (included via genie_backend_manager.h) skip its own handler
+// definition and avoid a redefinition conflict.
+#include "test/providers/qnn/qnn_test_utils.h"
+
 #include "core/providers/qnn/genie/genie_node.h"
 #include "core/providers/qnn/genie/genie_api_loader.h"
 #include "core/providers/qnn/genie/genie_backend_manager.h"
-
-#include "test/providers/qnn/qnn_test_utils.h"
 
 namespace onnxruntime {
 namespace test {

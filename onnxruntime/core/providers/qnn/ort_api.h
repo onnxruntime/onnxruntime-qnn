@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cstring>
 #include <functional>
 #include <gsl/gsl>
 #include <memory>
@@ -15,6 +16,12 @@
 // GetStackTrace()) because onnxruntime::GetStackTrace is a LOCAL symbol in libonnxruntime.so and is
 // not available to plugin EPs at runtime. Using std::runtime_error here avoids the
 // undefined-symbol dependency while still throwing on integer overflow/divide-by-zero.
+//
+// In test builds, core/common/safeint.h may be included transitively before this header. In that
+// case SafeIntDefaultExceptionHandler is already defined (using ORT_THROW), so we skip our
+// definition to avoid a redefinition conflict. The ORT_THROW-based handler is safe in tests
+// because GetStackTrace is available when linking against ort_core.
+#ifndef SafeIntDefaultExceptionHandler
 class SafeIntExceptionHandler : public std::exception {
  public:
   [[noreturn]] static void SafeIntOnOverflow() { throw std::runtime_error("Integer overflow"); }
@@ -23,6 +30,7 @@ class SafeIntExceptionHandler : public std::exception {
 
 #define SAFEINT_EXCEPTION_HANDLER_CPP 1
 #define SafeIntDefaultExceptionHandler SafeIntExceptionHandler
+#endif  // !defined(SafeIntDefaultExceptionHandler)
 
 #if defined(__GNUC__)
 #include "onnxruntime_config.h"
@@ -117,10 +125,25 @@ namespace onnxruntime {
     }                                                   \
   } while (0)
 
-// Convenient macro for logging with an Ort::Logger pointer, espeically in QnnBackendManager.
+// Returns true if an Ort::Logger has a null internal OrtLogger pointer (i.e., was default-constructed
+// and never initialized). Ort::Logger is standard-layout and trivially copyable; its first member
+// (const OrtLogger* logger_) is at offset 0, so memcpy is well-defined here.
+inline bool IsNullLogger(const Ort::Logger& logger) {
+  const OrtLogger* ptr = nullptr;
+  std::memcpy(&ptr, &logger, sizeof(ptr));
+  return ptr == nullptr;
+}
+
+// Convenient macro for logging with an Ort::Logger pointer, especially in QnnBackendManager.
 // This macro avoids the necessity of parentheses (i.e., (*logger_ptr)) in every ORT_CXX_LOG call.
+// Guards against a null-constructed Ort::Logger (no-op when logger is uninitialized).
 // This macro can be removed once ORT_CXX_LOG is fixed to properly wrap given logger with parentheses.
-#define ORT_CXX_LOG_PTR(logger_ptr, message_severity, message) ORT_CXX_LOG((*logger_ptr), message_severity, message)
+#define ORT_CXX_LOG_PTR(logger_ptr, message_severity, message)         \
+  do {                                                                  \
+    if ((logger_ptr) && !IsNullLogger(*logger_ptr)) {                   \
+      ORT_CXX_LOG((*logger_ptr), message_severity, message);            \
+    }                                                                   \
+  } while (false)
 
 // QNN-EP COPY START
 // Below are macors copied from core/common/common.h directly.
