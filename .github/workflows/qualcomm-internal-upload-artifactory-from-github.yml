@@ -159,10 +159,10 @@ jobs:
 
       - name: Verify wheel artifacts
         run: |
-          # After merge: 4 arm64 + 4 merged AMD wheels in build/dist/
+          # After merge: 4 arm64 + 4 x86_64 + 4 arm64ec + 4 merged wheels in build/dist/
           count=$(find "${{ github.workspace }}/build/dist" -name "*.whl" | wc -l)
           echo "Found $count wheel(s) in build/dist"
-          [ "$count" -eq 8 ] || { echo "ERROR: Expected 8 wheels in build/dist, found $count"; exit 1; }
+          [ "$count" -eq 16 ] || { echo "ERROR: Expected 16 wheels in build/dist, found $count"; exit 1; }
 
       - name: Check Wheels
         run: |
