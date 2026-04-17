@@ -186,7 +186,7 @@ jobs:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
     if: ${{ inputs.run_tests && !inputs.build_test_same_runner }}
     needs: [build]
-    runs-on: ["self-hosted", "${{inputs.target_os}}", "${{ inputs.test_runner_arch }}", "Build"]
+    runs-on: ["self-hosted", "${{inputs.target_os}}", "${{ inputs.test_runner_arch }}", "Test"]
     defaults:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"
@@ -242,7 +242,7 @@ jobs:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}-wheel-smoke"
     if: ${{ inputs.test_wheel }}
     needs: [build]
-    runs-on: ["self-hosted", "${{inputs.target_os}}", "${{ inputs.test_runner_arch }}", "Build"]
+    runs-on: ["self-hosted", "${{inputs.target_os}}", "${{ inputs.test_runner_arch }}", "Test"]
     defaults:
       run:
         shell: "${{ inputs.target_os == 'windows' && 'cmd' || 'bash' }}"

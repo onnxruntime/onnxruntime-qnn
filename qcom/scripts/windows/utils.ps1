@@ -250,7 +250,7 @@ function Test-UpdateNeeded() {
             return $True
         }
     } else {
-        $SlnPath = "$BuildDir\$Config\onnxruntime.sln"
+        $SlnPath = "$BuildDir\$Config\onnxruntime_qnn.sln"
         if (-Not (Test-Path -Path $SlnPath)) {
             Write-Host "VS Solution $SlnPath does not exist."
             return $True

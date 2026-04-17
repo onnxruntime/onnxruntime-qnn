@@ -1569,6 +1569,26 @@ TEST_F(QnnHTPBackendTests, ScatterElements_int8_reduction_mul) {
                                  true);  // combine_quant_inputs_qparams
 }
 
+// Test ScatterElements with int32 inputs on HTP
+TEST_F(QnnHTPBackendTests, ScatterElements_Int32_Reduction_None) {
+  std::vector<int32_t> data = {0, 1, 2, 3};
+  std::vector<int32_t> indices = {1};
+  std::vector<int32_t> updates = {10};
+  RunOpTest<int32_t, int32_t>("ScatterElements",
+                              {
+                                  TestInputDef<int32_t>({4}, false, std::move(data)),
+                              },
+                              {
+                                  TestInputDef<int32_t>({1}, false, std::move(indices)),
+                              },
+                              {
+                                  TestInputDef<int32_t>({1}, false, std::move(updates)),
+                              },
+                              {},
+                              17,
+                              ExpectedEPNodeAssignment::All);
+}
+
 // Test 8-bit QDQ GridSample with bilinear
 TEST_F(QnnHTPBackendTests, GridSample_Bilinear) {
   RunQDQOpTest<uint8_t>("GridSample",

@@ -387,6 +387,7 @@ class BatchNormOpBuilder : public BaseOpBuilder {
         symmetric = true;
       } else if (info.qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16) {
         data_size *= sizeof(uint16_t);
+        symmetric = true;
       }
       raw_tensor.resize(data_size);
       float scale = 0.0f;
