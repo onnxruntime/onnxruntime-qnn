@@ -17,4 +17,4 @@ EXPORTS
     GenieNodeConfig_bindLogger
     GenieLog_free
     GetMockGenieCallCount
-    ResetMockGenieCalls
+    ResetMockGenieCallCounts

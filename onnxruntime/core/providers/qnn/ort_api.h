@@ -4,6 +4,7 @@
 #pragma once
 
 #include <cstring>
+#include <cstddef>
 #include <functional>
 #include <gsl/gsl>
 #include <memory>

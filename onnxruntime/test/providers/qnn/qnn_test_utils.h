@@ -1640,8 +1640,6 @@ class QnnCPUBackendTests : public ::testing::Test {
 class GenieBackendTests : public ::testing::Test {
  protected:
   void SetUp() override;
-
-  static BackendSupport cached_genie_support_;  // Set by the first test using this fixture.
 };
 
 // Testing fixture class for tests that require the QNN Ir backend. Checks if QNN IR is available before the test

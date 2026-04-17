@@ -17,7 +17,7 @@
     GenieLog_create;
     GenieNodeConfig_bindLogger;
     GenieLog_free;
-    GetMockGenieCalls;
-    ResetMockGenieCalls;
+    GetMockGenieCallCount;
+    ResetMockGenieCallCounts;
   local: *;
 };

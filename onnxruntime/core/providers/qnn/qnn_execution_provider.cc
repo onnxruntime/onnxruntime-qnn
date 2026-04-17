@@ -52,11 +52,12 @@ const std::string kDefaultHtpBackendPath = MakeSharedLibraryPath("QnnHtp");
 const std::string kDefaultSaverBackendPath = MakeSharedLibraryPath("QnnSaver");
 const std::string kDefaultIrBackendPath = MakeSharedLibraryPath("QnnIr");
 
+constexpr std::string_view kGenieBackendTypeName{"genie"};
+
 static bool ParseBackendTypeName(std::string_view backend_type_name,
                                  std::string& backend_path,
                                  const Ort::Logger& logger) {
   constexpr std::string_view kCpuBackendTypeName{"cpu"};
-  constexpr std::string_view kGenieBackendTypeName{"genie"};
   constexpr std::string_view kGpuBackendTypeName{"gpu"};
   constexpr std::string_view kHtpBackendTypeName{"htp"};
   constexpr std::string_view kSaverBackendTypeName{"saver"};
@@ -518,6 +519,9 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     if (!backend_type.empty()) {
       if (std::string parsed_backend_path; ParseBackendTypeName(backend_type, parsed_backend_path, logger_)) {
         backend_path_from_options = parsed_backend_path;
+        if (backend_type == kGenieBackendTypeName) {
+          genie_backend_path_ = parsed_backend_path;
+        }
       } else {
         ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Failed to parse 'backend_type' value.");
       }
@@ -533,15 +537,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     }
 
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Using backend path: " + backend_path).c_str());
-
-    // If the resolved path is the Genie library (either via backend_type="genie" or a direct
-    // backend_path pointing to the Genie library), store it for use in GetGenieCapability().
-    // Otherwise, keep the default Genie path so the Genie pathway always has a valid path.
-    if (backend_path == kDefaultGenieBackendPath ||
-        (!backend_path_option.empty() && backend_path == backend_path_option &&
-         backend_path.find("Genie") != std::string::npos)) {
-      genie_backend_path_ = backend_path;
-    }
   }
 
   std::unique_ptr<qnn::QnnSerializerConfig> qnn_serializer_config = InitQnnSerializerConfig();

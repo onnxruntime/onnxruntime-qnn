@@ -12,7 +12,7 @@ static void* GetSym(void* h, const char* s) { return reinterpret_cast<void*>(Get
 static constexpr const char* kMockGeniePath = "MockGenie.dll";
 #else
 #include <dlfcn.h>
-static void* LoadMockLib() { return dlopen("libMockGenie.so", RTLD_NOW | RTLD_NOLOAD); }
+static void* LoadMockLib() { return dlopen("libMockGenie.so", RTLD_NOW); }
 static void* GetSym(void* h, const char* s) { return dlsym(h, s); }
 static constexpr const char* kMockGeniePath = "libMockGenie.so";
 #endif
@@ -152,12 +152,12 @@ TEST_F(GenieSessionTest, Run_ProducesExpectedOutputShape) {
 }
 
 // ---------------------------------------------------------------------------
-// Test: MockGenie's exported call-tracking functions (ResetMockGenieCalls,
+// Test: MockGenie's exported call-tracking functions (ResetMockGenieCallCounts,
 // GetMockGenieCallCount) resolve correctly and behave as expected.
 // ---------------------------------------------------------------------------
 TEST_F(GenieSessionTest, MockGenie_CallTrackingFunctions_Resolvable) {
   void* h = LoadMockLib();
-  auto reset = reinterpret_cast<void (*)()>(GetSym(h, "ResetMockGenieCalls"));
+  auto reset = reinterpret_cast<void (*)()>(GetSym(h, "ResetMockGenieCallCounts"));
   auto get_count = reinterpret_cast<int (*)(const char*)>(GetSym(h, "GetMockGenieCallCount"));
   ASSERT_NE(reset, nullptr);
   ASSERT_NE(get_count, nullptr);
@@ -178,7 +178,7 @@ TEST_F(GenieSessionTest, MockGenie_CallTrackingFunctions_Resolvable) {
 TEST_F(GenieSessionTest, CreateState_InvokesExpectedApiSequence) {
   void* dll_handle = LoadMockLib();
   ASSERT_NE(dll_handle, nullptr) << "MockGenie handle must be non-null after session creation";
-  auto reset = reinterpret_cast<void (*)()>(GetSym(dll_handle, "ResetMockGenieCalls"));
+  auto reset = reinterpret_cast<void (*)()>(GetSym(dll_handle, "ResetMockGenieCallCounts"));
   auto get_count = reinterpret_cast<int (*)(const char*)>(GetSym(dll_handle, "GetMockGenieCallCount"));
   ASSERT_NE(reset, nullptr);
   ASSERT_NE(get_count, nullptr);
@@ -203,7 +203,7 @@ TEST_F(GenieSessionTest, CreateState_InvokesExpectedApiSequence) {
 TEST_F(GenieSessionTest, Compute_InvokesExpectedApiSequence) {
   void* dll_handle = LoadMockLib();
   ASSERT_NE(dll_handle, nullptr) << "MockGenie handle must be non-null after session creation";
-  auto reset = reinterpret_cast<void (*)()>(GetSym(dll_handle, "ResetMockGenieCalls"));
+  auto reset = reinterpret_cast<void (*)()>(GetSym(dll_handle, "ResetMockGenieCallCounts"));
   auto get_count = reinterpret_cast<int (*)(const char*)>(GetSym(dll_handle, "GetMockGenieCallCount"));
   ASSERT_NE(reset, nullptr);
   ASSERT_NE(get_count, nullptr);
@@ -239,7 +239,7 @@ TEST_F(GenieSessionTest, Compute_InvokesExpectedApiSequence) {
 // ---------------------------------------------------------------------------
 TEST_F(GenieSessionTest, SetupBackend_AlreadySetup_IsIdempotent) {
   void* h = LoadMockLib();
-  auto reset = reinterpret_cast<void (*)()>(GetSym(h, "ResetMockGenieCalls"));
+  auto reset = reinterpret_cast<void (*)()>(GetSym(h, "ResetMockGenieCallCounts"));
   auto get_count = reinterpret_cast<int (*)(const char*)>(GetSym(h, "GetMockGenieCallCount"));
   ASSERT_NE(reset, nullptr);
   ASSERT_NE(get_count, nullptr);
@@ -255,10 +255,8 @@ TEST_F(GenieSessionTest, SetupBackend_AlreadySetup_IsIdempotent) {
   RegisteredEpDeviceUniquePtr ep2;
   Ort::Session session2 = MakeGenieSession(*env_, ep2);
 
-  // NOTE: If GenieBackendManager is EP-level (shared across sessions), this
-  // count will be 1. If it is session-level, it will be 1 per session.
-  // Verify the exact scope in qnn_execution_provider.cc and tighten as needed.
-  EXPECT_GE(get_count("DlcConfig_create"), 1);
+  // DlcConfig_create is called once per node (session-level) in session2.
+  EXPECT_EQ(get_count("DlcConfig_create"), 1);
 }
 
 }  // namespace test

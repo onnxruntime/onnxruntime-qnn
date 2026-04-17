@@ -239,10 +239,6 @@
     set_property(TARGET MockGenie APPEND_STRING PROPERTY LINK_FLAGS
       " -DEF:${ONNXRUNTIME_ROOT}/test/providers/qnn/genie/mock_genie_symbols.def")
 
-    # else()
-    #   target_link_options(MockGenie PRIVATE
-    #     "-Wl,--version-script=${ONNXRUNTIME_ROOT}/test/providers/qnn/genie/mock_genie_version_script.lds")
-
     # Copy MockGenie next to the test executable so GenieBackendManager
     # finds it by name when backend_path="MockGenie.dll".
     add_custom_command(
