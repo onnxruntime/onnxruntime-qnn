@@ -136,6 +136,12 @@ $CommonArgs = `
     "--config", $Config, `
     "--parallel"
 
+# Use static MSVC runtime for ARM64 builds to eliminate MSVCP140.dll and
+# VCRUNTIME140.dll dependencies from the shipping QNN EP DLL.
+if ($Arch -in @("aarch64", "arm64", "arm64ec")) {
+    $CommonArgs += "--enable_msvc_static_runtime"
+}
+
 $QnnArgs = "--use_qnn", "--qnn_home", "$QairtSdkRoot"
 if ($OrtPrebuiltRoot -ne "") {
     $OrtPrebuiltRoot = Resolve-Path -Path $OrtPrebuiltRoot
