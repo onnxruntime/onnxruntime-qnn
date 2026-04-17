@@ -10,22 +10,51 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 
 ## Contents
 
-- [Install Pre-requisites (Build from Source Only)](#install-pre-requisites-build-from-source-only)
-- [Build (Windows)](#build-windows)
-- [Pre-built Packages (Windows Only)](#pre-built-packages-windows-only)
-- [Qualcomm AI Hub](#qualcomm-ai-hub)
-- [Configuration Options](#configuration-options)
-- [Supported ONNX operators](#supported-onnx-operators)
-- [Running a model with QNN EP's HTP backend (Python)](#running-a-model-with-qnn-eps-htp-backend-python)
-- [Running a model with QNN EP's GPU backend](#running-a-model-with-qnn-eps-gpu-backend)
-- [QNN context binary cache feature](#qnn-context-binary-cache-feature)
-- [QNN EP Profiling](#qnn-ep-profiling)
-- [QNN EP weight sharing](#qnn-ep-weight-sharing)
-- [Usage](#usage)
-- [Error handling](#error-handling)
-- [Add new operator support in QNN EP](#add-new-operator-support-in-qnn-ep)
-- [Mixed precision support](#mixed-precision-support)
-- [LoRAv2 support](#lorav2-support)
+- [QNN Execution Provider](#qnn-execution-provider)
+  - [Contents](#contents)
+  - [Install Pre-requisites (Build from Source Only)](#install-pre-requisites-build-from-source-only)
+    - [QNN Execution Provider Version Requirements](#qnn-execution-provider-version-requirements)
+  - [Build (Windows)](#build-windows)
+  - [Pre-built Packages (Windows Only)](#pre-built-packages-windows-only)
+  - [Qualcomm AI Hub](#qualcomm-ai-hub)
+  - [Configuration Options](#configuration-options)
+    - [EP Provider Options](#ep-provider-options)
+    - [Run Options](#run-options)
+  - [Supported ONNX operators](#supported-onnx-operators)
+  - [Running a model with QNN EP's HTP backend (Python)](#running-a-model-with-qnn-eps-htp-backend-python)
+    - [Model requirements](#model-requirements)
+    - [Generating a quantized model (x64 only)](#generating-a-quantized-model-x64-only)
+    - [Running a quantized model on Windows ARM64 (onnxruntime-qnn version \>= 1.18.0)](#running-a-quantized-model-on-windows-arm64-onnxruntime-qnn-version--1180)
+  - [Running a model with QNN EP's GPU backend](#running-a-model-with-qnn-eps-gpu-backend)
+  - [QNN context binary cache feature](#qnn-context-binary-cache-feature)
+    - [Dump QNN context binary](#dump-qnn-context-binary)
+    - [Configure the context binary file path](#configure-the-context-binary-file-path)
+    - [Enable the embed mode](#enable-the-embed-mode)
+  - [Parallel Graph Preparation](#parallel-graph-preparation)
+    - [General Usage](#general-usage)
+    - [Important Considerations](#important-considerations)
+      - [Feature Disabled if Number of Subgraphs is Less Than 5](#feature-disabled-if-number-of-subgraphs-is-less-than-5)
+      - [Feature Disabled if `num_graph_prepare_threads` is 1](#feature-disabled-if-num_graph_prepare_threads-is-1)
+      - [Number of Supported Concurrency Threads by Hardware](#number-of-supported-concurrency-threads-by-hardware)
+      - [Default Behavior](#default-behavior)
+  - [QNN EP Profiling](#qnn-ep-profiling)
+    - [General Usage](#general-usage-1)
+    - [Optrace-Level Profiling](#optrace-level-profiling)
+    - [Optrace Setup](#optrace-setup)
+    - [Generating QHAS Data](#generating-qhas-data)
+    - [Additional References](#additional-references)
+  - [QNN EP weight sharing](#qnn-ep-weight-sharing)
+  - [Usage](#usage)
+    - [Using QNN EP as a Plugin EP](#using-qnn-ep-as-a-plugin-ep)
+    - [C++](#c)
+    - [Python](#python)
+    - [Inference example](#inference-example)
+  - [Error handling](#error-handling)
+    - [HTP SubSystem Restart - SSR](#htp-subsystem-restart---ssr)
+  - [Add new operator support in QNN EP](#add-new-operator-support-in-qnn-ep)
+    - [Example PRs to enable new operators:](#example-prs-to-enable-new-operators)
+  - [Mixed precision support](#mixed-precision-support)
+  - [LoRAv2 support](#lorav2-support)
 
 ## Install Pre-requisites (Build from Source Only)
 
@@ -108,6 +137,10 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |---|---|
 |'0'|Default. Disabled.|
 |'1'|Enable VTCM backup buffer sharing across sessions. Requires QNN API version >= 2.26. Conflicts with `ep.context_embed_mode`.|
+
+|`"htp_share_resource_optimization"`|Description|
+|---|---|
+|'1'|Enable share resource optimization.|
 
 |`"htp_performance_mode"`|Description|
 |---|---|
@@ -696,7 +729,7 @@ session = ort.InferenceSession("model.onnx", sess_options=sess_options)
 
 ### Important Considerations
 #### Feature Disabled if Number of Subgraphs is Less Than 5
-While graph composition is responsible for the majority of the preparation time, asynchronously finalizing the subgraphs cuts the total time down by a considerable amount, depending on the graph. For smaller models or models with only a few subgraphs, the overhead of setting up for parallel graph preparation will negate any possible performance gains and may actually result in worse performance. 
+While graph composition is responsible for the majority of the preparation time, asynchronously finalizing the subgraphs cuts the total time down by a considerable amount, depending on the graph. For smaller models or models with only a few subgraphs, the overhead of setting up for parallel graph preparation will negate any possible performance gains and may actually result in worse performance.
 
 #### Feature Disabled if `num_graph_prepare_threads` is 1
 This defeats the purpose of the feature, and enabling the feature will only add additional overhead from thread pool creation.

@@ -2245,7 +2245,7 @@ index 71f9050730..1e879bf5df 100644
 +                             "qnn_saver_path", "htp_graph_finalization_optimization_mode", "qnn_context_priority",
 +                             "htp_arch", "enable_htp_fp16_precision", "offload_graph_io_quantization",
 +                             "enable_htp_spill_fill_buffer", "enable_htp_shared_memory_allocator", "dump_json_qnn_graph",
-+                             "json_qnn_graph_dir", "disable_file_mapped_weights", "htp_bf16_enable", "enable_vtcm_backup_buffer_sharing", "extended_udma"});
++                             "json_qnn_graph_dir", "disable_file_mapped_weights", "htp_bf16_enable", "enable_vtcm_backup_buffer_sharing", "extended_udma", "htp_share_resource_optimization"});
 
      for (const auto& provider_option : provider_options) {
        const std::string& key = provider_option.first;
