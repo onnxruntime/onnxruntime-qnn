@@ -6,13 +6,13 @@
 #include <string>
 
 #if defined(_WIN32)
-#  include <windows.h>
-static void* LoadMockLib()                   { return LoadLibraryA("MockGenie.dll"); }
+#include <windows.h>
+static void* LoadMockLib() { return LoadLibraryA("MockGenie.dll"); }
 static void* GetSym(void* h, const char* s) { return reinterpret_cast<void*>(GetProcAddress(static_cast<HMODULE>(h), s)); }
 static constexpr const char* kMockGeniePath = "MockGenie.dll";
 #else
-#  include <dlfcn.h>
-static void* LoadMockLib()                   { return dlopen("libMockGenie.so", RTLD_NOW | RTLD_NOLOAD); }
+#include <dlfcn.h>
+static void* LoadMockLib() { return dlopen("libMockGenie.so", RTLD_NOW | RTLD_NOLOAD); }
 static void* GetSym(void* h, const char* s) { return dlsym(h, s); }
 static constexpr const char* kMockGeniePath = "libMockGenie.so";
 #endif
@@ -133,13 +133,13 @@ TEST_F(GenieSessionTest, Run_ProducesExpectedOutputShape) {
       mem_info, input_data.data(), input_data.size(),
       input_shape.data(), input_shape.size());
 
-  const char* input_names[]  = {"genie_input"};
+  const char* input_names[] = {"genie_input"};
   const char* output_names[] = {"genie_output"};
   std::vector<Ort::Value> outputs;
 
   EXPECT_NO_THROW({
     outputs = session.Run(Ort::RunOptions{nullptr},
-                          input_names,  &input_tensor, 1,
+                          input_names, &input_tensor, 1,
                           output_names, 1);
   });
 
@@ -157,9 +157,9 @@ TEST_F(GenieSessionTest, Run_ProducesExpectedOutputShape) {
 // ---------------------------------------------------------------------------
 TEST_F(GenieSessionTest, MockGenie_CallTrackingFunctions_Resolvable) {
   void* h = LoadMockLib();
-  auto reset     = reinterpret_cast<void(*)()>(GetSym(h, "ResetMockGenieCalls"));
-  auto get_count = reinterpret_cast<int(*)(const char*)>(GetSym(h, "GetMockGenieCallCount"));
-  ASSERT_NE(reset,     nullptr);
+  auto reset = reinterpret_cast<void (*)()>(GetSym(h, "ResetMockGenieCalls"));
+  auto get_count = reinterpret_cast<int (*)(const char*)>(GetSym(h, "GetMockGenieCallCount"));
+  ASSERT_NE(reset, nullptr);
   ASSERT_NE(get_count, nullptr);
   reset();
 
@@ -178,21 +178,21 @@ TEST_F(GenieSessionTest, MockGenie_CallTrackingFunctions_Resolvable) {
 TEST_F(GenieSessionTest, CreateState_InvokesExpectedApiSequence) {
   void* dll_handle = LoadMockLib();
   ASSERT_NE(dll_handle, nullptr) << "MockGenie handle must be non-null after session creation";
-  auto reset     = reinterpret_cast<void(*)()>(GetSym(dll_handle, "ResetMockGenieCalls"));
-  auto get_count = reinterpret_cast<int(*)(const char*)>(GetSym(dll_handle, "GetMockGenieCallCount"));
-  ASSERT_NE(reset,     nullptr);
+  auto reset = reinterpret_cast<void (*)()>(GetSym(dll_handle, "ResetMockGenieCalls"));
+  auto get_count = reinterpret_cast<int (*)(const char*)>(GetSym(dll_handle, "GetMockGenieCallCount"));
+  ASSERT_NE(reset, nullptr);
   ASSERT_NE(get_count, nullptr);
   reset();
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::Session session = MakeGenieSession(*env_, registered_ep_device);
 
-  EXPECT_EQ(get_count("DlcConfig_create"),         1) << "GenieDlcConfig_create";
-  EXPECT_EQ(get_count("Dlc_create"),               1) << "GenieDlc_create";
+  EXPECT_EQ(get_count("DlcConfig_create"), 1) << "GenieDlcConfig_create";
+  EXPECT_EQ(get_count("Dlc_create"), 1) << "GenieDlc_create";
   EXPECT_EQ(get_count("NodeConfig_createFromDlc"), 1) << "GenieNodeConfig_createFromDlc";
-  EXPECT_EQ(get_count("Log_create"),               1) << "GenieLog_create";
-  EXPECT_EQ(get_count("NodeConfig_bindLogger"),    1) << "GenieNodeConfig_bindLogger";
-  EXPECT_EQ(get_count("Node_create"),              1) << "GenieNode_create";
+  EXPECT_EQ(get_count("Log_create"), 1) << "GenieLog_create";
+  EXPECT_EQ(get_count("NodeConfig_bindLogger"), 1) << "GenieNodeConfig_bindLogger";
+  EXPECT_EQ(get_count("Node_create"), 1) << "GenieNode_create";
 }
 
 // ---------------------------------------------------------------------------
@@ -203,9 +203,9 @@ TEST_F(GenieSessionTest, CreateState_InvokesExpectedApiSequence) {
 TEST_F(GenieSessionTest, Compute_InvokesExpectedApiSequence) {
   void* dll_handle = LoadMockLib();
   ASSERT_NE(dll_handle, nullptr) << "MockGenie handle must be non-null after session creation";
-  auto reset     = reinterpret_cast<void(*)()>(GetSym(dll_handle, "ResetMockGenieCalls"));
-  auto get_count = reinterpret_cast<int(*)(const char*)>(GetSym(dll_handle, "GetMockGenieCallCount"));
-  ASSERT_NE(reset,     nullptr);
+  auto reset = reinterpret_cast<void (*)()>(GetSym(dll_handle, "ResetMockGenieCalls"));
+  auto get_count = reinterpret_cast<int (*)(const char*)>(GetSym(dll_handle, "GetMockGenieCallCount"));
+  ASSERT_NE(reset, nullptr);
   ASSERT_NE(get_count, nullptr);
   reset();
 
@@ -219,7 +219,7 @@ TEST_F(GenieSessionTest, Compute_InvokesExpectedApiSequence) {
       mem_info, input_data.data(), input_data.size(),
       input_shape.data(), input_shape.size());
 
-  const char* input_names[]  = {"genie_input"};
+  const char* input_names[] = {"genie_input"};
   const char* output_names[] = {"genie_output"};
   session.Run(Ort::RunOptions{nullptr},
               input_names, &input_tensor, 1,
@@ -229,7 +229,7 @@ TEST_F(GenieSessionTest, Compute_InvokesExpectedApiSequence) {
   EXPECT_EQ(get_count("Node_execute"), 1) << "GenieNode_execute";
   EXPECT_EQ(get_count("Node_getData"), 1) << "GenieNode_getData";
   // KV-cache rewind is not triggered on a fresh session (rewind_ starts at 1):
-  EXPECT_EQ(get_count("Node_reset"),   0) << "GenieNode_reset should not be called on first Run";
+  EXPECT_EQ(get_count("Node_reset"), 0) << "GenieNode_reset should not be called on first Run";
 }
 
 // ---------------------------------------------------------------------------
@@ -239,9 +239,9 @@ TEST_F(GenieSessionTest, Compute_InvokesExpectedApiSequence) {
 // ---------------------------------------------------------------------------
 TEST_F(GenieSessionTest, SetupBackend_AlreadySetup_IsIdempotent) {
   void* h = LoadMockLib();
-  auto reset     = reinterpret_cast<void(*)()>(GetSym(h, "ResetMockGenieCalls"));
-  auto get_count = reinterpret_cast<int(*)(const char*)>(GetSym(h, "GetMockGenieCallCount"));
-  ASSERT_NE(reset,     nullptr);
+  auto reset = reinterpret_cast<void (*)()>(GetSym(h, "ResetMockGenieCalls"));
+  auto get_count = reinterpret_cast<int (*)(const char*)>(GetSym(h, "GetMockGenieCallCount"));
+  ASSERT_NE(reset, nullptr);
   ASSERT_NE(get_count, nullptr);
 
   // First session creation runs SetupBackend() + CreateStateImpl once.

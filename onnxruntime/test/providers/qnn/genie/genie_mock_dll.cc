@@ -25,9 +25,9 @@
 // Platform-portable export macro.
 // ---------------------------------------------------------------------------
 #if defined(_WIN32)
-#  define MOCK_EXPORT __declspec(dllexport)
+#define MOCK_EXPORT __declspec(dllexport)
 #else
-#  define MOCK_EXPORT __attribute__((visibility("default")))
+#define MOCK_EXPORT __attribute__((visibility("default")))
 #endif
 
 // ---------------------------------------------------------------------------
@@ -80,7 +80,7 @@ Genie_Status_t GenieDlcConfig_free(const GenieDlcConfig_Handle_t /*configHandle*
 }
 
 Genie_Status_t GenieDlc_create(const GenieDlcConfig_Handle_t /*configHandle*/,
-                                GenieDlc_Handle_t* dlcHandle) {
+                               GenieDlc_Handle_t* dlcHandle) {
   ++g_calls["Dlc_create"];
   if (dlcHandle) *dlcHandle = reinterpret_cast<GenieDlc_Handle_t>(0x3000);
   return GENIE_STATUS_SUCCESS;
@@ -188,4 +188,3 @@ Genie_Status_t GenieLog_free(GenieLog_Handle_t /*logHandle*/) {
 }
 
 }  // extern "C"
-

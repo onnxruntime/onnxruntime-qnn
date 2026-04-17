@@ -138,11 +138,11 @@ inline bool IsNullLogger(const Ort::Logger& logger) {
 // This macro avoids the necessity of parentheses (i.e., (*logger_ptr)) in every ORT_CXX_LOG call.
 // Guards against a null-constructed Ort::Logger (no-op when logger is uninitialized).
 // This macro can be removed once ORT_CXX_LOG is fixed to properly wrap given logger with parentheses.
-#define ORT_CXX_LOG_PTR(logger_ptr, message_severity, message)         \
-  do {                                                                  \
-    if ((logger_ptr) && !IsNullLogger(*logger_ptr)) {                   \
-      ORT_CXX_LOG((*logger_ptr), message_severity, message);            \
-    }                                                                   \
+#define ORT_CXX_LOG_PTR(logger_ptr, message_severity, message) \
+  do {                                                         \
+    if ((logger_ptr) && !IsNullLogger(*logger_ptr)) {          \
+      ORT_CXX_LOG((*logger_ptr), message_severity, message);   \
+    }                                                          \
   } while (false)
 
 // QNN-EP COPY START
