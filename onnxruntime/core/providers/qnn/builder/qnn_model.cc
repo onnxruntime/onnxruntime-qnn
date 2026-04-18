@@ -176,8 +176,7 @@ Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
     auto add_qnn_name_aliases = [](GraphInputOutputInfo& io_info,
                                    const std::vector<QnnTensorWrapper>& qnn_tensors,
                                    const std::vector<std::string>& fused_order) {
-      size_t count = std::min(qnn_tensors.size(), fused_order.size());
-      for (size_t i = 0; i < count; ++i) {
+      for (size_t i = 0; i < qnn_tensors.size() && i < fused_order.size(); ++i) {
         const std::string& qnn_name = qnn_tensors[i].GetName();
         const std::string& fused_name = fused_order[i];
         if (qnn_name != fused_name && io_info.indices.find(qnn_name) == io_info.indices.end()) {

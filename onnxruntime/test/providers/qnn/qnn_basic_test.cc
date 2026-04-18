@@ -2011,7 +2011,9 @@ TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationContextBinaryRoundTrip) {
     RegisteredEpDeviceUniquePtr registered_ep_device;
     RegisterQnnEpLibrary(registered_ep_device, so2, onnxruntime::kQnnExecutionProvider, provider_options);
 
-    Ort::Session session2(*ort_env, ctx_model_file.c_str(), so2);
+    std::ifstream ifs(ctx_model_file, std::ios::binary);
+    std::string ctx_data((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    Ort::Session session2(*ort_env, ctx_data.data(), ctx_data.size(), so2);
   }
 }
 
