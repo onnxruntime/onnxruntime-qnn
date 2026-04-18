@@ -1280,6 +1280,13 @@ std::string GetVerboseQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interfac
   return MakeString("Unknown error. QNN error handle: ", qnn_error_handle);
 }
 
+bool IsSSRCapture(const Ort::Status* status) {
+  if (status->IsOK()) {
+    return false;
+  }
+  return status->GetErrorMessage().find(std::to_string(QNN_COMMON_ERROR_SYSTEM_COMMUNICATION)) != std::string::npos;
+}
+
 // Calculate strides for a given shape without using TensorShape
 static Ort::Status GetTransposeStrides(gsl::span<const int64_t> input_shape,
                                        gsl::span<const size_t> perm,

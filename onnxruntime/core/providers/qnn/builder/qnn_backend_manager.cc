@@ -31,6 +31,7 @@
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/qnn_telemetry.h"
 #include "core/providers/qnn/shared_context.h"
+#include "core/session/onnxruntime_c_api.h"
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 #include "core/providers/qnn/builder/qnn_windows_file_mapper.h"
@@ -1427,6 +1428,18 @@ std::unique_ptr<unsigned char[]> QnnBackendManager::GetContextBinaryBuffer(uint6
   return context_buffer;
 }
 
+Ort::Status QnnBackendManager::SaveContextToBinary() {
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "[SSR Handle] SaveContextToBinary for recover");
+  uint64_t writtenBufferSize{0};
+  qnn_save_buffer_ = GetContextBinaryBuffer(writtenBufferSize);
+  qnn_save_buffer_size_ = writtenBufferSize;
+
+  RETURN_IF(qnn_save_buffer_ == nullptr || writtenBufferSize == 0,
+            "Failed to get valid context binary buffer.");
+
+  return Ort::Status();
+}
+
 Ort::Status QnnBackendManager::GetMaxSpillFillBufferSize(unsigned char* buffer,
                                                          uint64_t buffer_length,
                                                          uint64_t& max_spill_fill_buffer_size) {
@@ -1727,7 +1740,7 @@ Ort::Status QnnBackendManager::LoadCachedQnnContextFromBuffer(
   }
 #endif
 
-  if (1 == graph_count) {
+  if (!node_name.empty() && 1 == graph_count) {
     // in case the EPContext node is generated from script
     // the graph name from the context binary may not match the EPContext node name
     auto qnn_model = std::make_unique<qnn::QnnModel>(this, api_ptrs_);
@@ -1757,6 +1770,7 @@ Ort::Status QnnBackendManager::SetupBackend(
     bool share_ep_contexts,
     bool enable_vtcm_backup_buffer_sharing,
     bool enable_file_mapped_weights,
+    bool enable_ssr_handling,
     std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
     bool enable_htp_extended_udma_mode) {
@@ -1789,6 +1803,8 @@ Ort::Status QnnBackendManager::SetupBackend(
   }
 
   vtcm_backup_buffer_sharing_enabled_ = enable_vtcm_backup_buffer_sharing;
+  enable_htp_extended_udma_mode_ = enable_htp_extended_udma_mode;
+  enable_ssr_handling_ = enable_ssr_handling;
 
   auto status = Ort::Status();
   if (!qnn_serializer_config_) {
@@ -1814,7 +1830,7 @@ Ort::Status QnnBackendManager::SetupBackend(
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "LoadBackend succeed.");
   }
 
-  if (status.IsOK() && (load_from_cached_context || need_load_system_lib)) {
+  if (status.IsOK() && (load_from_cached_context || need_load_system_lib || enable_ssr_handling)) {
     status = LoadQnnSystemLib();
   }
 
@@ -2625,6 +2641,75 @@ Ort::Status QnnBackendManager::GetPlatformInfo() {
 
   RETURN_IF(htp_arch_internal_ == QNN_HTP_DEVICE_ARCH_NONE, "Failed to get HTP arch.");
 
+  return Ort::Status();
+}
+
+Ort::Status QnnBackendManager::InvokeWithSSRHandle(
+    const std::function<Ort::Status()>& operation,
+    const std::function<Ort::Status()>& ssr_recover,
+    const std::string& operation_name) const {
+  Ort::Status result;
+
+  // State machine to track SSR handling progress:
+  // - Init: First attempt at operation
+  // - Retry: Attempting operation after SSR recovery
+  // - End: Processing complete (success or unrecoverable failure)
+  enum class SSRHandleState { Init = 0,
+                              Retry = 1,
+                              End = 2 };
+  SSRHandleState retry_state = SSRHandleState::Init;
+
+  // Validate input functions
+  RETURN_IF_NOT(operation, "Operation function cannot be null");
+  RETURN_IF_NOT(ssr_recover, "SSR recover function cannot be null");
+
+  do {
+    // Execute the operation (first attempt or retry)
+    result = operation();
+
+    if (retry_state == SSRHandleState::Init) {
+      // Determine next state: retry if SSR occurred, otherwise we're done
+      if (enable_ssr_handling_ && qnn::utils::IsSSRCapture(&result)) {
+        RETURN_IF_ERROR(ssr_recover());
+        retry_state = SSRHandleState::Retry;
+      } else {
+        retry_state = SSRHandleState::End;
+      }
+    } else if (retry_state == SSRHandleState::Retry) {
+      // Log the result of the retry attempt
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, ("[SSR Handle during " + operation_name + "] " + result.GetErrorMessage()).c_str());
+      retry_state = SSRHandleState::End;  // Always exit after one retry
+    }
+  } while (retry_state != SSRHandleState::End);  // Continue until we reach End state
+
+  return result;  // Return final status (success or error)
+}
+
+Ort::Status QnnBackendManager::SSRCleanUp(std::string caller_name, std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models) {
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, ("[SSR Handle] SSRCleanUp for " + caller_name).c_str());
+  // Customer Recover Routines
+  // ReleaseContext helps contextFree with custom deleter
+  RETURN_IF_ERROR(ReleaseContext());
+  if (caller_name.find("CompileImpl") != std::string::npos) {
+    RETURN_IF_ERROR(CreateContext(false, enable_htp_extended_udma_mode_));
+  } else if (caller_name.find("ExecuteGraph") != std::string::npos) {
+    uint64_t max_spill_fill_buffer_size = 0;
+    RETURN_IF_ERROR(GetMaxSpillFillBufferSize(
+        qnn_save_buffer_.get(),
+        qnn_save_buffer_size_,
+        max_spill_fill_buffer_size));
+    // If there are multiple graphs in the buffer, LoadCachedQnnContextFromBuffer will fetch
+    // graph names from QnnSystemContext_GraphInfo_t
+    RETURN_IF_ERROR(LoadCachedQnnContextFromBuffer(
+        reinterpret_cast<char*>(qnn_save_buffer_.get()),
+        qnn_save_buffer_size_,
+        "" /* context_bin_filepath */,
+        "", /* node_name */
+        qnn_models,
+        max_spill_fill_buffer_size));
+  } else {
+    return MAKE_EP_FAIL(("Not Implementation of SSRCleanUp in " + caller_name).c_str());
+  }
   return Ort::Status();
 }
 

@@ -857,6 +857,13 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                                                                   true,
                                                                   logger_);
 
+  // Handling SSR requires QnnSystem lib and it's no supported for Windows x86_64 platform
+  enable_ssr_handling_ = ParseBoolOption(ort_api,
+                                         session_options_,
+                                         FormatEPConfigKey("enable_ssr_handling"),
+                                         false,
+                                         logger_);
+
   model_settings_.htp_bf16_enable = ParseBoolOption(ort_api,
                                                     session_options_,
                                                     FormatEPConfigKey("htp_bf16_enable"),
@@ -1508,14 +1515,25 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     }
   }
 
-  Ort::Status rt = ep->qnn_backend_manager_->SetupBackend(is_qnn_ctx_model,
-                                                          ep->context_cache_enabled_,
-                                                          ep->share_ep_contexts_,
-                                                          ep->enable_vtcm_backup_buffer_sharing_,
-                                                          ep->enable_file_mapped_weights_,
-                                                          ep->rpcmem_library_,
-                                                          context_bin_map,
-                                                          ep->enable_htp_extended_udma_mode_);
+  // It will load the QnnSystem lib if is_qnn_ctx_model=true, and
+  // delay the Qnn context creation to Compile() using the cached context binary
+  // or generate context cache enable, need to use use QnnSystem lib to parse the binary to get the max spill fill buffer size
+  Ort::Status rt = ep->qnn_backend_manager_->InvokeWithSSRHandle(
+      [&]() {
+        return ep->qnn_backend_manager_->SetupBackend(is_qnn_ctx_model,
+                                                      ep->context_cache_enabled_,
+                                                      ep->share_ep_contexts_,
+                                                      ep->enable_vtcm_backup_buffer_sharing_,
+                                                      ep->enable_file_mapped_weights_,
+                                                      ep->enable_ssr_handling_,
+                                                      ep->rpcmem_library_,
+                                                      context_bin_map,
+                                                      ep->enable_htp_extended_udma_mode_);
+      },
+      [&]() {
+        return Ort::Status();  // No SSR recover needed since SetupBackend help clean up on failure"
+      },
+      "SetupBackend");
 
   context_bin_map.clear();
 
@@ -1933,6 +1951,25 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
                                            _Out_writes_all_(count) OrtNodeComputeInfo** node_compute_infos,
                                            _Out_writes_(count) OrtNode** ep_context_nodes) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+  Ort::Status rt = ep->qnn_backend_manager_->InvokeWithSSRHandle(
+      [&]() {
+        return Ort::Status(ep->CompileUtil(this_ptr, graphs, fused_nodes, count, node_compute_infos, ep_context_nodes));
+      },
+      [&]() {
+        std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>> recovered_qnn_models;
+        return Ort::Status(ep->qnn_backend_manager_->SSRCleanUp(__FUNCTION__, recovered_qnn_models));
+      },
+      "CompileUtil");
+  return rt.release();
+}
+
+OrtStatus* QnnEp::CompileUtil(OrtEp* this_ptr,
+                              const OrtGraph** graphs,
+                              const OrtNode** fused_nodes,
+                              size_t count,
+                              OrtNodeComputeInfo** node_compute_infos,
+                              OrtNode** ep_context_nodes) {
+  QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
   if (qnn::IsOrtGraphHasCtxNode(graphs, count, ep->ort_api)) {
     return ep->CompileContextModel(graphs, fused_nodes, count, node_compute_infos);
@@ -2087,6 +2124,11 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     }
   }
 #endif  // _WIN32
+
+  // Store context binary for SSR Recovering
+  if (ep->enable_ssr_handling_) {
+    RETURN_IF_ERROR(ep->qnn_backend_manager_->SaveContextToBinary());
+  }
 
   // Clean up transient GetCapability→Compile state.
   ep->onnx_graph_io_names_.reset();
@@ -2405,7 +2447,7 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
   bool is_backend_setup = qnn_backend_manager_->IsBackendSetup();
   if (!is_backend_setup) {
     std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-    qnn_backend_manager_->SetupBackend(true, true, false, false, false, nullptr, dummy_map);
+    qnn_backend_manager_->SetupBackend(true, true, false, false, false, false, nullptr, dummy_map);
   }
 
   Ort::Status status = qnn_cache_compatibility_manager_->ValidateCompatibilityInfo(info, *model_compatibility);
@@ -2422,7 +2464,7 @@ OrtStatus* QnnEp::GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevic
                                                           OrtDeviceEpIncompatibilityDetails* details) noexcept {
   // This function is always called by temporary QnnEp, so no need to check if backend is already setup.
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-  Ort::Status status = qnn_backend_manager_->SetupBackend(true, true, false, false, false, nullptr, dummy_map);
+  Ort::Status status = qnn_backend_manager_->SetupBackend(true, true, false, false, false, false, nullptr, dummy_map);
 
   if (!status.IsOK()) {
     const std::string error_message = status.GetErrorMessage();

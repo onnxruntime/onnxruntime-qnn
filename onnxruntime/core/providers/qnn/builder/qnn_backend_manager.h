@@ -34,7 +34,6 @@
 #include "core/providers/qnn/builder/qnn_htp_power_config_manager.h"
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
-#include "core/providers/qnn/ort_api.h"
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 #include "core/providers/qnn/builder/qnn_file_mapping_interface.h"
@@ -169,6 +168,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   std::unique_ptr<unsigned char[]> GetContextBinaryBuffer(uint64_t& written_buffer_size);
 
+  Ort::Status SaveContextToBinary();
+
   Ort::Status LoadCachedQnnContextFromBuffer(
       char* buffer,
       uint64_t buffer_length,
@@ -185,6 +186,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       bool share_ep_contexts,
       bool enable_vtcm_backup_buffer_sharing,
       bool enable_file_mapped_weights,
+      bool enable_ssr_handling,
       std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
       bool enable_htp_extended_udma_mode = false);
@@ -279,6 +281,29 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Ort::Status ParseLoraConfig(std::string lora_config);
 
   QnnSerializerConfig* GetQnnSerializerConfig();
+
+  /**
+   * @brief Executes an operation with SubSystem Restart (SSR) handling.
+   *
+   * This function provides a unified approach for handling SSR events
+   * that may occur during QNN operations. SSR events happen when the DSP/NPU hardware enters
+   * a bad state and needs to be reset. When an SSR event is detected, this function:
+   * 1. Attempts the operation
+   * 2. If an SSR event occurs, executes recovery logic
+   * 3. Retries the operation once after recovery
+   *
+   * @param operation The function to execute that may trigger an SSR event
+   * @param ssr_recover The recovery function to execute if an SSR event occurs
+   * @param operation_name Name of the operation for logging purposes
+   *
+   * @return Ort::Status The status of the operation (success or error)
+   */
+  Ort::Status InvokeWithSSRHandle(
+      const std::function<Ort::Status()>& operation,
+      const std::function<Ort::Status()>& ssr_recover,
+      const std::string& operation_name) const;
+
+  Ort::Status SSRCleanUp(std::string caller_name, std::unordered_map<std::string, std::unique_ptr<qnn::QnnModel>>& qnn_models);
 
   // Handler to be called upon successful context creation via contextCreateFromBinaryListAsync()
   // This handler is expected to be called in the callback ContextCreateAsyncCallback() in the .cc file
@@ -546,6 +571,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Vector of Qnn_ContextHandle_t. The context handles are owned by context_map_.
   std::vector<Qnn_ContextHandle_t> contexts_;
 
+  // Binary buffer of Qnn Context to handle SSR
+  std::unique_ptr<unsigned char[]> qnn_save_buffer_;
+  uint64_t qnn_save_buffer_size_ = 0;
+
   ProfilingLevel profiling_level_etw_;
   ProfilingLevel profiling_level_;
   ProfilingLevel profiling_level_merge_;
@@ -561,9 +590,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool context_created_ = false;
   bool backend_setup_completed_ = false;
   bool vtcm_backup_buffer_sharing_enabled_ = false;
+  bool enable_htp_extended_udma_mode_ = false;
 
   uint32_t backend_id_ = QNN_BACKEND_ID_CPU;
   bool file_mapped_weights_enabled_ = false;
+  bool enable_ssr_handling_ = false;
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   std::unique_ptr<FileMappingInterface> file_mapper_ = nullptr;

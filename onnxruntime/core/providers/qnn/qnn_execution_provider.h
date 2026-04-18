@@ -96,6 +96,13 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   void PartitionCtxModel(const OrtGraph* graph, OrtEpGraphSupportInfo* graph_support_info);
 
+  OrtStatus* CompileUtil(OrtEp* this_ptr,
+                         const OrtGraph** graphs,
+                         const OrtNode** fused_nodes,
+                         size_t count,
+                         OrtNodeComputeInfo** node_compute_infos,
+                         OrtNode** ep_context_nodes);
+
   OrtStatus* CompileContextModel(const OrtGraph** graphs,
                                  const OrtNode** fused_nodes,
                                  size_t count,
@@ -178,6 +185,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool stop_share_ep_contexts_ = false;
   bool enable_spill_fill_buffer_ = false;
   bool enable_file_mapped_weights_ = true;
+  bool enable_ssr_handling_ = false;
 #if defined(_WIN32)
   uint8_t num_graph_prepare_threads_ = 8;
   qnn::QnnTelemetry::EtwInternalCallback callback_ETWSink_provider_ = nullptr;
