@@ -1597,17 +1597,17 @@ void OrtSelectorManager::CreateSelectors() {
 
   // Register misc ops
   OrtOpVersionsAndSelector::OpVersionsMap misc_ops = {
-      {"Gather", {}},
-      {"GatherElements", {}},
-      {"Reshape", {}},
       {"Expand", {}},
       {"Flatten", {}},
-      {"Transpose", {}},
+      {"Gather", {}},
+      {"GatherElements", {}},
       {"MaxPool", {12}},
+      {"Reshape", {}},
       {"Resize", {}},
       {"Squeeze", {}},
-      {"Unsqueeze", {}},
-      {"Tile", {}}};
+      {"Tile", {}},
+      {"Transpose", {}},
+      {"Unsqueeze", {}}};
   ort_selectors_.RegisterSelector(misc_ops, std::make_unique<OrtDropQDQNodeGroupSelector>());
 
   // Register drop DQ ops
@@ -1618,43 +1618,43 @@ void OrtSelectorManager::CreateSelectors() {
 
   // Register unary ops
   OrtOpVersionsAndSelector::OpVersionsMap unary_ops = {
+      {"Abs", {}},
+      {"Asin", {}},
+      {"Atan", {}},
       {"AveragePool", {}},
+      {"Ceil", {}},
+      {"Cos", {}},
+      {"DepthToSpace", {}},
+      {"Elu", {}},
+      {"Erf", {}},
+      {"Exp", {}},
+      {"Floor", {}},
+      {"Gelu", {}},
       {"GlobalAveragePool", {}},
       {"GlobalMaxPool", {}},
+      {"HardSigmoid", {}},
+      {"HardSwish", {}},
+      {"LRN", {}},
       {"LeakyRelu", {}},
+      {"Log", {}},
+      {"LogSoftmax", {}},
+      {"LpNormalization", {}},
+      {"Neg", {}},
+      {"ReduceMax", {}},
       {"ReduceMean", {}},
       {"ReduceMin", {}},
-      {"ReduceMax", {}},
       {"ReduceProd", {}},
       {"ReduceSum", {}},
       {"Relu", {}},
-      {"Gelu", {}},
-      {"Elu", {}},
-      {"Erf", {}},
-      {"HardSigmoid", {}},
-      {"HardSwish", {}},
-      {"Sigmoid", {}},
-      {"Slice", {}},
-      {"LogSoftmax", {}},
-      {"Softmax", {}},
-      {"Sqrt", {}},
-      {"Atan", {}},
-      {"Asin", {}},
-      {"Sin", {}},
-      {"Cos", {}},
-      {"Sign", {}},
-      {"Tanh", {}},
-      {"Exp", {}},
-      {"Log", {}},
-      {"LRN", {}},
-      {"Ceil", {}},
-      {"Floor", {}},
       {"Round", {}},
-      {"Abs", {}},
-      {"Neg", {}},
-      {"DepthToSpace", {}},
+      {"Sigmoid", {}},
+      {"Sign", {}},
+      {"Sin", {}},
+      {"Slice", {}},
+      {"Softmax", {}},
       {"SpaceToDepth", {}},
-      {"LpNormalization", {}}};
+      {"Sqrt", {}},
+      {"Tanh", {}}};
   ort_selectors_.RegisterSelector(unary_ops, std::make_unique<OrtUnaryNodeGroupSelector>());
 
   // Register clip ops
@@ -1666,11 +1666,11 @@ void OrtSelectorManager::CreateSelectors() {
   OrtOpVersionsAndSelector::OpVersionsMap binary_ops = {
       {"Add", {}},
       {"Div", {}},
+      {"GridSample", {}},
       {"Mul", {}},
       {"Pow", {}},
-      {"Sub", {}},
       {"PRelu", {}},
-      {"GridSample", {}}};
+      {"Sub", {}}};
   ort_selectors_.RegisterSelector(binary_ops, std::make_unique<OrtBinaryNodeGroupSelector>());
 
   // Register variadic ops
