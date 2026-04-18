@@ -883,6 +883,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 class ScopedGraphState {
  public:
   ScopedGraphState(QnnBackendManager* manager,
+                   bool valid_power_config_id,
                    GraphState start_state,
                    GraphState done_state,
                    uint32_t htp_power_config_client_id,
@@ -890,19 +891,20 @@ class ScopedGraphState {
                    uint32_t rpc_polling_time,
                    uint32_t rpc_control_latency)
       : manager_(manager),
+        valid_power_config_id_(valid_power_config_id),
         done_state_(done_state),
         htp_power_config_client_id_(htp_power_config_client_id),
         perf_mode_(perf_mode),
         rpc_polling_time_(rpc_polling_time),
         rpc_control_latency_(rpc_control_latency),
         finalized_(false) {
-    if (manager_) {
+    if (manager_ && valid_power_config_id_) {
       start_status_ = manager_->SetState(start_state, htp_power_config_client_id_,
                                          perf_mode_, rpc_polling_time_, rpc_control_latency_);
     }
   }
   ~ScopedGraphState() {
-    if (!finalized_ && manager_) {
+    if (!finalized_ && manager_ && valid_power_config_id_) {
       // Error cannot be propagated from a destructor; silently ignore.
       manager_->SetState(done_state_, htp_power_config_client_id_,
                          perf_mode_, rpc_polling_time_, rpc_control_latency_);
@@ -915,7 +917,7 @@ class ScopedGraphState {
   // After this call the destructor will not invoke SetState again.
   Ort::Status SetPostRunHtpPerf() {
     finalized_ = true;
-    if (manager_) {
+    if (manager_ && valid_power_config_id_) {
       return manager_->SetState(done_state_, htp_power_config_client_id_,
                                 perf_mode_, rpc_polling_time_, rpc_control_latency_);
     }
@@ -925,6 +927,7 @@ class ScopedGraphState {
   ScopedGraphState& operator=(const ScopedGraphState&) = delete;
  private:
   QnnBackendManager* manager_;
+  bool valid_power_config_id_;
   GraphState done_state_;
   uint32_t htp_power_config_client_id_;
   qnn::HtpPerformanceMode perf_mode_;
