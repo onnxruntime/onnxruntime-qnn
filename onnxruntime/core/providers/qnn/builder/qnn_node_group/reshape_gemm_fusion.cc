@@ -9,6 +9,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/qnn_def.h"
@@ -167,6 +168,13 @@ bool IsValidGemmForFusion(const QnnModelWrapper& qnn_model_wrapper,
     return false;
   }
 
+  // Only fuse when alpha == 1.0 and beta == 1.0
+  float alpha = attr_helper.Get("alpha", 1.0f);
+  float beta = attr_helper.Get("beta", 1.0f);
+  if (alpha != 1.0f || beta != 1.0f) {
+    return false;
+  }
+
   // Weight must be constant
   const OrtNodeUnitIODef& weight_input = gemm_node_unit.Inputs()[1];
   if (!qnn_model_wrapper.IsConstantInput(weight_input.name)) {
@@ -181,38 +189,28 @@ bool IsValidGemmForFusion(const QnnModelWrapper& qnn_model_wrapper,
   return true;
 }
 
-// Common implementation for CreateOrValidateOnQnn with optional output reshape.
-// When output_reshape_node_unit is nullptr, creates FC node only (2-node fusion).
-// When output_reshape_node_unit is provided, creates FC + Reshape nodes (3-node and 4-node fusion).
+// Common implementation for creating/validating fused FC on QNN.
+// Handles 2-node (no output reshape), 3-node (one output reshape), and 4-node (skip reshape1, use reshape2).
 Ort::Status CreateOrValidateFusedFCOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& input_reshape_node_unit,
                                          const OrtNodeUnit& gemm_node_unit,
                                          const OrtNodeUnit* output_reshape_node_unit,
                                          const Ort::Logger& logger,
                                          bool validate) {
-  const auto& fc_node_name = utils::UniqueNameGenerator().New(gemm_node_unit);
+  const bool has_output_reshape = output_reshape_node_unit != nullptr;
 
-  // Get input from the input reshape's input (original ND tensor)
+  // Get input/output definitions
   const OrtNodeUnitIODef& input_def = input_reshape_node_unit.Inputs()[0];
   const OrtNodeUnitIODef& weight_def = gemm_node_unit.Inputs()[1];
-  const OrtNodeUnitIODef* bias_def_ptr = nullptr;
-  bool has_bias = gemm_node_unit.Inputs().size() > 2;
-  if (has_bias) {
-    bias_def_ptr = &gemm_node_unit.Inputs()[2];
-  }
-  // FC output definition (from Gemm node)
+  const OrtNodeUnitIODef* bias_def_ptr = gemm_node_unit.Inputs().size() > 2 ? &gemm_node_unit.Inputs()[2] : nullptr;
+  const bool has_bias = bias_def_ptr != nullptr;
+
+  // FC output is Gemm's output; final output is reshape's output if present
   const OrtNodeUnitIODef& fc_output_def = gemm_node_unit.Outputs()[0];
+  const OrtNodeUnitIODef& final_output_def = has_output_reshape ? output_reshape_node_unit->Outputs()[0] : fc_output_def;
 
-  // Determine if we have an output reshape
-  const bool has_output_reshape = (output_reshape_node_unit != nullptr);
-
-  // FC output name: intermediate if we have reshape, final otherwise
-  const std::string fc_output_name = has_output_reshape ? (fc_node_name + "_fc_out") : fc_output_def.name;
-
-  // Final output: from reshape if present, otherwise from FC
-  const OrtNodeUnitIODef& final_output_def = has_output_reshape
-                                                 ? output_reshape_node_unit->Outputs()[0]
-                                                 : fc_output_def;
+  const std::string fc_node_name = utils::UniqueNameGenerator().New(gemm_node_unit);
+  const std::string& fc_output_name = has_output_reshape ? fc_node_name + "_fc_out" : fc_output_def.name;
   const std::string& final_output_name = final_output_def.name;
 
   // Create input tensor wrapper
@@ -226,22 +224,18 @@ Ort::Status CreateOrValidateFusedFCOnQnn(QnnModelWrapper& qnn_model_wrapper,
 
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(weight_def.shape, weight_shape), "Failed to get weight shape");
 
-  Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(weight_tensor_name);
+  // Get tensor type for weight
+  Qnn_TensorType_t weight_tensor_type = qnn_model_wrapper.GetTensorType(weight_tensor_name);
   Qnn_DataType_t weight_data_type = QNN_DATATYPE_FLOAT_32;
-  RETURN_IF_ERROR(utils::GetQnnDataType(weight_def.quant_param.has_value(), weight_def.type, weight_data_type));
+  RETURN_IF_ERROR(utils::GetQnnDataType(false, weight_def.type, weight_data_type));
 
-  // Get weight tensor and transpose (Gemm weight is [K, N], FC expects [N, K])
+  // Get weight tensor proto and perform 2D transpose
   const auto* weight_tensor_proto = qnn_model_wrapper.GetConstantTensor(weight_tensor_name);
   RETURN_IF_ERROR(utils::TwoDimensionTranspose(qnn_model_wrapper, weight_shape, weight_tensor_proto,
                                                unpacked_tensor, logger, validate));
 
-  QnnQuantParamsWrapper weight_quant_param;
-  RETURN_IF_ERROR(weight_quant_param.Init(qnn_model_wrapper, weight_def));
-  RETURN_IF_ERROR(weight_quant_param.HandleTranspose<uint32_t>(std::vector<uint32_t>({1, 0})));
-
-  QnnTensorWrapper weight_tensor(weight_tensor_name, tensor_type, weight_data_type,
-                                 std::move(weight_quant_param), std::move(weight_shape),
-                                 std::move(unpacked_tensor));
+  QnnTensorWrapper weight_tensor(weight_tensor_name, weight_tensor_type, weight_data_type, QnnQuantParamsWrapper(),
+                                 std::move(weight_shape), std::move(unpacked_tensor));
 
   // Process bias if present
   QnnTensorWrapper bias_tensor;
@@ -250,25 +244,25 @@ Ort::Status CreateOrValidateFusedFCOnQnn(QnnModelWrapper& qnn_model_wrapper,
   }
 
   // Create FC output tensor
-  std::vector<uint32_t> fc_output_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(fc_output_def.shape, fc_output_shape), "Failed to get FC output shape");
-
-  Qnn_DataType_t fc_output_data_type = QNN_DATATYPE_FLOAT_32;
-  RETURN_IF_ERROR(utils::GetQnnDataType(fc_output_def.quant_param.has_value(), fc_output_def.type, fc_output_data_type));
-
-  QnnQuantParamsWrapper fc_output_quant_param;
-  RETURN_IF_ERROR(fc_output_quant_param.Init(qnn_model_wrapper, fc_output_def));
-
-  // FC output tensor type: native if intermediate, check graph output if final
-  Qnn_TensorType_t fc_output_tensor_type = QNN_TENSOR_TYPE_NATIVE;
+  QnnTensorWrapper fc_output_tensor;
   if (!has_output_reshape) {
-    const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(fc_output_name);
-    fc_output_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
-  }
+    // For 2-node case, use MakeTensorWrapper for output
+    RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(fc_output_def, fc_output_tensor));
+  } else {
+    // For 3/4-node case, create intermediate tensor
+    std::vector<uint32_t> fc_output_shape;
+    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(fc_output_def.shape, fc_output_shape), "Failed to get FC output shape");
 
-  QnnTensorWrapper fc_output_tensor(fc_output_name, fc_output_tensor_type, fc_output_data_type,
-                                    std::move(fc_output_quant_param), std::move(fc_output_shape),
-                                    std::vector<uint8_t>());
+    Qnn_DataType_t fc_output_data_type = QNN_DATATYPE_FLOAT_32;
+    RETURN_IF_ERROR(utils::GetQnnDataType(fc_output_def.quant_param.has_value(), fc_output_def.type, fc_output_data_type));
+
+    QnnQuantParamsWrapper fc_output_quant_param;
+    RETURN_IF_ERROR(fc_output_quant_param.Init(qnn_model_wrapper, fc_output_def));
+
+    fc_output_tensor = QnnTensorWrapper(fc_output_name, QNN_TENSOR_TYPE_NATIVE, fc_output_data_type,
+                                        std::move(fc_output_quant_param), std::move(fc_output_shape),
+                                        std::vector<uint8_t>());
+  }
 
   // Create final output tensor (reshape output) if we have output reshape
   QnnTensorWrapper final_output_tensor;
@@ -349,47 +343,52 @@ Ort::Status CreateOrValidateFusedFCOnQnn(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-// For ReshapeGemmFusion (2-node: Reshape -> Gemm)
-Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
-                                  const OrtNodeUnit& reshape_node_unit,
-                                  const OrtNodeUnit& gemm_node_unit,
-                                  const Ort::Logger& logger,
-                                  bool validate) {
-  return CreateOrValidateFusedFCOnQnn(qnn_model_wrapper, reshape_node_unit, gemm_node_unit,
-                                      nullptr, logger, validate);
-}
-
-// For ReshapeGemmReshapeFusion (3-node: Reshape -> Gemm -> Reshape)
-Ort::Status CreateOrValidateOnQnn3Node(QnnModelWrapper& qnn_model_wrapper,
-                                       const OrtNodeUnit& input_reshape_node_unit,
-                                       const OrtNodeUnit& gemm_node_unit,
-                                       const OrtNodeUnit& output_reshape_node_unit,
-                                       const Ort::Logger& logger,
-                                       bool validate) {
-  return CreateOrValidateFusedFCOnQnn(qnn_model_wrapper, input_reshape_node_unit, gemm_node_unit,
-                                      &output_reshape_node_unit, logger, validate);
-}
-
-// For ReshapeGemmReshapeReshapeFusion (4-node: Reshape -> Gemm -> Reshape1 -> Reshape2)
-// Note: Reshape1 is skipped; we fuse directly to Reshape2's output shape
-Ort::Status CreateOrValidateOnQnn4Node(QnnModelWrapper& qnn_model_wrapper,
-                                       const OrtNodeUnit& input_reshape_node_unit,
-                                       const OrtNodeUnit& gemm_node_unit,
-                                       const OrtNodeUnit& output_reshape1_node_unit,
-                                       const OrtNodeUnit& output_reshape2_node_unit,
-                                       const Ort::Logger& logger,
-                                       bool validate) {
-  ORT_UNUSED_PARAMETER(output_reshape1_node_unit);
-  return CreateOrValidateFusedFCOnQnn(qnn_model_wrapper, input_reshape_node_unit, gemm_node_unit,
-                                      &output_reshape2_node_unit, logger, validate);
-}
-
 }  // namespace
 
 // ============================================================================
-// ReshapeGemmReshapeFusion: 2-node fusion (Reshape -> Gemm)
+// ReshapeGemmFusionGroup implementation
 // ============================================================================
-std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusion::TryFusion(
+
+ReshapeGemmFusionGroup::ReshapeGemmFusionGroup(std::vector<const OrtNodeUnit*> node_units)
+    : node_units_(std::move(node_units)) {
+}
+
+Ort::Status ReshapeGemmFusionGroup::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
+  return CreateOrValidateOnQnn(qmw, logger, true);
+}
+
+Ort::Status ReshapeGemmFusionGroup::AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
+  return CreateOrValidateOnQnn(qmw, logger, false);
+}
+
+gsl::span<const OrtNodeUnit* const> ReshapeGemmFusionGroup::GetNodeUnits() const {
+  return node_units_;
+}
+
+const OrtNodeUnit* ReshapeGemmFusionGroup::GetTargetNodeUnit() const {
+  return node_units_[1];  // The Gemm node is always at index 1
+}
+
+Ort::Status ReshapeGemmFusionGroup::CreateOrValidateOnQnn(QnnModelWrapper& qmw, const Ort::Logger& logger,
+                                                          bool validate) const {
+  const OrtNodeUnit* input_reshape = node_units_[0];
+  const OrtNodeUnit* gemm = node_units_[1];
+
+  // Determine output reshape node based on fusion size
+  const OrtNodeUnit* output_reshape = nullptr;
+  if (node_units_.size() == 3) {
+    // 3-node: use the output reshape directly
+    output_reshape = node_units_[2];
+  } else if (node_units_.size() == 4) {
+    // 4-node: skip reshape1 (index 2), use reshape2 (index 3)
+    output_reshape = node_units_[3];
+  }
+
+  return CreateOrValidateFusedFCOnQnn(qmw, *input_reshape, *gemm, output_reshape, logger, validate);
+}
+
+// 2-node fusion: Reshape -> Gemm
+std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion2(
     QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& gemm_node_unit,
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
@@ -419,36 +418,13 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusion::TryFusion(
     return nullptr;
   }
 
-  return std::make_unique<ReshapeGemmFusion>(*input_reshape, gemm_node_unit);
+  return std::make_unique<ReshapeGemmFusionGroup>(
+      std::vector<const OrtNodeUnit*>{input_reshape, &gemm_node_unit});
 }
 
-ReshapeGemmFusion::ReshapeGemmFusion(const OrtNodeUnit& reshape_node_unit, const OrtNodeUnit& gemm_node_unit)
-    : node_units_{&reshape_node_unit, &gemm_node_unit} {
-}
-
-Ort::Status ReshapeGemmFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
-  return CreateOrValidateOnQnn(qmw, *node_units_[0], *node_units_[1], logger, true);
-}
-
-Ort::Status ReshapeGemmFusion::AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
-  return CreateOrValidateOnQnn(qmw, *node_units_[0], *node_units_[1], logger, false);
-}
-
-gsl::span<const OrtNodeUnit* const> ReshapeGemmFusion::GetNodeUnits() const {
-  return node_units_;
-}
-
-const OrtNodeUnit* ReshapeGemmFusion::GetTargetNodeUnit() const {
-  return node_units_[1];
-}
-
-// ============================================================================
-// ReshapeGemmReshapeFusion: 3-node fusion (Reshape -> Gemm -> Reshape)
-// ============================================================================
-
-std::unique_ptr<IQnnNodeGroup> ReshapeGemmReshapeFusion::TryFusion(
-    QnnModelWrapper& qnn_model_wrapper,
-    const OrtNodeUnit& gemm_node_unit,
+// 3-node fusion: Reshape -> Gemm -> Reshape
+std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion3(
+    QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& gemm_node_unit,
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
@@ -484,38 +460,13 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmReshapeFusion::TryFusion(
     return nullptr;
   }
 
-  return std::make_unique<ReshapeGemmReshapeFusion>(*input_reshape, gemm_node_unit, *output_reshape);
+  return std::make_unique<ReshapeGemmFusionGroup>(
+      std::vector<const OrtNodeUnit*>{input_reshape, &gemm_node_unit, output_reshape});
 }
 
-ReshapeGemmReshapeFusion::ReshapeGemmReshapeFusion(const OrtNodeUnit& input_reshape_node_unit,
-                                                   const OrtNodeUnit& gemm_node_unit,
-                                                   const OrtNodeUnit& output_reshape_node_unit)
-    : node_units_{&input_reshape_node_unit, &gemm_node_unit, &output_reshape_node_unit} {
-}
-
-Ort::Status ReshapeGemmReshapeFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
-  return CreateOrValidateOnQnn3Node(qmw, *node_units_[0], *node_units_[1], *node_units_[2], logger, true);
-}
-
-Ort::Status ReshapeGemmReshapeFusion::AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
-  return CreateOrValidateOnQnn3Node(qmw, *node_units_[0], *node_units_[1], *node_units_[2], logger, false);
-}
-
-gsl::span<const OrtNodeUnit* const> ReshapeGemmReshapeFusion::GetNodeUnits() const {
-  return node_units_;
-}
-
-const OrtNodeUnit* ReshapeGemmReshapeFusion::GetTargetNodeUnit() const {
-  return node_units_[1];  // The Gemm node is the target
-}
-
-// ============================================================================
-// ReshapeGemmReshapeReshapeFusion: 4-node fusion (Reshape -> Gemm -> Reshape -> Reshape)
-// ============================================================================
-
-std::unique_ptr<IQnnNodeGroup> ReshapeGemmReshapeReshapeFusion::TryFusion(
-    QnnModelWrapper& qnn_model_wrapper,
-    const OrtNodeUnit& gemm_node_unit,
+// 4-node fusion: Reshape -> Gemm -> Reshape -> Reshape
+std::unique_ptr<IQnnNodeGroup> ReshapeGemmFusionGroup::TryFusion4(
+    QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnit& gemm_node_unit,
     const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
     const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& node_unit_to_qnn_node_group,
     const Ort::Logger& logger) {
@@ -564,30 +515,8 @@ std::unique_ptr<IQnnNodeGroup> ReshapeGemmReshapeReshapeFusion::TryFusion(
     return nullptr;
   }
 
-  return std::make_unique<ReshapeGemmReshapeReshapeFusion>(*input_reshape, gemm_node_unit, *output_reshape1, *output_reshape2);
-}
-
-ReshapeGemmReshapeReshapeFusion::ReshapeGemmReshapeReshapeFusion(const OrtNodeUnit& input_reshape_node_unit,
-                                                                 const OrtNodeUnit& gemm_node_unit,
-                                                                 const OrtNodeUnit& output_reshape1_node_unit,
-                                                                 const OrtNodeUnit& output_reshape2_node_unit)
-    : node_units_{&input_reshape_node_unit, &gemm_node_unit, &output_reshape1_node_unit, &output_reshape2_node_unit} {
-}
-
-Ort::Status ReshapeGemmReshapeReshapeFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
-  return CreateOrValidateOnQnn4Node(qmw, *node_units_[0], *node_units_[1], *node_units_[2], *node_units_[3], logger, true);
-}
-
-Ort::Status ReshapeGemmReshapeReshapeFusion::AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
-  return CreateOrValidateOnQnn4Node(qmw, *node_units_[0], *node_units_[1], *node_units_[2], *node_units_[3], logger, false);
-}
-
-gsl::span<const OrtNodeUnit* const> ReshapeGemmReshapeReshapeFusion::GetNodeUnits() const {
-  return node_units_;
-}
-
-const OrtNodeUnit* ReshapeGemmReshapeReshapeFusion::GetTargetNodeUnit() const {
-  return node_units_[1];  // The Gemm node is the target
+  return std::make_unique<ReshapeGemmFusionGroup>(
+      std::vector<const OrtNodeUnit*>{input_reshape, &gemm_node_unit, output_reshape1, output_reshape2});
 }
 
 }  // namespace qnn
