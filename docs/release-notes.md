@@ -1,7 +1,7 @@
 # ONNX Runtime QNN Execution Provider v2.1.0
 
 **ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.24.4)
-**QAIRT SDK Compatibility:** 2.45.0
+**QAIRT SDK Compatibility:** 2.45.40
 
 ```
 pip install onnxruntime
@@ -12,7 +12,7 @@ pip install onnxruntime-qnn==2.1.0
 
 ## Highlights
 
-QNN EP 2.1.0 adds Genie backend support for on-device LLM inference, 64-bit UDMA for next-gen hardware, seven new operators, four graph-level fusions, and significant memory and startup performance improvements for large model deployments on ARM64 Windows.
+QNN EP 2.1.0 adds Genie backend support for on-device LLM inference, 64-bit uDMA (user-DMA) for next-gen hardware, seven new operators, four graph-level fusions, and significant memory and startup performance improvements for large model deployments on ARM64 Windows.
 
 ---
 
@@ -21,8 +21,8 @@ QNN EP 2.1.0 adds Genie backend support for on-device LLM inference, 64-bit UDMA
 ### Genie Backend Support
 Added Genie backend integration for ONNX Runtime, enabling on-device LLM inference through the Qualcomm Genie runtime. Genie operates on pre-compiled context binaries and provides optimized execution for generative AI workloads.
 
-### 64-bit Extended UDMA Mode
-Enabled extended UDMA (Unified DMA) mode for v81+ hardware via the `extended_udma` provider option. Allows far-mapping of weights and spill/fill buffers, expanding addressable memory for large models on next-generation Qualcomm devices.
+### 64-bit Extended uDMA (user-DMA) Mode
+Enabled 64-bit Extended uDMA (user-DMA) for v81+ hardware via the `extended_udma` provider option. Allows far-mapping of weights and spill/fill buffers, expanding addressable memory for large models on next-generation Qualcomm devices.
 
 ### File-Mapped Weights on ARM64 Windows
 Enabled Windows file mapping of weights and context binaries on ARM64. Multiple ORT sessions can share a single loaded context binary, eliminating per-session heap allocation. Significantly improves memory efficiency and initialization time for LLM-scale deployments. Automatically disabled when `context_embed_mode=1`.
@@ -62,9 +62,10 @@ Extended offline compilation support to x64 platforms for graphs using MEMHANDLE
 
 ### Improved Operators
 
-- **LSTM** — Changed from unrolled multi-op representation to a single monolithic QNN LSTM op on HTP. Exposed as `monolithic_lstm` session option. May significantly reduce graph finalization time for LSTM-heavy models.
 - **SpaceToDepth** — Added DCR (Depth-Column-Row) mode attribute.
 - **Resize** — Added cubic interpolation mode.
+
+For a complete list of operators supported by QNN and ORT QNN EP, refer to the [ORT QNN EP operator list](docs/execution_providers/QNN-ExecutionProvider.md#supported-onnx-operators). For detailed QNN operator definitions and backend-specific constraints, see the [QNN Master Operator Definition](https://docs.qualcomm.com/doc/80-63442-10/topic/MasterOpDef.html).
 
 ---
 
@@ -108,7 +109,7 @@ Various correctness and stability fixes across the EP.
 
 ## Known Issues
 
-- **SpaceToDepth FP32 accuracy** — FP32 tests for SpaceToDepth are disabled due to known accuracy issues. Will be fixed in the next release.
+- **SpaceToDepth FP32 accuracy** — FP32 validation tests for the SpaceToDepth operator have been disabled due to known accuracy issues. A fix is targeted for the next release.
 
 ---
 
@@ -116,7 +117,7 @@ Various correctness and stability fixes across the EP.
 
 This release includes contributions from:
 
-Arnav Deshpande, Ashwath Shankarnarayan, derdeljan-msft, huaychou, Jeff Kilpatrick, kuanyul-qti, Kyle Romero, Mike Hsu, minfhong-qti, qti-chenweng, qti-chuteng, qti-hungjuiw, qti-mattsinc, qti-mbadnara, qti-shubham, qti-yuduo, quic-calvnguy, Samrat Dutta, tirupath-qti, Yathindra Kota, yuhuchua-qti
+[Arnav Deshpande](https://github.com/qti-arnadesh), [Ashwath Shankarnarayan](https://github.com/qti-ashwshan), [Badri Narayanan](https://github.com/qti-mbadnara), [Calvin Nguyen](https://github.com/quic-calvnguy), [Cheng-Hsin Weng](https://github.com/qti-chenweng), [Chun-Chih Teng](https://github.com/qti-chuteng), [Hua-Yu Chou](https://github.com/huaychou), [Hung-Jui Wang](https://github.com/qti-hungjuiw), [Jeff Kilpatrick](https:/github.com/qti-jkilpatrick), [Kuan-Yu Lin](https://github.com/kuanyul-qti), [Kyle Romero](https://github.com/qti-kromero), [Matthew Sinclair](https://github.com/qti-mattsinc), [Mike Hsu](https://github.com/quic-muchhsu), [Min Fong Hong](https://github.com/minfhong-qti), [Samrat Dutta](https://github.com/samrdutt-design), [Shubham Patel](https://github.com/qti-shubham), [Tirupathi Reddy T](https://github.com/tirupath-qti), [Yathindra Kota](https://github.com/quic-ykota), [Yuduo Wu](https://github.com/qti-yuduo), [Yu-Hung Chuang](https://github.com/yuhuchua-qti)
 
 ---
 ---
