@@ -579,7 +579,8 @@ void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
                        std::unordered_map<std::string, Ort::Value>& feeds,
                        std::vector<Ort::Value>& output_vals,
-                       std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt);
+                       std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
+                       std::filesystem::path optimized_onnx_path = std::filesystem::path());
 
 void InferenceModel(const std::string& model_data,
                     const char* log_id,
@@ -590,7 +591,8 @@ void InferenceModel(const std::string& model_data,
                     OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                     const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                     std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
-                    std::function<void(const Graph&)>* graph_checker = nullptr);
+                    std::function<void(const Graph&)>* graph_checker = nullptr,
+                    std::filesystem::path optimized_onnx_path = std::filesystem::path());
 
 /**
  * If the ORT_UNIT_TEST_ENABLE_QNN_SAVER environment variable is enabled (set to 1), this function modifies
@@ -637,6 +639,7 @@ class QNNTestEnvironment {
   }
 
   bool dump_onnx() const { return dump_onnx_; }
+  bool dump_optimized_onnx() const { return dump_optimized_onnx_; }
   bool dump_json() const { return dump_json_; }
   bool dump_dlc() const { return dump_dlc_; }
   bool verbose() const { return verbose_; }
@@ -673,6 +676,11 @@ class QNNTestEnvironment {
       dump_onnx_ = true;
     }
 
+    if (IsEnvVarSet("QNN_DUMP_OPTIMIZED_ONNX")) {
+      std::cout << "[QNN only] OPTIMIZED ONNX model dumping enabled via environment variable." << std::endl;
+      dump_optimized_onnx_ = true;
+    }
+
     if (IsEnvVarSet("QNN_DUMP_JSON")) {
       std::cout << "[QNN only] Json QNN Graph dumping enabled via environment variable." << std::endl;
       dump_json_ = true;
@@ -690,6 +698,7 @@ class QNNTestEnvironment {
   }
 
   bool dump_onnx_ = false;
+  bool dump_optimized_onnx_ = false;
   bool dump_json_ = false;
   bool dump_dlc_ = false;
   bool verbose_ = false;
@@ -842,6 +851,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                                  std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr) {
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
+      QNNTestEnvironment::GetInstance().dump_optimized_onnx() ||
       QNNTestEnvironment::GetInstance().dump_dlc() ||
       QNNTestEnvironment::GetInstance().dump_json()) {
     output_dir = QNNTestEnvironment::GetInstance().CreateTestcaseDirs();
@@ -870,7 +880,8 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run f32 model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_f32_outputs;
-  InferenceModelCPU(f32_model_data, "f32_model_logger", f32_helper.feeds_, cpu_f32_outputs, graph_optimization_level);
+  InferenceModelCPU(f32_model_data, "f32_model_logger", f32_helper.feeds_,
+                  cpu_f32_outputs, graph_optimization_level, output_dir / "dumped_optimized_f32_model.onnx");
   ASSERT_FALSE(cpu_f32_outputs.empty());
 
   const size_t num_outputs = cpu_f32_outputs.size();
@@ -919,7 +930,8 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_qdq_outputs;
-  InferenceModelCPU(qdq_model_data, "qdq_model_logger", qdq_helper.feeds_, cpu_qdq_outputs, graph_optimization_level);
+  InferenceModelCPU(qdq_model_data, "qdq_model_logger", qdq_helper.feeds_,
+                  cpu_qdq_outputs, graph_optimization_level, output_dir / "dumped_optimized_qdq_model.onnx");
 
   qnn_options["dump_json_qnn_graph"] = "1";
 
@@ -972,7 +984,8 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                    log_severity,
                    session_option_pairs,
                    graph_optimization_level,
-                   qnn_ep_graph_checker);
+                   qnn_ep_graph_checker,
+                   output_dir / "dumped_optimized_qdq_model_qnnep.onnx");
   }
 
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
@@ -1099,6 +1112,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                                   const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
+      QNNTestEnvironment::GetInstance().dump_optimized_onnx() ||
       QNNTestEnvironment::GetInstance().dump_dlc() ||
       QNNTestEnvironment::GetInstance().dump_json()) {
     output_dir = QNNTestEnvironment::GetInstance().CreateTestcaseDirs();
@@ -1126,7 +1140,8 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run f32 model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_f32_outputs;
-  InferenceModelCPU(f32_model_data, "f32_model_logger", f32_helper.feeds_, cpu_f32_outputs);
+  InferenceModelCPU(f32_model_data, "f32_model_logger", f32_helper.feeds_,
+                  cpu_f32_outputs, std::nullopt, output_dir / "dumped_optimized_f32_model.onnx");
   ASSERT_FALSE(cpu_f32_outputs.empty());
 
   const size_t num_outputs = cpu_f32_outputs.size();
@@ -1170,7 +1185,8 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
 
   // Run QDQ model on CPU EP and collect outputs.
   std::vector<Ort::Value> cpu_f16_outputs;
-  InferenceModelCPU(f16_model_data, "fp16_model_logger", f16_helper.feeds_, cpu_f16_outputs);
+  InferenceModelCPU(f16_model_data, "fp16_model_logger", f16_helper.feeds_,
+                    cpu_f16_outputs, std::nullopt, output_dir / "dumped_optimized_f16_model.onnx");
 
   if (QNNTestEnvironment::GetInstance().dump_dlc()) {
     qnn_options["dump_qnn_ir_dlc"] = "1";
@@ -1218,7 +1234,10 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                    f16_helper.feeds_,
                    qnn_f16_outputs,
                    log_severity,
-                   session_option_pairs);
+                   session_option_pairs,
+                   std::nullopt,
+                   nullptr,
+                   output_dir / "dumped_optimized_fp16_model_qnnep.onnx");
   }
 
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {

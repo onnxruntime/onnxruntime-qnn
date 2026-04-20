@@ -357,12 +357,17 @@ void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
                        std::unordered_map<std::string, Ort::Value>& feeds,
                        std::vector<Ort::Value>& output_vals,
-                       std::optional<GraphOptimizationLevel> graph_optimization_level) {
+                       std::optional<GraphOptimizationLevel> graph_optimization_level,
+                       std::filesystem::path optimized_onnx_path) {
   Ort::SessionOptions session_options;
   session_options.SetLogId(log_id);
 
   if (graph_optimization_level.has_value()) {
     session_options.SetGraphOptimizationLevel(graph_optimization_level.value());
+  }
+
+  if (QNNTestEnvironment::GetInstance().dump_optimized_onnx()) {
+    session_options.SetOptimizedModelFilePath(optimized_onnx_path.c_str());
   }
 
   Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
@@ -411,7 +416,8 @@ void InferenceModel(const std::string& model_data,
                     OrtLoggingLevel log_severity,
                     const std::unordered_map<std::string, std::string>& session_option_pairs,
                     std::optional<GraphOptimizationLevel> graph_optimization_level,
-                    std::function<void(const Graph&)>* graph_checker [[maybe_unused]]) {
+                    std::function<void(const Graph&)>* graph_checker [[maybe_unused]],
+                    std::filesystem::path optimized_onnx_path) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = "QNNExecutionProvider";
   Ort::SessionOptions session_options;
@@ -423,6 +429,10 @@ void InferenceModel(const std::string& model_data,
 
   session_options.SetLogId(log_id);
   session_options.SetLogSeverityLevel(log_severity);
+
+  if (QNNTestEnvironment::GetInstance().dump_optimized_onnx()) {
+    session_options.SetOptimizedModelFilePath(optimized_onnx_path.c_str());
+  }
 
   if (QNNTestEnvironment::GetInstance().verbose()) {
     session_options.SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
