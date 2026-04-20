@@ -44,6 +44,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreatePoolOpBuilder("GlobalMaxPool", *this);
   CreatePoolOpBuilder("MaxPool", *this);
   CreateQuickGeluOpBuilder("QuickGelu", *this);
+  CreateRandomNormalLikeOpBuilder("RandomNormalLike", *this);
   CreateRandomUniformLikeOpBuilder("RandomUniformLike", *this);
   CreateReciprocalOpBuilder("Reciprocal", *this);
   CreateReduceOpBuilder("ReduceL2", *this);
