@@ -72,6 +72,8 @@ The QNN Execution Provider supports a number of configuration options. These pro
 |'saver'|Enable Saver backend.|
 |'ir'|Enable IR backend.|
 
+> **Note**: Execution on the Genie backend is automatically enabled based on the contents of the ONNX model passed to onnxruntime-qnn.
+
 |`"backend_path"`|Description|
 |---|-----|
 |'libQnnCpu.so' or 'QnnCpu.dll'|Enable CPU backend. See `backend_type` 'cpu'.|
@@ -82,6 +84,15 @@ The QNN Execution Provider supports a number of configuration options. These pro
 
 **Note:** `backend_path` is an alternative to `backend_type`. At most one of the two should be specified.
 `backend_path` requires a platform-specific path (e.g., `libQnnCpu.so` vs. `QnnCpu.dll`) but also allows one to specify an arbitrary path.
+
+|`"genie_log_level"`|Description|
+|---|---|
+|'error'|Default. Error-level logging only.|
+|'warn'|Warning and error messages.|
+|'info'|Informational, warning, and error messages.|
+|'verbose'|All messages including verbose output.|
+
+> **Note**: `genie_log_level` only applies when using the [Genie LLM inference pathway](#running-an-llm-model-with-qnn-eps-genie-backend).
 
 |`"profiling_level"`|Description|
 |---|---|
@@ -209,15 +220,6 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |Number (string)|The number of threads to use during model compilation. Must be greater than 1 and no more than the maximum supported concurrency threads as [reported by the hardware](https://en.cppreference.com/w/cpp/thread/thread/hardware_concurrency.html).<br><br>An invalid value will result in a warning and default behavior.<br><br>Defaults to 8 or the maximum supported threads, whichever is lower.<br><br><b>Will only take effect if the model is partitioned into 5+ subgraphs</b><br><br><b>Currently only supported on Windows ARM64 devices</b>|
 
 For more information, see the [Parallel Graph Preparation](#parallel-graph-preparation) section below.
-
-|`"genie_log_level"`|Description|
-|---|---|
-|'error'|Default. Error-level logging only.|
-|'warn'|Warning and error messages.|
-|'info'|Informational, warning, and error messages.|
-|'verbose'|All messages including verbose output.|
-
-> **Note**: `genie_log_level` only applies when using the [Genie LLM inference pathway](#running-an-llm-model-with-qnn-eps-genie-backend).
 
 
 ### Run Options
@@ -594,19 +596,21 @@ ort.unregister_execution_provider_library(ep_registration_name)
 ## Running an LLM model with QNN EP's Genie backend
 
 The QNN EP includes a Genie execution pathway for accelerated LLM inference on Windows ARM64 devices.
-Genie is Qualcomm's generative AI framework (part of the QAIRT SDK) that performs token-to-logit inference
-for auto-regressive LLM generation using pre-compiled DLC (Deep Learning Container) models.
+Genie is Qualcomm's generative AI framework (part of the QAIRT SDK) that the QNN EP can delegate token-to-logit inference
+for auto-regressive LLM generation to using pre-compiled DLC (Deep Learning Container) models.
+
+For dialog functionalities, onnxruntime-qnn should be used with onnxruntime-genai.
 
 ### Requirements
 
 - **Platform**: Windows ARM64 only
-- **QAIRT SDK**: Version ≥ 2.45.0 (Genie API ≥ 1.17)
+- **QAIRT SDK**: Version ≥ 2.45.40 (Genie API ≥ 1.17)
 - **Model**: An ONNX model containing an `EPContext` node with `ep_context_type="dlc"` pointing to a Genie-prepared DLC file
 
 ### How it works
 
 Instead of using the standard QNN graph pathway, the EP automatically detects ONNX models that
-contain an `EPContext` node referencing a DLC file. At session creation and inference time, the EP:
+contain an `EPContext` node referencing a Genie-compatible DLC file. At session creation and inference time, the EP:
 
 1. Loads the Genie backend library (`Genie.dll`)
 2. Creates a Genie DLC handle from the DLC path embedded in the ONNX model
