@@ -53,7 +53,7 @@ jobs:
       build_android_aar: true
 
   upload-wheel-workflow:
-    name: "Upload python wheel artifatcs to Artifactory"
+    name: "Upload python wheel artifacts to Artifactory"
     runs-on: [Linux, self-hosted, Build]
     needs: [build-artifacts]
 
@@ -257,7 +257,7 @@ jobs:
             -InputDir "${{ github.workspace }}\build\windows-arm64\Release"
 
   upload-zip-workflow:
-    name: "Upload zip artifatcs to Artifactory"
+    name: "Upload zip artifacts to Artifactory"
     runs-on: [Linux, self-hosted, Build]
     needs: [build-artifacts]
 

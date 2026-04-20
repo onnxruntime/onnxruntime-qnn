@@ -121,7 +121,7 @@ jobs:
 
   publish-wheel-workflow:
     if: ${{ inputs.artifact_format == 'wheel' || inputs.artifact_format == 'all' }}
-    name: "Publish artifatcs to Artifactory or PyPI"
+    name: "Publish artifacts to Artifactory or PyPI"
     runs-on: [Linux, self-hosted]
     needs: check-admin-permission
 
@@ -150,7 +150,7 @@ jobs:
 
   publish-nuget-workflow:
     if: ${{ inputs.artifact_format == 'nuget' || inputs.artifact_format == 'all' }}
-    name: "Publish artifatcs to Artifactory or NuGet"
+    name: "Publish artifacts to Artifactory or NuGet"
     runs-on: [Windows, self-hosted, X64]
     needs: check-admin-permission
 
@@ -184,7 +184,7 @@ jobs:
 
   publish-zip-workflow:
     if: ${{ inputs.artifact_format == 'zip' || inputs.artifact_format == 'all' }}
-    name: "Publish artifatcs to Artifactory or GitHub"
+    name: "Publish artifacts to Artifactory or GitHub"
     runs-on: [Linux, self-hosted]
     needs: check-admin-permission
 
