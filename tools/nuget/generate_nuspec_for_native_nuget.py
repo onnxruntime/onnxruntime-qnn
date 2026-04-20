@@ -361,14 +361,9 @@ def generate_files(line_list, args):
         files_list.append("<file src=" + '"' + os.path.join(args.native_build_path, "QnnCpu.dll") + runtimes + " />")
         files_list.append("<file src=" + '"' + os.path.join(args.native_build_path, "QnnHtp.dll") + runtimes + " />")
         if args.target_architecture != "x64":
+            files_list.append("<file src=" + '"' + os.path.join(args.native_build_path, "Genie.dll") + runtimes + " />")
             files_list.append(
                 "<file src=" + '"' + os.path.join(args.native_build_path, "QnnGpu.dll") + runtimes + " />"
-            )
-            files_list.append(
-                "<file src=" + '"' + os.path.join(args.native_build_path, "QnnSystem.dll") + runtimes + " />"
-            )
-            files_list.append(
-                "<file src=" + '"' + os.path.join(args.native_build_path, "QnnHtpPrepare.dll") + runtimes + " />"
             )
             files_list.append(
                 "<file src="
@@ -377,7 +372,12 @@ def generate_files(line_list, args):
                 + runtimes
                 + " />"
             )
-            files_list.append("<file src=" + '"' + os.path.join(args.native_build_path, "Genie.dll") + runtimes + " />")
+            files_list.append(
+                "<file src=" + '"' + os.path.join(args.native_build_path, "QnnHtpPrepare.dll") + runtimes + " />"
+            )
+            files_list.append(
+                "<file src=" + '"' + os.path.join(args.native_build_path, "QnnSystem.dll") + runtimes + " />"
+            )
             for htp_arch in [73, 81]:
                 files_list.append(
                     "<file src="
