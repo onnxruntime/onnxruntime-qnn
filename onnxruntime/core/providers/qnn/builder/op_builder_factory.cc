@@ -28,6 +28,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateGatherNDOpBuilder("GatherND", *this);
   CreateGemmOpBuilder("Gemm", *this);
   CreateGroupNormOpBuilder("GroupNormalization", *this);
+  CreateIdentityOpBuilder("Identity", *this);
   CreateInstanceNormOpBuilder("InstanceNormalization", *this);
   CreateInverseOpBuilder("Inverse", *this);
   CreateIsNanOpBuilder("IsNaN", *this);
@@ -52,7 +53,6 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateReduceOpBuilder("ReduceMin", *this);
   CreateReduceOpBuilder("ReduceProd", *this);
   CreateReduceOpBuilder("ReduceSum", *this);
-  CreateIdentityOpBuilder("Identity", *this);
   CreateReshapeOpBuilder("Flatten", *this);
   CreateReshapeOpBuilder("Reshape", *this);
   CreateReshapeOpBuilder("Squeeze", *this);
