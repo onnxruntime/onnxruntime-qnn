@@ -176,6 +176,84 @@ TEST_F(QnnHTPBackendTests, NonZero_AllZero) {
   RunNonZeroTest(BuildNonZeroTestCase<float>({2, 2}, {0, 0, 0, 0}), 11);
 }
 
+// NonZero -> Gather pattern with two Gather consumers to verify multiple consumers are handled.
+// Graph:
+//   mask -> NonZero -> [1, N] -> Reshape -> [N] (int64) -> Cast -> [N] (int32) -+-> Gather(data1) -> output1
+//                                                                                +-> Gather(data2) -> output2
+// NonZero output is declared as a graph output with static shape [1, num_elements] so QNN EP can claim it.
+// All mask elements are non-zero to avoid CPU/QNN shape mismatch from NonZero padding.
+TEST_F(QnnHTPBackendTests, NonZero_Gather_1D_Int32) {
+  std::vector<float> mask_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};  // non-zero at indices 0,1,2,3,4
+  std::vector<int32_t> data1 = {10, 20, 30, 40, 50};
+  std::vector<int32_t> data2 = {100, 200, 300, 400, 500};
+  int64_t num_elements = 5;
+
+  auto build_model = [mask_data, data1, data2, num_elements](ModelTestBuilder& builder) {
+    TestInputDef<float> mask_def({num_elements}, false, mask_data);
+    MakeTestInput<float>(builder, "mask", mask_def);
+
+    // NonZero: output [1, num_elements] — declared as graph output with static shape
+    // so QNN EP sees fixed dims and can claim the node
+    builder.AddNode("nonzero_node", "NonZero", {"mask"}, {"nonzero_out"}, kOnnxDomain);
+    builder.MakeOutput<int64_t>("nonzero_out", std::vector<int64_t>{1, num_elements});
+
+    // Reshape [1, num_elements] -> [num_elements]
+    builder.Make1DInitializer<int64_t>("reshape_shape", {num_elements});
+    builder.AddNode("reshape_node", "Reshape", {"nonzero_out", "reshape_shape"}, {"indices_i64"}, kOnnxDomain);
+
+    // Cast int64 -> int32 (HTP requires int32 indices for Gather)
+    builder.AddNode("cast_node", "Cast", {"indices_i64"}, {"indices_i32"}, kOnnxDomain,
+                    {test::MakeAttribute("to", int64_t(ONNX_NAMESPACE::TensorProto_DataType_INT32))});
+
+    // First Gather: data1[indices]
+    builder.MakeInitializer<int32_t>("data1", {num_elements}, data1);
+    builder.AddNode("gather_node1", "Gather", {"data1", "indices_i32"}, {"output1"}, kOnnxDomain,
+                    {test::MakeAttribute("axis", int64_t(0))});
+    builder.MakeOutput<int32_t>("output1", std::vector<int64_t>{num_elements});
+
+    // Second Gather: data2[indices]
+    builder.MakeInitializer<int32_t>("data2", {num_elements}, data2);
+    builder.AddNode("gather_node2", "Gather", {"data2", "indices_i32"}, {"output2"}, kOnnxDomain,
+                    {test::MakeAttribute("axis", int64_t(0))});
+    builder.MakeOutput<int32_t>("output2", std::vector<int64_t>{num_elements});
+  };
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+  ModelTestBuilder helper;
+  build_model(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+
+  // Run on CPU EP
+  std::vector<Ort::Value> expected;
+  InferenceModelCPU(model_data, "NonZero_Gather_CPU", helper.feeds_, expected);
+
+  // Run on QNN EP (all nodes assigned)
+  std::vector<Ort::Value> actual;
+  InferenceModel(model_data, "NonZero_Gather_QNN", HtpProviderOptions(),
+                 ExpectedEPNodeAssignment::All, helper.feeds_, actual);
+
+  // Outputs: index 0 = NonZero graph output, index 1 = Gather1 output, index 2 = Gather2 output
+  for (size_t out_idx : {1, 2}) {
+    auto exp_shape = expected[out_idx].GetTensorTypeAndShapeInfo().GetShape();
+    auto act_shape = actual[out_idx].GetTensorTypeAndShapeInfo().GetShape();
+    ASSERT_EQ(exp_shape, act_shape) << "Shape mismatch for output " << out_idx;
+
+    auto element_count = expected[out_idx].GetTensorTypeAndShapeInfo().GetElementCount();
+    const int32_t* exp_data = expected[out_idx].GetTensorData<int32_t>();
+    const int32_t* act_data = actual[out_idx].GetTensorData<int32_t>();
+    for (size_t i = 0; i < element_count; ++i) {
+      EXPECT_EQ(exp_data[i], act_data[i]) << "Mismatch at output " << out_idx << " index " << i;
+    }
+  }
+}
+
 // Negative test: NonZero with dynamic output shape should not be assigned to QNN EP.
 TEST_F(QnnHTPBackendTests, NonZero_DynamicOutputShape_Negative) {
   auto build_model = [](ModelTestBuilder& builder) {

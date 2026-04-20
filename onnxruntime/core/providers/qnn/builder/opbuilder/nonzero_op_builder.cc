@@ -96,23 +96,9 @@ Ort::Status NonZeroOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
     const std::string cast_output_name = utils::UniqueNameGenerator().New(original_input_name, "_cast_fp16");
 
     // Create fp16 intermediate tensor.
-    QnnTensorWrapper cast_output_tensorwrapper(cast_output_name,
-                                               QNN_TENSOR_TYPE_NATIVE,
-                                               QNN_DATATYPE_FLOAT_16,
-                                               QnnQuantParamsWrapper(),
-                                               std::vector<uint32_t>(input_info.shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(cast_output_tensorwrapper)),
-                  "Failed to add fp16 cast tensor.");
-
-    // Add Cast node: fp32 -> fp16.
-    const std::string cast_node_name = cast_output_name + "_cast_node";
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(cast_node_name,
-                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_CAST,
-                                                  {original_input_name},
-                                                  {cast_output_name},
-                                                  {}),
-                  "Failed to add Cast fp32->fp16 node");
+    RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(cast_output_name + "_cast_node", original_input_name,
+                                                  cast_output_name, QNN_TENSOR_TYPE_NATIVE, QNN_DATATYPE_FLOAT_16,
+                                                  QnnQuantParamsWrapper(), std::vector<uint32_t>(input_info.shape), do_op_validation));
 
     // Replace the input name with the casted fp16 tensor.
     input_names.back() = cast_output_name;
@@ -200,7 +186,8 @@ Ort::Status NonZeroOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
                                                   QNN_OP_TRANSPOSE,
                                                   {nonzero_out_name},
                                                   {transpose_out_name},
-                                                  std::move(transpose_params)),
+                                                  std::move(transpose_params),
+                                                  do_op_validation),
                   "Failed to add Transpose node.");
 
     // Cast: int32 -> int64 for graph output.
@@ -217,7 +204,8 @@ Ort::Status NonZeroOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
                                                   QNN_OP_CAST,
                                                   {transpose_out_name},
                                                   {output_name},
-                                                  {}),
+                                                  {},
+                                                  do_op_validation),
                   "Failed to add Cast node.");
   } else {
     // Transpose output is the final native tensor.
@@ -234,7 +222,8 @@ Ort::Status NonZeroOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
                                                   QNN_OP_TRANSPOSE,
                                                   {nonzero_out_name},
                                                   {output_name},
-                                                  std::move(transpose_params)),
+                                                  std::move(transpose_params),
+                                                  do_op_validation),
                   "Failed to add Transpose node.");
   }
 
