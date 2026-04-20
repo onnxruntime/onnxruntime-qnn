@@ -18,6 +18,7 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 - [Supported ONNX operators](#supported-onnx-operators)
 - [Running a model with QNN EP's HTP backend (Python)](#running-a-model-with-qnn-eps-htp-backend-python)
 - [Running a model with QNN EP's GPU backend](#running-a-model-with-qnn-eps-gpu-backend)
+- [Running an LLM model with QNN EP's Genie backend](#running-an-llm-model-with-qnn-eps-genie-backend)
 - [QNN context binary cache feature](#qnn-context-binary-cache-feature)
 - [QNN EP Profiling](#qnn-ep-profiling)
 - [QNN EP weight sharing](#qnn-ep-weight-sharing)
@@ -26,7 +27,6 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 - [Add new operator support in QNN EP](#add-new-operator-support-in-qnn-ep)
 - [Mixed precision support](#mixed-precision-support)
 - [LoRAv2 support](#lorav2-support)
-- [Genie LLM inference pathway](#genie-llm-inference-pathway)
 
 ## Install Pre-requisites (Build from Source Only)
 
@@ -217,7 +217,7 @@ For more information, see the [Parallel Graph Preparation](#parallel-graph-prepa
 |'info'|Informational, warning, and error messages.|
 |'verbose'|All messages including verbose output.|
 
-> **Note**: `genie_log_level` only applies when using the [Genie LLM inference pathway](#genie-llm-inference-pathway).
+> **Note**: `genie_log_level` only applies when using the [Genie LLM inference pathway](#running-an-llm-model-with-qnn-eps-genie-backend).
 
 
 ### Run Options
@@ -229,7 +229,7 @@ Run options can be set dynamically at runtime using the ORT Run API. These optio
 |`"qnn.perf_mode"`|HTP performance mode for this inference run. Valid values: 'burst', 'balanced', 'default', 'high_performance', 'high_power_saver', 'low_balanced', 'low_power_saver', 'power_saver', 'extreme_power_saver', 'sustained_high_performance'. Overrides the EP provider option `htp_performance_mode` for this run.|
 |`"qnn.rpc_control_latency"`|RPC control latency in microseconds for this inference run. Overrides the EP provider option `rpc_control_latency` for this run.|
 |`"qnn.lora_config"`|LoRAv2 config file path. Format: `<graph name>;<adapter binary section path>`. See **LoRAv2 support** section for details.|
-|`"kvcache_rewind"`|Genie KV-cache reset. Set to `"0"` to reset the KV cache before the next inference (useful at the start of a new conversation). Set to `"1"` (default) to skip the reset. Only applies when using the [Genie LLM inference pathway](#genie-llm-inference-pathway).|
+|`"kvcache_rewind"`|Genie KV-cache reset. Set to `"0"` to reset the KV cache before the next inference (useful at the start of a new conversation). Set to `"1"` (default) to skip the reset. Only applies when using the [Genie LLM inference pathway](#running-an-llm-model-with-qnn-eps-genie-backend).|
 
 **Example usage (Python):**
 ```python
@@ -590,6 +590,79 @@ del session
 # Unregister the library after all sessions using it have been released
 ort.unregister_execution_provider_library(ep_registration_name)
 ```
+
+## Running an LLM model with QNN EP's Genie backend
+
+The QNN EP includes a Genie execution pathway for accelerated LLM inference on Windows ARM64 devices.
+Genie is Qualcomm's generative AI framework (part of the QAIRT SDK) that performs token-to-logit inference
+for auto-regressive LLM generation using pre-compiled DLC (Deep Learning Container) models.
+
+### Requirements
+
+- **Platform**: Windows ARM64 only
+- **QAIRT SDK**: Version ≥ 2.45.0 (Genie API ≥ 1.17)
+- **Model**: An ONNX model containing an `EPContext` node with `ep_context_type="dlc"` pointing to a Genie-prepared DLC file
+
+### How it works
+
+Instead of using the standard QNN graph pathway, the EP automatically detects ONNX models that
+contain an `EPContext` node referencing a DLC file. At session creation and inference time, the EP:
+
+1. Loads the Genie backend library (`Genie.dll`)
+2. Creates a Genie DLC handle from the DLC path embedded in the ONNX model
+3. Searches the DLC's parent directory for a backend extension override JSON file (`tmp*.json`)
+4. Creates a Genie node configured with that DLC and executes token-to-logit inference on each `session.run()` call
+
+The input tensor contains token IDs and the output tensor contains logits over the vocabulary.
+
+### KV-cache management
+
+The Genie node maintains an internal KV-cache across successive `session.run()` calls, enabling
+efficient auto-regressive generation. Use the `kvcache_rewind` run option (see [Run Options](#run-options))
+to reset the KV-cache at the start of a new conversation.
+
+### Python example
+
+```python
+import numpy as np
+import onnxruntime as ort
+import onnxruntime_qnn as qnn_ep
+
+# Register the QNN EP plugin library
+ep_lib_path = qnn_ep.get_library_path()
+ep_registration_name = "QNNExecutionProvider"
+ort.register_execution_provider_library(ep_registration_name, ep_lib_path)
+
+# Select QNN EP device
+all_ep_devices = ort.get_ep_devices()
+selected_ep_devices = [d for d in all_ep_devices if d.ep_name == ep_registration_name]
+
+# Set Genie-specific EP options
+ep_options = {"genie_log_level": "error"}
+
+sess_options = ort.SessionOptions()
+sess_options.add_provider_for_devices(selected_ep_devices, ep_options)
+
+# Load the ONNX model that wraps the Genie DLC
+sess = ort.InferenceSession("model.onnx", sess_options=sess_options)
+
+# Reset the KV-cache at the start of a new conversation
+run_options = ort.RunOptions()
+run_options.add_run_config_entry("kvcache_rewind", "0")
+
+# Run one auto-regressive step: input = token IDs, output = logits
+input_tokens = np.array([[42, 73, 101]], dtype=np.int32)
+logits = sess.run(None, {"input_ids": input_tokens}, run_options)[0]
+
+# Subsequent steps reuse the KV-cache (no rewind needed)
+next_tokens = np.array([[202]], dtype=np.int32)
+logits = sess.run(None, {"input_ids": next_tokens})[0]
+
+del sess
+ort.unregister_execution_provider_library(ep_registration_name)
+```
+
+For a more complete sample, see [`qcom/samples/test_genie.py`](../../qcom/samples/test_genie.py).
 
 ## QNN context binary cache feature
 There's a QNN context which contains QNN graphs after converting, compiling, finalizing the model. QNN can serialize the context into binary file, so that user can use it for futher inference directly (without the QDQ model) to improve the model loading cost.
@@ -1054,76 +1127,3 @@ Currently, only pre-compiled models with EPContext nodes are supported. The  exa
 ```
 <graph name>;<adapter binary section path>
 ```
-
-## Genie LLM inference pathway
-
-The QNN EP includes a Genie execution pathway for accelerated LLM inference on Windows ARM64 devices.
-Genie is Qualcomm's generative AI framework (part of the QAIRT SDK) that performs token-to-logit inference
-for auto-regressive LLM generation using pre-compiled DLC (Deep Learning Container) models.
-
-### Requirements
-
-- **Platform**: Windows ARM64 only
-- **QAIRT SDK**: Version ≥ 2.45.0 (Genie API ≥ 1.17)
-- **Model**: An ONNX model containing an `EPContext` node with `ep_context_type="dlc"` pointing to a Genie-prepared DLC file
-
-### How it works
-
-Instead of using the standard QNN graph pathway, the EP automatically detects ONNX models that
-contain an `EPContext` node referencing a DLC file. At session creation and inference time, the EP:
-
-1. Loads the Genie backend library (`Genie.dll`)
-2. Creates a Genie DLC handle from the DLC path embedded in the ONNX model
-3. Searches the DLC's parent directory for a backend extension override JSON file (`tmp*.json`)
-4. Creates a Genie node configured with that DLC and executes token-to-logit inference on each `session.run()` call
-
-The input tensor contains token IDs and the output tensor contains logits over the vocabulary.
-
-### KV-cache management
-
-The Genie node maintains an internal KV-cache across successive `session.run()` calls, enabling
-efficient auto-regressive generation. Use the `kvcache_rewind` run option (see [Run Options](#run-options))
-to reset the KV-cache at the start of a new conversation.
-
-### Python example
-
-```python
-import numpy as np
-import onnxruntime as ort
-import onnxruntime_qnn as qnn_ep
-
-# Register the QNN EP plugin library
-ep_lib_path = qnn_ep.get_library_path()
-ep_registration_name = "QNNExecutionProvider"
-ort.register_execution_provider_library(ep_registration_name, ep_lib_path)
-
-# Select QNN EP device
-all_ep_devices = ort.get_ep_devices()
-selected_ep_devices = [d for d in all_ep_devices if d.ep_name == ep_registration_name]
-
-# Set Genie-specific EP options
-ep_options = {"genie_log_level": "error"}
-
-sess_options = ort.SessionOptions()
-sess_options.add_provider_for_devices(selected_ep_devices, ep_options)
-
-# Load the ONNX model that wraps the Genie DLC
-sess = ort.InferenceSession("model.onnx", sess_options=sess_options)
-
-# Reset the KV-cache at the start of a new conversation
-run_options = ort.RunOptions()
-run_options.add_run_config_entry("kvcache_rewind", "0")
-
-# Run one auto-regressive step: input = token IDs, output = logits
-input_tokens = np.array([[42, 73, 101]], dtype=np.int32)
-logits = sess.run(None, {"input_ids": input_tokens}, run_options)[0]
-
-# Subsequent steps reuse the KV-cache (no rewind needed)
-next_tokens = np.array([[202]], dtype=np.int32)
-logits = sess.run(None, {"input_ids": next_tokens})[0]
-
-del sess
-ort.unregister_execution_provider_library(ep_registration_name)
-```
-
-For a more complete sample, see [`qcom/samples/test_genie.py`](../../qcom/samples/test_genie.py).
