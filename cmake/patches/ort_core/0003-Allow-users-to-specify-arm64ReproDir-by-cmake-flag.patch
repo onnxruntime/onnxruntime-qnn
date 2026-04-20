@@ -1,7 +1,7 @@
-From 00a90b4e96be555505d65bb318ab113a69b28a9f Mon Sep 17 00:00:00 2001
+From 789fe768d915f8eeebc0746da420f3cc2d97b9db Mon Sep 17 00:00:00 2001
 From: hungjuiw <hungjuiw@qti.qualcomm.com>
 Date: Wed, 18 Mar 2026 14:58:21 +0800
-Subject: [PATCH 3/4] Allow users to specify arm64ReproDir by cmake flag
+Subject: [PATCH 3/3] Allow users to specify arm64ReproDir by cmake flag
 
 ---
  cmake/arm64x.cmake | 3 ++-
@@ -19,5 +19,5 @@ index 525206367c..9cd26e9bc1 100644
  function(set_arm64_dependencies n)
  	set(ARM64_LIBS)
 -- 
-2.53.0.windows.1
+2.34.1.windows.1
 
