@@ -140,16 +140,6 @@ struct QnnBackendManagerConfig {
   bool skip_backend_op_validation = false;
 };
 
-// Graph states to tune the power/performance configurations
-enum class GraphState {
-  INIT_START,
-  INIT_DONE,
-  RUN_START,
-  RUN_DONE,
-  TIMEOUT,
-  NONE
-};
-
 class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager> {
   friend class QnnBackendSystemDlcPlugin;
 
@@ -183,7 +173,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
         op_packages_(config.op_packages),
         skip_qnn_version_check_(config.skip_qnn_version_check),
         skip_backend_op_validation_(config.skip_backend_op_validation),
-        htp_power_config_manager_(power::HtpPowerConfigManager()),
+        htp_power_config_manager_(power::HtpPowerConfigManager(logger)),
         api_ptrs_(api_ptrs),
         logger_ptr_(&logger) {
   }
@@ -406,7 +396,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Releases all QNN resources. Called in the destructor.
   // NOTE: This function indirectly locks the internal `logger_recursive_mutex_` via nested function calls.
   void ReleaseResources();
-  Ort::Status SetState(GraphState state, uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
+  // Ort::Status SetState(GraphState state, uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   typedef struct FileMappingCallbackInfo {
@@ -423,6 +413,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   void ResetLogger(const Ort::Logger& logger) { logger_ptr_ = &logger; }
 
   bool IsDx12SharedMemoryAllocatorSupported();
+
+  power::HtpPowerConfigManager& GetHtpPowerConfigManager() { return htp_power_config_manager_; }
 
  private:
   Ort::Status LoadBackend();
@@ -538,26 +530,26 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void* LibFunction(void* handle, const char* symbol, std::string& error_msg);
 
-  bool IsTimerThreadRunning();
+  /*  bool IsTimerThreadRunning();
 
-  Ort::Status SetSustainedPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
+    Ort::Status SetSustainedPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
 
-  Ort::Status SetPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
+    Ort::Status SetPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
 
-  static void TimerCallback(void* user_data);
+    static void TimerCallback(void* user_data);*/
 
   Ort::Status CreateHtpPowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
 
-  void CreateTimerThread(uint32_t htp_power_config_client_id);
+  // void CreateTimerThread(uint32_t htp_power_config_client_id);
 
   Ort::Status DestroyHTPPowerConfigID(uint32_t htp_power_config_id);
 
-  Ort::Status SetHtpPowerConfigs(uint32_t htp_power_config_client_id,
-                                 HtpPerformanceMode htp_performance_mode,
-                                 uint32_t rpc_polling_time,
-                                 uint32_t rpc_control_latency);
+  /*  Ort::Status SetHtpPowerConfigs(uint32_t htp_power_config_client_id,
+                                   HtpPerformanceMode htp_performance_mode,
+                                   uint32_t rpc_polling_time,
+                                   uint32_t rpc_control_latency);
 
-  Ort::Status SetHtpPowerCustomConfigs(uint32_t htp_power_config_client_id, QnnHtpPerfInfrastructure_PowerConfig_t power_config, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
+    Ort::Status SetHtpPowerCustomConfigs(uint32_t htp_power_config_client_id, QnnHtpPerfInfrastructure_PowerConfig_t power_config, uint32_t rpc_polling_time, uint32_t rpc_control_latency);*/
 
   template <class T>
   inline T ResolveSymbol(void* lib_handle, const char* sym, const Ort::Logger& logger) {
@@ -842,24 +834,24 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   const ApiPtrs api_ptrs_;
   const Ort::Logger* logger_ptr_;
-  std::mutex perf_mutex_;
-  std::mutex state_mutex_;
-  std::unique_ptr<Timer> timer_;
-  struct TimerResource {
-    static constexpr uint64_t sustained_timer_duration_ = kDefaultTimerTimeoutUs;  // in microseconds
-    std::atomic<bool> caller_busy_ = false;
-    std::atomic<bool> timer_active_ = false;
-  };
-  TimerResource timer_resource_;
-  std::atomic<GraphState> graph_state_ = GraphState::NONE;
-  struct TimerCallbackArg {
-    uint32_t power_config_id_;
-    QnnBackendManager* instance_;
+  /*  std::mutex perf_mutex_;
+    std::mutex state_mutex_;
+    std::unique_ptr<Timer> timer_;
+    struct TimerResource {
+      static constexpr uint64_t sustained_timer_duration_ = kDefaultTimerTimeoutUs;  // in microseconds
+      std::atomic<bool> caller_busy_ = false;
+      std::atomic<bool> timer_active_ = false;
+    };
+    TimerResource timer_resource_;
+    std::atomic<GraphState> graph_state_ = GraphState::NONE;
+    struct TimerCallbackArg {
+      uint32_t power_config_id_;
+      QnnBackendManager* instance_;
 
-    TimerCallbackArg(uint32_t id, QnnBackendManager* manager)
-        : power_config_id_(id), instance_(manager) {}
-  };
-  std::unique_ptr<TimerCallbackArg> timer_callback_arg_;
+      TimerCallbackArg(uint32_t id, QnnBackendManager* manager)
+          : power_config_id_(id), instance_(manager) {}
+    };
+    std::unique_ptr<TimerCallbackArg> timer_callback_arg_;*/
 };
 
 // RAII guard for QnnBackendManager::SetState.
@@ -899,15 +891,17 @@ class ScopedGraphState {
         rpc_control_latency_(rpc_control_latency),
         finalized_(false) {
     if (manager_ && valid_power_config_id_) {
-      start_status_ = manager_->SetState(start_state, htp_power_config_client_id_,
-                                         perf_mode_, rpc_polling_time_, rpc_control_latency_);
+      power::HtpPowerConfigManager& htp_power_config_manager = manager_->GetHtpPowerConfigManager();
+      start_status_ = htp_power_config_manager.SetState(start_state, htp_power_config_client_id_,
+                                                        perf_mode_, rpc_polling_time_, rpc_control_latency_);
     }
   }
   ~ScopedGraphState() {
     if (!finalized_ && manager_ && valid_power_config_id_) {
       // Error cannot be propagated from a destructor; silently ignore.
-      manager_->SetState(done_state_, htp_power_config_client_id_,
-                         perf_mode_, rpc_polling_time_, rpc_control_latency_);
+      power::HtpPowerConfigManager& htp_power_config_manager = manager_->GetHtpPowerConfigManager();
+      htp_power_config_manager.SetState(done_state_, htp_power_config_client_id_,
+                                        perf_mode_, rpc_polling_time_, rpc_control_latency_);
     }
   }
   // Returns (by move) the status of setting HTP performance before work begins.
@@ -918,13 +912,15 @@ class ScopedGraphState {
   Ort::Status SetPostRunHtpPerf() {
     finalized_ = true;
     if (manager_ && valid_power_config_id_) {
-      return manager_->SetState(done_state_, htp_power_config_client_id_,
-                                perf_mode_, rpc_polling_time_, rpc_control_latency_);
+      power::HtpPowerConfigManager& htp_power_config_manager = manager_->GetHtpPowerConfigManager();
+      return htp_power_config_manager.SetState(done_state_, htp_power_config_client_id_,
+                                               perf_mode_, rpc_polling_time_, rpc_control_latency_);
     }
     return Ort::Status();
   }
   ScopedGraphState(const ScopedGraphState&) = delete;
   ScopedGraphState& operator=(const ScopedGraphState&) = delete;
+
  private:
   QnnBackendManager* manager_;
   bool valid_power_config_id_;

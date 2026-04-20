@@ -95,6 +95,16 @@ enum class DcvsState {
   DCVS_NUM_STATES
 };
 
+// Graph states to tune the power/performance configurations
+enum class GraphState {
+  INIT_START,
+  INIT_DONE,
+  RUN_START,
+  RUN_DONE,
+  TIMEOUT,
+  NONE
+};
+
 typedef struct PerThreadHtpPowerConfigs {
   std::optional<HtpPerformanceMode> pre_run_perf_mode;
   std::optional<HtpPerformanceMode> post_run_perf_mode;

@@ -159,7 +159,7 @@ Ort::Status ReadBinaryFromFile(const std::string& file_path, uint8_t* buffer, si
   return Ort::Status();
 }
 
-bool QnnBackendManager::IsTimerThreadRunning() {
+/*bool QnnBackendManager::IsTimerThreadRunning() {
   std::chrono::microseconds remainUs = std::chrono::microseconds::zero();
   uint64_t remaining_duration = 0;
   if (timer_ && timer_->TimerInUse() && timer_->RemainingDuration(remainUs)) {
@@ -167,9 +167,9 @@ bool QnnBackendManager::IsTimerThreadRunning() {
     return remaining_duration > 0 && remaining_duration < timer_resource_.sustained_timer_duration_;
   }
   return false;
-}
+}*/
 
-Ort::Status QnnBackendManager::SetHtpPowerCustomConfigs(uint32_t htp_power_config_client_id,
+/*Ort::Status QnnBackendManager::SetHtpPowerCustomConfigs(uint32_t htp_power_config_client_id,
                                                         QnnHtpPerfInfrastructure_PowerConfig_t power_config,
                                                         uint32_t rpc_polling_time,
                                                         uint32_t rpc_control_latency) {
@@ -180,9 +180,9 @@ Ort::Status QnnBackendManager::SetHtpPowerCustomConfigs(uint32_t htp_power_confi
   RETURN_IF_ERROR(htp_power_config_manager_.SetPowerConfig(htp_power_config_client_id, GetQnnInterface(), *logger_ptr_));
 
   return Ort::Status();
-}
+}*/
 
-Ort::Status QnnBackendManager::SetSustainedPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode, uint32_t rpc_polling_time, uint32_t rpc_control_latency) {
+/*Ort::Status QnnBackendManager::SetSustainedPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode, uint32_t rpc_polling_time, uint32_t rpc_control_latency) {
   std::lock_guard<std::mutex> lk(perf_mutex_);
   Ort::Status status = Ort::Status();
 
@@ -322,9 +322,9 @@ void QnnBackendManager::TimerCallback(void* user_data) {
       ORT_CXX_LOG_PTR(instance->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "State update failed");
     }
   }
-}
+}*/
 
-void QnnBackendManager::CreateTimerThread(uint32_t htp_power_config_client_id) {
+/*void QnnBackendManager::CreateTimerThread(uint32_t htp_power_config_client_id) {
   std::lock_guard<std::mutex> lk(state_mutex_);
   if (timer_ == nullptr) {
     std::unique_ptr<Timer> temp(new Timer());
@@ -349,10 +349,10 @@ void QnnBackendManager::CreateTimerThread(uint32_t htp_power_config_client_id) {
   } else {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Timer already created");
   }
-}
+}*/
 
 void QnnBackendManager::ReleaseTimerThread() {
-  {
+  /*{
     std::lock_guard<std::mutex> lk(state_mutex_);
     if (timer_ != nullptr) {
       {
@@ -366,7 +366,14 @@ void QnnBackendManager::ReleaseTimerThread() {
     timer_->DeInitialize();
     timer_callback_arg_.reset();
     timer_.reset();
-  }
+  }*/
+  /*{
+    std::lock_guard<std::mutex> lk(state_mutex_);
+    if (IsTimerCreated()) {
+        timer_resource_.timer_active_ = false;
+    }
+  }*/
+  htp_power_config_manager_.ReleaseTimerThread();
 }
 
 Ort::Status QnnBackendManager::ParseLoraConfig(std::string lora_config_path) {
@@ -553,6 +560,7 @@ Ort::Status QnnBackendManager::LoadBackend() {
                                                                                           QNN_API_VERSION_PATCH},
                                                                                          &backend_interface_provider)));
   qnn_interface_ = backend_interface_provider->QNN_INTERFACE_VER_NAME;
+  htp_power_config_manager_.Init(qnn_interface_);
   backend_id_ = backend_interface_provider->backendId;
   core_api_version_ = backend_interface_provider->apiVersion.coreApiVersion;
   backend_api_version_ = backend_interface_provider->apiVersion.backendApiVersion;
@@ -620,6 +628,7 @@ Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
        QNN_API_VERSION_PATCH},
       &serializer_interface_provider)));
   qnn_interface_ = serializer_interface_provider->QNN_INTERFACE_VER_NAME;  // NOTE: QnnSaver/Ir will provide the interfaces
+  htp_power_config_manager_.Init(qnn_interface_);
 
   Qnn_Version_t backend_interface_version = GetQnnInterfaceApiVersion(backend_interface_provider);
   Qnn_Version_t serializer_interface_version = GetQnnInterfaceApiVersion(serializer_interface_provider);
@@ -2419,7 +2428,7 @@ Ort::Status QnnBackendManager::SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arc
 
 Ort::Status QnnBackendManager::InitializePowerCfgId(uint32_t device_id, uint32_t core_id, uint32_t& htp_power_config_id) {
   RETURN_IF_ERROR(CreateHtpPowerCfgId(device_id, core_id, htp_power_config_id));
-  CreateTimerThread(htp_power_config_id);
+  htp_power_config_manager_.CreateTimerThread(htp_power_config_id);
   return Ort::Status();
 }
 
@@ -2448,7 +2457,7 @@ Ort::Status QnnBackendManager::CreateHtpPowerCfgId(uint32_t device_id, uint32_t 
   return Ort::Status();
 }
 
-Ort::Status QnnBackendManager::SetHtpPowerConfigs(uint32_t htp_power_config_client_id,
+/*Ort::Status QnnBackendManager::SetHtpPowerConfigs(uint32_t htp_power_config_client_id,
                                                   HtpPerformanceMode htp_performance_mode,
                                                   uint32_t rpc_polling_time,
                                                   uint32_t rpc_control_latency) {
@@ -2466,7 +2475,7 @@ Ort::Status QnnBackendManager::SetHtpPowerConfigs(uint32_t htp_power_config_clie
                                                            *logger_ptr_));
 
   return Ort::Status();
-}
+}*/
 
 Ort::Status QnnBackendManager::SetPerThreadHtpPowerConfigs(const std::thread::id& thread_id, bool pre_run) {
   PerThreadHtpPowerConfigs_t htp_power_configs;
@@ -2478,15 +2487,15 @@ Ort::Status QnnBackendManager::SetPerThreadHtpPowerConfigs(const std::thread::id
   if (pre_run) {
     // add in htp_power_configs the default power config id also so to run when we execute
     if (htp_power_configs.pre_run_perf_mode.has_value()) {
-      RETURN_IF_ERROR(SetState(onnxruntime::qnn::GraphState::RUN_START, htp_power_config_id, *htp_power_configs.pre_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
+      RETURN_IF_ERROR(htp_power_config_manager_.SetState(onnxruntime::qnn::GraphState::RUN_START, htp_power_config_id, *htp_power_configs.pre_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
     } else if (htp_power_configs.default_perf_mode.has_value()) {
-      RETURN_IF_ERROR(SetState(onnxruntime::qnn::GraphState::RUN_START, htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
+      RETURN_IF_ERROR(htp_power_config_manager_.SetState(onnxruntime::qnn::GraphState::RUN_START, htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
     }
   } else {
     if (htp_power_configs.post_run_perf_mode.has_value()) {
-      RETURN_IF_ERROR(SetState(onnxruntime::qnn::GraphState::RUN_DONE, htp_power_config_id, *htp_power_configs.post_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
+      RETURN_IF_ERROR(htp_power_config_manager_.SetState(onnxruntime::qnn::GraphState::RUN_DONE, htp_power_config_id, *htp_power_configs.post_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
     } else if (htp_power_configs.default_perf_mode.has_value()) {
-      RETURN_IF_ERROR(SetState(onnxruntime::qnn::GraphState::RUN_DONE, htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
+      RETURN_IF_ERROR(htp_power_config_manager_.SetState(onnxruntime::qnn::GraphState::RUN_DONE, htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency));
     }
   }
   return Ort::Status();
