@@ -393,6 +393,16 @@ void HtpPowerConfigManager::CreateTimerThread(uint32_t htp_power_config_client_i
 }
 
 void HtpPowerConfigManager::ReleaseTimerThread() {
+  {
+    std::lock_guard<std::mutex> lk(state_mutex_);
+    if (timer_ != nullptr) {
+      {
+        timer_resource_.timer_active_ = false;
+        graph_state_ = GraphState::NONE;
+        timer_resource_.caller_busy_ = false;
+      }
+    }
+  }
   if (timer_ != nullptr) {
     timer_->DeInitialize();
     timer_callback_arg_.reset();

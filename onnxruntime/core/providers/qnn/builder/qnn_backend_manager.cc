@@ -352,27 +352,6 @@ void QnnBackendManager::TimerCallback(void* user_data) {
 }*/
 
 void QnnBackendManager::ReleaseTimerThread() {
-  /*{
-    std::lock_guard<std::mutex> lk(state_mutex_);
-    if (timer_ != nullptr) {
-      {
-        timer_resource_.timer_active_ = false;
-        graph_state_ = GraphState::NONE;
-        timer_resource_.caller_busy_ = false;
-      }
-    }
-  }
-  if (timer_ != nullptr) {
-    timer_->DeInitialize();
-    timer_callback_arg_.reset();
-    timer_.reset();
-  }*/
-  /*{
-    std::lock_guard<std::mutex> lk(state_mutex_);
-    if (IsTimerCreated()) {
-        timer_resource_.timer_active_ = false;
-    }
-  }*/
   htp_power_config_manager_.ReleaseTimerThread();
 }
 
