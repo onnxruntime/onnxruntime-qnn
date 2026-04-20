@@ -52,8 +52,8 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateReduceOpBuilder("ReduceMin", *this);
   CreateReduceOpBuilder("ReduceProd", *this);
   CreateReduceOpBuilder("ReduceSum", *this);
+  CreateIdentityOpBuilder("Identity", *this);
   CreateReshapeOpBuilder("Flatten", *this);
-  CreateReshapeOpBuilder("Identity", *this);
   CreateReshapeOpBuilder("Reshape", *this);
   CreateReshapeOpBuilder("Squeeze", *this);
   CreateReshapeOpBuilder("Unsqueeze", *this);
