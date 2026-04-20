@@ -316,6 +316,8 @@ block()
       ${ONNXRUNTIME_ROOT}/core/providers/qnn/genie/genie_api_loader.cc
       ${ONNXRUNTIME_ROOT}/core/providers/qnn/genie/genie_backend_manager.cc
       ${ONNXRUNTIME_ROOT}/core/providers/qnn/genie/genie_node.cc
+      # Stub for OrtGetRuntimePath (defined in ort_api.cc, which is EP DLL only).
+      ${ONNXRUNTIME_ROOT}/test/providers/qnn/genie_test_stubs.cc
     )
   endif()
 
@@ -339,6 +341,14 @@ block()
     ${onnxruntime_QNN_HOME}/include
     ${onnxruntime_QNN_HOME}/include/QNN)
   target_link_libraries(onnxruntime_provider_test PRIVATE qnn_sdk_headers_include)
+
+  if(onnxruntime_USE_QNN)
+    # genie_backend_manager.cc is recompiled here rather than linked from the EP DLL.
+    # ort_api.h (included transitively) defines ORT_API_MANUAL_INIT, which must be
+    # uniform across all TUs in a binary. Suppress the define so the genie TUs match
+    # the rest of the test binary.
+    target_compile_definitions(onnxruntime_provider_test PRIVATE ORT_UNIT_TEST_BUILD)
+  endif()
 
   target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT})
 

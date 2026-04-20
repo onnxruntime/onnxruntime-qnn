@@ -23,7 +23,12 @@
 // is built as a static library.
 // Includes when building QNN EP as a shared library
 // #include "core/providers/shared_library/provider_api.h"
+// ORT_UNIT_TEST_BUILD is defined when genie source files are recompiled directly
+// into the unit test binary. In that context, the test binary owns ORT API
+// initialization, so ORT_API_MANUAL_INIT must NOT be set (all TUs must agree).
+#ifndef ORT_UNIT_TEST_BUILD
 #define ORT_API_MANUAL_INIT
+#endif
 #include "core/session/onnxruntime_cxx_api.h"
 
 #include "core/session/onnxruntime_c_api.h"
