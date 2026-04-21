@@ -7,7 +7,7 @@
 
 #include <cmath>
 
-#include "core/providers/qnn/inlined_containers_fwd.h"
+#include "core/providers/qnn/common/inlined_containers_fwd.h"
 
 #ifndef DISABLE_ABSEIL
 

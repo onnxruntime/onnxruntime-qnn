@@ -15,7 +15,6 @@
 #include "nlohmann/json.hpp"
 
 #include "core/providers/qnn/ort_api.h"
-#include "core/providers/qnn/make_string.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 
@@ -1266,7 +1265,7 @@ std::string GetQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface, Qnn_
   if (qnn_interface.errorGetMessage(qnn_error_handle, &error_msg) == QNN_SUCCESS) {
     return error_msg;
   }
-  return MakeString("Unknown error. QNN error handle: ", qnn_error_handle);
+  return "Unknown error. QNN error handle: " + std::to_string(qnn_error_handle);
 }
 
 std::string GetVerboseQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface,
@@ -1278,7 +1277,7 @@ std::string GetVerboseQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interfac
     });
     return error_msg;
   }
-  return MakeString("Unknown error. QNN error handle: ", qnn_error_handle);
+  return "Unknown error. QNN error handle: " + std::to_string(qnn_error_handle);
 }
 
 // Calculate strides for a given shape without using TensorShape
