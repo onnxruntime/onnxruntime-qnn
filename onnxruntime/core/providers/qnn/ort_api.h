@@ -14,7 +14,6 @@
 
 // SafeInt wrapper that avoids the GetStackTrace dependency from core/common/safeint.h.
 // See qnn_safeint.h for details.
-#include <stdexcept>
 #include "core/providers/qnn/qnn_safeint.h"
 
 // This compilation unit (ort_api.h/.cc) encapsulates the interface between the EP and ORT in a manner
@@ -103,8 +102,14 @@ namespace onnxruntime {
     }                                                   \
   } while (0)
 
+// Ort::Logger must be standard-layout so that its first declared member (logger_) is
+// guaranteed to reside at offset 0 with no vtable or padding before it. If this assert
+// fires, ORT changed the class layout and IsNullLogger's memcpy approach must be revised.
+static_assert(std::is_standard_layout<Ort::Logger>::value,
+              "IsNullLogger requires Ort::Logger to be standard-layout");
+
 // Returns true if an Ort::Logger has a null internal OrtLogger pointer (i.e., was default-constructed
-// and never initialized). Ort::Logger is standard-layout and trivially copyable; its first member
+// and never initialized). Ort::Logger is standard-layout; its first member
 // (const OrtLogger* logger_) is at offset 0, so memcpy is well-defined here.
 inline bool IsNullLogger(const Ort::Logger& logger) {
   const OrtLogger* ptr = nullptr;

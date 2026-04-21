@@ -77,10 +77,10 @@ OrtStatus* GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_ptr,
       std::string error_msg = std::string("Error searching for extension file: ") + e.what();
       return ep.ort_api.CreateStatus(ORT_EP_FAIL, error_msg.c_str());
     }
-  } else {
+  } else if (!parent_folder_path.empty()) {
     ORT_CXX_LOG(ep.logger_, ORT_LOGGING_LEVEL_WARNING,
-                ("HTP extension file not found in '" + parent_folder_path.string() +
-                 "'; continuing without HTP extensions.")
+                ("HTP extension directory '" + parent_folder_path.string() +
+                 "' is not accessible; continuing without HTP extensions.")
                     .c_str());
   }
   // Replace single backslashes with double backslashes for JSON

@@ -396,8 +396,8 @@ block()
       FOLDER "ONNXRuntimeTest"
     )
 
-    set_property(TARGET MockGenie APPEND_STRING PROPERTY LINK_FLAGS
-      " -DEF:${ONNXRUNTIME_ROOT}/test/providers/qnn/genie/mock_genie_symbols.def")
+    target_link_options(MockGenie PRIVATE
+      "/DEF:${ONNXRUNTIME_ROOT}/test/providers/qnn/genie/mock_genie_symbols.def")
 
     # Copy MockGenie next to the test executable so GenieBackendManager
     # finds it by name when backend_path="MockGenie.dll".
