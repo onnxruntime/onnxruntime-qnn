@@ -43,7 +43,7 @@ jobs:
     secrets: inherit
     with:
       build_linux_x86_64: false
-      linux_aarch64_manylinux_2_34_target_py_vsns: "[]"
+      linux_aarch64_manylinux_2_34_target_py_vsns: "['3.11','3.12','3.13','3.14']"
       windows_target_archs: ${{ inputs.windows_target_archs }}
       windows_target_py_vsns: ${{ inputs.windows_target_py_vsns }}
       windows_arm64_build_nuget: true
@@ -53,7 +53,7 @@ jobs:
       build_android_aar: true
 
   upload-wheel-workflow:
-    name: "Upload python wheel artifatcs to Artifactory"
+    name: "Upload python wheel artifacts to Artifactory"
     runs-on: [Linux, self-hosted, Build]
     needs: [build-artifacts]
 
@@ -70,6 +70,26 @@ jobs:
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
       # Download Python wheels from Artifactory
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_manylinux_2_34-py3.11-wheels
+
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_manylinux_2_34-py3.12-wheels
+
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_manylinux_2_34-py3.13-wheels
+
+      - name: Download Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_manylinux_2_34-py3.14-wheels
+
       - name: Download Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -134,6 +154,7 @@ jobs:
         run: |
           mkdir "${{ github.workspace }}/build/dist"
           cp "${{ github.workspace }}/build/windows-arm64/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
+          cp "${{ github.workspace }}/build/linux-aarch64_manylinux_2_34/Release/dist/"*.whl "${{ github.workspace }}/build/dist"
 
       - name: Consolidate Wheels
         run: |
@@ -158,12 +179,17 @@ jobs:
             "${{ github.workspace }}/build/dist/arm64ec" \
             "${{ github.workspace }}/build/dist"
 
+      - name: Remove intermediate wheels before verification
+        run: |
+          rm -rf "${{ github.workspace }}/build/dist/x64"
+          rm -rf "${{ github.workspace }}/build/dist/arm64ec"
+
       - name: Verify wheel artifacts
         run: |
-          # After merge: 4 arm64 + 4 merged AMD wheels in build/dist/
+          # After merge: 4 linux aarch64 manylinux_2_34 + 4 arm64 + 4 merged AMD wheels in build/dist/
           count=$(find "${{ github.workspace }}/build/dist" -name "*.whl" | wc -l)
           echo "Found $count wheel(s) in build/dist"
-          [ "$count" -eq 8 ] || { echo "ERROR: Expected 8 wheels in build/dist, found $count"; exit 1; }
+          [ "$count" -eq 12 ] || { echo "ERROR: Expected 12 wheels in build/dist, found $count"; exit 1; }
 
       - name: Check Wheels
         run: |
@@ -231,7 +257,7 @@ jobs:
             -InputDir "${{ github.workspace }}\build\windows-arm64\Release"
 
   upload-zip-workflow:
-    name: "Upload zip artifatcs to Artifactory"
+    name: "Upload zip artifacts to Artifactory"
     runs-on: [Linux, self-hosted, Build]
     needs: [build-artifacts]
 
@@ -247,16 +273,27 @@ jobs:
           JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
-      - name: Download Zip from Artifactory
+      - name: Download Windows ARM64 Zip from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-arm64-py3.11-zip
 
-      - name: Verify Zip artifact
+      - name: Download Linux aarch64 manylinux_2_34 TGZ from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_manylinux_2_34-py3.11-tgz
+
+      - name: Verify Zip artifacts
         run: |
           count=$(find "${{ github.workspace }}/build" -name "*.zip" | wc -l)
           echo "Found $count Zip archive(s)"
           [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 Zip archive, found $count"; exit 1; }
+
+      - name: Verify TGZ artifact
+        run: |
+          count=$(find "${{ github.workspace }}/build" -name "*.tgz" | wc -l)
+          echo "Found $count TGZ archive(s)"
+          [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 TGZ archive, found $count"; exit 1; }
 
       - name: Publish
         if: ${{ !inputs.skip_publish }}
@@ -273,9 +310,14 @@ jobs:
           password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
 
-          # Upload files using the upload script
+          # Upload Windows ARM64 zip
           ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
             "${{ github.workspace }}/build/windows-arm64/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Linux aarch64 manylinux_2_34 zip
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/linux-aarch64_manylinux_2_34/Release/dist" \
             "$NETRC_FILE"
 
           # Clean up the temporary .netrc file

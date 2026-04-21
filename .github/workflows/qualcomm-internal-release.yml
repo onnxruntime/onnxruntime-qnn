@@ -41,7 +41,7 @@ jobs:
       nightly_build: ${{inputs.nightly_build}}
       build_android_aarch64: true
       build_linux_aarch64_oe_gcc11_2: true
-      linux_aarch64_manylinux_2_34_target_py_vsns: "[]"
+      linux_aarch64_manylinux_2_34_target_py_vsns: "['3.11','3.12','3.13','3.14']"
       windows_target_archs: "['arm64', 'arm64ec', 'x86_64']"
       windows_target_py_vsns: "['3.11','3.12','3.13','3.14']"
       build_android_aar: true
@@ -123,6 +123,26 @@ jobs:
         with:
           name: linux-x86_64-py3.10-wheels
 
+      - name: Download aarch64 manylinux_2_34 Linux 3.11 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_manylinux_2_34-py3.11-wheels
+
+      - name: Download aarch64 manylinux_2_34 Linux 3.12 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_manylinux_2_34-py3.12-wheels
+
+      - name: Download aarch64 manylinux_2_34 Linux 3.13 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_manylinux_2_34-py3.13-wheels
+
+      - name: Download aarch64 manylinux_2_34 Linux 3.14 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_manylinux_2_34-py3.14-wheels
+
       - name: Download arm64 Windows 3.11 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -187,6 +207,11 @@ jobs:
       # Download test archives
       # ----------------------
 
+      - name: Download aarch64 manylinux_2_34 Linux Tests from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_manylinux_2_34-py3.11-tests
+
       - name: Download aarch64 Android Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -236,6 +261,11 @@ jobs:
         with:
           name: windows-arm64-py3.11-zip
 
+      - name: Download aarch64 manylinux_2_34 Linux TGZ Package from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-aarch64_manylinux_2_34-py3.11-tgz
+
       - name: Merge AMD Wheels
         run: |
           # Collect the ARM64ec and x86_64 wheels into known locations
@@ -258,11 +288,11 @@ jobs:
 
       - name: Verify wheel artifacts
         run: |
-          # After merge: 1 linux x86_64 + 4 arm64 + 4 merged AMD = 9 wheels
+          # After merge: 1 linux x86_64 + 4 linux aarch64 manylinux_2_34 + 4 arm64 + 4 merged AMD = 13 wheels
           # (arm64ec and x86_64 originals are deleted by the merge step above)
           count=$(find "${{ github.workspace }}/build" -name "*.whl" | wc -l)
           echo "Found $count wheel(s)"
-          [ "$count" -eq 9 ] || { echo "ERROR: Expected 9 wheels, found $count"; exit 1; }
+          [ "$count" -eq 13 ] || { echo "ERROR: Expected 13 wheels, found $count"; exit 1; }
 
       - name: Verify NuGet artifact
         run: |
@@ -274,13 +304,19 @@ jobs:
         run: |
           count=$(find "${{ github.workspace }}/build" -name "*.tar.bz2" | wc -l)
           echo "Found $count .tar.bz2 archive(s)"
-          [ "$count" -eq 2 ] || { echo "ERROR: Expected 2 .tar.bz2 archives, found $count"; exit 1; }
+          [ "$count" -eq 3 ] || { echo "ERROR: Expected 3 .tar.bz2 archives, found $count"; exit 1; }
 
       - name: Verify Zip artifact
         run: |
           count=$(find "${{ github.workspace }}/build" -name "*.zip" | wc -l)
           echo "Found $count Zip archive(s)"
           [ "$count" -eq 5 ] || { echo "ERROR: Expected 5 Zip archives, found $count"; exit 1; }
+
+      - name: Verify TGZ artifact
+        run: |
+          count=$(find "${{ github.workspace }}/build" -name "*.tgz" | wc -l)
+          echo "Found $count TGZ archive(s)"
+          [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 TGZ archive, found $count"; exit 1; }
 
       - name: Verify AAR artifact
         run: |

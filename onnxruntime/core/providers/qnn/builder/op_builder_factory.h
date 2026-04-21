@@ -119,6 +119,8 @@ void CreateLSTMOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_
 
 void CreateCumSumOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
+void CreateRandomNormalLikeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+
 void CreateRandomUniformLikeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
 void CreateMeanOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
@@ -150,6 +152,8 @@ void CreateGroupNormOpBuilder(const std::string& op_type, OpBuilderRegistrations
 void CreateTanOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
 void CreateRoiAlignOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+
+void CreateNonZeroOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
 }  // namespace qnn
 }  // namespace onnxruntime
