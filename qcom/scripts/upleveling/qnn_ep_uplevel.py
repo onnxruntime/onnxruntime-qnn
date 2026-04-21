@@ -9,7 +9,7 @@
 
 """
 Artifact upleveling script with class-based architecture.
-Supports Python wheels, NuGet packages, and ZIP archives.
+Supports Python wheels, NuGet packages, ZIP archives, and TGZ archives.
 """
 
 import argparse
@@ -38,9 +38,10 @@ ARTIFACTORY_PREFIXES = {
     "wheel": "re-artifactory-pypi",
     "nuget": "re-artifactory-nuget",
     "zip": "re-artifactory-zip",
+    "tgz": "re-artifactory-zip",
 }
 
-ARTIFACT_SUFFIXES = {"wheel": ".whl", "nuget": ".nupkg", "zip": ".zip"}
+ARTIFACT_SUFFIXES = {"wheel": ".whl", "nuget": ".nupkg", "zip": ".zip", "tgz": ".tgz"}
 
 
 class ConfigManager:
@@ -496,7 +497,10 @@ class ZipUpleveler(ArtifactUpleveler):
     def update_artifacts(self, artifact_list: list[str], input_dir: str, output_dir: str) -> None:
         """Update ZIP archive versions (simple copy with renamed version)."""
         for zip_file in artifact_list:
-            logging.info(f"Updating version from {self.args.version_from} to {self.args.version_to} for zip {zip_file}")
+            logging.info(
+                f"Updating version from {self.args.version_from} to {self.args.version_to} "
+                f"for {self.artifact_format} {zip_file}"
+            )
 
             zip_path = os.path.join(input_dir, zip_file)
             updated_zip_path = os.path.join(
@@ -566,6 +570,14 @@ class ZipUpleveler(ArtifactUpleveler):
                 logging.info(f"Cleaned up temporary .netrc file: {netrc_path}")
 
 
+class TgzUpleveler(ZipUpleveler):
+    """Handles TGZ archive upleveling."""
+
+    @property
+    def artifact_format(self) -> str:
+        return "tgz"
+
+
 class UplevelingFactory:
     """Factory class to create appropriate upleveler instances."""
 
@@ -573,6 +585,7 @@ class UplevelingFactory:
         "wheel": WheelUpleveler,
         "nuget": NugetUpleveler,
         "zip": ZipUpleveler,
+        "tgz": TgzUpleveler,
     }
 
     @classmethod
@@ -603,8 +616,8 @@ def parse_arguments() -> argparse.Namespace:
         "--artifact_format",
         type=str,
         required=True,
-        choices=["wheel", "nuget", "zip"],
-        help="The format of artifact. Choose one of [wheel, nuget, zip].",
+        choices=["wheel", "nuget", "zip", "tgz"],
+        help="The format of artifact. Choose one of [wheel, nuget, zip, tgz].",
     )
     parser.add_argument(
         "--version_from",
@@ -646,7 +659,7 @@ def parse_arguments() -> argparse.Namespace:
         "--netrc_file",
         type=str,
         default="",
-        help="Path to .netrc file for curl authentication (optional, only used for zip uploads).",
+        help="Path to .netrc file for curl authentication (optional, only used for zip and tgz uploads).",
     )
 
     args = parser.parse_args()

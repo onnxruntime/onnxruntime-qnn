@@ -260,6 +260,7 @@ class TaskLibrary:
                 "build",
                 extra_args=extra_args,
                 env=env,
+                build_zip=self.__build_zip,
             )
         )
 
@@ -501,6 +502,7 @@ class TaskLibrary:
                 self.__target_py_version,
                 self.__qairt_sdk_root,
                 self.__docker_ccache_root,
+                self.__build_zip,
             ),
         )
 
@@ -676,6 +678,8 @@ class TaskLibrary:
                 build_args={
                     "BUILD_UID": str(os.getuid()),
                     "BUILD_GID": str(os.getgid()),
+                    "ORT_NIGHTLY_BUILD": os.environ.get("ORT_NIGHTLY_BUILD", "0"),
+                    "ORT_VERSION_SUFFIX": os.environ.get("ORT_VERSION_SUFFIX", ""),
                 },
             )
         )

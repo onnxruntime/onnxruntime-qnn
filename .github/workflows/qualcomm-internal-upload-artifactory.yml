@@ -1,7 +1,7 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
-name: Publish ONNX Runtime Execution Provider wheel, nuget and zip
+name: Publish ONNX Runtime Execution Provider wheel, nuget, zip and tgz
 
 permissions:
   checks: write
@@ -15,7 +15,7 @@ on:
         type: string
         default: "onnxruntime-qnn"
       artifact_format:
-        description: "The format of artifact. Choose one of [wheel, nuget, zip, all]."
+        description: "The format of artifact. Choose one of [wheel, nuget, zip, tgz, all]."
         type: string
         default: "wheel"
       version_from:
@@ -55,7 +55,7 @@ on:
         type: string
         default: "onnxruntime-qnn"
       artifact_format:
-        description: "The format of artifact. Choose one of [wheel, nuget, zip, all]."
+        description: "The format of artifact. Choose one of [wheel, nuget, zip, tgz, all]."
         type: string
         default: "wheel"
       version_from:
@@ -121,7 +121,7 @@ jobs:
 
   publish-wheel-workflow:
     if: ${{ inputs.artifact_format == 'wheel' || inputs.artifact_format == 'all' }}
-    name: "Publish artifatcs to Artifactory or PyPI"
+    name: "Publish artifacts to Artifactory or PyPI"
     runs-on: [Linux, self-hosted]
     needs: check-admin-permission
 
@@ -150,7 +150,7 @@ jobs:
 
   publish-nuget-workflow:
     if: ${{ inputs.artifact_format == 'nuget' || inputs.artifact_format == 'all' }}
-    name: "Publish artifatcs to Artifactory or NuGet"
+    name: "Publish artifacts to Artifactory or NuGet"
     runs-on: [Windows, self-hosted, X64]
     needs: check-admin-permission
 
@@ -184,7 +184,7 @@ jobs:
 
   publish-zip-workflow:
     if: ${{ inputs.artifact_format == 'zip' || inputs.artifact_format == 'all' }}
-    name: "Publish artifatcs to Artifactory or GitHub"
+    name: "Publish artifacts to Artifactory or GitHub"
     runs-on: [Linux, self-hosted]
     needs: check-admin-permission
 
@@ -218,6 +218,51 @@ jobs:
           python ./qcom/scripts/upleveling/qnn_ep_uplevel.py \
             --product_name ${{ inputs.product_name }} \
             --artifact_format "zip" \
+            --version_from ${{ inputs.version_from }} \
+            --version_to ${{ inputs.version_to }} \
+            --index_server_from ${{ inputs.index_server_from }} \
+            --index_server_to ${{ inputs.index_server_to }} \
+            --netrc_file "$NETRC_FILE"
+
+          # Clean up the temporary .netrc file
+          rm -f "$NETRC_FILE"
+
+  publish-tgz-workflow:
+    if: ${{ inputs.artifact_format == 'tgz' || inputs.artifact_format == 'all' }}
+    name: "Publish TGZ artifacts to Artifactory"
+    runs-on: [Linux, self-hosted]
+    needs: check-admin-permission
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Dependencies
+        run: |
+          ./qcom/scripts/upleveling/create_uplevel_venv.sh
+
+      - name: Publish
+        env:
+          ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+        run: |
+          source uplevel_venv/bin/activate
+
+          # Create temporary .netrc file with credentials
+          # Try /tmp first, then $HOME, then workspace as fallback
+          NETRC_FILE=$(mktemp -p /tmp 2>/dev/null || \
+                       mktemp -p "$HOME" 2>/dev/null || \
+                       mktemp -p "${{ github.workspace }}")
+          chmod 600 "$NETRC_FILE"
+          cat > "$NETRC_FILE" << EOF
+          machine re-artifactory.qualcomm.com
+          login ${{ secrets.ARTIFACTORY_USERNAME }}
+          password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          EOF
+
+          # Run the upleveling script with netrc file
+          python ./qcom/scripts/upleveling/qnn_ep_uplevel.py \
+            --product_name ${{ inputs.product_name }} \
+            --artifact_format "tgz" \
             --version_from ${{ inputs.version_from }} \
             --version_to ${{ inputs.version_to }} \
             --index_server_from ${{ inputs.index_server_from }} \

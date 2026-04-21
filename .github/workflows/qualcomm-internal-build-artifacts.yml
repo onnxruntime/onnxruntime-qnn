@@ -93,7 +93,9 @@ jobs:
       run_tests: false
       # Upload the test archive with the first Python version we encounter
       upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_aarch64_manylinux_2_34_target_py_vsns)[0] }}
-      upload_wheel: false
+      # Build Zip with the first Python version we encounter
+      build_zip: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_aarch64_manylinux_2_34_target_py_vsns)[0] }}
+      upload_zip: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_aarch64_manylinux_2_34_target_py_vsns)[0] }}
 
   build-linux-aarch64-oe-gcc11_2:
       if: ${{ inputs.build_linux_aarch64_oe_gcc11_2 }}
