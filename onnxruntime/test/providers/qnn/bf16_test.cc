@@ -61,6 +61,12 @@ namespace test {
                                               float fp32_abs_err = 1e-2f) {
   ORT_UNUSED_PARAMETER(input_shape);
 
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    std::string backend_upper = "htp";
+    backend_upper[0] = std::toupper(backend_upper[0]);
+    GTEST_SKIP() << "Test requires " << backend_upper << " FP32/FP16 support (arch > V68).";
+  }
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["htp_bf16_enable"] = "1";  // Enable BF16 mode

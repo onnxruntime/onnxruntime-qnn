@@ -38,6 +38,14 @@ static void RunMatMulOpTest(const std::vector<int64_t>& shape_0,
                             ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All,
                             const std::string& backend_name = "cpu",
                             int opset = 18, float f32_abs_err = 1e-4f) {
+  if (backend_name == "htp" || backend_name == "gpu") {
+    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+      std::string backend_upper = backend_name;
+      backend_upper[0] = std::toupper(backend_upper[0]);
+      GTEST_SKIP() << "Test requires " << backend_upper << " FP32/FP16 support (arch > V68).";
+    }
+  }
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
@@ -164,6 +172,13 @@ static void RunQDQMatMulOpTest(const std::vector<int64_t>& shape_0, const std::v
                                ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All,
                                int opset = 21, bool use_contrib_qdq = false,
                                QDQTolerance tolerance = QDQTolerance()) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    if (std::is_same_v<Input0QType, uint16_t> || std::is_same_v<Input0QType, int16_t> ||
+        std::is_same_v<Input0QType, Int4x2> || std::is_same_v<Input0QType, UInt4x2>) {
+      GTEST_SKIP() << "Test requires HTP INT4 or INT16 support (arch > V68).";
+    }
+  }
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";

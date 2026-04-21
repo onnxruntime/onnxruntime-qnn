@@ -318,6 +318,14 @@ static void RunConvOpTest(const std::string& conv_op_type, const TestInputDef<fl
                           const std::string& backend_name = "cpu",
                           int opset = 13,
                           float fp32_abs_err = 1e-5f) {
+  if (backend_name == "htp" || backend_name == "gpu") {
+    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+      std::string backend_upper = backend_name;
+      backend_upper[0] = std::toupper(backend_upper[0]);
+      GTEST_SKIP() << "Test requires " << backend_upper << " FP32/FP16 support (arch > V68).";
+    }
+  }
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
@@ -592,6 +600,13 @@ static void RunHTPConvOpTest(const std::string& conv_op_type, const TestInputDef
                              QDQTolerance tolerance = QDQTolerance(),
                              std::optional<OutputActivationInfo> output_activation = std::nullopt,
                              std::optional<std::vector<int64_t>> output_shape = std::nullopt) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    if (std::is_same_v<ActivationQType, uint16_t> || std::is_same_v<ActivationQType, int16_t> ||
+        std::is_same_v<ActivationQType, Int4x2> || std::is_same_v<ActivationQType, UInt4x2>) {
+      GTEST_SKIP() << "Test requires HTP INT4 or INT16 support (arch > V68).";
+    }
+  }
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -625,6 +640,13 @@ static void RunHTPConvOpPerChannelTest(const std::string& conv_op_type, const Te
                                        int opset = 13,
                                        QDQTolerance tolerance = QDQTolerance(),
                                        std::optional<OutputActivationInfo> output_activation = std::nullopt) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    if (std::is_same_v<ActivationQType, uint16_t> || std::is_same_v<ActivationQType, int16_t> ||
+        std::is_same_v<ActivationQType, Int4x2> || std::is_same_v<ActivationQType, UInt4x2>) {
+      GTEST_SKIP() << "Test requires HTP INT4 or INT16 support (arch > V68).";
+    }
+  }
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";

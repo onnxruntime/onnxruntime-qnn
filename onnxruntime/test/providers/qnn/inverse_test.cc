@@ -24,6 +24,16 @@ static void RunInverseTest(const std::vector<TestInputDef<DataType>>& input_defs
                            float fp32_abs_err = 1e-5,
                            const std::string& backend_name = "cpu",
                            int opset = 13) {
+  if (backend_name == "htp" || backend_name == "gpu") {
+    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+      if (std::is_same_v<DataType, float> || std::is_same_v<DataType, Ort::Float16_t>) {
+        std::string backend_upper = backend_name;
+        backend_upper[0] = std::toupper(backend_upper[0]);
+        GTEST_SKIP() << "Test requires " << backend_upper << " FP32/FP16 support (arch > V68).";
+      }
+    }
+  }
+
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = backend_name;
@@ -116,6 +126,13 @@ static void RunQDQInverseOpTest(const TestInputDef<float>& input_defs,
                                 ExpectedEPNodeAssignment expected_ep_assignment,
                                 QDQTolerance tolerance = QDQTolerance(),  // Default 0.4%
                                 int opset = 18) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    if (std::is_same_v<QuantType, uint16_t> || std::is_same_v<QuantType, int16_t> ||
+        std::is_same_v<QuantType, Int4x2> || std::is_same_v<QuantType, UInt4x2>) {
+      GTEST_SKIP() << "Test requires HTP INT4 or INT16 support (arch > V68).";
+    }
+  }
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";

@@ -103,9 +103,11 @@ static void RunCastOpTest(const std::vector<int64_t>& shape, ONNX_NAMESPACE::Ten
                           ExpectedEPNodeAssignment expected_ep_assignment,
                           const std::string& backend_name = "cpu",
                           bool enable_fp16_precision = true) {
-  if (backend_name == "htp" && enable_fp16_precision) {
+  if ((backend_name == "htp" || backend_name == "gpu") && enable_fp16_precision) {
     if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-      GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+      std::string backend_upper = backend_name;
+      backend_upper[0] = std::toupper(backend_upper[0]);
+      GTEST_SKIP() << "Test requires " << backend_upper << " FP32/FP16 support (arch > V68).";
     }
   }
 
@@ -118,8 +120,12 @@ static void RunCastOpTest(const std::vector<int64_t>& shape, ONNX_NAMESPACE::Ten
 static void RunCastFP64OpTest(const std::vector<int64_t>& shape,
                               ExpectedEPNodeAssignment expected_ep_assignment,
                               const std::string& backend_name = "cpu") {
-  if (backend_name == "htp" && QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  if (backend_name == "htp" || backend_name == "gpu") {
+    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+      std::string backend_upper = backend_name;
+      backend_upper[0] = std::toupper(backend_upper[0]);
+      GTEST_SKIP() << "Test requires " << backend_upper << " FP32/FP16 support (arch > V68).";
+    }
   }
 
   RunQnnModelTest(BuildCastFP64TestCase(shape),

@@ -64,18 +64,23 @@ static GetTestQDQModelFn<QuantType> BuildQDQTransposeTestCase(const TestInputDef
   };
 }
 
-/**
- * Runs an Transpose model on the QNN HTP backend. Checks the QDQ graph node assignment, and that inference
- * outputs for QNN and CPU match.
- *
- * \param input_def The data (int32_t) input's definition (shape, is_initializer, data).
- * \attrs node attributes
- * \param expected_ep_assignment How many nodes are expected to be assigned to QNN (All, Some, or None).
- */
+// Runs an Transpose model on the QNN HTP backend. Checks the QDQ graph node assignment, and that inference
+// outputs for QNN and CPU match.
+//
+// \param input_def The data (int32_t) input's definition (shape, is_initializer, data).
+// \attrs node attributes
+// \param expected_ep_assignment How many nodes are expected to be assigned to QNN (All, Some, or None).
 template <typename QuantType = uint8_t>
 static void RunTransposeQDQTest(const TestInputDef<float>& input_def,
                                 const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                 ExpectedEPNodeAssignment expected_ep_assignment) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    if (std::is_same_v<QuantType, uint16_t> || std::is_same_v<QuantType, int16_t> ||
+        std::is_same_v<QuantType, Int4x2> || std::is_same_v<QuantType, UInt4x2>) {
+      GTEST_SKIP() << "Test requires HTP INT4 or INT16 support (arch > V68).";
+    }
+  }
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -101,6 +106,12 @@ static void RunTransposeNonQDQOnHTP(const TestInputDef<DataType>& input_def,
                                     const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                     ExpectedEPNodeAssignment expected_ep_assignment,
                                     float fp32_abs_err = 1e-5f) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    if (std::is_same_v<DataType, float> || std::is_same_v<DataType, Ort::Float16_t>) {
+      GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+    }
+  }
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 

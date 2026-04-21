@@ -49,6 +49,14 @@ static void RunArgMxxOpTest(const std::string& op_type, TestInputDef<float> inpu
 
   provider_options["backend_type"] = backend_name;
 
+  if (backend_name == "htp" || backend_name == "gpu") {
+    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+      std::string backend_upper = backend_name;
+      backend_upper[0] = std::toupper(backend_upper[0]);
+      GTEST_SKIP() << "Test requires " << backend_upper << " FP32/FP16 support (arch > V68).";
+    }
+  }
+
   RunQnnModelTest(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, attrs),
                   provider_options,
                   opset,
@@ -66,6 +74,13 @@ static void RunQDQArgMxxOpTest(const std::string& op_type, TestInputDef<float> i
 
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
+
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    if (std::is_same_v<QType, uint16_t> || std::is_same_v<QType, int16_t> ||
+        std::is_same_v<QType, Int4x2> || std::is_same_v<QType, UInt4x2>) {
+      GTEST_SKIP() << "Test requires HTP INT4 or INT16 support (arch > V68).";
+    }
+  }
 
   TestQDQModelAccuracy(BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, attrs),  // baseline float32 model
                        BuildQDQArgMxxTestCase<QType>(op_type, input_def, attrs),                    // QDQ model

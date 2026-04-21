@@ -203,6 +203,13 @@ static void RunQDQResizeOpTest(const TestInputDef<float>& input_def,
                                const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                                std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
                                std::optional<float> cubic_coeff_a = std::nullopt) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    if (std::is_same_v<QuantType, uint16_t> || std::is_same_v<QuantType, int16_t> ||
+        std::is_same_v<QuantType, Int4x2> || std::is_same_v<QuantType, UInt4x2>) {
+      GTEST_SKIP() << "Test requires HTP INT4 or INT16 support (arch > V68).";
+    }
+  }
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";

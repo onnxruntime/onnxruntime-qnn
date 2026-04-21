@@ -22,6 +22,10 @@ namespace test {
 // Test RandomNormalLike + Add to verify the output can be consumed by a downstream op.
 // This tests the full HTP path: RandomNormalLike (uint8) -> Dequantize -> Add -> output.
 TEST_F(QnnHTPBackendTests, RandomNormalLike_AddDownstream) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
+
   auto build_test_case = [](ModelTestBuilder& builder) {
     std::vector<float> input_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f,
                                      7.0f, 8.0f, 9.0f, 10.0f, 11.0f, 12.0f};

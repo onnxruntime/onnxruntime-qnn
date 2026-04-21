@@ -25,6 +25,12 @@ static void RunStftOpTest(const TestInputDef<SignalType>& signal_def,
                           int opset_version = 17,
                           ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All,
                           float fp32_abs_err = 1e-3f) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    if (std::is_same_v<SignalType, float> || std::is_same_v<SignalType, Ort::Float16_t>) {
+      GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+    }
+  }
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";

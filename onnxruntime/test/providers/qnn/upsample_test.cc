@@ -23,6 +23,14 @@ static void RunUpsampleTestOnCPU(const TestInputDef<DataType>& input_def,
                                  std::vector<ONNX_NAMESPACE::AttributeProto>&& attrs,
                                  ExpectedEPNodeAssignment expected_ep_assignment,
                                  int opset = 9) {
+  if (opset >= 9) {
+    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+      if (std::is_same_v<DataType, float> || std::is_same_v<DataType, Ort::Float16_t>) {
+        GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+      }
+    }
+  }
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
   provider_options["offload_graph_io_quantization"] = "0";

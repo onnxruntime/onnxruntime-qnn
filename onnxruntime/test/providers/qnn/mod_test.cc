@@ -23,6 +23,12 @@ static void RunModTest(const std::vector<TestInputDef<DataType>>& input_defs,
                        ExpectedEPNodeAssignment expected_ep_assignment,
                        const std::string& backend_name = "cpu",
                        int opset = 13) {
+  if (backend_name == "htp") {
+    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+      GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+    }
+  }
+
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = backend_name;

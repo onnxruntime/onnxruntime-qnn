@@ -23,6 +23,16 @@ static void RunReshapeExpandTest(const std::string& op_type,
                                  ExpectedEPNodeAssignment expected_ep_assignment,
                                  const std::string& backend_name = "cpu",
                                  int opset = 19) {
+  if (backend_name == "htp" || backend_name == "gpu") {
+    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+      if (std::is_same_v<DataType, float> || std::is_same_v<DataType, Ort::Float16_t>) {
+        std::string backend_upper = backend_name;
+        backend_upper[0] = std::toupper(backend_upper[0]);
+        GTEST_SKIP() << "Test requires " << backend_upper << " FP32/FP16 support (arch > V68).";
+      }
+    }
+  }
+
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = backend_name;

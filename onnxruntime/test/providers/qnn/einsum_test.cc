@@ -33,6 +33,14 @@ static void RunQnnEinsum(
     const TestInputDef<DataType>& in1,
     const std::string& equation,
     const float tolerance) {
+  if (backend == "htp" || backend == "gpu") {
+    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+      std::string backend_upper = backend;
+      backend_upper[0] = std::toupper(backend_upper[0]);
+      GTEST_SKIP() << "Test requires " << backend_upper << " FP32/FP16 support (arch > V68).";
+    }
+  }
+
   ProviderOptions provider_options;
   provider_options[kQnnBackendType] = backend;
   provider_options[kOffloadGraphIoQuantization] = kOffloadGraphIoQuantizationDisable;

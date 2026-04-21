@@ -49,6 +49,10 @@ static void RunNonZeroTest(const GetTestModelFn& build_test_case,
                            ExpectedEPNodeAssignment expected_ep_assignment =
                                ExpectedEPNodeAssignment::All,
                            ProviderOptions provider_options = HtpProviderOptions()) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
+
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
   ModelTestBuilder helper;
   build_test_case(helper);

@@ -21,6 +21,13 @@ static void RunLeakyReluOpQDQTest(const TestInputDef<float>& input_def,
                                   const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                   int opset,
                                   ExpectedEPNodeAssignment expected_ep_assignment) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    if (std::is_same_v<QuantType, uint16_t> || std::is_same_v<QuantType, int16_t> ||
+        std::is_same_v<QuantType, Int4x2> || std::is_same_v<QuantType, UInt4x2>) {
+      GTEST_SKIP() << "Test requires HTP INT4 or INT16 support (arch > V68).";
+    }
+  }
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
