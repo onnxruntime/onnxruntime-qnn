@@ -529,6 +529,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
       }
     } else if (!backend_path_option.empty()) {
       backend_path_from_options = backend_path_option;
+      genie_backend_path_ = backend_path_option;
     }
 
     // Use the determined backend path or default

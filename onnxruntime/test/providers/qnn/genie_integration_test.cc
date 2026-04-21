@@ -232,29 +232,46 @@ TEST_F(GenieSessionTest, Compute_InvokesExpectedApiSequence) {
 }
 
 // ---------------------------------------------------------------------------
-// Test: a second session reuses the already-loaded Genie backend library.
-// SetupBackend() returns early via backend_setup_completed_ without re-running
-// LoadLib, so library-level init calls are not duplicated across sessions.
+// Test: two sequential sessions backed by the same EP registration both
+// succeed end-to-end.  The second session reuses ep1's already-registered
+// OrtEpDevice directly (via AppendExecutionProvider_V2) rather than calling
+// RegisterQnnEpLibrary again, which would fail because the ORT environment
+// rejects duplicate registrations for the same name.
 // ---------------------------------------------------------------------------
-TEST_F(GenieSessionTest, SetupBackend_AlreadySetup_IsIdempotent) {
+TEST_F(GenieSessionTest, TwoSequentialSessions_BothSucceed) {
   void* h = LoadMockLib();
   auto reset = reinterpret_cast<void (*)()>(GetSym(h, "ResetMockGenieCallCounts"));
   auto get_count = reinterpret_cast<int (*)(const char*)>(GetSym(h, "GetMockGenieCallCount"));
   ASSERT_NE(reset, nullptr);
   ASSERT_NE(get_count, nullptr);
 
-  // First session creation runs SetupBackend() + CreateStateImpl once.
+  // First session — registers the EP library and creates the backend.
   RegisteredEpDeviceUniquePtr ep1;
   Ort::Session session1 = MakeGenieSession(*env_, ep1);
   reset();
 
-  // Second session with the same process reuses the loaded library.
-  // SetupBackend() returns early, so no second library-init path is triggered.
-  // DlcConfig_create is called once per node (session-level), not per library load.
-  RegisteredEpDeviceUniquePtr ep2;
-  Ort::Session session2 = MakeGenieSession(*env_, ep2);
+  // Second session — reuse ep1's registration; do NOT call RegisterQnnEpLibrary.
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+  ModelTestBuilder helper;
+  CreateDlcContextGraph()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{
+        helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
 
-  // DlcConfig_create is called once per node (session-level) in session2.
+  Ort::SessionOptions so2;
+  ProviderOptions provider_options;
+  provider_options["backend_path"] = kMockGeniePath;
+  so2.AppendExecutionProvider_V2(*GetOrtEnv(), {Ort::ConstEpDevice(ep1.get())}, provider_options);
+  Ort::Session session2(*env_, model_data_span.data(), model_data_span.size(), so2);
+
+  // session2's CreateStateImpl ran exactly once.
   EXPECT_EQ(get_count("DlcConfig_create"), 1);
 }
 
