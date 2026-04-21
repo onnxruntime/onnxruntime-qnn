@@ -48,7 +48,7 @@ jobs:
       windows_target_archs: ${{ inputs.windows_target_archs }}
       windows_target_py_vsns: ${{ inputs.windows_target_py_vsns }}
       windows_arm64_build_nuget: true
-      windows_arm64_build_zip: true
+      windows_arm64_build_archive: true
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
 
