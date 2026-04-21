@@ -100,7 +100,7 @@ class BuildEpLinuxTask(BashScriptsWithVenvTask):
             cmd.append(f"--qairt-sdk-root={qairt_sdk_root}")
 
         if build_zip:
-            cmd.append("--build-zip")
+            cmd.append("--build-tgz")
 
         if extra_args is not None:
             cmd.extend(extra_args)
