@@ -80,9 +80,6 @@ sed --in-place=".bak" "s@${orig_build_dir}@${build_dir}@g" CTestTestfile.cmake
 log_info "-=-=-=- Running ctests -=-=-=-"
 # TODO: [AISW-164203] ORT test failures on Rubik Pi
 exclude_args=()
-if [ "$(uname -m)" == "aarch64" ]; then
-    exclude_args+=(--exclude-regex "onnxruntime_provider_test")
-fi
 count_errors ./ctest --verbose --timeout 10800 --stop-on-failure "${exclude_args[@]}"
 
 # TODO: We will support python wheel in linux
