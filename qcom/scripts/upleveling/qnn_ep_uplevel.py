@@ -119,7 +119,7 @@ class ArtifactUpleveler(ABC):
     def _get_credentials(self, repository_index: str) -> tuple[str, str]:
         """Helper method to get credentials from environment variables."""
         return self.credential_manager.get_credentials(repository_index)
-    
+
     def _should_skip_artifact(self, artifact_filename: str) -> bool:
         """Return True if this artifact should be skipped during download. Override in subclasses."""
         return False
@@ -245,7 +245,7 @@ class WheelUpleveler(ArtifactUpleveler):
 
     def _should_skip_artifact(self, artifact_filename: str) -> bool:
         """Skip non-Linux wheels. Only publish manylinux wheels."""
-        return artifact_filename.endswith("win_amd64.whl") or artifact_filename.endswith("win_arm64.whl")
+        return artifact_filename.endswith(("win_amd64.whl", "win_arm64.whl"))
 
     def update_artifacts(self, artifact_list: list[str], input_dir: str, output_dir: str) -> None:
         """Update wheel package versions."""
