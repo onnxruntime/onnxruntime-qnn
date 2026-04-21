@@ -153,5 +153,7 @@ void CreateTanOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_r
 
 void CreateRoiAlignOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 
+void CreateNonZeroOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+
 }  // namespace qnn
 }  // namespace onnxruntime

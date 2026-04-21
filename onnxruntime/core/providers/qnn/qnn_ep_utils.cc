@@ -1613,7 +1613,8 @@ void OrtSelectorManager::CreateSelectors() {
   // Register drop DQ ops
   OrtOpVersionsAndSelector::OpVersionsMap drop_dq_ops = {
       {"ArgMax", {}},
-      {"ArgMin", {}}};
+      {"ArgMin", {}},
+      {"NonZero", {}}};
   ort_selectors_.RegisterSelector(drop_dq_ops, std::make_unique<OrtDropDQNodeGroupSelector>());
 
   // Register unary ops
