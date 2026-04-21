@@ -388,6 +388,84 @@ TEST_F(QnnCPUBackendTests, Resize_DownSample_Linear_HalfPixel_scales) {
 // HTP tests:
 //
 
+// Test QDQ Resize mode: "linear", coordinate_transformation_mode: "tf_half_pixel_for_nn"
+// QNN has no dedicated tf_half_pixel_for_nn mode; it is mapped to HALF_PIXEL as the closest
+// equivalent. The reference float model also uses half_pixel so that accuracy is checked
+// against what QNN actually computes, not against the differing tf_half_pixel_for_nn formula.
+TEST_F(QnnHTPBackendTests, ResizeU8_2xLinearTfHalfPixelForNN) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  const TestInputDef<float> input_def({1, 3, 4, 4}, false, input_data);
+  const std::vector<int64_t> sizes_data = {1, 3, 8, 8};
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  // Reference float model uses half_pixel (what QNN maps tf_half_pixel_for_nn to).
+  auto float_builder = GetResizeModelBuilder(input_def, sizes_data, "linear", "half_pixel", "");
+
+  TestQDQModelAccuracy(float_builder,
+                       GetQDQResizeModelBuilder<uint8_t>(input_def, sizes_data, "linear",
+                                                         "tf_half_pixel_for_nn", ""),
+                       provider_options,
+                       19,
+                       ExpectedEPNodeAssignment::All);
+}
+
+// Test QDQ Resize mode: "nearest", coordinate_transformation_mode: "tf_half_pixel_for_nn",
+// nearest_mode: "round_prefer_floor".
+// QNN has no dedicated tf_half_pixel_for_nn mode; mapped to HALF_PIXEL as the closest equivalent.
+// Reference float model uses half_pixel to match what QNN actually computes.
+TEST_F(QnnHTPBackendTests, ResizeU8_2xNearestTfHalfPixelForNN_RoundPreferFloor) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  const TestInputDef<float> input_def({1, 3, 4, 4}, false, input_data);
+  const std::vector<int64_t> sizes_data = {1, 3, 8, 8};
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  // Reference float model uses half_pixel (what QNN maps tf_half_pixel_for_nn to).
+  auto float_builder = GetResizeModelBuilder(input_def, sizes_data, "nearest", "half_pixel",
+                                             "round_prefer_floor");
+
+  TestQDQModelAccuracy(float_builder,
+                       GetQDQResizeModelBuilder<uint8_t>(input_def, sizes_data, "nearest",
+                                                         "tf_half_pixel_for_nn", "round_prefer_floor"),
+                       provider_options,
+                       19,
+                       ExpectedEPNodeAssignment::All);
+}
+
+// Test QDQ Resize mode: "cubic", coordinate_transformation_mode: "tf_half_pixel_for_nn"
+// QNN has no dedicated tf_half_pixel_for_nn mode; mapped to HALF_PIXEL as the closest equivalent.
+// Reference float model uses half_pixel to match what QNN actually computes.
+// GraphOptimizationLevel::ORT_DISABLE_ALL prevents DQ->Resize->Q folding that would bypass QNN.
+TEST_F(QnnHTPBackendTests, ResizeU8_2xCubicTfHalfPixelForNN) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  const TestInputDef<float> input_def({1, 3, 4, 4}, false, input_data);
+  const std::vector<int64_t> sizes_data = {1, 3, 8, 8};
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  // Reference float model uses half_pixel (what QNN maps tf_half_pixel_for_nn to).
+  auto float_builder = GetResizeModelBuilder(input_def, sizes_data, "cubic", "half_pixel", "");
+
+  TestQDQModelAccuracy(float_builder,
+                       GetQDQResizeModelBuilder<uint8_t>(input_def, sizes_data, "cubic",
+                                                         "tf_half_pixel_for_nn", ""),
+                       provider_options,
+                       19,
+                       ExpectedEPNodeAssignment::All,
+                       QDQTolerance(),
+                       OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                       "",
+                       {},
+                       GraphOptimizationLevel::ORT_DISABLE_ALL);
+}
+
 // Test QDQ Resize downsample with mode: "linear", coordinate_transformation_mode: "align_corners"
 // Maps to QNN's ResizeBilinear operator.
 TEST_F(QnnHTPBackendTests, Resize_DownSample_Linear_AlignCorners) {
