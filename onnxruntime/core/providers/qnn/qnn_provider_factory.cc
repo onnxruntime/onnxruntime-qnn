@@ -1,20 +1,19 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License
 
+#include "core/providers/qnn/qnn_provider_factory.h"
+
 #include <cassert>
 #include <iostream>
 #include <optional>
 
 #include "onnxruntime_c_api.h"
-
+#include "onnxruntime_ep_device_ep_metadata_keys.h"
 #include "QnnCommon.h"
 
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_allocator.h"
 #include "core/providers/qnn/soc_utils.h"
-#include "core/session/abi_devices.h"
-#include "core/session/onnxruntime_ep_device_ep_metadata_keys.h"
-#include "core/providers/qnn/qnn_provider_factory.h"
 
 // We allow `backend_type` (e.g., `htp`) or `backend_path` in relative path (e.g., `QnnHtp.dll`) for configurations,
 // and QnnBackendManager will later find the appropriate library and load it relative to the OnnxRuntime library.

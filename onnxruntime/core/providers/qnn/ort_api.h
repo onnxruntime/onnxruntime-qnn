@@ -19,14 +19,15 @@
 // Includes when building QNN EP as a shared library
 // #include "core/providers/shared_library/provider_api.h"
 #define ORT_API_MANUAL_INIT
-#include "onnxruntime_cxx_api.h"
 
+// Public headers from ORT Core
 #include "onnxruntime_c_api.h"
+#include "onnxruntime_cxx_api.h"
+#include "onnxruntime_run_options_config_keys.h"
+#include "onnxruntime_session_options_config_keys.h"
 
 #include "core/providers/qnn/common/inlined_containers.h"
 #include "core/providers/qnn/common/int4.h"
-#include "onnxruntime_session_options_config_keys.h"
-#include "onnxruntime_run_options_config_keys.h"
 
 namespace onnxruntime {
 
