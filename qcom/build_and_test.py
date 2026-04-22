@@ -25,6 +25,7 @@ from ep_build.plan import (
     task,
 )
 from ep_build.task import (
+    BashScriptsWithVenvTask,
     CompositeTask,
     ConvertArchiveTask,
     ExtractArchiveTask,
@@ -522,6 +523,42 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
+                )
+            )
+
+    if is_host_linux() and is_host_x86_64():
+
+        @public_task("Build with code coverage and generate HTML report (Linux x86_64, always Debug)")
+        @depends(["create_venv"])
+        def coverage_linux_x86_64(self, plan: Plan) -> str:
+            build_dir = REPO_ROOT / "build" / "linux-x86_64"
+            return plan.add_step(
+                CompositeTask(
+                    "Coverage build, test, and report",
+                    [
+                        BuildEpLinuxTask(
+                            "Building ONNX Runtime for Linux (Debug + coverage)",
+                            self.__venv_path,
+                            "linux",
+                            "x86_64",
+                            "Debug",
+                            self.__target_py_version,
+                            self.__ort_prebuilt_root,
+                            self.__qairt_sdk_root,
+                            "build",
+                            extra_args=["--enable-coverage"],
+                        ),
+                        BashScriptsWithVenvTask(
+                            "Generating HTML coverage report",
+                            self.__venv_path,
+                            [
+                                [
+                                    str(REPO_ROOT / "qcom" / "scripts" / "linux" / "generate_coverage.sh"),
+                                    f"--build-dir={build_dir}",
+                                ]
+                            ],
+                        ),
+                    ],
                 )
             )
 

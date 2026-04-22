@@ -39,6 +39,7 @@ use_cache=1
 warnings_as_errors=1
 build_java=
 build_archive=
+enable_coverage=
 for i in "$@"; do
   case $i in
     --build-archive)
@@ -63,6 +64,10 @@ for i in "$@"; do
       ;;
     --build-java)
       build_java=1
+      shift
+      ;;
+    --enable-coverage)
+      enable_coverage=1
       shift
       ;;
     --ort-home=*)
@@ -297,6 +302,10 @@ else
     fi
     if [[ "${ORT_NIGHTLY_BUILD:-}" == "1" ]]; then
       package_args+=(--wheel_name_suffix "qcom-internal")
+    fi
+
+    if [ -n "${enable_coverage}" ]; then
+      export ENABLE_COVERAGE=1
     fi
 
     "${python_for_build}" ${REPO_ROOT}/tools/ci_build/build.py \

@@ -71,8 +71,13 @@
 
   # Set linker flags for function(s) exported by EP DLL
   if(UNIX)
+    if("$ENV{ENABLE_COVERAGE}" MATCHES "1|ON|YES|TRUE")
+      set(qnn_version_script "${ONNXRUNTIME_ROOT}/core/providers/qnn/version_script_coverage.lds")
+    else()
+      set(qnn_version_script "${ONNXRUNTIME_ROOT}/core/providers/qnn/version_script.lds")
+    endif()
     target_link_options(onnxruntime_providers_qnn PRIVATE
-                        "LINKER:--version-script=${ONNXRUNTIME_ROOT}/core/providers/qnn/version_script.lds"
+                        "LINKER:--version-script=${qnn_version_script}"
                         "LINKER:--gc-sections"
                         "LINKER:-rpath=\$ORIGIN"
     )
@@ -212,3 +217,16 @@
           LIBRARY   DESTINATION ${CMAKE_INSTALL_LIBDIR}
           RUNTIME   DESTINATION ${CMAKE_INSTALL_BINDIR}
           FRAMEWORK DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# Code Coverage Configuration
+if("$ENV{ENABLE_COVERAGE}" MATCHES "1|ON|YES|TRUE")
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        target_compile_options(onnxruntime_providers_qnn PRIVATE
+            --coverage
+            -g
+            -O0
+            -fprofile-abs-path
+        )
+        target_link_options(onnxruntime_providers_qnn PRIVATE --coverage)
+    endif()
+endif()
