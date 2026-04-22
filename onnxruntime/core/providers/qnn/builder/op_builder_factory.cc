@@ -28,6 +28,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateGatherNDOpBuilder("GatherND", *this);
   CreateGemmOpBuilder("Gemm", *this);
   CreateGroupNormOpBuilder("GroupNormalization", *this);
+  CreateIdentityOpBuilder("Identity", *this);
   CreateInstanceNormOpBuilder("InstanceNormalization", *this);
   CreateInverseOpBuilder("Inverse", *this);
   CreateIsNanOpBuilder("IsNaN", *this);
