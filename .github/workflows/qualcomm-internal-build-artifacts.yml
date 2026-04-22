@@ -84,7 +84,6 @@ jobs:
     with:
       target_os: android
       target_arch: aarch64
-      test_aar: ${{ inputs.build_android_aarch64_aar }}
 
   build-linux-aarch64-manylinux_2_34:
     if: ${{ toJSON(fromJSON(inputs.linux_aarch64_manylinux_2_34_target_py_vsns)) != '[]' }}

@@ -85,7 +85,7 @@ if (aarPath != null || qnnEpJniLibsDir != null) {
 					}
 				}
 				pom {
-					name        = 'onnxruntime-qnn'
+					name        = 'onnxruntime-android-qnn'
 					description = 'QNN Execution Provider plugin for ONNX Runtime Android.'
 					url = 'https://github.com/onnxruntime/onnxruntime-qnn/blob/main/docs/execution_providers/QNN-ExecutionProvider.md'
 					licenses {

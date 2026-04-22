@@ -215,7 +215,7 @@ jobs:
       - name: Download aarch64 Android Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
-          name: android-aarch64-aar-pyNone-tests
+          name: android-aarch64-pyNone-tests
 
       - name: Download aarch64 OE GCC 11.2 Linux Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact

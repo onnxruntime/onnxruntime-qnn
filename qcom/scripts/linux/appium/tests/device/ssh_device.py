@@ -39,9 +39,6 @@ class SshDevice(DeviceBase):
             return res.stdout.decode("utf-8").split("\n")
         return None
 
-    def install(self, apk_path: Path, reinstall: bool = True) -> None:
-        raise NotImplementedError("install() is only supported on Android (adb) devices.")
-
     def __rsync(self, src: str, dest: str) -> None:
         # We avoid -a because it can cause directories to be created that we cannot write to.
         # fmt: off

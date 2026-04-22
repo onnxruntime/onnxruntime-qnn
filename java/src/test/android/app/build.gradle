@@ -62,8 +62,13 @@ def getAvailableVersion(String artifact, String requestedVersion, String checkVe
 			dependencies.create("${artifact}:${requestedVersion}")
 		).resolve()
 		return requestedVersion
-	} catch (Exception e) {
-		logger.warn("${artifact}:${requestedVersion} not found in Maven repository, falling back to ${fallbackVersion}")
+	} catch (org.gradle.api.artifacts.ResolveException e) {
+		// Only fall back when the artifact genuinely cannot be resolved (not found in any
+		// configured repository). Network/TLS/credential failures must NOT be silently
+		// swallowed — they would surface here with a different exception type and we want
+		// them to propagate so a broken Maven mirror in CI is obvious instead of producing
+		// a misleading fallback.
+		logger.warn("${artifact}:${requestedVersion} not found in Maven repository (${e.class.simpleName}: ${e.message}); falling back to ${fallbackVersion}")
 		return fallbackVersion
 	}
 }

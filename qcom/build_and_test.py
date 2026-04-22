@@ -441,6 +441,8 @@ class TaskLibrary:
         def build_ort_android_aarch64(self, plan: Plan) -> str:
             if is_host_linux() or is_host_mac():
                 extra_args = ["--no-warnings-as-errors"]
+                if self.__build_aar:
+                    extra_args.append("--build-java")
                 return plan.add_step(
                     BuildEpLinuxTask(
                         "Building ONNX Runtime for Android",
@@ -452,7 +454,7 @@ class TaskLibrary:
                         self.__ort_prebuilt_root,
                         self.__qairt_sdk_root,
                         "build",
-                        extra_args=[*extra_args, "--build-java"] if self.__build_aar else extra_args,
+                        extra_args=extra_args,
                     )
                 )
             else:

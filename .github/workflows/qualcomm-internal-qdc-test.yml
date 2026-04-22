@@ -16,10 +16,6 @@ on:
       target_arch:
         default: aarch64
         type: string
-      test_aar:
-        description: "If true, download the AAR-flavored test archive (with '-aar' in the artifact name)."
-        default: false
-        type: boolean
   workflow_dispatch:
     inputs:
       target_os:
@@ -33,10 +29,6 @@ on:
           [Linux] aarch64_oe_gcc11_2.
         default: aarch64
         type: string
-      test_aar:
-        description: "If true, download the AAR-flavored test archive (with '-aar' in the artifact name)."
-        default: false
-        type: boolean
 
 env:
   # The QDC results folder is a bit odd
@@ -67,7 +59,7 @@ jobs:
       - name: Download Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}${{ inputs.test_aar == true && '-aar' || '' }}-pyNone-tests"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-pyNone-tests"
 
       - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} pynone
         env:
@@ -90,7 +82,7 @@ jobs:
         uses: mikepenz/action-junit-report@v6
         if: always() # always run even if the previous step fails
         with:
-          check_name: ${{inputs.target_os}}-${{inputs.target_arch}}${{ inputs.test_aar == true && '-aar' || '' }}-pynone-test-results
+          check_name: ${{inputs.target_os}}-${{inputs.target_arch}}-pynone-test-results
           group_reports: false
           include_passed: true
           detailed_summary: true
@@ -101,7 +93,7 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always() # always run even if the previous step fails
         with:
-          name: ORT ${{inputs.target_os}} ${{inputs.target_arch}}${{ inputs.test_aar == true && ' aar' || '' }} pynone Test Results
+          name: ORT ${{inputs.target_os}} ${{inputs.target_arch}} pynone Test Results
           path: |
             ${{ github.workspace }}/build/qdc-${{ env.QDC_RESULTS_ARCH }}/*.results.xml
             ${{ github.workspace }}/build/qdc-${{ env.QDC_RESULTS_ARCH }}/*.txt
