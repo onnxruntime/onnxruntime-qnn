@@ -79,8 +79,8 @@ sed --in-place=".bak" "s@${orig_build_dir}@${build_dir}@g" CTestTestfile.cmake
 
 log_info "-=-=-=- Running ctests -=-=-=-"
 
-export LD_LIBRARY_PATH=${build_dir}
-export ADSP_LIBRARY_PATH=${build_dir}
+export LD_LIBRARY_PATH=${build_dir}/onnxruntime-qnn
+export ADSP_LIBRARY_PATH=${build_dir}/onnxruntime-qnn
 
 log_info "LD Library Path: ${LD_LIBRARY_PATH}"
 log_info "ADSP Library Path: ${ADSP_LIBRARY_PATH}"
