@@ -109,6 +109,10 @@ TEST_F(QnnCPUBackendTests, MaxPool_Global) {
 }
 
 TEST_F(QnnCPUBackendTests, MaxPool_Rank3) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+      GTEST_SKIP() << "Skipping this test (arch > V68).";
+    }
+  }
   RunPoolOpTest("MaxPool",
                 TestInputDef<float>({1, 16, 120}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                 {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
