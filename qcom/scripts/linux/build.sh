@@ -37,8 +37,14 @@ qnn_arch_abi=
 target_py_version=
 use_cache=1
 warnings_as_errors=1
+build_java=
+build_tgz=
 for i in "$@"; do
   case $i in
+    --build-tgz)
+      build_tgz=1
+      shift
+      ;;
     --config=*)
       config="${i#*=}"
       shift
@@ -111,7 +117,6 @@ common_args=(--cmake_generator "${cmake_generator}" \
              --config "${config}" \
              --parallel \
              --build_dir "${build_dir}" \
-             --wheel_name_suffix qcom-internal \
 )
 
 if [ -n "${qnn_arch_abi}" ]; then
@@ -161,7 +166,7 @@ case "${target_platform}" in
       qnn_args+=("--ort_home")
       qnn_args+=("${ort_prebuilt_root}")
     fi
-    platform_args=(--build_shared_lib)
+    platform_args=(--build_shared_lib --cmake_extra_defines CMAKE_BUILD_RPATH_USE_ORIGIN:BOOL=TRUE)
 
     test_runner="${REPO_ROOT}/qcom/scripts/linux/run_tests.sh"
 
@@ -272,11 +277,24 @@ else
 
     python "${REPO_ROOT}/qcom/scripts/all/fetch_cmake_deps.py"
 
+    package_args=()
+    if [ -n "${build_tgz}" ]; then
+      log_info "Building tgz asset."
+      package_args+=(--build_zip_asset)
+    fi
+    if [ -n "${ORT_VERSION_SUFFIX:-}" ]; then
+      package_args+=(--version_suffix "${ORT_VERSION_SUFFIX}")
+    fi
+    if [[ "${ORT_NIGHTLY_BUILD:-}" == "1" ]]; then
+      package_args+=(--wheel_name_suffix "qcom-internal")
+    fi
+
     "${python_for_build}" ${REPO_ROOT}/tools/ci_build/build.py \
       "${action_args[@]}" \
       "${common_args[@]}" \
       "${qnn_args[@]}" \
-      "${platform_args[@]}"
+      "${platform_args[@]}" \
+      "${package_args[@]}"
   fi
 
   if [ -n "${run_tests}" ]; then

@@ -49,7 +49,7 @@ def get_python_executable(
     version: TargetPyVersionT,
 ) -> Path:
     if not is_host_windows():
-        raise NotImplementedError("Not available on this platform")
+        return Path(f"python{version}")
 
     py_package = f"python_{version.replace('.', '')}_windows_{arch}"
 

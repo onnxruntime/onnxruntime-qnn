@@ -237,7 +237,7 @@ class TaskLibrary:
         """In-container build steps for aarch64-manylinux_2_34. Not to be used outside of Docker."""
         extra_args = [
             "--no-warnings-as-errors",
-            "--qnn-arch-abi=aarch64-ubuntu-gcc9.4",
+            "--qnn-arch-abi=aarch64-oe-linux-gcc11.2",
         ]
 
         env = os.environ.copy()
@@ -260,6 +260,7 @@ class TaskLibrary:
                 "build",
                 extra_args=extra_args,
                 env=env,
+                build_zip=self.__build_zip,
             )
         )
 
@@ -459,6 +460,7 @@ class TaskLibrary:
                 self.__target_py_version,
                 self.__qairt_sdk_root,
                 self.__docker_ccache_root,
+                self.__build_zip,
             ),
         )
 
@@ -634,6 +636,8 @@ class TaskLibrary:
                 build_args={
                     "BUILD_UID": str(os.getuid()),
                     "BUILD_GID": str(os.getgid()),
+                    "ORT_NIGHTLY_BUILD": os.environ.get("ORT_NIGHTLY_BUILD", "0"),
+                    "ORT_VERSION_SUFFIX": os.environ.get("ORT_VERSION_SUFFIX", ""),
                 },
             )
         )
@@ -775,6 +779,38 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "test",
+                )
+            )
+
+    if is_host_linux() and is_host_arm64():
+
+        @task
+        @depends(["build_ort_linux_aarch64_manylinux_2_34"])
+        def test_ort_linux_aarch64_manylinux_2_34_pygpu(self, plan: Plan) -> str:
+            assert self.__target_py_version is not None
+            return plan.add_step(
+                OrtWheelGpuModelTestTask(
+                    "Running GPU model tests on aarch64",
+                    self.__venv_path,
+                    "aarch64_manylinux_2_34",
+                    self.__config,
+                    self.__target_py_version,
+                )
+            )
+
+    if is_host_linux() and is_host_arm64():
+
+        @task
+        @depends(["build_ort_linux_aarch64_manylinux_2_34"])
+        def test_ort_linux_aarch64_manylinux_2_34_pysmoke(self, plan: Plan) -> str:
+            assert self.__target_py_version is not None
+            return plan.add_step(
+                OrtWheelSmokeTestTask(
+                    "Smoke testing aarch64 wheel",
+                    self.__venv_path,
+                    "aarch64_manylinux_2_34",
+                    self.__config,
+                    self.__target_py_version,
                 )
             )
 
