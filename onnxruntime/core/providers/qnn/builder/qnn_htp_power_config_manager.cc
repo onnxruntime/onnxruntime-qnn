@@ -14,7 +14,7 @@ namespace onnxruntime {
 namespace qnn {
 namespace power {
 
-HtpPowerConfigManager::HtpPowerConfigManager(const Ort::Logger logger) : logger_(logger) {
+HtpPowerConfigManager::HtpPowerConfigManager(const Ort::Logger& logger) : logger_ptr_(&logger) {
   constexpr int kMaxNumConfigs = 3;
   power_configs_.reserve(kMaxNumConfigs);
 }
@@ -30,13 +30,13 @@ Ort::Status HtpPowerConfigManager::AddRpcPollingTime(uint32_t rpc_polling_time) 
   RETURN_IF(rpc_polling_time_set_, "There is already a pending RPC polling time config");
 
   if (rpc_polling_time == last_set_rpc_polling_time_) {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Requested rpc polling time is the same as last set (" + std::to_string(last_set_rpc_polling_time_) + "). Ignoring request").c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_VERBOSE,
+                    ("Requested rpc polling time is the same as last set (" + std::to_string(last_set_rpc_polling_time_) + "). Ignoring request").c_str());
   } else {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Updating rpc polling time to: " + std::to_string(rpc_polling_time) + "us.").c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_VERBOSE,
+                    ("Updating rpc polling time to: " + std::to_string(rpc_polling_time) + "us.").c_str());
     auto& rpc_polling_time_cfg = power_configs_.emplace_back();
     rpc_polling_time_cfg.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_RPC_POLLING_TIME;
     rpc_polling_time_cfg.rpcPollingTimeConfig = rpc_polling_time;
@@ -50,15 +50,15 @@ Ort::Status HtpPowerConfigManager::AddRpcPollingTime(uint32_t rpc_polling_time) 
 Ort::Status HtpPowerConfigManager::AddRpcControlLatency(uint32_t rpc_control_latency) {
   RETURN_IF(rpc_control_latency_set_, "There is already a pending RPC control latency config");
   if (rpc_control_latency == last_set_rpc_control_latency_) {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Requested rpc control latency is the same as last set (" +
-                 std::to_string(last_set_rpc_control_latency_) + "). Ignoring request")
-                    .c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_VERBOSE,
+                    ("Requested rpc control latency is the same as last set (" +
+                     std::to_string(last_set_rpc_control_latency_) + "). Ignoring request")
+                        .c_str());
   } else {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Updating rpc control latency to: " + std::to_string(rpc_control_latency) + "us.").c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_VERBOSE,
+                    ("Updating rpc control latency to: " + std::to_string(rpc_control_latency) + "us.").c_str());
     auto& rpc_control_latency_cfg = power_configs_.emplace_back();
     rpc_control_latency_cfg.option = QNN_HTP_PERF_INFRASTRUCTURE_POWER_CONFIGOPTION_RPC_CONTROL_LATENCY;
     rpc_control_latency_cfg.rpcControlLatencyConfig = rpc_control_latency;
@@ -105,18 +105,18 @@ Ort::Status HtpPowerConfigManager::AddHtpPerformanceMode(HtpPerformanceMode htp_
                                                          uint32_t htp_power_config_client_id) {
   RETURN_IF(htp_performance_mode_set_, "There is already a pending HTP performance mode config");
   if (htp_performance_mode == last_set_htp_performance_mode_) {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Requested htp performance mode is the same as last set (" +
-                 std::string(PerformanceModeToString(last_set_htp_performance_mode_)) +
-                 "). Ignoring request")
-                    .c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_VERBOSE,
+                    ("Requested htp performance mode is the same as last set (" +
+                     std::string(PerformanceModeToString(last_set_htp_performance_mode_)) +
+                     "). Ignoring request")
+                        .c_str());
   } else {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Updating htp performance mode to: " +
-                 std::string(PerformanceModeToString(htp_performance_mode)) + ".")
-                    .c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_VERBOSE,
+                    ("Updating htp performance mode to: " +
+                     std::string(PerformanceModeToString(htp_performance_mode)) + ".")
+                        .c_str());
 
     QnnHtpPerfInfrastructure_PowerConfig_t htp_performance_cfg{};
     RETURN_IF_ERROR(SetHtpPerformancePowerConfig(htp_performance_cfg,
@@ -159,7 +159,7 @@ Ort::Status HtpPowerConfigManager::SetPowerConfig(uint32_t htp_power_config_clie
     htp_performance_mode_set_ = false;
     power_configs_.clear();
   } else {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "SetPowerConfig called but no configs to be set.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "SetPowerConfig called but no configs to be set.");
   }
 
   return Ort::Status();
@@ -373,22 +373,22 @@ void HtpPowerConfigManager::CreateTimerThread(uint32_t htp_power_config_client_i
       timer_ = std::move(temp);
       timer_callback_arg_ = std::make_unique<TimerCallbackArg>(htp_power_config_client_id, this);
       if (timer_callback_arg_ == nullptr) {
-        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Failed to create Timer argument");
+        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Failed to create Timer argument");
         timer_.reset();
         return;
       }
       if (!timer_->Initialize(TimerCallback, timer_callback_arg_.get())) {
-        ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Failed to create timer to set performance");
+        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Failed to create timer to set performance");
         timer_callback_arg_.reset();
         timer_.reset();
       } else {
         timer_resource_.timer_active_ = true;
       }
     } else {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Failed: Timer is nullptr");
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Failed: Timer is nullptr");
     }
   } else {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Timer already created");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Timer already created");
   }
 }
 
@@ -461,7 +461,7 @@ Ort::Status HtpPowerConfigManager::SetSustainedPerformance(uint32_t htp_power_co
       break;
     }
     default:
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Invalid graph state");
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Invalid graph state");
       break;
   }
   return status;
@@ -497,7 +497,7 @@ Ort::Status HtpPowerConfigManager::SetPerformance(uint32_t htp_power_config_clie
           break;
         }
         default:
-          ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Invalid performance mode");
+          ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Invalid performance mode");
           break;
       }
       graph_state_ = GraphState::NONE;
@@ -508,21 +508,19 @@ Ort::Status HtpPowerConfigManager::SetPerformance(uint32_t htp_power_config_clie
       graph_state_ = GraphState::NONE;
       break;
     default:
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Invalid graph state");
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "Invalid graph state");
       break;
   }
   return status;
 }
 
 Ort::Status HtpPowerConfigManager::SetState(GraphState state, uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode, uint32_t rpc_polling_time, uint32_t rpc_control_latency) {
-  {
-    std::lock_guard<std::mutex> lk(state_mutex_);
-    if (state != graph_state_) {
-      graph_state_ = state;
-    } else {
-      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "State is the same as current. Ignoring request.");
-      return Ort::Status();
-    }
+  std::lock_guard<std::mutex> lk(state_mutex_);
+  if (state != graph_state_) {
+    graph_state_ = state;
+  } else {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "State is the same as current. Ignoring request.");
+    return Ort::Status();
   }
   if (perfMode == qnn::HtpPerformanceMode::kHtpSustainedHighPerformance || perfMode == qnn::HtpPerformanceMode::kHtpBurst) {
     RETURN_IF(timer_resource_.timer_active_ == false, "Timer is not active. Cannot set state.");
@@ -547,7 +545,7 @@ void HtpPowerConfigManager::TimerCallback(void* user_data) {
   if (instance->timer_resource_.timer_active_) {
     auto rt = instance->SetState(GraphState::TIMEOUT, args->power_config_id_, qnn::HtpPerformanceMode::kHtpSustainedHighPerformance, 0, 0);
     if (!rt.IsOK()) {
-      ORT_CXX_LOG(instance->logger_, ORT_LOGGING_LEVEL_VERBOSE, "State update failed");
+      ORT_CXX_LOG_PTR(instance->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "State update failed");
     }
   }
 }

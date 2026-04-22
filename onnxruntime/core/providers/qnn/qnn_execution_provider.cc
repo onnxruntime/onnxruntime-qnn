@@ -2757,7 +2757,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
 
   if (qnn::IsOrtGraphHasCtxNode(graphs, count, ep->ort_api)) {
     uint32_t htp_power_config_id = 0;
-    bool power_config_valid = ep->GetHtpPowerConfigId(htp_power_config_id) ? true : false;
+    bool power_config_valid = ep->GetHtpPowerConfigId(htp_power_config_id);
     qnn::ScopedGraphState state_guard(
         ep->qnn_backend_manager_.get(),
         power_config_valid,
@@ -2770,7 +2770,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     return status;
   } else if (qnn::IsOrtGraphHasDlcCtxNode(graphs, count, ep->ort_api)) {
     uint32_t htp_power_config_id = 0;
-    bool power_config_valid = ep->GetHtpPowerConfigId(htp_power_config_id) ? true : false;
+    bool power_config_valid = ep->GetHtpPowerConfigId(htp_power_config_id);
     qnn::ScopedGraphState state_guard(
         ep->qnn_backend_manager_.get(),
         power_config_valid,
@@ -2941,17 +2941,17 @@ void QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thr
     per_thread_htp_power_configs.rpc_control_latency = default_rpc_control_latency_;
   }
 
-  if (qnn::HtpPerformanceMode::kHtpBurst == pre_run_htp_performance_mode) {
-    per_thread_htp_power_configs.rpc_polling_time = 9999;
-  } else {
-    per_thread_htp_power_configs.rpc_polling_time = default_rpc_polling_time_;
-  }
-
   if (qnn::HtpPerformanceMode::kHtpDefault != dynamic_htp_performance_mode_) {
     // reset perf mode, rpc control latency and rpc polling time to dynamic perf mode values
     per_thread_htp_power_configs.default_perf_mode = dynamic_htp_performance_mode_;
+    per_thread_htp_power_configs.rpc_polling_time = dynamic_rpc_polling_time_;
   } else if (qnn::HtpPerformanceMode::kHtpDefault != default_htp_performance_mode_) {
     per_thread_htp_power_configs.default_perf_mode = default_htp_performance_mode_;
+    per_thread_htp_power_configs.rpc_polling_time = default_rpc_polling_time_;
+  }
+
+  if (qnn::HtpPerformanceMode::kHtpBurst == pre_run_htp_performance_mode) {
+    per_thread_htp_power_configs.rpc_polling_time = 9999;
   }
 
   if (qnn::HtpPerformanceMode::kHtpDefault != pre_run_htp_performance_mode) {
@@ -3095,9 +3095,9 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
       if (htp_performance_mode != qnn::HtpPerformanceMode::kHtpDefault) {
         ep->dynamic_htp_performance_mode_ = htp_performance_mode;
         if (htp_performance_mode == qnn::HtpPerformanceMode::kHtpBurst) {
-          ep->default_rpc_polling_time_ = 9999;
+          ep->dynamic_rpc_polling_time_ = 9999;
         } else {
-          ep->default_rpc_polling_time_ = 0;
+          ep->dynamic_rpc_polling_time_ = 0;
         }
       }
     } else {

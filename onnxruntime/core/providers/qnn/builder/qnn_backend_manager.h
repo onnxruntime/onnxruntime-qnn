@@ -407,7 +407,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   } FileMappingCallbackInfo_t;
 #endif
 
-  void ResetLogger(const Ort::Logger& logger) { logger_ptr_ = &logger; }
+  void ResetLogger(const Ort::Logger& logger) {
+    logger_ptr_ = &logger;
+    htp_power_config_manager_.ResetLogger(logger);
+  }
 
   bool IsDx12SharedMemoryAllocatorSupported();
 

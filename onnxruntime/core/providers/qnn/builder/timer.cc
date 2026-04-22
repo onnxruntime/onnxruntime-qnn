@@ -3,6 +3,10 @@
 
 #include "timer.h"
 
+namespace onnxruntime {
+namespace qnn {
+namespace power {
+
 void Timer::DeInitialize() {
   std::unique_lock<std::mutex> lk(mtx_);
   is_timer_deinit_ = true;
@@ -88,3 +92,7 @@ bool Timer::TimerInUse() {
   std::unique_lock<std::mutex> lk(mtx_);
   return thread_status_ == threadState::LAUNCH;
 }
+
+}  // namespace power
+}  // namespace qnn
+}  // namespace onnxruntime

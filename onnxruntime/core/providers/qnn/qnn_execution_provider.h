@@ -245,6 +245,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   qnn::HtpPerformanceMode dynamic_htp_performance_mode_{qnn::HtpPerformanceMode::kHtpDefault};
   uint32_t default_rpc_control_latency_ = 0;
   uint32_t default_rpc_polling_time_ = 0;
+  uint32_t dynamic_rpc_polling_time_ = 0;
   qnn::ModelSettings model_settings_ = {};
   qnn::HtpGraphConfigs_t htp_graph_configs_;
 

@@ -21,7 +21,7 @@ namespace power {
 // updates power configurations for the HTP backend
 class HtpPowerConfigManager {
  public:
-  HtpPowerConfigManager(const Ort::Logger logger);
+  HtpPowerConfigManager(const Ort::Logger& logger);
   ~HtpPowerConfigManager();
 
   // Stages a new rpc polling time for next power config update
@@ -65,16 +65,11 @@ class HtpPowerConfigManager {
 
   void ReleaseTimerThread();
 
-  bool IsTimerCreated() {
-    if (timer_ != nullptr) {
-      return true;
-    }
-    return false;
-  }
-
   Ort::Status SetState(GraphState state, uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
 
   void Init(const QNN_INTERFACE_VER_TYPE& qnn_interface) { qnn_interface_ = &qnn_interface; }
+
+  void ResetLogger(const Ort::Logger& logger) { logger_ptr_ = &logger; }
 
  private:
   // Sets voltage corner votes for HTP based on the given performance mode
@@ -107,7 +102,7 @@ class HtpPowerConfigManager {
 
   std::vector<QnnHtpPerfInfrastructure_PowerConfig_t> power_configs_;
 
-  const Ort::Logger logger_;
+  const Ort::Logger* logger_ptr_;
   const QNN_INTERFACE_VER_TYPE* qnn_interface_ = nullptr;
 
   std::mutex perf_mutex_;
@@ -128,6 +123,7 @@ class HtpPowerConfigManager {
   };
   std::unique_ptr<TimerCallbackArg> timer_callback_arg_;
 };
+
 }  // namespace power
 }  // namespace qnn
 }  // namespace onnxruntime

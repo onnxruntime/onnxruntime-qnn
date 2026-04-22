@@ -10,6 +10,10 @@
 #include <atomic>
 #include "core/providers/qnn/ort_api.h"
 
+namespace onnxruntime {
+namespace qnn {
+namespace power {
+
 class Timer {
  public:
   enum class threadState {
@@ -71,3 +75,7 @@ class Timer {
   std::atomic<bool> is_timer_deinit_ = false;
   std::atomic<bool> is_timer_launched_ = false;
 };
+
+}  // namespace power
+}  // namespace qnn
+}  // namespace onnxruntime
