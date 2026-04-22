@@ -167,7 +167,6 @@ Ort::Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   //                      asymmetric |    X     Resize    RBL     Resize       X
   //            tf_half_pixel_for_nn |    x     Resize    RBL     Resize       X
 
-
   // Resize w/ "nearest" mode.
   // Translation matrix of ONNX Resize w/ "nearest" mode on HTP backend.
   // Table entries correspond to the QNN operator used for the given configuration
