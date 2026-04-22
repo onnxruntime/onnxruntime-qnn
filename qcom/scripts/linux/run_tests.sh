@@ -78,6 +78,14 @@ orig_build_dir=$(sed -n "s@# Build directory: @@p" CTestTestfile.cmake)
 sed --in-place=".bak" "s@${orig_build_dir}@${build_dir}@g" CTestTestfile.cmake
 
 log_info "-=-=-=- Running ctests -=-=-=-"
+
+export LD_LIBRARY_PATH=${build_dir}
+export ADSP_LIBRARY_PATH=${build_dir}
+
+log_info "LD Library Path: ${LD_LIBRARY_PATH}"
+log_info "ADSP Library Path: ${ADSP_LIBRARY_PATH}"
+
+ 
 # TODO: [AISW-164203] ORT test failures on Rubik Pi
 exclude_args=()
 count_errors ./ctest --verbose --timeout 10800 --stop-on-failure "${exclude_args[@]}"
