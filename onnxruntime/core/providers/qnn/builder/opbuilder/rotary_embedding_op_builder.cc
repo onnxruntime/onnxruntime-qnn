@@ -922,7 +922,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
   return Ort::Status();
 }
 
-void CreateRopeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
+void CreateRotaryEmbeddingOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
   op_registrations.AddOpBuilder(op_type, std::make_unique<RopeOpBuilder>());
 }
 

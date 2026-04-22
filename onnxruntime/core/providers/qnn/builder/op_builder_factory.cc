@@ -13,7 +13,7 @@ namespace qnn {
 OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateArgMaxMinOpBuilder("ArgMax", *this);
   CreateArgMaxMinOpBuilder("ArgMin", *this);
-  CreateBatchNormOpBuilder("BatchNormalization", *this);
+  CreateBatchNormalizationOpBuilder("BatchNormalization", *this);
   CreateCastOpBuilder("Cast", *this);
   CreateClipOpBuilder("Clip", *this);
   CreateConcatOpBuilder("Concat", *this);
@@ -27,12 +27,12 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateGatherOpBuilder("GatherElements", *this);
   CreateGatherNDOpBuilder("GatherND", *this);
   CreateGemmOpBuilder("Gemm", *this);
-  CreateGroupNormOpBuilder("GroupNormalization", *this);
+  CreateGroupNormalizationOpBuilder("GroupNormalization", *this);
   CreateIdentityOpBuilder("Identity", *this);
-  CreateInstanceNormOpBuilder("InstanceNormalization", *this);
+  CreateInstanceNormalizationOpBuilder("InstanceNormalization", *this);
   CreateInverseOpBuilder("Inverse", *this);
-  CreateIsNanOpBuilder("IsNaN", *this);
-  CreateLayerNormOpBuilder("LayerNormalization", *this);
+  CreateIsNaNOpBuilder("IsNaN", *this);
+  CreateLayerNormalizationOpBuilder("LayerNormalization", *this);
   CreateLRNOpBuilder("LRN", *this);
   CreateLSTMOpBuilder("LSTM", *this);
   CreateMatMulOpBuilder("MatMul", *this);
@@ -60,10 +60,10 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateReshapeOpBuilder("Squeeze", *this);
   CreateReshapeOpBuilder("Unsqueeze", *this);
   CreateResizeOpBuilder("Resize", *this);
-  CreateRMSNormOpBuilder("RMSNormalization", *this);
-  CreateRMSNormOpBuilder("SimplifiedLayerNormalization", *this);
+  CreateRMSNormalizationOpBuilder("RMSNormalization", *this);
+  CreateRMSNormalizationOpBuilder("SimplifiedLayerNormalization", *this);
   CreateRoiAlignOpBuilder("RoiAlign", *this);
-  CreateRopeOpBuilder("RotaryEmbedding", *this);
+  CreateRotaryEmbeddingOpBuilder("RotaryEmbedding", *this);
   CreateSimpleOpBuilder("Abs", *this);
   CreateSimpleOpBuilder("Add", *this);
   CreateSimpleOpBuilder("And", *this);

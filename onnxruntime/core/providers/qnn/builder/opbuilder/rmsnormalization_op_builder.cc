@@ -178,7 +178,7 @@ Ort::Status RMSNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
   return Ort::Status();
 }
 
-void CreateRMSNormOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
+void CreateRMSNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
   op_registrations.AddOpBuilder(op_type, std::make_unique<RMSNormOpBuilder>());
 }
 

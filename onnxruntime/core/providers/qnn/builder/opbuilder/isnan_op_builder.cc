@@ -84,7 +84,7 @@ Ort::Status IsNanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
   return Ort::Status();
 }
 
-void CreateIsNanOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
+void CreateIsNaNOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
   op_registrations.AddOpBuilder(op_type, std::make_unique<IsNanOpBuilder>());
 }
 

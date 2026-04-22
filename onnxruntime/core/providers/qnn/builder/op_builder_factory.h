@@ -58,7 +58,7 @@ class OpBuilderRegistrations {
 const IOpBuilder* GetOpBuilder(const std::string& onnx_op_type);
 
 void CreateArgMaxMinOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
-void CreateBatchNormOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateBatchNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateCastOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateClipOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateConcatOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
@@ -70,13 +70,13 @@ void CreateFusedMatMulOpBuilder(const std::string& op_type, OpBuilderRegistratio
 void CreateGatherOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateGatherNDOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateGemmOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
-void CreateGroupNormOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateGroupNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateHardSigmoidOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateIdentityOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
-void CreateInstanceNormOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateInstanceNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateInverseOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
-void CreateIsNanOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
-void CreateLayerNormOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateIsNaNOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateLayerNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateLRNOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateLSTMOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateMatMulOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
@@ -93,9 +93,9 @@ void CreateReciprocalOpBuilder(const std::string& op_type, OpBuilderRegistration
 void CreateReduceOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateReshapeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateResizeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
-void CreateRMSNormOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateRMSNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateRoiAlignOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
-void CreateRopeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateRotaryEmbeddingOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateSimpleOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateSliceOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateSoftmaxOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);

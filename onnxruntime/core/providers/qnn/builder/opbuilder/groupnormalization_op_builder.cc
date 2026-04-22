@@ -147,7 +147,7 @@ Ort::Status GroupNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
                         logger, do_op_validation, GetQnnOpType(node_unit.OpType()));
 }
 
-void CreateGroupNormOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
+void CreateGroupNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
   op_registrations.AddOpBuilder(op_type, std::make_unique<GroupNormOpBuilder>());
 }
 

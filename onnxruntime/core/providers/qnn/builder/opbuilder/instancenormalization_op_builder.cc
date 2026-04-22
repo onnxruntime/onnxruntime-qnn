@@ -260,7 +260,7 @@ Ort::Status InstanceNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& 
   return Ort::Status();
 }
 
-void CreateInstanceNormOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
+void CreateInstanceNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
   op_registrations.AddOpBuilder(op_type, std::make_unique<InstanceNormOpBuilder>());
 }
 

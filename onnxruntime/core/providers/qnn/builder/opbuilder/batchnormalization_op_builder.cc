@@ -680,7 +680,7 @@ Ort::Status BatchNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper
   return Ort::Status();
 }
 
-void CreateBatchNormOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
+void CreateBatchNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
   op_registrations.AddOpBuilder(op_type, std::make_unique<BatchNormOpBuilder>());
 }
 
