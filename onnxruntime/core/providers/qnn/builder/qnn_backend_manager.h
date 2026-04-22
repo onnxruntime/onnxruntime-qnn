@@ -834,24 +834,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   const ApiPtrs api_ptrs_;
   const Ort::Logger* logger_ptr_;
-  /*  std::mutex perf_mutex_;
-    std::mutex state_mutex_;
-    std::unique_ptr<Timer> timer_;
-    struct TimerResource {
-      static constexpr uint64_t sustained_timer_duration_ = kDefaultTimerTimeoutUs;  // in microseconds
-      std::atomic<bool> caller_busy_ = false;
-      std::atomic<bool> timer_active_ = false;
-    };
-    TimerResource timer_resource_;
-    std::atomic<GraphState> graph_state_ = GraphState::NONE;
-    struct TimerCallbackArg {
-      uint32_t power_config_id_;
-      QnnBackendManager* instance_;
-
-      TimerCallbackArg(uint32_t id, QnnBackendManager* manager)
-          : power_config_id_(id), instance_(manager) {}
-    };
-    std::unique_ptr<TimerCallbackArg> timer_callback_arg_;*/
 };
 
 // RAII guard for QnnBackendManager::SetState.
