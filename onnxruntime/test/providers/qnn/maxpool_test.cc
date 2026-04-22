@@ -109,9 +109,12 @@ TEST_F(QnnCPUBackendTests, MaxPool_Global) {
 }
 
 TEST_F(QnnCPUBackendTests, MaxPool_Rank3) {
+  // Skip on Linux v68 architecture
+  #if defined(__linux__) || defined(__APPLE__)
   if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Skipping this test (arch > V68).";
+    GTEST_SKIP() << "Test not supported on Linux v68 architecture.";
   }
+  #endif
   RunPoolOpTest("MaxPool",
                 TestInputDef<float>({1, 16, 120}, false, -10.0f, 10.0f),  // Dynamic input with range [-10, 10]
                 {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3}),
