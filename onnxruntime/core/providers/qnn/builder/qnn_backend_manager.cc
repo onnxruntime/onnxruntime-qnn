@@ -159,10 +159,6 @@ Ort::Status ReadBinaryFromFile(const std::string& file_path, uint8_t* buffer, si
   return Ort::Status();
 }
 
-void QnnBackendManager::ReleaseTimerThread() {
-  htp_power_config_manager_.ReleaseTimerThread();
-}
-
 Ort::Status QnnBackendManager::ParseLoraConfig(std::string lora_config_path) {
   ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, ("Acquiring the QnnInterface " + lora_config_path).c_str());
 
@@ -2219,9 +2215,8 @@ Ort::Status QnnBackendManager::InitializePowerCfgId(uint32_t device_id, uint32_t
   return Ort::Status();
 }
 
-Ort::Status QnnBackendManager::DeInitializePowerCfgId(uint32_t htp_power_config_id) {
-  DestroyHTPPowerConfigID(htp_power_config_id);
-  return Ort::Status();
+void QnnBackendManager::DeInitializePerfTimer() {
+  htp_power_config_manager_.ReleaseTimerThread();
 }
 
 Ort::Status QnnBackendManager::CreateHtpPowerCfgId(uint32_t device_id, uint32_t core_id, uint32_t& htp_power_config_id) {

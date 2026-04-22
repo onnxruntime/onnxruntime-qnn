@@ -247,9 +247,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   Ort::Status InitializePowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
 
-  Ort::Status DeInitializePowerCfgId(uint32_t htp_power_config_id);
+  void DeInitializePerfTimer();
 
-  void ReleaseTimerThread();
+  Ort::Status DestroyHTPPowerConfigID(uint32_t htp_power_config_id);
 
   Ort::Status SetPerThreadHtpPowerConfigs(const std::thread::id& thread_id, bool pre_run);
 
@@ -530,26 +530,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void* LibFunction(void* handle, const char* symbol, std::string& error_msg);
 
-  /*  bool IsTimerThreadRunning();
-
-    Ort::Status SetSustainedPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
-
-    Ort::Status SetPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
-
-    static void TimerCallback(void* user_data);*/
-
   Ort::Status CreateHtpPowerCfgId(uint32_t deviceId, uint32_t coreId, uint32_t& htp_power_config_id);
-
-  // void CreateTimerThread(uint32_t htp_power_config_client_id);
-
-  Ort::Status DestroyHTPPowerConfigID(uint32_t htp_power_config_id);
-
-  /*  Ort::Status SetHtpPowerConfigs(uint32_t htp_power_config_client_id,
-                                   HtpPerformanceMode htp_performance_mode,
-                                   uint32_t rpc_polling_time,
-                                   uint32_t rpc_control_latency);
-
-    Ort::Status SetHtpPowerCustomConfigs(uint32_t htp_power_config_client_id, QnnHtpPerfInfrastructure_PowerConfig_t power_config, uint32_t rpc_polling_time, uint32_t rpc_control_latency);*/
 
   template <class T>
   inline T ResolveSymbol(void* lib_handle, const char* sym, const Ort::Logger& logger) {

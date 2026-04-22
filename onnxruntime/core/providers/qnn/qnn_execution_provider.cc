@@ -1403,10 +1403,10 @@ QnnEp::~QnnEp() {
   if (qnn_backend_manager_) {
     auto thread_id = std::this_thread::get_id();
     qnn_backend_manager_->RemovePerThreadHtpPowerConfigMapping(thread_id);
-    qnn_backend_manager_->ReleaseTimerThread();
+    qnn_backend_manager_->DeInitializePerfTimer();
     std::lock_guard<std::mutex> lock(config_id_mutex_);
     if (htp_power_config_id_.has_value()) {
-      qnn_backend_manager_->DeInitializePowerCfgId(*htp_power_config_id_);
+      qnn_backend_manager_->DestroyHTPPowerConfigID(*htp_power_config_id_);
     }
   }
 
