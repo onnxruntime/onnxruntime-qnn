@@ -386,7 +386,9 @@ def add_csharp_binding_args(parser: argparse.ArgumentParser) -> None:
 def add_packaging_args(parser: argparse.ArgumentParser) -> None:
     """Adds arguments for packaging and distribution."""
     parser.add_argument(
-        "--build_archive_asset", action="store_true", help="Build archive asset package containing QNN EP and dependencies."
+        "--build_archive_asset",
+        action="store_true",
+        help="Build archive asset package containing QNN EP and dependencies.",
     )
     parser.add_argument(
         "--archive_name_suffix",
