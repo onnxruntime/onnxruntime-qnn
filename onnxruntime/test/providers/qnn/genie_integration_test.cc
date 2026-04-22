@@ -20,7 +20,6 @@ static constexpr const char* kMockGeniePath = "libMockGenie.so";
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "core/session/onnxruntime_cxx_api.h"
 #include "core/session/onnxruntime_session_options_config_keys.h"
-#include "core/session/inference_session.h"
 
 namespace onnxruntime {
 namespace test {
