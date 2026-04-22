@@ -89,7 +89,9 @@ dependencies {
 	androidTestImplementation 'com.microsoft.appcenter:espresso-test-extension:1.4'
 
 	// ORT core, QNN EP (includes libonnxruntime_providers_qnn.so + Kotlin helpers), and QNN runtime
-	// Dynamically check and use available version from Maven repository
+	// Dynamically check and use available version from Maven repository.
+	// Fallback versions (1.24.3, 2.45.0) are the previous known-good releases used when the
+	// requested version is not yet available in the Maven repository (e.g., same-day CI runs).
 	def resolvedOrtVersion = getAvailableVersion('com.microsoft.onnxruntime:onnxruntime-android', ortVersion, '1.24.4', '1.24.3')
 	implementation "com.microsoft.onnxruntime:onnxruntime-android:${resolvedOrtVersion}"
 	implementation(name: 'onnxruntime-android-qnn', ext: 'aar')
