@@ -1,6 +1,8 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
+import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -14,6 +16,7 @@ _APP_APK = _APK_BASE / "debug" / "app-debug.apk"
 _ANDROIDTEST_APK = _APK_BASE / "androidTest" / "debug" / "app-debug-androidTest.apk"
 
 _INSTRUMENTATION_TARGET = "ai.onnxruntime.example.javavalidator.test/androidx.test.runner.AndroidJUnitRunner"
+_RESULTS_XML_NAME = "test_aar.results.xml"
 
 
 class TestAar(TestBase):
@@ -51,6 +54,19 @@ class TestAar(TestBase):
         )
         text = "\n".join(output or [])
         print(text)
+
+        # Convert the per-method status blocks into JUnit XML and push it to the
+        # device's QDC log directory so it is uploaded as a job artifact.
+        log_to_xml = Path(self.config().host_qcom_scripts_path) / "all" / "instrumentation_to_junit_xml.py"
+        with tempfile.TemporaryDirectory(prefix="InstrumentationXml-") as tmpdir:
+            tmppath = Path(tmpdir)
+            raw_log = tmppath / "test_aar.instrumentation.txt"
+            raw_log.write_text(text, encoding="utf-8")
+            results_xml = tmppath / _RESULTS_XML_NAME
+            with open(results_xml, "w") as xml_out:
+                subprocess.run([str(log_to_xml), str(raw_log)], stdout=xml_out, check=True)
+            self.device.push(results_xml, Path(self.config().qdc_log_path) / _RESULTS_XML_NAME)
+
         # INSTRUMENTATION_CODE values: -1 = success, 0 = failure, other = runner error.
         assert "INSTRUMENTATION_CODE: -1" in text, (
             "AndroidJUnit instrumentation did not report success (expected 'INSTRUMENTATION_CODE: -1' in output)."
