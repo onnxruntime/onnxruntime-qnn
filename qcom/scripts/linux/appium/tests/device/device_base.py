@@ -24,6 +24,10 @@ class DeviceBase(abc.ABC):
     ) -> list[str] | None:
         pass
 
+    @abc.abstractmethod
+    def install(self, apk_path: Path, reinstall: bool = True) -> None:
+        pass
+
 
 def device_from_url(url: str) -> DeviceBase:
     # local to avoid circular import
