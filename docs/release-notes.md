@@ -1,3 +1,77 @@
+# ONNX Runtime QNN Execution Provider v2.1.0 (Linux Preview)
+
+**ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.24.4)
+**QAIRT SDK Compatibility:** 2.45.40
+**Platform:** Linux ARM64 (Preview, available from v2.1.0+)
+**Tested On:** HTP v68 architecture device
+
+```
+pip install onnxruntime
+pip install onnxruntime-qnn==2.1.0
+```
+
+---
+
+## ⚠️ Preview Release Notice
+
+This is a **preview release** of QNN EP 2.1.0 for Linux ARM64 platforms. **Linux support is only available from QNN EP v2.1.0 onwards.** It includes all features from the Windows 2.1.0 release with the limitations noted below. While the core functionality is stable, some features may have limited testing on Linux platforms. Please report any issues encountered during evaluation.
+
+For complete feature details, refer to the [Windows 2.1.0 release notes](#onnx-runtime-qnn-execution-provider-v210) below.
+
+---
+
+## v68 Architecture Limitations
+
+The following features and data types are **not supported** on v68 HTP architecture:
+
+**Unsupported Data Types on HTP:**
+- **INT4** quantization (4-bit integers)
+- **INT16** quantization (16-bit integers)
+- **FP16** (16-bit floating-point)
+- **FP32** (32-bit floating-point)
+
+**Unsupported Features on v68:**
+- 64-bit Extended uDMA (`extended_udma` provider option)
+- File-mapped weights
+- HTP weight sharing
+
+**Supported on v68:**
+- **INT8** quantization on HTP backend
+- **FP32** on CPU backend
+- **FP16** on GPU backend (if available)
+
+For v81+ architecture devices, all features and data types are supported.
+
+---
+
+## Platform Support
+
+| Package | Linux ARM64 | Windows ARM64 | Windows x64 |
+|---|---|---|---|
+| Python Wheel | Inference (v2.1.0+) | Inference | AOT compilation + Inference |
+| NuGet | — | Inference | — |
+| ZIP | Inference (v2.1.0+) | Inference | — |
+
+---
+
+## Known Issues
+
+- **SpaceToDepth FP32 accuracy** — FP32 validation tests for the SpaceToDepth operator have been disabled due to known accuracy issues. A fix is targeted for the next release.
+- **Linux Preview** — This is a preview release for Linux ARM64. Some features may have limited testing on Linux platforms.
+- **v68 Architecture** — INT4, INT16, and FP16 data types are not supported on v68 HTP architecture. Use INT8 quantization for optimal compatibility.
+
+---
+
+## Contributors
+
+This release includes contributions from:
+
+[Arnav Deshpande](https://github.com/qti-arnadesh), [Ashwath Shankarnarayan](https://github.com/qti-ashwshan), [Badri Narayanan](https://github.com/qti-mbadnara), [Calvin Nguyen](https://github.com/quic-calvnguy), [Cheng-Hsin Weng](https://github.com/qti-chenweng), [Chun-Chih Teng](https://github.com/qti-chuteng), [Hua-Yu Chou](https://github.com/huaychou), [Hung-Jui Wang](https://github.com/qti-hungjuiw), [Jeff Kilpatrick](https:/github.com/qti-jkilpatrick), [Kuan-Yu Lin](https://github.com/kuanyul-qti), [Kyle Romero](https://github.com/qti-kromero), [Matthew Sinclair](https://github.com/qti-mattsinc), [Mike Hsu](https://github.com/quic-muchhsu), [Min Fong Hong](https://github.com/minfhong-qti), [Samrat Dutta](https://github.com/samrdutt-design), [Shubham Patel](https://github.com/qti-shubham), [Tirupathi Reddy T](https://github.com/tirupath-qti), [Yathindra Kota](https://github.com/quic-ykota), [Yuduo Wu](https://github.com/qti-yuduo), [Yu-Hung Chuang](https://github.com/yuhuchua-qti)
+
+---
+
+---
+
 # ONNX Runtime QNN Execution Provider v2.1.0
 
 **ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.24.4)
@@ -120,6 +194,7 @@ This release includes contributions from:
 [Arnav Deshpande](https://github.com/qti-arnadesh), [Ashwath Shankarnarayan](https://github.com/qti-ashwshan), [Badri Narayanan](https://github.com/qti-mbadnara), [Calvin Nguyen](https://github.com/quic-calvnguy), [Cheng-Hsin Weng](https://github.com/qti-chenweng), [Chun-Chih Teng](https://github.com/qti-chuteng), [Hua-Yu Chou](https://github.com/huaychou), [Hung-Jui Wang](https://github.com/qti-hungjuiw), [Jeff Kilpatrick](https:/github.com/qti-jkilpatrick), [Kuan-Yu Lin](https://github.com/kuanyul-qti), [Kyle Romero](https://github.com/qti-kromero), [Matthew Sinclair](https://github.com/qti-mattsinc), [Mike Hsu](https://github.com/quic-muchhsu), [Min Fong Hong](https://github.com/minfhong-qti), [Samrat Dutta](https://github.com/samrdutt-design), [Shubham Patel](https://github.com/qti-shubham), [Tirupathi Reddy T](https://github.com/tirupath-qti), [Yathindra Kota](https://github.com/quic-ykota), [Yuduo Wu](https://github.com/qti-yuduo), [Yu-Hung Chuang](https://github.com/yuhuchua-qti)
 
 ---
+
 ---
 
 # ONNX Runtime QNN Execution Provider v2.0.0 (Preview)

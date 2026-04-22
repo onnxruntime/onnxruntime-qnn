@@ -3,7 +3,9 @@
 The QNN Execution Provider (QNN EP) for ONNX Runtime enables hardware accelerated execution on Qualcomm chipsets.
 It uses the Qualcomm AI Runtime SDK (QAIRT SDK) to construct a QNN graph from an ONNX model which can
 be executed by a supported accelerator backend library.
-ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC's.
+ONNX Runtime QNN EP can be used on Windows and Linux devices with Qualcomm Snapdragon SOC's.
+
+**Note:** Linux support is available from QNN EP v2.1.0 onwards.
 
 - **Note**: QNN EP version < 2.0 is **NOT** included in this page, please refer to [this page](https://onnxruntime.ai/docs/execution-providers/QNN-ExecutionProvider.html) for QNN EP version < 2.0.
 - **Note**: QNN EP version < 2.0 will be deprecated and no longer maintained.
@@ -12,7 +14,9 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 
 - [Install Pre-requisites (Build from Source Only)](#install-pre-requisites-build-from-source-only)
 - [Build (Windows)](#build-windows)
+- [Build (Linux)](#build-linux)
 - [Pre-built Packages (Windows Only)](#pre-built-packages-windows-only)
+- [Pre-built Packages (Linux)](#pre-built-packages-linux)
 - [Qualcomm AI Hub](#qualcomm-ai-hub)
 - [Configuration Options](#configuration-options)
 - [Supported ONNX operators](#supported-onnx-operators)
@@ -34,15 +38,25 @@ download the Qualcomm AI Runtime SDK (QAIRT SDK) from [https://qpm.qualcomm.com/
 
 ### QNN Execution Provider Version Requirements
 
-ONNX Runtime QNN EP has been built and tested with the following SDK version combinations on Windows:
+ONNX Runtime QNN EP has been built and tested with the following SDK version combinations:
+
+**Windows:**
 | QNN EP Version | QAIRT SDK Version | ONNX Runtime Version |
 |----------------|-------------------|----------------------|
 | v2.1.0         | v2.45.40           | v1.24.4             |
 
-> **Note**: ONNX Runtime QNN EP is built and tested by using the arm64 ONNX Runtime SDK (ex: onnxruntime-win-arm64-1.24.0.zip).
+**Linux (Preview):**
+| QNN EP Version | QAIRT SDK Version | ONNX Runtime Version |
+|----------------|-------------------|----------------------|
+| v2.1.0         | v2.45.40           | v1.24.4             |
+
+> **Note**: ONNX Runtime QNN EP is built and tested by using the arm64 ONNX Runtime SDK (ex: onnxruntime-win-arm64-1.24.0.zip for Windows, onnxruntime-linux-aarch64-1.24.0.tgz for Linux).
 
 ## Build (Windows)
 For build instructions, please see the [BUILD page](./build.md).
+
+## Build (Linux)
+For Linux build instructions, please see the [BUILD page](./build.md).
 
 ## Pre-built Packages (Windows Only)
 - [NuGet package](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN)
@@ -54,6 +68,14 @@ For build instructions, please see the [BUILD page](./build.md).
     - Python 3.11.x
     - Numpy 1.25.2 or >= 1.26.4
   - Install: `pip install onnxruntime-qnn`
+
+## Pre-built Packages (Linux)
+- [Python package](https://pypi.org/project/onnxruntime-qnn/) (Linux ARM64 Preview)
+  - Requirements:
+    - Linux ARM64 (for on-device inference with Qualcomm NPU)
+    - Python 3.11.x
+    - Numpy 1.25.2 or >= 1.26.4
+  - Install: `pip install onnxruntime-qnn>=2.1.0`
 
 ## Qualcomm AI Hub
 Qualcomm AI Hub can be used to optimize and run models on Qualcomm hosted devices.

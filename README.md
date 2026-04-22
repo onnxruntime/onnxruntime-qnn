@@ -21,6 +21,7 @@ ONNX Runtime supports hardware acceleration through **Execution Providers (EPs)*
 | Distribution | Bundled with ORT | Separate package |
 | ORT build required | Yes | No |
 | Install | `pip install onnxruntime-qnn>=1.24.1` | `pip install onnxruntime-qnn==`**`2.1.0`** |
+| Platforms | Windows ARM64 | Windows ARM64, Windows x64, Linux ARM64 (Preview, >=2.1.0) |
 
 ---
 
@@ -84,6 +85,7 @@ pip install onnxruntime-qnn
 **Requirements:**
 - Windows ARM64 (for on-device inference with Qualcomm NPU)
 - Windows X64 (for model quantization and AOT compilation)
+- Linux ARM64 (for on-device inference with Qualcomm NPU - Preview, available from v2.1.0+)
 
 For NuGet: [`Qualcomm.ML.OnnxRuntime.QNN`](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN) (Windows ARM64 only)
 
