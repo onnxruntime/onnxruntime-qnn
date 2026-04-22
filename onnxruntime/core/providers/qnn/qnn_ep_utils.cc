@@ -19,18 +19,6 @@ void OrtSelectors::RegisterSelector(const OrtOpVersionsAndSelector::OpVersionsMa
 }
 
 namespace {
-// Helper function to get the number of actual values (inputs or outputs) for a node
-int NumActualValues(const OrtNode* node, const OrtApi& ort_api, bool input) {
-  size_t num_defs = 0;
-
-  if (input) {
-    RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumInputs(node, &num_defs), ort_api, 0);
-  } else {
-    RETURN_DEFAULT_IF_API_FAIL(ort_api.Node_GetNumOutputs(node, &num_defs), ort_api, 0);
-  }
-
-  return static_cast<int>(num_defs);
-}
 
 // Helper function to extract the data type from a value info
 std::optional<ONNXTensorElementDataType> GetDataTypeFromValueInfo(const OrtApi& ort_api,
@@ -220,8 +208,9 @@ bool CanCreateNodeGroup(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
   }
 
   // Check if the number of DQ inputs matches the number of inputs that exist
-  int num_inputs = NumActualValues(node, ort_api, true);
-  if (num_inputs < static_cast<int>(dq_nodes.size())) {
+  size_t num_inputs = 0;
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(node, &num_inputs), ort_api);
+  if (num_inputs < dq_nodes.size()) {
     return false;
   }
 
@@ -231,21 +220,18 @@ bool CanCreateNodeGroup(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
   }
 
   // Check if the number of Q outputs matches the number of outputs that exist
-  int num_outputs = NumActualValues(node, ort_api, false);
-  if (num_outputs < static_cast<int>(q_nodes.size())) {
+  size_t num_outputs = 0;
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumOutputs(node, &num_outputs), ort_api);
+  if (num_outputs < q_nodes.size()) {
     return false;
   }
 
-  // Get the outputs as OrtValueInfo instances
-  size_t num_outputs_actual = 0;
-  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumOutputs(node, &num_outputs_actual), ort_api);
-
-  std::vector<const OrtValueInfo*> outputs(num_outputs_actual);
+  std::vector<const OrtValueInfo*> outputs(num_outputs);
   ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetOutputs(node, outputs.data(), outputs.size()), ort_api);
 
   // Check if any of the outputs are graph outputs
   bool produces_graph_output = false;
-  for (size_t i = 0; i < num_outputs_actual; i++) {
+  for (size_t i = 0; i < num_outputs; i++) {
     const OrtValueInfo* value_info = outputs[i];
     bool is_graph_output = false;
     ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_IsGraphOutput(value_info, &is_graph_output), ort_api);
@@ -258,7 +244,7 @@ bool CanCreateNodeGroup(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
 
   // Count the total number of consumers for all outputs
   size_t total_consumers = 0;
-  for (size_t i = 0; i < num_outputs_actual; i++) {
+  for (size_t i = 0; i < num_outputs; i++) {
     const OrtValueInfo* value_info = outputs[i];
     size_t num_consumers = 0;
     ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers), ort_api);
@@ -266,7 +252,7 @@ bool CanCreateNodeGroup(const OrtGraph* graph, const OrtApi& ort_api, const OrtN
     total_consumers += num_consumers;
   }
 
-  return (num_outputs == static_cast<int>(q_nodes.size())) &&
+  return (num_outputs == q_nodes.size()) &&
          (q_nodes.size() == total_consumers) &&
          !produces_graph_output;
 }
@@ -409,7 +395,9 @@ bool OrtNodeGroupSelector::CheckQDQNodes(const OrtGraph* /*graph*/, const OrtApi
                                          int num_dq_inputs,
                                          bool is_empty_q_nodes_allowed) const {
   if (num_dq_inputs == -1) {
-    num_dq_inputs = NumActualValues(node, ort_api, true);
+    size_t num_inputs = 0;
+    ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumInputs(node, &num_inputs), ort_api);
+    num_dq_inputs = static_cast<int>(num_inputs);
   }
 
   // Check if the number of DQ inputs matches the expected number
@@ -423,19 +411,16 @@ bool OrtNodeGroupSelector::CheckQDQNodes(const OrtGraph* /*graph*/, const OrtApi
   }
 
   // Check if the number of Q outputs matches the number of outputs that exist
-  int num_outputs = NumActualValues(node, ort_api, false);
+  size_t num_outputs = 0;
+  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumOutputs(node, &num_outputs), ort_api);
 
-  // Get the outputs as OrtValueInfo instances
-  size_t num_outputs_actual = 0;
-  ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetNumOutputs(node, &num_outputs_actual), ort_api);
-
-  std::vector<const OrtValueInfo*> outputs(num_outputs_actual);
+  std::vector<const OrtValueInfo*> outputs(num_outputs);
   ORT_RETURN_FALSE_ON_ERROR(ort_api.Node_GetOutputs(node, outputs.data(), outputs.size()), ort_api);
 
   // Check if any of the outputs are graph outputs
   bool produces_graph_output = false;
 
-  for (size_t i = 0; i < num_outputs_actual; i++) {
+  for (size_t i = 0; i < num_outputs; i++) {
     const OrtValueInfo* value_info = outputs[i];
     bool is_graph_output = false;
     ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_IsGraphOutput(value_info, &is_graph_output), ort_api);
@@ -448,7 +433,7 @@ bool OrtNodeGroupSelector::CheckQDQNodes(const OrtGraph* /*graph*/, const OrtApi
 
   // Count the total number of consumers for all outputs
   size_t total_consumers = 0;
-  for (size_t i = 0; i < num_outputs_actual; i++) {
+  for (size_t i = 0; i < num_outputs; i++) {
     const OrtValueInfo* value_info = outputs[i];
     size_t num_consumers = 0;
     ORT_CONTINUE_ON_ERROR(ort_api.ValueInfo_GetValueNumConsumers(value_info, &num_consumers), ort_api);
@@ -456,7 +441,7 @@ bool OrtNodeGroupSelector::CheckQDQNodes(const OrtGraph* /*graph*/, const OrtApi
     total_consumers += num_consumers;
   }
 
-  return (num_outputs == static_cast<int>(q_nodes.size())) &&
+  return (num_outputs == q_nodes.size()) &&
          (q_nodes.size() == total_consumers) &&
          !produces_graph_output;
 }
