@@ -659,11 +659,11 @@ QnnEp::QnnEp(QnnEpFactory& factory,
 #endif
 
   std::string disable_file_mapped_weights_str;
-  GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("disabl_file_mapped_weights"), "0", disable_file_mapped_weights_str);
+  GetSessionConfigEntryOrDefault(ort_api, session_options_, FormatEPConfigKey("disable_file_mapped_weights"), "0", disable_file_mapped_weights_str);
   if (disable_file_mapped_weights_str == "1") {
     enable_file_mapped_weights_ = false;
     ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_WARNING, ("User specified disable_file_mapped_weights: " + std::to_string(enable_file_mapped_weights_)).c_str());
+                ORT_LOGGING_LEVEL_WARNING, ("User specified disable_file_mapped_weights: " + std::to_string(!enable_file_mapped_weights_)).c_str());
   }
 
 #ifndef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE

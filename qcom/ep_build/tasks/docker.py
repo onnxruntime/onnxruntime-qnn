@@ -88,6 +88,7 @@ class DockerBuildAndTestTask(DockerRunTask):
         venv_path: Path | None = None,
         qairt_sdk_root: Path | None = None,
         ccache_root: Path | None = None,
+        build_zip: bool = False,
     ) -> None:
         # deferred to avoid circular import
         from ..tools import get_package_dir, get_tools_dir  # noqa:PLC0415
@@ -99,6 +100,8 @@ class DockerBuildAndTestTask(DockerRunTask):
         ]
         if venv_path is not None:
             cmd.append(f"--venv-path={venv_path}")
+        if build_zip:
+            cmd.append("--build-zip")
         cmd.extend(tasks)
 
         volumes_with_caches = dict({} if volumes is None else volumes)

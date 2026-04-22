@@ -94,6 +94,8 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
 
     if (qnn_model_wrapper.GetModelSettings().offload_graph_io_quantization &&
         qnn_model_wrapper.IsGraphOutput(node_unit.Outputs()[0].name)) {
+      qnn_model_wrapper.SetTensorNameOverride(/*internal=*/node_unit.Inputs()[0].name,
+                                              /*external=*/node_unit.Outputs()[0].name);
       return MAKE_EP_FAIL("QNN EP is configured to not take DQ nodes that generate a graph output.");
     }
   }
@@ -106,6 +108,8 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
 
     if (qnn_model_wrapper.GetModelSettings().offload_graph_io_quantization &&
         qnn_model_wrapper.IsGraphInput(node_unit.Inputs()[0].name)) {
+      qnn_model_wrapper.SetTensorNameOverride(/*internal=*/node_unit.Outputs()[0].name,
+                                              /*external=*/node_unit.Inputs()[0].name);
       return MAKE_EP_FAIL("QNN EP is configured to not take Q nodes that consume a graph input.");
     }
   }
