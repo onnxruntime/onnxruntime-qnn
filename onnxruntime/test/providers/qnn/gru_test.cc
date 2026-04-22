@@ -194,6 +194,80 @@ static GetTestQDQModelFn<InputQType> BuildQDQGRUTestCase(const TestInputDef<floa
   };
 }
 
+// Runs a GRU model on the QNN CPU backend with FP32.
+static void RunCpuFP32GRUOpTest(const TestInputDef<float>& X_def,
+                                 const TestInputDef<float>& W_def,
+                                 const TestInputDef<float>& R_def,
+                                 const std::optional<std::reference_wrapper<TestInputDef<float>>> B_def,
+                                 const std::optional<std::reference_wrapper<TestInputDef<float>>> H_def,
+                                 const bool has_Y,
+                                 const bool has_Y_h,
+                                 const std::string direction,
+                                 const int64_t hidden_size,
+                                 const int64_t layout,
+                                 ExpectedEPNodeAssignment expected_ep_assignment,
+                                 const int64_t linear_before_reset = 0,
+                                 float tolerance = 0.004f,
+                                 int opset = 22) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+
+  RunQnnModelTest(BuildGRUTestCase<float>(X_def, W_def, R_def, B_def, H_def, has_Y, has_Y_h,
+                                         direction, hidden_size, layout, linear_before_reset),
+                  provider_options,
+                  opset,
+                  expected_ep_assignment,
+                  tolerance);
+}
+
+// ============================================================
+// CPU FP32 Tests
+// ============================================================
+
+TEST_F(QnnCPUBackendTests, GRU_fp32_sanity_forward) {
+  std::string direction = "forward";
+  uint32_t num_direction = 1;
+  uint32_t batch_size = 1;  // QNN CPU GRU only reliably processes single-batch with initial_h
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  RunCpuFP32GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
+                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),  // W
+                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f), // R
+                      std::ref(B_def),                                                                        // B
+                      std::ref(H_def),                                                                        // initial_h
+                      true,                                                                                   // has_Y
+                      true,                                                                                   // has_Y_h
+                      direction,                                                                              // direction
+                      hidden_size,                                                                            // hidden_size
+                      0,                                                                                      // layout
+                      ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnCPUBackendTests, GRU_fp32_sanity_bidirectional) {
+  std::string direction = "bidirectional";
+  uint32_t num_direction = 2;
+  uint32_t batch_size = 1;  // QNN CPU GRU only reliably processes single-batch with initial_h
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
+  RunCpuFP32GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
+                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),  // W
+                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f), // R
+                      std::ref(B_def),                                                                        // B
+                      std::ref(H_def),                                                                        // initial_h
+                      true,                                                                                   // has_Y
+                      true,                                                                                   // has_Y_h
+                      direction,                                                                              // direction
+                      hidden_size,                                                                            // hidden_size
+                      0,                                                                                      // layout
+                      ExpectedEPNodeAssignment::All);
+}
+
 #if defined(__aarch64__) || defined(_M_ARM64)
 
 // Runs a GRU model on the QNN HTP backend with QDQ quantization.
@@ -252,32 +326,6 @@ static void RunHtpFp16GRUOpTest(const TestInputDef<float>& X_def,
                         opset,
                         expected_ep_assignment,
                         tolerance);
-}
-
-// Runs a GRU model on the QNN CPU backend with FP32.
-static void RunCpuFP32GRUOpTest(const TestInputDef<float>& X_def,
-                                 const TestInputDef<float>& W_def,
-                                 const TestInputDef<float>& R_def,
-                                 const std::optional<std::reference_wrapper<TestInputDef<float>>> B_def,
-                                 const std::optional<std::reference_wrapper<TestInputDef<float>>> H_def,
-                                 const bool has_Y,
-                                 const bool has_Y_h,
-                                 const std::string direction,
-                                 const int64_t hidden_size,
-                                 const int64_t layout,
-                                 ExpectedEPNodeAssignment expected_ep_assignment,
-                                 const int64_t linear_before_reset = 0,
-                                 float tolerance = 0.004f,
-                                 int opset = 22) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "cpu";
-
-  RunQnnModelTest(BuildGRUTestCase<float>(X_def, W_def, R_def, B_def, H_def, has_Y, has_Y_h,
-                                         direction, hidden_size, layout, linear_before_reset),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment,
-                  tolerance);
 }
 
 // ============================================================
@@ -604,54 +652,6 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_linear_before_reset) {
                       0,                                                                                      // layout
                       ExpectedEPNodeAssignment::All,
                       1);                                                                                     // linear_before_reset
-}
-
-// ============================================================
-// CPU FP32 Tests
-// ============================================================
-
-TEST_F(QnnCPUBackendTests, GRU_fp32_sanity_forward) {
-  std::string direction = "forward";
-  uint32_t num_direction = 1;
-  uint32_t batch_size = 3;
-  uint32_t hidden_size = 4;
-  uint32_t input_size = 5;
-  uint32_t seq_len = 6;
-  auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
-  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
-  RunCpuFP32GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
-                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),  // W
-                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f), // R
-                      std::ref(B_def),                                                                        // B
-                      std::ref(H_def),                                                                        // initial_h
-                      true,                                                                                   // has_Y
-                      true,                                                                                   // has_Y_h
-                      direction,                                                                              // direction
-                      hidden_size,                                                                            // hidden_size
-                      0,                                                                                      // layout
-                      ExpectedEPNodeAssignment::All);
-}
-
-TEST_F(QnnCPUBackendTests, GRU_fp32_sanity_bidirectional) {
-  std::string direction = "bidirectional";
-  uint32_t num_direction = 2;
-  uint32_t batch_size = 3;
-  uint32_t hidden_size = 4;
-  uint32_t input_size = 5;
-  uint32_t seq_len = 6;
-  auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
-  auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
-  RunCpuFP32GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
-                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),  // W
-                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f), // R
-                      std::ref(B_def),                                                                        // B
-                      std::ref(H_def),                                                                        // initial_h
-                      true,                                                                                   // has_Y
-                      true,                                                                                   // has_Y_h
-                      direction,                                                                              // direction
-                      hidden_size,                                                                            // hidden_size
-                      0,                                                                                      // layout
-                      ExpectedEPNodeAssignment::All);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64)
