@@ -4,13 +4,16 @@ rootProject.buildFileName = 'build-android.gradle'
 include ':qnnpluginep'
 project(':qnnpluginep').projectDir = new File('src/main/qnnpluginep')
 
-// Redirect :qnnpluginep build output out of the source tree.
-// CMake passes -DqnnpluginepBuildDir=<path> to avoid polluting src/main/qnnpluginep/build/.
+// Redirect build output out of the source tree.
+// CMake passes -D<name>BuildDir=<path> to avoid polluting the source tree.
 def qnnpluginepBuildDir = System.properties['qnnpluginepBuildDir']
-if (qnnpluginepBuildDir) {
+def rootBuildDir = System.properties['rootBuildDir']
+if (qnnpluginepBuildDir || rootBuildDir) {
     gradle.beforeProject { proj ->
-        if (proj.name == 'qnnpluginep') {
+        if (qnnpluginepBuildDir && proj.name == 'qnnpluginep') {
             proj.buildDir = qnnpluginepBuildDir
+        } else if (rootBuildDir && proj == proj.rootProject) {
+            proj.buildDir = rootBuildDir
         }
     }
 }

@@ -40,12 +40,16 @@ if (ANDROID)
       COMMAND ${CMAKE_COMMAND} -E echo "Generating onnxruntime-android-qnn AAR..."
       COMMAND ${GRADLE_EXECUTABLE}
         ${COMMON_GRADLE_ARGS}
-        :qnnpluginep:bundleReleaseAar
+        :qnnpluginep:bundleReleaseAar generatePomFileForQnnEpPublication
         -b build-android.gradle -c settings-android.gradle
         -DminSdkVer=${ANDROID_MIN_SDK}
         -DqnnEpJniLibsDir=${ANDROID_QNN_EP_JNILIBS_DIR}
         -DqnnpluginepBuildDir=${ANDROID_QNN_EP_OUTPUT_DIR}
+        -DrootBuildDir=${ANDROID_QNN_EP_OUTPUT_DIR}
         --stacktrace
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${ANDROID_QNN_EP_OUTPUT_DIR}/publications/qnnEp/pom-default.xml
+        ${ANDROID_QNN_EP_OUTPUT_DIR}/outputs/aar/onnxruntime-android-qnn.pom
       WORKING_DIRECTORY ${JAVA_ROOT})
   endif()
 
