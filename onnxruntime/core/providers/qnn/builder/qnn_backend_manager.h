@@ -39,8 +39,6 @@
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/rpcmem_library.h"
-#include "core/providers/qnn/builder/timer.h"
-#include <HTP/QnnHtpPerfInfrastructure.h>
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
 #include "core/providers/qnn/builder/qnn_file_mapping_interface.h"
@@ -396,7 +394,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   // Releases all QNN resources. Called in the destructor.
   // NOTE: This function indirectly locks the internal `logger_recursive_mutex_` via nested function calls.
   void ReleaseResources();
-  // Ort::Status SetState(GraphState state, uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
   typedef struct FileMappingCallbackInfo {
