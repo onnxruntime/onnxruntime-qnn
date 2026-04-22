@@ -38,7 +38,6 @@ class BuildEpDockerTask(CompositeTask):
         target_py_version: TargetPyVersionT | None,
         qairt_sdk_root: Path | None,
         ccache_root: Path | None,
-        build_zip: bool = False,
     ) -> None:
         dist_rel_dir = Path("build") / f"linux-{target_arch}" / config / "dist"
 
@@ -58,7 +57,6 @@ class BuildEpDockerTask(CompositeTask):
                     venv_path=DOCKER_REPO_ROOT / "build" / "venv.build",
                     qairt_sdk_root=qairt_sdk_root,
                     ccache_root=ccache_root,
-                    build_zip=build_zip,
                 ),
             ],
         )
@@ -80,7 +78,6 @@ class BuildEpLinuxTask(BashScriptsWithVenvTask):
         mode: str,
         extra_args: Iterable[str] | None = None,
         env: Mapping[str, str] | None = None,
-        build_zip: bool = False,
     ) -> None:
         cmd = [
             str(REPO_ROOT / "qcom" / "scripts" / "linux" / "build.sh"),
@@ -98,9 +95,6 @@ class BuildEpLinuxTask(BashScriptsWithVenvTask):
 
         if qairt_sdk_root is not None:
             cmd.append(f"--qairt-sdk-root={qairt_sdk_root}")
-
-        if build_zip:
-            cmd.append("--build-tgz")
 
         if extra_args is not None:
             cmd.extend(extra_args)

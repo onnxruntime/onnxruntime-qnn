@@ -8,7 +8,6 @@ import os
 import platform
 import re
 import sys
-import tarfile
 import zipfile
 from pathlib import Path
 
@@ -82,20 +81,10 @@ def get_qnn_asset_file_list():
             "libQnnCpu.so",
             "libQnnGpu.so",
             "libQnnHtp.so",
-            "libQnnHtpNetRunExtensions.so",
             "libQnnHtpPrepare.so",
             "libQnnHtpV68Skel.so",
             "libQnnHtpV68Stub.so",
-            "libQnnHtpV69Skel.so",
-            "libQnnHtpV69Stub.so",
-            "libQnnHtpV73Skel.so",
-            "libQnnHtpV73Stub.so",
-            "libQnnHtpV75Skel.so",
-            "libQnnHtpV75Stub.so",
-            "libQnnHtpV79Skel.so",
-            "libQnnHtpV79Stub.so",
-            "libQnnHtpV81Skel.so",
-            "libQnnHtpV81Stub.so",
+            "libQnnHtpNetRunExtensions.so",
             "libQnnIr.so",
             "libQnnSaver.so",
             "libQnnSystem.so",
@@ -160,8 +149,6 @@ def build_zip_asset(
         # Parse version from VERSION_NUMBER file
         version = parse_version_number(source_dir)
 
-        archive_ext = ".zip" if is_windows() else ".tgz"
-
         zip_name = "onnxruntime-qnn"
         if version:
             zip_name += f"-{version}"
@@ -169,7 +156,7 @@ def build_zip_asset(
             zip_name += f"{version_suffix}"
         if zip_name_suffix:
             zip_name += f"-{zip_name_suffix}"
-        zip_name += f"-{platform_name}-{arch}{archive_ext}"
+        zip_name += f"-{platform_name}-{arch}.zip"
 
         zip_path = Path(dist_dir) / zip_name
 
@@ -224,22 +211,15 @@ def build_zip_asset(
         if not found_files:
             raise FileNotFoundError(f"No asset files found in {cwd}. Expected files: {asset_files}")
 
-        # Create archive file
-        log.info(f"Creating archive: {zip_path}")
-        if is_windows():
-            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-                for _filename, file_path in found_files:
-                    arcname = os.path.relpath(file_path, cwd)
-                    zipf.write(file_path, arcname)
-                    log.debug(f"Added to zip: {arcname}")
-        else:
-            with tarfile.open(zip_path, "w:gz") as tgzf:
-                for _filename, file_path in found_files:
-                    arcname = os.path.relpath(file_path, cwd)
-                    tgzf.add(file_path, arcname)
-                    log.debug(f"Added to tgz: {arcname}")
+        # Create zip file
+        log.info(f"Creating zip: {zip_path}")
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for _filename, file_path in found_files:
+                arcname = os.path.relpath(file_path, cwd)
+                zipf.write(file_path, arcname)
+                log.debug(f"Added to zip: {arcname}")
 
-        log.info(f"Created archive: {zip_path} ({len(found_files)} files)")
+        log.info(f"Created zip asset: {zip_path} ({len(found_files)} files)")
         created_zips.append(zip_path)
 
     return created_zips
