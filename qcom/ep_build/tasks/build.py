@@ -150,7 +150,7 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
             cmd.extend(["-BuildNuget", "1"])
 
         if build_archive:
-            cmd.extend(["-BuildZip", "1"])
+            cmd.extend(["-BuildArchive", "1"])
 
         super().__init__(group_name, [cmd], env=ort_build_env_vars())
 
