@@ -247,7 +247,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void DeInitializePerfTimer();
 
-  Ort::Status DestroyHTPPowerConfigID(uint32_t htp_power_config_id);
+  Ort::Status DestroyHtpPowerConfigId(uint32_t htp_power_config_id);
 
   Ort::Status SetPerThreadHtpPowerConfigs(const std::thread::id& thread_id, bool pre_run);
 
