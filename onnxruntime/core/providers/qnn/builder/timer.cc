@@ -90,7 +90,7 @@ void Timer::AbortTimer() {
 
 bool Timer::TimerInUse() {
   std::unique_lock<std::mutex> lk(mtx_);
-  return thread_status_ == threadState::LAUNCH;
+  return thread_status_ == threadState::LAUNCH || thread_status_ == threadState::CALLING;
 }
 
 }  // namespace power

@@ -1008,9 +1008,6 @@ TEST_F(QnnHTPBackendTests, MultithreadSustainedHighPowerCfgFromEpOption) {
   options["offload_graph_io_quantization"] = "0";
   options["htp_performance_mode"] = "sustained_high_performance";
 
-  Ort::RunOptions run_opts;
-  run_opts.SetRunTag("logger0");
-
   Ort::SessionOptions session_opts;
   session_opts.SetLogId("logger0");
 
@@ -1024,6 +1021,8 @@ TEST_F(QnnHTPBackendTests, MultithreadSustainedHighPowerCfgFromEpOption) {
   constexpr int loop_count = 10;
 
   for (int i = 0; i < num_threads; i++) {
+    Ort::RunOptions run_opts;
+    run_opts.SetRunTag("logger0");
     threads.push_back(std::thread(RunSessionAndVerify, std::ref(session), std::move(run_opts),
                                   std::ref(model->builder.feeds_), output_shapes, output_values, loop_count));
   }

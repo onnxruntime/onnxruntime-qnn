@@ -1406,7 +1406,7 @@ QnnEp::~QnnEp() {
     qnn_backend_manager_->DeInitializePerfTimer();
     std::lock_guard<std::mutex> lock(config_id_mutex_);
     if (htp_power_config_id_.has_value()) {
-      qnn_backend_manager_->DestroyHTPPowerConfigID(*htp_power_config_id_);
+      qnn_backend_manager_->DestroyHtpPowerConfigId(*htp_power_config_id_);
     }
   }
 

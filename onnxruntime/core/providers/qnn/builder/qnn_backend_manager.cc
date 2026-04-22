@@ -2294,7 +2294,7 @@ void QnnBackendManager::RemovePerThreadHtpPowerConfigMapping(const std::thread::
   per_thread_power_configs_.erase(thread_id);
 }
 
-Ort::Status QnnBackendManager::DestroyHTPPowerConfigID(uint32_t htp_power_config_id) {
+Ort::Status QnnBackendManager::DestroyHtpPowerConfigId(uint32_t htp_power_config_id) {
   QnnDevice_Infrastructure_t qnn_device_infra = nullptr;
   auto status = qnn_interface_.deviceGetInfrastructure(&qnn_device_infra);
   RETURN_IF(QNN_SUCCESS != status, "backendGetPerfInfrastructure failed.");
