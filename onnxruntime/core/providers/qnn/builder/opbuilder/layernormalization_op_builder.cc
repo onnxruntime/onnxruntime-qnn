@@ -11,10 +11,10 @@
 namespace onnxruntime {
 namespace qnn {
 
-class LayerNormOpBuilder : public BaseOpBuilder {
+class LayerNormalizationOpBuilder : public BaseOpBuilder {
  public:
-  LayerNormOpBuilder() : BaseOpBuilder("LayerNormOpBuilder") {}
-  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(LayerNormOpBuilder);
+  LayerNormalizationOpBuilder() : BaseOpBuilder("LayerNormalizationOpBuilder") {}
+  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(LayerNormalizationOpBuilder);
 
   Ort::Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                             const OrtNodeUnit& node_unit,
@@ -33,9 +33,9 @@ class LayerNormOpBuilder : public BaseOpBuilder {
                                           bool do_op_validation) const override ORT_MUST_USE_RESULT;
 };
 
-Ort::Status LayerNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                                              const OrtNodeUnit& node_unit,
-                                              const Ort::Logger& logger) const {
+Ort::Status LayerNormalizationOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
+                                                       const OrtNodeUnit& node_unit,
+                                                       const Ort::Logger& logger) const {
   // Also check output type is float for CPU.
   const auto& outputs = node_unit.Outputs();
   RETURN_IF(outputs.size() > 1, "QNN LayerNorm only support 1 output.");
@@ -57,11 +57,11 @@ Ort::Status LayerNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper
   return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
 }
 
-Ort::Status LayerNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                              const OrtNodeUnit& node_unit,
-                                              const Ort::Logger& logger,
-                                              std::vector<std::string>& input_names,
-                                              bool do_op_validation) const {
+Ort::Status LayerNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                                                       const OrtNodeUnit& node_unit,
+                                                       const Ort::Logger& logger,
+                                                       std::vector<std::string>& input_names,
+                                                       bool do_op_validation) const {
   ORT_UNUSED_PARAMETER(do_op_validation);
 
   const auto& inputs = node_unit.Inputs();
@@ -104,11 +104,11 @@ Ort::Status LayerNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper
   return Ort::Status();
 }
 
-Ort::Status LayerNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                            const OrtNodeUnit& node_unit,
-                                                            std::vector<std::string>&& input_names,
-                                                            const Ort::Logger& logger,
-                                                            bool do_op_validation) const {
+Ort::Status LayerNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
+                                                                     const OrtNodeUnit& node_unit,
+                                                                     std::vector<std::string>&& input_names,
+                                                                     const Ort::Logger& logger,
+                                                                     bool do_op_validation) const {
   OrtNodeAttrHelper node_helper(node_unit);
   std::vector<std::string> param_tensor_names;
 
@@ -151,7 +151,7 @@ Ort::Status LayerNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
 }
 
 void CreateLayerNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
-  op_registrations.AddOpBuilder(op_type, std::make_unique<LayerNormOpBuilder>());
+  op_registrations.AddOpBuilder(op_type, std::make_unique<LayerNormalizationOpBuilder>());
 }
 
 }  // namespace qnn

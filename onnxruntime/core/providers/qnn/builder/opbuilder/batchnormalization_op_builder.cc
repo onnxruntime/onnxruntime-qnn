@@ -13,10 +13,10 @@
 namespace onnxruntime {
 namespace qnn {
 
-class BatchNormOpBuilder : public BaseOpBuilder {
+class BatchNormalizationOpBuilder : public BaseOpBuilder {
  public:
-  BatchNormOpBuilder() : BaseOpBuilder("BatchNormOpBuilder") {}
-  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(BatchNormOpBuilder);
+  BatchNormalizationOpBuilder() : BaseOpBuilder("BatchNormalizationOpBuilder") {}
+  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(BatchNormalizationOpBuilder);
 
   Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                             const OrtNodeUnit& node_unit,
@@ -487,9 +487,9 @@ void OverrideParamTypeForRequantize(Qnn_DataType_t x_dtype,
 // BatchNorm is sensitive with data layout, no special validation so far
 // The nodes from 1st call of GetCapability do not get layout transformer applied, it's still NCHW
 // The nodes from 2nd call of GetCapability get layout transformer applied, it's NHWC
-Ort::Status BatchNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                                              const OrtNodeUnit& node_unit,
-                                              const Ort::Logger& logger) const {
+Ort::Status BatchNormalizationOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
+                                                       const OrtNodeUnit& node_unit,
+                                                       const Ort::Logger& logger) const {
   if (node_unit.Domain() == kMSInternalNHWCDomain) {
     // It's useless to fallback the node after layout transformation because CPU EP can't support it anyway
     // Still do it here so hopefully QNN Op validation API can tell us some details why it's not supported
@@ -544,11 +544,11 @@ Ort::Status BatchNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper
   return Ort::Status();
 }
 
-Ort::Status BatchNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                              const OrtNodeUnit& node_unit,
-                                              const Ort::Logger& logger,
-                                              std::vector<std::string>& input_names,
-                                              bool do_op_validation) const {
+Ort::Status BatchNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                                                       const OrtNodeUnit& node_unit,
+                                                       const Ort::Logger& logger,
+                                                       std::vector<std::string>& input_names,
+                                                       bool do_op_validation) const {
   ORT_UNUSED_PARAMETER(do_op_validation);
   ORT_UNUSED_PARAMETER(logger);
 
@@ -681,11 +681,11 @@ Ort::Status BatchNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper
 }
 
 void CreateBatchNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
-  op_registrations.AddOpBuilder(op_type, std::make_unique<BatchNormOpBuilder>());
+  op_registrations.AddOpBuilder(op_type, std::make_unique<BatchNormalizationOpBuilder>());
 }
 
-Ort::Status BatchNormOpBuilder::CheckCpuDataTypes(const std::vector<Qnn_DataType_t> in_dtypes,
-                                                  const std::vector<Qnn_DataType_t> out_dtypes) const {
+Ort::Status BatchNormalizationOpBuilder::CheckCpuDataTypes(const std::vector<Qnn_DataType_t> in_dtypes,
+                                                           const std::vector<Qnn_DataType_t> out_dtypes) const {
   bool is_supported_dtype = false;
   // in_dtypes: [X, scale, B, input_mean, input_var]
   std::vector<Qnn_DataType_t> all_dtypes(in_dtypes.begin(), in_dtypes.begin() + 3);
@@ -706,8 +706,8 @@ Ort::Status BatchNormOpBuilder::CheckCpuDataTypes(const std::vector<Qnn_DataType
   return Ort::Status();
 }
 
-Ort::Status BatchNormOpBuilder::CheckHtpDataTypes(const std::vector<Qnn_DataType_t> in_dtypes,
-                                                  const std::vector<Qnn_DataType_t> out_dtypes) const {
+Ort::Status BatchNormalizationOpBuilder::CheckHtpDataTypes(const std::vector<Qnn_DataType_t> in_dtypes,
+                                                           const std::vector<Qnn_DataType_t> out_dtypes) const {
   bool is_supported_dtype = false;
   // in_dtypes: [X, scale, B, input_mean, input_var]
   // out_dtypes: [Y, running_mean, running_var]

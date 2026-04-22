@@ -9,10 +9,10 @@
 namespace onnxruntime {
 namespace qnn {
 
-class InstanceNormOpBuilder : public BaseOpBuilder {
+class InstanceNormalizationOpBuilder : public BaseOpBuilder {
  public:
-  InstanceNormOpBuilder() : BaseOpBuilder("InstanceNormOpBuilder") {}
-  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(InstanceNormOpBuilder);
+  InstanceNormalizationOpBuilder() : BaseOpBuilder("InstanceNormalizationOpBuilder") {}
+  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(InstanceNormalizationOpBuilder);
 
   Ort::Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                             const OrtNodeUnit& node_unit,
@@ -41,9 +41,9 @@ class InstanceNormOpBuilder : public BaseOpBuilder {
 // The nodes from 1st call of GetCapability do not get layout transformer applied, so their shapes are still NCHW.
 // The nodes from 2nd call of GetCapability get their layout transformed to NHWC.
 // Therefore, we need to check the node domain to determine if the layout has been transformed.
-Ort::Status InstanceNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                                                 const OrtNodeUnit& node_unit,
-                                                 const Ort::Logger& logger) const {
+Ort::Status InstanceNormalizationOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
+                                                          const OrtNodeUnit& node_unit,
+                                                          const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
 
   // Check input type is float for CPU.
@@ -81,11 +81,11 @@ Ort::Status InstanceNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrap
   return Ort::Status();
 }
 
-Ort::Status InstanceNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                                 const OrtNodeUnit& node_unit,
-                                                 const Ort::Logger& logger,
-                                                 std::vector<std::string>& input_names,
-                                                 bool do_op_validation) const {
+Ort::Status InstanceNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                                                          const OrtNodeUnit& node_unit,
+                                                          const Ort::Logger& logger,
+                                                          std::vector<std::string>& input_names,
+                                                          bool do_op_validation) const {
   const auto& inputs = node_unit.Inputs();
 
   TensorInfo input0_info = {};
@@ -148,10 +148,10 @@ Ort::Status InstanceNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrap
   return Ort::Status();
 }
 
-Ort::Status InstanceNormOpBuilder::ProcessScale(QnnModelWrapper& qnn_model_wrapper,
-                                                const OrtNodeUnitIODef& input,
-                                                const Ort::Logger& logger,
-                                                std::vector<std::string>& input_names) const {
+Ort::Status InstanceNormalizationOpBuilder::ProcessScale(QnnModelWrapper& qnn_model_wrapper,
+                                                         const OrtNodeUnitIODef& input,
+                                                         const Ort::Logger& logger,
+                                                         std::vector<std::string>& input_names) const {
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, input, logger, input_names));
 
   // Turn SFIXED scale of InstanceNorm into UFIXED when it is constant
@@ -185,11 +185,11 @@ Ort::Status InstanceNormOpBuilder::ProcessScale(QnnModelWrapper& qnn_model_wrapp
   return Ort::Status();
 }
 
-Ort::Status InstanceNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                               const OrtNodeUnit& node_unit,
-                                                               std::vector<std::string>&& input_names,
-                                                               const Ort::Logger& logger,
-                                                               bool do_op_validation) const {
+Ort::Status InstanceNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
+                                                                        const OrtNodeUnit& node_unit,
+                                                                        std::vector<std::string>&& input_names,
+                                                                        const Ort::Logger& logger,
+                                                                        bool do_op_validation) const {
   OrtNodeAttrHelper node_helper(node_unit);
   std::vector<std::string> param_tensor_names;
 
@@ -261,7 +261,7 @@ Ort::Status InstanceNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& 
 }
 
 void CreateInstanceNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
-  op_registrations.AddOpBuilder(op_type, std::make_unique<InstanceNormOpBuilder>());
+  op_registrations.AddOpBuilder(op_type, std::make_unique<InstanceNormalizationOpBuilder>());
 }
 
 }  // namespace qnn

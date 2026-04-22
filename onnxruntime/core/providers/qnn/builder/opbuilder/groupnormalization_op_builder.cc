@@ -9,10 +9,10 @@
 namespace onnxruntime {
 namespace qnn {
 
-class GroupNormOpBuilder : public BaseOpBuilder {
+class GroupNormalizationOpBuilder : public BaseOpBuilder {
  public:
-  GroupNormOpBuilder() : BaseOpBuilder("GroupNormOpBuilder") {}
-  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(GroupNormOpBuilder);
+  GroupNormalizationOpBuilder() : BaseOpBuilder("GroupNormalizationOpBuilder") {}
+  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(GroupNormalizationOpBuilder);
 
   Ort::Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                             const OrtNodeUnit& node_unit,
@@ -32,9 +32,9 @@ class GroupNormOpBuilder : public BaseOpBuilder {
                                           bool do_op_validation) const override ORT_MUST_USE_RESULT;
 };
 
-Ort::Status GroupNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                                              const OrtNodeUnit& node_unit,
-                                              const Ort::Logger& logger) const {
+Ort::Status GroupNormalizationOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
+                                                       const OrtNodeUnit& node_unit,
+                                                       const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
 
   const auto& inputs = node_unit.Inputs();
@@ -96,11 +96,11 @@ Ort::Status GroupNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper
   return Ort::Status();
 }
 
-Ort::Status GroupNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                              const OrtNodeUnit& node_unit,
-                                              const Ort::Logger& logger,
-                                              std::vector<std::string>& input_names,
-                                              bool do_op_validation) const {
+Ort::Status GroupNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                                                       const OrtNodeUnit& node_unit,
+                                                       const Ort::Logger& logger,
+                                                       std::vector<std::string>& input_names,
+                                                       bool do_op_validation) const {
   ORT_UNUSED_PARAMETER(do_op_validation);
   const auto& inputs = node_unit.Inputs();
 
@@ -111,11 +111,11 @@ Ort::Status GroupNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper
   return Ort::Status();
 }
 
-Ort::Status GroupNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                            const OrtNodeUnit& node_unit,
-                                                            std::vector<std::string>&& input_names,
-                                                            const Ort::Logger& logger,
-                                                            bool do_op_validation) const {
+Ort::Status GroupNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
+                                                                     const OrtNodeUnit& node_unit,
+                                                                     std::vector<std::string>&& input_names,
+                                                                     const Ort::Logger& logger,
+                                                                     bool do_op_validation) const {
   OrtNodeAttrHelper node_helper(node_unit);
   std::vector<std::string> param_tensor_names;
 
@@ -148,7 +148,7 @@ Ort::Status GroupNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
 }
 
 void CreateGroupNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
-  op_registrations.AddOpBuilder(op_type, std::make_unique<GroupNormOpBuilder>());
+  op_registrations.AddOpBuilder(op_type, std::make_unique<GroupNormalizationOpBuilder>());
 }
 
 }  // namespace qnn

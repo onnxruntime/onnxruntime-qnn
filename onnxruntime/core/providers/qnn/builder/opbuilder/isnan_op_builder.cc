@@ -8,10 +8,10 @@
 
 namespace onnxruntime {
 namespace qnn {
-class IsNanOpBuilder : public BaseOpBuilder {
+class IsNaNOpBuilder : public BaseOpBuilder {
  public:
-  IsNanOpBuilder() : BaseOpBuilder("IsNanOpBuilder") {}
-  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(IsNanOpBuilder);
+  IsNaNOpBuilder() : BaseOpBuilder("IsNaNOpBuilder") {}
+  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(IsNaNOpBuilder);
 
  protected:
   Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
@@ -27,7 +27,7 @@ class IsNanOpBuilder : public BaseOpBuilder {
                                           bool do_op_validation) const override ORT_MUST_USE_RESULT;
 };
 
-Ort::Status IsNanOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+Ort::Status IsNaNOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                           const OrtNodeUnit& node_unit,
                                           const Ort::Logger& logger,
                                           std::vector<std::string>& input_names,
@@ -50,7 +50,7 @@ Ort::Status IsNanOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-Ort::Status IsNanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
+Ort::Status IsNaNOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                         const OrtNodeUnit& node_unit,
                                                         std::vector<std::string>&& input_names,
                                                         const Ort::Logger& logger,
@@ -85,7 +85,7 @@ Ort::Status IsNanOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mod
 }
 
 void CreateIsNaNOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
-  op_registrations.AddOpBuilder(op_type, std::make_unique<IsNanOpBuilder>());
+  op_registrations.AddOpBuilder(op_type, std::make_unique<IsNaNOpBuilder>());
 }
 
 }  // namespace qnn

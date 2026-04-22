@@ -11,10 +11,10 @@
 namespace onnxruntime {
 namespace qnn {
 
-class RMSNormOpBuilder : public BaseOpBuilder {
+class RMSNormalizationOpBuilder : public BaseOpBuilder {
  public:
-  RMSNormOpBuilder() : BaseOpBuilder("RMSNormOpBuilder") {}
-  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(RMSNormOpBuilder);
+  RMSNormalizationOpBuilder() : BaseOpBuilder("RMSNormalizationOpBuilder") {}
+  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(RMSNormalizationOpBuilder);
 
   Ort::Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                             const OrtNodeUnit& node_unit,
@@ -33,9 +33,9 @@ class RMSNormOpBuilder : public BaseOpBuilder {
                                           bool do_op_validation) const override ORT_MUST_USE_RESULT;
 };
 
-Ort::Status RMSNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                                            const OrtNodeUnit& node_unit,
-                                            const Ort::Logger& logger) const {
+Ort::Status RMSNormalizationOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
+                                                     const OrtNodeUnit& node_unit,
+                                                     const Ort::Logger& logger) const {
   const auto& inputs = node_unit.Inputs();
   const auto& outputs = node_unit.Outputs();
 
@@ -74,11 +74,11 @@ Ort::Status RMSNormOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
 }
 
-Ort::Status RMSNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                            const OrtNodeUnit& node_unit,
-                                            const Ort::Logger& logger,
-                                            std::vector<std::string>& input_names,
-                                            bool do_op_validation) const {
+Ort::Status RMSNormalizationOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                                                     const OrtNodeUnit& node_unit,
+                                                     const Ort::Logger& logger,
+                                                     std::vector<std::string>& input_names,
+                                                     bool do_op_validation) const {
   ORT_UNUSED_PARAMETER(do_op_validation);
 
   const auto& inputs = node_unit.Inputs();
@@ -129,11 +129,11 @@ Ort::Status RMSNormOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-Ort::Status RMSNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                          const OrtNodeUnit& node_unit,
-                                                          std::vector<std::string>&& input_names,
-                                                          const Ort::Logger& logger,
-                                                          bool do_op_validation) const {
+Ort::Status RMSNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
+                                                                   const OrtNodeUnit& node_unit,
+                                                                   std::vector<std::string>&& input_names,
+                                                                   const Ort::Logger& logger,
+                                                                   bool do_op_validation) const {
   OrtNodeAttrHelper node_helper(node_unit);
   std::vector<std::string> param_tensor_names;
 
@@ -179,7 +179,7 @@ Ort::Status RMSNormOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
 }
 
 void CreateRMSNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
-  op_registrations.AddOpBuilder(op_type, std::make_unique<RMSNormOpBuilder>());
+  op_registrations.AddOpBuilder(op_type, std::make_unique<RMSNormalizationOpBuilder>());
 }
 
 }  // namespace qnn

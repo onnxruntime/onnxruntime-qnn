@@ -9,10 +9,10 @@
 namespace onnxruntime {
 namespace qnn {
 
-class RopeOpBuilder final : public BaseOpBuilder {
+class RotaryEmbeddingOpBuilder final : public BaseOpBuilder {
  public:
-  RopeOpBuilder() : BaseOpBuilder("RopeOpBuilder") {}
-  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(RopeOpBuilder);
+  RotaryEmbeddingOpBuilder() : BaseOpBuilder("RotaryEmbeddingOpBuilder") {}
+  ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(RotaryEmbeddingOpBuilder);
 
   Ort::Status IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                             const OrtNodeUnit& node_unit,
@@ -37,9 +37,9 @@ class RopeOpBuilder final : public BaseOpBuilder {
                                        bool do_op_validation) const ORT_MUST_USE_RESULT;
 };
 
-Ort::Status RopeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
-                                         const OrtNodeUnit& node_unit,
-                                         const Ort::Logger& logger) const {
+Ort::Status RotaryEmbeddingOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
+                                                    const OrtNodeUnit& node_unit,
+                                                    const Ort::Logger& logger) const {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Validating RotaryEmbedding op for QNN EP");
 
   // Only support HTP backend for now
@@ -152,9 +152,9 @@ Ort::Status RopeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-Ort::Status RopeOpBuilder::ValidateInputShapes(QnnModelWrapper& qnn_model_wrapper,
-                                               const OrtNodeUnit& node_unit,
-                                               const Ort::Logger& logger) const {
+Ort::Status RotaryEmbeddingOpBuilder::ValidateInputShapes(QnnModelWrapper& qnn_model_wrapper,
+                                                          const OrtNodeUnit& node_unit,
+                                                          const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
 
   const auto& inputs = node_unit.Inputs();
@@ -169,11 +169,11 @@ Ort::Status RopeOpBuilder::ValidateInputShapes(QnnModelWrapper& qnn_model_wrappe
   return Ort::Status();
 }
 
-Ort::Status RopeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
-                                                       const OrtNodeUnit& node_unit,
-                                                       std::vector<std::string>&& input_names,
-                                                       const Ort::Logger& logger,
-                                                       bool do_op_validation) const {
+Ort::Status RotaryEmbeddingOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
+                                                                  const OrtNodeUnit& node_unit,
+                                                                  std::vector<std::string>&& input_names,
+                                                                  const Ort::Logger& logger,
+                                                                  bool do_op_validation) const {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Processing RotaryEmbedding op for QNN");
 
   // Decompose RotaryEmbedding into QNN elementary ops
@@ -181,11 +181,11 @@ Ort::Status RopeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                   logger, do_op_validation);
 }
 
-Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_wrapper,
-                                                    const OrtNodeUnit& node_unit,
-                                                    std::vector<std::string>&& input_names,
-                                                    const Ort::Logger& logger,
-                                                    bool do_op_validation) const {
+Ort::Status RotaryEmbeddingOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_wrapper,
+                                                               const OrtNodeUnit& node_unit,
+                                                               std::vector<std::string>&& input_names,
+                                                               const Ort::Logger& logger,
+                                                               bool do_op_validation) const {
   ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Decomposing RotaryEmbedding into QNN ops");
 
   const auto& inputs = node_unit.Inputs();
@@ -923,7 +923,7 @@ Ort::Status RopeOpBuilder::DecomposeRotaryEmbedding(QnnModelWrapper& qnn_model_w
 }
 
 void CreateRotaryEmbeddingOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations) {
-  op_registrations.AddOpBuilder(op_type, std::make_unique<RopeOpBuilder>());
+  op_registrations.AddOpBuilder(op_type, std::make_unique<RotaryEmbeddingOpBuilder>());
 }
 
 }  // namespace qnn
