@@ -4,13 +4,26 @@ rootProject.buildFileName = 'build-android.gradle'
 include ':qnnpluginep'
 project(':qnnpluginep').projectDir = new File('src/main/qnnpluginep')
 
-// Redirect :qnnpluginep build output out of the source tree.
-// CMake passes -DqnnpluginepBuildDir=<path> to avoid polluting src/main/qnnpluginep/build/.
+// Redirect build output out of the source tree.
+// CMake passes -D<name>BuildDir=<path> to avoid polluting the source tree.
+//
+// NOTE: In our current CMake integration (cmake/onnxruntime_java.cmake)
+// -DqnnpluginepBuildDir and -DrootBuildDir are deliberately set to the SAME
+// path: the root project's build tree is needed for the Maven publish plugin
+// to emit publications/qnnEp/pom-default.xml where CMake can find it, and the
+// :qnnpluginep subproject writes its AAR into outputs/aar/ under the same
+// tree. If a future CMake consumer passes only one of the two flags we still
+// honour it separately; if additional subprojects are introduced this
+// co-location should be revisited so the root and subproject build trees do
+// not interfere.
 def qnnpluginepBuildDir = System.properties['qnnpluginepBuildDir']
-if (qnnpluginepBuildDir) {
+def rootBuildDir = System.properties['rootBuildDir']
+if (qnnpluginepBuildDir || rootBuildDir) {
     gradle.beforeProject { proj ->
-        if (proj.name == 'qnnpluginep') {
+        if (qnnpluginepBuildDir && proj.name == 'qnnpluginep') {
             proj.buildDir = qnnpluginepBuildDir
+        } else if (rootBuildDir && proj == proj.rootProject) {
+            proj.buildDir = rootBuildDir
         }
     }
 }

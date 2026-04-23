@@ -173,6 +173,11 @@ Environment variables
         action="store_true",
         help="Enable building Zip archive.",
     )
+    parser.add_argument(
+        "--build-aar",
+        action="store_true",
+        help="Enable building Android AAR package.",
+    )
 
     args = parser.parse_args()
     if args.target_py_version.lower() == "none":
@@ -197,6 +202,7 @@ class TaskLibrary:
         docker_ccache_root: Path | None,
         build_nuget: bool,
         build_zip: bool,
+        build_aar: bool,
     ) -> None:
         self.__python_executable = python_executable
         self.__venv_path = venv_path
@@ -208,6 +214,7 @@ class TaskLibrary:
         self.__docker_ccache_root = docker_ccache_root
         self.__build_nuget = build_nuget
         self.__build_zip = build_zip
+        self.__build_aar = build_aar
 
     @staticmethod
     def to_dot(highlight: list[str] | None = None) -> str:
@@ -260,6 +267,7 @@ class TaskLibrary:
                 "build",
                 extra_args=extra_args,
                 env=env,
+                build_zip=self.__build_zip,
             )
         )
 
@@ -280,31 +288,11 @@ class TaskLibrary:
                         self.__ort_prebuilt_root,
                         self.__qairt_sdk_root,
                         "archive",
+                        extra_args=["--build-java"] if self.__build_aar else None,
                     )
                 )
             else:
                 raise NotImplementedError("Archiving for Android on this host is not supported.")
-
-        @task
-        @depends(["build_ort_android_aarch64_aar"])
-        def archive_ort_android_aarch64_aar(self, plan: Plan) -> str:
-            if is_host_linux() or is_host_mac():
-                return plan.add_step(
-                    BuildEpLinuxTask(
-                        "Archiving ONNX Runtime for Android AAR",
-                        self.__venv_path,
-                        "android",
-                        "aarch64",
-                        self.__config,
-                        None,  # target_py_version
-                        self.__ort_prebuilt_root,
-                        self.__qairt_sdk_root,
-                        "archive",
-                        extra_args=["--build-java"],
-                    )
-                )
-            else:
-                raise NotImplementedError("Archiving for Android AAR on this host is not supported.")
 
     if is_host_linux() or is_host_mac():
 
@@ -452,6 +440,9 @@ class TaskLibrary:
         @depends(["create_venv"])
         def build_ort_android_aarch64(self, plan: Plan) -> str:
             if is_host_linux() or is_host_mac():
+                extra_args = ["--no-warnings-as-errors"]
+                if self.__build_aar:
+                    extra_args.append("--build-java")
                 return plan.add_step(
                     BuildEpLinuxTask(
                         "Building ONNX Runtime for Android",
@@ -463,32 +454,11 @@ class TaskLibrary:
                         self.__ort_prebuilt_root,
                         self.__qairt_sdk_root,
                         "build",
-                        extra_args=["--no-warnings-as-errors"],
+                        extra_args=extra_args,
                     )
                 )
             else:
                 raise NotImplementedError("Building for Android on this host is not supported.")
-
-        @task
-        @depends(["create_venv"])
-        def build_ort_android_aarch64_aar(self, plan: Plan) -> str:
-            if is_host_linux() or is_host_mac():
-                return plan.add_step(
-                    BuildEpLinuxTask(
-                        "Building ONNX Runtime for Android AAR",
-                        self.__venv_path,
-                        "android",
-                        "aarch64",
-                        self.__config,
-                        None,  # target_py_version
-                        self.__ort_prebuilt_root,
-                        self.__qairt_sdk_root,
-                        "build",
-                        extra_args=["--no-warnings-as-errors", "--build-java"],
-                    )
-                )
-            else:
-                raise NotImplementedError("Building for Android AAR on this host is not supported.")
 
     @task
     @depends(["docker_build_manylinux_2_34_aarch64"])
@@ -501,6 +471,7 @@ class TaskLibrary:
                 self.__target_py_version,
                 self.__qairt_sdk_root,
                 self.__docker_ccache_root,
+                self.__build_zip,
             ),
         )
 
@@ -676,6 +647,8 @@ class TaskLibrary:
                 build_args={
                     "BUILD_UID": str(os.getuid()),
                     "BUILD_GID": str(os.getgid()),
+                    "ORT_NIGHTLY_BUILD": os.environ.get("ORT_NIGHTLY_BUILD", "0"),
+                    "ORT_VERSION_SUFFIX": os.environ.get("ORT_VERSION_SUFFIX", ""),
                 },
             )
         )
@@ -1175,6 +1148,7 @@ def plan_from_dependencies(
     docker_ccache_root: Path | None,
     build_nuget: bool,
     build_zip: bool,
+    build_aar: bool,
 ) -> Plan:
     """
     Uses a work list algorithm to create a Plan to build the given tasks and their
@@ -1190,6 +1164,7 @@ def plan_from_dependencies(
         docker_ccache_root,
         build_nuget,
         build_zip,
+        build_aar,
     )
     plan = Plan()
 
@@ -1243,6 +1218,7 @@ def plan_from_task_list(
     docker_ccache_root: Path | None,
     build_nuget: bool,
     build_zip: bool,
+    build_aar: bool,
 ) -> Plan:
     """
     Planner that just instantiates the given tasks with no attempt made to satisfy dependencies.
@@ -1258,6 +1234,7 @@ def plan_from_task_list(
         docker_ccache_root,
         build_nuget,
         build_zip,
+        build_aar,
     )
     plan = Plan()
     for task_name in tasks:
@@ -1295,6 +1272,7 @@ def build_and_test():
             docker_ccache_root,
             args.build_nuget,
             args.build_zip,
+            args.build_aar,
         )
 
     if args.skip is not None:

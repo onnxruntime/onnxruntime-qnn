@@ -9,9 +9,9 @@ permissions:
 
 on:
   push:
-    branches: [main, rel-*]
+    branches: [main, rel-*, rel/**/*]
   pull_request:
-    branches: [main, rel-*]
+    branches: [main, rel-*, rel/**/*]
   merge_group:
     types: [checks_requested]
 

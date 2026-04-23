@@ -171,6 +171,35 @@ Ort::Status QnnModel::SetGraphInputOutputInfo(const QnnModelContext& context) {
                                    std::forward_as_tuple(i, static_cast<int32_t>(elem_type), std::move(shape)));
   }
 
+  // DLC tensors may carry overridden names that differ from the fused node I/O names.
+  if (graph_info_) {
+    auto add_qnn_name_aliases = [](GraphInputOutputInfo& io_info,
+                                   const std::vector<QnnTensorWrapper>& qnn_tensors,
+                                   const std::vector<std::string>& fused_order) {
+      for (size_t i = 0; i < qnn_tensors.size() && i < fused_order.size(); ++i) {
+        const std::string& qnn_name = qnn_tensors[i].GetName();
+        const std::string& fused_name = fused_order[i];
+        if (qnn_name != fused_name && io_info.indices.find(qnn_name) == io_info.indices.end()) {
+          auto idx_it = io_info.indices.find(fused_name);
+          if (idx_it != io_info.indices.end()) {
+            io_info.indices.emplace(qnn_name, idx_it->second);
+          }
+          auto tensor_it = io_info.tensors.find(fused_name);
+          if (tensor_it != io_info.tensors.end()) {
+            const OnnxTensorInfo& info = tensor_it->second;
+            io_info.tensors.emplace(std::piecewise_construct,
+                                    std::forward_as_tuple(qnn_name),
+                                    std::forward_as_tuple(info.index_, info.data_type_,
+                                                          std::vector<int64_t>(info.shape_)));
+          }
+        }
+      }
+    };
+
+    add_qnn_name_aliases(graph_inputs_, graph_info_->InputTensors(), fused_input_order);
+    add_qnn_name_aliases(graph_outputs_, graph_info_->OutputTensors(), fused_output_order);
+  }
+
   return Ort::Status();
 }
 

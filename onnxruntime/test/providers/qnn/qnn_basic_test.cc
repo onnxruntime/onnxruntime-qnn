@@ -1524,9 +1524,7 @@ static GetTestModelFn QDQBuildSigmoidForTensorNameTest(const TestInputDef<float>
 }
 
 // Test that DLC I/O tensor names match original ONNX names when offload_graph_io_quantization=1.
-// Disabled: tensor_name_overrides mapping was removed to fix a crash when offload_graph_io_quantization is enabled.
-// Re-enable once tensor name override support is re-implemented.
-TEST_F(QnnHTPBackendTests, DISABLED_OffloadGraphIoQuantizationTensorNameOverrides) {
+TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationTensorNameOverrides) {
   ProviderOptions provider_options;
 #if defined(_WIN32)
   provider_options["backend_path"] = "QnnHtp.dll";
@@ -1972,6 +1970,53 @@ TEST_F(QnnHTPBackendTests, TestMismatchedGraphInputAndTensorWrapperCount) {
                   0.008f);
 }
 
+// Compile a QDQ model to a context binary with offload_graph_io_quantization=1,
+// then load and run the context binary. Regression test for PR #234.
+TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationContextBinaryRoundTrip) {
+  const std::string ctx_model_file = "./offload_qdq_ctx_test.onnx";
+  std::remove(ctx_model_file.c_str());
+  auto cleanup = gsl::finally([&]() { std::remove(ctx_model_file.c_str()); });
+
+  std::vector<float> input_data = GetFloatDataInRange(0.0f, 1.0f, 8);
+  TestInputDef<float> input_def({1, 2, 2, 2}, false, input_data);
+
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(model, QDQBuildSigmoidForTensorNameTest<uint8_t>(input_def), "sigmoid.qdq", 21);
+
+  ProviderOptions provider_options;
+#if defined(_WIN32)
+  provider_options["backend_path"] = "QnnHtp.dll";
+#else
+  provider_options["backend_path"] = "libQnnHtp.so";
+#endif
+  provider_options["offload_graph_io_quantization"] = "1";
+
+  {
+    Ort::SessionOptions so;
+    so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+    so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_model_file.c_str());
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+
+    Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), so);
+    ASSERT_TRUE(std::filesystem::exists(ctx_model_file)) << "Context binary not generated";
+  }
+
+  {
+    Ort::SessionOptions so2;
+    so2.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_model_file.c_str());
+
+    RegisteredEpDeviceUniquePtr registered_ep_device;
+    RegisterQnnEpLibrary(registered_ep_device, so2, onnxruntime::kQnnExecutionProvider, provider_options);
+
+    std::ifstream ifs(ctx_model_file, std::ios::binary);
+    std::string ctx_data((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
+    Ort::Session session2(*ort_env, ctx_data.data(), ctx_data.size(), so2);
+  }
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 #if !BUILD_QNN_EP_STATIC_LIB
@@ -2171,9 +2216,7 @@ static GetTestModelFn BuildPartitionAddedInputQDQModel() {
 // Verifies the same as PartitionAddedInputRegisteredAsGraphInput but via the
 // tensor_name_overrides code path: with offload_graph_io_quantization=1,
 // QuantizeLinear stays on CPU and causes a tensor name remap (q_input <-> input).
-// Disabled: tensor_name_overrides mapping was removed to fix a crash when offload_graph_io_quantization is enabled.
-// Re-enable once tensor name override support is re-implemented.
-TEST_F(QnnCPUBackendTests, DISABLED_PartitionAddedInputRegisteredAsGraphInputOffloadGraphIoQuantization) {
+TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInputOffloadGraphIoQuantization) {
   // Build model using public API
   std::unique_ptr<ModelAndBuilder> model;
   CreateModelInMemory(model, BuildPartitionAddedInputQDQModel(), "partition_added_input_qdq", 13);
@@ -2379,9 +2422,7 @@ static GetTestModelFn BuildMultiSigmoidQDQModelForIOOrderTest() {
 }
 
 // Verifies QNN graph I/O order matches ONNX declaration order with offload_graph_io_quantization=1.
-// Disabled: tensor_name_overrides mapping was removed to fix a crash when offload_graph_io_quantization is enabled.
-// Re-enable once tensor name override support is re-implemented.
-TEST_F(QnnCPUBackendTests, DISABLED_GraphInputOutputOrderMatchesOnnxOffloadGraphIoQuantization) {
+TEST_F(QnnCPUBackendTests, GraphInputOutputOrderMatchesOnnxOffloadGraphIoQuantization) {
   ProviderOptions provider_options;
 #if defined(_WIN32)
   provider_options["backend_path"] = "QnnCpu.dll";
