@@ -51,25 +51,25 @@ android {
 	namespace 'ai.onnxruntime.example.javavalidator'
 }
 
-// Check if the requested ORT version exists in Maven repository
-// If version 1.24.4 is not available, fallback to 1.24.3
-def getAvailableOrtVersion(String requestedVersion) {
-	// Only check for version 1.24.4, return other versions as-is
-	if (requestedVersion != '1.24.4') {
+// Resolve a Maven artifact version, falling back to a known-good version if unavailable.
+// Only performs resolution when requestedVersion matches checkVersion; all other versions pass through.
+def getAvailableVersion(String artifact, String requestedVersion, String checkVersion, String fallbackVersion) {
+	if (requestedVersion != checkVersion) {
 		return requestedVersion
 	}
-	
 	try {
-		// Attempt to resolve version 1.24.4 from Maven repository
-		def config = configurations.detachedConfiguration(
-			dependencies.create("com.microsoft.onnxruntime:onnxruntime-android:${requestedVersion}")
-		)
-		config.resolve()
-		logger.info("Version ${requestedVersion} found in Maven repository")
+		configurations.detachedConfiguration(
+			dependencies.create("${artifact}:${requestedVersion}")
+		).resolve()
 		return requestedVersion
-	} catch (Exception e) {
-		logger.warn("Version ${requestedVersion} not found in Maven repository, falling back to 1.24.3")
-		return '1.24.3'
+	} catch (org.gradle.api.artifacts.ResolveException e) {
+		// Only fall back when the artifact genuinely cannot be resolved (not found in any
+		// configured repository). Network/TLS/credential failures must NOT be silently
+		// swallowed — they would surface here with a different exception type and we want
+		// them to propagate so a broken Maven mirror in CI is obvious instead of producing
+		// a misleading fallback.
+		logger.warn("${artifact}:${requestedVersion} not found in Maven repository (${e.class.simpleName}: ${e.message}); falling back to ${fallbackVersion}")
+		return fallbackVersion
 	}
 }
 
@@ -89,9 +89,12 @@ dependencies {
 	androidTestImplementation 'com.microsoft.appcenter:espresso-test-extension:1.4'
 
 	// ORT core, QNN EP (includes libonnxruntime_providers_qnn.so + Kotlin helpers), and QNN runtime
-	// Dynamically check and use available version from Maven repository
-	def resolvedOrtVersion = getAvailableOrtVersion(ortVersion)
+	// Dynamically check and use available version from Maven repository.
+	// Fallback versions (1.24.3, 2.45.0) are the previous known-good releases used when the
+	// requested version is not yet available in the Maven repository (e.g., same-day CI runs).
+	def resolvedOrtVersion = getAvailableVersion('com.microsoft.onnxruntime:onnxruntime-android', ortVersion, '1.24.4', '1.24.3')
 	implementation "com.microsoft.onnxruntime:onnxruntime-android:${resolvedOrtVersion}"
 	implementation(name: 'onnxruntime-android-qnn', ext: 'aar')
-	implementation "com.qualcomm.qti:qnn-runtime:$qnnVersion"
+	def resolvedQnnVersion = getAvailableVersion('com.qualcomm.qti:qnn-runtime', qnnVersion, '2.45.40', '2.45.0')
+	implementation "com.qualcomm.qti:qnn-runtime:${resolvedQnnVersion}"
 }

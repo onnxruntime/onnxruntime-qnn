@@ -22,6 +22,10 @@ on:
         description: "If true, build for Android"
         type: boolean
         default: false
+      build_android_aarch64_aar:
+        description: "If true, build the Android AAR"
+        type: boolean
+        default: false
       build_linux_aarch64_oe_gcc11_2:
         description: "If true, build for aarch64 OpenEmbedded Linux using GCC 11.2"
         type: boolean
@@ -50,20 +54,13 @@ on:
         description: "If true, build a zip archive with the first ARM64 build."
         type: boolean
         default: true
-      build_android_aar:
-        description: "If true, build the Android AAR"
-        type: boolean
-        default: true
 
   workflow_dispatch:
     inputs: *common_inputs
 
-env:
-  BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
-
 jobs:
   build-android-aarch64:
-    if: ${{ inputs.build_android_aarch64 }}
+    if: ${{ inputs.build_android_aarch64 || inputs.build_android_aarch64_aar }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
@@ -76,6 +73,17 @@ jobs:
       run_tests: false
       upload_test_archive: true
       upload_wheel: false
+      build_aar: ${{ inputs.build_android_aarch64_aar }}
+      upload_aar: ${{ inputs.build_android_aarch64_aar }}
+
+  test-android-aarch64:
+    if: ${{ inputs.build_android_aarch64 || inputs.build_android_aarch64_aar }}
+    needs: [build-android-aarch64]
+    uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
+    secrets: inherit
+    with:
+      target_os: android
+      target_arch: aarch64
 
   build-linux-aarch64-manylinux_2_34:
     if: ${{ toJSON(fromJSON(inputs.linux_aarch64_manylinux_2_34_target_py_vsns)) != '[]' }}
@@ -152,30 +160,3 @@ jobs:
       upload_nuget: ${{ inputs.windows_arm64_build_nuget && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       build_zip: ${{ inputs.windows_arm64_build_zip && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       upload_zip: ${{ inputs.windows_arm64_build_zip && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
-
-  build-android-aarch64-aar:
-    if: ${{ inputs.build_android_aar }}
-    runs-on: ["self-hosted", "X64", "Linux", "Build"]
-    steps:
-      - uses: actions/checkout@v6
-        with:
-          submodules: recursive
-
-      - name: Setup JFrog CLI
-        uses: jfrog/setup-jfrog-cli@v5
-        with:
-          disable-auto-build-publish: true
-          disable-job-summary: true
-        env:
-          JF_URL: ${{ secrets.BUILD_ARTIFACTORY_URL }}
-          JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
-
-      - name: Build Android AAR
-        run: |
-          python3 qcom/build_and_test.py build_ort_android_aarch64_aar
-
-      - name: Upload AAR to Artifactory
-        uses: ./.github/actions/upload-ci-artifact
-        with:
-          name: "android-aarch64-aar"
-          src_pattern: android-aarch64/Release/java/build/android-qnn-ep/outputs/aar/onnxruntime-android-qnn.aar

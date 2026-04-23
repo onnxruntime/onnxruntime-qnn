@@ -65,12 +65,6 @@ MODEL_TEST_IDS = [m.name for m in MODEL_TEST_DEFINITIONS]
 
 
 class TestOrt(TestBase):
-    @pytest.fixture(scope="session", autouse=True)
-    def device_session(self):
-        self.prepare_ort_tests()
-        yield self
-        self.copy_logs()
-
     @pytest.mark.parametrize(["test_name", "test_cmd"], CTEST_PLAN.tests.items(), ids=CTEST_PLAN.names)
     def test_onnxruntime_test_suite(self, test_name: str, test_cmd: list[str]) -> None:
         if test_name in CONFIG.skip_ctests:

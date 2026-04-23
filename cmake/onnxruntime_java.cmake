@@ -36,16 +36,39 @@ if (ANDROID)
         $<TARGET_FILE:onnxruntime_providers_qnn>
         ${ANDROID_QNN_EP_ABI_DIR}/$<TARGET_LINKER_FILE_NAME:onnxruntime_providers_qnn>)
 
+    # The Android Gradle Plugin's `maven-publish` plugin generates POM files at
+    # ${rootBuildDir}/publications/<publication>/pom-default.xml, so we need the
+    # root project's build tree to share the qnnpluginep subproject's output
+    # directory for the copy_if_different below to find pom-default.xml.
+    set(ANDROID_QNN_EP_POM_PATH ${ANDROID_QNN_EP_OUTPUT_DIR}/publications/qnnEp/pom-default.xml)
+
+    # Generate a tiny cmake -P script into the build tree so we can do a
+    # build-time if(NOT EXISTS) check without committing a new source file and
+    # without relying on bash (which cmake/Ninja may re-wrap in /bin/sh -c,
+    # causing compound-syntax errors).
+    set(_check_pom_script "${CMAKE_CURRENT_BINARY_DIR}/check_pom_exists.cmake")
+    file(WRITE "${_check_pom_script}"
+      "if(NOT EXISTS \"${ANDROID_QNN_EP_POM_PATH}\")\n"
+      "  message(FATAL_ERROR"
+      " \"pom-default.xml was not generated: ${ANDROID_QNN_EP_POM_PATH}\\n\""
+      " \"Please check if gradle executes generatePomFileForQnnEpPublication.\")\n"
+      "endif()\n")
+
     add_custom_command(TARGET onnxruntime_providers_qnn POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E echo "Generating onnxruntime-android-qnn AAR..."
       COMMAND ${GRADLE_EXECUTABLE}
         ${COMMON_GRADLE_ARGS}
-        :qnnpluginep:bundleReleaseAar
+        :qnnpluginep:bundleReleaseAar generatePomFileForQnnEpPublication
         -b build-android.gradle -c settings-android.gradle
         -DminSdkVer=${ANDROID_MIN_SDK}
         -DqnnEpJniLibsDir=${ANDROID_QNN_EP_JNILIBS_DIR}
         -DqnnpluginepBuildDir=${ANDROID_QNN_EP_OUTPUT_DIR}
+        -DrootBuildDir=${ANDROID_QNN_EP_OUTPUT_DIR}
         --stacktrace
+      COMMAND ${CMAKE_COMMAND} -P "${_check_pom_script}"
+      COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${ANDROID_QNN_EP_POM_PATH}
+        ${ANDROID_QNN_EP_OUTPUT_DIR}/outputs/aar/onnxruntime-android-qnn.pom
       WORKING_DIRECTORY ${JAVA_ROOT})
   endif()
 

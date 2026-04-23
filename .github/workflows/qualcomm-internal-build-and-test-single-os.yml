@@ -77,6 +77,19 @@ on:
       upload_zip:
         default: false
         type: boolean
+      build_aar:
+        description: |
+          If true, also build the Android AAR during the Android build.
+          Must be set together with upload_aar (the two inputs are always coupled;
+          setting only one is a configuration error).
+        default: false
+        type: boolean
+      upload_aar:
+        description: |
+          If true, upload the Android AAR (and its POM sidecar) as CI artifacts.
+          Must be set together with build_aar (see build_aar's description).
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs: *common_inputs
 
@@ -114,7 +127,8 @@ jobs:
           --target-py-version ${{inputs.target_py_vsn}}
           ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
           ${{ inputs.build_zip == true && '--build-zip' || '' }}
-          ${{inputs.upload_test_archive == true && 'archive' || 'build'}}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}
+          ${{ inputs.build_aar == true && '--build-aar' || '' }}
+          ${{ inputs.upload_test_archive == true && 'archive' || 'build' }}_ort_${{ inputs.target_os }}_${{ inputs.target_arch }}
 
       - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         if: ${{ inputs.run_tests && inputs.build_test_same_runner }}
@@ -181,6 +195,20 @@ jobs:
         with:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime-qnn*.${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}"
+
+      - name: Upload AAR to Artifactory
+        if: ${{ inputs.upload_aar }}
+        uses: ./.github/actions/upload-ci-artifact
+        with:
+          name: "${{inputs.target_os}}-${{ inputs.target_arch }}-aar"
+          src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/java/build/android-qnn-ep/outputs/aar/onnxruntime-android-qnn.aar"
+
+      - name: Upload POM to Artifactory
+        if: ${{ inputs.upload_aar }}
+        uses: ./.github/actions/upload-ci-artifact
+        with:
+          name: "${{inputs.target_os}}-${{ inputs.target_arch }}-pom"
+          src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/java/build/android-qnn-ep/outputs/aar/onnxruntime-android-qnn.pom"
 
   test:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"

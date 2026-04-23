@@ -7,7 +7,6 @@ import ai.onnxruntime.*
 import ai.onnxruntime.OrtSession.SessionOptions
 import android.os.Build;
 import android.util.Log
-import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.microsoft.appcenter.espresso.Factory
@@ -24,9 +23,6 @@ private const val QNN_EP_REGISTRATION_NAME = "QNNExecutionProvider"
 
 @RunWith(AndroidJUnit4::class)
 class SimpleTest {
-    @get:Rule
-    val activityTestRule = ActivityScenarioRule(MainActivity::class.java)
-
     @get:Rule
     var reportHelper: ReportHelper = Factory.getReportHelper()
 
@@ -88,6 +84,7 @@ class SimpleTest {
                     }
                     val providerOptions = Collections.singletonMap("backend_type", "htp")
                     opts.addExecutionProvider(qnnDevices, providerOptions)
+                    opts.addConfigEntry("session.disable_cpu_ep_fallback", "1")
                 }
 
                 OrtProvider.CPU -> {
