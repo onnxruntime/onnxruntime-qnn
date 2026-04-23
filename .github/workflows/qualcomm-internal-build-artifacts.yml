@@ -160,3 +160,6 @@ jobs:
       upload_nuget: ${{ inputs.windows_arm64_build_nuget && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       build_archive: ${{ inputs.windows_arm64_build_archive && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       upload_archive: ${{ inputs.windows_arm64_build_archive && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      # For each arch, build and upload a PDB archive with the first python version we encounter
+      build_pdb_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+      upload_pdb_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}

@@ -10,7 +10,7 @@ permissions:
 
 on:
   workflow_call:
-    inputs: &common_inputs
+    inputs:
       nightly_build:
         description: "If true, include a verbose version string in file names."
         type: boolean
@@ -31,8 +31,6 @@ on:
         description: "If true, skip publishing artifacts (dry run)."
         type: boolean
         default: false
-  workflow_dispatch:
-    inputs: *common_inputs
 
 env:
   BUILD_ARTIFACTORY_REPO: "${{ secrets.BUILD_ARTIFACTORY_REPO }}"
@@ -283,11 +281,27 @@ jobs:
         with:
           name: linux-aarch64_manylinux_2_34-py3.11-tgz
 
+      - name: Download Windows ARM64 PDB Archive from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64-py3.11-pdb-zip
+
+      - name: Download Windows ARM64EC PDB Archive from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64ec-py3.11-pdb-zip
+
+      - name: Download Windows x86_64 PDB Archive from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-x86_64-py3.11-pdb-zip
+
       - name: Verify Zip artifacts
         run: |
+          # 1 windows zip + 3 PDB archives = 4 zips
           count=$(find "${{ github.workspace }}/build" -name "*.zip" | wc -l)
           echo "Found $count Zip archive(s)"
-          [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 Zip archive, found $count"; exit 1; }
+          [ "$count" -eq 4 ] || { echo "ERROR: Expected 4 Zip archive, found $count"; exit 1; }
 
       - name: Verify TGZ artifact
         run: |
@@ -310,7 +324,7 @@ jobs:
           password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
 
-          # Upload Windows ARM64 zip
+          # Upload Windows ARM64 archive and PDB archive
           ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
             "${{ github.workspace }}/build/windows-arm64/Release/dist" \
             "$NETRC_FILE"
@@ -318,6 +332,16 @@ jobs:
           # Upload Linux aarch64 manylinux_2_34 zip
           ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
             "${{ github.workspace }}/build/linux-aarch64_manylinux_2_34/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Windows ARM64EC PDB archive
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/windows-arm64ec/Release/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Windows x86_64 PDB archive
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/windows-x86_64/Release/dist" \
             "$NETRC_FILE"
 
           # Clean up the temporary .netrc file

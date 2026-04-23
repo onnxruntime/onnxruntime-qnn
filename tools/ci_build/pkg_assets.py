@@ -46,7 +46,7 @@ def parse_version_number(source_dir):
 
 def get_qnn_asset_file_list():
     """
-    Returns the list of QNN asset files to include in the zip package.
+    Returns the list of QNN asset files to include in the archive package.
 
     Args:
         is_windows_platform: If None, auto-detect from platform.system()
@@ -105,6 +105,47 @@ def get_qnn_asset_file_list():
     return qnn_assets["windows"] if is_windows() else qnn_assets["others"]
 
 
+def _compute_archive_name(source_dir, version_suffix, archive_name_suffix, archive_ext, target_arch=None):
+    """
+    Build the archive filename using the shared naming rules.
+
+    Format: onnxruntime-qnn[-<version>][<version_suffix>][-<archive_name_suffix>]-<platform>-<arch><ext>
+
+    Args:
+        source_dir: Path to source directory
+        version_suffix: Optional version suffix for archive filename
+        archive_name_suffix: Optional suffix for archive filename
+        archive_ext: String for archive extension
+        target_arch: Optional explicit target architecture. When set, overrides
+            platform.machine() — needed for cross-compile builds where the build
+            host arch differs from the target arch (e.g. arm64ec on an x64 host).
+    """
+    sys_name = platform.system().lower()
+    platform_name = "win" if sys_name == "windows" else sys_name
+    arch = (target_arch or platform.machine()).lower()
+    arch = {"amd64": "x64", "x86_64": "x64"}.get(arch, arch)
+
+    version = parse_version_number(source_dir)
+
+    name = "onnxruntime-qnn"
+    if version:
+        name += f"-{version}"
+    if version_suffix:
+        name += f"{version_suffix}"
+    if archive_name_suffix:
+        name += f"-{archive_name_suffix}"
+    name += f"-{platform_name}-{arch}{archive_ext}"
+    return name
+
+
+def _resolve_config_cwd(build_dir, config, use_ninja):
+    """Resolve the per-config working directory for asset packaging."""
+    config_build_dir = os.path.join(build_dir, config)
+    if is_windows() and not use_ninja:
+        return os.path.join(config_build_dir, config)
+    return config_build_dir
+
+
 def build_archive_asset(
     source_dir,
     build_dir,
@@ -112,6 +153,7 @@ def build_archive_asset(
     archive_name_suffix=None,
     version_suffix="",
     use_ninja=False,
+    target_arch=None,
 ):
     """
     Build archive asset packages containing QNN EP and dependencies.
@@ -123,6 +165,9 @@ def build_archive_asset(
         archive_name_suffix: Optional suffix for archive filename
         version_suffix: Optional version suffix for archive filename
         use_ninja: Whether Ninja generator was used
+        target_arch: Override for platform.machine() in the archive filename.
+            Required for cross-compile builds (e.g. arm64ec on x64) where the
+            build host arch differs from the target arch.
 
     Returns:
         list[Path]: List of created archive file paths
@@ -132,13 +177,7 @@ def build_archive_asset(
     for config in configs:
         log.info(f"Building archive asset for {config} configuration")
 
-        # Determine working directory (matching build_python_wheel logic)
-        config_build_dir = os.path.join(build_dir, config)
-        if is_windows() and not use_ninja:
-            cwd = os.path.join(config_build_dir, config)
-        else:
-            cwd = config_build_dir
-
+        cwd = _resolve_config_cwd(build_dir, config, use_ninja)
         if not os.path.exists(cwd):
             raise FileNotFoundError(f"Build directory not found: {cwd}")
 
@@ -146,31 +185,10 @@ def build_archive_asset(
         dist_dir = os.path.join(cwd, "dist")
         os.makedirs(dist_dir, exist_ok=True)
 
-        # Generate archive filename
-        platform_name = platform.system().lower()
-        platform_abbr = {"windows": "win"}
-        if platform_name in platform_abbr:
-            platform_name = platform_abbr[platform_name]
-        arch = platform.machine().lower()
-        if arch == "amd64":
-            arch = "x64"
-        elif arch == "x86_64":
-            arch = "x64"
-
-        # Parse version from VERSION_NUMBER file
-        version = parse_version_number(source_dir)
-
         archive_ext = ".zip" if is_windows() else ".tgz"
-
-        archive_name = "onnxruntime-qnn"
-        if version:
-            archive_name += f"-{version}"
-        if version_suffix:
-            archive_name += f"{version_suffix}"
-        if archive_name_suffix:
-            archive_name += f"-{archive_name_suffix}"
-        archive_name += f"-{platform_name}-{arch}{archive_ext}"
-
+        archive_name = _compute_archive_name(
+            source_dir, version_suffix, archive_name_suffix, archive_ext, target_arch=target_arch
+        )
         archive_path = Path(dist_dir) / archive_name
 
         # Get list of files to include
@@ -220,7 +238,7 @@ def build_archive_asset(
                 file_path = os.path.join(cwd, filename)
 
             if os.path.exists(file_path):
-                found_files.append((filename, file_path))
+                found_files.append(file_path)
                 log.debug(f"Found asset file: {file_path}")
             else:
                 missing_files.append(filename)
@@ -240,18 +258,86 @@ def build_archive_asset(
         log.info(f"Creating archive: {archive_path}")
         if is_windows():
             with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zipf:
-                for _filename, file_path in found_files:
+                for file_path in found_files:
                     arcname = os.path.relpath(file_path, cwd)
                     zipf.write(file_path, arcname)
                     log.debug(f"Added to zip: {arcname}")
         else:
             with tarfile.open(archive_path, "w:gz") as tgzf:
-                for _filename, file_path in found_files:
+                for file_path in found_files:
                     arcname = os.path.relpath(file_path, cwd)
                     tgzf.add(file_path, arcname)
                     log.debug(f"Added to tgz: {arcname}")
 
         log.info(f"Created archive: {archive_path} ({len(found_files)} files)")
+        created_archives.append(archive_path)
+
+    return created_archives
+
+
+def build_pdb_archive_asset(
+    source_dir,
+    build_dir,
+    configs,
+    version_suffix="",
+    use_ninja=False,
+    target_arch=None,
+):
+    """
+    Build a Windows-only archive containing PDB debug symbol files.
+
+    The resulting archive is a sibling of the main asset archive and uses the same
+    naming convention with a trailing "-pdb" suffix, e.g.:
+        onnxruntime-qnn-<version>[<version_suffix>]-win-<arch>-pdb.zip
+
+    Args:
+        source_dir: Path to source directory
+        build_dir: Path to build directory
+        configs: List of build configurations (e.g., ['RelWithDebInfo'])
+        version_suffix: Optional version suffix for archive filename
+        use_ninja: Whether Ninja generator was used
+        target_arch: Override for platform.machine() in the archive filename.
+            Required for cross-compile builds (e.g. arm64ec on x64) where the
+            build host arch differs from the target arch.
+
+    Returns:
+        list[Path]: List of created archive file paths (empty on non-Windows).
+    """
+    if not is_windows():
+        log.info("Skipping PDB archive: not on Windows")
+        return []
+
+    pdb_files = ["onnxruntime_providers_qnn.pdb"]
+    created_archives = []
+
+    for config in configs:
+        log.info(f"Building PDB archive asset for {config} configuration")
+
+        cwd = _resolve_config_cwd(build_dir, config, use_ninja)
+        if not os.path.exists(cwd):
+            raise FileNotFoundError(f"Build directory not found: {cwd}")
+
+        dist_dir = os.path.join(cwd, "dist")
+        os.makedirs(dist_dir, exist_ok=True)
+
+        base_name = _compute_archive_name(source_dir, version_suffix, None, "", target_arch=target_arch)
+        archive_path = Path(dist_dir) / f"{base_name}-pdb.zip"
+
+        found_files = []
+        for filename in pdb_files:
+            file_path = os.path.join(cwd, filename)
+            if not os.path.exists(file_path):
+                raise FileNotFoundError(f"Required PDB file missing: {file_path}")
+            found_files.append(file_path)
+
+        log.info(f"Creating PDB archive: {archive_path}")
+        with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            for file_path in found_files:
+                arcname = os.path.relpath(file_path, cwd)
+                zipf.write(file_path, arcname)
+                log.debug(f"Added to PDB archive: {arcname}")
+
+        log.info(f"Created PDB archive: {archive_path} ({len(found_files)} files)")
         created_archives.append(archive_path)
 
     return created_archives
@@ -288,6 +374,20 @@ Examples:
 
     parser.add_argument("--use_ninja", action="store_true", help="Whether Ninja generator was used for build")
 
+    parser.add_argument(
+        "--pdb_only",
+        action="store_true",
+        help="Build a Windows PDB-only archive (onnxruntime-qnn-<version>-win-<arch>-pdb.zip) instead of the main asset archive.",
+    )
+
+    parser.add_argument(
+        "--target_arch",
+        type=str,
+        default=None,
+        help="Target architecture for the archive filename (overrides platform.machine()). "
+        "Required for cross-compile builds such as arm64ec on an x64 host.",
+    )
+
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable verbose logging")
 
     args = parser.parse_args()
@@ -301,14 +401,25 @@ Examples:
         args.config = ["RelWithDebInfo"]
 
     try:
-        created_archives = build_archive_asset(
-            source_dir=args.source_dir,
-            build_dir=args.build_dir,
-            configs=args.config,
-            archive_name_suffix=args.suffix,
-            version_suffix=args.version_suffix,
-            use_ninja=args.use_ninja,
-        )
+        if args.pdb_only:
+            created_archives = build_pdb_archive_asset(
+                source_dir=args.source_dir,
+                build_dir=args.build_dir,
+                configs=args.config,
+                version_suffix=args.version_suffix,
+                use_ninja=args.use_ninja,
+                target_arch=args.target_arch,
+            )
+        else:
+            created_archives = build_archive_asset(
+                source_dir=args.source_dir,
+                build_dir=args.build_dir,
+                configs=args.config,
+                archive_name_suffix=args.suffix,
+                version_suffix=args.version_suffix,
+                use_ninja=args.use_ninja,
+                target_arch=args.target_arch,
+            )
 
         print(f"Successfully created {len(created_archives)} archive package(s):")
         for archive_path in created_archives:

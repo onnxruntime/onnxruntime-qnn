@@ -77,6 +77,14 @@ on:
       upload_archive:
         default: false
         type: boolean
+      build_pdb_archive:
+        description: "If true (Windows only), build an archive containing just the PDB debug symbols."
+        default: false
+        type: boolean
+      upload_pdb_archive:
+        description: "If true, upload the PDB archive as a CI artifact."
+        default: false
+        type: boolean
       build_aar:
         description: |
           If true, also build the Android AAR during the Android build.
@@ -129,6 +137,18 @@ jobs:
           ${{ inputs.build_archive == true && '--build-archive' || '' }}
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
           ${{inputs.upload_test_archive == true && 'archive' || 'build'}}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}
+
+      - name: Build Windows ${{ inputs.target_arch }} PDB Archive
+        if: ${{ inputs.build_pdb_archive && inputs.target_os == 'windows' }}
+        run: >
+          python.exe tools/ci_build/pkg_assets.py
+          --source_dir ${{ github.workspace }}
+          --build_dir ${{ github.workspace }}/build/${{ inputs.target_os }}-${{ inputs.target_arch }}
+          --config Release
+          --pdb_only
+          --target_arch ${{ inputs.target_arch }}
+          ${{ env.BUILD_CONFIG_DIR == 'Release' && '--use_ninja' || '' }}
+          ${{ env.ORT_VERSION_SUFFIX != '' && format('--version_suffix {0}', env.ORT_VERSION_SUFFIX) || '' }}
 
       - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         if: ${{ inputs.run_tests && inputs.build_test_same_runner }}
@@ -209,6 +229,13 @@ jobs:
         with:
           name: "${{inputs.target_os}}-${{ inputs.target_arch }}-pom"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/java/build/android-qnn-ep/outputs/aar/onnxruntime-android-qnn.pom"
+
+      - name: Upload PDB Archive to Artifactory
+        if: ${{ inputs.upload_pdb_archive && inputs.target_os == 'windows' }}
+        uses: ./.github/actions/upload-ci-artifact
+        with:
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-pdb-zip"
+          src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime-qnn-*-win-*-pdb.zip"
 
   test:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
