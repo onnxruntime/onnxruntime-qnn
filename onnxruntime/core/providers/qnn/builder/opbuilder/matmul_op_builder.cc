@@ -174,6 +174,44 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
   RETURN_IF_ERROR(ProcessInput0(qnn_model_wrapper, input_info_0, org_input_0_name, input_names,
                                 logger, do_op_validation));
 
+  // If input_0's rank is less than input_1's rank (e.g., input_0 is 2D but input_1 is 5D),
+  // Insert a Reshape node that prepends leading 1s to input_0 to match input_1's rank.
+  const size_t rank_0 = input_info_0.shape.size() < 2 ? 2 : input_info_0.shape.size();  // After ProcessInput0, 1D becomes 2D
+  const size_t rank_1 = input_info_1.shape.size() < 2 ? 2 : input_info_1.shape.size();
+  if (rank_0 < rank_1) {
+    // The input tensor is already in the map from ProcessInput0(); capture its name before popping.
+    const std::string current_input_0_name = input_names.back();
+    const std::string broadcast_input_0_name =
+        utils::UniqueNameGenerator().New(org_input_0_name, "_reshape_broadcast");
+
+    // Determine the actual current shape of input_0 after ProcessInput0 (1D -> 2D, otherwise unchanged).
+    std::vector<uint32_t> current_shape_0 =
+        (input_info_0.shape.size() == 1) ? std::vector<uint32_t>{1, input_info_0.shape[0]} : input_info_0.shape;
+
+    // Prepend (rank_1 - rank_0) ones to match input_1's rank.
+    std::vector<uint32_t> broadcast_shape_0(rank_1 - rank_0, 1);
+    broadcast_shape_0.insert(broadcast_shape_0.end(), current_shape_0.begin(), current_shape_0.end());
+
+    QnnQuantParamsWrapper broadcast_quant_param_0 = input_info_0.quant_param.Copy();
+    RETURN_IF_ERROR(
+        broadcast_quant_param_0.HandleUnsqueeze<uint32_t>(current_shape_0, broadcast_shape_0));
+
+    // Only add the Reshape output tensor — the input is already registered in the tensor map.
+    QnnTensorWrapper broadcast_output_tensor(broadcast_input_0_name, QNN_TENSOR_TYPE_NATIVE,
+                                             input_info_0.qnn_data_type, broadcast_quant_param_0.Copy(),
+                                             std::vector<uint32_t>(broadcast_shape_0));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(broadcast_output_tensor)),
+                  "QNN EP: Failed to add broadcast-reshape output tensor for MatMul input_0.");
+
+    input_names.pop_back();
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                      broadcast_input_0_name,
+                      QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_RESHAPE,
+                      {current_input_0_name}, {broadcast_input_0_name}, {}, do_op_validation),
+                  "QNN EP: Failed to create broadcast-reshape node for MatMul input_0.");
+    input_names.push_back(broadcast_input_0_name);
+  }
+
   // Process input 1.
   const std::string& org_input_1_name = inputs[1].name;
   std::string input_1_name = org_input_1_name;
@@ -393,7 +431,14 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
       CheckInputs(qnn_model_wrapper, inputs[0], inputs[1], input_info_0, input_info_1, use_fully_connected));
   bool reshape_input_0 = input_info_0.shape.size() == 1;
   bool reshape_input_1 = input_info_1.shape.size() == 1;
-  bool reshape_output = reshape_input_0 || reshape_input_1 || (use_fully_connected && input_info_0.shape.size() > 2);
+  // When input_0 is rank-broadcast-reshaped to match input_1's higher rank (e.g., 2D -> 5D),
+  // the QNN MatMul output already has the correct shape matching output_info.shape, so no
+  // output reshape is needed for this case.
+  const bool broadcast_input_0_rank =
+      !use_fully_connected && !reshape_input_0 &&
+      (input_info_0.shape.size() < input_info_1.shape.size());
+  bool reshape_output = !broadcast_input_0_rank &&
+                        (reshape_input_0 || reshape_input_1 || (use_fully_connected && input_info_0.shape.size() > 2));
 
   // For QNN MatMul: set the input transpose parameters to their default values of 0. These parameters should be
   // optional, but older versions of QNN SDK failed validation if not explicitly provided.

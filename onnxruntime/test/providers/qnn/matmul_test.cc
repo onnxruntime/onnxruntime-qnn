@@ -294,6 +294,32 @@ TEST_F(QnnHTPBackendTests, MatMulOp) {
   // RunMatMulOpTest({3, 3, 3}, {3, 2}, true, false, ExpectedEPNodeAssignment::All, "htp", 18, 1e-2f);
 }
 
+// input_0: [2, 64], input_1: [1, 192, 33, 64, 1] -> input_0 reshaped to [1, 1, 1, 64, 64]
+TEST_F(QnnHTPBackendTests, MatMulOp_2DInput0_5DInput1_ReshapeBroadcast) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  const std::vector<int64_t> shape_0 = {64, 64};
+  const std::vector<int64_t> shape_1 = {1, 192, 33, 64, 1};
+
+  TestInputDef<float> input0_def(
+      shape_0, false,
+      GetFloatDataInRange(-0.1f, 0.1f,
+                          static_cast<size_t>(std::accumulate(shape_0.begin(), shape_0.end(),
+                                                              static_cast<int64_t>(1),
+                                                              std::multiplies<int64_t>()))));
+  TestInputDef<float> input1_def(
+      shape_1, false,
+      GetFloatDataInRange(-0.1f, 0.1f,
+                          static_cast<size_t>(std::accumulate(shape_1.begin(), shape_1.end(),
+                                                              static_cast<int64_t>(1),
+                                                              std::multiplies<int64_t>()))));
+
+  RunQnnModelTest(BuildMatMulOpTestCase(input0_def, input1_def),
+                  provider_options, 18, ExpectedEPNodeAssignment::All, 1e-2f);
+}
+
 // Broken on v79 and v81 devices with several results outside of acceptable tolerance.
 // Example:
 // Inaccuracy detected for output 'output_0', element 0
