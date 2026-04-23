@@ -227,7 +227,7 @@ static void RunCpuFP32GRUOpTest(const TestInputDef<float>& X_def,
 TEST_F(QnnCPUBackendTests, GRU_fp32_sanity_forward) {
   std::string direction = "forward";
   uint32_t num_direction = 1;
-  uint32_t batch_size = 1;  // QNN CPU GRU only reliably processes single-batch with initial_h
+  uint32_t batch_size = 6;
   uint32_t hidden_size = 4;
   uint32_t input_size = 5;
   uint32_t seq_len = 6;
@@ -249,7 +249,7 @@ TEST_F(QnnCPUBackendTests, GRU_fp32_sanity_forward) {
 TEST_F(QnnCPUBackendTests, GRU_fp32_sanity_bidirectional) {
   std::string direction = "bidirectional";
   uint32_t num_direction = 2;
-  uint32_t batch_size = 1;  // QNN CPU GRU only reliably processes single-batch with initial_h
+  uint32_t batch_size = 6;
   uint32_t hidden_size = 4;
   uint32_t input_size = 5;
   uint32_t seq_len = 6;

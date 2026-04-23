@@ -318,8 +318,10 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
                                          static_cast<uint32_t>(linear_before_reset),
                                          QNN_OP_GRU_PARAM_LINEAR_BEFORE_RESET, param_names));
 
-  // time_major: set to true since current builder only supports time major GRU (layout=0)
-  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), true,
+  // time_major: set to false to work around a QNN CPU backend bug where batch elements get
+  // incorrect (duplicated) values when time_major=true. We transpose the input from
+  // [seq, batch, input] to [batch, seq, input] before the GRU and transpose the output back.
+  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), false,
                                      QNN_OP_GRU_PARAM_TIME_MAJOR, param_names));
 
   // Common null tensor for optional inputs
@@ -329,7 +331,23 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   qnn_model_wrapper.AddTensorWrapper(std::move(null_tensor_wrapper));
 
   std::vector<std::string> qnn_gru_input_names(14, null_tensor_name);
-  qnn_gru_input_names[0] = input_names[0];
+
+  // Transpose X from time-major [seq, batch, input] to batch-first [batch, seq, input]
+  // to match time_major=false.
+  const std::string x_transposed_name = utils::UniqueNameGenerator().New(input_names[0], "_transposed_" + direction);
+  RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(
+      node_unit.Index(),
+      input_names[0],
+      x_transposed_name,
+      input_tensor_infos[0].shape,                              // [seq, batch, input]
+      {1, 0, 2},                                                // perm: swap seq and batch
+      {batch_size, seq_length, input_size},                     // [batch, seq, input]
+      input_tensor_infos[0].qnn_data_type,
+      input_tensor_infos[0].quant_param,
+      do_op_validation,
+      /*is_for_input=*/false,
+      /*is_for_output=*/false));
+  qnn_gru_input_names[0] = x_transposed_name;
 
   // input W: ONNX in[1] [num_directions, 3*hidden_size, input_size], gate order: z, r, h
   {
@@ -545,11 +563,11 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   // }
 
   // outputs
-  // QNN out[0]: Y [seq_length, batch_size, hidden_size]
+  // QNN out[0]: Y [batch_size, seq_length, hidden_size] (time_major=false)
   // QNN out[1]: Y_h [1, batch_size, hidden_size] - QNN CPU may not give the correct final hidden
   //              state in out[1], so we derive Y_h from the appropriate time step of out[0] instead.
   std::vector<std::vector<uint32_t>> qnn_gru_output_shapes = {
-      {seq_length, batch_size, hidden_size},
+      {batch_size, seq_length, hidden_size},
       {1, batch_size, hidden_size}};
 
   std::vector<std::string> qnn_gru_output_names = {
@@ -571,16 +589,37 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
                                                 std::vector<std::string>(param_names), do_op_validation),
                 "QNN EP: Failed to create Qnn GRU node.");
 
-  // Map QNN outputs to ONNX outputs with appropriate reshapes/slices.
+  // Map QNN outputs to ONNX outputs with appropriate transposes/reshapes/slices.
   //
-  // QNN out[0]: Y [seq_length, batch_size, hidden_size]
+  // QNN out[0] (time_major=false): Y [batch_size, seq_length, hidden_size]
+  //   -> Transpose to [seq_length, batch_size, hidden_size] (time-major format)
   //   -> ONNX out[0]: Y [seq_length, 1, batch_size, hidden_size] (add num_directions dim via Reshape)
   //
   // QNN out[1] is unreliable on some backends (may return first-step state instead of final state).
-  // Instead, derive Y_h by slicing the correct time step from out[0]:
+  // Instead, derive Y_h by slicing the correct time step from the transposed Y:
   //   - forward:  Y[seq_length-1, :, :] = final hidden state
   //   - reverse:  Y[0, :, :] = final hidden state (last processed in reverse order)
   // Then reshape [batch_size, hidden_size] -> [1, batch_size, hidden_size] for ONNX Y_h.
+
+  // Transpose QNN Y from [batch, seq, hidden] to [seq, batch, hidden]
+  const std::string y_transposed_name = utils::UniqueNameGenerator().New(
+      qnn_gru_output_names[0], "_transposed_" + direction);
+  RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(
+      node_unit.Index(),
+      qnn_gru_output_names[0],
+      y_transposed_name,
+      qnn_gru_output_shapes[0],                                // [batch, seq, hidden]
+      {1, 0, 2},                                                // perm: swap batch and seq
+      {seq_length, batch_size, hidden_size},                    // [seq, batch, hidden]
+      output_tensor_infos[0].qnn_data_type,
+      output_tensor_infos[0].quant_param,
+      do_op_validation,
+      /*is_for_input=*/false,
+      /*is_for_output=*/false));
+
+  // Transposed Y shape in time-major format
+  const std::vector<uint32_t> y_time_major_shape = {seq_length, batch_size, hidden_size};
+
   std::vector<std::vector<uint32_t>> onnx_gru_output_shapes = {
       {seq_length, 1, batch_size, hidden_size},
       {1, batch_size, hidden_size}};
@@ -595,9 +634,9 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
 
       if (i == 0) {
         // Y: Reshape [seq, batch, hidden] -> [seq, 1, batch, hidden]
-        RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(/*input_name=*/qnn_gru_output_names[0],
+        RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(/*input_name=*/y_transposed_name,
                                                          /*output_name=*/reshape_output_name,
-                                                         /*input_shape=*/qnn_gru_output_shapes[0],
+                                                         /*input_shape=*/y_time_major_shape,
                                                          /*output_shape=*/onnx_gru_output_shapes[0],
                                                          /*tensor_data_type=*/output_tensor_infos[0].qnn_data_type,
                                                          /*quantize_param=*/output_tensor_infos[0].quant_param,
@@ -605,7 +644,7 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
                                                          /*is_for_input=*/false,
                                                          /*is_for_output=*/qnn_model_wrapper.IsGraphOutput(reshape_output_name)));
       } else {
-        // Y_h: slice the final hidden state from Y (out[0]) and reshape to [1, batch, hidden].
+        // Y_h: slice the final hidden state from the transposed Y and reshape to [1, batch, hidden].
         // For forward direction: take Y[seq_length-1, :, :] (last time step).
         // For reverse direction: take Y[0, :, :] (first index = last processed in reverse).
         const int32_t y_h_t = (direction == "forward") ? SafeInt<int32_t>(seq_length) - 1 : 0;
@@ -617,9 +656,9 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
         std::vector<uint32_t> y_h_slice_shape = {batch_size, hidden_size};
         RETURN_IF_ERROR(AddStridedSliceOrReshape(/*qnn_model_wrapper=*/qnn_model_wrapper,
                                                  /*node_unit=*/node_unit,
-                                                 /*input_name=*/qnn_gru_output_names[0],
+                                                 /*input_name=*/y_transposed_name,
                                                  /*output_name=*/y_h_slice_name,
-                                                 /*input_shape=*/qnn_gru_output_shapes[0],
+                                                 /*input_shape=*/y_time_major_shape,
                                                  /*output_shape=*/y_h_slice_shape,
                                                  /*ranges=*/y_h_ranges,
                                                  /*begin_mask=*/0b000U,
