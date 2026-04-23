@@ -2276,6 +2276,60 @@ TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInputOffloadGraph
   }
 }
 
+// Returns a model where a single graph input fans out to two separate Q->DQ chains,
+// both feeding into an Add node. This triggers the duplicate-name scenario in
+// RegisterGraphInputOutputInOrder when offload_graph_io_quantization=1.
+static GetTestModelFn BuildGraphInputFanoutQDQModel() {
+  return [](ModelTestBuilder& builder) {
+    builder.graph_->set_name("graph_input_fanout_qdq_graph");
+
+    MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}));
+    builder.MakeInitializer<float>("scale", {}, {1.0f / 255.0f});
+    builder.MakeInitializer<uint8_t>("zero_point", {}, {0});
+
+    // Two Q->DQ pairs on the same graph input. With offload_graph_io_quantization=1,
+    // both Q nodes stay on CPU and both DQ outputs are registered as QNN graph inputs
+    // with the override name "input" — triggering the duplicate-name id-assignment bug.
+    builder.AddNode("q_a", "QuantizeLinear", {"input", "scale", "zero_point"}, {"q_a_out"}, kOnnxDomain);
+    builder.AddNode("dq_a", "DequantizeLinear", {"q_a_out", "scale", "zero_point"}, {"dq_a_out"}, kOnnxDomain);
+
+    builder.AddNode("q_b", "QuantizeLinear", {"input", "scale", "zero_point"}, {"q_b_out"}, kOnnxDomain);
+    builder.AddNode("dq_b", "DequantizeLinear", {"q_b_out", "scale", "zero_point"}, {"dq_b_out"}, kOnnxDomain);
+
+    builder.AddNode("add", "Add", {"dq_a_out", "dq_b_out"}, {"add_out"}, kOnnxDomain);
+    builder.MakeOutput("add_out");
+  };
+}
+
+// Regression test for AISW-174227: a graph input that fans out to multiple QDQ pairs
+// with offload_graph_io_quantization=1 must not fail graph composition. Previously,
+// the second DQ tensor received QNN tensor id=0 (never set) because CreateTensorInQnnGraph
+// returned early when it found the override name already in tensors_created_table.
+TEST_F(QnnCPUBackendTests, OffloadGraphIoQuantizationMultipleQDQPairsOnGraphInput) {
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(model, BuildGraphInputFanoutQDQModel(), "graph_input_fanout_qdq", 18);
+
+  Ort::SessionOptions so;
+  so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
+
+  onnxruntime::ProviderOptions options;
+#if defined(_WIN32)
+  options["backend_path"] = "QnnCpu.dll";
+#else
+  options["backend_path"] = "libQnnCpu.so";
+#endif
+  options["offload_graph_io_quantization"] = "1";
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+
+  ASSERT_NO_THROW(Ort::Session(*ort_env, model->model_data.data(), model->model_data.size(), so));
+}
+
 // Returns a function that builds a model with 3 Relu ops to test I/O ordering.
 static GetTestModelFn BuildMultiReluModelForIOOrderTest() {
   return [](ModelTestBuilder& builder) {

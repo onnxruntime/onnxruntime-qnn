@@ -473,9 +473,9 @@ class QnnModelWrapper {
   // All QnnParamWrapper for the graph
   std::unordered_map<std::string, QnnParamWrapper> model_params_map_;
   std::vector<QnnOpProperty> qnn_op_property_list_;
-  // <tensor_name, qnn_tensor_created> -- true means qnn tensor created in qnn graph
-  // it includs normal qnn_tensors and qnn_tensors inside param_tensors
-  std::unordered_map<std::string, bool> tensor_created_map_;
+  // <tensor_name, qnn_tensor_id> -- stores the QNN-assigned ID once the tensor is created
+  // it includes normal qnn_tensors and qnn_tensors inside param_tensors
+  std::unordered_map<std::string, uint32_t> tensor_created_map_;
   const GraphInputOutputInfo& graph_inputs_;
   const GraphInputOutputInfo& graph_outputs_;
   QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;

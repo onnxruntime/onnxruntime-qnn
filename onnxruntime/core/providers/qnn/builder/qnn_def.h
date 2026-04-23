@@ -178,10 +178,11 @@ bool CreateTensorInQnnGraph(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                             const std::string& node_name,
                             const std::string& tensor_name,
                             Qnn_Tensor_t& qnn_tensor,
-                            std::unordered_map<std::string, bool>& tensors_created_table,
+                            std::unordered_map<std::string, uint32_t>& tensors_created_table,
                             std::string& error_msg);
 
 uint32_t GetQnnTensorID(const Qnn_Tensor_t& qnn_tensor);
+void SetQnnTensorID(Qnn_Tensor_t& qnn_tensor, uint32_t id);
 Qnn_TensorType_t GetQnnTensorType(const Qnn_Tensor_t& qnn_tensor);
 const char* GetQnnTensorName(const Qnn_Tensor_t& qnn_tensor);
 Qnn_TensorDataFormat_t GetQnnTensorDataFormat(const Qnn_Tensor_t& qnn_tensor);
@@ -355,7 +356,7 @@ class QnnTensorWrapper {
   bool CreateQnnGraphTensor(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                             const Qnn_GraphHandle_t& graph,
                             const std::string& node_name,
-                            std::unordered_map<std::string, bool>& tensors_created_table,
+                            std::unordered_map<std::string, uint32_t>& tensors_created_table,
                             std::string& error_msg) {
     return CreateTensorInQnnGraph(qnn_interface, graph, node_name, GetResolvedTensorName(),
                                   qnn_tensor_, tensors_created_table, error_msg);
@@ -475,7 +476,7 @@ class QnnParamWrapper {
   bool CreateQnnGraphParam(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                            const Qnn_GraphHandle_t& graph,
                            const std::string& node_name,
-                           std::unordered_map<std::string, bool>& tensors_created_table,
+                           std::unordered_map<std::string, uint32_t>& tensors_created_table,
                            std::string& error_msg);
 
  private:
