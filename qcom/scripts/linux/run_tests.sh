@@ -79,12 +79,6 @@ sed --in-place=".bak" "s@${orig_build_dir}@${build_dir}@g" CTestTestfile.cmake
 
 log_info "-=-=-=- Running ctests -=-=-=-"
 
-export LD_LIBRARY_PATH=${build_dir}
-export ADSP_LIBRARY_PATH=${build_dir}
-
-log_info "LD Library Path: ${LD_LIBRARY_PATH}"
-log_info "ADSP Library Path: ${ADSP_LIBRARY_PATH}"
-
  
 # TODO: [AISW-164203] ORT test failures on Rubik Pi
 exclude_args=()
@@ -122,8 +116,9 @@ cd "${onnx_models_root}"
 declare -a model_test_runners=("run_model_test")
 for runner in "${model_test_runners[@]}"; do
 
+    "${runner}" cpu node "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node"
+
     if [ "$(uname -m)" != "aarch64" ]; then  # TODO: [AISW-164203] ORT test failures on Rubik Pi
-        "${runner}" cpu node "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node"
         "${runner}" cpu float32
         "${runner}" htp qdq
     fi
