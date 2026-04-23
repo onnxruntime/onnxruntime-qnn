@@ -328,7 +328,7 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
                                        QnnQuantParamsWrapper(), std::vector<uint32_t>{0});
   qnn_model_wrapper.AddTensorWrapper(std::move(null_tensor_wrapper));
 
-  std::vector<std::string> qnn_gru_input_names(15, null_tensor_name);
+  std::vector<std::string> qnn_gru_input_names(14, null_tensor_name);
   qnn_gru_input_names[0] = input_names[0];
 
   // input W: ONNX in[1] [num_directions, 3*hidden_size, input_size], gate order: z, r, h
@@ -527,6 +527,22 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
       qnn_gru_input_names[13] = zero_initial_h_name;
     }
   }
+
+  // {
+  //   // QNN in[14]
+  //   // prepare reset
+  //   const std::string& node_name = node_unit.Name();
+  //   std::string reset_name = utils::UniqueNameGenerator().New(node_name, "_GRU_reset");
+  //   QnnTensorWrapper reset_wrapper(reset_name,
+  //                                  QNN_TENSOR_TYPE_STATIC,
+  //                                  QNN_DATATYPE_BOOL_8,
+  //                                  QnnQuantParamsWrapper(),
+  //                                  std::vector<uint32_t>({}),
+  //                                  std::vector<uint8_t>({1}));
+  //   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(reset_wrapper)),
+  //                 "Failed to add reset for QNN GRU node.");
+  //   qnn_gru_input_names[13] = reset_name;
+  // }
 
   // outputs
   // QNN out[0]: Y [seq_length, batch_size, hidden_size]
