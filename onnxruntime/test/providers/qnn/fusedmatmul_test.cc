@@ -73,6 +73,13 @@ static void RunQDQFusedMatMulTest(const TestInputDef<float>& input_a_def,
                                   ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All,
                                   const std::string& backend_name = "htp",
                                   bool use_contrib_qdq = false) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    if (std::is_same_v<QType, uint8_t> || std::is_same_v<QType, uint16_t> || std::is_same_v<QType, int16_t> ||
+        std::is_same_v<QType, Int4x2> || std::is_same_v<QType, UInt4x2>) {
+      GTEST_SKIP() << "Test requires HTP quantization support (arch > V68).";
+    }
+  }
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";

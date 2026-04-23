@@ -193,6 +193,9 @@ ProviderOptions GetProviderOptions() {
 
 // Test 2-node fusion: Reshape -> Gemm (3D input)
 TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_3D) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmFusion_3D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -214,6 +217,9 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_3D) {
 
 // Test 3-node fusion: Reshape -> Gemm -> Reshape (3D input)
 TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_3D) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmReshapeFusion_3D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -236,6 +242,9 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_3D) {
 
 // Test 3-node fusion: Reshape -> Gemm -> Reshape (4D input)
 TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_4D) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmReshapeFusion_4D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -258,6 +267,9 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_4D) {
 
 // Test 4-node fusion: Reshape -> Gemm -> Reshape -> Reshape
 TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeReshapeFusion_3D) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmReshapeReshapeFusion_3D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -281,6 +293,9 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeReshapeFusion_3D) {
 // Test 3-node fusion with ViT-like pattern: keep first dim, flatten last dims
 // [197, 1, 12, 64] -> [197, 768] -> Gemm -> [197, 768] -> [197, 1, 768]
 TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_ViTPattern) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmReshapeFusion_ViTPattern";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -303,6 +318,9 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_ViTPattern) {
 
 // Test with transformer-like shape (smaller for unit test)
 TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_Transformer) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmReshapeFusion_Transformer";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -462,6 +480,9 @@ GetTestModelFn BuildReshapeGemmNonDefaultAlphaTestCase(const std::vector<int64_t
 
 // Test: Fusion should NOT happen when transA=1
 TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_TransA) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   ProviderOptions provider_options = GetProviderOptions();
 
   // Model should still run, but fusion won't happen (Gemm handled separately)
@@ -474,6 +495,9 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_TransA) {
 
 // Test: Fusion should NOT happen when transB=1
 TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_TransB) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   ProviderOptions provider_options = GetProviderOptions();
 
   RunQnnModelTest(BuildReshapeGemmWithTransBTestCase({1, 32, 64}, 64, 128),
@@ -485,6 +509,9 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_TransB) {
 
 // Test: Fusion should NOT happen when weight is dynamic
 TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_DynamicWeight) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   ProviderOptions provider_options = GetProviderOptions();
 
   RunQnnModelTest(BuildReshapeGemmDynamicWeightTestCase({1, 32, 64}, 64, 128),

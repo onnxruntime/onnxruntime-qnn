@@ -58,9 +58,9 @@ static void RunQDQQuickGeluTest(const TestInputDef<float>& input_def,
                                 const std::string& backend_name = "htp",
                                 bool use_contrib_qdq = false) {
   if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    if (std::is_same_v<QType, uint16_t> || std::is_same_v<QType, int16_t> ||
+    if (std::is_same_v<QType, uint8_t> || std::is_same_v<QType, uint16_t> || std::is_same_v<QType, int16_t> ||
         std::is_same_v<QType, Int4x2> || std::is_same_v<QType, UInt4x2>) {
-      GTEST_SKIP() << "Test requires HTP INT4 or INT16 support (arch > V68).";
+      GTEST_SKIP() << "Test requires HTP quantization support (arch > V68).";
     }
   }
 

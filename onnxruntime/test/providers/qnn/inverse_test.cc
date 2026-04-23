@@ -127,9 +127,9 @@ static void RunQDQInverseOpTest(const TestInputDef<float>& input_defs,
                                 QDQTolerance tolerance = QDQTolerance(),  // Default 0.4%
                                 int opset = 18) {
   if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    if (std::is_same_v<QuantType, uint16_t> || std::is_same_v<QuantType, int16_t> ||
+    if (std::is_same_v<QuantType, uint8_t> || std::is_same_v<QuantType, uint16_t> || std::is_same_v<QuantType, int16_t> ||
         std::is_same_v<QuantType, Int4x2> || std::is_same_v<QuantType, UInt4x2>) {
-      GTEST_SKIP() << "Test requires HTP INT4 or INT16 support (arch > V68).";
+      GTEST_SKIP() << "Test requires HTP quantization support (arch > V68).";
     }
   }
 

@@ -108,9 +108,9 @@ static void RunQDQRoiAlignOpTest(const TestInputDef<float>& input_def,
                                  ExpectedEPNodeAssignment expected_ep_assignment,
                                  int opset = 16) {
   if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    if (std::is_same_v<QuantType, uint16_t> || std::is_same_v<QuantType, int16_t> ||
+    if (std::is_same_v<QuantType, uint8_t> || std::is_same_v<QuantType, uint16_t> || std::is_same_v<QuantType, int16_t> ||
         std::is_same_v<QuantType, Int4x2> || std::is_same_v<QuantType, UInt4x2>) {
-      GTEST_SKIP() << "Test requires HTP INT4 or INT16 support (arch > V68).";
+      GTEST_SKIP() << "Test requires HTP quantization support (arch > V68).";
     }
   }
 
@@ -191,6 +191,9 @@ TEST_F(QnnCPUBackendTests, DISABLED_TestRoialign_Unsupported_sampling_ratio) {
 // HTP tests:
 //
 TEST_F(QnnHTPBackendTests, TestRoialign) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
                     TestInputDef<int64_t>({1}, true, {0}),

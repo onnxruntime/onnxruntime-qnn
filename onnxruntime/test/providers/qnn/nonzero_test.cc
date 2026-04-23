@@ -187,6 +187,9 @@ TEST_F(QnnHTPBackendTests, NonZero_AllZero) {
 // NonZero output is declared as a graph output with static shape [1, num_elements] so QNN EP can claim it.
 // All mask elements are non-zero to avoid CPU/QNN shape mismatch from NonZero padding.
 TEST_F(QnnHTPBackendTests, NonZero_Gather_1D_Int32) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   std::vector<float> mask_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};  // non-zero at indices 0,1,2,3,4
   std::vector<int32_t> data1 = {10, 20, 30, 40, 50};
   std::vector<int32_t> data2 = {100, 200, 300, 400, 500};

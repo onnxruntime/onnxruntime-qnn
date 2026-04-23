@@ -89,9 +89,9 @@ static void RunSimplifiedLayerNormQDQTest(const TestInputDef<float>& input_def,
                                           ExpectedEPNodeAssignment expected_ep_assignment,
                                           bool use_contrib_qdq_ops = false) {
   if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    if (std::is_same_v<InputQType, uint16_t> || std::is_same_v<InputQType, int16_t> ||
+    if (std::is_same_v<InputQType, uint8_t> || std::is_same_v<InputQType, uint16_t> || std::is_same_v<InputQType, int16_t> ||
         std::is_same_v<InputQType, Int4x2> || std::is_same_v<InputQType, UInt4x2>) {
-      GTEST_SKIP() << "Test requires HTP INT4 or INT16 support (arch > V68).";
+      GTEST_SKIP() << "Test requires HTP quantization support (arch > V68).";
     }
   }
 

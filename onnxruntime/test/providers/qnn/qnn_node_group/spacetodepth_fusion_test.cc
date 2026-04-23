@@ -266,6 +266,13 @@ void RunSpaceToDepthFusionTest(const std::filesystem::path& json_qnn_graph_dir,
                                bool use_contrib_qdq,
                                const std::string& backend_type,
                                float fp32_abs_err = 1e-2f) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    if (std::is_same_v<QuantType, uint8_t> || std::is_same_v<QuantType, uint16_t> || std::is_same_v<QuantType, int16_t> ||
+        std::is_same_v<QuantType, Int4x2> || std::is_same_v<QuantType, UInt4x2>) {
+      GTEST_SKIP() << "Test requires HTP quantization support (arch > V68).";
+    }
+  }
+
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
   const int uncaught_on_entry = std::uncaught_exceptions();
@@ -347,6 +354,9 @@ TEST_F(QnnCPUBackendTests, DISABLED_SpaceToDepthFusion_Float_DCR) {
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped4Node_Head_Float_CRD) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   RunWrappedPatternSpaceToDepthFusionTest("SpaceToDepthFusionWrapped4NodeHeadFloatCRD_HTP",
                                           BuildHeadWrappedSpaceToDepthTestCase<>(/*use_qdq=*/false,
                                                                                  /*use_contrib_qdq=*/false),
@@ -361,6 +371,9 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped4Node_Head_QDQ_CRD) {
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped4Node_Tail_Float_CRD) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   RunWrappedPatternSpaceToDepthFusionTest("SpaceToDepthFusionWrapped4NodeTailFloatCRD_HTP",
                                           BuildTailWrappedSpaceToDepthTestCase<>(/*use_qdq=*/false,
                                                                                  /*use_contrib_qdq=*/false),
@@ -426,6 +439,9 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_DCR) {
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Float_CRD) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   RunSpaceToDepthFusionTest("SpaceToDepthFusionFloatCRD",
                             /*input_shape=*/{1, 2, 4, 4},
                             /*block_height=*/2,
@@ -462,6 +478,9 @@ TEST_F(QnnHTPBackendTests, DISABLED_SpaceToDepthFusion_UnequalBlockSize_DCR) {
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_CRD) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   RunSpaceToDepthFusionTest("SpaceToDepthFusionUnequalBlockCRD",
                             /*input_shape=*/{1, 2, 4, 6},
                             /*block_height=*/2,

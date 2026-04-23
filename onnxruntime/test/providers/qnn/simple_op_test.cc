@@ -169,6 +169,13 @@ static void RunQDQOpTest(const std::string& op_type,
                          const std::string& op_domain = kOnnxDomain,
                          bool use_contrib_qdq = false,
                          QDQTolerance tolerance = QDQTolerance()) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    if (std::is_same_v<InputQType, uint8_t> || std::is_same_v<InputQType, uint16_t> || std::is_same_v<InputQType, int16_t> ||
+        std::is_same_v<InputQType, Int4x2> || std::is_same_v<InputQType, UInt4x2>) {
+      GTEST_SKIP() << "Test requires HTP quantization support (arch > V68).";
+    }
+  }
+
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -303,6 +310,9 @@ static void RunFP16OpTest(const std::string& op_type,
 
 // Test Concat with empty input
 TEST_F(QnnHTPBackendTests, Concat_EmptyInput) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   RunOpTest("Concat",
             {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
              TestInputDef<float>({1, 0, 4, 4}, false, {})},
@@ -313,6 +323,9 @@ TEST_F(QnnHTPBackendTests, Concat_EmptyInput) {
 
 // Test Concat with empty initializer
 TEST_F(QnnHTPBackendTests, Concat_EmptyInitializer) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   RunOpTest("Concat",
             {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
              TestInputDef<float>({1, 0, 4, 4}, true, {})},  // true makes this an initializer
@@ -1234,6 +1247,9 @@ TEST_F(QnnHTPBackendTests, Reciprocal_QU8) {
 
 // Test Mean Op on HTP
 TEST_F(QnnHTPBackendTests, Mean_TwoInputs) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   std::vector<float> input1 = {1.0f, 2.0f, 3.0f, 4.0f};
   std::vector<float> input2 = {5.0f, 6.0f, 7.0f, 8.0f};
 
@@ -1249,6 +1265,9 @@ TEST_F(QnnHTPBackendTests, Mean_TwoInputs) {
 
 // Test Mean Op with multiple inputs on HTP
 TEST_F(QnnHTPBackendTests, Mean_FourInputs) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   std::vector<float> input1 = {1.0f, 1.0f, 1.0f, 1.0f};
   std::vector<float> input2 = {2.0f, 2.0f, 2.0f, 2.0f};
   std::vector<float> input3 = {3.0f, 3.0f, 3.0f, 3.0f};
@@ -1428,6 +1447,9 @@ TEST_F(QnnCPUBackendTests, ScatterElements_Float_Reduction_Add) {
 
 // Test ScatterElements with default attributes on HTP
 TEST_F(QnnHTPBackendTests, ScatterElements_Float_Reduction_None) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   std::vector<float> data = {0.0f, 1.0f, 2.0f, 3.0f};
   std::vector<int64_t> indices = {1};
   std::vector<float> updates = {10.0f};
@@ -2064,6 +2086,9 @@ TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP16) {
 
 // Test RandomUniformLike + Add operation on HTP backend
 TEST_F(QnnHTPBackendTests, RandomUniformLikeAddTest) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   // Create a function that builds the test model: input -> RandomUniformLike -> Add -> output
   auto build_test_case = [](ModelTestBuilder& builder) {
     // Create input tensor with shape [1, 4, 3] and float32 data

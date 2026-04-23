@@ -229,6 +229,9 @@ TEST(QnnEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
 // Tests that the QNN EP is registered when added via the public C++ API.
 // Loads a simple ONNX model that adds floats.
 TEST_F(QnnHTPBackendTests, TestAddEpUsingPublicApi) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   onnxruntime::ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnHtp.dll";
@@ -1941,6 +1944,9 @@ TEST_F(QnnHTPBackendTests, io_binding_qnn_htp_shared) {
 // - However, these remaining inputs still appear in the graph inputs,
 //   resulting in a discrepancy in the input quantities.
 TEST_F(QnnHTPBackendTests, TestMismatchedGraphInputAndTensorWrapperCount) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   onnxruntime::ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
@@ -1965,6 +1971,9 @@ TEST_F(QnnHTPBackendTests, TestMismatchedGraphInputAndTensorWrapperCount) {
 // Compile a QDQ model to a context binary with offload_graph_io_quantization=1,
 // then load and run the context binary. Regression test for PR #234.
 TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationContextBinaryRoundTrip) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   const std::string ctx_model_file = "./offload_qdq_ctx_test.onnx";
   std::remove(ctx_model_file.c_str());
   auto cleanup = gsl::finally([&]() { std::remove(ctx_model_file.c_str()); });

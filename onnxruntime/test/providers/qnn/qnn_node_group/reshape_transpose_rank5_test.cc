@@ -109,6 +109,9 @@ ProviderOptions GetProviderOptions() {
 }  // namespace
 
 TEST_F(QnnHTPBackendTests, Rank6ToRank5Fusion_Float) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   ProviderOptions provider_options = GetProviderOptions();
   RunQnnModelTest(BuildRank6ToRank5FloatTestCase(),
                   provider_options,
@@ -118,6 +121,9 @@ TEST_F(QnnHTPBackendTests, Rank6ToRank5Fusion_Float) {
 }
 
 TEST_F(QnnHTPBackendTests, Rank6ToRank5Fusion_Float_MultiConsumer) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   ProviderOptions provider_options = GetProviderOptions();
   RunQnnModelTest(BuildRank6ToRank5FloatMultiConsumerTestCase(),
                   provider_options,

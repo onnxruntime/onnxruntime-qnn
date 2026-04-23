@@ -76,6 +76,9 @@ ProviderOptions GetProviderOptions() {
 
 // 3D input [1, 8, 16], axes=[-1], 1D gamma/beta {16}.
 TEST_F(QnnHTPBackendTests, LayerNormFusion_3D_1D_GammaBeta) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   const std::filesystem::path json_dir = "LayerNormFusion_3D_1D_GammaBeta";
   std::filesystem::remove_all(json_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_dir));
@@ -100,6 +103,9 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_3D_1D_GammaBeta) {
 
 // 3D input, padded gamma/beta {1, 1, 16} — fusion must squeeze to {16}.
 TEST_F(QnnHTPBackendTests, LayerNormFusion_3D_PaddedGammaBeta) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   const std::filesystem::path json_dir = "LayerNormFusion_3D_PaddedGammaBeta";
   std::filesystem::remove_all(json_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_dir));
@@ -124,6 +130,9 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_3D_PaddedGammaBeta) {
 
 // 4D input [1, 4, 8, 16], axes=[-1], 1D gamma/beta {16}.
 TEST_F(QnnHTPBackendTests, LayerNormFusion_4D_1D_GammaBeta) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   const std::filesystem::path json_dir = "LayerNormFusion_4D_1D_GammaBeta";
   std::filesystem::remove_all(json_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_dir));
@@ -148,6 +157,9 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_4D_1D_GammaBeta) {
 
 // Transformer shape [1, 256, 64], axes=[-1], 1D gamma/beta {64}.
 TEST_F(QnnHTPBackendTests, LayerNormFusion_TransformerShape) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   const std::filesystem::path json_dir = "LayerNormFusion_TransformerShape";
   std::filesystem::remove_all(json_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_dir));
@@ -172,6 +184,9 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_TransformerShape) {
 
 // gamma {1, 64, 1} with axes=[-1] — non-normalized dim is non-unit, fusion must be skipped.
 TEST_F(QnnHTPBackendTests, LayerNormFusion_Skip_InvalidGammaShape) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   const std::filesystem::path json_dir = "LayerNormFusion_Skip_InvalidGammaShape";
   std::filesystem::remove_all(json_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_dir));

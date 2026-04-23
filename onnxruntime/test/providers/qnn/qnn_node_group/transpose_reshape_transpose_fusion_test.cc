@@ -122,6 +122,9 @@ TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_Basic) {
 // Test Case 2: Fusable pattern with surrounding ops
 // Same as Test Case 1 but with Add ops before and after
 TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_WithContext) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   const std::filesystem::path json_qnn_graph_dir = "TransposeReshapeTransposeFusion_WithContext";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
