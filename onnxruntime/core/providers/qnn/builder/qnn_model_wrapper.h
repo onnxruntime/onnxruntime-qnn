@@ -45,6 +45,10 @@ class QnnModelWrapper {
   friend class BF16ConversionGuard;
 
  public:
+  // Production constructor. References enforce non-null at compile time for both
+  // ort_graph and logger. In production both are owned and managed by ORT runtime
+  // for the EP callback's duration; the wrapper has DISALLOW_COPY_ASSIGNMENT_AND_MOVE
+  // and never outlives the callback, so the referenced objects remain valid.
   QnnModelWrapper(const OrtGraph& ort_graph,
                   const ApiPtrs& api_ptrs,
                   const Ort::Logger& logger,
@@ -58,8 +62,58 @@ class QnnModelWrapper {
                   const ModelSettings& model_settings,
                   std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr,
                   OpTraceCollector* op_trace_collector = nullptr)
-      : ort_graph_(ort_graph),
-        logger_(logger),
+      : QnnModelWrapper(&ort_graph, api_ptrs, &logger, qnn_interface, backend_handle,
+                        qnn_validator_interface, validator_backend_handle,
+                        graph_inputs, graph_outputs, qnn_backend_type, model_settings,
+                        tensor_name_overrides, op_trace_collector) {}
+
+  // Test-only constructor. Accepts std::nullptr_t for both ort_graph and logger.
+  // Conditionally compiled only when QNN_EP_FUNCTION_LEVEL_UT is defined; absent in
+  // all production builds, so it cannot be called from production code by accident.
+  //
+  // Neither OrtGraph nor Ort::Logger can be mocked or constructed using only public
+  // ORT headers without a running ORT session. Tests that need to query graph data or
+  // log must stub the relevant OrtApi function pointers in the ApiPtrs they provide.
+  // ORT_CXX_LOG_PTR silently skips logging when logger is null.
+#if QNN_EP_FUNCTION_LEVEL_UT
+  QnnModelWrapper(std::nullptr_t,
+                  const ApiPtrs& api_ptrs,
+                  std::nullptr_t,
+                  const QNN_INTERFACE_VER_TYPE& qnn_interface,
+                  const Qnn_BackendHandle_t& backend_handle,
+                  const QNN_INTERFACE_VER_TYPE& qnn_validator_interface,
+                  const Qnn_BackendHandle_t& validator_backend_handle,
+                  const GraphInputOutputInfo& graph_inputs,
+                  const GraphInputOutputInfo& graph_outputs,
+                  QnnBackendType qnn_backend_type,
+                  const ModelSettings& model_settings,
+                  std::unordered_map<std::string, std::string>* tensor_name_overrides = nullptr)
+      : QnnModelWrapper(static_cast<const OrtGraph*>(nullptr),
+                        api_ptrs, static_cast<const Ort::Logger*>(nullptr),
+                        qnn_interface, backend_handle,
+                        qnn_validator_interface, validator_backend_handle,
+                        graph_inputs, graph_outputs, qnn_backend_type, model_settings,
+                        tensor_name_overrides, /*op_trace_collector=*/nullptr) {}
+#endif
+
+ private:
+  // Single implementation. The public overloads above delegate here so member
+  // initialization and invariant checks live in one place.
+  QnnModelWrapper(const OrtGraph* ort_graph,
+                  const ApiPtrs& api_ptrs,
+                  const Ort::Logger* logger,
+                  const QNN_INTERFACE_VER_TYPE& qnn_interface,
+                  const Qnn_BackendHandle_t& backend_handle,
+                  const QNN_INTERFACE_VER_TYPE& qnn_validator_interface,
+                  const Qnn_BackendHandle_t& validator_backend_handle,
+                  const GraphInputOutputInfo& graph_inputs,
+                  const GraphInputOutputInfo& graph_outputs,
+                  QnnBackendType qnn_backend_type,
+                  const ModelSettings& model_settings,
+                  std::unordered_map<std::string, std::string>* tensor_name_overrides,
+                  OpTraceCollector* op_trace_collector = nullptr)
+      : ort_graph_ptr_(ort_graph),
+        logger_ptr_(logger),
         qnn_interface_(qnn_interface),
         backend_handle_(backend_handle),
         qnn_validator_interface_(qnn_validator_interface),
@@ -72,10 +126,11 @@ class QnnModelWrapper {
         tensor_name_overrides_(tensor_name_overrides),
         op_trace_collector_(op_trace_collector) {
     // Invariant: validator interface and handle must both be set or both be null.
-    // They are populated together by QnnBackendManager::LoadQnnSerializerBackend() (QnnIr flow).
     assert((validator_backend_handle == nullptr) ==
            (qnn_validator_interface.backendValidateOpConfig == nullptr));
   }
+
+ public:
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
   ~QnnModelWrapper() = default;
@@ -138,7 +193,7 @@ class QnnModelWrapper {
   }
 
   Ort::Status GetInitializerTensors(gsl::span<const OrtValueInfo*> initializers) const {
-    ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetInitializers(&ort_graph_,
+    ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetInitializers(ort_graph_ptr_,
                                                                        initializers.data(),
                                                                        initializers.size()));
     return Ort::Status();
@@ -148,7 +203,7 @@ class QnnModelWrapper {
   Ort::Status FindInitializer(const std::string& tensor_name,
                               const OrtValueInfo** found_value_info = nullptr) const {
     size_t num_initializers = 0;
-    ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetNumInitializers(&ort_graph_, &num_initializers));
+    ORT_CXX_RETURN_ON_API_FAIL(api_ptrs_.ort_api.Graph_GetNumInitializers(ort_graph_ptr_, &num_initializers));
 
     std::vector<const OrtValueInfo*> initializers(num_initializers);
     RETURN_IF_ERROR(GetInitializerTensors(initializers));
@@ -311,11 +366,11 @@ class QnnModelWrapper {
                                      bool is_for_input = true,
                                      bool is_for_output = false,
                                      bool is_3d = false) {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Add NCHW->HWCN Transpose node after Conv weight input: " +
-                 input_name + " -> " + output_name)
-                    .c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_VERBOSE,
+                    ("Add NCHW->HWCN Transpose node after Conv weight input: " +
+                     input_name + " -> " + output_name)
+                        .c_str());
     auto perm = is_3d ? nchw2hwcn_perm_3d : nchw2hwcn_perm;
     std::vector<uint32_t> transpose_perm;
     transpose_perm.resize(perm.size());
@@ -339,11 +394,11 @@ class QnnModelWrapper {
                                      bool is_for_input = true,
                                      bool is_for_output = false,
                                      bool is_3d = false) {
-    ORT_CXX_LOG(logger_,
-                ORT_LOGGING_LEVEL_VERBOSE,
-                ("Add CNHW->HWCN Transpose node after ConvTranspose weight input: " +
-                 input_name + " -> " + output_name)
-                    .c_str());
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_VERBOSE,
+                    ("Add CNHW->HWCN Transpose node after ConvTranspose weight input: " +
+                     input_name + " -> " + output_name)
+                        .c_str());
     auto perm = is_3d ? cnhw2hwcn_perm_3d : cnhw2hwcn_perm;
     std::vector<uint32_t> transpose_perm;
     transpose_perm.resize(perm.size());
@@ -361,7 +416,7 @@ class QnnModelWrapper {
 
   QnnBackendType GetQnnBackendType() const { return qnn_backend_type_; }
 
-  const OrtGraph& GetOrtGraph() const { return ort_graph_; }
+  const OrtGraph& GetOrtGraph() const { return *ort_graph_ptr_; }
 
   const std::unordered_map<std::string, QnnTensorWrapper>& GetModelTensorsMap() const {
     return model_tensors_map_;
@@ -493,8 +548,8 @@ class QnnModelWrapper {
 
   const std::string* GetTensorNameOverride(const std::string& internal) const;
 
-  const OrtGraph& ort_graph_;
-  const Ort::Logger& logger_;
+  const OrtGraph* ort_graph_ptr_;
+  const Ort::Logger* logger_ptr_;
   const QNN_INTERFACE_VER_TYPE& qnn_interface_;
   const Qnn_BackendHandle_t& backend_handle_;
   const QNN_INTERFACE_VER_TYPE& qnn_validator_interface_;

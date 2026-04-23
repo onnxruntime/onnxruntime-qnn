@@ -112,6 +112,50 @@ For details on the general ONNX Runtime roadmap, please visit: https://onnxrunti
 
 ---
 
+## Testing
+
+### Test Architecture
+
+The QNN EP test suite follows a four-tier pyramid:
+
+| Tier | Name | Location | Requires QNN HW? | Guard |
+|---|---|---|---|---|
+| 1 | **Unit tests** | `test/providers/qnn/unit/` | No | `QNN_EP_FUNCTION_LEVEL_UT=1` |
+| 2 | **Integration tests (CPU backend)** | `test/providers/qnn/` | No | — |
+| 3 | **Integration tests (HTP backend)** | `test/providers/qnn/` | Yes | — |
+| 4 | **End-to-end / model tests** | `test/providers/qnn/` | Yes | — |
+
+Unit tests cover both individual function logic (e.g. utility helpers in `qnn_def.cc`)
+and component behavior (e.g. `QnnModelWrapper` end-to-end paths via mocked QNN APIs).
+All run on a Linux x86-64 host without QNN hardware.
+
+### Running unit tests (no hardware required)
+
+```bash
+# Build with coverage instrumentation (enables QNN_EP_FUNCTION_LEVEL_UT automatically)
+python qcom/build_and_test.py --target-py-version 3.12 coverage_linux_x86_64
+
+# Run all QNN unit tests manually
+cd build/linux-x86_64/RelWithDebInfo
+./onnxruntime_provider_test --gtest_filter="*QnnUnit_*"
+```
+
+See [`onnxruntime/test/providers/qnn/unit/README.md`](onnxruntime/test/providers/qnn/unit/README.md) for full details on build flags and coverage workflow.
+
+### Target directory structure (in progress)
+
+```
+onnxruntime/test/providers/qnn/
+├── unit/                   # Tiers 1–2: pure-logic tests, no QNN SDK calls
+│   ├── qnn_def_test.cc
+│   ├── qnn_model_wrapper_test.cc
+│   └── ...
+└── integration/            # Tiers 3–5: require QNN SDK / hardware (planned)
+    └── ...
+```
+
+---
+
 ## Contributions and Feedback
 
 We welcome contributions! See the [contribution guidelines](CONTRIBUTING.md).
