@@ -510,7 +510,9 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_forward) {
                       direction,                                                                              // direction
                       hidden_size,                                                                            // hidden_size
                       0,                                                                                      // layout
-                      ExpectedEPNodeAssignment::All);
+                      ExpectedEPNodeAssignment::All,
+                      0,
+                      0.03f);
 }
 
 TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_reverse) {
@@ -651,7 +653,8 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_linear_before_reset) {
                       hidden_size,                                                                            // hidden_size
                       0,                                                                                      // layout
                       ExpectedEPNodeAssignment::All,
-                      1);                                                                                     // linear_before_reset
+                      1,                                                                                     // linear_before_reset
+                      0.03f);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64)
