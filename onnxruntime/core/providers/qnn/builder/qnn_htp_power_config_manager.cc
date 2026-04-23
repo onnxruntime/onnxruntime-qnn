@@ -410,7 +410,7 @@ void HtpPowerConfigManager::ReleaseTimerThread() {
   }
 }
 
-Ort::Status HtpPowerConfigManager::SetSustainedPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode, uint32_t rpc_polling_time, uint32_t rpc_control_latency) {
+Ort::Status HtpPowerConfigManager::SetSustainedPerformance(const HtpPerfConfig_t& config) {
   std::lock_guard<std::mutex> lk(perf_mutex_);
   Ort::Status status = Ort::Status();
 
@@ -429,15 +429,15 @@ Ort::Status HtpPowerConfigManager::SetSustainedPerformance(uint32_t htp_power_co
       if (IsTimerThreadRunning()) {
         timer_->AbortTimer();
       } else {
-        status = SetHtpPowerConfigs(htp_power_config_client_id, performance_mode, rpc_polling_time, rpc_control_latency);
+        status = SetHtpPowerConfigs(config);
       }
       graph_state_ = GraphState::NONE;
       timer_resource_.caller_busy_ = true;
       break;
     case GraphState::INIT_DONE: {
       QnnHtpPerfInfrastructure_PowerConfig_t init_done_htp_performance_cfg{};
-      SetRelaxedPerfPowerConfig(init_done_htp_performance_cfg, htp_power_config_client_id, onnxruntime::qnn::DcvsState::DCVS_DEFAULT);
-      status = SetHtpPowerCustomConfigs(htp_power_config_client_id, init_done_htp_performance_cfg, rpc_polling_time, rpc_control_latency);
+      SetRelaxedPerfPowerConfig(init_done_htp_performance_cfg, config.htp_power_config_client_id, onnxruntime::qnn::DcvsState::DCVS_DEFAULT);
+      status = SetHtpPowerCustomConfigs(config.htp_power_config_client_id, init_done_htp_performance_cfg, config.rpc_polling_time, config.rpc_control_latency);
       graph_state_ = GraphState::NONE;
       timer_resource_.caller_busy_ = false;
       break;
@@ -446,7 +446,7 @@ Ort::Status HtpPowerConfigManager::SetSustainedPerformance(uint32_t htp_power_co
       if (IsTimerThreadRunning()) {
         timer_->AbortTimer();
       } else {
-        status = SetHtpPowerConfigs(htp_power_config_client_id, performance_mode, rpc_polling_time, rpc_control_latency);
+        status = SetHtpPowerConfigs(config);
       }
       graph_state_ = GraphState::NONE;
       timer_resource_.caller_busy_ = true;
@@ -454,8 +454,8 @@ Ort::Status HtpPowerConfigManager::SetSustainedPerformance(uint32_t htp_power_co
     case GraphState::TIMEOUT: {
       if (!timer_resource_.caller_busy_) {
         QnnHtpPerfInfrastructure_PowerConfig_t timeout_htp_performance_cfg{};
-        SetRelaxedPerfPowerConfig(timeout_htp_performance_cfg, htp_power_config_client_id, onnxruntime::qnn::DcvsState::DCVS_DEFAULT);
-        status = SetHtpPowerCustomConfigs(htp_power_config_client_id, timeout_htp_performance_cfg, rpc_polling_time, rpc_control_latency);
+        SetRelaxedPerfPowerConfig(timeout_htp_performance_cfg, config.htp_power_config_client_id, onnxruntime::qnn::DcvsState::DCVS_DEFAULT);
+        status = SetHtpPowerCustomConfigs(config.htp_power_config_client_id, timeout_htp_performance_cfg, config.rpc_polling_time, config.rpc_control_latency);
         graph_state_ = GraphState::NONE;
       }
       break;
@@ -467,33 +467,33 @@ Ort::Status HtpPowerConfigManager::SetSustainedPerformance(uint32_t htp_power_co
   return status;
 }
 
-Ort::Status HtpPowerConfigManager::SetPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode, uint32_t rpc_polling_time, uint32_t rpc_control_latency) {
+Ort::Status HtpPowerConfigManager::SetPerformance(const HtpPerfConfig_t& config) {
   std::lock_guard<std::mutex> lk(perf_mutex_);
   Ort::Status status = Ort::Status();
   switch (graph_state_) {
     case GraphState::RUN_DONE:
     case GraphState::INIT_DONE:
-      switch (performance_mode) {
+      switch (config.perf_mode) {
         case qnn::HtpPerformanceMode::kHtpLowBalanced:
         case qnn::HtpPerformanceMode::kHtpBalanced:
         case qnn::HtpPerformanceMode::kHtpHighPerformance: {
           QnnHtpPerfInfrastructure_PowerConfig_t relaxed_htp_performance_cfg{};
-          SetRelaxedPerfPowerConfig(relaxed_htp_performance_cfg, htp_power_config_client_id, onnxruntime::qnn::DcvsState::DCVS_DEFAULT);
-          status = SetHtpPowerCustomConfigs(htp_power_config_client_id, relaxed_htp_performance_cfg, rpc_polling_time, rpc_control_latency);
+          SetRelaxedPerfPowerConfig(relaxed_htp_performance_cfg, config.htp_power_config_client_id, onnxruntime::qnn::DcvsState::DCVS_DEFAULT);
+          status = SetHtpPowerCustomConfigs(config.htp_power_config_client_id, relaxed_htp_performance_cfg, config.rpc_polling_time, config.rpc_control_latency);
           break;
         }
         case qnn::HtpPerformanceMode::kHtpExtremePowerSaver: {
           QnnHtpPerfInfrastructure_PowerConfig_t extreme_power_saver_htp_performance_cfg{};
-          SetExtremeLowPerfPowerConfig(extreme_power_saver_htp_performance_cfg, htp_power_config_client_id);
-          status = SetHtpPowerCustomConfigs(htp_power_config_client_id, extreme_power_saver_htp_performance_cfg, rpc_polling_time, rpc_control_latency);
+          SetExtremeLowPerfPowerConfig(extreme_power_saver_htp_performance_cfg, config.htp_power_config_client_id);
+          status = SetHtpPowerCustomConfigs(config.htp_power_config_client_id, extreme_power_saver_htp_performance_cfg, config.rpc_polling_time, config.rpc_control_latency);
           break;
         }
         case qnn::HtpPerformanceMode::kHtpLowPowerSaver:
         case qnn::HtpPerformanceMode::kHtpHighPowerSaver:
         case qnn::HtpPerformanceMode::kHtpPowerSaver: {
           QnnHtpPerfInfrastructure_PowerConfig_t released_htp_performance_cfg{};
-          SetReleasedPerfPowerConfig(released_htp_performance_cfg, htp_power_config_client_id, onnxruntime::qnn::DcvsState::DCVS_DEFAULT);
-          status = SetHtpPowerCustomConfigs(htp_power_config_client_id, released_htp_performance_cfg, rpc_polling_time, rpc_control_latency);
+          SetReleasedPerfPowerConfig(released_htp_performance_cfg, config.htp_power_config_client_id, onnxruntime::qnn::DcvsState::DCVS_DEFAULT);
+          status = SetHtpPowerCustomConfigs(config.htp_power_config_client_id, released_htp_performance_cfg, config.rpc_polling_time, config.rpc_control_latency);
           break;
         }
         default:
@@ -504,7 +504,7 @@ Ort::Status HtpPowerConfigManager::SetPerformance(uint32_t htp_power_config_clie
       break;
     case GraphState::RUN_START:
     case GraphState::INIT_START:
-      status = SetHtpPowerConfigs(htp_power_config_client_id, performance_mode, rpc_polling_time, rpc_control_latency);
+      status = SetHtpPowerConfigs(config);
       graph_state_ = GraphState::NONE;
       break;
     default:
@@ -514,7 +514,7 @@ Ort::Status HtpPowerConfigManager::SetPerformance(uint32_t htp_power_config_clie
   return status;
 }
 
-Ort::Status HtpPowerConfigManager::SetState(GraphState state, uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode, uint32_t rpc_polling_time, uint32_t rpc_control_latency) {
+Ort::Status HtpPowerConfigManager::SetState(GraphState state, const HtpPerfConfig_t& config) {
   std::lock_guard<std::mutex> lk(state_mutex_);
   if (state != graph_state_) {
     graph_state_ = state;
@@ -522,11 +522,11 @@ Ort::Status HtpPowerConfigManager::SetState(GraphState state, uint32_t htp_power
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "State is the same as current. Ignoring request.");
     return Ort::Status();
   }
-  if (perfMode == qnn::HtpPerformanceMode::kHtpSustainedHighPerformance || perfMode == qnn::HtpPerformanceMode::kHtpBurst) {
+  if (config.perf_mode == qnn::HtpPerformanceMode::kHtpSustainedHighPerformance || config.perf_mode == qnn::HtpPerformanceMode::kHtpBurst) {
     RETURN_IF(timer_resource_.timer_active_ == false, "Timer is not active. Cannot set state.");
     RETURN_IF(timer_ == nullptr, "timer is not started");
-    return SetSustainedPerformance(htp_power_config_client_id, perfMode, rpc_polling_time, rpc_control_latency);
-  } else if (perfMode == qnn::HtpPerformanceMode::kHtpDefault) {
+    return SetSustainedPerformance(config);
+  } else if (config.perf_mode == qnn::HtpPerformanceMode::kHtpDefault) {
     if (timer_ && timer_->TimerInUse()) {
       timer_->AbortTimer();
     }
@@ -535,7 +535,7 @@ Ort::Status HtpPowerConfigManager::SetState(GraphState state, uint32_t htp_power
     if (timer_ && timer_->TimerInUse()) {
       timer_->AbortTimer();
     }
-    return SetPerformance(htp_power_config_client_id, perfMode, rpc_polling_time, rpc_control_latency);
+    return SetPerformance(config);
   }
 }
 
@@ -543,7 +543,7 @@ void HtpPowerConfigManager::TimerCallback(void* user_data) {
   TimerCallbackArg* args = static_cast<TimerCallbackArg*>(user_data);
   HtpPowerConfigManager* instance = args->instance_;
   if (instance->timer_resource_.timer_active_) {
-    auto rt = instance->SetState(GraphState::TIMEOUT, args->power_config_id_, qnn::HtpPerformanceMode::kHtpSustainedHighPerformance, 0, 0);
+    auto rt = instance->SetState(GraphState::TIMEOUT, {args->power_config_id_, qnn::HtpPerformanceMode::kHtpSustainedHighPerformance, 0, 0});
     if (!rt.IsOK()) {
       ORT_CXX_LOG_PTR(instance->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "State update failed");
     }
@@ -560,19 +560,12 @@ bool HtpPowerConfigManager::IsTimerThreadRunning() {
   return false;
 }
 
-Ort::Status HtpPowerConfigManager::SetHtpPowerConfigs(uint32_t htp_power_config_client_id,
-                                                      HtpPerformanceMode htp_performance_mode,
-                                                      uint32_t rpc_polling_time,
-                                                      uint32_t rpc_control_latency) {
-  // This function is called in QNN EP's OnRunStart() even if QNN backend setup failed and the model is assigned
-  // to a different EP. Therefore, we have to check that backend setup actually completed before trying to
-  // set an HTP power config ID. Otherwise, this causes a segfault because the QNN backend lib is unloaded.
-  // RETURN_IF_NOT(backend_setup_completed_, "Cannot set HTP power config ID if backend setup is not complete.");
-  RETURN_IF_ERROR(AddRpcPollingTime(rpc_polling_time));
-  RETURN_IF_ERROR(AddRpcControlLatency(rpc_control_latency));
-  RETURN_IF_ERROR(AddHtpPerformanceMode(htp_performance_mode,
-                                        htp_power_config_client_id));
-  RETURN_IF_ERROR(SetPowerConfig(htp_power_config_client_id,
+Ort::Status HtpPowerConfigManager::SetHtpPowerConfigs(const HtpPerfConfig_t& config) {
+  RETURN_IF_ERROR(AddRpcPollingTime(config.rpc_polling_time));
+  RETURN_IF_ERROR(AddRpcControlLatency(config.rpc_control_latency));
+  RETURN_IF_ERROR(AddHtpPerformanceMode(config.perf_mode,
+                                        config.htp_power_config_client_id));
+  RETURN_IF_ERROR(SetPowerConfig(config.htp_power_config_client_id,
                                  *qnn_interface_));
 
   return Ort::Status();
@@ -582,7 +575,6 @@ Ort::Status HtpPowerConfigManager::SetHtpPowerCustomConfigs(uint32_t htp_power_c
                                                             QnnHtpPerfInfrastructure_PowerConfig_t power_config,
                                                             uint32_t rpc_polling_time,
                                                             uint32_t rpc_control_latency) {
-  // RETURN_IF_NOT(backend_setup_completed_, "Cannot set HTP power config ID if backend setup is not complete.");
   RETURN_IF_ERROR(AddRpcPollingTime(rpc_polling_time));
   RETURN_IF_ERROR(AddRpcControlLatency(rpc_control_latency));
   RETURN_IF_ERROR(AddHtpPerformanceConfig(power_config));

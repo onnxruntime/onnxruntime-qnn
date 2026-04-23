@@ -105,6 +105,13 @@ enum class GraphState {
   NONE
 };
 
+typedef struct HtpPerfConfig {
+  uint32_t htp_power_config_client_id;
+  HtpPerformanceMode perf_mode;
+  uint32_t rpc_polling_time;
+  uint32_t rpc_control_latency;
+} HtpPerfConfig_t;
+
 typedef struct PerThreadHtpPowerConfigs {
   std::optional<HtpPerformanceMode> pre_run_perf_mode;
   std::optional<HtpPerformanceMode> post_run_perf_mode;

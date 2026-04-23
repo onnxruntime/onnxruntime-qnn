@@ -2758,12 +2758,12 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   if (qnn::IsOrtGraphHasCtxNode(graphs, count, ep->ort_api)) {
     uint32_t htp_power_config_id = 0;
     bool power_config_valid = ep->GetHtpPowerConfigId(htp_power_config_id);
+    qnn::HtpPerfConfig_t perf_config{htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_};
     qnn::ScopedGraphState state_guard(
         ep->qnn_backend_manager_.get(),
         power_config_valid,
         qnn::GraphState::INIT_START, qnn::GraphState::INIT_DONE,
-        htp_power_config_id, ep->default_htp_performance_mode_,
-        ep->default_rpc_polling_time_, ep->default_rpc_control_latency_);
+        perf_config);
     RETURN_IF_NOT_OK(state_guard.SetPreRunHtpPerfStatus());
     auto status = ep->CompileContextModel(graphs, fused_nodes, count, node_compute_infos);
     RETURN_IF_NOT_OK(state_guard.SetPostRunHtpPerf());
@@ -2771,12 +2771,25 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   } else if (qnn::IsOrtGraphHasDlcCtxNode(graphs, count, ep->ort_api)) {
     uint32_t htp_power_config_id = 0;
     bool power_config_valid = ep->GetHtpPowerConfigId(htp_power_config_id);
+    qnn::HtpPerfConfig_t perf_config{htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_};
     qnn::ScopedGraphState state_guard(
         ep->qnn_backend_manager_.get(),
         power_config_valid,
         qnn::GraphState::INIT_START, qnn::GraphState::INIT_DONE,
-        htp_power_config_id, ep->default_htp_performance_mode_,
-        ep->default_rpc_polling_time_, ep->default_rpc_control_latency_);
+        perf_config);
+    RETURN_IF_NOT_OK(state_guard.SetPreRunHtpPerfStatus());
+    auto status = ep->CompileDlcContextModel(this_ptr, graphs, fused_nodes, count, node_compute_infos);
+    RETURN_IF_NOT_OK(state_guard.SetPostRunHtpPerf());
+    return status;
+  } else if (qnn::IsOrtGraphHasDlcCtxNode(graphs, count, ep->ort_api)) {
+    uint32_t htp_power_config_id = 0;
+    bool power_config_valid = ep->GetHtpPowerConfigId(htp_power_config_id);
+    qnn::HtpPerfConfig_t perf_config{htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_};
+    qnn::ScopedGraphState state_guard(
+        ep->qnn_backend_manager_.get(),
+        power_config_valid,
+        qnn::GraphState::INIT_START, qnn::GraphState::INIT_DONE,
+        perf_config);
     RETURN_IF_NOT_OK(state_guard.SetPreRunHtpPerfStatus());
     auto status = ep->CompileDlcContextModel(this_ptr, graphs, fused_nodes, count, node_compute_infos);
     RETURN_IF_NOT_OK(state_guard.SetPostRunHtpPerf());
@@ -2789,12 +2802,12 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
 
   uint32_t htp_power_config_id = 0;
   bool valid_power_config_id = ep->GetHtpPowerConfigId(htp_power_config_id);
+  qnn::HtpPerfConfig_t perf_config{htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_};
   qnn::ScopedGraphState state_guard(
       ep->qnn_backend_manager_.get(),
       valid_power_config_id,
       qnn::GraphState::INIT_START, qnn::GraphState::INIT_DONE,
-      htp_power_config_id, ep->default_htp_performance_mode_,
-      ep->default_rpc_polling_time_, ep->default_rpc_control_latency_);
+      perf_config);
   RETURN_IF_NOT_OK(state_guard.SetPreRunHtpPerfStatus());
 
   OrtStatus* compile_status = nullptr;
@@ -2950,13 +2963,12 @@ void QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thr
     per_thread_htp_power_configs.rpc_polling_time = default_rpc_polling_time_;
   }
 
-  if (qnn::HtpPerformanceMode::kHtpBurst == pre_run_htp_performance_mode) {
-    per_thread_htp_power_configs.rpc_polling_time = 9999;
-  }
-
   if (qnn::HtpPerformanceMode::kHtpDefault != pre_run_htp_performance_mode) {
     per_thread_htp_power_configs.pre_run_perf_mode = pre_run_htp_performance_mode;
     // rpc polling time will only be updated with perf mode changes
+    if (qnn::HtpPerformanceMode::kHtpBurst == pre_run_htp_performance_mode) {
+      per_thread_htp_power_configs.rpc_polling_time = 9999;
+    }
   }
 
   if (qnn::HtpPerformanceMode::kHtpDefault != post_run_htp_performance_mode) {

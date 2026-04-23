@@ -65,7 +65,7 @@ class HtpPowerConfigManager {
 
   void ReleaseTimerThread();
 
-  Ort::Status SetState(GraphState state, uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode perfMode, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
+  Ort::Status SetState(GraphState state, const HtpPerfConfig_t& config);
 
   void Init(const QNN_INTERFACE_VER_TYPE& qnn_interface) { qnn_interface_ = &qnn_interface; }
 
@@ -77,18 +77,15 @@ class HtpPowerConfigManager {
                                            uint32_t htp_power_config_client_id,
                                            const HtpPerformanceMode& htp_performance_mode);
 
-  Ort::Status SetSustainedPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
+  Ort::Status SetSustainedPerformance(const HtpPerfConfig_t& config);
 
-  Ort::Status SetPerformance(uint32_t htp_power_config_client_id, qnn::HtpPerformanceMode performance_mode, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
+  Ort::Status SetPerformance(const HtpPerfConfig_t& config);
 
   static void TimerCallback(void* user_data);
 
   bool IsTimerThreadRunning();
 
-  Ort::Status SetHtpPowerConfigs(uint32_t htp_power_config_client_id,
-                                 HtpPerformanceMode htp_performance_mode,
-                                 uint32_t rpc_polling_time,
-                                 uint32_t rpc_control_latency);
+  Ort::Status SetHtpPowerConfigs(const HtpPerfConfig_t& config);
 
   Ort::Status SetHtpPowerCustomConfigs(uint32_t htp_power_config_client_id, QnnHtpPerfInfrastructure_PowerConfig_t power_config, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
 

@@ -414,7 +414,9 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   bool IsDx12SharedMemoryAllocatorSupported();
 
-  power::HtpPowerConfigManager& GetHtpPowerConfigManager() { return htp_power_config_manager_; }
+  Ort::Status SetHtpPowerState(GraphState state, const HtpPerfConfig_t& config) {
+    return htp_power_config_manager_.SetState(state, config);
+  }
 
  private:
   Ort::Status LoadBackend();
@@ -824,11 +826,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 //
 // Typical usage (INIT_START / INIT_DONE pair):
 //
-//   uint32_t htp_power_config_id = 0;
-//   QnnBackendManager* mgr = ep->GetHtpPowerConfigId(htp_power_config_id)
-//                                ? ep->qnn_backend_manager_.get() : nullptr;
-//   ScopedGraphState state_guard(mgr, GraphState::INIT_START, GraphState::INIT_DONE,
-//                                htp_power_config_id, perf_mode, rpc_poll, rpc_latency);
+//   QnnBackendManager* mgr points to a valid manager instance;
+//   bool valid_power_config_id = ...;  // determined by caller based on whether power config id was successfully created
+//   HtpPerfConfig_t config = ...;  // configured as needed for the operation
+//   ScopedGraphState state_guard(mgr, valid_power_config_id, GraphState::INIT_START, GraphState::INIT_DONE,
+//                                config);
 //   RETURN_IF_NOT_OK(state_guard.SetPreRunHtpPerfStatus());
 //   auto status = DoWork(...);
 //   RETURN_IF_NOT_OK(state_guard.SetPostRunHtpPerf());  // optional: capture post-run perf error
@@ -841,30 +843,20 @@ class ScopedGraphState {
                    bool valid_power_config_id,
                    GraphState start_state,
                    GraphState done_state,
-                   uint32_t htp_power_config_client_id,
-                   qnn::HtpPerformanceMode perf_mode,
-                   uint32_t rpc_polling_time,
-                   uint32_t rpc_control_latency)
+                   const HtpPerfConfig_t& config)
       : manager_(manager),
         valid_power_config_id_(valid_power_config_id),
         done_state_(done_state),
-        htp_power_config_client_id_(htp_power_config_client_id),
-        perf_mode_(perf_mode),
-        rpc_polling_time_(rpc_polling_time),
-        rpc_control_latency_(rpc_control_latency),
+        config_(config),
         finalized_(false) {
     if (manager_ && valid_power_config_id_) {
-      power::HtpPowerConfigManager& htp_power_config_manager = manager_->GetHtpPowerConfigManager();
-      start_status_ = htp_power_config_manager.SetState(start_state, htp_power_config_client_id_,
-                                                        perf_mode_, rpc_polling_time_, rpc_control_latency_);
+      start_status_ = manager_->SetHtpPowerState(start_state, config_);
     }
   }
   ~ScopedGraphState() {
     if (!finalized_ && manager_ && valid_power_config_id_) {
       // Error cannot be propagated from a destructor; silently ignore.
-      power::HtpPowerConfigManager& htp_power_config_manager = manager_->GetHtpPowerConfigManager();
-      htp_power_config_manager.SetState(done_state_, htp_power_config_client_id_,
-                                        perf_mode_, rpc_polling_time_, rpc_control_latency_);
+      manager_->SetHtpPowerState(done_state_, config_);
     }
   }
   // Returns (by move) the status of setting HTP performance before work begins.
@@ -875,9 +867,7 @@ class ScopedGraphState {
   Ort::Status SetPostRunHtpPerf() {
     finalized_ = true;
     if (manager_ && valid_power_config_id_) {
-      power::HtpPowerConfigManager& htp_power_config_manager = manager_->GetHtpPowerConfigManager();
-      return htp_power_config_manager.SetState(done_state_, htp_power_config_client_id_,
-                                               perf_mode_, rpc_polling_time_, rpc_control_latency_);
+      return manager_->SetHtpPowerState(done_state_, config_);
     }
     return Ort::Status();
   }
@@ -888,10 +878,7 @@ class ScopedGraphState {
   QnnBackendManager* manager_;
   bool valid_power_config_id_;
   GraphState done_state_;
-  uint32_t htp_power_config_client_id_;
-  qnn::HtpPerformanceMode perf_mode_;
-  uint32_t rpc_polling_time_;
-  uint32_t rpc_control_latency_;
+  HtpPerfConfig_t config_;
   Ort::Status start_status_;
   bool finalized_;
 };
