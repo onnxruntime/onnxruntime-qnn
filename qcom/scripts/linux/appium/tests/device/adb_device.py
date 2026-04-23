@@ -41,6 +41,13 @@ class AdbDevice(DeviceBase):
     ) -> list[str] | None:
         return self.__do("shell", command, check=check, capture_output=capture_output)
 
+    def install(self, apk_path: Path, reinstall: bool = True) -> None:
+        args: list[str] = []
+        if reinstall:
+            args.append("-r")
+        args.append(str(apk_path))
+        self.__do("install", args, check=True)
+
     def __do(
         self,
         verb: str,

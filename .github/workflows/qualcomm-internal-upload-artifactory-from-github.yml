@@ -43,6 +43,7 @@ jobs:
     secrets: inherit
     with:
       build_linux_x86_64: false
+      build_android_aarch64_aar: true
       linux_aarch64_manylinux_2_34_target_py_vsns: "['3.11','3.12','3.13','3.14']"
       windows_target_archs: ${{ inputs.windows_target_archs }}
       windows_target_py_vsns: ${{ inputs.windows_target_py_vsns }}
@@ -50,7 +51,6 @@ jobs:
       windows_arm64_build_zip: true
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
-      build_android_aar: true
 
   upload-wheel-workflow:
     name: "Upload python wheel artifacts to Artifactory"
@@ -345,5 +345,10 @@ jobs:
         uses: ./.github/actions/download-ci-artifact
         with:
           name: android-aarch64-aar
+
+      - name: Download POM from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: android-aarch64-pom
 
       # TODO: add Publish phase
