@@ -2283,7 +2283,7 @@ static GetTestModelFn BuildGraphInputFanoutQDQModel() {
   return [](ModelTestBuilder& builder) {
     builder.graph_->set_name("graph_input_fanout_qdq_graph");
 
-    MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 3}, false, {1.0f, 2.0f, 3.0f}));
+    MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 3}, false, {0.1f, 0.2f, 0.3f}));
     builder.MakeInitializer<float>("scale", {}, {1.0f / 255.0f});
     builder.MakeInitializer<uint8_t>("zero_point", {}, {0});
 
@@ -2301,16 +2301,18 @@ static GetTestModelFn BuildGraphInputFanoutQDQModel() {
   };
 }
 
-// Regression test for AISW-174227: a graph input that fans out to multiple QDQ pairs
-// with offload_graph_io_quantization=1 must not fail graph composition. Previously,
-// the second DQ tensor received QNN tensor id=0 (never set) because CreateTensorInQnnGraph
-// returned early when it found the override name already in tensors_created_table.
+// Tests that a graph input fanning out to multiple QDQ pairs with offload_graph_io_quantization=1
+// composes without error. Two bugs were fixed:
+//   1. CreateTensorInQnnGraph returned early on a duplicate override name, leaving the second
+//      DQ tensor with QNN tensor id=0 (never set).
+//   2. GetGraphInputOutputTensorWrapper must deduplicate wrappers sharing the same override name
+//      to avoid passing more inputs to graphExecute than the QNN graph has APP_WRITE tensors.
 TEST_F(QnnCPUBackendTests, OffloadGraphIoQuantizationMultipleQDQPairsOnGraphInput) {
   std::unique_ptr<ModelAndBuilder> model;
   CreateModelInMemory(model, BuildGraphInputFanoutQDQModel(), "graph_input_fanout_qdq", 18);
 
   Ort::SessionOptions so;
-  so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
+  so.SetGraphOptimizationLevel(ORT_DISABLE_ALL);
 
   onnxruntime::ProviderOptions options;
 #if defined(_WIN32)
@@ -2327,7 +2329,26 @@ TEST_F(QnnCPUBackendTests, OffloadGraphIoQuantizationMultipleQDQPairsOnGraphInpu
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
 
-  ASSERT_NO_THROW(Ort::Session(*ort_env, model->model_data.data(), model->model_data.size(), so));
+  Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), so);
+
+  // Run inference: verify output ≈ 2 * input (two identical DQ branches added together).
+  std::vector<float> input_data = {0.1f, 0.2f, 0.3f};
+  std::array<int64_t, 2> input_shape = {1, 3};
+  auto memory_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
+  std::vector<Ort::Value> ort_inputs;
+  ort_inputs.emplace_back(Ort::Value::CreateTensor<float>(
+      memory_info, input_data.data(), input_data.size(), input_shape.data(), input_shape.size()));
+
+  const char* input_name = "input";
+  const char* output_name = "add_out";
+  std::vector<Ort::Value> ort_outputs = session.Run(
+      Ort::RunOptions{nullptr}, &input_name, ort_inputs.data(), 1, &output_name, 1);
+
+  ASSERT_EQ(ort_outputs.size(), 1u);
+  const float* output_data = ort_outputs[0].GetTensorData<float>();
+  EXPECT_NEAR(output_data[0], 2.0f * input_data[0], 0.02f);
+  EXPECT_NEAR(output_data[1], 2.0f * input_data[1], 0.02f);
+  EXPECT_NEAR(output_data[2], 2.0f * input_data[2], 0.02f);
 }
 
 // Returns a function that builds a model with 3 Relu ops to test I/O ordering.
