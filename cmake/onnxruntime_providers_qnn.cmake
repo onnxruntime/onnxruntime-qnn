@@ -218,7 +218,7 @@
           FRAMEWORK DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # Code Coverage Configuration
-# Currently only supported on Linux x86_64 with GCC.
+# Currently only supported on Linux with GCC.
 # Future: extend to Android (aarch64 cross-compile) — requires ADB-based test execution,
 # pulling .gcda files from device, and lcov path substitution for cross-compiled sources.
 if(ENABLE_COVERAGE)

@@ -7,7 +7,7 @@
 # Prerequisites:
 #   - A Debug build compiled with coverage instrumentation (ENABLE_COVERAGE=1).
 #     Use: python qcom/build_and_test.py coverage_linux_x86_64
-#   - lcov 2.x (auto-installed via packages.yml)
+#   - lcov 1.x (auto-installed via packages.yml)
 #   - genhtml (bundled with lcov)
 #   - Perl (must be present on the host; raise an error if missing)
 #
