@@ -90,6 +90,23 @@ bool Is4BitIntType(ONNXTensorElementDataType data_type) {
          data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4;
 }
 
+bool IsDisallowedType(ONNXTensorElementDataType dt, bool allow_16bit, bool allow_4bit) {
+  return (!allow_16bit && Is16BitIntType(dt)) || (!allow_4bit && Is4BitIntType(dt));
+}
+
+//  Helper which returns false if any dtype is disallowed (by allow_16bit/allow_4bit)
+//  or if require_all_same is true and the types differ
+bool CheckQuantTypes(std::initializer_list<ONNXTensorElementDataType> dtypes,
+                     bool allow_16bit, bool allow_4bit,
+                     bool require_all_same = true) {
+  auto first_dt = *dtypes.begin();
+  for (auto dt : dtypes) {
+    if (IsDisallowedType(dt, allow_16bit, allow_4bit)) return false;
+    if (require_all_same && dt != first_dt) return false;
+  }
+  return true;
+}
+
 // Helper function to get a constant initializer from a node's input
 const OrtValue* GetConstantInitializer(const OrtGraph* graph, const OrtApi& ort_api, const char* name) {
   const OrtValue* initializer = nullptr;
@@ -463,15 +480,7 @@ bool OrtDropQDQNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort
     return false;
   }
 
-  if (dt_input.value() != dt_output.value()) {
-    return false;
-  }
-
-  if (!allow_16bit_ && Is16BitIntType(dt_input.value())) {
-    return false;
-  }
-
-  if (!allow_4bit_ && Is4BitIntType(dt_input.value())) {
+  if (!CheckQuantTypes({dt_input.value(), dt_output.value()}, allow_16bit_, allow_4bit_)) {
     return false;
   }
 
@@ -512,13 +521,7 @@ bool OrtDropDQNodeGroupSelector::Check(const OrtGraph* /*graph*/, const OrtApi& 
     return false;
   }
 
-  // Allow 16-bit int types only if explicitly allowed
-  if (!allow_16bit_ && Is16BitIntType(dt_input.value())) {
-    return false;
-  }
-
-  // Allow 4-bit int types only if explicitly allowed
-  if (!allow_4bit_ && Is4BitIntType(dt_input.value())) {
+  if (IsDisallowedType(dt_input.value(), allow_16bit_, allow_4bit_)) {
     return false;
   }
 
@@ -543,17 +546,7 @@ bool OrtUnaryNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_a
     return false;
   }
 
-  if (dt_input.value() != dt_output.value()) {
-    return false;
-  }
-
-  // Allow 16-bit int types only if explicitly allowed
-  if (!allow_16bit_ && Is16BitIntType(dt_input.value())) {
-    return false;
-  }
-
-  // Allow 4-bit int types only if explicitly allowed
-  if (!allow_4bit_ && Is4BitIntType(dt_input.value())) {
+  if (!CheckQuantTypes({dt_input.value(), dt_output.value()}, allow_16bit_, allow_4bit_)) {
     return false;
   }
 
@@ -610,16 +603,7 @@ bool OrtClipNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     return false;
   }
 
-  if (dt_input.value() != dt_output.value()) {
-    return false;
-  }
-
-  // 16-bit int types must be explicitly allowed.
-  if (!allow_16bit_ && Is16BitIntType(dt_input.value())) {
-    return false;
-  }
-
-  if (!allow_4bit_ && Is4BitIntType(dt_input.value())) {
+  if (!CheckQuantTypes({dt_input.value(), dt_output.value()}, allow_16bit_, allow_4bit_)) {
     return false;
   }
 
@@ -645,18 +629,7 @@ bool OrtBinaryNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
     return false;
   }
 
-  // All input and output types must match
-  if (dt_input_1.value() != dt_input_2.value() || dt_input_1.value() != dt_output.value()) {
-    return false;
-  }
-
-  // Allow 16-bit int types only if explicitly allowed
-  if (!allow_16bit_ && Is16BitIntType(dt_input_1.value())) {
-    return false;
-  }
-
-  // Allow 4-bit int types only if explicitly allowed
-  if (!allow_4bit_ && Is4BitIntType(dt_input_1.value())) {
+  if (!CheckQuantTypes({dt_input_1.value(), dt_input_2.value(), dt_output.value()}, allow_16bit_, allow_4bit_)) {
     return false;
   }
 
@@ -697,18 +670,7 @@ bool OrtVariadicNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& or
     }
   }
 
-  // Check if the input and output data types match
-  if (dt_input.value() != dt_output.value()) {
-    return false;
-  }
-
-  // Allow 16-bit int types only if explicitly allowed
-  if (!allow_16bit_ && Is16BitIntType(dt_input.value())) {
-    return false;
-  }
-
-  // Allow 4-bit int types only if explicitly allowed
-  if (!allow_4bit_ && Is4BitIntType(dt_input.value())) {
+  if (!CheckQuantTypes({dt_input.value(), dt_output.value()}, allow_16bit_, allow_4bit_)) {
     return false;
   }
 
@@ -910,13 +872,8 @@ bool OrtMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
     }
   }
 
-  // 16-bit int types must be explicitly allowed
-  if (!allow_16bit_ && (Is16BitIntType(dt_input.value()) || Is16BitIntType(dt_weight.value()))) {
-    return false;
-  }
-
-  // 4-bit int types must be explicitly allowed
-  if (!allow_4bit_ && (Is4BitIntType(dt_input.value()) || Is4BitIntType(dt_weight.value()))) {
+  if (IsDisallowedType(dt_input.value(), allow_16bit_, allow_4bit_) ||
+      IsDisallowedType(dt_weight.value(), allow_16bit_, allow_4bit_)) {
     return false;
   }
 
@@ -974,13 +931,8 @@ bool OrtGemmNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     }
   }
 
-  // 16-bit int types must be explicitly allowed
-  if (!allow_16bit_ && (Is16BitIntType(dt_A.value()) || Is16BitIntType(dt_B.value()))) {
-    return false;
-  }
-
-  // 4-bit int types must be explicitly allowed
-  if (!allow_4bit_ && (Is4BitIntType(dt_A.value()) || Is4BitIntType(dt_B.value()))) {
+  if (IsDisallowedType(dt_A.value(), allow_16bit_, allow_4bit_) ||
+      IsDisallowedType(dt_B.value(), allow_16bit_, allow_4bit_)) {
     return false;
   }
 
@@ -1023,18 +975,7 @@ bool OrtWhereNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_a
     return false;
   }
 
-  // All input and output types must match
-  if (dt_input_1.value() != dt_input_2.value() || dt_input_1.value() != dt_output.value()) {
-    return false;
-  }
-
-  // Allow 16-bit int types only if explicitly allowed
-  if (!allow_16bit_ && Is16BitIntType(dt_input_1.value())) {
-    return false;
-  }
-
-  // Allow 4-bit int types only if explicitly allowed
-  if (!allow_4bit_ && Is4BitIntType(dt_input_1.value())) {
+  if (!CheckQuantTypes({dt_input_1.value(), dt_input_2.value(), dt_output.value()}, allow_16bit_, allow_4bit_)) {
     return false;
   }
 
