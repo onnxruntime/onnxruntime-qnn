@@ -461,7 +461,7 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_all_initializer) {
                                0,                                                                                     // layout
                                ExpectedEPNodeAssignment::All,
                                0,
-                               QDQTolerance(0.008f));
+                               QDQTolerance(0.004f));
 }
 
 TEST_F(QnnHTPBackendTests, GRU_QDQ_linear_before_reset) {
@@ -512,7 +512,7 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_forward) {
                       0,                                                                                      // layout
                       ExpectedEPNodeAssignment::All,
                       0,
-                      0.03f);
+                      0.04f);
 }
 
 TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_reverse) {
@@ -536,7 +536,7 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_reverse) {
                       0,                                                                                      // layout
                       ExpectedEPNodeAssignment::All,
                       0,
-                      0.27f);
+                      0.006f);
 }
 
 TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_bidirectional) {
@@ -560,7 +560,7 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_bidirectional) {
                       0,                                                                                      // layout
                       ExpectedEPNodeAssignment::All,
                       0,
-                      0.25f);
+                      0.02f);
 }
 
 TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_bidirectional_wo_B) {
@@ -583,7 +583,7 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_bidirectional_wo_B) {
                       0,                                                                                      // layout
                       ExpectedEPNodeAssignment::All,
                       0,
-                      0.07f);
+                      0.03f);
 }
 
 TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_bidirectional_wo_H) {
@@ -606,7 +606,7 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_bidirectional_wo_H) {
                       0,                                                                                      // layout
                       ExpectedEPNodeAssignment::All,
                       0,
-                      0.035f);
+                      0.04f);
 }
 
 TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_bidirectional_all_initializer) {
@@ -630,7 +630,7 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_bidirectional_all_initializer) {
                       0,                                                                                     // layout
                       ExpectedEPNodeAssignment::All,
                       0,
-                      0.14f);
+                      0.02f);
 }
 
 TEST_F(QnnHTPBackendTests, GRU_Fp16_linear_before_reset) {
