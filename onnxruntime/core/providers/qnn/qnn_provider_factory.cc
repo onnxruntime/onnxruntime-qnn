@@ -238,10 +238,10 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
     } else if (num_devices == 1) {
       device_to_use = devices[0];
     } else {
-      const auto is_npu = [factory](const OrtHardwareDevice* device) {
+      const auto is_npu = [&factory](const OrtHardwareDevice* device) {
         return factory->ort_api.HardwareDevice_Type(device) == OrtHardwareDeviceType_NPU;
       };
-      const auto is_gpu = [factory](const OrtHardwareDevice* device) {
+      const auto is_gpu = [&factory](const OrtHardwareDevice* device) {
         return factory->ort_api.HardwareDevice_Type(device) == OrtHardwareDeviceType_GPU;
       };
 

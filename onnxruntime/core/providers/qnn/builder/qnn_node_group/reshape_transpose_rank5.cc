@@ -19,6 +19,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/common/inlined_containers.h"
 
 namespace onnxruntime {
 namespace qnn {
