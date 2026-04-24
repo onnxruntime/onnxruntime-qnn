@@ -742,7 +742,7 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
     return false;
   }
 
-  if (dt_input.value() == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8)) {
+  if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
     if (!int8_allowed_ || dt_weight.value() != dt_input.value()) {
       return false;
     }
@@ -750,7 +750,7 @@ bool OrtConvNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
 
   if (dq_nodes.size() == 3) {  // has bias
     auto dt_bias = GetNodeInputDataType(dq_nodes[2], ort_api, 0);
-    if (!dt_bias.has_value() || dt_bias.value() != static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32)) {
+    if (!dt_bias.has_value() || dt_bias.value() != ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32) {
       return false;
     }
   }
@@ -780,7 +780,7 @@ bool OrtEinsumNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
     }
 
     // Check if INT8 is allowed
-    if (!allow_int8_ && dt_input.value() == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8)) {
+    if (!allow_int8_ && dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
       return false;
     }
 
@@ -826,7 +826,7 @@ bool OrtReciprocalNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& 
     if (!dt_input.has_value()) {
       return false;
     }
-    if (!allow_int8_ && dt_input.value() == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8)) {
+    if (!allow_int8_ && dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
       return false;
     }
     if (!allow_16bit_ && Is16BitIntType(dt_input.value())) {
@@ -866,7 +866,7 @@ bool OrtMatMulNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_
   }
 
   // Check if INT8 is allowed
-  if (dt_input.value() == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8)) {
+  if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
     if (!int8_allowed_ || dt_weight.value() != dt_input.value()) {
       return false;
     }
@@ -917,7 +917,7 @@ bool OrtGemmNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
   }
 
   // If A is INT8, B must also be INT8
-  if (dt_A.value() == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8)) {
+  if (dt_A.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
     if (dt_A.value() != dt_B.value()) {  // if A is signed int, B must be signed int
       return false;
     }
@@ -952,7 +952,7 @@ bool OrtGemmNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_ap
 
   // Check if bias has the correct data type (INT32)
   auto dt_bias = GetNodeInputDataType(dq_nodes[2], ort_api, 0);
-  return dt_bias.has_value() && dt_bias.value() == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32);
+  return dt_bias.has_value() && dt_bias.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32;
 }
 
 bool OrtWhereNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
@@ -1042,7 +1042,7 @@ bool OrtInstanceAndLayerNormalizationNodeGroupSelector::Check(const OrtGraph* gr
   // Input, output, need to be the same type. The bias is int32.
   // Scale can be different with input for a16w8 case
   return (dt_input.value() == dt_output.value()) &&
-         (has_bias ? dt_bias.value() == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32) : true);
+         (has_bias ? dt_bias.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32 : true);
 }
 
 bool OrtBatchNormalizationNodeGroupSelector::Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
@@ -1073,7 +1073,7 @@ bool OrtBatchNormalizationNodeGroupSelector::Check(const OrtGraph* graph, const 
   }
 
   // INT8 is 3 in ONNX_NAMESPACE::TensorProto_DataType
-  if (dt_input.value() == static_cast<int32_t>(ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8)) {  // INT8
+  if (dt_input.value() == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
     if (!int8_allowed_ || dt_scale.value() != dt_input.value()) {
       return false;
     }
