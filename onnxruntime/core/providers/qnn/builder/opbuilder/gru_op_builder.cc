@@ -171,9 +171,9 @@ Ort::Status GRUOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-// Manually unrolls the GRU across time steps and batch elements.
-// Each QNN GRU node processes a single (time_step, batch_element) with batch_size=1, seq_length=1.
-// This works around QNN CPU/HTP backend bugs where batch_size > 1 produces incorrect results.
+// Manually unrolls the GRU across time steps only (time_major=true).
+// Each QNN GRU node processes a single time step with input shape [1, batch, input] (seq=1, time_major=true).
+// The full batch is processed together in each step, avoiding the batch-element loop entirely.
 Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
                                              const OrtNodeUnit& node_unit,
                                              const std::string& direction,
@@ -211,15 +211,21 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   const uint32_t seq_length = input_tensor_infos[0].shape[0];
   const int32_t direction_idx = input_tensor_infos[1].shape[0] < 2 || direction == "forward" ? 0 : 1;
 
-  // GRU parameters - shared by all unrolled cells
+  // GRU parameters - shared by all unrolled time-step cells.
+  // Use the actual ONNX direction so QNN sees the correct gate ordering.
+  // Time step ordering for reverse is handled by the unrolling loop (iterating t from seq-1 down to 0).
   std::vector<std::string> param_names;
-  // Always use forward direction for individual cells; time step ordering handled by unrolling loop
+  const uint32_t qnn_direction = (direction == "reverse") ? QNN_OP_GRU_DIRECTION_REVERSE : QNN_OP_GRU_DIRECTION_FORWARD;
   RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name() + "_" + direction,
-                                         QNN_OP_GRU_DIRECTION_FORWARD, QNN_OP_GRU_PARAM_DIRECTION, param_names));
+                                         qnn_direction, QNN_OP_GRU_PARAM_DIRECTION, param_names));
   RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
                                          static_cast<uint32_t>(linear_before_reset),
                                          QNN_OP_GRU_PARAM_LINEAR_BEFORE_RESET, param_names));
-  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), false,
+  // QNN CPU has a batch bug with time_major=true; QNN HTP has a batch bug with time_major=false.
+  // Pick time_major based on the backend to avoid the respective batch dimension bugs.
+  const bool is_npu_backend = qnn_model_wrapper.GetQnnBackendType() != QnnBackendType::CPU;
+  const bool time_major = is_npu_backend;  // true for HTP, false for CPU
+  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), time_major,
                                      QNN_OP_GRU_PARAM_TIME_MAJOR, param_names));
 
   // Null tensor for optional inputs
@@ -301,6 +307,7 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
     }
   }
   // initial_h: ONNX in[5] [num_directions, batch_size, hidden_size] -> [1, batch_size, hidden_size]
+  // Shape [1, batch, hidden] matches time_major=true initial_h for seq=1 GRU nodes.
   std::string initial_h_name;
   {
     std::vector<uint32_t> h_shape = {1, batch_size, hidden_size};
@@ -322,90 +329,97 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
     }
   }
 
-  // Split initial_h [1, batch, hidden] -> per-batch [hidden_size] tensors
-  std::vector<std::string> prev_h_names(batch_size);
-  for (uint32_t b = 0; b < batch_size; b++) {
-    prev_h_names[b] = utils::UniqueNameGenerator().New(node_unit, "_h_init_b" + std::to_string(b) + "_" + direction);
-    RETURN_IF_ERROR(AddStridedSliceOrReshape(qnn_model_wrapper, node_unit, initial_h_name, prev_h_names[b],
-                                             {1, batch_size, hidden_size}, {hidden_size},
-                                             {{0, 1, 1}, {SafeInt<int32_t>(b), SafeInt<int32_t>(b + 1), 1}, {0, hidden_size_sign, 1}},
-                                             0, 0, 0b011U, 0, input_tensor_infos[0].qnn_data_type,
-                                             output_tensor_infos[1].quant_param, do_op_validation, false, false));
-  }
-
-  // Unroll across time steps and batch elements
-  std::vector<std::string> qnn_all_hidden_state_names(seq_length);
+  // Unroll across time steps only.
+  // Each step feeds the full batch with seq=1.
+  // time_major=true:  input [1, batch, input], output Y [1, batch, hidden]
+  // time_major=false: input [batch, 1, input], output Y [batch, 1, hidden]
+  std::vector<std::string> qnn_all_step_hidden_names(seq_length);  // [batch, hidden] per step, ordered by t
+  std::string prev_h_name = initial_h_name;                        // [1, batch, hidden]
 
   for (uint32_t step = 0; step < seq_length; step++) {
-    uint32_t t = direction == "forward" ? step : seq_length - step - 1;
-    std::vector<std::string> per_batch_h(batch_size);
+    // For reverse direction iterate from the last time step to the first.
+    const uint32_t t = (direction == "reverse") ? (seq_length - step - 1) : step;
+    const std::string sfx = "_t" + std::to_string(t) + "_" + direction;
 
-    for (uint32_t b = 0; b < batch_size; b++) {
-      std::vector<std::string> cell_inputs = qnn_gru_input_names;
-      const std::string sfx = "_t" + std::to_string(t) + "_b" + std::to_string(b) + "_" + direction;
+    std::vector<std::string> cell_inputs = qnn_gru_input_names;
 
-      // Slice X[t, b, :] -> [input_size], reshape to [1, 1, input_size]
-      std::string x_flat = utils::UniqueNameGenerator().New(input_names[0], "_xf" + sfx);
-      RETURN_IF_ERROR(AddStridedSliceOrReshape(qnn_model_wrapper, node_unit, input_names[0], x_flat,
-                                               input_tensor_infos[0].shape, {input_size},
-                                               {{SafeInt<int32_t>(t), SafeInt<int32_t>(t + 1), 1},
-                                                {SafeInt<int32_t>(b), SafeInt<int32_t>(b + 1), 1},
-                                                {0, SafeInt<int32_t>(input_size), 1}},
-                                               0, 0, 0b011U, 0, input_tensor_infos[0].qnn_data_type,
-                                               input_tensor_infos[0].quant_param, do_op_validation, false, false));
-      std::string x_3d = utils::UniqueNameGenerator().New(input_names[0], "_x3d" + sfx);
-      RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(x_flat, x_3d, {input_size}, {1, 1, input_size},
-                                                       input_tensor_infos[0].qnn_data_type,
-                                                       input_tensor_infos[0].quant_param, do_op_validation, false, false));
-      cell_inputs[0] = x_3d;
+    // Slice X[t, :, :] -> [batch, input], reshape to 3D for QNN GRU.
+    std::string x_2d = utils::UniqueNameGenerator().New(input_names[0], "_x2d" + sfx);
+    RETURN_IF_ERROR(AddStridedSliceOrReshape(qnn_model_wrapper, node_unit, input_names[0], x_2d,
+                                             input_tensor_infos[0].shape, {batch_size, input_size},
+                                             {{SafeInt<int32_t>(t), SafeInt<int32_t>(t + 1), 1},
+                                              {0, SafeInt<int32_t>(batch_size), 1},
+                                              {0, SafeInt<int32_t>(input_size), 1}},
+                                             0, 0, 0b001U, 0, input_tensor_infos[0].qnn_data_type,
+                                             input_tensor_infos[0].quant_param, do_op_validation, false, false));
+    std::string x_3d = utils::UniqueNameGenerator().New(input_names[0], "_x3d" + sfx);
+    const std::vector<uint32_t> x_3d_shape = time_major ? std::vector<uint32_t>{1, batch_size, input_size}
+                                                        : std::vector<uint32_t>{batch_size, 1, input_size};
+    RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(x_2d, x_3d, {batch_size, input_size}, x_3d_shape,
+                                                     input_tensor_infos[0].qnn_data_type,
+                                                     input_tensor_infos[0].quant_param, do_op_validation, false, false));
+    cell_inputs[0] = x_3d;
 
-      // Reshape prev_h [hidden_size] -> [1, 1, hidden_size] for initial_h
-      std::string h_3d = utils::UniqueNameGenerator().New(node_unit, "_h3d" + sfx);
-      RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(prev_h_names[b], h_3d, {hidden_size}, {1, 1, hidden_size},
-                                                       input_tensor_infos[0].qnn_data_type,
-                                                       output_tensor_infos[1].quant_param, do_op_validation, false, false));
-      cell_inputs[13] = h_3d;
+    // initial_h for this step: prev_h_name is [1, batch, hidden].
+    // Use a no-op Reshape to give it a unique name for this step's cell.
+    std::string h_in = utils::UniqueNameGenerator().New(node_unit, "_h_in" + sfx);
+    RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(prev_h_name, h_in,
+                                                     {1, batch_size, hidden_size}, {1, batch_size, hidden_size},
+                                                     input_tensor_infos[0].qnn_data_type,
+                                                     output_tensor_infos[1].quant_param, do_op_validation, false, false));
+    cell_inputs[13] = h_in;
 
-      // GRU outputs: Y [1, 1, hidden], Y_h [1, 1, hidden]
-      std::string y_name = utils::UniqueNameGenerator().New(node_unit, "_Y" + sfx);
-      std::string yh_name = utils::UniqueNameGenerator().New(node_unit, "_Yh" + sfx);
-      for (const auto& [name, idx] : std::vector<std::pair<std::string, size_t>>{{y_name, 0}, {yh_name, 1}}) {
-        QnnTensorWrapper tw(name, QNN_TENSOR_TYPE_NATIVE, output_tensor_infos[idx].qnn_data_type,
-                            output_tensor_infos[idx].quant_param.Copy(), std::vector<uint32_t>{1, 1, hidden_size});
-        RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tw)), "Failed to add GRU output tensor.");
-      }
-      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                        utils::UniqueNameGenerator().New(node_unit, "_cell" + sfx),
-                        QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_GRU,
-                        std::move(cell_inputs), {y_name, yh_name},
-                        std::vector<std::string>(param_names), do_op_validation),
-                    "Failed to create GRU node.");
+    // GRU outputs:
+    // time_major=true:  Y [1, batch, hidden], Y_h [1, batch, hidden]
+    // time_major=false: Y [batch, 1, hidden], Y_h [1, batch, hidden]
+    const std::vector<uint32_t> y_shape = time_major ? std::vector<uint32_t>{1, batch_size, hidden_size}
+                                                     : std::vector<uint32_t>{batch_size, 1, hidden_size};
+    std::string y_name = utils::UniqueNameGenerator().New(node_unit, "_Y" + sfx);
+    std::string yh_name = utils::UniqueNameGenerator().New(node_unit, "_Yh" + sfx);
+    {
+      QnnTensorWrapper y_tw(y_name, QNN_TENSOR_TYPE_NATIVE, output_tensor_infos[0].qnn_data_type,
+                            output_tensor_infos[0].quant_param.Copy(), std::vector<uint32_t>(y_shape));
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(y_tw)), "Failed to add GRU Y output.");
+      QnnTensorWrapper yh_tw(yh_name, QNN_TENSOR_TYPE_NATIVE, output_tensor_infos[1].qnn_data_type,
+                             output_tensor_infos[1].quant_param.Copy(), std::vector<uint32_t>{1, batch_size, hidden_size});
+      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(yh_tw)), "Failed to add GRU Y_h output.");
+    }
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                      utils::UniqueNameGenerator().New(node_unit, "_cell" + sfx),
+                      QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_GRU,
+                      std::move(cell_inputs), {y_name, yh_name},
+                      std::vector<std::string>(param_names), do_op_validation),
+                  "Failed to create GRU node.");
 
-      // Reshape Y [1, 1, hidden] -> [hidden_size]
-      std::string h_flat = utils::UniqueNameGenerator().New(node_unit, "_hf" + sfx);
-      RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(y_name, h_flat, {1, 1, hidden_size}, {hidden_size},
+    // Derive next step's initial_h from Y (out[0]) - Y_h (out[1]) is unreliable on QNN CPU.
+    // Need [1, batch, hidden] for initial_h.
+    std::string y_as_h = utils::UniqueNameGenerator().New(node_unit, "_Y_as_h" + sfx);
+    if (time_major) {
+      // Y is already [1, batch, hidden] - just use a no-op Reshape
+      RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(y_name, y_as_h,
+                                                       y_shape, {1, batch_size, hidden_size},
                                                        output_tensor_infos[0].qnn_data_type,
                                                        output_tensor_infos[0].quant_param, do_op_validation, false, false));
-      per_batch_h[b] = h_flat;
-      prev_h_names[b] = h_flat;
+    } else {
+      // Y is [batch, 1, hidden] - Transpose to [1, batch, hidden]
+      RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(
+          node_unit.Index(), y_name, y_as_h,
+          y_shape, {1, 0, 2}, {1, batch_size, hidden_size},
+          output_tensor_infos[0].qnn_data_type, output_tensor_infos[0].quant_param,
+          do_op_validation, false, false));
     }
+    prev_h_name = y_as_h;
 
-    // Pack per-batch [hidden] -> [batch, hidden]
-    std::string packed = utils::UniqueNameGenerator().New(node_unit, "_pk_t" + std::to_string(t) + "_" + direction);
-    {
-      std::vector<std::string> pp;
-      RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), packed, 0, QNN_OP_PACK_PARAM_AXIS, pp));
-      QnnTensorWrapper tw(packed, QNN_TENSOR_TYPE_NATIVE, output_tensor_infos[0].qnn_data_type,
-                          output_tensor_infos[0].quant_param.Copy(), {batch_size, hidden_size});
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tw)), "Failed to add Pack output.");
-      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(packed, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_PACK,
-                                                    std::move(per_batch_h), {packed}, std::move(pp), do_op_validation),
-                    "Failed to create Pack node.");
-    }
-    qnn_all_hidden_state_names[t] = packed;
+    // Reshape Y -> [batch, hidden] for packing across time steps.
+    std::string y_2d = utils::UniqueNameGenerator().New(node_unit, "_Y2d" + sfx);
+    RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(y_name, y_2d, y_shape, {batch_size, hidden_size},
+                                                     output_tensor_infos[0].qnn_data_type,
+                                                     output_tensor_infos[0].quant_param, do_op_validation, false, false));
+    qnn_all_step_hidden_names[t] = y_2d;
   }
 
-  // Pack time steps [batch, hidden] * seq -> [seq, batch, hidden]
+  // Pack all per-step [batch, hidden] -> [seq, batch, hidden] using QNN_OP_PACK axis=0.
+  // qnn_all_step_hidden_names is indexed by t (0..seq-1) so forward order is naturally correct.
   const std::string y_all = utils::UniqueNameGenerator().New(node_unit, "_Y_all_" + direction);
   {
     std::vector<std::string> pp;
@@ -414,34 +428,30 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
                         output_tensor_infos[0].quant_param.Copy(), {seq_length, batch_size, hidden_size});
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tw)), "Failed to add Y Pack output.");
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(y_all, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_PACK,
-                                                  std::move(qnn_all_hidden_state_names), {y_all}, std::move(pp), do_op_validation),
+                                                  std::move(qnn_all_step_hidden_names), {y_all}, std::move(pp), do_op_validation),
                   "Failed to create Y Pack node.");
   }
 
-  // Pack final hidden states [hidden] * batch -> [batch, hidden]
-  const std::string y_h_packed = utils::UniqueNameGenerator().New(node_unit, "_Yh_pk_" + direction);
-  {
-    std::vector<std::string> pp;
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), y_h_packed, 0, QNN_OP_PACK_PARAM_AXIS, pp));
-    QnnTensorWrapper tw(y_h_packed, QNN_TENSOR_TYPE_NATIVE, output_tensor_infos[1].qnn_data_type,
-                        output_tensor_infos[1].quant_param.Copy(), {batch_size, hidden_size});
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tw)), "Failed to add Y_h Pack output.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(y_h_packed, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_PACK,
-                                                  std::vector<std::string>(prev_h_names), {y_h_packed}, std::move(pp), do_op_validation),
-                  "Failed to create Y_h Pack node.");
-  }
+  // Final Y_h: last step's Y is already [1, batch, hidden] - use prev_h_name directly.
+  // Give it a stable name via a no-op Reshape so it can be referenced as Y_h.
+  const std::string y_h_final = utils::UniqueNameGenerator().New(node_unit, "_Yh_final_" + direction);
+  RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(prev_h_name, y_h_final,
+                                                   {1, batch_size, hidden_size}, {1, batch_size, hidden_size},
+                                                   output_tensor_infos[1].qnn_data_type,
+                                                   output_tensor_infos[1].quant_param, do_op_validation, false, false));
 
-  // Map to ONNX output shapes
+  // Map to ONNX output shapes:
+  //   Y:   [seq, batch, hidden] -> ONNX [seq, 1, batch, hidden]  (Reshape)
+  //   Y_h: [1, batch, hidden]   -> ONNX [1, batch, hidden]       (no-op Reshape)
   std::vector<std::vector<uint32_t>> onnx_shapes = {{seq_length, 1, batch_size, hidden_size}, {1, batch_size, hidden_size}};
+  const std::string* srcs[2] = {&y_all, &y_h_final};
+  std::vector<std::vector<uint32_t>> src_shapes = {{seq_length, batch_size, hidden_size}, {1, batch_size, hidden_size}};
   for (size_t i = 0; i < 2; i++) {
     if (onnx_outputs.size() > i && onnx_outputs[i].Exists()) {
       const std::string out_name = is_bidirection
-                                       ? utils::UniqueNameGenerator().New(y_all, "_unsqueeze_" + direction)
+                                       ? utils::UniqueNameGenerator().New(*srcs[i], "_unsqueeze_" + direction)
                                        : onnx_outputs[i].name;
-      const std::string& src = (i == 0) ? y_all : y_h_packed;
-      const std::vector<uint32_t> src_shape = (i == 0) ? std::vector<uint32_t>{seq_length, batch_size, hidden_size}
-                                                       : std::vector<uint32_t>{batch_size, hidden_size};
-      RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(src, out_name, src_shape, onnx_shapes[i],
+      RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(*srcs[i], out_name, src_shapes[i], onnx_shapes[i],
                                                        output_tensor_infos[i].qnn_data_type,
                                                        output_tensor_infos[i].quant_param, do_op_validation, false,
                                                        qnn_model_wrapper.IsGraphOutput(out_name)));
