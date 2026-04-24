@@ -14,10 +14,15 @@ on:
         description: "Python version for the build (3.10, 3.11, 3.12, 3.13)"
         default: "3.10"
         type: string
+  # TEMP: remove before merge — workflow_dispatch cannot be triggered on a non-default branch via UI/API,
+  # so this push trigger is added temporarily to validate CI runner behavior before merging.
+  push:
+    branches:
+      - dev/yuhuchua/enable-coverage-tool
 
 jobs:
   coverage-linux-x86_64:
-    name: "coverage-linux-x86_64-py${{ inputs.target_py_vsn }}"
+    name: "coverage-linux-x86_64-py${{ inputs.target_py_vsn || '3.10' }}"
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
       - uses: actions/checkout@v6
@@ -27,13 +32,13 @@ jobs:
       - name: Run Coverage (Linux x86_64, always Debug)
         run: |
           python3 qcom/build_and_test.py \
-            --target-py-version ${{ inputs.target_py_vsn }} \
+            --target-py-version ${{ inputs.target_py_vsn || '3.10' }} \
             coverage_linux_x86_64
 
       - name: Upload Coverage Report
         uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: "coverage-linux-x86_64-py${{ inputs.target_py_vsn }}-${{ github.sha }}"
+          name: "coverage-linux-x86_64-py${{ inputs.target_py_vsn || '3.10' }}-${{ github.sha }}"
           retention-days: 7
           path: build/linux-x86_64/Debug/coverage/

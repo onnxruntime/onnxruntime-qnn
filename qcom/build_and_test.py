@@ -25,7 +25,6 @@ from ep_build.plan import (
     task,
 )
 from ep_build.task import (
-    BashScriptsWithVenvTask,
     CompositeTask,
     ConvertArchiveTask,
     ExtractArchiveTask,
@@ -37,6 +36,7 @@ from ep_build.tasks.build import (
     BuildEpDockerTask,
     BuildEpLinuxTask,
     BuildEpWindowsTask,
+    GenerateCoverageTask,
     QdcTestsTask,
 )
 from ep_build.tasks.docker import MANYLINUX_2_34_AARCH64_TAG, DockerBuildTask
@@ -548,15 +548,10 @@ class TaskLibrary:
                             "build",
                             extra_args=["--enable-coverage"],
                         ),
-                        BashScriptsWithVenvTask(
+                        GenerateCoverageTask(
                             "Generating HTML coverage report",
                             self.__venv_path,
-                            [
-                                [
-                                    str(REPO_ROOT / "qcom" / "scripts" / "linux" / "generate_coverage.sh"),
-                                    f"--build-dir={build_dir}",
-                                ]
-                            ],
+                            build_dir,
                         ),
                     ],
                 )

@@ -3,6 +3,10 @@
 
   add_compile_definitions(USE_QNN=1)
 
+  # Coverage builds are only supported on Linux with GCC.
+  # Pass -DENABLE_COVERAGE=ON to cmake to enable (e.g. via build.sh --enable-coverage).
+  option(ENABLE_COVERAGE "Enable GCC code coverage instrumentation (Linux only)" OFF)
+
   file(GLOB_RECURSE
        onnxruntime_providers_qnn_ep_srcs CONFIGURE_DEPENDS
        "${ONNXRUNTIME_ROOT}/core/providers/qnn/*.h"
@@ -71,13 +75,8 @@
 
   # Set linker flags for function(s) exported by EP DLL
   if(UNIX)
-    if("$ENV{ENABLE_COVERAGE}" MATCHES "1|ON|YES|TRUE")
-      set(qnn_version_script "${ONNXRUNTIME_ROOT}/core/providers/qnn/version_script_coverage.lds")
-    else()
-      set(qnn_version_script "${ONNXRUNTIME_ROOT}/core/providers/qnn/version_script.lds")
-    endif()
     target_link_options(onnxruntime_providers_qnn PRIVATE
-                        "LINKER:--version-script=${qnn_version_script}"
+                        "LINKER:--version-script=${ONNXRUNTIME_ROOT}/core/providers/qnn/version_script.lds"
                         "LINKER:--gc-sections"
                         "LINKER:-rpath=\$ORIGIN"
     )
@@ -219,8 +218,11 @@
           FRAMEWORK DESTINATION ${CMAKE_INSTALL_BINDIR})
 
 # Code Coverage Configuration
-if("$ENV{ENABLE_COVERAGE}" MATCHES "1|ON|YES|TRUE")
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+# Currently only supported on Linux x86_64 with GCC.
+# Future: extend to Android (aarch64 cross-compile) — requires ADB-based test execution,
+# pulling .gcda files from device, and lcov path substitution for cross-compiled sources.
+if(ENABLE_COVERAGE)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         target_compile_options(onnxruntime_providers_qnn PRIVATE
             --coverage
             -g

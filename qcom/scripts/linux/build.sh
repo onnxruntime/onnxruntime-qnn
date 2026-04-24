@@ -305,7 +305,7 @@ else
     fi
 
     if [ -n "${enable_coverage}" ]; then
-      export ENABLE_COVERAGE=1
+      common_args+=(--cmake_extra_defines "ENABLE_COVERAGE:BOOL=ON")
     fi
 
     "${python_for_build}" ${REPO_ROOT}/tools/ci_build/build.py \
