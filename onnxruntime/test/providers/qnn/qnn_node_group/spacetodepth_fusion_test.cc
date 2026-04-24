@@ -300,6 +300,10 @@ void RunSpaceToDepthFusionTest(const std::filesystem::path& json_qnn_graph_dir,
 void RunWrappedPatternSpaceToDepthFusionTest(const std::filesystem::path& json_qnn_graph_dir,
                                              GetTestModelFn model_builder,
                                              const std::string& backend_type) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
+
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
   const int uncaught_on_entry = std::uncaught_exceptions();

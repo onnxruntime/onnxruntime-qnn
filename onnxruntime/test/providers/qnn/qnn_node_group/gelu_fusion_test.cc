@@ -644,6 +644,10 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_2D) {
 
 // Test GELU Pattern 2 with 2D input (typical for linear layers)
 TEST_F(QnnHTPBackendTests, GeluFusionPattern2_2D) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
+
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern2_2D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));

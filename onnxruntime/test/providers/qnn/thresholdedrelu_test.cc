@@ -137,9 +137,9 @@ static void RunQDQThresholdedReluTestOnHTP(const std::vector<TestInputDef<float>
                                            bool use_contrib_qdq = false,
                                            QDQTolerance tolerance = QDQTolerance()) {
   if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    if (std::is_same_v<InputAQType, uint16_t> || std::is_same_v<InputAQType, int16_t> ||
+    if (std::is_same_v<InputAQType, uint8_t> || std::is_same_v<InputAQType, uint16_t> || std::is_same_v<InputAQType, int16_t> ||
         std::is_same_v<InputAQType, Int4x2> || std::is_same_v<InputAQType, UInt4x2>) {
-      GTEST_SKIP() << "Test requires HTP INT4 or INT16 support (arch > V68).";
+      GTEST_SKIP() << "Test requires HTP quantization support (arch > V68).";
     }
   }
 
