@@ -49,17 +49,19 @@ const GenieApi& GenieApiLoader::Get() {
 
 void GenieApiLoader::Init() {
   LOAD_GENIE_SYMBOL(NodeConfig_createFromJson);
+#if (GENIE_API_VERSION_MAJOR > 1) || (GENIE_API_VERSION_MAJOR == 1 && GENIE_API_VERSION_MINOR >= 17)
   LOAD_GENIE_SYMBOL(DlcConfig_create);
   LOAD_GENIE_SYMBOL(DlcConfig_free);
   LOAD_GENIE_SYMBOL(Dlc_create);
   LOAD_GENIE_SYMBOL(Dlc_free);
   LOAD_GENIE_SYMBOL(Dlc_getUseCases);
   LOAD_GENIE_SYMBOL(NodeConfig_createFromDlc);
-  LOAD_GENIE_SYMBOL(Node_create);
-  LOAD_GENIE_SYMBOL(Node_setData);
   LOAD_GENIE_SYMBOL(Node_getData);
   LOAD_GENIE_SYMBOL(Node_execute);
   LOAD_GENIE_SYMBOL(Node_reset);
+#endif
+  LOAD_GENIE_SYMBOL(Node_create);
+  LOAD_GENIE_SYMBOL(Node_setData);
   LOAD_GENIE_SYMBOL(Node_free);
   LOAD_GENIE_SYMBOL(NodeConfig_free);
   LOAD_GENIE_SYMBOL(Log_create);

@@ -210,9 +210,21 @@ TEST_F(QnnCPUBackendTests, ReshapeGemmFusion) {
   std::vector<int64_t> shape_data = {4, 2};
   std::vector<float> weight_data(6, 1.0f);
   std::vector<float> bias_data = {1.0f, 2.0f, 3.0f};
+// GCC 13 with -O2 inlines this call chain deeply enough that its data flow analyzer loses track of
+// std::variant's initialization state inside the copy constructor (variant:224), triggering a false
+// positive -Wmaybe-uninitialized. The warning is suppressed here because TestInputDef members are
+// properly initialized in all constructors; this is a known GCC 13 analysis limitation with
+// std::variant + lambda capture + deep inlining.
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#endif
   RunReshapeGemmTest(TestInputDef<float>({2, 2, 2}, false, input_data), TestInputDef<int64_t>({2}, true, shape_data),
                      TestInputDef<float>({2, 3}, true, weight_data), TestInputDef<float>({3}, true, bias_data),
                      ExpectedEPNodeAssignment::All);
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

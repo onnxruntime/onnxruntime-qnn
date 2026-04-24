@@ -78,8 +78,10 @@ function Set-NuGetCredentials {
 
     if ($server -eq "testnuget") {
         Set-Item -Path "env:$source_credentials_var" -Value "Username=$env:TEST_NUGET_API_KEY;Password=$env:TEST_NUGET_API_KEY"
+        nuget setApiKey $env:TEST_NUGET_API_KEY -Source https://int.nugettest.org/api/v2/package
     } elseif ($server -eq "nuget") {
         Set-Item -Path "env:$source_credentials_var" -Value "Username=$env:NUGET_API_KEY;Password=$env:NUGET_API_KEY"
+        nuget setApiKey $env:NUGET_API_KEY -Source https://api.nuget.org/v3/index.json
     } else {
         Set-Item -Path "env:$source_credentials_var" -Value "Username=$env:ARTIFACTORY_USERNAME;Password=$env:ARTIFACTORY_PASSWORD"
     }

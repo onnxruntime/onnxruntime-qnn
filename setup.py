@@ -51,7 +51,6 @@ if parse_arg_remove_boolean(sys.argv, "--nightly_build"):
 wheel_name_suffix = parse_arg_remove_string(sys.argv, "--wheel_name_suffix=")
 version_suffix = parse_arg_remove_string(sys.argv, "--version_suffix=")
 
-is_qnn = True
 package_name = "onnxruntime-qnn"
 qnn_version = parse_arg_remove_string(sys.argv, "--qnn_version=")
 
@@ -100,16 +99,19 @@ try:
 
         def finalize_options(self):
             _bdist_wheel.finalize_options(self)
-            if not is_manylinux:
-                self.root_is_pure = False
+            # Insist that this wheel contains more than Python source
+            self.root_is_pure = False
 
         def run(self):
+            qnn_dependencies = ["libcdsprpc.so"]
             _bdist_wheel.run(self)
-            if is_manylinux and not disable_auditwheel_repair and not is_qnn:
+            if is_manylinux and not disable_auditwheel_repair:
                 assert self.dist_dir is not None
                 file = glob(path.join(self.dist_dir, "*linux*.whl"))[0]
                 logger.info("repairing %s for manylinux1", file)
                 auditwheel_cmd = ["auditwheel", "-v", "repair", "-w", self.dist_dir, file]
+                for dep in qnn_dependencies:
+                    auditwheel_cmd.extend(["--exclude", dep])
                 logger.info("Running %s", " ".join([shlex.quote(arg) for arg in auditwheel_cmd]))
                 try:
                     subprocess.run(auditwheel_cmd, check=True, stdout=subprocess.PIPE)
@@ -147,17 +149,27 @@ if platform.system() == "Linux" or platform.system() == "AIX":
     # QNN
     qnn_deps = [
         "libGenie.so",
+        "libHtpPrepare.so",
         "libQnnCpu.so",
         "libQnnGpu.so",
         "libQnnHtp.so",
-        "libQnnHtpPrepare.so",
         "libQnnHtpNetRunExtensions.so",
+        "libQnnHtpPrepare.so",
         "libQnnHtpV68Skel.so",
         "libQnnHtpV68Stub.so",
+        "libQnnHtpV69Skel.so",
+        "libQnnHtpV69Stub.so",
+        "libQnnHtpV73Skel.so",
+        "libQnnHtpV73Stub.so",
+        "libQnnHtpV75Skel.so",
+        "libQnnHtpV75Stub.so",
+        "libQnnHtpV79Skel.so",
+        "libQnnHtpV79Stub.so",
+        "libQnnHtpV81Skel.so",
+        "libQnnHtpV81Stub.so",
         "libQnnIr.so",
         "libQnnSaver.so",
         "libQnnSystem.so",
-        "libHtpPrepare.so",
     ]
     dl_libs.extend(qnn_deps)
 else:
@@ -166,23 +178,23 @@ else:
     # QNN V68/V73/V81 dependencies
     qnn_deps = [
         "Genie.dll",
+        "HtpPrepare.dll",
+        "libQnnHtpV68Skel.so",
+        "libqnnhtpv73.cat",
+        "libQnnHtpV73Skel.so",
+        "libqnnhtpv81.cat",
+        "libQnnHtpV81Skel.so",
         "QnnCpu.dll",
         "QnnGpu.dll",
         "QnnHtp.dll",
+        "QnnHtpNetRunExtensions.dll",
+        "QnnHtpPrepare.dll",
+        "QnnHtpV68Stub.dll",
+        "QnnHtpV73Stub.dll",
+        "QnnHtpV81Stub.dll",
         "QnnIr.dll",
         "QnnSaver.dll",
         "QnnSystem.dll",
-        "QnnHtpNetRunExtensions.dll",
-        "QnnHtpPrepare.dll",
-        "HtpPrepare.dll",
-        "QnnHtpV81Stub.dll",
-        "libQnnHtpV81Skel.so",
-        "libqnnhtpv81.cat",
-        "QnnHtpV73Stub.dll",
-        "libQnnHtpV73Skel.so",
-        "libqnnhtpv73.cat",
-        "QnnHtpV68Stub.dll",
-        "libQnnHtpV68Skel.so",
     ]
     libs.extend(qnn_deps)
 
