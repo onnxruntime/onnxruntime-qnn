@@ -196,24 +196,24 @@ static GetTestQDQModelFn<InputQType> BuildQDQGRUTestCase(const TestInputDef<floa
 
 // Runs a GRU model on the QNN CPU backend with FP32.
 static void RunCpuFP32GRUOpTest(const TestInputDef<float>& X_def,
-                                 const TestInputDef<float>& W_def,
-                                 const TestInputDef<float>& R_def,
-                                 const std::optional<std::reference_wrapper<TestInputDef<float>>> B_def,
-                                 const std::optional<std::reference_wrapper<TestInputDef<float>>> H_def,
-                                 const bool has_Y,
-                                 const bool has_Y_h,
-                                 const std::string direction,
-                                 const int64_t hidden_size,
-                                 const int64_t layout,
-                                 ExpectedEPNodeAssignment expected_ep_assignment,
-                                 const int64_t linear_before_reset = 0,
-                                 float tolerance = 0.004f,
-                                 int opset = 22) {
+                                const TestInputDef<float>& W_def,
+                                const TestInputDef<float>& R_def,
+                                const std::optional<std::reference_wrapper<TestInputDef<float>>> B_def,
+                                const std::optional<std::reference_wrapper<TestInputDef<float>>> H_def,
+                                const bool has_Y,
+                                const bool has_Y_h,
+                                const std::string direction,
+                                const int64_t hidden_size,
+                                const int64_t layout,
+                                ExpectedEPNodeAssignment expected_ep_assignment,
+                                const int64_t linear_before_reset = 0,
+                                float tolerance = 0.004f,
+                                int opset = 22) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
 
   RunQnnModelTest(BuildGRUTestCase<float>(X_def, W_def, R_def, B_def, H_def, has_Y, has_Y_h,
-                                         direction, hidden_size, layout, linear_before_reset),
+                                          direction, hidden_size, layout, linear_before_reset),
                   provider_options,
                   opset,
                   expected_ep_assignment,
@@ -233,16 +233,16 @@ TEST_F(QnnCPUBackendTests, GRU_fp32_sanity_forward) {
   uint32_t seq_len = 6;
   auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
   auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
-  RunCpuFP32GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
-                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),  // W
-                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f), // R
-                      std::ref(B_def),                                                                        // B
-                      std::ref(H_def),                                                                        // initial_h
-                      true,                                                                                   // has_Y
-                      true,                                                                                   // has_Y_h
-                      direction,                                                                              // direction
-                      hidden_size,                                                                            // hidden_size
-                      0,                                                                                      // layout
+  RunCpuFP32GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                      std::ref(B_def),                                                                         // B
+                      std::ref(H_def),                                                                         // initial_h
+                      true,                                                                                    // has_Y
+                      true,                                                                                    // has_Y_h
+                      direction,                                                                               // direction
+                      hidden_size,                                                                             // hidden_size
+                      0,                                                                                       // layout
                       ExpectedEPNodeAssignment::All);
 }
 
@@ -255,16 +255,16 @@ TEST_F(QnnCPUBackendTests, GRU_fp32_sanity_bidirectional) {
   uint32_t seq_len = 6;
   auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
   auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
-  RunCpuFP32GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
-                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),  // W
-                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f), // R
-                      std::ref(B_def),                                                                        // B
-                      std::ref(H_def),                                                                        // initial_h
-                      true,                                                                                   // has_Y
-                      true,                                                                                   // has_Y_h
-                      direction,                                                                              // direction
-                      hidden_size,                                                                            // hidden_size
-                      0,                                                                                      // layout
+  RunCpuFP32GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                      std::ref(B_def),                                                                         // B
+                      std::ref(H_def),                                                                         // initial_h
+                      true,                                                                                    // has_Y
+                      true,                                                                                    // has_Y_h
+                      direction,                                                                               // direction
+                      hidden_size,                                                                             // hidden_size
+                      0,                                                                                       // layout
                       ExpectedEPNodeAssignment::All);
 }
 
@@ -273,19 +273,19 @@ TEST_F(QnnCPUBackendTests, GRU_fp32_sanity_bidirectional) {
 // Runs a GRU model on the QNN HTP backend with QDQ quantization.
 template <typename QuantType>
 static void RunHtpQDQGRUOpTest(const TestInputDef<float>& X_def,
-                                const TestInputDef<float>& W_def,
-                                const TestInputDef<float>& R_def,
-                                const std::optional<std::reference_wrapper<TestInputDef<float>>> B_def,
-                                const std::optional<std::reference_wrapper<TestInputDef<float>>> H_def,
-                                const bool has_Y,
-                                const bool has_Y_h,
-                                const std::string direction,
-                                const int64_t hidden_size,
-                                const int64_t layout,
-                                ExpectedEPNodeAssignment expected_ep_assignment,
-                                const int64_t linear_before_reset = 0,
-                                QDQTolerance tolerance = QDQTolerance(),
-                                int opset = 22) {
+                               const TestInputDef<float>& W_def,
+                               const TestInputDef<float>& R_def,
+                               const std::optional<std::reference_wrapper<TestInputDef<float>>> B_def,
+                               const std::optional<std::reference_wrapper<TestInputDef<float>>> H_def,
+                               const bool has_Y,
+                               const bool has_Y_h,
+                               const std::string direction,
+                               const int64_t hidden_size,
+                               const int64_t layout,
+                               ExpectedEPNodeAssignment expected_ep_assignment,
+                               const int64_t linear_before_reset = 0,
+                               QDQTolerance tolerance = QDQTolerance(),
+                               int opset = 22) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -302,19 +302,19 @@ static void RunHtpQDQGRUOpTest(const TestInputDef<float>& X_def,
 
 // Runs a GRU model on the QNN HTP backend with FP16 precision.
 static void RunHtpFp16GRUOpTest(const TestInputDef<float>& X_def,
-                                 const TestInputDef<float>& W_def,
-                                 const TestInputDef<float>& R_def,
-                                 const std::optional<std::reference_wrapper<TestInputDef<float>>> B_def,
-                                 const std::optional<std::reference_wrapper<TestInputDef<float>>> H_def,
-                                 const bool has_Y,
-                                 const bool has_Y_h,
-                                 const std::string direction,
-                                 const int64_t hidden_size,
-                                 const int64_t layout,
-                                 ExpectedEPNodeAssignment expected_ep_assignment,
-                                 const int64_t linear_before_reset = 0,
-                                 float tolerance = 0.004f,
-                                 int opset = 22) {
+                                const TestInputDef<float>& W_def,
+                                const TestInputDef<float>& R_def,
+                                const std::optional<std::reference_wrapper<TestInputDef<float>>> B_def,
+                                const std::optional<std::reference_wrapper<TestInputDef<float>>> H_def,
+                                const bool has_Y,
+                                const bool has_Y_h,
+                                const std::string direction,
+                                const int64_t hidden_size,
+                                const int64_t layout,
+                                ExpectedEPNodeAssignment expected_ep_assignment,
+                                const int64_t linear_before_reset = 0,
+                                float tolerance = 0.004f,
+                                int opset = 22) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
@@ -341,17 +341,17 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_forward) {
   uint32_t seq_len = 6;
   auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
   auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
-  RunHtpQDQGRUOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
-                               TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),  // W
-                               TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f), // R
-                               std::ref(B_def),                                                                        // B
-                               std::ref(H_def),                                                                        // initial_h
-                               true,                                                                                   // has_Y
-                               true,                                                                                   // has_Y_h
-                               direction,                                                                              // direction
-                               hidden_size,                                                                            // hidden_size
-                               0,                                                                                      // layout
-                               ExpectedEPNodeAssignment::All);
+  RunHtpQDQGRUOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                              TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                              TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                              std::ref(B_def),                                                                         // B
+                              std::ref(H_def),                                                                         // initial_h
+                              true,                                                                                    // has_Y
+                              true,                                                                                    // has_Y_h
+                              direction,                                                                               // direction
+                              hidden_size,                                                                             // hidden_size
+                              0,                                                                                       // layout
+                              ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_reverse) {
@@ -363,17 +363,17 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_reverse) {
   uint32_t seq_len = 6;
   auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
   auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
-  RunHtpQDQGRUOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
-                               TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),  // W
-                               TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f), // R
-                               std::ref(B_def),                                                                        // B
-                               std::ref(H_def),                                                                        // initial_h
-                               true,                                                                                   // has_Y
-                               true,                                                                                   // has_Y_h
-                               direction,                                                                              // direction
-                               hidden_size,                                                                            // hidden_size
-                               0,                                                                                      // layout
-                               ExpectedEPNodeAssignment::All);
+  RunHtpQDQGRUOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                              TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                              TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                              std::ref(B_def),                                                                         // B
+                              std::ref(H_def),                                                                         // initial_h
+                              true,                                                                                    // has_Y
+                              true,                                                                                    // has_Y_h
+                              direction,                                                                               // direction
+                              hidden_size,                                                                             // hidden_size
+                              0,                                                                                       // layout
+                              ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional) {
@@ -385,17 +385,17 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional) {
   uint32_t seq_len = 6;
   auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
   auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
-  RunHtpQDQGRUOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
-                               TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),  // W
-                               TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f), // R
-                               std::ref(B_def),                                                                        // B
-                               std::ref(H_def),                                                                        // initial_h
-                               true,                                                                                   // has_Y
-                               true,                                                                                   // has_Y_h
-                               direction,                                                                              // direction
-                               hidden_size,                                                                            // hidden_size
-                               0,                                                                                      // layout
-                               ExpectedEPNodeAssignment::All);
+  RunHtpQDQGRUOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                              TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                              TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                              std::ref(B_def),                                                                         // B
+                              std::ref(H_def),                                                                         // initial_h
+                              true,                                                                                    // has_Y
+                              true,                                                                                    // has_Y_h
+                              direction,                                                                               // direction
+                              hidden_size,                                                                             // hidden_size
+                              0,                                                                                       // layout
+                              ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_wo_B) {
@@ -406,17 +406,17 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_wo_B) {
   uint32_t input_size = 5;
   uint32_t seq_len = 6;
   auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
-  RunHtpQDQGRUOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
-                               TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),  // W
-                               TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f), // R
-                               std::nullopt,                                                                           // B
-                               std::ref(H_def),                                                                        // initial_h
-                               true,                                                                                   // has_Y
-                               true,                                                                                   // has_Y_h
-                               direction,                                                                              // direction
-                               hidden_size,                                                                            // hidden_size
-                               0,                                                                                      // layout
-                               ExpectedEPNodeAssignment::All);
+  RunHtpQDQGRUOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                              TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                              TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                              std::nullopt,                                                                            // B
+                              std::ref(H_def),                                                                         // initial_h
+                              true,                                                                                    // has_Y
+                              true,                                                                                    // has_Y_h
+                              direction,                                                                               // direction
+                              hidden_size,                                                                             // hidden_size
+                              0,                                                                                       // layout
+                              ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_wo_H) {
@@ -427,17 +427,17 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_wo_H) {
   uint32_t input_size = 5;
   uint32_t seq_len = 6;
   auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
-  RunHtpQDQGRUOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
-                               TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),  // W
-                               TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f), // R
-                               std::ref(B_def),                                                                        // B
-                               std::nullopt,                                                                           // initial_h
-                               true,                                                                                   // has_Y
-                               true,                                                                                   // has_Y_h
-                               direction,                                                                              // direction
-                               hidden_size,                                                                            // hidden_size
-                               0,                                                                                      // layout
-                               ExpectedEPNodeAssignment::All);
+  RunHtpQDQGRUOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                              TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                              TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                              std::ref(B_def),                                                                         // B
+                              std::nullopt,                                                                            // initial_h
+                              true,                                                                                    // has_Y
+                              true,                                                                                    // has_Y_h
+                              direction,                                                                               // direction
+                              hidden_size,                                                                             // hidden_size
+                              0,                                                                                       // layout
+                              ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_all_initializer) {
@@ -449,19 +449,19 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_sanity_bidirectional_all_initializer) {
   uint32_t seq_len = 6;
   auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, true, -0.5f, 0.5f);
   auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, true, -0.5f, 0.5f);
-  RunHtpQDQGRUOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -0.5f, 0.5f),            // X
-                               TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, true, -0.5f, 0.5f),  // W
-                               TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, true, -0.5f, 0.5f), // R
-                               std::ref(B_def),                                                                       // B
-                               std::ref(H_def),                                                                       // initial_h
-                               true,                                                                                  // has_Y
-                               true,                                                                                  // has_Y_h
-                               direction,                                                                             // direction
-                               hidden_size,                                                                           // hidden_size
-                               0,                                                                                     // layout
-                               ExpectedEPNodeAssignment::All,
-                               0,
-                               QDQTolerance(0.004f));
+  RunHtpQDQGRUOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -0.5f, 0.5f),             // X
+                              TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, true, -0.5f, 0.5f),   // W
+                              TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, true, -0.5f, 0.5f),  // R
+                              std::ref(B_def),                                                                        // B
+                              std::ref(H_def),                                                                        // initial_h
+                              true,                                                                                   // has_Y
+                              true,                                                                                   // has_Y_h
+                              direction,                                                                              // direction
+                              hidden_size,                                                                            // hidden_size
+                              0,                                                                                      // layout
+                              ExpectedEPNodeAssignment::All,
+                              0,
+                              QDQTolerance(0.004f));
 }
 
 TEST_F(QnnHTPBackendTests, GRU_QDQ_linear_before_reset) {
@@ -473,18 +473,18 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_linear_before_reset) {
   uint32_t seq_len = 6;
   auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
   auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
-  RunHtpQDQGRUOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
-                               TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),  // W
-                               TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f), // R
-                               std::ref(B_def),                                                                        // B
-                               std::ref(H_def),                                                                        // initial_h
-                               true,                                                                                   // has_Y
-                               true,                                                                                   // has_Y_h
-                               direction,                                                                              // direction
-                               hidden_size,                                                                            // hidden_size
-                               0,                                                                                      // layout
-                               ExpectedEPNodeAssignment::All,
-                               1);                                                                                     // linear_before_reset
+  RunHtpQDQGRUOpTest<uint8_t>(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                              TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                              TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                              std::ref(B_def),                                                                         // B
+                              std::ref(H_def),                                                                         // initial_h
+                              true,                                                                                    // has_Y
+                              true,                                                                                    // has_Y_h
+                              direction,                                                                               // direction
+                              hidden_size,                                                                             // hidden_size
+                              0,                                                                                       // layout
+                              ExpectedEPNodeAssignment::All,
+                              1);  // linear_before_reset
 }
 
 // ============================================================
@@ -500,16 +500,16 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_forward) {
   uint32_t seq_len = 6;
   auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
   auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
-  RunHtpFp16GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
-                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),  // W
-                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f), // R
-                      std::ref(B_def),                                                                        // B
-                      std::ref(H_def),                                                                        // initial_h
-                      true,                                                                                   // has_Y
-                      true,                                                                                   // has_Y_h
-                      direction,                                                                              // direction
-                      hidden_size,                                                                            // hidden_size
-                      0,                                                                                      // layout
+  RunHtpFp16GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                      std::ref(B_def),                                                                         // B
+                      std::ref(H_def),                                                                         // initial_h
+                      true,                                                                                    // has_Y
+                      true,                                                                                    // has_Y_h
+                      direction,                                                                               // direction
+                      hidden_size,                                                                             // hidden_size
+                      0,                                                                                       // layout
                       ExpectedEPNodeAssignment::All,
                       0,
                       0.04f);
@@ -524,16 +524,16 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_reverse) {
   uint32_t seq_len = 6;
   auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
   auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
-  RunHtpFp16GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
-                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),  // W
-                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f), // R
-                      std::ref(B_def),                                                                        // B
-                      std::ref(H_def),                                                                        // initial_h
-                      true,                                                                                   // has_Y
-                      true,                                                                                   // has_Y_h
-                      direction,                                                                              // direction
-                      hidden_size,                                                                            // hidden_size
-                      0,                                                                                      // layout
+  RunHtpFp16GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                      std::ref(B_def),                                                                         // B
+                      std::ref(H_def),                                                                         // initial_h
+                      true,                                                                                    // has_Y
+                      true,                                                                                    // has_Y_h
+                      direction,                                                                               // direction
+                      hidden_size,                                                                             // hidden_size
+                      0,                                                                                       // layout
                       ExpectedEPNodeAssignment::All,
                       0,
                       0.006f);
@@ -548,16 +548,16 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_bidirectional) {
   uint32_t seq_len = 6;
   auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
   auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
-  RunHtpFp16GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
-                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),  // W
-                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f), // R
-                      std::ref(B_def),                                                                        // B
-                      std::ref(H_def),                                                                        // initial_h
-                      true,                                                                                   // has_Y
-                      true,                                                                                   // has_Y_h
-                      direction,                                                                              // direction
-                      hidden_size,                                                                            // hidden_size
-                      0,                                                                                      // layout
+  RunHtpFp16GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                      std::ref(B_def),                                                                         // B
+                      std::ref(H_def),                                                                         // initial_h
+                      true,                                                                                    // has_Y
+                      true,                                                                                    // has_Y_h
+                      direction,                                                                               // direction
+                      hidden_size,                                                                             // hidden_size
+                      0,                                                                                       // layout
                       ExpectedEPNodeAssignment::All,
                       0,
                       0.02f);
@@ -571,16 +571,16 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_bidirectional_wo_B) {
   uint32_t input_size = 5;
   uint32_t seq_len = 6;
   auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
-  RunHtpFp16GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
-                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),  // W
-                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f), // R
-                      std::nullopt,                                                                           // B
-                      std::ref(H_def),                                                                        // initial_h
-                      true,                                                                                   // has_Y
-                      true,                                                                                   // has_Y_h
-                      direction,                                                                              // direction
-                      hidden_size,                                                                            // hidden_size
-                      0,                                                                                      // layout
+  RunHtpFp16GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                      std::nullopt,                                                                            // B
+                      std::ref(H_def),                                                                         // initial_h
+                      true,                                                                                    // has_Y
+                      true,                                                                                    // has_Y_h
+                      direction,                                                                               // direction
+                      hidden_size,                                                                             // hidden_size
+                      0,                                                                                       // layout
                       ExpectedEPNodeAssignment::All,
                       0,
                       0.03f);
@@ -594,16 +594,16 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_bidirectional_wo_H) {
   uint32_t input_size = 5;
   uint32_t seq_len = 6;
   auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
-  RunHtpFp16GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
-                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),  // W
-                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f), // R
-                      std::ref(B_def),                                                                        // B
-                      std::nullopt,                                                                           // initial_h
-                      true,                                                                                   // has_Y
-                      true,                                                                                   // has_Y_h
-                      direction,                                                                              // direction
-                      hidden_size,                                                                            // hidden_size
-                      0,                                                                                      // layout
+  RunHtpFp16GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                      std::ref(B_def),                                                                         // B
+                      std::nullopt,                                                                            // initial_h
+                      true,                                                                                    // has_Y
+                      true,                                                                                    // has_Y_h
+                      direction,                                                                               // direction
+                      hidden_size,                                                                             // hidden_size
+                      0,                                                                                       // layout
                       ExpectedEPNodeAssignment::All,
                       0,
                       0.04f);
@@ -618,16 +618,16 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_sanity_bidirectional_all_initializer) {
   uint32_t seq_len = 6;
   auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, true, -1.0f, 1.0f);
   auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, true, -1.0f, 1.0f);
-  RunHtpFp16GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),            // X
-                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, true, -1.0f, 1.0f),  // W
-                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, true, -1.0f, 1.0f), // R
-                      std::ref(B_def),                                                                       // B
-                      std::ref(H_def),                                                                       // initial_h
-                      true,                                                                                  // has_Y
-                      true,                                                                                  // has_Y_h
-                      direction,                                                                             // direction
-                      hidden_size,                                                                           // hidden_size
-                      0,                                                                                     // layout
+  RunHtpFp16GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
+                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, true, -1.0f, 1.0f),   // W
+                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, true, -1.0f, 1.0f),  // R
+                      std::ref(B_def),                                                                        // B
+                      std::ref(H_def),                                                                        // initial_h
+                      true,                                                                                   // has_Y
+                      true,                                                                                   // has_Y_h
+                      direction,                                                                              // direction
+                      hidden_size,                                                                            // hidden_size
+                      0,                                                                                      // layout
                       ExpectedEPNodeAssignment::All,
                       0,
                       0.02f);
@@ -642,18 +642,18 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_linear_before_reset) {
   uint32_t seq_len = 6;
   auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
   auto H_def = TestInputDef<float>({num_direction, batch_size, hidden_size}, false, -1.0f, 1.0f);
-  RunHtpFp16GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),             // X
-                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),  // W
-                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f), // R
-                      std::ref(B_def),                                                                        // B
-                      std::ref(H_def),                                                                        // initial_h
-                      true,                                                                                   // has_Y
-                      true,                                                                                   // has_Y_h
-                      direction,                                                                              // direction
-                      hidden_size,                                                                            // hidden_size
-                      0,                                                                                      // layout
+  RunHtpFp16GRUOpTest(TestInputDef<float>({seq_len, batch_size, input_size}, false, -1.0f, 1.0f),              // X
+                      TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                      TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                      std::ref(B_def),                                                                         // B
+                      std::ref(H_def),                                                                         // initial_h
+                      true,                                                                                    // has_Y
+                      true,                                                                                    // has_Y_h
+                      direction,                                                                               // direction
+                      hidden_size,                                                                             // hidden_size
+                      0,                                                                                       // layout
                       ExpectedEPNodeAssignment::All,
-                      1,                                                                                     // linear_before_reset
+                      1,  // linear_before_reset
                       0.03f);
 }
 

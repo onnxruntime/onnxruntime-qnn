@@ -309,7 +309,8 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
       RETURN_IF_ERROR(AddStridedSliceOrReshape(qnn_model_wrapper, node_unit, input_names[5], initial_h_name,
                                                input_tensor_infos[5].shape, h_shape,
                                                {{direction_idx, direction_idx + 1, 1},
-                                                {0, SafeInt<int32_t>(batch_size), 1}, {0, hidden_size_sign, 1}},
+                                                {0, SafeInt<int32_t>(batch_size), 1},
+                                                {0, hidden_size_sign, 1}},
                                                0, 0, 0, 0, input_tensor_infos[5].qnn_data_type,
                                                input_tensor_infos[5].quant_param, do_op_validation, false, false));
     } else {
