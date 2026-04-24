@@ -78,36 +78,31 @@ orig_build_dir=$(sed -n "s@# Build directory: @@p" CTestTestfile.cmake)
 sed --in-place=".bak" "s@${orig_build_dir}@${build_dir}@g" CTestTestfile.cmake
 
 log_info "-=-=-=- Running ctests -=-=-=-"
-
- 
-# TODO: [AISW-164203] ORT test failures on Rubik Pi
 exclude_args=()
 count_errors ./ctest --verbose --timeout 10800 --stop-on-failure "${exclude_args[@]}"
 
-# TODO: We will support python wheel in linux
-# log_info "-=-=-=- Running Python tests -=-=-=-"
-# mapfile -t PYTHON_TEST_FILES < "python_test_files.txt"
-
-# for python_file in "${PYTHON_TEST_FILES[@]}"; do
-#     if [ -f "${python_file}" ]; then
-#         # TODO: [AISW-164203] ORT test failures on Rubik Pi
-#         if [[ "${python_file}" =~ ^(onnxruntime_test_python(_compile_api|_mlops)?.py)$ ]]; then
-#             log_warn "Skipping ${python_file} due to known failures."
-#         else
-#             log_debug "Running ${python_file}..."
-#             count_errors "${python_exe}" ${python_file}
-#         fi
-#     else
-#         log_warn "Failed to find ${python_file} - may be OK on platforms which do not support Python."
-#     fi
-# done
-
-# if [ -d "quantization" ]; then
-#     # Quantization tests ran calling unittest directly in MSFT build.py
-#     count_errors "${python_exe}" -m unittest discover -s quantization
-# else
-#     log_warn "Failed to find directory 'quantization' - may be OK on platforms which do not support Python."
-# fi
+log_info "-=-=-=- Running Python tests -=-=-=-"  
+mapfile -t PYTHON_TEST_FILES < "python_test_files.txt"  
+  
+for python_file in "${PYTHON_TEST_FILES[@]}"; do  
+    if [ -f "${python_file}" ]; then  
+        if [[ "${python_file}" =~ ^(onnxruntime_test_python(_compile_api|_mlops)?.py)$ ]]; then  
+            log_debug "Running ${python_file}..."  
+            count_errors "${python_exe}" ${python_file}  
+        else  
+            log_debug "Running ${python_file}..."  
+            count_errors "${python_exe}" ${python_file}  
+        fi  
+    else  
+        log_warn "Failed to find ${python_file} - may be OK on platforms which do not support Python."  
+    fi  
+done  
+  
+if [ -d "quantization" ]; then   
+    count_errors "${python_exe}" -m unittest discover -s quantization  
+else  
+    log_warn "Failed to find directory 'quantization' - may be OK on platforms which do not support Python."  
+fi
 
 log_info "-=-=-=- Running ONNX model tests -=-=-=-=-"
 
@@ -118,14 +113,16 @@ for runner in "${model_test_runners[@]}"; do
 
     "${runner}" cpu node "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node"
 
-    if [ "$(uname -m)" != "aarch64" ]; then  # TODO: [AISW-164203] ORT test failures on Rubik Pi
+    # Known failures as QDQ and FP32 are not supported in v68
+    if [ "$(uname -m)" != "aarch64" ]; then
         "${runner}" cpu float32
         "${runner}" htp qdq
+        "${runner}" htp qdq-with-context-cache
     fi
 
     log_debug "Scrubbing old context caches"
     find "testdata/qdq-with-context-cache" -name "*_ctx.onnx" -print -delete
-    "${runner}" htp qdq-with-context-cache
+
 done
 
 exit "${errors}"
