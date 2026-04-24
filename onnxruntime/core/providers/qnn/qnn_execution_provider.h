@@ -313,4 +313,70 @@ class QnnEp : public OrtEp, public ApiPtrs {
   mutable std::atomic<uint64_t> genie_kv_cache_rewind_{1};
 };
 
+namespace qnn {
+// RAII guard for QnnBackendManager::SetHtpPowerState.
+//
+// Calls SetHtpPowerState(start_state, ...) on construction and SetHtpPowerState(done_state, ...)
+// on destruction, ensuring the done state is always reached even on early returns.
+//
+// Typical usage (INIT_START / INIT_DONE pair):
+//
+//   QnnBackendManager* mgr points to a valid manager instance;
+//   bool valid_power_config_id = ...;  // determined by caller based on whether power config id was successfully created
+//   HtpPerfConfig_t config = ...;  // configured as needed for the operation
+//   HtpPowerStateGuard power_guard(mgr, valid_power_config_id, GraphState::INIT_START, GraphState::INIT_DONE,
+//                                  config);
+//   RETURN_IF_NOT_OK(power_guard.SetPreRunHtpPerfStatus());
+//   auto status = DoWork(...);
+//   RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());  // optional: capture post-run perf error
+//   return status;
+//
+// Passing nullptr as manager creates a no-op guard (all calls succeed immediately).
+class HtpPowerStateGuard {
+ public:
+  HtpPowerStateGuard(QnnBackendManager* manager,
+                     bool valid_power_config_id,
+                     GraphState start_state,
+                     GraphState done_state,
+                     const HtpPerfConfig_t& config)
+      : manager_(manager),
+        valid_power_config_id_(valid_power_config_id),
+        done_state_(done_state),
+        config_(config),
+        finalized_(false) {
+    if (manager_ && valid_power_config_id_) {
+      start_status_ = manager_->SetHtpPowerState(start_state, config_);
+    }
+  }
+  ~HtpPowerStateGuard() {
+    if (!finalized_ && manager_ && valid_power_config_id_) {
+      // Error cannot be propagated from a destructor; silently ignore.
+      manager_->SetHtpPowerState(done_state_, config_);
+    }
+  }
+  // Returns (by move) the status of setting HTP performance before work begins.
+  // Should be checked immediately after construction.
+  Ort::Status SetPreRunHtpPerfStatus() { return std::move(start_status_); }
+  // Explicitly sets HTP performance after work is done and returns its status.
+  // After this call the destructor will not invoke SetState again.
+  Ort::Status SetPostRunHtpPerf() {
+    finalized_ = true;
+    if (manager_ && valid_power_config_id_) {
+      return manager_->SetHtpPowerState(done_state_, config_);
+    }
+    return Ort::Status();
+  }
+  HtpPowerStateGuard(const HtpPowerStateGuard&) = delete;
+  HtpPowerStateGuard& operator=(const HtpPowerStateGuard&) = delete;
+
+ private:
+  QnnBackendManager* manager_;
+  bool valid_power_config_id_;
+  GraphState done_state_;
+  HtpPerfConfig_t config_;
+  Ort::Status start_status_;
+  bool finalized_;
+};
+}  // namespace qnn
+
 }  // namespace onnxruntime

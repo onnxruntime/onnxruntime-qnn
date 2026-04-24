@@ -112,6 +112,12 @@ typedef struct HtpPerfConfig {
   uint32_t rpc_control_latency;
 } HtpPerfConfig_t;
 
+// pre_run_perf_mode and post_run_perf_mode takes precedence over default_perf_mode. If pre_run_perf_mode is set,
+// it will be used for performance setting in OnRunStart().
+// If post_run_perf_mode is set, it will be used for performance setting in OnRunDone().
+// If default_perf_mode is set and pre_run_perf_mode or post_run_perf_mode is not set,
+// default_perf_mode will be used for performance setting in both OnRunStart() and OnRunDone().
+// rpc_control_latency and rpc_polling_time will be set beforehand in OnRunStart() as it depends on the performance mode set in OnRunStart().
 typedef struct PerThreadHtpPowerConfigs {
   std::optional<HtpPerformanceMode> pre_run_perf_mode;
   std::optional<HtpPerformanceMode> post_run_perf_mode;

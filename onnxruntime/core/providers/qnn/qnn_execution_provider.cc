@@ -2759,40 +2759,27 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     uint32_t htp_power_config_id = 0;
     bool power_config_valid = ep->GetHtpPowerConfigId(htp_power_config_id);
     qnn::HtpPerfConfig_t perf_config{htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_};
-    qnn::ScopedGraphState state_guard(
+    qnn::HtpPowerStateGuard power_guard(
         ep->qnn_backend_manager_.get(),
         power_config_valid,
         qnn::GraphState::INIT_START, qnn::GraphState::INIT_DONE,
         perf_config);
-    RETURN_IF_NOT_OK(state_guard.SetPreRunHtpPerfStatus());
+    RETURN_IF_NOT_OK(power_guard.SetPreRunHtpPerfStatus());
     auto status = ep->CompileContextModel(graphs, fused_nodes, count, node_compute_infos);
-    RETURN_IF_NOT_OK(state_guard.SetPostRunHtpPerf());
+    RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
     return status;
   } else if (qnn::IsOrtGraphHasDlcCtxNode(graphs, count, ep->ort_api)) {
     uint32_t htp_power_config_id = 0;
     bool power_config_valid = ep->GetHtpPowerConfigId(htp_power_config_id);
     qnn::HtpPerfConfig_t perf_config{htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_};
-    qnn::ScopedGraphState state_guard(
+    qnn::HtpPowerStateGuard power_guard(
         ep->qnn_backend_manager_.get(),
         power_config_valid,
         qnn::GraphState::INIT_START, qnn::GraphState::INIT_DONE,
         perf_config);
-    RETURN_IF_NOT_OK(state_guard.SetPreRunHtpPerfStatus());
+    RETURN_IF_NOT_OK(power_guard.SetPreRunHtpPerfStatus());
     auto status = ep->CompileDlcContextModel(this_ptr, graphs, fused_nodes, count, node_compute_infos);
-    RETURN_IF_NOT_OK(state_guard.SetPostRunHtpPerf());
-    return status;
-  } else if (qnn::IsOrtGraphHasDlcCtxNode(graphs, count, ep->ort_api)) {
-    uint32_t htp_power_config_id = 0;
-    bool power_config_valid = ep->GetHtpPowerConfigId(htp_power_config_id);
-    qnn::HtpPerfConfig_t perf_config{htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_};
-    qnn::ScopedGraphState state_guard(
-        ep->qnn_backend_manager_.get(),
-        power_config_valid,
-        qnn::GraphState::INIT_START, qnn::GraphState::INIT_DONE,
-        perf_config);
-    RETURN_IF_NOT_OK(state_guard.SetPreRunHtpPerfStatus());
-    auto status = ep->CompileDlcContextModel(this_ptr, graphs, fused_nodes, count, node_compute_infos);
-    RETURN_IF_NOT_OK(state_guard.SetPostRunHtpPerf());
+    RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
     return status;
   }
 
@@ -2803,12 +2790,12 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   uint32_t htp_power_config_id = 0;
   bool valid_power_config_id = ep->GetHtpPowerConfigId(htp_power_config_id);
   qnn::HtpPerfConfig_t perf_config{htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_};
-  qnn::ScopedGraphState state_guard(
+  qnn::HtpPowerStateGuard power_guard(
       ep->qnn_backend_manager_.get(),
       valid_power_config_id,
       qnn::GraphState::INIT_START, qnn::GraphState::INIT_DONE,
       perf_config);
-  RETURN_IF_NOT_OK(state_guard.SetPreRunHtpPerfStatus());
+  RETURN_IF_NOT_OK(power_guard.SetPreRunHtpPerfStatus());
 
   OrtStatus* compile_status = nullptr;
   if (!ep->enable_multi_soc_ep_context_) {
@@ -2822,7 +2809,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     compile_status = ep->CompileMultiSocOnnxModel(graphs, fused_nodes, count, node_compute_infos);
   }
 
-  RETURN_IF_NOT_OK(state_guard.SetPostRunHtpPerf());
+  RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
 
   RETURN_IF_NOT_NULL(compile_status);
 
@@ -3103,7 +3090,7 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
       }
       qnn::HtpPerformanceMode htp_performance_mode = qnn::HtpPerformanceMode::kHtpDefault;
       ParseHtpPerformanceMode(value, htp_performance_mode, ep->logger_);
-
+      // Dynamic HTP performance mode is used for performance setting for execute so it will be set in OnRunStart.
       if (htp_performance_mode != qnn::HtpPerformanceMode::kHtpDefault) {
         ep->dynamic_htp_performance_mode_ = htp_performance_mode;
         if (htp_performance_mode == qnn::HtpPerformanceMode::kHtpBurst) {

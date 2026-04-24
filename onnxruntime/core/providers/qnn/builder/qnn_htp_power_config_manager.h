@@ -91,7 +91,6 @@ class HtpPowerConfigManager {
 
   uint32_t last_set_rpc_polling_time_ = kDisableRpcPolling;
   uint32_t last_set_rpc_control_latency_ = kDisableRpcControlLatency;
-  HtpPerformanceMode last_set_htp_performance_mode_ = HtpPerformanceMode::kHtpDefault;
 
   bool rpc_polling_time_set_ = false;
   bool rpc_control_latency_set_ = false;

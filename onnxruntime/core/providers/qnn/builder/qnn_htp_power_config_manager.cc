@@ -96,7 +96,6 @@ static std::string_view PerformanceModeToString(HtpPerformanceMode htp_performan
 
 Ort::Status HtpPowerConfigManager::AddHtpPerformanceConfig(QnnHtpPerfInfrastructure_PowerConfig_t htp_performance_cfg) {
   power_configs_.emplace_back(std::move(htp_performance_cfg));
-  last_set_htp_performance_mode_ = HtpPerformanceMode::kHtpDefault;
   htp_performance_mode_set_ = true;
   return Ort::Status();
 }
@@ -104,30 +103,19 @@ Ort::Status HtpPowerConfigManager::AddHtpPerformanceConfig(QnnHtpPerfInfrastruct
 Ort::Status HtpPowerConfigManager::AddHtpPerformanceMode(HtpPerformanceMode htp_performance_mode,
                                                          uint32_t htp_power_config_client_id) {
   RETURN_IF(htp_performance_mode_set_, "There is already a pending HTP performance mode config");
-  if (htp_performance_mode == last_set_htp_performance_mode_) {
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_VERBOSE,
-                    ("Requested htp performance mode is the same as last set (" +
-                     std::string(PerformanceModeToString(last_set_htp_performance_mode_)) +
-                     "). Ignoring request")
-                        .c_str());
-  } else {
-    ORT_CXX_LOG_PTR(logger_ptr_,
-                    ORT_LOGGING_LEVEL_VERBOSE,
-                    ("Updating htp performance mode to: " +
-                     std::string(PerformanceModeToString(htp_performance_mode)) + ".")
-                        .c_str());
+  ORT_CXX_LOG_PTR(logger_ptr_,
+                  ORT_LOGGING_LEVEL_VERBOSE,
+                  ("Updating htp performance mode to: " +
+                   std::string(PerformanceModeToString(htp_performance_mode)) + ".")
+                      .c_str());
 
-    QnnHtpPerfInfrastructure_PowerConfig_t htp_performance_cfg{};
-    RETURN_IF_ERROR(SetHtpPerformancePowerConfig(htp_performance_cfg,
-                                                 htp_power_config_client_id,
-                                                 htp_performance_mode));
+  QnnHtpPerfInfrastructure_PowerConfig_t htp_performance_cfg{};
+  RETURN_IF_ERROR(SetHtpPerformancePowerConfig(htp_performance_cfg,
+                                               htp_power_config_client_id,
+                                               htp_performance_mode));
 
-    power_configs_.emplace_back(std::move(htp_performance_cfg));
-
-    last_set_htp_performance_mode_ = htp_performance_mode;
-    htp_performance_mode_set_ = true;
-  }
+  power_configs_.emplace_back(std::move(htp_performance_cfg));
+  htp_performance_mode_set_ = true;
 
   return Ort::Status();
 }
