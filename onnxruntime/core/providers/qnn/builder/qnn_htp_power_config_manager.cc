@@ -381,20 +381,27 @@ void HtpPowerConfigManager::CreateTimerThread(uint32_t htp_power_config_client_i
 }
 
 void HtpPowerConfigManager::ReleaseTimerThread() {
+  std::unique_ptr<Timer> local_timer;
+  std::unique_ptr<TimerCallbackArg> local_callback_arg;
   {
     std::lock_guard<std::mutex> lk(state_mutex_);
     if (timer_ != nullptr) {
-      {
-        timer_resource_.timer_active_ = false;
-        graph_state_ = GraphState::NONE;
-        timer_resource_.caller_busy_ = false;
-      }
+      timer_resource_.timer_active_ = false;
+      graph_state_ = GraphState::NONE;
+      timer_resource_.caller_busy_ = false;
+      // Move ownership out while holding the lock: timer_ becomes nullptr
+      // atomically, so CreateTimerThread sees null and can safely create
+      // a new timer. We hold exclusive ownership in the locals.
+      local_timer = std::move(timer_);
+      local_callback_arg = std::move(timer_callback_arg_);
     }
   }
-  if (timer_ != nullptr) {
-    timer_->DeInitialize();
-    timer_callback_arg_.reset();
-    timer_.reset();
+  // Deinitialize outside the lock to avoid deadlock: an in-flight
+  // TimerCallback calls SetState() which acquires state_mutex_.
+  if (local_timer != nullptr) {
+    local_timer->DeInitialize();
+    local_callback_arg.reset();
+    local_timer.reset();
   }
 }
 
