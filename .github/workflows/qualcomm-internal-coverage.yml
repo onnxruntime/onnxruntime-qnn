@@ -9,11 +9,6 @@ permissions:
 
 on:
   workflow_dispatch:
-  # TEMP: remove before merge — workflow_dispatch cannot be triggered on a non-default branch via UI/API,
-  # so this push trigger is added temporarily to validate CI runner behavior before merging.
-  push:
-    branches:
-      - dev/yuhuchua/enable-coverage-tool
 
 jobs:
   coverage-linux-x86_64:
