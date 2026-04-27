@@ -100,6 +100,8 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
       // two APP_READ tensors with the same external name (which reduces the composed
       // QNN graph's input count and causes a null slot in qnn_tensor_infos at runtime).
       if (!qnn_model_wrapper.IsExternalOverrideTarget(node_unit.Outputs()[0].name)) {
+        // The tensor name override is used to align the output name of DLC produced by IRBackend
+        // with the output name of original onnx graph for better consistency.
         qnn_model_wrapper.SetTensorNameOverride(/*internal=*/node_unit.Inputs()[0].name,
                                                 /*external=*/node_unit.Outputs()[0].name);
       }
@@ -117,10 +119,12 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
         qnn_model_wrapper.IsGraphInput(node_unit.Inputs()[0].name)) {
       // Only register the override for the first Q node that consumes this graph input.
       // If another Q node already maps to the same external name, skip registration so
-      // that the second output becomes a separate APP_WRITE tensor instead of creating
+      // that the second input becomes a separate APP_WRITE tensor instead of creating
       // two APP_WRITE tensors with the same external name (which reduces the composed
       // QNN graph's input count and causes a null slot in qnn_tensor_infos at runtime).
       if (!qnn_model_wrapper.IsExternalOverrideTarget(node_unit.Inputs()[0].name)) {
+        // The tensor name override is used to align the input name of DLC produced by IRBackend
+        // with the input name of original onnx graph for better consistency.
         qnn_model_wrapper.SetTensorNameOverride(/*internal=*/node_unit.Outputs()[0].name,
                                                 /*external=*/node_unit.Inputs()[0].name);
       }

@@ -2297,7 +2297,12 @@ static GetTestModelFn BuildGraphInputFanoutQDQModel() {
     builder.AddNode("dq_b", "DequantizeLinear", {"q_b_out", "scale", "zero_point"}, {"dq_b_out"}, kOnnxDomain);
 
     builder.AddNode("add", "Add", {"dq_a_out", "dq_b_out"}, {"add_out"}, kOnnxDomain);
-    builder.MakeOutput("add_out");
+
+    // Q->DQ pair on the graph output. With offload_graph_io_quantization=1,
+    // this DQ node stays on CPU and add_out is registered as a QNN graph output.
+    builder.AddNode("q_out", "QuantizeLinear", {"add_out", "scale", "zero_point"}, {"q_out_out"}, kOnnxDomain);
+    builder.AddNode("dq_out", "DequantizeLinear", {"q_out_out", "scale", "zero_point"}, {"output"}, kOnnxDomain);
+    builder.MakeOutput("output");
   };
 }
 
@@ -2340,7 +2345,7 @@ TEST_F(QnnCPUBackendTests, OffloadGraphIoQuantizationMultipleQDQPairsOnGraphInpu
       memory_info, input_data.data(), input_data.size(), input_shape.data(), input_shape.size()));
 
   const char* input_name = "input";
-  const char* output_name = "add_out";
+  const char* output_name = "output";
   std::vector<Ort::Value> ort_outputs = session.Run(
       Ort::RunOptions{nullptr}, &input_name, ort_inputs.data(), 1, &output_name, 1);
 
