@@ -832,6 +832,13 @@ void VerifyQDQOutput(const std::vector<Ort::Value>& cpu_qdq_outputs,
  * \param ep_graph_checker Function called on the Graph generated for the QNN EP's session. Used to check node
  *                         EP assignment.
  */
+
+// Forward declarations for helper functions (defined after QnnHTPBackendTests class)
+template <typename QuantType>
+inline bool ShouldSkipQDQTestOnV68(const ProviderOptions& qnn_options);
+inline bool ShouldSkipFp16TestOnV68(const ProviderOptions& qnn_options);
+inline std::string GetCapitalizedBackendName(const ProviderOptions& qnn_options);
+
 template <typename QuantType>
 inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                                  const GetTestQDQModelFn<QuantType>& qdq_model_fn,
