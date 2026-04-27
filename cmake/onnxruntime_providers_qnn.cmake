@@ -3,10 +3,6 @@
 
   add_compile_definitions(USE_QNN=1)
 
-  # Coverage builds are only supported on Linux with GCC.
-  # Pass -DENABLE_COVERAGE=ON to cmake to enable (e.g. via build.sh --enable-coverage).
-  option(ENABLE_COVERAGE "Enable GCC code coverage instrumentation (Linux only)" OFF)
-
   file(GLOB_RECURSE
        onnxruntime_providers_qnn_ep_srcs CONFIGURE_DEPENDS
        "${ONNXRUNTIME_ROOT}/core/providers/qnn/*.h"
