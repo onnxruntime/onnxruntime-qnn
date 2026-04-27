@@ -171,7 +171,7 @@ Environment variables
     parser.add_argument(
         "--build-archive",
         action="store_true",
-        help="Enable building release archive.",
+        help="Enable building archive.",
     )
     parser.add_argument(
         "--build-aar",

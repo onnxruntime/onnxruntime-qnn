@@ -250,7 +250,7 @@ def main():
     Main entry point for standalone execution of pkg_assets.py
     """
     parser = argparse.ArgumentParser(
-        description="Build QNN asset packages",
+        description="Build QNN asset archive packages",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:

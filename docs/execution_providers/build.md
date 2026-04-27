@@ -258,10 +258,10 @@ Located in `build/Release/Release/nuget-local-artifacts/` (Windows):
 
 #### Archives
 
-Located in `build/`:
+Located in `build/Release/Release/dist/` (Windows) or `build/Release/dist/` (Linux):
 
-* Windows: `onnxruntime-[platform]-[arch]-[version].zip`
-* Linux: `onnxruntime-[platform]-[arch]-[version].tgz`
+* Windows: `onnxruntime-qnn-[version]-[platform]-[arch].zip`
+* Linux: `onnxruntime-qnn-[version]-[platform]-[arch].tgz`
 
 ## Advanced Usage
 
