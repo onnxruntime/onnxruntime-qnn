@@ -105,32 +105,32 @@ def get_qnn_asset_file_list():
     return qnn_assets["windows"] if is_windows() else qnn_assets["others"]
 
 
-def build_zip_asset(
+def build_archive_asset(
     source_dir,
     build_dir,
     configs,
-    zip_name_suffix=None,
+    archive_name_suffix=None,
     version_suffix="",
     use_ninja=False,
 ):
     """
-    Build zip asset packages containing QNN EP and dependencies.
+    Build archive asset packages containing QNN EP and dependencies.
 
     Args:
         source_dir: Path to source directory
         build_dir: Path to build directory
         configs: List of build configurations (e.g., ['RelWithDebInfo'])
-        zip_name_suffix: Optional suffix for zip filename
-        version_suffix: Optional version suffix for zip filename
+        archive_name_suffix: Optional suffix for archive filename
+        version_suffix: Optional version suffix for archive filename
         use_ninja: Whether Ninja generator was used
 
     Returns:
-        list[Path]: List of created zip file paths
+        list[Path]: List of created archive file paths
     """
-    created_zips = []
+    created_archives = []
 
     for config in configs:
-        log.info(f"Building zip asset for {config} configuration")
+        log.info(f"Building archive asset for {config} configuration")
 
         # Determine working directory (matching build_python_wheel logic)
         config_build_dir = os.path.join(build_dir, config)
@@ -146,7 +146,7 @@ def build_zip_asset(
         dist_dir = os.path.join(cwd, "dist")
         os.makedirs(dist_dir, exist_ok=True)
 
-        # Generate zip filename
+        # Generate archive filename
         platform_name = platform.system().lower()
         platform_abbr = {"windows": "win"}
         if platform_name in platform_abbr:
@@ -162,16 +162,16 @@ def build_zip_asset(
 
         archive_ext = ".zip" if is_windows() else ".tgz"
 
-        zip_name = "onnxruntime-qnn"
+        archive_name = "onnxruntime-qnn"
         if version:
-            zip_name += f"-{version}"
+            archive_name += f"-{version}"
         if version_suffix:
-            zip_name += f"{version_suffix}"
-        if zip_name_suffix:
-            zip_name += f"-{zip_name_suffix}"
-        zip_name += f"-{platform_name}-{arch}{archive_ext}"
+            archive_name += f"{version_suffix}"
+        if archive_name_suffix:
+            archive_name += f"-{archive_name_suffix}"
+        archive_name += f"-{platform_name}-{arch}{archive_ext}"
 
-        zip_path = Path(dist_dir) / zip_name
+        archive_path = Path(dist_dir) / archive_name
 
         # Get list of files to include
         asset_files = get_qnn_asset_file_list()
@@ -225,24 +225,24 @@ def build_zip_asset(
             raise FileNotFoundError(f"No asset files found in {cwd}. Expected files: {asset_files}")
 
         # Create archive file
-        log.info(f"Creating archive: {zip_path}")
+        log.info(f"Creating archive: {archive_path}")
         if is_windows():
-            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zipf:
+            with zipfile.ZipFile(archive_path, "w", zipfile.ZIP_DEFLATED) as zipf:
                 for _filename, file_path in found_files:
                     arcname = os.path.relpath(file_path, cwd)
                     zipf.write(file_path, arcname)
                     log.debug(f"Added to zip: {arcname}")
         else:
-            with tarfile.open(zip_path, "w:gz") as tgzf:
+            with tarfile.open(archive_path, "w:gz") as tgzf:
                 for _filename, file_path in found_files:
                     arcname = os.path.relpath(file_path, cwd)
                     tgzf.add(file_path, arcname)
                     log.debug(f"Added to tgz: {arcname}")
 
-        log.info(f"Created archive: {zip_path} ({len(found_files)} files)")
-        created_zips.append(zip_path)
+        log.info(f"Created archive: {archive_path} ({len(found_files)} files)")
+        created_archives.append(archive_path)
 
-    return created_zips
+    return created_archives
 
 
 def main():
@@ -250,7 +250,7 @@ def main():
     Main entry point for standalone execution of pkg_assets.py
     """
     parser = argparse.ArgumentParser(
-        description="Build QNN asset zip packages",
+        description="Build QNN asset archive packages",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -270,9 +270,9 @@ Examples:
         help="Build configuration(s) to package (e.g., RelWithDebInfo, Debug). Can be specified multiple times.",
     )
 
-    parser.add_argument("--suffix", help="Optional suffix for zip filename")
+    parser.add_argument("--suffix", help="Optional suffix for archive filename")
 
-    parser.add_argument("--version_suffix", type=str, default="", help="Optional version suffix for zip filename")
+    parser.add_argument("--version_suffix", type=str, default="", help="Optional version suffix for archive filename")
 
     parser.add_argument("--use_ninja", action="store_true", help="Whether Ninja generator was used for build")
 
@@ -289,21 +289,21 @@ Examples:
         args.config = ["RelWithDebInfo"]
 
     try:
-        created_zips = build_zip_asset(
+        created_archives = build_archive_asset(
             source_dir=args.source_dir,
             build_dir=args.build_dir,
             configs=args.config,
-            zip_name_suffix=args.suffix,
+            archive_name_suffix=args.suffix,
             version_suffix=args.version_suffix,
             use_ninja=args.use_ninja,
         )
 
-        print(f"Successfully created {len(created_zips)} zip package(s):")
-        for zip_path in created_zips:
-            print(f"  {zip_path}")
+        print(f"Successfully created {len(created_archives)} archive package(s):")
+        for archive_path in created_archives:
+            print(f"  {archive_path}")
 
     except Exception as e:
-        log.error(f"Failed to create zip packages: {e}")
+        log.error(f"Failed to create archive packages: {e}")
         sys.exit(1)
 
 

@@ -38,11 +38,11 @@ target_py_version=
 use_cache=1
 warnings_as_errors=1
 build_java=
-build_tgz=
+build_archive=
 for i in "$@"; do
   case $i in
-    --build-tgz)
-      build_tgz=1
+    --build-archive)
+      build_archive=1
       shift
       ;;
     --config=*)
@@ -288,9 +288,9 @@ else
     python "${REPO_ROOT}/qcom/scripts/all/fetch_cmake_deps.py"
 
     package_args=()
-    if [ -n "${build_tgz}" ]; then
-      log_info "Building tgz asset."
-      package_args+=(--build_zip_asset)
+    if [ -n "${build_archive}" ]; then
+      log_info "Building archive asset."
+      package_args+=(--build_archive_asset)
     fi
     if [ -n "${ORT_VERSION_SUFFIX:-}" ]; then
       package_args+=(--version_suffix "${ORT_VERSION_SUFFIX}")

@@ -169,9 +169,9 @@ Environment variables
         help="Enable building NuGet packages for .NET bindings.",
     )
     parser.add_argument(
-        "--build-zip",
+        "--build-archive",
         action="store_true",
-        help="Enable building Zip archive.",
+        help="Enable building archive.",
     )
     parser.add_argument(
         "--build-aar",
@@ -201,7 +201,7 @@ class TaskLibrary:
         qairt_sdk_root: Path | None,
         docker_ccache_root: Path | None,
         build_nuget: bool,
-        build_zip: bool,
+        build_archive: bool,
         build_aar: bool,
     ) -> None:
         self.__python_executable = python_executable
@@ -213,7 +213,7 @@ class TaskLibrary:
         self.__qairt_sdk_root = qairt_sdk_root
         self.__docker_ccache_root = docker_ccache_root
         self.__build_nuget = build_nuget
-        self.__build_zip = build_zip
+        self.__build_archive = build_archive
         self.__build_aar = build_aar
 
     @staticmethod
@@ -267,7 +267,7 @@ class TaskLibrary:
                 "build",
                 extra_args=extra_args,
                 env=env,
-                build_zip=self.__build_zip,
+                build_archive=self.__build_archive,
             )
         )
 
@@ -471,7 +471,7 @@ class TaskLibrary:
                 self.__target_py_version,
                 self.__qairt_sdk_root,
                 self.__docker_ccache_root,
-                self.__build_zip,
+                self.__build_archive,
             ),
         )
 
@@ -542,7 +542,7 @@ class TaskLibrary:
                     "build",
                     False,
                     self.__build_nuget,
-                    self.__build_zip,
+                    self.__build_archive,
                 )
             )
 
@@ -1147,7 +1147,7 @@ def plan_from_dependencies(
     qairt_sdk_root: Path | None,
     docker_ccache_root: Path | None,
     build_nuget: bool,
-    build_zip: bool,
+    build_archive: bool,
     build_aar: bool,
 ) -> Plan:
     """
@@ -1163,7 +1163,7 @@ def plan_from_dependencies(
         qairt_sdk_root,
         docker_ccache_root,
         build_nuget,
-        build_zip,
+        build_archive,
         build_aar,
     )
     plan = Plan()
@@ -1217,7 +1217,7 @@ def plan_from_task_list(
     qairt_sdk_root: Path | None,
     docker_ccache_root: Path | None,
     build_nuget: bool,
-    build_zip: bool,
+    build_archive: bool,
     build_aar: bool,
 ) -> Plan:
     """
@@ -1233,7 +1233,7 @@ def plan_from_task_list(
         qairt_sdk_root,
         docker_ccache_root,
         build_nuget,
-        build_zip,
+        build_archive,
         build_aar,
     )
     plan = Plan()
@@ -1271,7 +1271,7 @@ def build_and_test():
             qairt_sdk_root,
             docker_ccache_root,
             args.build_nuget,
-            args.build_zip,
+            args.build_archive,
             args.build_aar,
         )
 

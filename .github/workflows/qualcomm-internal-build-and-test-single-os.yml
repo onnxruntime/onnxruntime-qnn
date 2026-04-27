@@ -71,10 +71,10 @@ on:
       upload_nuget:
         default: false
         type: boolean
-      build_zip:
+      build_archive:
         default: false
         type: boolean
-      upload_zip:
+      upload_archive:
         default: false
         type: boolean
       build_aar:
@@ -126,9 +126,9 @@ jobs:
           qcom/build_and_test.py
           --target-py-version ${{inputs.target_py_vsn}}
           ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
-          ${{ inputs.build_zip == true && '--build-zip' || '' }}
+          ${{ inputs.build_archive == true && '--build-archive' || '' }}
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
-          ${{ inputs.upload_test_archive == true && 'archive' || 'build' }}_ort_${{ inputs.target_os }}_${{ inputs.target_arch }}
+          ${{inputs.upload_test_archive == true && 'archive' || 'build'}}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}
 
       - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         if: ${{ inputs.run_tests && inputs.build_test_same_runner }}
@@ -190,7 +190,7 @@ jobs:
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/Qualcomm.ML.OnnxRuntime.QNN*.nupkg"
 
       - name: Upload Archive to Artifactory
-        if: ${{ inputs.upload_zip }}
+        if: ${{ inputs.upload_archive }}
         uses: ./.github/actions/upload-ci-artifact
         with:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}"
