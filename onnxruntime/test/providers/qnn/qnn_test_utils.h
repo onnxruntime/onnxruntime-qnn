@@ -840,6 +840,24 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                                  std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
                                  std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr) {
+  std::string backend_name = "htp";
+  if (qnn_options.find("backend_type") != qnn_options.end()) {
+    backend_name = qnn_options.at("backend_type");
+  }
+
+  if (backend_name == "htp" || backend_name == "gpu") {
+    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+      if (std::is_same_v<QuantType, uint8_t> || std::is_same_v<QuantType, int8_t> ||
+          std::is_same_v<QuantType, uint16_t> || std::is_same_v<QuantType, int16_t> ||
+          std::is_same_v<QuantType, uint32_t> || std::is_same_v<QuantType, int32_t> ||
+          std::is_same_v<QuantType, Int4x2> || std::is_same_v<QuantType, UInt4x2>) {
+        std::string backend_upper = backend_name;
+        backend_upper[0] = std::toupper(backend_upper[0]);
+        GTEST_SKIP() << "Test requires " << backend_upper << " quantization support (arch > V68)";
+      }
+    }
+  }
+
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
       QNNTestEnvironment::GetInstance().dump_dlc() ||
@@ -1097,6 +1115,19 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                                   OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                                   const std::string& qnn_ctx_model_path = "",
                                   const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
+  std::string backend_name = "htp";
+  if (qnn_options.find("backend_type") != qnn_options.end()) {
+    backend_name = qnn_options.at("backend_type");
+  }
+
+  if (backend_name == "htp" || backend_name == "gpu") {
+    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+      std::string backend_upper = backend_name;
+      backend_upper[0] = std::toupper(backend_upper[0]);
+      GTEST_SKIP() << "Test requires " << backend_upper << " FP32/FP16 support (arch > V68)";
+    }
+  }
+
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
       QNNTestEnvironment::GetInstance().dump_dlc() ||
@@ -1592,14 +1623,6 @@ class QnnHTPBackendTests : public ::testing::Test {
 
   // Query QNN platform attributes by directly calling QNN APIs
   Ort::Status QueryQnnPlatformAttributesDirectly(QnnPlatformAttributes& out, const Ort::Logger& logger);
-
-  // Returns true if the test should be skipped because HTP FP16 is not supported on this platform.
-  static bool ShouldSkipIfHtpFp16Unsupported() {
-#if defined(_WIN32)  // On Windows ARM64, FP16 is not supported if the HTP architecture is v68.
-    return ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68);
-#else
-    return false;
-#endif
   }
 
   static std::optional<QnnHTPBackendTests::QnnPlatformAttributes> cached_platform_attrs_;  // Set by the first test using this fixture.
