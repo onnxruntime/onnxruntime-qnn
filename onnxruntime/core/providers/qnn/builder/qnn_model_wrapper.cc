@@ -931,9 +931,11 @@ Ort::Status QnnModelWrapper::AddTransposeNode(size_t node_index,
   // we don't need this right now.
   RETURN_IF(quantize_param.IsPerChannel(),
             "Do not support inserted Transpose nodes with per-channel quantization");
-  // No need to add this for output nodes as it is added as output tensor for previous node
-  if (is_for_input) {
-    Qnn_TensorType_t tensor_type = QNN_TENSOR_TYPE_APP_WRITE;
+  // During GetCapability, upstream node groups that validate via ValidateQnnNode() do not
+  // populate model_tensors_map_, so the input wrapper may be missing. Register a NATIVE
+  // fallback; AddTensorWrapper is idempotent, so Compose-path registration still wins.
+  if (is_for_input || !IsQnnTensorWrapperExist(input_name)) {
+    Qnn_TensorType_t tensor_type = is_for_input ? QNN_TENSOR_TYPE_APP_WRITE : QNN_TENSOR_TYPE_NATIVE;
     QnnTensorWrapper input_tensorwrapper(input_name,
                                          tensor_type,
                                          tensor_data_type,
