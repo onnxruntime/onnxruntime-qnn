@@ -499,7 +499,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 
   std::string backend_path = kDefaultHtpBackendPath;
-  genie_backend_path_ = kDefaultGenieBackendPath;  // Default; may be overridden below.
   {
     std::optional<std::string> backend_path_from_options{};
 
@@ -521,15 +520,11 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     if (!backend_type.empty()) {
       if (std::string parsed_backend_path; ParseBackendTypeName(backend_type, parsed_backend_path, logger_)) {
         backend_path_from_options = parsed_backend_path;
-        if (backend_type == kGenieBackendTypeName) {
-          genie_backend_path_ = parsed_backend_path;
-        }
       } else {
         ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, "Failed to parse 'backend_type' value.");
       }
     } else if (!backend_path_option.empty()) {
       backend_path_from_options = backend_path_option;
-      genie_backend_path_ = backend_path_option;
     }
 
     // Use the determined backend path or default
@@ -1411,8 +1406,16 @@ OrtStatus* ORT_API_CALL QnnEp::GetGenieCapability(OrtEp* this_ptr,
   // CREATE GENIE_BACKEND_MANAGER
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
   if (!ep->genie_backend_manager_) {
+    std::string genie_path = kDefaultGenieBackendPath;
+    std::string backend_path_option;
+    GetSessionConfigEntryOrDefault(ep->ort_api, ep->session_options_,
+                                   ep->FormatEPConfigKey("backend_path"), "",
+                                   backend_path_option);
+    if (!backend_path_option.empty()) {
+      genie_path = backend_path_option;
+    }
     ep->genie_backend_manager_ = qnn::GenieBackendManager::Create(
-        qnn::GenieBackendManagerConfig{ep->genie_backend_path_}, ep->logger_);
+        qnn::GenieBackendManagerConfig{genie_path}, ep->logger_);
     auto setup_st = ep->genie_backend_manager_->SetupBackend();
     if (!setup_st.IsOK()) {
       return ep->ort_api.CreateStatus(ORT_EP_FAIL, setup_st.GetErrorMessage().c_str());
