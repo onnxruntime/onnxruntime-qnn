@@ -16,8 +16,8 @@ param (
     [bool]$BuildNuget = $false,
 
     [Parameter(Mandatory = $false,
-               HelpMessage = "If true, build Zip archive.")]
-    [bool]$BuildZip = $false,
+               HelpMessage = "If true, build archive.")]
+    [bool]$BuildArchive = $false,
 
     [Parameter(Mandatory = $false,
                HelpMessage = "Path to ORT Prebuilt.")]
@@ -342,7 +342,7 @@ else {
                         }
                     }
                 }
-                if ($BuildZip) {
+                if ($BuildArchive) {
                     Use-PyVenv -PyVenv $BuildVEnv {
                         Use-WorkingDir -Path $BuildOutputDir {
                             $PkgAssetsArgs = @(
@@ -354,7 +354,7 @@ else {
                             if ($CMakeGenerator -eq "Ninja") {
                                 $PkgAssetsArgs += "--use_ninja"
                             }
-                            Assert-Success -ErrorMessage "Failed to build zip" {
+                            Assert-Success -ErrorMessage "Failed to build archive" {
                                 python.exe (Join-Path $RepoRoot "tools\ci_build\pkg_assets.py") @PkgAssetsArgs $VersionSuffixArg
                             }
                         }
