@@ -1660,13 +1660,6 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
     }                                                                                \
   } while (0)
 
-#define QNN_SKIP_TEST_IF_AUTOEP_NPU_UNSUPPORTED()                                                            \
-  do {                                                                                                       \
-    if (QnnHTPBackendTests::ShouldSkipIfAutoEpNpuUnsupported()) {                                            \
-      GTEST_SKIP() << "This platform lacks dxcore.dll NPU discovery capability required by auto-EP feature"; \
-    }                                                                                                        \
-  } while (0)
-
 // Skips the test on any ARM64 platform.
 // Matches: __aarch64__   (GCC/Clang — Linux/Android AArch64)
 //          _M_ARM64      (MSVC — Windows ARM64, native ABI)
