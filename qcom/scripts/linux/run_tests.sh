@@ -78,20 +78,17 @@ orig_build_dir=$(sed -n "s@# Build directory: @@p" CTestTestfile.cmake)
 sed --in-place=".bak" "s@${orig_build_dir}@${build_dir}@g" CTestTestfile.cmake
 
 log_info "-=-=-=- Running ctests -=-=-=-"
-# TODO: [AISW-164203] ORT test failures on Rubik Pi
 exclude_args=()
-if [ "$(uname -m)" == "aarch64" ]; then
-    exclude_args+=(--exclude-regex "onnxruntime_provider_test")
-fi
 count_errors ./ctest --verbose --timeout 10800 --stop-on-failure "${exclude_args[@]}"
 
 # TODO: We will support python wheel in linux
+# TODO: [AISW-164203] ORT test failures on Rubik Pi
+
 # log_info "-=-=-=- Running Python tests -=-=-=-"
 # mapfile -t PYTHON_TEST_FILES < "python_test_files.txt"
 
 # for python_file in "${PYTHON_TEST_FILES[@]}"; do
 #     if [ -f "${python_file}" ]; then
-#         # TODO: [AISW-164203] ORT test failures on Rubik Pi
 #         if [[ "${python_file}" =~ ^(onnxruntime_test_python(_compile_api|_mlops)?.py)$ ]]; then
 #             log_warn "Skipping ${python_file} due to known failures."
 #         else
@@ -117,8 +114,25 @@ cd "${onnx_models_root}"
 declare -a model_test_runners=("run_model_test")
 for runner in "${model_test_runners[@]}"; do
 
-    if [ "$(uname -m)" != "aarch64" ]; then  # TODO: [AISW-164203] ORT test failures on Rubik Pi
-        "${runner}" cpu node "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node"
+    # Following tests are not supported on ARM64 Linux Runner
+    # TODO: [AISW-163150]
+    # test strnormalizer_export_monday_casesensintive_lower
+    # test strnormalizer_export_monday_casesensintive_nochangecase
+    # test strnormalizer_export_monday_casesensintive_upper
+    # test strnormalizer_export_monday_empty_output
+    # Remvong them from test suite
+
+    if [ "$(uname -m)" == "aarch64" ]; then
+        rm -rf "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node/test_strnormalizer_export_monday_casesensintive_lower"
+        rm -rf "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node/test_strnormalizer_export_monday_casesensintive_nochangecase"
+        rm -rf "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node/test_strnormalizer_export_monday_casesensintive_upper"
+        rm -rf "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node/test_strnormalizer_export_monday_empty_output"
+    fi
+    
+    "${runner}" cpu node "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node"
+
+    # Known failures as QDQ and FP32 are not supported in v68
+    if [ "$(uname -m)" != "aarch64" ]; then
         "${runner}" cpu float32
         "${runner}" htp qdq
     fi
@@ -126,6 +140,7 @@ for runner in "${model_test_runners[@]}"; do
     log_debug "Scrubbing old context caches"
     find "testdata/qdq-with-context-cache" -name "*_ctx.onnx" -print -delete
     "${runner}" htp qdq-with-context-cache
+
 done
 
 exit "${errors}"
