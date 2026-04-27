@@ -15,9 +15,42 @@
 // that allows QNN EP to built either as a static library or a dynamic shared library.
 // The preprocessor macro `BUILD_QNN_EP_STATIC_LIB` is defined and set to 1 if QNN EP
 // is built as a static library.
+
+#if BUILD_QNN_EP_STATIC_LIB
+// ORT internal headers required by static-lib code paths (e.g. qnn_telemetry.cc).
+// Mirrors the include set in ORT core's ort_api.h for the BUILD_QNN_EP_STATIC_LIB=1 case.
+#ifdef _WIN32
+#include <Windows.h>
+#include <winmeta.h>
+#include "core/platform/tracing.h"
+#include "core/platform/windows/logging/etw_sink.h"
+#include "core/platform/windows/telemetry.h"
+// logging.h (and its transitive dependency on date/date.h) is only needed on Windows
+// for logging::EtwRegistrationManager::SupportsETW() in qnn_telemetry.cc.
+// It must not be included on Android/Linux where date/date.h is unavailable in
+// the cross-compilation environment used with --use_qnn static_lib.
+#include "core/common/logging/logging.h"
+#endif
+#include "core/platform/env.h"
+#include "core/common/common.h"
+// Provides kOnnxDomain, kMSDomain, kMSInternalNHWCDomain etc. used throughout QNN EP source files.
+#include "core/graph/constants.h"
+// Provides ReinterpretAsSpan used throughout QNN EP source files.
+#include "core/common/span_utils.h"
+#endif  // BUILD_QNN_EP_STATIC_LIB
+
 // Includes when building QNN EP as a shared library
 // #include "core/providers/shared_library/provider_api.h"
+#if !BUILD_QNN_EP_STATIC_LIB
+// In shared-lib/plugin mode the ORT C++ API must be manually initialized after
+// the plugin is loaded into the host process; ORT_API_MANUAL_INIT suppresses
+// the automatic global initializer so we can call Ort::InitApi() ourselves.
+// In static-lib mode we are directly linked into the host binary which owns
+// OrtGetApiBase(), so the normal auto-initialization must be used — defining
+// ORT_API_MANUAL_INIT here would produce an LNK2038 mismatch against the rest
+// of the test binary (all compiled without this macro).
 #define ORT_API_MANUAL_INIT
+#endif  // !BUILD_QNN_EP_STATIC_LIB
 #include "core/session/onnxruntime_cxx_api.h"
 
 #include "core/session/onnxruntime_c_api.h"
@@ -29,6 +62,12 @@
 #include "core/session/onnxruntime_run_options_config_keys.h"
 
 namespace onnxruntime {
+
+#if BUILD_QNN_EP_STATIC_LIB
+// Mirrors ORT core's ort_api.h: provides access to the default ORT Env (and its telemetry
+// provider) without going through the public C API.
+inline const Env& GetDefaultEnv() { return Env::Default(); }
+#endif
 
 #define MAKE_FAIL(msg) Ort::Status(msg, ORT_FAIL)
 #define MAKE_EP_FAIL(msg) Ort::Status(msg, ORT_EP_FAIL)
@@ -130,6 +169,10 @@ namespace onnxruntime {
 #endif
 
 // QNN-EP COPY START
+// These symbols are copied from ORT core headers for use in shared-lib builds where
+// ORT core headers are not directly available. In static-lib builds they come from the
+// real ORT core headers (span_utils.h, constants.h) that are already on the include path.
+#if !BUILD_QNN_EP_STATIC_LIB
 // Below are GSL utilities copied from core/common/span_utils.h directly.
 template <class U, class T>
 [[nodiscard]] inline gsl::span<U> ReinterpretAsSpan(gsl::span<T> src) {
@@ -143,6 +186,7 @@ template <class U, class T>
 inline constexpr const char* kOnnxDomain = "";
 inline constexpr const char* kMSDomain = "com.microsoft";
 inline constexpr const char* kMSInternalNHWCDomain = "com.ms.internal.nhwc";
+#endif  // !BUILD_QNN_EP_STATIC_LIB
 // QNN-EP COPY END
 
 class OrtLoggingManager {

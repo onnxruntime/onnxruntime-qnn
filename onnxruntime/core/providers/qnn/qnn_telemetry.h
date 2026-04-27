@@ -7,6 +7,7 @@
 
 #ifdef _WIN32
 #include <Windows.h>
+#include <evntprov.h>  // For PEVENT_FILTER_DESCRIPTOR, used by EtwInternalCallback in both static and shared lib builds
 
 #if !BUILD_QNN_EP_STATIC_LIB
 #include <TraceLoggingProvider.h>

@@ -106,9 +106,9 @@ QnnTelemetry& QnnTelemetry::Instance() {
 
 bool QnnTelemetry::SupportsETW() {
 #if BUILD_QNN_EP_STATIC_LIB
-  const Env& env = GetDefaultEnv();
-  auto& provider = env.GetTelemetryProvider();
-  return provider.SupportsETW();
+  // Telemetry base class doesn't expose SupportsETW(); delegate to EtwRegistrationManager
+  // which is the correct static-lib API for this check.
+  return logging::EtwRegistrationManager::SupportsETW();
 #else
   // Check for Windows 10 SDK or later (same logic as etw_sink.h)
   // VER_PRODUCTBUILD > 9600 means Windows 10 SDK or later

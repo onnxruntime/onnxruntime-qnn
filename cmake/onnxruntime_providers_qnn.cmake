@@ -38,12 +38,20 @@
   source_group(TREE ${ONNXRUNTIME_ROOT}/core FILES ${onnxruntime_providers_qnn_ep_srcs})
 
   set(onnxruntime_providers_qnn_all_srcs ${onnxruntime_providers_qnn_ep_srcs})
-  if(WIN32)
+  if(WIN32 AND NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
     # Sets the DLL version info on Windows: https://learn.microsoft.com/en-us/windows/win32/menurc/versioninfo-resource
     list(APPEND onnxruntime_providers_qnn_all_srcs "${ONNXRUNTIME_ROOT}/core/providers/qnn/onnxruntime_providers_qnn.rc")
   endif()
 
-  onnxruntime_add_shared_library_module(onnxruntime_providers_qnn ${onnxruntime_providers_qnn_all_srcs})
+  if(onnxruntime_BUILD_QNN_EP_STATIC_LIB)
+    onnxruntime_add_static_library(onnxruntime_providers_qnn ${onnxruntime_providers_qnn_all_srcs})
+    # Expose BUILD_QNN_EP_STATIC_LIB to all consumers (e.g. the test binary) so
+    # that code guarded by #if BUILD_QNN_EP_STATIC_LIB uses the same type
+    # definitions as the library itself, avoiding ODR violations.
+    target_compile_definitions(onnxruntime_providers_qnn PUBLIC BUILD_QNN_EP_STATIC_LIB=1)
+  else()
+    onnxruntime_add_shared_library_module(onnxruntime_providers_qnn ${onnxruntime_providers_qnn_all_srcs})
+  endif()
   onnxruntime_add_include_to_target(onnxruntime_providers_qnn ${GSL_TARGET} safeint_interface nlohmann_json::nlohmann_json)
 
   target_link_libraries(onnxruntime_providers_qnn PRIVATE ${ABSEIL_LIBS})
@@ -57,8 +65,8 @@
                                                                   ${onnxruntime_QNN_HOME}/include/QNN
                                                                   ${onnxruntime_QNN_HOME}/include)
 
-  # Set preprocessor definitions used in onnxruntime_providers_qnn.rc
-  if(WIN32)
+  # Set preprocessor definitions used in onnxruntime_providers_qnn.rc (DLL-only)
+  if(WIN32 AND NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
     if(NOT QNN_SDK_VERSION)
       set(QNN_DLL_FILE_DESCRIPTION "ONNX Runtime QNN Provider")
     else()
@@ -69,18 +77,20 @@
     target_compile_definitions(onnxruntime_providers_qnn PRIVATE FILE_NAME=\"onnxruntime_providers_qnn.dll\")
   endif()
 
-  # Set linker flags for function(s) exported by EP DLL
-  if(UNIX)
-    target_link_options(onnxruntime_providers_qnn PRIVATE
-                        "LINKER:--version-script=${ONNXRUNTIME_ROOT}/core/providers/qnn/version_script.lds"
-                        "LINKER:--gc-sections"
-                        "LINKER:-rpath=\$ORIGIN"
-    )
-  elseif(WIN32)
-    set_property(TARGET onnxruntime_providers_qnn APPEND_STRING PROPERTY LINK_FLAGS
-                  "-DEF:${ONNXRUNTIME_ROOT}/core/providers/qnn/symbols.def")
-  else()
-    message(FATAL_ERROR "onnxruntime_providers_qnn unknown platform, need to specify shared library exports for it")
+  # Set linker flags for function(s) exported by EP DLL (not applicable for static lib)
+  if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
+    if(UNIX)
+      target_link_options(onnxruntime_providers_qnn PRIVATE
+                          "LINKER:--version-script=${ONNXRUNTIME_ROOT}/core/providers/qnn/version_script.lds"
+                          "LINKER:--gc-sections"
+                          "LINKER:-rpath=\$ORIGIN"
+      )
+    elseif(WIN32)
+      set_property(TARGET onnxruntime_providers_qnn APPEND_STRING PROPERTY LINK_FLAGS
+                    "-DEF:${ONNXRUNTIME_ROOT}/core/providers/qnn/symbols.def")
+    else()
+      message(FATAL_ERROR "onnxruntime_providers_qnn unknown platform, need to specify shared library exports for it")
+    endif()
   endif()
 
   # Set compile options

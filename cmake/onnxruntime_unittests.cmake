@@ -203,6 +203,10 @@ if(onnxruntime_USE_QNN AND NOT onnxruntime_MINIMAL_BUILD AND NOT onnxruntime_RED
   list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_qnn)
   if(NOT onnxruntime_BUILD_QNN_EP_STATIC_LIB)
     list(APPEND onnxruntime_test_providers_dependencies onnxruntime_providers_shared)
+  else()
+    # In static-lib mode the QNN EP object code must be linked into the test binary
+    # (in shared-lib mode it is loaded at runtime, so it is only a build dependency).
+    list(APPEND onnxruntime_test_providers_libs onnxruntime_providers_qnn)
   endif()
 endif()
 
@@ -328,6 +332,12 @@ block()
 
   # For onnxruntime_cxx_api.h
   target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session)
+
+  # Propagate BUILD_QNN_EP_STATIC_LIB so that tests guarded by
+  # #if BUILD_QNN_EP_STATIC_LIB (e.g. qnn_model_wrapper_test.cc) are compiled in.
+  if(onnxruntime_BUILD_QNN_EP_STATIC_LIB)
+    target_compile_definitions(onnxruntime_provider_test PRIVATE BUILD_QNN_EP_STATIC_LIB=1)
+  endif()
 
   add_custom_command(
     TARGET onnxruntime_provider_test POST_BUILD

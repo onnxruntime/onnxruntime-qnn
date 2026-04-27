@@ -48,7 +48,7 @@ else()
     message(STATUS "  Python Executable: ${Python3_EXECUTABLE}")
     message(STATUS "  CMake Generator: ${CMAKE_GENERATOR}")
 
-    if (${CMAKE_SYSTEM_NAME} STREQUAL "Android")
+    if(onnxruntime_BUILD_QNN_EP_STATIC_LIB OR ${CMAKE_SYSTEM_NAME} STREQUAL "Android")
         set(QNN_LIBRARY_KIND static_lib)
     else()
         set(QNN_LIBRARY_KIND shared_lib)

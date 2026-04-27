@@ -386,8 +386,11 @@ OrtStatus* CreateEpFactories(const char* registration_name,
     return nullptr;  // Cannot create status without ORT API
   }
 
-  // Manual init for the C++ API
+  // Manual init for the C++ API (only needed in shared-lib/plugin mode; in static-lib
+  // mode the host binary owns OrtGetApiBase() and the auto-initializer handles this).
+#if !BUILD_QNN_EP_STATIC_LIB
   Ort::InitApi(ort_api);
+#endif  // !BUILD_QNN_EP_STATIC_LIB
 
   if (max_factories < 1) {
     return ort_api->CreateStatus(ORT_INVALID_ARGUMENT,
