@@ -1617,8 +1617,12 @@ class QnnHTPBackendTests : public ::testing::Test {
 
   // Returns true if the test should be skipped because HTP architecture is less than or equal to the provided arch.
   // Example: if (QnnHTPBackendTests::ShouldSkipIfHTPArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) { GTEST_SKIP() << "..."; }
-  static bool ShouldSkipIfHtpArchIsLessThanOrEqualTo(QnnHtpDevice_Arch_t arch) {
+  static bool ShouldSkipIfHtpArchIsLessThanOrEqualTo([[maybe_unused]] QnnHtpDevice_Arch_t arch) {
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
     return HasPlatformAttributes() && GetPlatformAttributes().htp_arch <= arch;
+#else
+    return false;
+#endif
   }
 
   // Query QNN platform attributes by directly calling QNN APIs
