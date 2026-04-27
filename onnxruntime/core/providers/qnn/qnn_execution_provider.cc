@@ -652,7 +652,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   } else if (!htp_share_resource_optimization_str.empty()) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_ERROR,
-                ("Invalid value entered for htp_share_resource_optimization: " + htp_share_resource_optimization_str + ", only 1 is allowed. Setting to 0.").c_str());
+                ("Invalid value entered for htp_share_resource_optimization: " + htp_share_resource_optimization_str + ", only 1 is allowed.").c_str());
   } else if (enable_vtcm_backup_buffer_sharing_str == "1") {
     // htp_share_resource_optimization not set, fall back to enable_vtcm_backup_buffer_sharing
     htp_share_resource_optimization_ = 1;
