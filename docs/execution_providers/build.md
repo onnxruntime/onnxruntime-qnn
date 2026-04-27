@@ -45,7 +45,7 @@ The build system uses a task-based approach via `python qcom/build_and_test.py`.
 * `--ort-prebuilt PATH`: Path to pre-built ONNX Runtime SDK (optional)
 * `--target-py-version [3.10/3.11/3.12/3.13/3.14]`: Python version for wheel building (default: 3.12 on Windows, 3.10 on Linux)
 * `--build-nuget`: Enable building NuGet packages for .NET bindings
-* `--build-zip`: Enable building Zip archives
+* `--build-archive`: Enable building archives
 * `--venv-path PATH`: Virtual environment path (default: ./venv)
 * `--dry-run`: Print the build plan without executing
 * `--only`: Run only specified tasks, skipping dependencies
@@ -256,11 +256,12 @@ Located in `build/Release/Release/nuget-local-artifacts/` (Windows):
 
 * `Qualcomm.ML.OnnxRuntime.QNN.[version].nupkg`
 
-#### Zip Archives
+#### Archives
 
-Located in `build/`:
+Located in `build/Release/Release/dist/` (Windows) or `build/Release/dist/` (Linux):
 
-* `onnxruntime-[platform]-[arch]-[version].zip`
+* Windows: `onnxruntime-qnn-[version]-[platform]-[arch].zip`
+* Linux: `onnxruntime-qnn-[version]-[platform]-[arch].tgz`
 
 ## Advanced Usage
 

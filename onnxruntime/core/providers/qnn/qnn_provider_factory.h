@@ -3,7 +3,6 @@
 
 #pragma once
 
-#include "core/framework/error_code_helper.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_execution_provider.h"
 
@@ -61,6 +60,10 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
 
   QnnEp* qnn_ep_ = nullptr;
   std::vector<OrtEpDevice*> ep_devices_;
+
+  using HardwareDeviceUniquePtr = std::unique_ptr<OrtHardwareDevice, FuncDeleter<OrtHardwareDevice>>;
+  // This is an actual NPU hardware but unable to be detected by ORT Core (e.g., Makena).
+  HardwareDeviceUniquePtr undetected_npu_hw_device_;
 };
 
 }  // namespace onnxruntime

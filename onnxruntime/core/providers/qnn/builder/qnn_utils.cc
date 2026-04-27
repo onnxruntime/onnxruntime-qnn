@@ -557,13 +557,13 @@ static inline uint32_t FillJSONArrayFromRawData(nlohmann::json* json_array, cons
 }
 
 template <>
-inline uint32_t FillJSONArrayFromRawData<MLFloat16>(nlohmann::json* json_array, const void* ptr, uint32_t num_elems) {
-  gsl::span<const MLFloat16> elems{reinterpret_cast<const MLFloat16*>(ptr), static_cast<size_t>(num_elems)};
+inline uint32_t FillJSONArrayFromRawData<Ort::Float16_t>(nlohmann::json* json_array, const void* ptr, uint32_t num_elems) {
+  gsl::span<const Ort::Float16_t> elems{reinterpret_cast<const Ort::Float16_t*>(ptr), static_cast<size_t>(num_elems)};
   for (auto elem : elems) {
     json_array->push_back(elem.ToFloat());
   }
 
-  return num_elems * sizeof(MLFloat16);
+  return num_elems * sizeof(Ort::Float16_t);
 }
 
 // Fills json array with typed elements from the raw source buffer.
@@ -590,7 +590,7 @@ static uint32_t AppendQnnElemsToJSONArray(nlohmann::json* json_array, const void
     case QNN_DATATYPE_FLOAT_32:
       return FillJSONArrayFromRawData<float>(json_array, data, num_elems);
     case QNN_DATATYPE_FLOAT_16:
-      return FillJSONArrayFromRawData<MLFloat16>(json_array, data, num_elems);
+      return FillJSONArrayFromRawData<Ort::Float16_t>(json_array, data, num_elems);
     default:
       return 0;  // Do not append anything for unsupported types.
   }
@@ -1265,7 +1265,7 @@ std::string GetQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface, Qnn_
   if (qnn_interface.errorGetMessage(qnn_error_handle, &error_msg) == QNN_SUCCESS) {
     return error_msg;
   }
-  return MakeString("Unknown error. QNN error handle: ", qnn_error_handle);
+  return "Unknown error. QNN error handle: " + std::to_string(qnn_error_handle);
 }
 
 std::string GetVerboseQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interface,
@@ -1277,7 +1277,7 @@ std::string GetVerboseQnnErrorMessage(const QNN_INTERFACE_VER_TYPE& qnn_interfac
     });
     return error_msg;
   }
-  return MakeString("Unknown error. QNN error handle: ", qnn_error_handle);
+  return "Unknown error. QNN error handle: " + std::to_string(qnn_error_handle);
 }
 
 // Calculate strides for a given shape without using TensorShape
@@ -1694,8 +1694,8 @@ Ort::Status UnpackInitializerData(const OrtApi& ort_api,
     CASE_UNPACK(UINT16, uint16_t, int32_data_size);
     CASE_UNPACK(UINT32, uint32_t, uint64_data_size);
     CASE_UNPACK(UINT64, uint64_t, uint64_data_size);
-    CASE_UNPACK(FLOAT16, onnxruntime::MLFloat16, int32_data_size);
-    CASE_UNPACK(BFLOAT16, onnxruntime::BFloat16, int32_data_size);
+    CASE_UNPACK(FLOAT16, Ort::Float16_t, int32_data_size);
+    CASE_UNPACK(BFLOAT16, Ort::BFloat16_t, int32_data_size);
 #if !defined(DISABLE_FLOAT8_TYPES)
     // Refer to core/session/onnxruntime_cxx_api.h.
     CASE_UNPACK(FLOAT8E4M3FN, uint8_t, int32_data_size);

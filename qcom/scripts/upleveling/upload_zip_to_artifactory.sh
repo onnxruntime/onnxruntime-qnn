@@ -5,6 +5,9 @@
 # Script to upload zip and tgz files to Artifactory using netrc authentication
 # Usage: upload_zip_to_artifactory.sh <input_dir> <netrc_file>
 
+# Files ending in pdb.zip are uploaded to .../onnxruntime-qnn/<version>-pdb/<file>;
+# all other .zip/.tgz files are uploaded to .../onnxruntime-qnn/<version>/<file>.
+
 set -euo pipefail
 
 if [ "$#" -ne 2 ]; then
@@ -34,12 +37,18 @@ find "$INPUT_DIR" \( -name "*.zip" -o -name "*.tgz" \) -type f -print0 | while I
     filename_no_ext="${file_basename%.*}"
     version=$(echo "$filename_no_ext" | cut -d'-' -f3)
 
+    if [[ "$file_basename" == *pdb.zip ]]; then
+        TARGET_SUFFIX="-pdb"
+    else
+        TARGET_SUFFIX=""
+    fi
+
     echo "Uploading $file_basename (version: $version)..."
 
     curl -T "$file" \
         --cacert "$REPO_ROOT/qcom/scripts/upleveling/certs/artifactory-ca.pem" \
         --netrc-file "$NETRC_FILE" \
-        https://re-artifactory.qualcomm.com/artifactory/aisw-zip-test-project/onnxruntime-qnn/"$version"/"$file_basename"
+        https://re-artifactory.qualcomm.com/artifactory/aisw-zip-test-project/onnxruntime-qnn/"${version}${TARGET_SUFFIX}"/"$file_basename"
 
     echo "Successfully uploaded $file_basename"
 done

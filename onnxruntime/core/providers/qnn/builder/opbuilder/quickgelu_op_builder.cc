@@ -59,9 +59,9 @@ Ort::Status QuickGeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn
     std::vector<uint8_t> alpha_data;
 
     if (alpha_qnn_data_type == QNN_DATATYPE_FLOAT_16) {
-      alpha_data.resize(sizeof(MLFloat16));
-      MLFloat16 alpha_fp16(alpha);
-      memcpy(alpha_data.data(), &alpha_fp16.val, sizeof(MLFloat16));
+      alpha_data.resize(sizeof(Ort::Float16_t));
+      Ort::Float16_t alpha_fp16(alpha);
+      memcpy(alpha_data.data(), &alpha_fp16.val, sizeof(Ort::Float16_t));
     } else {
       alpha_data.resize(sizeof(float));
       memcpy(alpha_data.data(), &alpha, sizeof(float));

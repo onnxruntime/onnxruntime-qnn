@@ -94,6 +94,8 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
 
     if (qnn_model_wrapper.GetModelSettings().offload_graph_io_quantization &&
         qnn_model_wrapper.IsGraphOutput(node_unit.Outputs()[0].name)) {
+      qnn_model_wrapper.SetTensorNameOverride(/*internal=*/node_unit.Inputs()[0].name,
+                                              /*external=*/node_unit.Outputs()[0].name);
       return MAKE_EP_FAIL("QNN EP is configured to not take DQ nodes that generate a graph output.");
     }
   }
@@ -106,6 +108,8 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
 
     if (qnn_model_wrapper.GetModelSettings().offload_graph_io_quantization &&
         qnn_model_wrapper.IsGraphInput(node_unit.Inputs()[0].name)) {
+      qnn_model_wrapper.SetTensorNameOverride(/*internal=*/node_unit.Outputs()[0].name,
+                                              /*external=*/node_unit.Inputs()[0].name);
       return MAKE_EP_FAIL("QNN EP is configured to not take Q nodes that consume a graph input.");
     }
   }
@@ -226,9 +230,9 @@ Ort::Status ProcessAlphaAttributeAsInput(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input_info));
     // QNN requires alpha is fp16 when input is fp16
     if (input_info.qnn_data_type == QNN_DATATYPE_FLOAT_16) {
-      tensor_data.alpha_fp16 = MLFloat16(tensor_data.alpha).val;
+      tensor_data.alpha_fp16 = Ort::Float16_t(tensor_data.alpha).val;
       qnn_data_type = QNN_DATATYPE_FLOAT_16;
-      unpacked_data.assign(tensor_data.unpack, tensor_data.unpack + sizeof(MLFloat16));
+      unpacked_data.assign(tensor_data.unpack, tensor_data.unpack + sizeof(Ort::Float16_t));
     } else {
       unpacked_data.assign(tensor_data.unpack, tensor_data.unpack + sizeof(float));
     }
