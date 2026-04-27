@@ -131,15 +131,14 @@ for runner in "${model_test_runners[@]}"; do
     
     "${runner}" cpu node "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node"
 
-    # Known failures as QDQ and FP32 are not supported in v68
     if [ "$(uname -m)" != "aarch64" ]; then
         "${runner}" cpu float32
+        #TODO: [AISW-164203] - Known issues with QDQ model suite
         "${runner}" htp qdq
+        log_debug "Scrubbing old context caches"
+        find "testdata/qdq-with-context-cache" -name "*_ctx.onnx" -print -delete
+        "${runner}" htp qdq-with-context-cache
     fi
-
-    log_debug "Scrubbing old context caches"
-    find "testdata/qdq-with-context-cache" -name "*_ctx.onnx" -print -delete
-    "${runner}" htp qdq-with-context-cache
 
 done
 
