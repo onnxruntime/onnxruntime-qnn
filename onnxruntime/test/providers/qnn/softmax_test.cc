@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Qualcomm. All rights reserved.
 // Licensed under the MIT License.
 
 #include "onnxruntime_c_api.h"
@@ -16,6 +16,33 @@
 
 namespace onnxruntime {
 namespace test {
+
+// Regression: Softmax(axis=1) fed by a MatMul+Add that ORT's MatMulAddFusion rewrites to Gemm.
+// The Softmax OpBuilder's transpose-insertion path must register a tensor wrapper for its
+// input during GetCapability validation, since upstream node groups do not populate the
+// shared QnnModelWrapper's tensor map in the validate phase. Without that, the op falls
+// to CPU and fragments the graph.
+namespace {
+GetTestModelFn BuildMatMulAddSoftmaxNonLastAxisTestCase(int64_t K, int64_t N) {
+  return [K, N](ModelTestBuilder& builder) {
+    const std::vector<int64_t> input_shape = {1, 2, K};
+    const std::vector<int64_t> weight_shape = {K, N};
+    const std::vector<int64_t> bias_shape = {N};
+
+    builder.MakeInput<float>("X", input_shape, -1.0f, 1.0f);
+    builder.MakeInitializer<float>("W", weight_shape, -1.0f, 1.0f);
+    builder.MakeInitializer<float>("B", bias_shape, -1.0f, 1.0f);
+
+    builder.AddNode("node_MatMul", "MatMul", {"X", "W"}, {"val_mm"});
+    builder.AddNode("node_linear_17", "Add", {"val_mm", "B"}, {"linear_17"});
+    builder.AddNode("node_softmax", "Softmax", {"linear_17"}, {"softmax_out"},
+                    /*domain=*/"",
+                    {test::MakeAttribute("axis", static_cast<int64_t>(1))});
+
+    builder.MakeOutput("softmax_out");
+  };
+}
+}  // namespace
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
@@ -93,45 +120,6 @@ TEST_F(QnnHTPBackendTests, Softmax13NonLastAxisLargeInputU16) {
                          true);
 }
 
-// Regression: Softmax(axis=1) fed by a MatMul+Add that ORT's MatMulAddFusion rewrites to Gemm.
-// The Softmax OpBuilder's transpose-insertion path must register a tensor wrapper for its
-// input during GetCapability validation, since upstream node groups do not populate the
-// shared QnnModelWrapper's tensor map in the validate phase. Without that, the op falls
-// to CPU and fragments the graph.
-namespace {
-GetTestModelFn BuildMatMulAddSoftmaxNonLastAxisTestCase(int64_t K, int64_t N) {
-  return [K, N](ModelTestBuilder& builder) {
-    const std::vector<int64_t> input_shape = {1, 2, K};
-    const std::vector<int64_t> weight_shape = {K, N};
-    const std::vector<int64_t> bias_shape = {N};
-
-    builder.MakeInput<float>("X", input_shape, -1.0f, 1.0f);
-    builder.MakeInitializer<float>("W", weight_shape, -1.0f, 1.0f);
-    builder.MakeInitializer<float>("B", bias_shape, -1.0f, 1.0f);
-
-    builder.AddNode("node_MatMul", "MatMul", {"X", "W"}, {"val_mm"});
-    builder.AddNode("node_linear_17", "Add", {"val_mm", "B"}, {"linear_17"});
-    builder.AddNode("node_softmax", "Softmax", {"linear_17"}, {"softmax_out"},
-                    /*domain=*/"",
-                    {test::MakeAttribute("axis", static_cast<int64_t>(1))});
-
-    builder.MakeOutput("softmax_out");
-  };
-}
-}  // namespace
-
-TEST_F(QnnHTPBackendTests, Softmax13NonLastAxisAfterMatMulAddFusion) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildMatMulAddSoftmaxNonLastAxisTestCase(/*K=*/128, /*N=*/1),
-                  provider_options,
-                  /*opset=*/18,
-                  ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-3f);
-}
-
 TEST_F(QnnHTPBackendTests, Softmax11DefaultAxis) {
   RunQDQOpTest<uint8_t>("Softmax",
                         {TestInputDef<float>({1, 2, 3}, false, -5.0f, 5.0f)},
@@ -182,6 +170,18 @@ TEST_F(QnnHTPBackendTests, LogSoftmax11LastAxis) {
                         {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
                         11,
                         ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, Softmax13NonLastAxisAfterMatMulAddFusion) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildMatMulAddSoftmaxNonLastAxisTestCase(/*K=*/128, /*N=*/1),
+                  provider_options,
+                  /*opset=*/18,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/2e-3f);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
