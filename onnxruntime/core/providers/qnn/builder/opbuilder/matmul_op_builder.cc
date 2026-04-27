@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
+﻿// Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
 #include <functional>
@@ -130,6 +130,7 @@ Ort::Status CheckInputs(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeU
                                                  !input_info_0.is_initializer &&
                                                  IsQuant16bit(input_info_1.qnn_data_type) &&
                                                  !input_info_1.is_initializer);
+  use_fully_connected = use_fully_connected && !input_info_1.quant_param.IsLPBQ();
 #endif
   return Ort::Status();
 }
