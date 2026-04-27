@@ -37,6 +37,9 @@
 
 namespace onnxruntime {
 namespace test {
+// Forward declaration for QnnHTPBackendTests used in template functions below
+class QnnHTPBackendTests;
+
 // Signature for function that builds a float32 model.
 using GetTestModelFn = std::function<void(ModelTestBuilder& builder)>;
 
