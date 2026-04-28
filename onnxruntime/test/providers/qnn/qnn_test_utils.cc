@@ -281,12 +281,12 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
     backend_name = provider_options.at("backend_type");
   }
 
-  if (backend_name == "htp" || backend_name == "gpu") {
+  if (backend_name == "htp") {
     if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-      std::string backend_upper = backend_name;
-      backend_upper[0] = std::toupper(backend_upper[0]);
-      GTEST_SKIP() << "Test requires " << backend_upper << " FP32/FP16 support (arch > V68)";
+      GTEST_SKIP() << "Test requires HTP FP16/FP32 support (arch > v68)";
     }
+  } else if (backend_name == "gpu") {
+    QNN_SKIP_TEST_ON_AARCH64("Test requires GPU support on Linux ARM64 (arch > v68)");
   }
 
   std::filesystem::path output_dir;
