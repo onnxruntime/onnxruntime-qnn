@@ -300,26 +300,22 @@ else {
                 }
 
                 if ($BuildWheel) {
-                    $PyNightlyArg = ""
-                    $WheelNameSuffix = ""
+                    $WheelOnlyArgs = @(
+                        "--build_wheel_only",
+                        "--build_dir", $BuildDir,
+                        "--config", $Config,
+                        "--cmake_generator", $CMakeGenerator,
+                        "--qnn_home", "$QairtSdkRoot"
+                    )
                     if ($env:ORT_NIGHTLY_BUILD -eq "1") {
-                        $PyNightlyArg = "--nightly_build"
-                        $WheelNameSuffix = "--wheel_name_suffix=qcom_internal"
+                        $WheelOnlyArgs += "--wheel_name_suffix=qcom_internal"
                     }
-                    $PyVersionSuffixArg = ""
                     if ($env:ORT_VERSION_SUFFIX) {
-                        $PyVersionSuffixArg = "--version_suffix=$env:ORT_VERSION_SUFFIX"
+                        $WheelOnlyArgs += "--version_suffix=$env:ORT_VERSION_SUFFIX"
                     }
                     Use-PyVenv -PyVenv $BuildVEnv {
-                        Use-WorkingDir -Path $BuildOutputDir {
-                            Assert-Success -ErrorMessage "Failed to build wheel" {
-                                python.exe (Join-Path $RepoRoot "setup.py") `
-                                    bdist_wheel `
-                                    $WheelNameSuffix `
-                                    --qnn_version=$QairtSdkVersion `
-                                    $PyNightlyArg `
-                                    $PyVersionSuffixArg
-                            }
+                        Assert-Success -ErrorMessage "Failed to build wheel" {
+                            python.exe (Join-Path $RepoRoot "tools\ci_build\build.py") @WheelOnlyArgs
                         }
                     }
                 }
