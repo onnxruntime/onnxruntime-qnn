@@ -1238,6 +1238,17 @@ TEST_F(QnnHTPBackendTests, Reciprocal_QU8) {
                         ExpectedEPNodeAssignment::All);
 }
 
+// Test FP16 Reciprocal on HTP.
+// Exercises the QNN_DATATYPE_FLOAT_16 branch in ReciprocalOpBuilder which
+// encodes the constant 1.0 divisor as a float16 initializer.
+TEST_F(QnnHTPBackendTests, Reciprocal_FP16) {
+  RunFP16OpTest("Reciprocal",
+                {TestInputDef<float>({2, 2}, false, {1.0f, 2.0f, 0.5f, 4.0f})},
+                {},  // No attributes
+                13,
+                ExpectedEPNodeAssignment::All);
+}
+
 // Test Mean Op on HTP
 TEST_F(QnnHTPBackendTests, Mean_TwoInputs) {
   std::vector<float> input1 = {1.0f, 2.0f, 3.0f, 4.0f};

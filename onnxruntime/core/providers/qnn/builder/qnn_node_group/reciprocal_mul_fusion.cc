@@ -1,5 +1,5 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 // =============================================================================
 // ReciprocalMulFusion
@@ -77,8 +77,8 @@ namespace qnn {
 #define CreateOnQnn(qnn_model_wrapper, reciprocal_node_unit, mul_node_unit) \
   CreateOrValidateOnQnn((qnn_model_wrapper), (reciprocal_node_unit), (mul_node_unit), /*validate=*/false)
 
-// Forward declaration so the macros above can reference the function before
-// its full definition appears at the bottom of this translation unit.
+// Forward declaration so the use sites of the macros above can be parsed before
+// the full definition appears at the bottom of this translation unit.
 static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& reciprocal_node_unit,
                                          const OrtNodeUnit& mul_node_unit,
@@ -185,6 +185,13 @@ std::unique_ptr<IQnnNodeGroup> ReciprocalMulFusion::TryFusion(
     return nullptr;
   }
 
+  if (recip_is_mul_input0 && recip_is_mul_input1) {
+    // Degenerate case: both Mul inputs are the Reciprocal output (e.g. 1/b * 1/b).
+    // The fusion intentionally drops the Reciprocal output tensor, so we cannot
+    // reference it as the numerator of the Div.
+    return nullptr;
+  }
+
   // -- Step 6: QNN capability dry-run ----------------------------------------
   //
   // Ask the QNN backend whether it can handle an ElementWiseDivide node
@@ -253,18 +260,33 @@ gsl::span<const OrtNodeUnit* const> ReciprocalMulFusion::GetNodeUnits() const {
 // -----------------
 // Returns the Mul NodeUnit as the topological "target" of this fusion.
 //
-// The target is defined as the first node where ALL input paths of the
-// IQnnNodeGroup converge (see IQnnNodeGroup::GetTargetNodeUnit() docs).
-// In this fusion:
+// Contract (qnn_node_group.h lines 37-38):
+//   "The target should be the first NodeUnit where all input paths
+//    (of the IQnnNodeGroup) converge."
+//
+// In this fusion the two input paths are independent until they meet at Mul:
 //
 //   [denominator] --> Reciprocal --+
 //                                  v
 //   [numerator]  ----------------> Mul  <-- convergence point
 //
-// Both the numerator path and the Reciprocal path converge at the Mul node,
-// making it the correct target for topological ordering of IQnnNodeGroups.
+// The numerator arrives directly; the denominator travels through Reciprocal
+// first.  Neither path is a subset of the other, so the earliest node where
+// BOTH are available is Mul.  Mul is therefore the correct target.
+//
+// Contrast with HardSigmoidMulFusion, which returns node_units_[0]
+// (HardSigmoid) as its target.  That fusion shares a single root tensor x
+// for both branches:
+//
+//   [x] --> HardSigmoid --+
+//    |                     v
+//    +-------------------> Mul
+//
+// Because x is already present before HardSigmoid executes, HardSigmoid
+// itself is the first point where all inputs of the group are available,
+// making it the convergence node — not the downstream Mul.
 const OrtNodeUnit* ReciprocalMulFusion::GetTargetNodeUnit() const {
-  return node_units_[1];  // Mul is the convergence point
+  return node_units_[1];  // Mul is the convergence point; see comment above
 }
 
 // =============================================================================
