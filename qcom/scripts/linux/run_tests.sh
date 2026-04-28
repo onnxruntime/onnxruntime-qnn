@@ -32,7 +32,7 @@ function run_model_test() {
     local suite="${2}"
     local test_path="${3:-testdata/${suite}}"
 
-    log_info "-=-=-=- Running onnx/models ${suite} tests with the ABI-stable EP plugin -=-=-=-=-"
+    log_info "-=-=-=- Running onnx/models ${suite} tests with the ABI-stable EP plugin -=-=-=-"
 
     # We don't use count_errors() because both sides of a piped command get run
     # in subshells so ${errors} wouldn't get updated.
@@ -107,7 +107,7 @@ count_errors ./ctest --verbose --timeout 10800 --stop-on-failure "${exclude_args
 #     log_warn "Failed to find directory 'quantization' - may be OK on platforms which do not support Python."
 # fi
 
-log_info "-=-=-=- Running ONNX model tests -=-=-=-=-"
+log_info "-=-=-=- Running ONNX model tests -=-=-=-"
 
 cd "${onnx_models_root}"
 
@@ -120,7 +120,7 @@ for runner in "${model_test_runners[@]}"; do
     # test strnormalizer_export_monday_casesensintive_nochangecase
     # test strnormalizer_export_monday_casesensintive_upper
     # test strnormalizer_export_monday_empty_output
-    # Remvong them from test suite
+    # Removing them from test suite
 
     if [ "$(uname -m)" == "aarch64" ]; then
         rm -rf "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node/test_strnormalizer_export_monday_casesensintive_lower"
