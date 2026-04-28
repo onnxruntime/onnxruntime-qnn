@@ -1616,17 +1616,6 @@ class QnnHTPBackendTests : public ::testing::Test {
   // Query QNN platform attributes by directly calling QNN APIs
   Ort::Status QueryQnnPlatformAttributesDirectly(QnnPlatformAttributes& out, const Ort::Logger& logger);
 
-  // Returns true if the test should be skipped because HTP FP16 is not supported on this platform.
-  static bool ShouldSkipIfHtpFp16Unsupported() {
-    return ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68);
-  }
-
-  // Returns true if the test should be skipped because AutoEP is not supported on this platform.
-  static bool ShouldSkipIfAutoEpNpuUnsupported() {
-    // V68 device (Makena) on ARM64 platforms doesn't support NPU device discovery.
-    return ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68);
-  }
-
   static std::optional<QnnHTPBackendTests::QnnPlatformAttributes> cached_platform_attrs_;  // Set by the first test using this fixture.
   static BackendSupport cached_htp_support_;                                               // Set by the first test using this fixture.
   static BackendSupport cached_ir_support_;
