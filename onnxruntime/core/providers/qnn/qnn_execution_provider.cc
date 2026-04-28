@@ -2760,7 +2760,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     bool power_config_valid = ep->GetHtpPowerConfigId(htp_power_config_id);
     qnn::HtpPerfConfig_t perf_config{htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_};
     qnn::HtpPowerStateGuard power_guard(
-        ep->qnn_backend_manager_.get(),
+        &ep->qnn_backend_manager_->GetHtpPowerConfigManager(),
         power_config_valid,
         qnn::GraphState::INIT_START, qnn::GraphState::INIT_DONE,
         perf_config);
@@ -2773,7 +2773,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     bool power_config_valid = ep->GetHtpPowerConfigId(htp_power_config_id);
     qnn::HtpPerfConfig_t perf_config{htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_};
     qnn::HtpPowerStateGuard power_guard(
-        ep->qnn_backend_manager_.get(),
+        &ep->qnn_backend_manager_->GetHtpPowerConfigManager(),
         power_config_valid,
         qnn::GraphState::INIT_START, qnn::GraphState::INIT_DONE,
         perf_config);
@@ -2791,7 +2791,7 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
   bool valid_power_config_id = ep->GetHtpPowerConfigId(htp_power_config_id);
   qnn::HtpPerfConfig_t perf_config{htp_power_config_id, ep->default_htp_performance_mode_, ep->default_rpc_polling_time_, ep->default_rpc_control_latency_};
   qnn::HtpPowerStateGuard power_guard(
-      ep->qnn_backend_manager_.get(),
+      &ep->qnn_backend_manager_->GetHtpPowerConfigManager(),
       valid_power_config_id,
       qnn::GraphState::INIT_START, qnn::GraphState::INIT_DONE,
       perf_config);
@@ -2940,6 +2940,9 @@ void QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thr
   } else {
     per_thread_htp_power_configs.rpc_control_latency = default_rpc_control_latency_;
   }
+
+  // This ensures that rpc polling time is always set to a value
+  per_thread_htp_power_configs.rpc_polling_time = kDisableRpcPolling;
 
   if (qnn::HtpPerformanceMode::kHtpDefault != dynamic_htp_performance_mode_) {
     // reset perf mode, rpc control latency and rpc polling time to dynamic perf mode values

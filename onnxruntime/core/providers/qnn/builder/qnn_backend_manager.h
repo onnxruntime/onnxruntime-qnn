@@ -414,8 +414,8 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   bool IsDx12SharedMemoryAllocatorSupported();
 
-  Ort::Status SetHtpPowerState(GraphState state, const HtpPerfConfig_t& config) {
-    return htp_power_config_manager_.SetState(state, config);
+  power::HtpPowerConfigManager& GetHtpPowerConfigManager() {
+    return htp_power_config_manager_;
   }
 
  private:
