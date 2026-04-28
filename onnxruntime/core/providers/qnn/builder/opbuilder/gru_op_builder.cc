@@ -41,39 +41,39 @@ class GRUOpBuilder : public BaseOpBuilder {
                                  const bool& is_bidirection,
                                  std::vector<std::string>& uni_gru_output_names) const;
   Ort::Status AddStridedSlice(QnnModelWrapper& qnn_model_wrapper,
-                                       const OrtNodeUnit& node_unit,
-                                       const std::string& input_name,
-                                       const std::string& output_name,
-                                       const std::vector<uint32_t>& input_shape,
-                                       const std::vector<uint32_t>& output_shape,
-                                       const std::vector<std::vector<int32_t>>& ranges,
-                                       const uint32_t& begin_mask,
-                                       const uint32_t& end_mask,
-                                       const uint32_t& shrink_axes,
-                                       const uint32_t& new_axes_mask,
-                                       const Qnn_DataType_t& tensor_data_type,
-                                       const QnnQuantParamsWrapper& quantize_param,
-                                       bool do_op_validation,
-                                       bool is_for_input,
-                                       bool is_for_output) const;
+                              const OrtNodeUnit& node_unit,
+                              const std::string& input_name,
+                              const std::string& output_name,
+                              const std::vector<uint32_t>& input_shape,
+                              const std::vector<uint32_t>& output_shape,
+                              const std::vector<std::vector<int32_t>>& ranges,
+                              const uint32_t& begin_mask,
+                              const uint32_t& end_mask,
+                              const uint32_t& shrink_axes,
+                              const uint32_t& new_axes_mask,
+                              const Qnn_DataType_t& tensor_data_type,
+                              const QnnQuantParamsWrapper& quantize_param,
+                              bool do_op_validation,
+                              bool is_for_input,
+                              bool is_for_output) const;
 };
 
 Ort::Status GRUOpBuilder::AddStridedSlice(QnnModelWrapper& qnn_model_wrapper,
-                                                   const OrtNodeUnit& node_unit,
-                                                   const std::string& input_name,
-                                                   const std::string& output_name,
-                                                   const std::vector<uint32_t>& input_shape,
-                                                   const std::vector<uint32_t>& output_shape,
-                                                   const std::vector<std::vector<int32_t>>& ranges,
-                                                   const uint32_t& begin_mask,
-                                                   const uint32_t& end_mask,
-                                                   const uint32_t& shrink_axes,
-                                                   const uint32_t& new_axes_mask,
-                                                   const Qnn_DataType_t& tensor_data_type,
-                                                   const QnnQuantParamsWrapper& quantize_param,
-                                                   bool do_op_validation,
-                                                   bool is_for_input,
-                                                   bool is_for_output) const {
+                                          const OrtNodeUnit& node_unit,
+                                          const std::string& input_name,
+                                          const std::string& output_name,
+                                          const std::vector<uint32_t>& input_shape,
+                                          const std::vector<uint32_t>& output_shape,
+                                          const std::vector<std::vector<int32_t>>& ranges,
+                                          const uint32_t& begin_mask,
+                                          const uint32_t& end_mask,
+                                          const uint32_t& shrink_axes,
+                                          const uint32_t& new_axes_mask,
+                                          const Qnn_DataType_t& tensor_data_type,
+                                          const QnnQuantParamsWrapper& quantize_param,
+                                          bool do_op_validation,
+                                          bool is_for_input,
+                                          bool is_for_output) const {
   if (qnn_model_wrapper.IsQnnTensorWrapperExist(output_name)) {
     return Ort::Status();
   }
@@ -85,32 +85,32 @@ Ort::Status GRUOpBuilder::AddStridedSlice(QnnModelWrapper& qnn_model_wrapper,
 
   const std::string node_name = utils::UniqueNameGenerator().New(node_unit, QNN_OP_STRIDED_SLICE);
   std::vector<uint32_t> ranges_data;
-    for (size_t i = 0; i < ranges.size(); i++) {
-      for (size_t j = 0; j < 3; j++) {
-        ranges_data.emplace_back(SafeInt<uint32_t>(ranges[i][j]));
-      }
+  for (size_t i = 0; i < ranges.size(); i++) {
+    for (size_t j = 0; j < 3; j++) {
+      ranges_data.emplace_back(SafeInt<uint32_t>(ranges[i][j]));
     }
-    QnnParamWrapper ranges_param_wrapper(node_unit.Index(), node_name, QNN_OP_STRIDED_SLICE_PARAM_RANGES,
-                                         {static_cast<uint32_t>(ranges.size()), 3}, std::move(ranges_data), true);
-    std::vector<std::string> param_names = {ranges_param_wrapper.GetParamTensorName()};
-    qnn_model_wrapper.AddParamWrapper(std::move(ranges_param_wrapper));
+  }
+  QnnParamWrapper ranges_param_wrapper(node_unit.Index(), node_name, QNN_OP_STRIDED_SLICE_PARAM_RANGES,
+                                       {static_cast<uint32_t>(ranges.size()), 3}, std::move(ranges_data), true);
+  std::vector<std::string> param_names = {ranges_param_wrapper.GetParamTensorName()};
+  qnn_model_wrapper.AddParamWrapper(std::move(ranges_param_wrapper));
 
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, begin_mask,
-                                           QNN_OP_STRIDED_SLICE_PARAM_BEGIN_MASK, param_names));
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, end_mask,
-                                           QNN_OP_STRIDED_SLICE_PARAM_END_MASK, param_names));
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, shrink_axes,
-                                           QNN_OP_STRIDED_SLICE_PARAM_SHRINK_AXES, param_names));
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, new_axes_mask,
-                                           QNN_OP_STRIDED_SLICE_PARAM_NEW_AXES_MASK, param_names));
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, begin_mask,
+                                         QNN_OP_STRIDED_SLICE_PARAM_BEGIN_MASK, param_names));
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, end_mask,
+                                         QNN_OP_STRIDED_SLICE_PARAM_END_MASK, param_names));
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, shrink_axes,
+                                         QNN_OP_STRIDED_SLICE_PARAM_SHRINK_AXES, param_names));
+  RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_name, new_axes_mask,
+                                         QNN_OP_STRIDED_SLICE_PARAM_NEW_AXES_MASK, param_names));
 
-    QnnTensorWrapper output_tensorwrapper(output_name, is_for_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE,
-                                          tensor_data_type, quantize_param.Copy(), std::vector<uint32_t>(output_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)),
-                  "Failed to add output tensor for inserted StridedSlice.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_STRIDED_SLICE,
-                                                  {input_name}, {output_name}, std::move(param_names), do_op_validation),
-                  "Failed to create manually inserted Qnn StridedSlice node.");
+  QnnTensorWrapper output_tensorwrapper(output_name, is_for_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE,
+                                        tensor_data_type, quantize_param.Copy(), std::vector<uint32_t>(output_shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensorwrapper)),
+                "Failed to add output tensor for inserted StridedSlice.");
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_STRIDED_SLICE,
+                                                {input_name}, {output_name}, std::move(param_names), do_op_validation),
+                "Failed to create manually inserted Qnn StridedSlice node.");
   return Ort::Status();
 }
 
@@ -235,12 +235,12 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
         utils::UniqueNameGenerator().New(input_names[1], "_input_to_new_gate_weight_" + direction)};
     for (size_t i = 0; i < 3; i++) {
       RETURN_IF_ERROR(AddStridedSlice(qnn_model_wrapper, node_unit, input_names[1], names[i],
-                                               input_tensor_infos[1].shape, {hidden_size, input_size},
-                                               {{direction_idx, direction_idx + 1, 1},
-                                                {begins[i] * hidden_size_sign, (begins[i] + 1) * hidden_size_sign, 1},
-                                                {0, SafeInt<int32_t>(input_size), 1}},
-                                               0, 0, 0b001U, 0, input_tensor_infos[1].qnn_data_type,
-                                               input_tensor_infos[1].quant_param, do_op_validation, false, false));
+                                      input_tensor_infos[1].shape, {hidden_size, input_size},
+                                      {{direction_idx, direction_idx + 1, 1},
+                                       {begins[i] * hidden_size_sign, (begins[i] + 1) * hidden_size_sign, 1},
+                                       {0, SafeInt<int32_t>(input_size), 1}},
+                                      0, 0, 0b001U, 0, input_tensor_infos[1].qnn_data_type,
+                                      input_tensor_infos[1].quant_param, do_op_validation, false, false));
       qnn_gru_input_names[qnn_idx[i]] = names[i];
     }
   }
@@ -254,12 +254,12 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
         utils::UniqueNameGenerator().New(input_names[2], "_recurrent_to_new_gate_weight_" + direction)};
     for (size_t i = 0; i < 3; i++) {
       RETURN_IF_ERROR(AddStridedSlice(qnn_model_wrapper, node_unit, input_names[2], names[i],
-                                               input_tensor_infos[2].shape, {hidden_size, hidden_size},
-                                               {{direction_idx, direction_idx + 1, 1},
-                                                {begins[i] * hidden_size_sign, (begins[i] + 1) * hidden_size_sign, 1},
-                                                {0, hidden_size_sign, 1}},
-                                               0, 0, 0b001U, 0, input_tensor_infos[2].qnn_data_type,
-                                               input_tensor_infos[2].quant_param, do_op_validation, false, false));
+                                      input_tensor_infos[2].shape, {hidden_size, hidden_size},
+                                      {{direction_idx, direction_idx + 1, 1},
+                                       {begins[i] * hidden_size_sign, (begins[i] + 1) * hidden_size_sign, 1},
+                                       {0, hidden_size_sign, 1}},
+                                      0, 0, 0b001U, 0, input_tensor_infos[2].qnn_data_type,
+                                      input_tensor_infos[2].quant_param, do_op_validation, false, false));
       qnn_gru_input_names[qnn_idx[i]] = names[i];
     }
   }
@@ -277,11 +277,11 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
           utils::UniqueNameGenerator().New(input_names[3], "_recurrent_to_new_gate_bias_" + direction)};
       for (size_t i = 0; i < 6; i++) {
         RETURN_IF_ERROR(AddStridedSlice(qnn_model_wrapper, node_unit, input_names[3], names[i],
-                                                 input_tensor_infos[3].shape, {hidden_size},
-                                                 {{direction_idx, direction_idx + 1, 1},
-                                                  {begins[i] * hidden_size_sign, (begins[i] + 1) * hidden_size_sign, 1}},
-                                                 0, 0, 0b01U, 0, input_tensor_infos[3].qnn_data_type,
-                                                 input_tensor_infos[3].quant_param, do_op_validation, false, false));
+                                        input_tensor_infos[3].shape, {hidden_size},
+                                        {{direction_idx, direction_idx + 1, 1},
+                                         {begins[i] * hidden_size_sign, (begins[i] + 1) * hidden_size_sign, 1}},
+                                        0, 0, 0b01U, 0, input_tensor_infos[3].qnn_data_type,
+                                        input_tensor_infos[3].quant_param, do_op_validation, false, false));
         qnn_gru_input_names[qnn_idx[i]] = names[i];
       }
     } else {
@@ -328,7 +328,7 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
 
   // For CPU (time_major=false), transpose X upfront from [seq, batch, input] to [batch, seq, input]
   // so that per-step slicing produces [batch, 1, input] directly without per-step Reshapes.
-  std::string x_source = input_names[0];  // [seq, batch, input] for HTP, [batch, seq, input] for CPU
+  std::string x_source = input_names[0];                               // [seq, batch, input] for HTP, [batch, seq, input] for CPU
   std::vector<uint32_t> x_source_shape = input_tensor_infos[0].shape;  // [seq, batch, input]
   if (!time_major) {
     std::string x_transposed = utils::UniqueNameGenerator().New(input_names[0], "_transposed_" + direction);
@@ -365,9 +365,9 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
 
     std::string x_step = utils::UniqueNameGenerator().New(input_names[0], "_xs" + sfx);
     RETURN_IF_ERROR(AddStridedSlice(qnn_model_wrapper, node_unit, x_source, x_step,
-                                             x_source_shape, x_step_shape, x_ranges,
-                                             0, 0, 0, 0, input_tensor_infos[0].qnn_data_type,
-                                             input_tensor_infos[0].quant_param, do_op_validation, false, false));
+                                    x_source_shape, x_step_shape, x_ranges,
+                                    0, 0, 0, 0, input_tensor_infos[0].qnn_data_type,
+                                    input_tensor_infos[0].quant_param, do_op_validation, false, false));
     cell_inputs[0] = x_step;
 
     // initial_h for this step
