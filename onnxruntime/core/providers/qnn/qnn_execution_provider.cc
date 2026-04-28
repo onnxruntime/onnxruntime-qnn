@@ -2942,7 +2942,7 @@ void QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thr
   }
 
   // This ensures that rpc polling time is always set to a value
-  per_thread_htp_power_configs.rpc_polling_time = kDisableRpcPolling;
+  per_thread_htp_power_configs.rpc_polling_time = qnn::kDisableRpcPolling;
 
   if (qnn::HtpPerformanceMode::kHtpDefault != dynamic_htp_performance_mode_) {
     // reset perf mode, rpc control latency and rpc polling time to dynamic perf mode values
