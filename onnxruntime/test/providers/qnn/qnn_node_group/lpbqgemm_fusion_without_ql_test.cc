@@ -122,6 +122,9 @@ TEST_F(QnnHTPBackendTests, DISABLED_LPBQGemmFusionWithoutQL) {
 #else
 TEST_F(QnnHTPBackendTests, LPBQGemmFusionWithoutQL) {
 #endif
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires arch > v68 for LPBQ Gemm Fusion Pattern";
+  }
   const std::filesystem::path json_qnn_graph_dir = "LPBQGemmFusionWithoutQL";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));

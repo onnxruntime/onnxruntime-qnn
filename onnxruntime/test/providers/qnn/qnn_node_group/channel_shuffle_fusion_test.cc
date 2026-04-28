@@ -99,6 +99,9 @@ ProviderOptions GetProviderOptions() {
 }  // namespace
 
 TEST_F(QnnHTPBackendTests, ChannelShuffleFusion) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires arch > v68 for Channels Shuffle Fusion Pattern";
+  }
   const std::filesystem::path json_qnn_graph_dir = "ChannelShuffleFusion";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));

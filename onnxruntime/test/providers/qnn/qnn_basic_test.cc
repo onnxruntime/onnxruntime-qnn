@@ -229,6 +229,9 @@ TEST(QnnEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
 // Tests that the QNN EP is registered when added via the public C++ API.
 // Loads a simple ONNX model that adds floats.
 TEST_F(QnnHTPBackendTests, TestAddEpUsingPublicApi) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   onnxruntime::ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnHtp.dll";
@@ -1161,8 +1164,10 @@ void VerifyFileExistsAndIsNonEmpty(const std::string& filepath) {
 }
 
 TEST_F(QnnHTPBackendTests, ProfilingTest) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   onnxruntime::ProviderOptions provider_options;
-
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 #if defined(_WIN32)
@@ -1196,8 +1201,10 @@ TEST_F(QnnHTPBackendTests, ProfilingTest) {
 }
 
 TEST_F(QnnHTPBackendTests, OptraceTest) {
+    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   onnxruntime::ProviderOptions provider_options;
-
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 #if defined(_WIN32)
@@ -1525,6 +1532,9 @@ static GetTestModelFn QDQBuildSigmoidForTensorNameTest(const TestInputDef<float>
 
 // Test that DLC I/O tensor names match original ONNX names when offload_graph_io_quantization=1.
 TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationTensorNameOverrides) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
+  }
   ProviderOptions provider_options;
 #if defined(_WIN32)
   provider_options["backend_path"] = "QnnHtp.dll";
