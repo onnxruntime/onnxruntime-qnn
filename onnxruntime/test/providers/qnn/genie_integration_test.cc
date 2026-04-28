@@ -39,11 +39,9 @@ class GenieSessionTest : public GenieBackendTests {
  protected:
   void SetUp() override {
     GenieBackendTests::SetUp();  // runs availability skip logic
-#if !defined(_WIN32) || (!defined(__aarch64__) && !defined(_M_ARM64))
     // The Genie execution pathway in the QNN EP is guarded to ARM64 Windows only
     // (see qnn_execution_provider.cc). Skip on all other platforms.
-    GTEST_SKIP() << "Genie integration tests require ARM64 Windows";
-#endif
+    QNN_SKIP_TEST_ON_NON_ARM64_WINDOWS("Genie integration tests require ARM64 Windows");
     env_ = std::make_unique<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "GenieSessionTest");
   }
 

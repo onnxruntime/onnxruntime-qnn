@@ -28,6 +28,7 @@
 // initialization, so ORT_API_MANUAL_INIT must NOT be set (all TUs must agree).
 #ifndef ORT_UNIT_TEST_BUILD
 #define ORT_API_MANUAL_INIT
+#endif  // !ORT_UNIT_TEST_BUILD
 
 // Public headers from ORT Core
 #include "onnxruntime_c_api.h"
@@ -35,7 +36,11 @@
 #include "onnxruntime_run_options_config_keys.h"
 #include "onnxruntime_session_options_config_keys.h"
 
+#ifndef ORT_UNIT_TEST_BUILD
 #include "core/providers/qnn/common/inlined_containers.h"
+#else
+#include "core/common/inlined_containers.h"
+#endif
 #include "core/providers/qnn/common/int4.h"
 
 #include "core/common/span_utils.h"

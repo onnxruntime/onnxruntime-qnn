@@ -1720,6 +1720,22 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
   } while (0)
 #endif
 
+// Skips the test on every platform EXCEPT native ARM64 Windows.
+// The Genie execution pathway in the QNN EP is only available on ARM64 Windows
+// (_WIN32 + _M_ARM64 or __aarch64__). All other platforms must skip.
+// Uses AlwaysTrue() guard to prevent MSVC C4702 (unreachable code) after the skip.
+#if !defined(_WIN32) || (!defined(__aarch64__) && !defined(_M_ARM64))
+#define QNN_SKIP_TEST_ON_NON_ARM64_WINDOWS(reason) \
+  if (::testing::internal::AlwaysTrue()) {         \
+    GTEST_SKIP() << (reason);                      \
+  } else                                           \
+    static_assert(true, "")
+#else
+#define QNN_SKIP_TEST_ON_NON_ARM64_WINDOWS(reason) \
+  do {                                             \
+  } while (0)
+#endif
+
 }  // namespace test
 }  // namespace onnxruntime
 

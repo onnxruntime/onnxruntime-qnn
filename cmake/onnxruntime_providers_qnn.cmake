@@ -47,6 +47,7 @@
 
   message(STATUS ONNXRUNTIME_APPLICATION_SOURCE_ROOT ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT})
   target_include_directories(onnxruntime_providers_qnn PRIVATE ${CMAKE_CURRENT_BINARY_DIR}
+                                                               ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}
                                                                ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session
                                                                ${onnxruntime_QNN_HOME}/include/QNN
                                                                ${onnxruntime_QNN_HOME}/include)

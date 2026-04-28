@@ -602,7 +602,8 @@ void QnnCPUBackendTests::SetUp() {
 }
 
 void GenieBackendTests::SetUp() {
-  // Tests always run in an environment with MockGenie; no availability probe needed.
+  // Base fixture — derived fixtures (e.g. GenieSessionTest) are responsible
+  // for platform and availability checks.
 }
 
 static BackendSupport GetIRSupport() {

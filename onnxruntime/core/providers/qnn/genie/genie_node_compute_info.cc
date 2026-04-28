@@ -5,7 +5,6 @@
 
 #include <filesystem>
 #include <memory>
-#include <regex>
 #include <sstream>
 
 #include "core/providers/qnn/qnn_execution_provider.h"
@@ -62,12 +61,13 @@ OrtStatus* GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_ptr,
                                     std::filesystem::is_directory(parent_folder_path, dir_ec) &&
                                     !dir_ec;
   if (parent_is_searchable) {
-    static const std::regex kExtensionPattern{"tmp.*\\.json"};
     try {
       for (const auto& entry : std::filesystem::directory_iterator(parent_folder_path)) {
         if (entry.is_regular_file()) {
           const std::string filename = entry.path().filename().string();
-          if (std::regex_match(filename, kExtensionPattern)) {
+          if (filename.rfind("tmp", 0) == 0 &&
+              filename.size() >= 5 &&
+              filename.compare(filename.size() - 5, 5, ".json") == 0) {
             extension_path = entry.path().string();
             break;
           }
