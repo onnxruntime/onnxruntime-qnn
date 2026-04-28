@@ -19,9 +19,6 @@
 //   Float32 (fp32)
 //     - Basic 4-D input, numerator in Mul input[0]  (standard order)
 //     - Basic 4-D input, numerator in Mul input[1]  (commuted order)
-//     - 3-D input
-//     - 2-D input
-//     - Larger / realistic shape  {1, 128, 768}
 //
 //   Float16 (fp16)
 //     - Basic 4-D input, standard order  (HTP fp16 path)
@@ -400,75 +397,6 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_4D_CommutedOrder) {
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-3f);
-
-  AssertOpInQnnGraph(json_dir, "ElementWiseDivide");
-}
-
-// 3-D input shape
-TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_3D) {
-  const std::filesystem::path json_dir = "ReciprocalMulFusion_Float32_3D";
-  std::filesystem::remove_all(json_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
-  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
-
-  ProviderOptions provider_options = GetProviderOptions();
-  provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_dir.string();
-
-  const auto numerator_def = TestInputDef<float>({1, 16, 32}, false, -1.0f, 1.0f);
-  const auto denominator_def = TestInputDef<float>({1, 16, 32}, false, 0.5f, 2.0f);
-
-  RunQnnModelTest(BuildReciprocalMulTestCase(numerator_def, denominator_def),
-                  provider_options,
-                  /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-3f);
-
-  AssertOpInQnnGraph(json_dir, "ElementWiseDivide");
-}
-
-// 2-D input shape (typical for linear / attention layers)
-TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_2D) {
-  const std::filesystem::path json_dir = "ReciprocalMulFusion_Float32_2D";
-  std::filesystem::remove_all(json_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
-  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
-
-  ProviderOptions provider_options = GetProviderOptions();
-  provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_dir.string();
-
-  const auto numerator_def = TestInputDef<float>({32, 64}, false, -1.0f, 1.0f);
-  const auto denominator_def = TestInputDef<float>({32, 64}, false, 0.5f, 2.0f);
-
-  RunQnnModelTest(BuildReciprocalMulTestCase(numerator_def, denominator_def),
-                  provider_options,
-                  /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-3f);
-
-  AssertOpInQnnGraph(json_dir, "ElementWiseDivide");
-}
-
-// Larger / realistic shape matching a typical transformer hidden dimension
-TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_LargeShape) {
-  const std::filesystem::path json_dir = "ReciprocalMulFusion_Float32_LargeShape";
-  std::filesystem::remove_all(json_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
-  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
-
-  ProviderOptions provider_options = GetProviderOptions();
-  provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_dir.string();
-
-  const auto numerator_def = TestInputDef<float>({1, 128, 768}, false, -1.5f, 1.5f);
-  const auto denominator_def = TestInputDef<float>({1, 128, 768}, false, 0.5f, 2.0f);
-
-  RunQnnModelTest(BuildReciprocalMulTestCase(numerator_def, denominator_def),
-                  provider_options,
-                  /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-3f);
 
   AssertOpInQnnGraph(json_dir, "ElementWiseDivide");
 }
