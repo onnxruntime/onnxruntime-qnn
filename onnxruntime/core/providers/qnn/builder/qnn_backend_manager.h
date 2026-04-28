@@ -184,7 +184,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
       bool load_from_cached_context,
       bool need_load_system_lib,
       bool share_ep_contexts,
-      bool enable_vtcm_backup_buffer_sharing,
+      int htp_share_resource_optimization,
       bool enable_file_mapped_weights,
       std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library,
       std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>>& context_bin_map,
@@ -582,7 +582,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   bool device_created_ = false;
   bool context_created_ = false;
   bool backend_setup_completed_ = false;
-  bool vtcm_backup_buffer_sharing_enabled_ = false;
+  int htp_share_resource_optimization_ = -1;
 
   uint32_t backend_id_ = QNN_BACKEND_ID_CPU;
   bool file_mapped_weights_enabled_ = false;
