@@ -834,8 +834,8 @@ void VerifyQDQOutput(const std::vector<Ort::Value>& cpu_qdq_outputs,
  */
 
 // Forward declarations for helper functions (defined after QnnHTPBackendTests class)
-template <typename QuantType>
 inline bool ShouldSkipGpuTestOnArm64(const ProviderOptions& qnn_options);
+template <typename QuantType>
 inline bool ShouldSkipQDQTestOnV68(const ProviderOptions& qnn_options);
 inline bool ShouldSkipFp16TestOnV68(const ProviderOptions& qnn_options);
 inline std::string GetCapitalizedBackendName(const ProviderOptions& qnn_options);
