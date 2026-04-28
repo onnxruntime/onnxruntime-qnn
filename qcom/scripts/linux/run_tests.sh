@@ -32,24 +32,37 @@ function run_model_test() {
     local suite="${2}"
     local test_path="${3:-testdata/${suite}}"
 
+    local model_log="${build_dir}/${suite}_model_tests.log"
+    local model_xml="${build_dir}/${suite}_model_tests.results.xml"
+
+    # Remove old log and XML files
+    if [ -f "${model_log}" ]; then
+        rm -f "${model_log}"
+    fi
+    if [ -f "${model_xml}" ]; then
+        rm -f "${model_xml}"
+    fi
+
     log_info "-=-=-=- Running onnx/models ${suite} tests with the ABI-stable EP plugin -=-=-=-"
 
-    # We don't use count_errors() because both sides of a piped command get run
-    # in subshells so ${errors} wouldn't get updated.
     set +e
     "${build_dir}/onnxruntime_plugin_ep_onnx_test" \
         -j 1 \
         --plugin_ep_libs "qnn|libonnxruntime_providers_qnn.so" \
         --plugin_eps qnn \
         -i "backend_type|${backend}" \
-        "${test_path}" 2>&1 | tee "${build_dir}/${suite}_model_tests.log"
-    rc=$?
+        "${test_path}" 2>&1 | tee "${model_log}"
+    test_result=$?
     set -e
 
-    "${python_exe}" "${REPO_ROOT}/qcom/scripts/all/model_test_log_to_junit_xml.py" \
-        "${build_dir}/${suite}_model_tests.log" > "${build_dir}/${suite}_model_tests.results.xml"
+    log_info "Test runner exit code: ${test_result}"
 
-    if [ ${rc} -ne 0 ]; then
+    if [ -f "${model_log}" ]; then
+        "${python_exe}" "${REPO_ROOT}/qcom/scripts/all/model_test_log_to_junit_xml.py" \
+            "${model_log}" > "${model_xml}"
+    fi
+
+    if [ ${test_result} -ne 0 ]; then
         errors=$(($errors+1))
     fi
 }
@@ -132,7 +145,7 @@ for runner in "${model_test_runners[@]}"; do
     "${runner}" cpu node "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node"
 
     if [ "$(uname -m)" != "aarch64" ]; then
-        "${runner}" cpu float32
+    "${runner}" cpu float32
         #TODO: [AISW-164203] - Known issues with QDQ model suite
         "${runner}" htp qdq
         log_debug "Scrubbing old context caches"
