@@ -132,15 +132,11 @@ Ort::Status GRUOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   }
 
   OrtNodeAttrHelper node_helper(node_unit);
-  const float clip = node_helper.Get("clip", (float)0.0);
-  RETURN_IF(clip != 0, "QNN EP doesn't support non-default clip for GRU.");
+  RETURN_IF(node_helper.HasAttr("clip"), "QNN EP doesn't support clip for GRU.");
   const std::vector<std::string> activations = node_helper.Get("activations", std::vector<std::string>{});
   RETURN_IF((activations.size() >= 2 && (activations[0] != "sigmoid" || activations[1] != "tanh")) ||
                 (activations.size() == 4 && (activations[2] != "sigmoid" || activations[3] != "tanh")),
             "QNN EP doesn't support non-default activations for GRU.");
-  const int64_t layout = node_helper.Get("layout", static_cast<int64_t>(0));
-  RETURN_IF_NOT(layout == 0,
-                ("QNN EP: Unsupport layout mode" + std::to_string(layout) + " for " + node_unit.Name()).c_str());
   return Ort::Status();
 }
 
@@ -195,10 +191,11 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   const int32_t hidden_size_sign = SafeInt<int32_t>(hidden_size);
   RETURN_IF_NOT(hidden_size > 0, "hidden size is not set for GRU");
   const int64_t linear_before_reset = node_helper.Get("linear_before_reset", static_cast<int64_t>(0));
+  const int64_t layout = node_helper.Get("layout", static_cast<int64_t>(0));
 
   const uint32_t input_size = input_tensor_infos[0].shape[2];
-  const uint32_t batch_size = input_tensor_infos[0].shape[1];
-  const uint32_t seq_length = input_tensor_infos[0].shape[0];
+  const uint32_t batch_size = layout == 0 ? input_tensor_infos[0].shape[1] : input_tensor_infos[0].shape[0];
+  const uint32_t seq_length = layout == 0 ? input_tensor_infos[0].shape[0] : input_tensor_infos[0].shape[1];
   const int32_t direction_idx = input_tensor_infos[1].shape[0] < 2 || direction == "forward" ? 0 : 1;
 
   // GRU parameters - shared by all unrolled time-step cells.
@@ -211,10 +208,10 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
                                          static_cast<uint32_t>(linear_before_reset),
                                          QNN_OP_GRU_PARAM_LINEAR_BEFORE_RESET, param_names));
-  // QNN CPU has a batch bug with time_major=true; QNN HTP has a batch bug with time_major=false.
-  // Pick time_major based on the backend to avoid the respective batch dimension bugs.
-  const bool is_npu_backend = qnn_model_wrapper.GetQnnBackendType() != QnnBackendType::CPU;
-  const bool time_major = is_npu_backend;  // true for HTP, false for CPU
+  // time_major: on CPU, always use false to work around its batch dimension bug with time_major=true.
+  // On other backends (HTP), follow the ONNX layout attribute: layout=0 -> true, layout=1 -> false.
+  const bool is_cpu_backend = qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::CPU;
+  const bool time_major = is_cpu_backend ? false : (layout == 0);
   RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), time_major,
                                      QNN_OP_GRU_PARAM_TIME_MAJOR, param_names));
 
