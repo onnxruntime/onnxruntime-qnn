@@ -155,4 +155,5 @@ for runner in "${model_test_runners[@]}"; do
 
 done
 
+log_info "Total Number of Errors: ${errors}"
 exit "${errors}"
