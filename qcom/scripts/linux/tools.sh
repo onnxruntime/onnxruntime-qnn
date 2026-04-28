@@ -88,6 +88,13 @@ function get_linux_oe_gcc112_toolchain_root() {
 }
 
 #
+# Get the directory containing lcov/genhtml, installing it if necessary.
+#
+function get_lcov_bindir() {
+    get_package_bindir lcov_$(get_host_platform)
+}
+
+#
 # Get the directory containing ninja, installing it if necessary.
 #
 function get_ninja_bindir() {

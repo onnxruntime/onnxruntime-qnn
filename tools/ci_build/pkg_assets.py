@@ -59,10 +59,10 @@ def get_qnn_asset_file_list():
             "Genie.dll",
             "HtpPrepare.dll",
             "libQnnHtpV68Skel.so",
-            "libqnnhtpv73.cat",
             "libQnnHtpV73Skel.so",
-            "libqnnhtpv81.cat",
             "libQnnHtpV81Skel.so",
+            "libqnnhtpv73.cat",
+            "libqnnhtpv81.cat",
             "onnxruntime_providers_qnn.dll",
             "QnnCpu.dll",
             "QnnGpu.dll",
@@ -203,14 +203,14 @@ def build_archive_asset(
                 "release-notes.md",
             ]
         )
-        doc_md_files = ["QNN-ExecutionProvider.md", "build.md", "development.md"]
+        doc_md_files = ["build.md", "development.md", "QNN-ExecutionProvider.md"]
         doc_png_files = [
-            "qnn_ep_quant_workflow.png",
-            "quantization_mixed_precision_1.png",
-            "quantization_mixed_precision_2.png",
             "PluginEP-final.png",
             "Q-icon-rgb-blue.png",
             "header.png",
+            "qnn_ep_quant_workflow.png",
+            "quantization_mixed_precision_1.png",
+            "quantization_mixed_precision_2.png",
         ]
         asset_files.extend(doc_md_files)
         asset_files.extend(doc_png_files)

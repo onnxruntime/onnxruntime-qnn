@@ -183,7 +183,7 @@ bool QnnModelWrapper::CreateQnnInputOutputTensors(const std::string& qnn_node_na
         it->second.SetResolvedTensorName(*name);
       }
       std::string error_string;
-      auto rt = it->second.CreateQnnGraphTensor(qnn_interface_, graph_, qnn_node_name, tensor_created_map_, error_string);
+      auto rt = it->second.CreateQnnGraphTensor(qnn_interface_, graph_, qnn_node_name, qnn_tensor_id_map_, error_string);
       if (!rt) {
         ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, error_string.c_str());
         return false;
@@ -210,7 +210,7 @@ bool QnnModelWrapper::CreateQnnParamTensors(const std::string& qnn_node_name,
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, ("Add parameter tensor: " + it->second.GetName()).c_str());
     if (!do_op_validation) {
       std::string error_string;
-      auto rt = it->second.CreateQnnGraphParam(qnn_interface_, graph_, qnn_node_name, tensor_created_map_, error_string);
+      auto rt = it->second.CreateQnnGraphParam(qnn_interface_, graph_, qnn_node_name, qnn_tensor_id_map_, error_string);
       if (!rt) {
         ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, error_string.c_str());
         return false;
@@ -595,7 +595,7 @@ bool QnnModelWrapper::RegisterGraphInputOutputInOrder() {
       if (it->second.GetTensorType() != expected_type) {
         continue;
       }
-      if (tensor_created_map_.count(name)) {
+      if (qnn_tensor_id_map_.count(name)) {
         continue;
       }
 
@@ -606,7 +606,7 @@ bool QnnModelWrapper::RegisterGraphInputOutputInOrder() {
       }
 
       std::string error;
-      if (!it->second.CreateQnnGraphTensor(qnn_interface_, graph_, io_type, tensor_created_map_, error)) {
+      if (!it->second.CreateQnnGraphTensor(qnn_interface_, graph_, io_type, qnn_tensor_id_map_, error)) {
         ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR,
                     (std::string("Failed to pre-register ") + io_type + ": " + name + ". " + error).c_str());
         return false;
@@ -931,9 +931,11 @@ Ort::Status QnnModelWrapper::AddTransposeNode(size_t node_index,
   // we don't need this right now.
   RETURN_IF(quantize_param.IsPerChannel(),
             "Do not support inserted Transpose nodes with per-channel quantization");
-  // No need to add this for output nodes as it is added as output tensor for previous node
-  if (is_for_input) {
-    Qnn_TensorType_t tensor_type = QNN_TENSOR_TYPE_APP_WRITE;
+  // During GetCapability, upstream node groups that validate via ValidateQnnNode() do not
+  // populate model_tensors_map_, so the input wrapper may be missing. Register a NATIVE
+  // fallback; AddTensorWrapper is idempotent, so Compose-path registration still wins.
+  if (is_for_input || !IsQnnTensorWrapperExist(input_name)) {
+    Qnn_TensorType_t tensor_type = is_for_input ? QNN_TENSOR_TYPE_APP_WRITE : QNN_TENSOR_TYPE_NATIVE;
     QnnTensorWrapper input_tensorwrapper(input_name,
                                          tensor_type,
                                          tensor_data_type,

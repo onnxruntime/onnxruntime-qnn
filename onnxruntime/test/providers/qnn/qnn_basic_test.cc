@@ -2276,6 +2276,86 @@ TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInputOffloadGraph
   }
 }
 
+// Returns a model where a single graph input fans out to two separate Q->DQ chains,
+// both feeding into an Add node. This triggers the duplicate-name scenario in
+// RegisterGraphInputOutputInOrder when offload_graph_io_quantization=1.
+static GetTestModelFn BuildGraphInputFanoutQDQModel() {
+  return [](ModelTestBuilder& builder) {
+    builder.graph_->set_name("graph_input_fanout_qdq_graph");
+
+    MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 3}, false, {0.1f, 0.2f, 0.3f}));
+    builder.MakeInitializer<float>("scale", {}, {1.0f / 255.0f});
+    builder.MakeInitializer<uint8_t>("zero_point", {}, {0});
+
+    // Two Q->DQ pairs on the same graph input. With offload_graph_io_quantization=1,
+    // both Q nodes stay on CPU and both DQ outputs are registered as QNN graph inputs
+    // with the override name "input" — triggering the duplicate-name id-assignment bug.
+    builder.AddNode("q_a", "QuantizeLinear", {"input", "scale", "zero_point"}, {"q_a_out"}, kOnnxDomain);
+    builder.AddNode("dq_a", "DequantizeLinear", {"q_a_out", "scale", "zero_point"}, {"dq_a_out"}, kOnnxDomain);
+
+    builder.AddNode("q_b", "QuantizeLinear", {"input", "scale", "zero_point"}, {"q_b_out"}, kOnnxDomain);
+    builder.AddNode("dq_b", "DequantizeLinear", {"q_b_out", "scale", "zero_point"}, {"dq_b_out"}, kOnnxDomain);
+
+    builder.AddNode("add", "Add", {"dq_a_out", "dq_b_out"}, {"add_out"}, kOnnxDomain);
+
+    // Q->DQ pair on the graph output. With offload_graph_io_quantization=1,
+    // this DQ node stays on CPU and add_out is registered as a QNN graph output.
+    builder.AddNode("q_out", "QuantizeLinear", {"add_out", "scale", "zero_point"}, {"q_out_out"}, kOnnxDomain);
+    builder.AddNode("dq_out", "DequantizeLinear", {"q_out_out", "scale", "zero_point"}, {"output"}, kOnnxDomain);
+    builder.MakeOutput("output");
+  };
+}
+
+// Tests that a graph input fanning out to multiple QDQ pairs with offload_graph_io_quantization=1
+// composes without error. Two bugs were fixed:
+//   1. CreateTensorInQnnGraph returned early on a duplicate override name, leaving the second
+//      DQ tensor with QNN tensor id=0 (never set).
+//   2. GetGraphInputOutputTensorWrapper must deduplicate wrappers sharing the same override name
+//      to avoid passing more inputs to graphExecute than the QNN graph has APP_WRITE tensors.
+TEST_F(QnnCPUBackendTests, OffloadGraphIoQuantizationMultipleQDQPairsOnGraphInput) {
+  std::unique_ptr<ModelAndBuilder> model;
+  CreateModelInMemory(model, BuildGraphInputFanoutQDQModel(), "graph_input_fanout_qdq", 18);
+
+  Ort::SessionOptions so;
+  so.SetGraphOptimizationLevel(ORT_DISABLE_ALL);
+
+  onnxruntime::ProviderOptions options;
+#if defined(_WIN32)
+  options["backend_path"] = "QnnCpu.dll";
+#else
+  options["backend_path"] = "libQnnCpu.so";
+#endif
+  options["offload_graph_io_quantization"] = "1";
+
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+
+  Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), so);
+
+  // Run inference: verify output ≈ 2 * input (two identical DQ branches added together).
+  std::vector<float> input_data = {0.1f, 0.2f, 0.3f};
+  std::array<int64_t, 2> input_shape = {1, 3};
+  auto memory_info = Ort::MemoryInfo::CreateCpu(OrtDeviceAllocator, OrtMemTypeCPU);
+  std::vector<Ort::Value> ort_inputs;
+  ort_inputs.emplace_back(Ort::Value::CreateTensor<float>(
+      memory_info, input_data.data(), input_data.size(), input_shape.data(), input_shape.size()));
+
+  const char* input_name = "input";
+  const char* output_name = "output";
+  std::vector<Ort::Value> ort_outputs = session.Run(
+      Ort::RunOptions{nullptr}, &input_name, ort_inputs.data(), 1, &output_name, 1);
+
+  ASSERT_EQ(ort_outputs.size(), 1u);
+  const float* output_data = ort_outputs[0].GetTensorData<float>();
+  EXPECT_NEAR(output_data[0], 2.0f * input_data[0], 0.02f);
+  EXPECT_NEAR(output_data[1], 2.0f * input_data[1], 0.02f);
+  EXPECT_NEAR(output_data[2], 2.0f * input_data[2], 0.02f);
+}
+
 // Returns a function that builds a model with 3 Relu ops to test I/O ordering.
 static GetTestModelFn BuildMultiReluModelForIOOrderTest() {
   return [](ModelTestBuilder& builder) {
