@@ -659,7 +659,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_QDQ_U8) {
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
-  auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
+  auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -10.0f, 10.0f);
 
   TestQDQModelAccuracy(BuildGeluPattern1TestCase(input_def),
                        BuildQDQGeluPattern1TestCase<uint8_t>(input_def),
@@ -681,7 +681,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_QDQ_U8) {
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
-  auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
+  auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -10.0f, 10.0f);
 
   TestQDQModelAccuracy(BuildGeluPattern2TestCase(input_def),
                        BuildQDQGeluPattern2TestCase<uint8_t>(input_def),
@@ -703,7 +703,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern3_QDQ_U8) {
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
-  auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
+  auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -10.0f, 10.0f);
 
   TestQDQModelAccuracy(BuildGeluPattern3TestCase(input_def),
                        BuildQDQGeluPattern3TestCase<uint8_t>(input_def),

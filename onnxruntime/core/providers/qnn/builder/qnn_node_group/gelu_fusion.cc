@@ -132,17 +132,12 @@ bool TryMatchErfAddPattern2(
     return false;
   }
 
-  const auto& mul_outputs = mul_after_add_node_unit->Outputs();
-  if (mul_outputs.empty()) {
-    return false;
-  }
-
-  const OrtNodeUnit* final_mul_node_unit = GetOnlyChildOfOutput(ctx.qnn_model_wrapper,
-                                                                *mul_after_add_node_unit,
-                                                                mul_outputs[0],
-                                                                ctx.node_to_node_unit,
-                                                                ctx.node_unit_to_qnn_node_group);
-  if (final_mul_node_unit == nullptr || final_mul_node_unit->OpType() != "Mul") {
+  const OrtNodeUnit* final_mul_node_unit = GetChildNodeUnitAllowQdq(ctx.qnn_model_wrapper,
+                                                                    *mul_after_add_node_unit,
+                                                                    "Mul",
+                                                                    ctx.node_to_node_unit,
+                                                                    ctx.node_unit_to_qnn_node_group);
+  if (final_mul_node_unit == nullptr) {
     return false;
   }
 
@@ -162,18 +157,13 @@ bool TryMatchErfMulPattern(
   //               |                                           v
   //            [root] --> Div -----> Erf --> Mul --> Add --> Mul ==>
   //                      (B=1.4142...)      (0.5)   (0.5)
-  const auto& erf_outputs = erf_node_unit.Outputs();
-  if (erf_outputs.empty()) {
-    return false;
-  }
-
   // Erf should have a Mul child
-  const OrtNodeUnit* mul_after_erf_node_unit = GetOnlyChildOfOutput(ctx.qnn_model_wrapper,
-                                                                    erf_node_unit,
-                                                                    erf_outputs[0],
-                                                                    ctx.node_to_node_unit,
-                                                                    ctx.node_unit_to_qnn_node_group);
-  if (mul_after_erf_node_unit == nullptr || mul_after_erf_node_unit->OpType() != "Mul") {
+  const OrtNodeUnit* mul_after_erf_node_unit = GetChildNodeUnitAllowQdq(ctx.qnn_model_wrapper,
+                                                                        erf_node_unit,
+                                                                        "Mul",
+                                                                        ctx.node_to_node_unit,
+                                                                        ctx.node_unit_to_qnn_node_group);
+  if (mul_after_erf_node_unit == nullptr) {
     return false;
   }
 
@@ -183,32 +173,22 @@ bool TryMatchErfMulPattern(
   }
 
   // Mul must have an Add child
-  const auto& mul_outputs = mul_after_erf_node_unit->Outputs();
-  if (mul_outputs.empty()) {
-    return false;
-  }
-
-  const OrtNodeUnit* add_node_unit = GetOnlyChildOfOutput(ctx.qnn_model_wrapper,
-                                                          *mul_after_erf_node_unit,
-                                                          mul_outputs[0],
-                                                          ctx.node_to_node_unit,
-                                                          ctx.node_unit_to_qnn_node_group);
-  if (add_node_unit == nullptr || add_node_unit->OpType() != "Add") {
+  const OrtNodeUnit* add_node_unit = GetChildNodeUnitAllowQdq(ctx.qnn_model_wrapper,
+                                                              *mul_after_erf_node_unit,
+                                                              "Add",
+                                                              ctx.node_to_node_unit,
+                                                              ctx.node_unit_to_qnn_node_group);
+  if (add_node_unit == nullptr) {
     return false;
   }
 
   // Add must have a Mul child (final node)
-  const auto& add_outputs = add_node_unit->Outputs();
-  if (add_outputs.empty()) {
-    return false;
-  }
-
-  const OrtNodeUnit* final_mul_node_unit = GetOnlyChildOfOutput(ctx.qnn_model_wrapper,
-                                                                *add_node_unit,
-                                                                add_outputs[0],
-                                                                ctx.node_to_node_unit,
-                                                                ctx.node_unit_to_qnn_node_group);
-  if (final_mul_node_unit == nullptr || final_mul_node_unit->OpType() != "Mul") {
+  const OrtNodeUnit* final_mul_node_unit = GetChildNodeUnitAllowQdq(ctx.qnn_model_wrapper,
+                                                                    *add_node_unit,
+                                                                    "Mul",
+                                                                    ctx.node_to_node_unit,
+                                                                    ctx.node_unit_to_qnn_node_group);
+  if (final_mul_node_unit == nullptr) {
     return false;
   }
 
@@ -273,17 +253,6 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
   }
 
   // Determine which GELU pattern variant by checking Erf's child node type
-  const auto& erf_outputs = erf_node_unit.Outputs();
-  if (erf_outputs.empty()) {
-    return nullptr;
-  }
-
-  const OrtNodeUnit* erf_child_node_unit = GetOnlyChildOfOutput(qnn_model_wrapper, erf_node_unit, erf_outputs[0],
-                                                                node_to_node_unit, node_unit_to_qnn_node_group);
-  if (erf_child_node_unit == nullptr) {
-    return nullptr;
-  }
-
   const std::string& root_input_name = div_inputs[0].name;
   const GeluPatternMatchContext match_ctx{qnn_model_wrapper,
                                           node_to_node_unit,
@@ -293,40 +262,39 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
   GeluPatternMatchResult pattern_match;
   bool is_match = false;
 
-  if (erf_child_node_unit->OpType() == "Mul") {
+  // Try ErfMul Pattern first (Erf -> Mul -> Add -> Mul)
+  const OrtNodeUnit* erf_child_mul = GetChildNodeUnitAllowQdq(qnn_model_wrapper, erf_node_unit, "Mul",
+                                                              node_to_node_unit, node_unit_to_qnn_node_group);
+  if (erf_child_mul != nullptr) {
     // ErfMul Pattern3: Erf -> Mul -> Add -> Mul
     // Structure: x * (Erf(x / sqrt2) * 0.5 + 0.5)
     is_match = TryMatchErfMulPattern(div_node_unit,
                                      erf_node_unit,
                                      match_ctx,
                                      pattern_match);
-  } else if (erf_child_node_unit->OpType() == "Add") {
-    // ErfAdd Patterns 1 or 2: Erf -> Add -> Mul [-> Mul]
-    // Structure: x * 0.5 * (Erf(x / sqrt2) + 1) [with variations in Mul ordering]
-    const OrtNodeUnit* add_node_unit = erf_child_node_unit;
+  }
 
-    const auto& add_inputs = add_node_unit->Inputs();
-    if (add_inputs.size() < 2) {
-      return nullptr;
+  // Try ErfAdd patterns if ErfMul didn't match (Erf -> Add -> Mul [-> Mul])
+  if (!is_match) {
+    const OrtNodeUnit* erf_child_add = GetChildNodeUnitAllowQdq(qnn_model_wrapper, erf_node_unit, "Add",
+                                                                node_to_node_unit, node_unit_to_qnn_node_group);
+    if (erf_child_add != nullptr) {
+      // ErfAdd Patterns 1 or 2: Erf -> Add -> Mul [-> Mul]
+      // Structure: x * 0.5 * (Erf(x / sqrt2) + 1) [with variations in Mul ordering]
+      const auto& add_inputs = erf_child_add->Inputs();
+      if (add_inputs.size() >= 2) {
+        const OrtNodeUnit* mul_node_unit = GetChildNodeUnitAllowQdq(qnn_model_wrapper, *erf_child_add, "Mul",
+                                                                    node_to_node_unit, node_unit_to_qnn_node_group);
+        if (mul_node_unit != nullptr) {
+          is_match = TryMatchErfAddPatterns(div_node_unit,
+                                            erf_node_unit,
+                                            erf_child_add,
+                                            mul_node_unit,
+                                            match_ctx,
+                                            pattern_match);
+        }
+      }
     }
-
-    const auto& add_outputs = add_node_unit->Outputs();
-    if (add_outputs.empty()) {
-      return nullptr;
-    }
-
-    const OrtNodeUnit* mul_node_unit = GetOnlyChildOfOutput(qnn_model_wrapper, *add_node_unit, add_outputs[0],
-                                                            node_to_node_unit, node_unit_to_qnn_node_group);
-    if (mul_node_unit == nullptr || mul_node_unit->OpType() != "Mul") {
-      return nullptr;
-    }
-
-    is_match = TryMatchErfAddPatterns(div_node_unit,
-                                      erf_node_unit,
-                                      add_node_unit,
-                                      mul_node_unit,
-                                      match_ctx,
-                                      pattern_match);
   }
 
   if (!is_match) {
