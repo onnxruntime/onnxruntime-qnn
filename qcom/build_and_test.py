@@ -528,7 +528,7 @@ class TaskLibrary:
 
     if is_host_linux() and is_host_x86_64():
 
-        @public_task("Build with code coverage and generate HTML report (Linux x86_64, always Debug)")
+        @public_task("Build with code coverage and generate HTML report (Linux x86_64, RelWithDebInfo)")
         @depends(["create_venv"])
         def coverage_linux_x86_64(self, plan: Plan) -> str:
             build_dir = REPO_ROOT / "build" / "linux-x86_64"
@@ -537,11 +537,11 @@ class TaskLibrary:
                     "Coverage build, test, and report",
                     [
                         BuildEpLinuxTask(
-                            "Building ONNX Runtime for Linux (Debug + coverage)",
+                            "Building ONNX Runtime for Linux (RelWithDebInfo + coverage)",
                             self.__venv_path,
                             "linux",
                             "x86_64",
-                            "Debug",
+                            "RelWithDebInfo",
                             self.__target_py_version,
                             self.__ort_prebuilt_root,
                             self.__qairt_sdk_root,

@@ -19,7 +19,7 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Run Coverage (Linux x86_64, always Debug)
+      - name: Run Coverage (Linux x86_64, always RelWithDebInfo)
         run: |
           # Python version does not affect C++ code coverage results.
           # 3.10 matches DEFAULT_PYTHON_LINUX in qcom/ep_build/util.py.
@@ -33,4 +33,4 @@ jobs:
         with:
           name: "coverage-linux-x86_64-${{ github.sha }}"
           retention-days: 7
-          path: build/linux-x86_64/Debug/coverage/
+          path: build/linux-x86_64/RelWithDebInfo/coverage/

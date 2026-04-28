@@ -221,6 +221,8 @@ if(ENABLE_COVERAGE)
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         target_compile_options(onnxruntime_providers_qnn PRIVATE
             --coverage
+            # -g and -O0 are explicit so that debug info and no optimization are
+            # always present regardless of the CMake build type.
             -g
             -O0
             -fprofile-abs-path
