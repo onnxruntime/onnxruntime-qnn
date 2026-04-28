@@ -9,6 +9,7 @@
 #include <functional>
 #include <mutex>
 #include <numeric>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <string_view>

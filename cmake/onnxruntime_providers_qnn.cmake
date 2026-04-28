@@ -9,11 +9,6 @@
        "${ONNXRUNTIME_ROOT}/core/providers/qnn/*.cc"
   )
 
-  # Exclude the simulation EP factory files from the build
-  list(REMOVE_ITEM onnxruntime_providers_qnn_ep_srcs
-       "${ONNXRUNTIME_ROOT}/core/providers/qnn/qnn_provider_factory_simulation.h"
-       "${ONNXRUNTIME_ROOT}/core/providers/qnn/qnn_provider_factory_simulation.cc")
-
   function(extract_qnn_sdk_version_from_yaml QNN_SDK_YAML_FILE QNN_VERSION_OUTPUT)
     file(READ "${QNN_SDK_YAML_FILE}" QNN_SDK_YAML_CONTENT)
     # Match a line of text like "version: 1.33.2"
@@ -52,10 +47,9 @@
 
   message(STATUS ONNXRUNTIME_APPLICATION_SOURCE_ROOT ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT})
   target_include_directories(onnxruntime_providers_qnn PRIVATE ${CMAKE_CURRENT_BINARY_DIR}
-                                                                  ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT}
-                                                                  ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}
-                                                                  ${onnxruntime_QNN_HOME}/include/QNN
-                                                                  ${onnxruntime_QNN_HOME}/include)
+                                                               ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session
+                                                               ${onnxruntime_QNN_HOME}/include/QNN
+                                                               ${onnxruntime_QNN_HOME}/include)
 
   # Set preprocessor definitions used in onnxruntime_providers_qnn.rc
   if(WIN32)
@@ -79,6 +73,14 @@
   elseif(WIN32)
     set_property(TARGET onnxruntime_providers_qnn APPEND_STRING PROPERTY LINK_FLAGS
                   "-DEF:${ONNXRUNTIME_ROOT}/core/providers/qnn/symbols.def")
+    # Generate PDB for Release builds.
+    # /DEBUG tells the linker to emit a .pdb; /OPT:REF and /OPT:ICF re-enable
+    # linker optimizations that /DEBUG implicitly turns off via /OPT:NOREF /OPT:NOICF.
+    # Note: When developers use this PDB for crash analysis,
+    # please be aware that ICF may cause symbol aliasing.
+    target_link_options(onnxruntime_providers_qnn PRIVATE
+      "$<$<CONFIG:Release>:/DEBUG;/OPT:REF;/OPT:ICF>"
+    )
   else()
     message(FATAL_ERROR "onnxruntime_providers_qnn unknown platform, need to specify shared library exports for it")
   endif()

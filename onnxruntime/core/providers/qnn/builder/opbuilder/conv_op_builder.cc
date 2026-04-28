@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include <gsl/gsl>
+
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
@@ -919,8 +921,8 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                          kernel_shape[dim], dilations[dim], output_shape_attribute_value[dim]);
         DistributePadding(pad_type, total_pad, pad_head, pad_tail);
 
-        pads[dim] = narrow<uint32_t>(pad_head);
-        pads[rank + dim] = narrow<uint32_t>(pad_tail);
+        pads[dim] = gsl::narrow<uint32_t>(pad_head);
+        pads[rank + dim] = gsl::narrow<uint32_t>(pad_tail);
       }
 
     } else if (auto_pad != "NOTSET") {  // Case: auto_pad is SAME_UPPER/LOWER/VALID, no output_shape attribute
@@ -950,8 +952,8 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
                                                 kernel_shape[dim], dilations[dim], output_dims[dim]);
           qnn::DistributePadding(pad_type, total_pad, pad_head, pad_tail);
         }
-        pads[dim] = narrow<uint32_t>(pad_head);
-        pads[rank + dim] = narrow<uint32_t>(pad_tail);
+        pads[dim] = gsl::narrow<uint32_t>(pad_head);
+        pads[rank + dim] = gsl::narrow<uint32_t>(pad_tail);
       }
     } else {
       // Handle 1D conv by setting padding for height to 0.
@@ -967,7 +969,7 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     }
 
     ReArrangePads(pads);
-    uint32_t pad_size = narrow<uint32_t>(pads.size() / 2);
+    uint32_t pad_size = gsl::narrow<uint32_t>(pads.size() / 2);
     QnnParamWrapper pad_amount_paramwrapper(node_unit.Index(), node_unit.Name(), QNN_OP_CONV_2D_PARAM_PAD_AMOUNT,
                                             {pad_size, 2}, std::move(pads));
     param_tensor_names.push_back(pad_amount_paramwrapper.GetParamTensorName());

@@ -58,7 +58,7 @@ static Ort::Status SetAlphaByte(Qnn_DataType_t qnn_data_type,
                                 float alpha_value) {
   switch (qnn_data_type) {
     case QNN_DATATYPE_FLOAT_16: {
-      MLFloat16 zero_fp16 = static_cast<MLFloat16>(alpha_value);
+      Ort::Float16_t zero_fp16 = static_cast<Ort::Float16_t>(alpha_value);
       uint16_t cast_value = *reinterpret_cast<uint16_t*>(&zero_fp16);
       alpha_bytes.resize(sizeof(uint16_t));
       std::memcpy(alpha_bytes.data(), &cast_value, sizeof(uint16_t));

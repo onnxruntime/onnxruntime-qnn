@@ -38,7 +38,7 @@ class BuildEpDockerTask(CompositeTask):
         target_py_version: TargetPyVersionT | None,
         qairt_sdk_root: Path | None,
         ccache_root: Path | None,
-        build_zip: bool = False,
+        build_archive: bool = False,
     ) -> None:
         dist_rel_dir = Path("build") / f"linux-{target_arch}" / config / "dist"
 
@@ -58,7 +58,7 @@ class BuildEpDockerTask(CompositeTask):
                     venv_path=DOCKER_REPO_ROOT / "build" / "venv.build",
                     qairt_sdk_root=qairt_sdk_root,
                     ccache_root=ccache_root,
-                    build_zip=build_zip,
+                    build_archive=build_archive,
                 ),
             ],
         )
@@ -80,7 +80,7 @@ class BuildEpLinuxTask(BashScriptsWithVenvTask):
         mode: str,
         extra_args: Iterable[str] | None = None,
         env: Mapping[str, str] | None = None,
-        build_zip: bool = False,
+        build_archive: bool = False,
     ) -> None:
         cmd = [
             str(REPO_ROOT / "qcom" / "scripts" / "linux" / "build.sh"),
@@ -99,8 +99,8 @@ class BuildEpLinuxTask(BashScriptsWithVenvTask):
         if qairt_sdk_root is not None:
             cmd.append(f"--qairt-sdk-root={qairt_sdk_root}")
 
-        if build_zip:
-            cmd.append("--build-tgz")
+        if build_archive:
+            cmd.append("--build-archive")
 
         if extra_args is not None:
             cmd.extend(extra_args)
@@ -121,7 +121,7 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
         mode: str,
         build_as_x: bool = False,
         build_nuget: bool = False,
-        build_zip: bool = False,
+        build_archive: bool = False,
     ) -> None:
         cmd = [
             str(REPO_ROOT / "qcom" / "scripts" / "windows" / "build.ps1"),
@@ -149,8 +149,8 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
         if build_nuget:
             cmd.extend(["-BuildNuget", "1"])
 
-        if build_zip:
-            cmd.extend(["-BuildZip", "1"])
+        if build_archive:
+            cmd.extend(["-BuildArchive", "1"])
 
         super().__init__(group_name, [cmd], env=ort_build_env_vars())
 

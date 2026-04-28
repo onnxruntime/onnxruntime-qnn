@@ -292,14 +292,6 @@ class OrtMatMulNodeGroupSelector : public OrtNodeGroupSelector {
   bool allow_4bit_;
 };
 
-// Convert "1 DQ node for input B -> MatMul" to "MatMulNBits"
-class OrtDQMatMulNodeGroupSelector : public OrtNodeGroupSelector {
-  bool Check(const OrtGraph* graph, const OrtApi& ort_api, const OrtNode* node,
-             const OrtNode* redundant_clip_node,
-             const std::vector<const OrtNode*>& dq_nodes,
-             const std::vector<const OrtNode*>& q_nodes) const override;
-};
-
 // Input: DQ nodes for A, B and optional C
 // Output: optional Q node for Y
 class OrtGemmNodeGroupSelector : public OrtNodeGroupSelector {

@@ -39,9 +39,9 @@ namespace onnxruntime {
 
 static std::string MakeSharedLibraryPath(std::string_view name) {
 #if defined(_WIN32)
-  return MakeString(name, ".dll");
+  return std::string(name) + ".dll";
 #else
-  return MakeString("lib", name, ".so");
+  return "lib" + std::string(name) + ".so";
 #endif
 }
 
