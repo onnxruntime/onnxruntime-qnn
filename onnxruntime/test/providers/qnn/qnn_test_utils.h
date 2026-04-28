@@ -835,6 +835,7 @@ void VerifyQDQOutput(const std::vector<Ort::Value>& cpu_qdq_outputs,
 
 // Forward declarations for helper functions (defined after QnnHTPBackendTests class)
 template <typename QuantType>
+inline bool ShouldSkipGpuTestOnArm64(const ProviderOptions& qnn_options);
 inline bool ShouldSkipQDQTestOnV68(const ProviderOptions& qnn_options);
 inline bool ShouldSkipFp16TestOnV68(const ProviderOptions& qnn_options);
 inline std::string GetCapitalizedBackendName(const ProviderOptions& qnn_options);
@@ -1726,6 +1727,21 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
   } while (0)
 #endif
 
+// Helper to check if we should skip GPU backend tests on Linux ARM64
+inline bool ShouldSkipGpuTestOnArm64(const ProviderOptions& qnn_options) {
+  std::string backend_name = "htp";
+  if (qnn_options.find("backend_type") != qnn_options.end()) {
+    backend_name = qnn_options.at("backend_type");
+  }
+
+  if (backend_name == "gpu") {
+#if defined(__aarch64__)
+    return true;
+#endif
+  }
+  return false;
+}
+
 // Helper to check if we should skip QDQ tests on v68
 template <typename QuantType>
 inline bool ShouldSkipQDQTestOnV68(const ProviderOptions& qnn_options) {
@@ -1743,10 +1759,8 @@ inline bool ShouldSkipQDQTestOnV68(const ProviderOptions& qnn_options) {
         return true;
       }
     }
-  } else if (backend_name == "gpu") {
-    QNN_SKIP_TEST_ON_AARCH64("Test requires GPU support on Linux ARM64 (arch > v68)");
   }
-  return false;
+  return ShouldSkipGpuTestOnArm64(qnn_options);
 }
 
 // Helper to check if we should skip FP16 tests on v68
@@ -1760,10 +1774,8 @@ inline bool ShouldSkipFp16TestOnV68(const ProviderOptions& qnn_options) {
     if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
       return true;
     }
-  } else if (backend_name == "gpu") {
-    QNN_SKIP_TEST_ON_AARCH64("Test requires GPU support on Linux ARM64 (arch > v68)");
   }
-  return false;
+  return ShouldSkipGpuTestOnArm64(qnn_options);
 }
 
 // Helper to get capitalized backend name
