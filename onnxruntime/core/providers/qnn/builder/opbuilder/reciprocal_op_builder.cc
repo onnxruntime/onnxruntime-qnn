@@ -73,9 +73,9 @@ Ort::Status ReciprocalOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
     divisor_data.resize(element_size);
     std::memcpy(divisor_data.data(), &quantized_divisor_value, element_size);
   } else if (divisor_qnn_data_type == QNN_DATATYPE_FLOAT_16) {
-    MLFloat16 one_fp16(1.0f);
-    divisor_data.resize(sizeof(MLFloat16));
-    std::memcpy(divisor_data.data(), &one_fp16, sizeof(MLFloat16));
+    Ort::Float16_t one_fp16(1.0f);
+    divisor_data.resize(sizeof(Ort::Float16_t));
+    std::memcpy(divisor_data.data(), &one_fp16.val, sizeof(Ort::Float16_t));
   } else {
     // Create a float divisor tensor
     divisor_data.resize(sizeof(float));
