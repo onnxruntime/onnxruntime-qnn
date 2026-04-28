@@ -296,7 +296,7 @@ else
       package_args+=(--version_suffix "${ORT_VERSION_SUFFIX}")
     fi
     if [[ "${ORT_NIGHTLY_BUILD:-}" == "1" ]]; then
-      package_args+=(--wheel_name_suffix "qcom-internal")
+      package_args+=(--wheel_name_suffix "qcom_internal")
     fi
 
     "${python_for_build}" ${REPO_ROOT}/tools/ci_build/build.py \
