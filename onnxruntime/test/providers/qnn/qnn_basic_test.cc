@@ -1008,27 +1008,35 @@ TEST_F(QnnHTPBackendTests, MultithreadSustainedHighPowerCfgFromEpOption) {
   options["offload_graph_io_quantization"] = "0";
   options["htp_performance_mode"] = "sustained_high_performance";
 
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  // By default, 8 is used, which will impact time to run all
+  // unit tests due to overhead of thread creation/destruction
+  options["num_graph_prepare_threads"] = "1";
+#endif
+
   Ort::SessionOptions session_opts;
   session_opts.SetLogId("logger0");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, session_opts, onnxruntime::kQnnExecutionProvider, options);
 
-  Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts);
+  {
+    Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts);
 
-  std::vector<std::thread> threads;
-  constexpr int num_threads = 5;
-  constexpr int loop_count = 10;
+    std::vector<std::thread> threads;
+    constexpr int num_threads = 5;
+    constexpr int loop_count = 10;
 
-  for (int i = 0; i < num_threads; i++) {
-    Ort::RunOptions run_opts;
-    run_opts.SetRunTag("logger0");
-    threads.push_back(std::thread(RunSessionAndVerify, std::ref(session), std::move(run_opts),
-                                  std::ref(model->builder.feeds_), output_shapes, output_values, loop_count));
-  }
+    for (int i = 0; i < num_threads; i++) {
+      Ort::RunOptions run_opts;
+      run_opts.SetRunTag("logger0");
+      threads.push_back(std::thread(RunSessionAndVerify, std::ref(session), std::move(run_opts),
+                                    std::ref(model->builder.feeds_), output_shapes, output_values, loop_count));
+    }
 
-  for (auto& th : threads) {
-    th.join();
+    for (auto& th : threads) {
+      th.join();
+    }
   }
 }
 

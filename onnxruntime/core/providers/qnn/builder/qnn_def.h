@@ -88,13 +88,6 @@ enum class HtpPerformanceMode : uint8_t {
   kHtpExtremePowerSaver,
 };
 
-enum class DcvsState {
-  DCVS_DEFAULT = 0,
-  DCVS_DISABLE = 1,
-  DCVS_ENABLE = 2,
-  DCVS_NUM_STATES
-};
-
 // Graph states to tune the power/performance configurations
 enum class GraphState {
   INIT_START,

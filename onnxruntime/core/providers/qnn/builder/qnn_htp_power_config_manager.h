@@ -35,8 +35,6 @@ class HtpPowerConfigManager {
   Ort::Status AddRpcControlLatency(uint32_t rpc_control_latency);
 
   // Stages a new performance mode for next power config update
-  // If the value is the same as the last previously set, then
-  // there will be no new performance mode staged
   Ort::Status AddHtpPerformanceMode(HtpPerformanceMode htp_performance_mode,
                                     uint32_t htp_power_config_client_id);
 
@@ -49,17 +47,6 @@ class HtpPowerConfigManager {
   // then no attempt will be made.
   Ort::Status SetPowerConfig(uint32_t htp_power_config_client_id,
                              const QNN_INTERFACE_VER_TYPE& qnn_interface);
-
-  // Sets power config for relaxed performance mode based on DCVS state
-  void SetRelaxedPerfPowerConfig(QnnHtpPerfInfrastructure_PowerConfig_t& power_config,
-                                 uint32_t htp_power_config_client_id,
-                                 DcvsState dcvsState);
-
-  // Sets power config for released performance mode based on DCVS state
-  void SetReleasedPerfPowerConfig(QnnHtpPerfInfrastructure_PowerConfig_t& power_config, uint32_t htp_power_config_client_id, DcvsState dcvsState);
-
-  // Sets power config for extreme low performance mode
-  void SetExtremeLowPerfPowerConfig(QnnHtpPerfInfrastructure_PowerConfig_t& power_config, uint32_t htp_power_config_client_id);
 
   void CreateTimerThread(uint32_t htp_power_config_client_id);
 
@@ -77,9 +64,9 @@ class HtpPowerConfigManager {
                                            uint32_t htp_power_config_client_id,
                                            const HtpPerformanceMode& htp_performance_mode);
 
-  Ort::Status SetSustainedPerformance(const HtpPerfConfig_t& config);
+  Ort::Status SetSustainedPerformance(GraphState state, const HtpPerfConfig_t& config);
 
-  Ort::Status SetPerformance(const HtpPerfConfig_t& config);
+  Ort::Status SetPerformance(GraphState state, const HtpPerfConfig_t& config);
 
   static void TimerCallback(void* user_data);
 
@@ -87,7 +74,24 @@ class HtpPowerConfigManager {
 
   Ort::Status SetHtpPowerConfigs(const HtpPerfConfig_t& config);
 
-  Ort::Status SetHtpPowerCustomConfigs(uint32_t htp_power_config_client_id, QnnHtpPerfInfrastructure_PowerConfig_t power_config, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
+  Ort::Status SetHtpPowerCustomConfigs(uint32_t htp_power_config_client_id, const QnnHtpPerfInfrastructure_PowerConfig_t& power_config, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
+
+  enum class DcvsState {
+    DCVS_DEFAULT = 0,
+    DCVS_DISABLE = 1,
+    DCVS_ENABLE = 2
+  };
+
+  // Sets power config for relaxed performance mode based on DCVS state
+  void SetRelaxedPerfPowerConfig(QnnHtpPerfInfrastructure_PowerConfig_t& power_config,
+                                 uint32_t htp_power_config_client_id,
+                                 DcvsState dcvsState);
+
+  // Sets power config for released performance mode based on DCVS state
+  void SetReleasedPerfPowerConfig(QnnHtpPerfInfrastructure_PowerConfig_t& power_config, uint32_t htp_power_config_client_id, DcvsState dcvsState);
+
+  // Sets power config for extreme low performance mode
+  void SetExtremeLowPerfPowerConfig(QnnHtpPerfInfrastructure_PowerConfig_t& power_config, uint32_t htp_power_config_client_id);
 
   uint32_t last_set_rpc_polling_time_ = kDisableRpcPolling;
   uint32_t last_set_rpc_control_latency_ = kDisableRpcControlLatency;
