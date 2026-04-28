@@ -52,6 +52,21 @@ static void RunNonZeroTest(const GetTestModelFn& build_test_case,
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
   ModelTestBuilder helper;
   build_test_case(helper);
+
+  std::string backend_name = "htp";
+  if (provider_options.find("backend_type") != provider_options.end()) {
+    backend_name = provider_options.at("backend_type");
+  }
+
+  if (backend_name == "htp") {
+    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+      GTEST_SKIP() << "Test requires HTP FP16/FP32 support (arch > v68)";
+    }
+  } else if (backend_name == "gpu") {
+    QNN_SKIP_TEST_ON_AARCH64("Test requires GPU support on Linux ARM64 (arch > v68)");
+  }
+
+
   for (const auto& [domain, version] : domain_to_version) {
     const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
     opset_id_proto->set_domain(domain);
