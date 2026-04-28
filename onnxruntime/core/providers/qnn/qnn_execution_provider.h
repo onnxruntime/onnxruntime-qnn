@@ -24,6 +24,7 @@
 #include "core/providers/qnn/genie/genie_api_loader.h"
 #include "core/providers/qnn/genie/genie_node.h"
 #include "core/providers/qnn/genie/genie_node_compute_info.h"
+#include "core/providers/qnn/qnn_ep_utils.h"
 
 namespace onnxruntime {
 class QnnEpFactory;
@@ -92,7 +93,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
   OrtStatus* GetSupportedNodes(const OrtGraph* graph,
                                const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_unit_map,
                                const size_t node_unit_size,
-                               std::vector<const OrtNode*>& supported_nodes) const;
+                               std::vector<const OrtNode*>& supported_nodes,
+                               std::vector<utils::QnnNodeGroupInfo>& groups,
+                               std::unordered_map<const OrtNodeUnit*, size_t>& node_unit_to_group_id) const;
 
   void PartitionCtxModel(const OrtGraph* graph, OrtEpGraphSupportInfo* graph_support_info);
 
