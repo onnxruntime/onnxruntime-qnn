@@ -66,7 +66,6 @@ static void RunNonZeroTest(const GetTestModelFn& build_test_case,
     QNN_SKIP_TEST_ON_AARCH64("Test requires GPU support on Linux ARM64 (arch > v68)");
   }
 
-
   for (const auto& [domain, version] : domain_to_version) {
     const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
     opset_id_proto->set_domain(domain);

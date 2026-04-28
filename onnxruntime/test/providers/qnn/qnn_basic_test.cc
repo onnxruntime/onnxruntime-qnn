@@ -1201,7 +1201,7 @@ TEST_F(QnnHTPBackendTests, ProfilingTest) {
 }
 
 TEST_F(QnnHTPBackendTests, OptraceTest) {
-    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
     GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
   }
   onnxruntime::ProviderOptions provider_options;
