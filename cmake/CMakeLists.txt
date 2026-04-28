@@ -77,6 +77,10 @@ option(onnxruntime_CROSS_COMPILING "Cross compiling onnx runtime" OFF)
 option(onnxruntime_GCOV_COVERAGE "Compile with options necessary to run code coverage" OFF)
 option(onnxruntime_DONT_VECTORIZE "Do not vectorize operations in Eigen" OFF)
 
+# Coverage builds are only supported on Linux with GCC.
+# Pass -DENABLE_COVERAGE=ON to cmake to enable (e.g. via build.sh --enable-coverage).
+option(ENABLE_COVERAGE "Enable GCC code coverage instrumentation (Linux only)" OFF)
+
 option(onnxruntime_USE_FULL_PROTOBUF "Link to libprotobuf instead of libprotobuf-lite when this option is ON" OFF)
 option(onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS "Dump debug information about node inputs and outputs when executing the model." OFF)
 cmake_dependent_option(onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS_ENABLE_DUMP_TO_SQLDB "Build dump debug information about node inputs and outputs with support for sql database." OFF "onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS" OFF)

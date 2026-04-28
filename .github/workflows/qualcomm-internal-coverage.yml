@@ -1,0 +1,36 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Qualcomm Internal Coverage
+
+permissions:
+  contents: read
+  checks: write
+
+on:
+  workflow_dispatch:
+
+jobs:
+  coverage-linux-x86_64:
+    name: "coverage-linux-x86_64"
+    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Run Coverage (Linux x86_64, always RelWithDebInfo)
+        run: |
+          # Python version does not affect C++ code coverage results.
+          # 3.10 matches DEFAULT_PYTHON_LINUX in qcom/ep_build/util.py.
+          python3 qcom/build_and_test.py \
+            --target-py-version 3.10 \
+            coverage_linux_x86_64
+
+      - name: Upload Coverage Report
+        uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: "coverage-linux-x86_64-${{ github.sha }}"
+          retention-days: 7
+          path: build/linux-x86_64/RelWithDebInfo/coverage/
