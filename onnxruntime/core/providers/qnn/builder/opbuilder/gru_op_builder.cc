@@ -412,26 +412,42 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
       prev_h_name = y_as_h;
     }
 
-    // Reshape Y -> [batch, hidden] for packing across time steps.
-    std::string y_2d = utils::UniqueNameGenerator().New(node_unit, "_Y2d" + sfx);
-    RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(y_name, y_2d, y_shape, {batch_size, hidden_size},
-                                                     output_tensor_infos[0].qnn_data_type,
-                                                     output_tensor_infos[0].quant_param, do_op_validation, false, false));
-    qnn_all_step_hidden_names[t] = y_2d;
+    // Collect Y for Concat (no per-step Reshape needed).
+    qnn_all_step_hidden_names[t] = y_name;
   }
 
-  // Pack all per-step [batch, hidden] -> [seq, batch, hidden] using QNN_OP_PACK axis=0.
-  // qnn_all_step_hidden_names is indexed by t (0..seq-1) so forward order is naturally correct.
-  const std::string y_all = utils::UniqueNameGenerator().New(node_unit, "_Y_all_" + direction);
+  // Concat all per-step Y tensors into [seq, batch, hidden].
+  // HTP (time_major=true):  Y [1,batch,hidden] * seq, Concat axis=0 -> [seq, batch, hidden]
+  // CPU (time_major=false): Y [batch,1,hidden] * seq, Concat axis=1 -> [batch, seq, hidden]
+  //                         then Transpose -> [seq, batch, hidden]
+  const uint32_t concat_axis = time_major ? 0 : 1;
+  const std::string y_concat = utils::UniqueNameGenerator().New(node_unit, "_Y_concat_" + direction);
   {
-    std::vector<std::string> pp;
-    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), y_all, 0, QNN_OP_PACK_PARAM_AXIS, pp));
-    QnnTensorWrapper tw(y_all, QNN_TENSOR_TYPE_NATIVE, output_tensor_infos[0].qnn_data_type,
-                        output_tensor_infos[0].quant_param.Copy(), {seq_length, batch_size, hidden_size});
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tw)), "Failed to add Y Pack output.");
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(y_all, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_PACK,
-                                                  std::move(qnn_all_step_hidden_names), {y_all}, std::move(pp), do_op_validation),
-                  "Failed to create Y Pack node.");
+    std::vector<uint32_t> concat_out_shape = time_major
+                                                        ? std::vector<uint32_t>{seq_length, batch_size, hidden_size}
+                                                        : std::vector<uint32_t>{batch_size, seq_length, hidden_size};
+    std::vector<std::string> cp;
+    RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), y_concat,
+                                           concat_axis, QNN_OP_CONCAT_PARAM_AXIS, cp));
+    QnnTensorWrapper tw(y_concat, QNN_TENSOR_TYPE_NATIVE, output_tensor_infos[0].qnn_data_type,
+                        output_tensor_infos[0].quant_param.Copy(), std::move(concat_out_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(tw)), "Failed to add Y Concat output.");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(y_concat, QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_CONCAT,
+                                                  std::move(qnn_all_step_hidden_names), {y_concat}, std::move(cp), do_op_validation),
+                  "Failed to create Y Concat node.");
+  }
+
+  // For CPU (time_major=false), Transpose [batch, seq, hidden] -> [seq, batch, hidden].
+  std::string y_all;
+  if (!time_major) {
+    y_all = utils::UniqueNameGenerator().New(node_unit, "_Y_all_" + direction);
+    RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(
+        node_unit.Index(), y_concat, y_all,
+        {batch_size, seq_length, hidden_size}, {1, 0, 2}, {seq_length, batch_size, hidden_size},
+        output_tensor_infos[0].qnn_data_type, output_tensor_infos[0].quant_param,
+        do_op_validation, false, false));
+  } else {
+    y_all = y_concat;
   }
 
   // Map to ONNX output shapes:
