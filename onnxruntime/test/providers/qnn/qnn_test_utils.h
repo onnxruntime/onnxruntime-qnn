@@ -1784,7 +1784,9 @@ inline std::string GetCapitalizedBackendName(const ProviderOptions& qnn_options)
   if (qnn_options.find("backend_type") != qnn_options.end()) {
     backend_name = qnn_options.at("backend_type");
   }
-  backend_name[0] = std::toupper(backend_name[0]);
+  for (char& c : backend_name) {
+    c = std::toupper(c);
+  }
   return backend_name;
 }
 
