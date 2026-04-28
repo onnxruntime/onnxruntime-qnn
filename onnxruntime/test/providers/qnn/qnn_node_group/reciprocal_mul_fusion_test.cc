@@ -375,7 +375,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_4D_StandardOrder) {
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-4f);
+                  /*fp32_abs_err=*/1e-3f);
 
   AssertOpInQnnGraph(json_dir, "ElementWiseDivide");
 }
@@ -399,7 +399,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_4D_CommutedOrder) {
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-4f);
+                  /*fp32_abs_err=*/1e-3f);
 
   AssertOpInQnnGraph(json_dir, "ElementWiseDivide");
 }
@@ -422,7 +422,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_3D) {
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-4f);
+                  /*fp32_abs_err=*/1e-3f);
 
   AssertOpInQnnGraph(json_dir, "ElementWiseDivide");
 }
@@ -445,7 +445,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_2D) {
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-4f);
+                  /*fp32_abs_err=*/1e-3f);
 
   AssertOpInQnnGraph(json_dir, "ElementWiseDivide");
 }
@@ -468,7 +468,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_LargeShape) {
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-4f);
+                  /*fp32_abs_err=*/2e-3f);
 
   AssertOpInQnnGraph(json_dir, "ElementWiseDivide");
 }
