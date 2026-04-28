@@ -341,10 +341,16 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
     x_source_shape = {batch_size, seq_length, input_size};
   }
 
-  std::vector<std::string> qnn_all_step_hidden_names(seq_length);  // [batch, hidden] per step, ordered by t
+  std::vector<std::string> qnn_all_step_hidden_names(seq_length);  // Y tensors, indexed by t
   std::string prev_h_name = initial_h_name;                        // [1, batch, hidden]
 
+  // If Y_h is a direct graph output for unidirectional, the last step can write it directly.
+  const bool needs_y_h_output = !is_bidirection && onnx_outputs.size() > 1 && onnx_outputs[1].Exists();
+  const std::string y_h_out_name = needs_y_h_output ? onnx_outputs[1].name : "";
+  const bool y_h_is_graph_output = needs_y_h_output && qnn_model_wrapper.IsGraphOutput(y_h_out_name);
+
   for (uint32_t step = 0; step < seq_length; step++) {
+    const bool is_last_step = (step == seq_length - 1);
     // For reverse direction iterate from the last time step to the first.
     const uint32_t t = (direction == "reverse") ? (seq_length - step - 1) : step;
     const std::string sfx = "_t" + std::to_string(t) + "_" + direction;
@@ -379,12 +385,18 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
     const std::vector<uint32_t> y_shape = time_major ? std::vector<uint32_t>{1, batch_size, hidden_size}
                                                      : std::vector<uint32_t>{batch_size, 1, hidden_size};
     std::string y_name = utils::UniqueNameGenerator().New(node_unit, "_Y" + sfx);
-    std::string yh_name = utils::UniqueNameGenerator().New(node_unit, "_Yh" + sfx);
+
+    // For the last step on HTP: name Y_h after the ONNX output directly.
+    // CPU derives h from Y via Transpose instead (Y_h is unreliable on CPU).
+    const bool write_yh_directly = is_last_step && needs_y_h_output && time_major;
+    std::string yh_name = write_yh_directly ? y_h_out_name
+                                            : utils::UniqueNameGenerator().New(node_unit, "_Yh" + sfx);
     {
       QnnTensorWrapper y_tw(y_name, QNN_TENSOR_TYPE_NATIVE, output_tensor_infos[0].qnn_data_type,
                             output_tensor_infos[0].quant_param.Copy(), std::vector<uint32_t>(y_shape));
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(y_tw)), "Failed to add GRU Y output.");
-      QnnTensorWrapper yh_tw(yh_name, QNN_TENSOR_TYPE_NATIVE, output_tensor_infos[1].qnn_data_type,
+      Qnn_TensorType_t yh_type = (write_yh_directly && y_h_is_graph_output) ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+      QnnTensorWrapper yh_tw(yh_name, yh_type, output_tensor_infos[1].qnn_data_type,
                              output_tensor_infos[1].quant_param.Copy(), std::vector<uint32_t>{1, batch_size, hidden_size});
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(yh_tw)), "Failed to add GRU Y_h output.");
     }
@@ -402,13 +414,16 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
       // HTP: use Y_h directly as next step's initial_h
       prev_h_name = yh_name;
     } else {
-      // CPU: Y is [batch, 1, hidden] - Transpose to [1, batch, hidden]
-      std::string y_as_h = utils::UniqueNameGenerator().New(node_unit, "_Y_as_h" + sfx);
+      // CPU: Y is [batch, 1, hidden] - Transpose to [1, batch, hidden].
+      // On the last step for unidirectional, write directly to the ONNX output (is_for_output=true).
+      const bool write_as_output = is_last_step && needs_y_h_output;
+      const std::string y_as_h = write_as_output ? y_h_out_name
+                                                 : utils::UniqueNameGenerator().New(node_unit, "_Y_as_h" + sfx);
       RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(
           node_unit.Index(), y_name, y_as_h,
           y_shape, {1, 0, 2}, {1, batch_size, hidden_size},
           output_tensor_infos[0].qnn_data_type, output_tensor_infos[0].quant_param,
-          do_op_validation, false, false));
+          do_op_validation, false, write_as_output && y_h_is_graph_output));
       prev_h_name = y_as_h;
     }
 
@@ -424,8 +439,8 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   const std::string y_concat = utils::UniqueNameGenerator().New(node_unit, "_Y_concat_" + direction);
   {
     std::vector<uint32_t> concat_out_shape = time_major
-                                                        ? std::vector<uint32_t>{seq_length, batch_size, hidden_size}
-                                                        : std::vector<uint32_t>{batch_size, seq_length, hidden_size};
+                                                 ? std::vector<uint32_t>{seq_length, batch_size, hidden_size}
+                                                 : std::vector<uint32_t>{batch_size, seq_length, hidden_size};
     std::vector<std::string> cp;
     RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), y_concat,
                                            concat_axis, QNN_OP_CONCAT_PARAM_AXIS, cp));
@@ -468,16 +483,9 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
                                                          qnn_model_wrapper.IsGraphOutput(out_name)));
         uni_gru_output_names.emplace_back(out_name);
       } else {
-        // Y_h: prev_h_name is already [1, batch, hidden] from the last step.
+        // Y_h: already written under onnx_outputs[1].name in the last step (APP_READ or NATIVE).
         if (!is_bidirection) {
-          // Unidirectional: surface under the ONNX output name via Reshape (registers as APP_READ).
-          RETURN_IF_ERROR(qnn_model_wrapper.AddReshapeNode(prev_h_name, onnx_outputs[i].name,
-                                                           {1, batch_size, hidden_size},
-                                                           {1, batch_size, hidden_size},
-                                                           output_tensor_infos[1].qnn_data_type,
-                                                           output_tensor_infos[1].quant_param, do_op_validation, false,
-                                                           qnn_model_wrapper.IsGraphOutput(onnx_outputs[i].name)));
-          uni_gru_output_names.emplace_back(onnx_outputs[i].name);
+          uni_gru_output_names.emplace_back(y_h_out_name);
         } else {
           // Bidirectional: pass directly to Concat.
           uni_gru_output_names.emplace_back(prev_h_name);
