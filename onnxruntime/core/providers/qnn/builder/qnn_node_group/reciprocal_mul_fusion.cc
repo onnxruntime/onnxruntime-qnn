@@ -132,18 +132,43 @@ std::unique_ptr<IQnnNodeGroup> ReciprocalMulFusion::TryFusion(
     return nullptr;
   }
 
-  // -- Step 3: Reciprocal output must have exactly one consumer ---------------
+  // -- Step 3: Reciprocal output must have exactly one consumer and must NOT
+  //            be a graph-level output.
   //
-  // Guard against the case where the Reciprocal output feeds multiple
-  // downstream nodes (e.g. two Mul nodes).  In that scenario the intermediate
-  // tensor cannot be absorbed by a single fusion, so we must bail out.
+  // Guard against two cases that prevent the intermediate tensor from being
+  // absorbed by the fusion:
   //
-  // We perform this check explicitly via the raw ORT API rather than relying
-  // solely on GetOnlyChildOfType, because the Ort::ConstValueInfo::GetConsumers()
-  // C++ wrapper may return only the first consumer even when multiple exist.
+  //   (a) Multiple consumers: the Reciprocal output feeds more than one
+  //       downstream node (e.g. two Mul nodes).  The tensor cannot be removed
+  //       because other consumers still need it.
+  //
+  //   (b) Graph output: the Reciprocal output is exposed as a graph-level
+  //       output.  Removing it would change the observable outputs of the
+  //       model, so the fusion must not fire.
+  //
+  // For (a) we use ValueInfo_GetValueNumConsumers via the raw ORT C API.
+  // Note: this API counts only node consumers, not graph-output "consumers".
+  //
+  // For (b) we check by name against the ONNX graph's actual output list,
+  // obtained via ort_api.Graph_GetOutputs on the graph held by the model
+  // wrapper.  This is the same approach used in qnn_execution_provider.cc
+  // to build model_outputs and is reliable in both the IsSupported path
+  // (qnn_execution_provider.cc) and the ComposeGraph path (qnn_model.cc).
+  //
+  // We deliberately avoid:
+  //   - Ort::ConstValueInfo::IsGraphOutput()  — unreliable C++ wrapper;
+  //     the graph-output flag is not always propagated to node output infos.
+  //   - QnnModelWrapper::IsGraphOutput(name)  — checks graph_outputs_.indices
+  //     which is populated from the fused EPContext node's outputs; may not
+  //     include intermediate tensors that are also ONNX graph outputs when
+  //     the entire model is one partition.
+  //   - ort_api.ValueInfo_IsGraphOutput()     — operates on the OrtValueInfo*
+  //     returned by Node_GetOutputs, which is a different object from the
+  //     one in the graph's output list; the flag is not set on node outputs.
   {
     const OrtNode& recip_node = reciprocal_node_unit.GetNode();
     const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
+    const OrtGraph& ort_graph = qnn_model_wrapper.GetOrtGraph();
 
     size_t num_outputs = 0;
     if (ort_api.Node_GetNumOutputs(&recip_node, &num_outputs) != nullptr || num_outputs == 0) {
@@ -161,12 +186,51 @@ std::unique_ptr<IQnnNodeGroup> ReciprocalMulFusion::TryFusion(
       return nullptr;
     }
 
+    // (a) Multiple-consumer guard.
     size_t num_consumers = 0;
     if (ort_api.ValueInfo_GetValueNumConsumers(recip_output_vi, &num_consumers) != nullptr ||
         num_consumers != 1) {
       // Either the API call failed or there are zero / multiple consumers.
       // In both cases the fusion must not fire.
       return nullptr;
+    }
+
+    // (b) Graph-output guard: get the Reciprocal output's name, then scan
+    //     the graph's actual output list for a name match.
+    const char* recip_out_name_cstr = nullptr;
+    if (ort_api.GetValueInfoName(recip_output_vi, &recip_out_name_cstr) != nullptr ||
+        recip_out_name_cstr == nullptr) {
+      return nullptr;
+    }
+    const std::string recip_out_name(recip_out_name_cstr);
+
+    size_t num_graph_outputs = 0;
+    if (ort_api.Graph_GetNumOutputs(&ort_graph, &num_graph_outputs) != nullptr) {
+      // API call failed; conservatively block fusion.
+      return nullptr;
+    }
+
+    if (num_graph_outputs > 0) {
+      std::vector<const OrtValueInfo*> graph_outputs(num_graph_outputs);
+      if (ort_api.Graph_GetOutputs(&ort_graph, graph_outputs.data(), num_graph_outputs) != nullptr) {
+        // API call failed; conservatively block fusion.
+        return nullptr;
+      }
+
+      for (const OrtValueInfo* graph_out_vi : graph_outputs) {
+        if (graph_out_vi == nullptr) {
+          continue;
+        }
+        const char* graph_out_name_cstr = nullptr;
+        if (ort_api.GetValueInfoName(graph_out_vi, &graph_out_name_cstr) != nullptr ||
+            graph_out_name_cstr == nullptr) {
+          continue;
+        }
+        if (recip_out_name == graph_out_name_cstr) {
+          // The Reciprocal output is a graph-level output; block fusion.
+          return nullptr;
+        }
+      }
     }
   }
 
