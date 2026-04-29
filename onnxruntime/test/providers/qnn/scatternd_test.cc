@@ -35,7 +35,7 @@ TEST_F(QnnHTPBackendTests, ScatterNDInternalOutputNegativeIndex) {
   constexpr int64_t kRows = 1;
   constexpr int64_t kCols = 50;
 
-  auto build_model = [kRows, kCols](ModelTestBuilder& builder) {
+  auto build_model = [=](ModelTestBuilder& builder) {
     std::vector<int32_t> data(kRows * kCols, 0);
     builder.MakeInitializer<int32_t>("data", {kRows, kCols}, data);
 
@@ -62,7 +62,7 @@ TEST_F(QnnHTPBackendTests, ScatterNDMultipleNegativeIndicesAcrossColumns) {
   constexpr int64_t kDim0 = 4;
   constexpr int64_t kDim1 = 6;
 
-  auto build_model = [kDim0, kDim1](ModelTestBuilder& builder) {
+  auto build_model = [=](ModelTestBuilder& builder) {
     std::vector<int32_t> data(kDim0 * kDim1, 0);
     builder.MakeInitializer<int32_t>("data", {kDim0, kDim1}, data);
 
@@ -91,7 +91,7 @@ TEST_F(QnnHTPBackendTests, ScatterNDReductionAddWithNegativeIndices) {
   constexpr int64_t kRows = 1;
   constexpr int64_t kCols = 8;
 
-  auto build_model = [kRows, kCols](ModelTestBuilder& builder) {
+  auto build_model = [=](ModelTestBuilder& builder) {
     std::vector<int32_t> data(kRows * kCols, 0);
     builder.MakeInitializer<int32_t>("data", {kRows, kCols}, data);
 
@@ -120,7 +120,7 @@ TEST_F(QnnHTPBackendTests, ScatterNDEndToEndNegativeIndexInGraph) {
   constexpr int64_t kRows = 2;
   constexpr int64_t kCols = 64;
 
-  auto build_model = [kRows, kCols](ModelTestBuilder& builder) {
+  auto build_model = [=](ModelTestBuilder& builder) {
     std::vector<float> data(kRows * kCols);
     for (int64_t i = 0; i < kRows * kCols; ++i) {
       data[i] = static_cast<float>(i) * 0.01f;
@@ -156,7 +156,7 @@ TEST_F(QnnHTPBackendTests, ScatterNDSharedNegativeIndicesInitializer) {
   constexpr int64_t kRows = 1;
   constexpr int64_t kCols = 16;
 
-  auto build_model = [kRows, kCols](ModelTestBuilder& builder) {
+  auto build_model = [=](ModelTestBuilder& builder) {
     std::vector<int32_t> data_a(kRows * kCols, 0);
     std::vector<int32_t> data_b(kRows * kCols, 0);
     builder.MakeInitializer<int32_t>("dataA", {kRows, kCols}, data_a);
