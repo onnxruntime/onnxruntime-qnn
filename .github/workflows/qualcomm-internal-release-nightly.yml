@@ -31,19 +31,5 @@ jobs:
       nightly_build: true
       skip_publish_qa: false
       skip_publish_wheel: false
-
-  publish-artifacts-debug:
-    if: ${{ inputs.do_windows_arm64_debug }}
-    uses: ./.github/workflows/qualcomm-internal-build-artifacts.yml
-    secrets: inherit
-    with:
-      nightly_build: true
-      do_windows_arm64_debug: true
-
-  publish-artifacts-relwithdebinfo:
-    if: ${{ inputs.do_windows_arm64_relwithdebinfo }}
-    uses: ./.github/workflows/qualcomm-internal-build-artifacts.yml
-    secrets: inherit
-    with:
-      nightly_build: true
-      do_windows_arm64_relwithdebinfo: true
+      do_windows_arm64_debug: ${{ inputs.do_windows_arm64_debug || false }}
+      do_windows_arm64_relwithdebinfo: ${{ inputs.do_windows_arm64_relwithdebinfo || false }}
