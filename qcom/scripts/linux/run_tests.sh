@@ -127,12 +127,6 @@ for runner in "${model_test_runners[@]}"; do
 
     # Following tests are not supported on ARM64 Linux Runner
     # TODO: [AISW-163150]
-    # test strnormalizer_export_monday_casesensintive_lower
-    # test strnormalizer_export_monday_casesensintive_nochangecase
-    # test strnormalizer_export_monday_casesensintive_upper
-    # test strnormalizer_export_monday_empty_output
-    # Removing them from test suite
-
     if [ "$(uname -m)" == "aarch64" ]; then
         rm -rf "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node/test_strnormalizer_export_monday_casesensintive_lower"
         rm -rf "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node/test_strnormalizer_export_monday_casesensintive_nochangecase"
