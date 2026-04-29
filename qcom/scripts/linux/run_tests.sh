@@ -55,8 +55,6 @@ function run_model_test() {
     test_result=$?
     set -e
 
-    log_info "Test runner exit code: ${test_result}"
-
     if [ -f "${model_log}" ]; then
         "${python_exe}" "${REPO_ROOT}/qcom/scripts/all/model_test_log_to_junit_xml.py" \
             "${model_log}" > "${model_xml}"
@@ -144,9 +142,9 @@ for runner in "${model_test_runners[@]}"; do
     
     "${runner}" cpu node "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node"
 
+    #TODO: [AISW-164203] - Known issues with QDQ model suite
     if [ "$(uname -m)" != "aarch64" ]; then
-    "${runner}" cpu float32
-        #TODO: [AISW-164203] - Known issues with QDQ model suite
+        "${runner}" cpu float32
         "${runner}" htp qdq
         log_debug "Scrubbing old context caches"
         find "testdata/qdq-with-context-cache" -name "*_ctx.onnx" -print -delete
@@ -155,5 +153,4 @@ for runner in "${model_test_runners[@]}"; do
 
 done
 
-log_info "Total Number of Errors: ${errors}"
 exit "${errors}"
