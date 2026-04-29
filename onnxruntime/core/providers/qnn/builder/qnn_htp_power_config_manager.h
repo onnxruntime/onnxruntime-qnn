@@ -17,6 +17,29 @@ namespace onnxruntime {
 namespace qnn {
 namespace power {
 
+// Graph states to tune the power/performance configurations
+enum class GraphState {
+  INIT_START,
+  INIT_DONE,
+  RUN_START,
+  RUN_DONE,
+  TIMEOUT,
+  NONE
+};
+
+typedef struct HtpPerfConfig {
+  uint32_t htp_power_config_client_id;
+  HtpPerformanceMode perf_mode;
+  uint32_t rpc_polling_time;
+  uint32_t rpc_control_latency;
+} HtpPerfConfig_t;
+
+enum class DcvsState {
+  DCVS_DEFAULT = 0,
+  DCVS_DISABLE = 1,
+  DCVS_ENABLE = 2
+};
+
 // Manages staging of any new power configurations and
 // updates power configurations for the HTP backend
 class HtpPowerConfigManager {
@@ -75,12 +98,6 @@ class HtpPowerConfigManager {
   Ort::Status SetHtpPowerConfigs(const HtpPerfConfig_t& config, const Ort::Logger& logger);
 
   Ort::Status SetHtpPowerCustomConfigs(uint32_t htp_power_config_client_id, const QnnHtpPerfInfrastructure_PowerConfig_t& power_config, uint32_t rpc_polling_time, uint32_t rpc_control_latency, const Ort::Logger& logger);
-
-  enum class DcvsState {
-    DCVS_DEFAULT = 0,
-    DCVS_DISABLE = 1,
-    DCVS_ENABLE = 2
-  };
 
   // Sets power config for relaxed performance mode based on DCVS state
   void SetRelaxedPerfPowerConfig(QnnHtpPerfInfrastructure_PowerConfig_t& power_config,

@@ -13,8 +13,8 @@ namespace qnn {
 //
 //   power::HtpPowerConfigManager* power_manager = ...;
 //   bool valid_power_config_id = ...;  // determined by caller based on whether power config id was successfully created
-//   HtpPerfConfig_t config = ...;  // configured as needed for the operation
-//   HtpPowerStateGuard power_guard(power_manager, valid_power_config_id, GraphState::INIT_START, GraphState::INIT_DONE,
+//   power::HtpPerfConfig_t config = ...;  // configured as needed for the operation
+//   HtpPowerStateGuard power_guard(power_manager, valid_power_config_id, power::GraphState::INIT_START, power::GraphState::INIT_DONE,
 //                                  config);
 //   RETURN_IF_NOT_OK(power_guard.SetPreRunHtpPerfStatus());
 //   auto status = DoWork(...);
@@ -26,9 +26,9 @@ class HtpPowerStateGuard {
  public:
   HtpPowerStateGuard(power::HtpPowerConfigManager* power_manager,
                      bool valid_power_config_id,
-                     GraphState start_state,
-                     GraphState done_state,
-                     const HtpPerfConfig_t& config,
+                     power::GraphState start_state,
+                     power::GraphState done_state,
+                     const power::HtpPerfConfig_t& config,
                      const Ort::Logger& logger)
       : power_manager_(power_manager),
         valid_power_config_id_(valid_power_config_id),
@@ -64,8 +64,8 @@ class HtpPowerStateGuard {
  private:
   power::HtpPowerConfigManager* power_manager_;
   bool valid_power_config_id_;
-  GraphState done_state_;
-  HtpPerfConfig_t config_;
+  power::GraphState done_state_;
+  power::HtpPerfConfig_t config_;
   const Ort::Logger* logger_ptr_;
   Ort::Status start_status_;
   bool finalized_;

@@ -88,23 +88,6 @@ enum class HtpPerformanceMode : uint8_t {
   kHtpExtremePowerSaver,
 };
 
-// Graph states to tune the power/performance configurations
-enum class GraphState {
-  INIT_START,
-  INIT_DONE,
-  RUN_START,
-  RUN_DONE,
-  TIMEOUT,
-  NONE
-};
-
-typedef struct HtpPerfConfig {
-  uint32_t htp_power_config_client_id;
-  HtpPerformanceMode perf_mode;
-  uint32_t rpc_polling_time;
-  uint32_t rpc_control_latency;
-} HtpPerfConfig_t;
-
 // pre_run_perf_mode and post_run_perf_mode takes precedence over default_perf_mode. If pre_run_perf_mode is set,
 // it will be used for performance setting in OnRunStart().
 // If post_run_perf_mode is set, it will be used for performance setting in OnRunDone().

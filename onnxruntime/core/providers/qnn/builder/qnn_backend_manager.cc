@@ -2249,19 +2249,19 @@ Ort::Status QnnBackendManager::SetPerThreadHtpPowerConfigs(const std::thread::id
   if (pre_run) {
     // add in htp_power_configs the default power config id also so to run when we execute
     if (htp_power_configs.pre_run_perf_mode.has_value()) {
-      HtpPerfConfig_t config{htp_power_config_id, *htp_power_configs.pre_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency};
-      RETURN_IF_ERROR(htp_power_config_manager_.SetState(onnxruntime::qnn::GraphState::RUN_START, config, *logger_ptr_));
+      power::HtpPerfConfig_t config{htp_power_config_id, *htp_power_configs.pre_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency};
+      RETURN_IF_ERROR(htp_power_config_manager_.SetState(power::GraphState::RUN_START, config, *logger_ptr_));
     } else if (htp_power_configs.default_perf_mode.has_value()) {
-      HtpPerfConfig_t config{htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency};
-      RETURN_IF_ERROR(htp_power_config_manager_.SetState(onnxruntime::qnn::GraphState::RUN_START, config, *logger_ptr_));
+      power::HtpPerfConfig_t config{htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency};
+      RETURN_IF_ERROR(htp_power_config_manager_.SetState(power::GraphState::RUN_START, config, *logger_ptr_));
     }
   } else {
     if (htp_power_configs.post_run_perf_mode.has_value()) {
-      HtpPerfConfig_t config{htp_power_config_id, *htp_power_configs.post_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency};
-      RETURN_IF_ERROR(htp_power_config_manager_.SetState(onnxruntime::qnn::GraphState::RUN_DONE, config, *logger_ptr_));
+      power::HtpPerfConfig_t config{htp_power_config_id, *htp_power_configs.post_run_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency};
+      RETURN_IF_ERROR(htp_power_config_manager_.SetState(power::GraphState::RUN_DONE, config, *logger_ptr_));
     } else if (htp_power_configs.default_perf_mode.has_value()) {
-      HtpPerfConfig_t config{htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency};
-      RETURN_IF_ERROR(htp_power_config_manager_.SetState(onnxruntime::qnn::GraphState::RUN_DONE, config, *logger_ptr_));
+      power::HtpPerfConfig_t config{htp_power_config_id, *htp_power_configs.default_perf_mode, *htp_power_configs.rpc_polling_time, *htp_power_configs.rpc_control_latency};
+      RETURN_IF_ERROR(htp_power_config_manager_.SetState(power::GraphState::RUN_DONE, config, *logger_ptr_));
     }
   }
   return Ort::Status();
