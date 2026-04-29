@@ -11,6 +11,16 @@ permissions:
 on:
   schedule:
     - cron: "0 9 * * *"  # Every day at 2am in San Diego/PDT (9am UTC)
+  workflow_dispatch:
+    inputs:
+      do_windows_arm64_debug:
+        description: "If true, also build Windows ARM64 in Debug configuration."
+        type: boolean
+        default: false
+      do_windows_arm64_relwithdebinfo:
+        description: "If true, also build Windows ARM64 in RelWithDebInfo configuration."
+        type: boolean
+        default: false
 
 jobs:
   publish-artifacts:
@@ -21,3 +31,19 @@ jobs:
       nightly_build: true
       skip_publish_qa: false
       skip_publish_wheel: false
+
+  publish-artifacts-debug:
+    if: ${{ inputs.do_windows_arm64_debug }}
+    uses: ./.github/workflows/qualcomm-internal-build-artifacts.yml
+    secrets: inherit
+    with:
+      nightly_build: true
+      do_windows_arm64_debug: true
+
+  publish-artifacts-relwithdebinfo:
+    if: ${{ inputs.do_windows_arm64_relwithdebinfo }}
+    uses: ./.github/workflows/qualcomm-internal-build-artifacts.yml
+    secrets: inherit
+    with:
+      nightly_build: true
+      do_windows_arm64_relwithdebinfo: true
