@@ -1,13 +1,9 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License
-
 #pragma once
-
 #include "core/providers/qnn/builder/qnn_htp_power_config_manager.h"
-
 namespace onnxruntime {
 namespace qnn {
-
 // RAII guard for HtpPowerConfigManager::SetState.
 //
 // Calls SetState(start_state, ...) on construction and SetState(done_state, ...)
@@ -32,20 +28,22 @@ class HtpPowerStateGuard {
                      bool valid_power_config_id,
                      GraphState start_state,
                      GraphState done_state,
-                     const HtpPerfConfig_t& config)
+                     const HtpPerfConfig_t& config,
+                     const Ort::Logger& logger)
       : power_manager_(power_manager),
         valid_power_config_id_(valid_power_config_id),
         done_state_(done_state),
         config_(config),
+        logger_ptr_(&logger),
         finalized_(false) {
     if (power_manager_ && valid_power_config_id_) {
-      start_status_ = power_manager_->SetState(start_state, config_);
+      start_status_ = power_manager_->SetState(start_state, config_, *logger_ptr_);
     }
   }
   ~HtpPowerStateGuard() {
     if (!finalized_ && power_manager_ && valid_power_config_id_) {
       // Error cannot be propagated from a destructor; silently ignore.
-      power_manager_->SetState(done_state_, config_);
+      power_manager_->SetState(done_state_, config_, *logger_ptr_);
     }
   }
   // Returns (by move) the status of setting HTP performance before work begins.
@@ -56,7 +54,7 @@ class HtpPowerStateGuard {
   Ort::Status SetPostRunHtpPerf() {
     finalized_ = true;
     if (power_manager_ && valid_power_config_id_) {
-      return power_manager_->SetState(done_state_, config_);
+      return power_manager_->SetState(done_state_, config_, *logger_ptr_);
     }
     return Ort::Status();
   }
@@ -68,9 +66,9 @@ class HtpPowerStateGuard {
   bool valid_power_config_id_;
   GraphState done_state_;
   HtpPerfConfig_t config_;
+  const Ort::Logger* logger_ptr_;
   Ort::Status start_status_;
   bool finalized_;
 };
-
 }  // namespace qnn
 }  // namespace onnxruntime

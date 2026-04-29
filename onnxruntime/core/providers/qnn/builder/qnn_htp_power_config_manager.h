@@ -21,22 +21,23 @@ namespace power {
 // updates power configurations for the HTP backend
 class HtpPowerConfigManager {
  public:
-  HtpPowerConfigManager(const Ort::Logger& logger);
+  HtpPowerConfigManager();
   ~HtpPowerConfigManager();
 
   // Stages a new rpc polling time for next power config update
   // If the value is the same as the last previously set, then
   // there will be no new rpc polling time staged
-  Ort::Status AddRpcPollingTime(uint32_t rpc_polling_time);
+  Ort::Status AddRpcPollingTime(uint32_t rpc_polling_time, const Ort::Logger& logger);
 
   // Stages a new rpc control latency for next power config update
   // If the value is the same as the last previously set, then
   // there will be no new rpc control latency staged
-  Ort::Status AddRpcControlLatency(uint32_t rpc_control_latency);
+  Ort::Status AddRpcControlLatency(uint32_t rpc_control_latency, const Ort::Logger& logger);
 
   // Stages a new performance mode for next power config update
   Ort::Status AddHtpPerformanceMode(HtpPerformanceMode htp_performance_mode,
-                                    uint32_t htp_power_config_client_id);
+                                    uint32_t htp_power_config_client_id,
+                                    const Ort::Logger& logger);
 
   // Stages a new HTP power configuration for next power config update
   // performance mode is set to default after setting the power config
@@ -46,17 +47,16 @@ class HtpPowerConfigManager {
   // the HTP power configurations. If there is nothing staged,
   // then no attempt will be made.
   Ort::Status SetPowerConfig(uint32_t htp_power_config_client_id,
-                             const QNN_INTERFACE_VER_TYPE& qnn_interface);
+                             const QNN_INTERFACE_VER_TYPE& qnn_interface,
+                             const Ort::Logger& logger);
 
-  void CreateTimerThread(uint32_t htp_power_config_client_id);
+  void CreateTimerThread(uint32_t htp_power_config_client_id, const Ort::Logger& logger);
 
   void ReleaseTimerThread();
 
-  Ort::Status SetState(GraphState state, const HtpPerfConfig_t& config);
+  Ort::Status SetState(GraphState state, const HtpPerfConfig_t& config, const Ort::Logger& logger);
 
   void Init(const QNN_INTERFACE_VER_TYPE& qnn_interface) { qnn_interface_ = &qnn_interface; }
-
-  void ResetLogger(const Ort::Logger& logger) { logger_ptr_ = &logger; }
 
  private:
   // Sets voltage corner votes for HTP based on the given performance mode
@@ -64,17 +64,17 @@ class HtpPowerConfigManager {
                                            uint32_t htp_power_config_client_id,
                                            const HtpPerformanceMode& htp_performance_mode);
 
-  Ort::Status SetSustainedPerformance(GraphState state, const HtpPerfConfig_t& config);
+  Ort::Status SetSustainedPerformance(GraphState state, const HtpPerfConfig_t& config, const Ort::Logger& logger);
 
-  Ort::Status SetPerformance(GraphState state, const HtpPerfConfig_t& config);
+  Ort::Status SetPerformance(GraphState state, const HtpPerfConfig_t& config, const Ort::Logger& logger);
 
   static void TimerCallback(void* user_data);
 
   bool IsTimerThreadRunning();
 
-  Ort::Status SetHtpPowerConfigs(const HtpPerfConfig_t& config);
+  Ort::Status SetHtpPowerConfigs(const HtpPerfConfig_t& config, const Ort::Logger& logger);
 
-  Ort::Status SetHtpPowerCustomConfigs(uint32_t htp_power_config_client_id, const QnnHtpPerfInfrastructure_PowerConfig_t& power_config, uint32_t rpc_polling_time, uint32_t rpc_control_latency);
+  Ort::Status SetHtpPowerCustomConfigs(uint32_t htp_power_config_client_id, const QnnHtpPerfInfrastructure_PowerConfig_t& power_config, uint32_t rpc_polling_time, uint32_t rpc_control_latency, const Ort::Logger& logger);
 
   enum class DcvsState {
     DCVS_DEFAULT = 0,
@@ -102,7 +102,6 @@ class HtpPowerConfigManager {
 
   std::vector<QnnHtpPerfInfrastructure_PowerConfig_t> power_configs_;
 
-  const Ort::Logger* logger_ptr_;
   const QNN_INTERFACE_VER_TYPE* qnn_interface_ = nullptr;
 
   std::mutex perf_mutex_;
@@ -118,8 +117,9 @@ class HtpPowerConfigManager {
   struct TimerCallbackArg {
     uint32_t power_config_id_;
     HtpPowerConfigManager* instance_;
-    TimerCallbackArg(uint32_t id, HtpPowerConfigManager* manager)
-        : power_config_id_(id), instance_(manager) {}
+    const Ort::Logger* logger_ptr_;
+    TimerCallbackArg(uint32_t id, HtpPowerConfigManager* manager, const Ort::Logger& logger)
+        : power_config_id_(id), instance_(manager), logger_ptr_(&logger) {}
   };
   std::unique_ptr<TimerCallbackArg> timer_callback_arg_;
 };

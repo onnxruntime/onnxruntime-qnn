@@ -2763,7 +2763,8 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
         &ep->qnn_backend_manager_->GetHtpPowerConfigManager(),
         power_config_valid,
         qnn::GraphState::INIT_START, qnn::GraphState::INIT_DONE,
-        perf_config);
+        perf_config,
+        ep->logger_);
     RETURN_IF_NOT_OK(power_guard.SetPreRunHtpPerfStatus());
     auto status = ep->CompileContextModel(graphs, fused_nodes, count, node_compute_infos);
     RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
@@ -2776,7 +2777,8 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
         &ep->qnn_backend_manager_->GetHtpPowerConfigManager(),
         power_config_valid,
         qnn::GraphState::INIT_START, qnn::GraphState::INIT_DONE,
-        perf_config);
+        perf_config,
+        ep->logger_);
     RETURN_IF_NOT_OK(power_guard.SetPreRunHtpPerfStatus());
     auto status = ep->CompileDlcContextModel(this_ptr, graphs, fused_nodes, count, node_compute_infos);
     RETURN_IF_NOT_OK(power_guard.SetPostRunHtpPerf());
@@ -2794,7 +2796,8 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
       &ep->qnn_backend_manager_->GetHtpPowerConfigManager(),
       valid_power_config_id,
       qnn::GraphState::INIT_START, qnn::GraphState::INIT_DONE,
-      perf_config);
+      perf_config,
+      ep->logger_);
   RETURN_IF_NOT_OK(power_guard.SetPreRunHtpPerfStatus());
 
   OrtStatus* compile_status = nullptr;

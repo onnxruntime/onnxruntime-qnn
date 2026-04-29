@@ -171,7 +171,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
         op_packages_(config.op_packages),
         skip_qnn_version_check_(config.skip_qnn_version_check),
         skip_backend_op_validation_(config.skip_backend_op_validation),
-        htp_power_config_manager_(power::HtpPowerConfigManager(logger)),
+        htp_power_config_manager_(power::HtpPowerConfigManager()),
         api_ptrs_(api_ptrs),
         logger_ptr_(&logger) {
   }
@@ -409,7 +409,6 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
 
   void ResetLogger(const Ort::Logger& logger) {
     logger_ptr_ = &logger;
-    htp_power_config_manager_.ResetLogger(logger);
   }
 
   bool IsDx12SharedMemoryAllocatorSupported();
