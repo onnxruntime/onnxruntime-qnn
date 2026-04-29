@@ -3,6 +3,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/normalize_indices_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 
@@ -16,6 +17,11 @@ class SimpleOpBuilder : public BaseOpBuilder {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(SimpleOpBuilder);
 
  protected:
+  Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                            const OrtNodeUnit& node_unit,
+                            const Ort::Logger& logger,
+                            std::vector<std::string>& input_names,
+                            bool do_op_validation) const override ORT_MUST_USE_RESULT;
   Ort::Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                           const OrtNodeUnit& node_unit,
                                           std::vector<std::string>&& input_names,
@@ -57,8 +63,9 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
                   ("GridSample does not support padding_mode " + padding_mode).c_str());
   }
 
-  // To DO: Remove once QNN CPU supports ScatterND
   const auto qnn_backend_type = qnn_model_wrapper.GetQnnBackendType();
+
+  // TODO: Remove once QNN CPU supports ScatterND.
   if (op_type == "ScatterND") {
     RETURN_IF(qnn_backend_type == QnnBackendType::CPU,
               "QNN EP does not support ScatterND op on CPU backend. Falling back to ORT CPU.");
@@ -358,6 +365,36 @@ Ort::Status ProcessReductionAttribute(QnnModelWrapper& qnn_model_wrapper,
   qnn_model_wrapper.AddParamWrapper(std::move(reduction_param));
 
   return Ort::Status();
+}
+
+Ort::Status SimpleOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
+                                           const OrtNodeUnit& node_unit,
+                                           const Ort::Logger& logger,
+                                           std::vector<std::string>& input_names,
+                                           bool do_op_validation) const {
+  // Prefer a dedicated op builder (see gathernd_op_builder.cc) over extending
+  // this dispatch if another op needs ProcessInputs intervention.
+  const std::string& op_type = node_unit.OpType();
+
+  // QNN's ScatterND rejects negative and int64 indices; rewrite static indices
+  // so the node stays on QNN instead of silently falling back to CPU.
+  if (op_type == "ScatterND") {
+    const auto& inputs = node_unit.Inputs();
+    RETURN_IF(inputs.size() != 3, "QNN EP: ScatterND operator must have three inputs.");
+
+    RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
+
+    TensorInfo data_info = {};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], data_info));
+    RETURN_IF_ERROR(utils::NormalizeIndicesForScatterND(
+        qnn_model_wrapper, inputs[1], data_info.shape,
+        logger, input_names, do_op_validation));
+
+    RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[2], logger, input_names));
+    return Ort::Status();
+  }
+
+  return BaseOpBuilder::ProcessInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
 }
 
 Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
