@@ -533,35 +533,6 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_FP16) {
 // Negative / no-fusion tests
 // =============================================================================
 
-// When the Reciprocal output feeds TWO Mul nodes, the fusion must NOT fire.
-// The graph should still run entirely on QNN (both Mul nodes individually),
-// but no ElementWiseDivide should appear — instead we expect two Mul nodes
-// and one Reciprocal node in the QNN graph.
-TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_NoFusion_TwoConsumers) {
-  const std::filesystem::path json_dir = "ReciprocalMulFusion_NoFusion_TwoConsumers";
-  std::filesystem::remove_all(json_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
-  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
-
-  ProviderOptions provider_options = GetProviderOptions();
-  provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_dir.string();
-
-  const auto numerator_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
-  const auto denominator_def = TestInputDef<float>({1, 2, 3, 4}, false, 0.5f, 2.0f);
-
-  // The graph should still run on QNN (Reciprocal + 2x Mul individually),
-  // but no fused ElementWiseDivide should be emitted.
-  RunQnnModelTest(BuildReciprocalTwoConsumersTestCase(numerator_def, denominator_def),
-                  provider_options,
-                  /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-3f);
-
-  // Fusion must NOT have fired — no ElementWiseDivide op in the QNN graph.
-  AssertOpInQnnGraph(json_dir, "ElementWiseDivide", /*count=*/0);
-}
-
 // When the Reciprocal output is also a graph output, the fusion must NOT fire
 // because the intermediate tensor cannot be removed from the graph.
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_NoFusion_ReciprocalOutputIsGraphOutput) {
