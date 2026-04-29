@@ -22,7 +22,7 @@ namespace qnn {
 namespace utils {
 
 template <typename SrcType>
-bool NormalizeIndicesBytes(const std::vector<uint8_t>& onnx_bytes,
+bool NormalizeIndicesBytes(gsl::span<const uint8_t> onnx_bytes,
                            const std::function<int64_t(size_t)>& axis_dim_for_element,
                            std::vector<uint8_t>& qnn_bytes,
                            bool& has_negative_indices) {
@@ -31,12 +31,14 @@ bool NormalizeIndicesBytes(const std::vector<uint8_t>& onnx_bytes,
   }
 
   const size_t num_elems = onnx_bytes.size() / sizeof(SrcType);
-  gsl::span<const SrcType> onnx_indices{reinterpret_cast<const SrcType*>(onnx_bytes.data()), num_elems};
+  const auto onnx_indices = gsl::span<const SrcType>{
+      reinterpret_cast<const SrcType*>(onnx_bytes.data()), num_elems};
 
   qnn_bytes.resize(num_elems * sizeof(int32_t));
-  gsl::span<int32_t> qnn_indices{reinterpret_cast<int32_t*>(qnn_bytes.data()), num_elems};
+  const auto qnn_indices = gsl::span<int32_t>{
+      reinterpret_cast<int32_t*>(qnn_bytes.data()), num_elems};
 
-  for (size_t i = 0; i < num_elems; i++) {
+  for (size_t i = 0; i < num_elems; ++i) {
     const int64_t axis_dim = axis_dim_for_element(i);
     // int64 arithmetic prevents wraparound when int32 idx + axis_dim >= 2^31.
     int64_t idx = static_cast<int64_t>(onnx_indices[i]);
@@ -58,13 +60,16 @@ bool NormalizeIndicesBytes(const std::vector<uint8_t>& onnx_bytes,
 }
 
 template bool NormalizeIndicesBytes<int32_t>(
-    const std::vector<uint8_t>&, const std::function<int64_t(size_t)>&,
+    gsl::span<const uint8_t>, const std::function<int64_t(size_t)>&,
     std::vector<uint8_t>&, bool&);
 template bool NormalizeIndicesBytes<int64_t>(
-    const std::vector<uint8_t>&, const std::function<int64_t(size_t)>&,
+    gsl::span<const uint8_t>, const std::function<int64_t(size_t)>&,
     std::vector<uint8_t>&, bool&);
 
 namespace {
+
+constexpr const char* kOutOfRangeMsg =
+    "QNN does not support negative or out-of-range index values for ScatterND-style ops";
 
 // Registers the indices tensor and, for dynamic int64 inputs, inserts a
 // runtime Cast(INT_32).
@@ -151,13 +156,13 @@ Ort::Status NormalizeIndicesForScatterND(QnnModelWrapper& qnn_model_wrapper,
     if (indices_info.qnn_data_type == QNN_DATATYPE_INT_64) {
       RETURN_IF_NOT((NormalizeIndicesBytes<int64_t>(onnx_indices_bytes, axis_dim_for_element,
                                                     qnn_indices_bytes, has_negative_indices)),
-                    "QNN does not support negative or out-of-range index values for ScatterND-style ops");
+                    kOutOfRangeMsg);
       indices_info.qnn_data_type = QNN_DATATYPE_INT_32;
       rewrote_bytes = true;
     } else if (indices_info.qnn_data_type == QNN_DATATYPE_INT_32) {
       RETURN_IF_NOT((NormalizeIndicesBytes<int32_t>(onnx_indices_bytes, axis_dim_for_element,
                                                     qnn_indices_bytes, has_negative_indices)),
-                    "QNN does not support negative or out-of-range index values for ScatterND-style ops");
+                    kOutOfRangeMsg);
       rewrote_bytes = has_negative_indices;
       if (!rewrote_bytes) {
         qnn_indices_bytes = std::move(onnx_indices_bytes);

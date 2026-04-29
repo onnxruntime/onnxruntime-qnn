@@ -3,7 +3,6 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
-#include "core/providers/qnn/builder/opbuilder/normalize_indices_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 
@@ -17,11 +16,6 @@ class SimpleOpBuilder : public BaseOpBuilder {
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(SimpleOpBuilder);
 
  protected:
-  Ort::Status ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                            const OrtNodeUnit& node_unit,
-                            const Ort::Logger& logger,
-                            std::vector<std::string>& input_names,
-                            bool do_op_validation) const override ORT_MUST_USE_RESULT;
   Ort::Status ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                           const OrtNodeUnit& node_unit,
                                           std::vector<std::string>&& input_names,
@@ -46,7 +40,6 @@ class SimpleOpBuilder : public BaseOpBuilder {
 
   static constexpr std::array<std::string_view, 3> gridsample_supported_modes = {"bilinear", "nearest", "linear"};
   static constexpr std::array<std::string_view, 3> gridsample_supported_padding_modes = {"zeros", "border", "reflection"};
-  static constexpr std::array<std::string_view, 3> scatternd_supported_reduction = {"none", "add", "mul"};
   static constexpr std::array<std::string_view, 4> scatterelements_supported_reduction = {"none", "add", "mul", "max"};
 };
 
@@ -64,12 +57,6 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
   }
 
   const auto qnn_backend_type = qnn_model_wrapper.GetQnnBackendType();
-
-  // TODO: Remove once QNN CPU supports ScatterND.
-  if (op_type == "ScatterND") {
-    RETURN_IF(qnn_backend_type == QnnBackendType::CPU,
-              "QNN EP does not support ScatterND op on CPU backend. Falling back to ORT CPU.");
-  }
 
   // TODO: Remove once QNN HTP PRelu bug is fixed
   if (op_type == "PRelu") {
@@ -144,14 +131,6 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
     RETURN_IF(input_info.shape.size() > 4,
               "QNN EP does not support Softplus with input rank > 4.");
-  }
-
-  // QNN ScatterND doesn't support MAX, MIN reduction
-  if (op_type == "ScatterND") {
-    OrtNodeAttrHelper node_helper(node_unit);
-    std::string reduction = node_helper.Get("reduction", "none");
-    RETURN_IF_NOT(utils::ArrayHasString(scatternd_supported_reduction, reduction),
-                  ("ScatterND does not support reduction " + reduction).c_str());
   }
 
   // QNN ScatterElements doesn't support MIN reduction
@@ -315,31 +294,6 @@ Ort::Status ProcessGridSampleAttributes(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-// Process Reduction attribute of ScatterND op
-Ort::Status ProcessScatterNDReductionAttribute(QnnModelWrapper& qnn_model_wrapper,
-                                               const OrtNodeUnit& node_unit,
-                                               std::vector<std::string>& param_tensor_names) {
-  OrtNodeAttrHelper node_helper(node_unit);
-  std::string reduction = node_helper.Get("reduction", "none");
-  Qnn_Scalar_t reduction_qnn_scalar = QNN_SCALAR_INIT;
-  reduction_qnn_scalar.dataType = QNN_DATATYPE_UINT_32;
-  if ("none" == reduction) {
-    reduction_qnn_scalar.uint32Value = QNN_OP_SCATTER_ND_REDUCTION_NONE;
-  } else if ("add" == reduction) {
-    reduction_qnn_scalar.uint32Value = QNN_OP_SCATTER_ND_REDUCTION_ADD;
-  } else if ("mul" == reduction) {
-    reduction_qnn_scalar.uint32Value = QNN_OP_SCATTER_ND_REDUCTION_MUL;
-  } else {
-    return MAKE_EP_FAIL("ScatterND support only reduction:{none, add, mul}.");
-  }
-  QnnParamWrapper reduction_param(node_unit.Index(), node_unit.Name(), QNN_OP_SCATTER_ND_PARAM_REDUCTION,
-                                  reduction_qnn_scalar);
-  param_tensor_names.push_back(reduction_param.GetParamTensorName());
-  qnn_model_wrapper.AddParamWrapper(std::move(reduction_param));
-
-  return Ort::Status();
-}
-
 // Process Reduction attribute of ScatterElements op
 Ort::Status ProcessReductionAttribute(QnnModelWrapper& qnn_model_wrapper,
                                       const OrtNodeUnit& node_unit,
@@ -365,36 +319,6 @@ Ort::Status ProcessReductionAttribute(QnnModelWrapper& qnn_model_wrapper,
   qnn_model_wrapper.AddParamWrapper(std::move(reduction_param));
 
   return Ort::Status();
-}
-
-Ort::Status SimpleOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
-                                           const OrtNodeUnit& node_unit,
-                                           const Ort::Logger& logger,
-                                           std::vector<std::string>& input_names,
-                                           bool do_op_validation) const {
-  // Prefer a dedicated op builder (see gathernd_op_builder.cc) over extending
-  // this dispatch if another op needs ProcessInputs intervention.
-  const std::string& op_type = node_unit.OpType();
-
-  // QNN's ScatterND rejects negative and int64 indices; rewrite static indices
-  // so the node stays on QNN instead of silently falling back to CPU.
-  if (op_type == "ScatterND") {
-    const auto& inputs = node_unit.Inputs();
-    RETURN_IF(inputs.size() != 3, "QNN EP: ScatterND operator must have three inputs.");
-
-    RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
-
-    TensorInfo data_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], data_info));
-    RETURN_IF_ERROR(utils::NormalizeIndicesForScatterND(
-        qnn_model_wrapper, inputs[1], data_info.shape,
-        logger, input_names, do_op_validation));
-
-    RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[2], logger, input_names));
-    return Ort::Status();
-  }
-
-  return BaseOpBuilder::ProcessInputs(qnn_model_wrapper, node_unit, logger, input_names, do_op_validation);
 }
 
 Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
@@ -525,11 +449,6 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
   if (op_type == "GridSample") {
     RETURN_IF_ERROR(ProcessGridSampleAttributes(qnn_model_wrapper, node_unit, param_tensor_names));
-  }
-
-  if (op_type == "ScatterND") {
-    // Process reduction attribute
-    RETURN_IF_ERROR(ProcessScatterNDReductionAttribute(qnn_model_wrapper, node_unit, param_tensor_names));
   }
 
   if (op_type == "ScatterElements") {
