@@ -40,7 +40,7 @@ bool NormalizeIndicesBytes(gsl::span<const uint8_t> onnx_bytes,
 
   for (size_t i = 0; i < num_elems; ++i) {
     const int64_t axis_dim = axis_dim_for_element(i);
-    // int64 arithmetic prevents wraparound when int32 idx + axis_dim >= 2^31.
+    // int64 prevents wraparound on int32 idx + axis_dim >= 2^31.
     int64_t idx = static_cast<int64_t>(onnx_indices[i]);
 
     if (idx < 0) {
@@ -71,8 +71,6 @@ namespace {
 constexpr const char* kOutOfRangeMsg =
     "QNN does not support negative or out-of-range index values for ScatterND-style ops";
 
-// Registers the indices tensor and, for dynamic int64 inputs, inserts a
-// runtime Cast(INT_32).
 Ort::Status AddNormalizedIndicesTensor(QnnModelWrapper& qnn_model_wrapper,
                                        TensorInfo indices_info,
                                        const std::string& indices_tensor_name,
@@ -101,8 +99,7 @@ Ort::Status AddNormalizedIndicesTensor(QnnModelWrapper& qnn_model_wrapper,
   auto& input_tensorwrapper = qnn_model_wrapper.GetQnnTensorWrapper(indices_tensor_name);
   std::string indices_casted_name = indices_tensor_name;
   if (input_tensorwrapper.GetTensorDataType() == QNN_DATATYPE_INT_64) {
-    // Initializers are converted to INT_32 before registration, so INT_64 here
-    // implies a dynamic input.
+    // Initializers are INT_32 by this point, so INT_64 means dynamic input.
     RETURN_IF_NOT(!indices_info.is_initializer,
                   "Internal error: static indices tensor registered with INT_64 dtype.");
     indices_casted_name += "_int32";
@@ -172,8 +169,8 @@ Ort::Status NormalizeIndicesForScatterND(QnnModelWrapper& qnn_model_wrapper,
     }
   }
 
-  // When we rewrite the bytes, rename so a sibling op consuming the same ONNX
-  // initializer under a different axis bound cannot alias our copy.
+  // Rename so a sibling op reusing the same ONNX initializer under a different
+  // axis bound cannot alias our rewritten copy.
   if (indices_info.is_initializer && rewrote_bytes) {
     indices_tensor_name = UniqueNameGenerator().New(indices_tensor_name, "_qnn_idx");
     RETURN_IF(qnn_model_wrapper.IsQnnTensorWrapperExist(indices_tensor_name),

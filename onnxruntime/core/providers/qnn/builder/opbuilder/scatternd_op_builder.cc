@@ -49,8 +49,7 @@ Ort::Status ScatterNDOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper
 
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
 
-  // QNN ScatterND rejects negative and int64 indices; rewrite static indices so
-  // the node stays on QNN instead of silently falling back to CPU.
+  // QNN rejects negative/INT_64 indices; rewrite statics to keep the node on QNN.
   TensorInfo data_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], data_info));
   RETURN_IF_ERROR(utils::NormalizeIndicesForScatterND(

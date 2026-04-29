@@ -30,8 +30,7 @@ ProviderOptions MakeHtpProviderOptions() {
 
 }  // namespace
 
-// Regression: -1 in int64 static indices. Trailing Cast makes scatter_out
-// internal to exercise the non-graph-output path.
+// Trailing Cast keeps scatter_out non-graph-output.
 TEST_F(QnnHTPBackendTests, ScatterNDInternalOutputNegativeIndex) {
   constexpr int64_t kRows = 1;
   constexpr int64_t kCols = 50;
@@ -58,8 +57,7 @@ TEST_F(QnnHTPBackendTests, ScatterNDInternalOutputNegativeIndex) {
                   ExpectedEPNodeAssignment::All);
 }
 
-// Different tuple columns bound against different data dims, exercising the
-// column-indexed axis_dim lookup.
+// Exercises the column-indexed axis_dim lookup.
 TEST_F(QnnHTPBackendTests, ScatterNDMultipleNegativeIndicesAcrossColumns) {
   constexpr int64_t kDim0 = 4;
   constexpr int64_t kDim1 = 6;
@@ -89,8 +87,6 @@ TEST_F(QnnHTPBackendTests, ScatterNDMultipleNegativeIndicesAcrossColumns) {
                   ExpectedEPNodeAssignment::All);
 }
 
-// reduction=add combined with negative indices exercises both attribute
-// processing and the indices rewrite path together.
 TEST_F(QnnHTPBackendTests, ScatterNDReductionAddWithNegativeIndices) {
   constexpr int64_t kRows = 1;
   constexpr int64_t kCols = 8;
@@ -118,8 +114,8 @@ TEST_F(QnnHTPBackendTests, ScatterNDReductionAddWithNegativeIndices) {
                   ExpectedEPNodeAssignment::All);
 }
 
-// Regression for an AI Hub compile job: ScatterND(-1) embedded between
-// producer/consumer ops must compile all the way through QNN finalization.
+// Regression for an AI Hub compile job: ScatterND(-1) between producer/consumer
+// ops must compile all the way through QNN finalization.
 TEST_F(QnnHTPBackendTests, ScatterNDEndToEndNegativeIndexInGraph) {
   constexpr int64_t kRows = 2;
   constexpr int64_t kCols = 64;
@@ -155,8 +151,7 @@ TEST_F(QnnHTPBackendTests, ScatterNDEndToEndNegativeIndexInGraph) {
                   ExpectedEPNodeAssignment::All);
 }
 
-// Shared indices initializer across two ScatterND nodes: names must not
-// collide and both nodes must land on QNN.
+// Verifies the rename avoids collisions when a shared initializer is rewritten.
 TEST_F(QnnHTPBackendTests, ScatterNDSharedNegativeIndicesInitializer) {
   constexpr int64_t kRows = 1;
   constexpr int64_t kCols = 16;
