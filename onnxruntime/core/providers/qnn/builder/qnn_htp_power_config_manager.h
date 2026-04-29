@@ -50,7 +50,7 @@ class HtpPowerConfigManager {
                              const QNN_INTERFACE_VER_TYPE& qnn_interface,
                              const Ort::Logger& logger);
 
-  void CreateTimerThread(uint32_t htp_power_config_client_id, const Ort::Logger& logger);
+  void CreateTimerThread(uint32_t htp_power_config_client_id);
 
   void ReleaseTimerThread();
 
@@ -117,9 +117,8 @@ class HtpPowerConfigManager {
   struct TimerCallbackArg {
     uint32_t power_config_id_;
     HtpPowerConfigManager* instance_;
-    const Ort::Logger* logger_ptr_;
-    TimerCallbackArg(uint32_t id, HtpPowerConfigManager* manager, const Ort::Logger& logger)
-        : power_config_id_(id), instance_(manager), logger_ptr_(&logger) {}
+    TimerCallbackArg(uint32_t id, HtpPowerConfigManager* manager)
+        : power_config_id_(id), instance_(manager) {}
   };
   std::unique_ptr<TimerCallbackArg> timer_callback_arg_;
 };

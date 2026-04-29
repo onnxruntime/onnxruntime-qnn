@@ -2211,7 +2211,7 @@ Ort::Status QnnBackendManager::SetupDeviceAndContext(QnnHtpDevice_Arch_t htp_arc
 
 Ort::Status QnnBackendManager::InitializePowerCfgId(uint32_t device_id, uint32_t core_id, uint32_t& htp_power_config_id) {
   RETURN_IF_ERROR(CreateHtpPowerCfgId(device_id, core_id, htp_power_config_id));
-  htp_power_config_manager_.CreateTimerThread(htp_power_config_id, *logger_ptr_);
+  htp_power_config_manager_.CreateTimerThread(htp_power_config_id);
   return Ort::Status();
 }
 

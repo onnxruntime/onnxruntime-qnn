@@ -355,13 +355,14 @@ void HtpPowerConfigManager::SetReleasedPerfPowerConfig(QnnHtpPerfInfrastructure_
   dcvs_v3.setCoreParams = 1;
 }
 
-void HtpPowerConfigManager::CreateTimerThread(uint32_t htp_power_config_client_id, const Ort::Logger& logger) {
+void HtpPowerConfigManager::CreateTimerThread(uint32_t htp_power_config_client_id) {
   std::lock_guard<std::mutex> lk(state_mutex_);
+  const Ort::Logger& logger = OrtLoggingManager::GetDefaultLogger();
   if (timer_ == nullptr) {
     std::unique_ptr<Timer> temp(new Timer());
     if (temp != nullptr) {
       timer_ = std::move(temp);
-      timer_callback_arg_ = std::make_unique<TimerCallbackArg>(htp_power_config_client_id, this, logger);
+      timer_callback_arg_ = std::make_unique<TimerCallbackArg>(htp_power_config_client_id, this);
       if (!timer_->Initialize(TimerCallback, timer_callback_arg_.get())) {
         ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "Failed to create timer to set performance");
         timer_callback_arg_.reset();
@@ -538,9 +539,10 @@ void HtpPowerConfigManager::TimerCallback(void* user_data) {
   }
   HtpPowerConfigManager* instance = args->instance_;
   if (instance->timer_resource_.timer_active_) {
-    auto rt = instance->SetState(GraphState::TIMEOUT, {args->power_config_id_, qnn::HtpPerformanceMode::kHtpSustainedHighPerformance, 0, 0}, *args->logger_ptr_);
+    const Ort::Logger& logger = OrtLoggingManager::GetDefaultLogger();
+    auto rt = instance->SetState(GraphState::TIMEOUT, {args->power_config_id_, qnn::HtpPerformanceMode::kHtpSustainedHighPerformance, 0, 0}, logger);
     if (!rt.IsOK()) {
-      ORT_CXX_LOG_PTR(args->logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "State update failed");
+      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, "State update failed");
     }
   }
 }
