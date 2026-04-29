@@ -24,12 +24,7 @@ namespace utils {
 template <typename SrcType>
 bool NormalizeIndicesBytes(gsl::span<const uint8_t> onnx_bytes,
                            const std::function<int64_t(size_t)>& axis_dim_for_element,
-                           std::vector<uint8_t>& qnn_bytes,
-                           bool& has_negative_indices) {
-  if (onnx_bytes.size() % sizeof(SrcType) != 0) {
-    return false;
-  }
-
+                           std::vector<uint8_t>& qnn_bytes) {
   const size_t num_elems = onnx_bytes.size() / sizeof(SrcType);
   const auto onnx_indices = gsl::span<const SrcType>{
       reinterpret_cast<const SrcType*>(onnx_bytes.data()), num_elems};
@@ -42,29 +37,24 @@ bool NormalizeIndicesBytes(gsl::span<const uint8_t> onnx_bytes,
     const int64_t axis_dim = axis_dim_for_element(i);
     // int64 prevents wraparound on int32 idx + axis_dim >= 2^31.
     int64_t idx = static_cast<int64_t>(onnx_indices[i]);
-
     if (idx < 0) {
-      has_negative_indices = true;
       idx += axis_dim;
     }
-
+    // ORT core validates shapes/dtypes; value-range is the actual safeguard
+    // because ONNX allows out-of-range ints to ship in user models.
     if (idx < 0 || idx >= axis_dim ||
         idx > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
       return false;
     }
-
     qnn_indices[i] = static_cast<int32_t>(idx);
   }
 
   return true;
 }
 
-template bool NormalizeIndicesBytes<int32_t>(
-    gsl::span<const uint8_t>, const std::function<int64_t(size_t)>&,
-    std::vector<uint8_t>&, bool&);
 template bool NormalizeIndicesBytes<int64_t>(
     gsl::span<const uint8_t>, const std::function<int64_t(size_t)>&,
-    std::vector<uint8_t>&, bool&);
+    std::vector<uint8_t>&);
 
 namespace {
 
@@ -98,10 +88,9 @@ Ort::Status AddNormalizedIndicesTensor(QnnModelWrapper& qnn_model_wrapper,
 
   auto& input_tensorwrapper = qnn_model_wrapper.GetQnnTensorWrapper(indices_tensor_name);
   std::string indices_casted_name = indices_tensor_name;
+  // Initializers are rewritten to INT_32 before this point, so INT_64 here
+  // implies a dynamic input that needs a runtime Cast.
   if (input_tensorwrapper.GetTensorDataType() == QNN_DATATYPE_INT_64) {
-    // Initializers are INT_32 by this point, so INT_64 means dynamic input.
-    RETURN_IF_NOT(!indices_info.is_initializer,
-                  "Internal error: static indices tensor registered with INT_64 dtype.");
     indices_casted_name += "_int32";
     RETURN_IF_ERROR(qnn_model_wrapper.AddCastNode(
         UniqueNameGenerator().New(indices_tensor_name, QNN_OP_CAST),
@@ -130,53 +119,29 @@ Ort::Status NormalizeIndicesForScatterND(QnnModelWrapper& qnn_model_wrapper,
   TensorInfo indices_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(indices_input, indices_info));
 
-  RETURN_IF_NOT(!indices_info.shape.empty(),
-                "ScatterND-style indices tensor must have rank >= 1.");
-  const uint32_t k = indices_info.shape.back();
-  RETURN_IF_NOT(k > 0 && static_cast<size_t>(k) <= data_shape.size(),
-                "ScatterND-style indices last-dim must be in (0, rank(data)].");
+  // ORT core validates ONNX schema (rank>=1, last-dim <= rank(data), int64 dtype).
+  const uint32_t index_tuple_size = indices_info.shape.back();
 
-  std::vector<uint8_t> qnn_indices_bytes;
-  bool has_negative_indices = false;
-  bool rewrote_bytes = false;
-
-  const auto axis_dim_for_element = [k, &data_shape](size_t element_index) -> int64_t {
-    const size_t col = element_index % static_cast<size_t>(k);
+  const auto axis_dim_for_element = [index_tuple_size, &data_shape](size_t element_index) -> int64_t {
+    const size_t col = element_index % static_cast<size_t>(index_tuple_size);
     return static_cast<int64_t>(data_shape[col]);
   };
+
+  std::vector<uint8_t> qnn_indices_bytes;
 
   if (indices_info.is_initializer) {
     std::vector<uint8_t> onnx_indices_bytes;
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(indices_info.initializer_tensor,
                                                             onnx_indices_bytes));
 
-    if (indices_info.qnn_data_type == QNN_DATATYPE_INT_64) {
-      RETURN_IF_NOT((NormalizeIndicesBytes<int64_t>(onnx_indices_bytes, axis_dim_for_element,
-                                                    qnn_indices_bytes, has_negative_indices)),
-                    kOutOfRangeMsg);
-      indices_info.qnn_data_type = QNN_DATATYPE_INT_32;
-      rewrote_bytes = true;
-    } else if (indices_info.qnn_data_type == QNN_DATATYPE_INT_32) {
-      RETURN_IF_NOT((NormalizeIndicesBytes<int32_t>(onnx_indices_bytes, axis_dim_for_element,
-                                                    qnn_indices_bytes, has_negative_indices)),
-                    kOutOfRangeMsg);
-      rewrote_bytes = has_negative_indices;
-      if (!rewrote_bytes) {
-        qnn_indices_bytes = std::move(onnx_indices_bytes);
-      }
-    } else {
-      qnn_indices_bytes = std::move(onnx_indices_bytes);
-    }
-  }
+    RETURN_IF_NOT(NormalizeIndicesBytes<int64_t>(onnx_indices_bytes, axis_dim_for_element,
+                                                 qnn_indices_bytes),
+                  kOutOfRangeMsg);
+    indices_info.qnn_data_type = QNN_DATATYPE_INT_32;
 
-  // Rename so a sibling op reusing the same ONNX initializer under a different
-  // axis bound cannot alias our rewritten copy.
-  if (indices_info.is_initializer && rewrote_bytes) {
+    // Rename so a sibling op reusing the same ONNX initializer under a different
+    // axis bound cannot alias our rewritten copy.
     indices_tensor_name = UniqueNameGenerator().New(indices_tensor_name, "_qnn_idx");
-    RETURN_IF(qnn_model_wrapper.IsQnnTensorWrapperExist(indices_tensor_name),
-              ("Rewritten ScatterND indices name collided with existing tensor: " +
-               indices_tensor_name)
-                  .c_str());
   }
 
   return AddNormalizedIndicesTensor(qnn_model_wrapper, std::move(indices_info), indices_tensor_name,

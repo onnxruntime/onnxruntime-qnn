@@ -116,8 +116,7 @@ TEST_F(QnnHTPBackendTests, ScatterNDReductionAddWithNegativeIndices) {
                   ExpectedEPNodeAssignment::All);
 }
 
-// Regression for an AI Hub compile job: ScatterND(-1) between producer/consumer
-// ops must compile all the way through QNN finalization.
+// ScatterND(-1) between producer/consumer ops must compile through QNN finalization.
 TEST_F(QnnHTPBackendTests, ScatterNDEndToEndNegativeIndexInGraph) {
   constexpr int64_t kRows = 2;
   constexpr int64_t kCols = 64;
