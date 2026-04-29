@@ -1980,6 +1980,9 @@ TEST_F(QnnHTPBackendTests, TestMismatchedGraphInputAndTensorWrapperCount) {
 // Compile a QDQ model to a context binary with offload_graph_io_quantization=1,
 // then load and run the context binary. Regression test for PR #234.
 TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationContextBinaryRoundTrip) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16/FP32 support (arch > v68)";
+  }
   const std::string ctx_model_file = "./offload_qdq_ctx_test.onnx";
   std::remove(ctx_model_file.c_str());
   auto cleanup = gsl::finally([&]() { std::remove(ctx_model_file.c_str()); });
