@@ -13,6 +13,8 @@
 
 #include "gtest/gtest.h"
 
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+
 namespace onnxruntime {
 namespace test {
 
@@ -190,5 +192,7 @@ TEST_F(QnnHTPBackendTests, ScatterNDSharedNegativeIndicesInitializer) {
 
 }  // namespace test
 }  // namespace onnxruntime
+
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 #endif  // !defined(ORT_MINIMAL_BUILD)
