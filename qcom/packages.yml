@@ -67,6 +67,12 @@ cmake_windows_x86_64:
   sha256: cf35a516c4f5f4646b301e51c8e24b168cc012c3b1453b8f675303b54eb0ef45
   content_root: cmake-{version}-windows-x86_64
   bindir: bin
+lcov_linux_x86_64:
+  version: 1.16
+  url: https://github.com/linux-test-project/lcov/releases/download/v{version}/lcov-{version}.tar.gz
+  sha256: 987031ad5528c8a746d4b52b380bc1bffe412de1f2b9c2ba5224995668e3240b
+  content_root: lcov-{version}
+  bindir: bin
 linux_oe_gcc112_toolchain:
   # This package comes from AI Hub, which in turn copies it from the QAIRT build.
   version: 20250402d

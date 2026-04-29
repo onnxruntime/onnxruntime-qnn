@@ -36,6 +36,7 @@ from ep_build.tasks.build import (
     BuildEpDockerTask,
     BuildEpLinuxTask,
     BuildEpWindowsTask,
+    GenerateCoverageTask,
     QdcTestsTask,
 )
 from ep_build.tasks.docker import MANYLINUX_2_34_AARCH64_TAG, DockerBuildTask
@@ -522,6 +523,37 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
+                )
+            )
+
+    if is_host_linux() and is_host_x86_64():
+
+        @public_task("Build with code coverage and generate HTML report (Linux x86_64, RelWithDebInfo)")
+        @depends(["create_venv"])
+        def coverage_linux_x86_64(self, plan: Plan) -> str:
+            build_dir = REPO_ROOT / "build" / "linux-x86_64"
+            return plan.add_step(
+                CompositeTask(
+                    "Coverage build, test, and report",
+                    [
+                        BuildEpLinuxTask(
+                            "Building ONNX Runtime for Linux (RelWithDebInfo + coverage)",
+                            self.__venv_path,
+                            "linux",
+                            "x86_64",
+                            "RelWithDebInfo",
+                            self.__target_py_version,
+                            self.__ort_prebuilt_root,
+                            self.__qairt_sdk_root,
+                            "build",
+                            extra_args=["--enable-coverage"],
+                        ),
+                        GenerateCoverageTask(
+                            "Generating HTML coverage report",
+                            self.__venv_path,
+                            build_dir,
+                        ),
+                    ],
                 )
             )
 

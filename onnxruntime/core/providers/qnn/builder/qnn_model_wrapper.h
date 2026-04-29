@@ -397,6 +397,18 @@ class QnnModelWrapper {
   // Maps internal QNN tensor name to original ONNX name. Used by offload_graph_io_quantization.
   void SetTensorNameOverride(const std::string& internal, const std::string& original) const;
 
+  // Returns true if 'external' is already the target of any tensor name override.
+  // Used to prevent two Q-node outputs from mapping to the same external graph-input name,
+  // which would cause RegisterGraphInputOutputInOrder to create only one APP_WRITE tensor
+  // while graph_inputs_ still tracks two entries, leaving a null slot in qnn_tensor_infos.
+  bool IsExternalOverrideTarget(const std::string& external) const {
+    if (tensor_name_overrides_ == nullptr) return false;
+    for (const auto& [internal, ext] : *tensor_name_overrides_) {
+      if (ext == external) return true;
+    }
+    return false;
+  }
+
  private:
   bool CreateQnnInputOutputTensors(const std::string& qnn_node_name,
                                    const std::vector<std::string>& names,
@@ -409,14 +421,6 @@ class QnnModelWrapper {
                              const std::vector<std::string>& param_tensor_names,
                              std::vector<Qnn_Param_t>& qnn_params,
                              bool do_op_validation = false);
-
-  bool IsQnnTensorCreated(const std::string& tensor_name) {
-    auto pos = tensor_created_map_.find(tensor_name);
-    if (pos == tensor_created_map_.end()) {
-      return false;
-    }
-    return pos->second;
-  }
 
   void GetGraphInputOutputTensorWrapper(const std::vector<std::string>& names,
                                         std::vector<QnnTensorWrapper>& wrappers_list);
@@ -473,9 +477,9 @@ class QnnModelWrapper {
   // All QnnParamWrapper for the graph
   std::unordered_map<std::string, QnnParamWrapper> model_params_map_;
   std::vector<QnnOpProperty> qnn_op_property_list_;
-  // <tensor_name, qnn_tensor_created> -- true means qnn tensor created in qnn graph
-  // it includs normal qnn_tensors and qnn_tensors inside param_tensors
-  std::unordered_map<std::string, bool> tensor_created_map_;
+  // <tensor_name, qnn_tensor_id> -- stores the QNN-assigned ID once the tensor is created
+  // it includes normal qnn_tensors and qnn_tensors inside param_tensors
+  std::unordered_map<std::string, uint32_t> qnn_tensor_id_map_;
   const GraphInputOutputInfo& graph_inputs_;
   const GraphInputOutputInfo& graph_outputs_;
   QnnBackendType qnn_backend_type_ = QnnBackendType::CPU;
