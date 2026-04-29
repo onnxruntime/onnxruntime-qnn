@@ -132,7 +132,45 @@ std::unique_ptr<IQnnNodeGroup> ReciprocalMulFusion::TryFusion(
     return nullptr;
   }
 
-  // -- Step 3: Locate the single Mul consumer of the Reciprocal output ------
+  // -- Step 3: Reciprocal output must have exactly one consumer ---------------
+  //
+  // Guard against the case where the Reciprocal output feeds multiple
+  // downstream nodes (e.g. two Mul nodes).  In that scenario the intermediate
+  // tensor cannot be absorbed by a single fusion, so we must bail out.
+  //
+  // We perform this check explicitly via the raw ORT API rather than relying
+  // solely on GetOnlyChildOfType, because the Ort::ConstValueInfo::GetConsumers()
+  // C++ wrapper may return only the first consumer even when multiple exist.
+  {
+    const OrtNode& recip_node = reciprocal_node_unit.GetNode();
+    const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
+
+    size_t num_outputs = 0;
+    if (ort_api.Node_GetNumOutputs(&recip_node, &num_outputs) != nullptr || num_outputs == 0) {
+      return nullptr;
+    }
+
+    std::vector<const OrtValueInfo*> recip_outputs(num_outputs);
+    if (ort_api.Node_GetOutputs(&recip_node, recip_outputs.data(), num_outputs) != nullptr) {
+      return nullptr;
+    }
+
+    // Reciprocal is a unary op with a single output; check that output's consumer count.
+    const OrtValueInfo* recip_output_vi = recip_outputs[0];
+    if (recip_output_vi == nullptr) {
+      return nullptr;
+    }
+
+    size_t num_consumers = 0;
+    if (ort_api.ValueInfo_GetValueNumConsumers(recip_output_vi, &num_consumers) != nullptr ||
+        num_consumers != 1) {
+      // Either the API call failed or there are zero / multiple consumers.
+      // In both cases the fusion must not fire.
+      return nullptr;
+    }
+  }
+
+  // -- Step 4: Locate the single Mul consumer of the Reciprocal output ------
   //
   // GetOnlyChildOfType performs all of the following checks atomically:
   //   (a) The Reciprocal node has exactly one output tensor.
@@ -152,7 +190,7 @@ std::unique_ptr<IQnnNodeGroup> ReciprocalMulFusion::TryFusion(
     return nullptr;
   }
 
-  // -- Step 4: Mul must have exactly 2 inputs --------------------------------
+  // -- Step 5: Mul must have exactly 2 inputs --------------------------------
   //
   // ONNX Mul is a binary op.  One input must be the Reciprocal output
   // (the denominator path); the other is the numerator.
@@ -161,7 +199,7 @@ std::unique_ptr<IQnnNodeGroup> ReciprocalMulFusion::TryFusion(
     return nullptr;
   }
 
-  // -- Step 5: Verify the Reciprocal output is actually wired into the Mul --
+  // -- Step 6: Verify the Reciprocal output is actually wired into the Mul --
   //
   // GetOnlyChildOfType guarantees the Mul is the sole consumer of the
   // Reciprocal output, but it does not verify *which* input slot of the Mul
@@ -192,7 +230,7 @@ std::unique_ptr<IQnnNodeGroup> ReciprocalMulFusion::TryFusion(
     return nullptr;
   }
 
-  // -- Step 6: QNN capability dry-run ----------------------------------------
+  // -- Step 7: QNN capability dry-run ----------------------------------------
   //
   // Ask the QNN backend whether it can handle an ElementWiseDivide node
   // with the tensor types and shapes inferred from the ONNX graph.  This
@@ -206,7 +244,7 @@ std::unique_ptr<IQnnNodeGroup> ReciprocalMulFusion::TryFusion(
     return nullptr;
   }
 
-  // -- Step 7: Commit to the fusion ------------------------------------------
+  // -- Step 8: Commit to the fusion ------------------------------------------
   //
   // All checks passed.  Construct the fusion object.  The actual QNN node
   // will be created later when AddToModelBuilder() is called.

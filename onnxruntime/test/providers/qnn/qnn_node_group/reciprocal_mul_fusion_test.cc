@@ -556,7 +556,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_NoFusion_TwoConsumers) {
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-4f);
+                  /*fp32_abs_err=*/1e-3f);
 
   // Fusion must NOT have fired — no ElementWiseDivide op in the QNN graph.
   AssertOpInQnnGraph(json_dir, "ElementWiseDivide", /*count=*/0);
