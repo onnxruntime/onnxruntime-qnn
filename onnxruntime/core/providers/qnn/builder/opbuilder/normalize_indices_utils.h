@@ -24,19 +24,31 @@ class QnnModelWrapper;
 
 namespace utils {
 
-// Returns false on out-of-range index. `axis_dim_for_element(i)` is the
-// per-element open upper bound -- lets callers encode op-specific layout
-// (e.g. ScatterND's per-column bound).
+// `axis_dim_for_element(i)` is the per-element open upper bound -- lets
+// callers encode op-specific layout. `has_negative_indices` lets int32
+// callers skip the rewrite when no negatives are present.
 template <typename SrcType>
 bool NormalizeIndicesBytes(gsl::span<const uint8_t> onnx_bytes,
                            const std::function<int64_t(size_t)>& axis_dim_for_element,
-                           std::vector<uint8_t>& qnn_bytes);
+                           std::vector<uint8_t>& qnn_bytes,
+                           bool& has_negative_indices);
 
 // ScatterND: indices' last dim is tuple depth; column c bounds `data_shape[c]`.
 Ort::Status NormalizeIndicesForScatterND(
     QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnitIODef& indices_input,
     const std::vector<uint32_t>& data_shape,
+    const Ort::Logger& logger,
+    std::vector<std::string>& input_names,
+    bool do_op_validation);
+
+// ScatterElements: every index bounds `data_shape[axis]`. Caller must have
+// resolved any negative axis before invocation.
+Ort::Status NormalizeIndicesForScatterElements(
+    QnnModelWrapper& qnn_model_wrapper,
+    const OrtNodeUnitIODef& indices_input,
+    const std::vector<uint32_t>& data_shape,
+    int64_t axis,
     const Ort::Logger& logger,
     std::vector<std::string>& input_names,
     bool do_op_validation);
