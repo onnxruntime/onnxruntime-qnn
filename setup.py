@@ -149,17 +149,17 @@ if platform.system() == "Linux" or platform.system() == "AIX":
     # QNN
     qnn_deps = [
         "libGenie.so",
+        "libHtpPrepare.so",
         "libQnnCpu.so",
         "libQnnGpu.so",
         "libQnnHtp.so",
-        "libQnnHtpPrepare.so",
         "libQnnHtpNetRunExtensions.so",
+        "libQnnHtpPrepare.so",
         "libQnnHtpV68Skel.so",
         "libQnnHtpV68Stub.so",
         "libQnnIr.so",
         "libQnnSaver.so",
         "libQnnSystem.so",
-        "libHtpPrepare.so",
     ]
     dl_libs.extend(qnn_deps)
 else:
@@ -168,23 +168,23 @@ else:
     # QNN V68/V73/V81 dependencies
     qnn_deps = [
         "Genie.dll",
+        "HtpPrepare.dll",
+        "libQnnHtpV68Skel.so",
+        "libqnnhtpv73.cat",
+        "libQnnHtpV73Skel.so",
+        "libqnnhtpv81.cat",
+        "libQnnHtpV81Skel.so",
         "QnnCpu.dll",
         "QnnGpu.dll",
         "QnnHtp.dll",
+        "QnnHtpNetRunExtensions.dll",
+        "QnnHtpPrepare.dll",
+        "QnnHtpV68Stub.dll",
+        "QnnHtpV73Stub.dll",
+        "QnnHtpV81Stub.dll",
         "QnnIr.dll",
         "QnnSaver.dll",
         "QnnSystem.dll",
-        "QnnHtpNetRunExtensions.dll",
-        "QnnHtpPrepare.dll",
-        "HtpPrepare.dll",
-        "QnnHtpV81Stub.dll",
-        "libQnnHtpV81Skel.so",
-        "libqnnhtpv81.cat",
-        "QnnHtpV73Stub.dll",
-        "libQnnHtpV73Skel.so",
-        "libqnnhtpv73.cat",
-        "QnnHtpV68Stub.dll",
-        "libQnnHtpV68Skel.so",
     ]
     libs.extend(qnn_deps)
 
