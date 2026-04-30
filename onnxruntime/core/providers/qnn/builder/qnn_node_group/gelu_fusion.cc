@@ -157,6 +157,8 @@ bool TryMatchErfMulPattern(
   //               |                                           v
   //            [root] --> Div -----> Erf --> Mul --> Add --> Mul ==>
   //                      (B=1.4142...)      (0.5)   (0.5)
+  // At this stage, identify the first Mul after Erf, followed by Add and final Mul taking root as input.
+
   // Erf should have a Mul child
   const OrtNodeUnit* mul_after_erf_node_unit = GetChildNodeUnitAllowQdq(ctx.qnn_model_wrapper,
                                                                         erf_node_unit,
@@ -236,7 +238,7 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
     return nullptr;
   }
 
-  // Erf must have a Div parent on its input
+  // Erf must have a Div or Mul parent on its input (optimizers may replace Div with Mul)
   const auto& erf_inputs = erf_node_unit.Inputs();
   if (erf_inputs.empty()) {
     return nullptr;
@@ -244,7 +246,7 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
 
   const OrtNodeUnit* div_node_unit = GetParentOfInput(qnn_model_wrapper, erf_node_unit, erf_inputs[0],
                                                       node_to_node_unit, node_unit_to_qnn_node_group);
-  if (div_node_unit == nullptr || div_node_unit->OpType() != "Div") {
+  if (div_node_unit == nullptr || (div_node_unit->OpType() != "Div" && div_node_unit->OpType() != "Mul")) {
     return nullptr;
   }
   const auto& div_inputs = div_node_unit->Inputs();
@@ -281,18 +283,15 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
     if (erf_child_add != nullptr) {
       // ErfAdd Patterns 1 or 2: Erf -> Add -> Mul [-> Mul]
       // Structure: x * 0.5 * (Erf(x / sqrt2) + 1) [with variations in Mul ordering]
-      const auto& add_inputs = erf_child_add->Inputs();
-      if (add_inputs.size() >= 2) {
-        const OrtNodeUnit* mul_node_unit = GetChildNodeUnitAllowQdq(qnn_model_wrapper, *erf_child_add, "Mul",
-                                                                    node_to_node_unit, node_unit_to_qnn_node_group);
-        if (mul_node_unit != nullptr) {
-          is_match = TryMatchErfAddPatterns(div_node_unit,
-                                            erf_node_unit,
-                                            erf_child_add,
-                                            mul_node_unit,
-                                            match_ctx,
-                                            pattern_match);
-        }
+      const OrtNodeUnit* mul_node_unit = GetChildNodeUnitAllowQdq(qnn_model_wrapper, *erf_child_add, "Mul",
+                                                                  node_to_node_unit, node_unit_to_qnn_node_group);
+      if (mul_node_unit != nullptr) {
+        is_match = TryMatchErfAddPatterns(div_node_unit,
+                                          erf_node_unit,
+                                          erf_child_add,
+                                          mul_node_unit,
+                                          match_ctx,
+                                          pattern_match);
       }
     }
   }

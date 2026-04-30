@@ -19,20 +19,21 @@ namespace test {
 
 namespace {
 
-// Helper function to build GELU Pattern 1: root -> Mul -> Div -> Erf -> Add -> Mul
+// Helper function to build GELU Pattern 1: root -> Mul -> Div/Mul -> Erf -> Add -> Mul
 // Pattern 1:
 //                   +-------Mul(0.5)---------------------+
 //                   |                                    |
 //                   |                                    v
-//                [root] --> Div -----> Erf  --> Add --> Mul ==>
-//                          (B=1.4142...)        (1)
-GetTestModelFn BuildGeluPattern1TestCase(const TestInputDef<float>& input_def) {
-  return [input_def](ModelTestBuilder& builder) -> void {
+//                [root] --> Div/Mul -----> Erf  --> Add --> Mul ==>
+//                          (1.4142... or 1/1.4142...)   (1)
+GetTestModelFn BuildGeluPattern1TestCase(const TestInputDef<float>& input_def, bool use_mul = false) {
+  return [input_def, use_mul](ModelTestBuilder& builder) -> void {
     constexpr float sqrt_2 = 1.4142135381698608f;
+    constexpr float inv_sqrt_2 = 0.7071067690849304f;  // 1 / sqrt(2)
     constexpr float half = 0.5f;
     constexpr float one = 1.0f;
 
-    builder.graph_->set_name("gelu_pattern1_graph");
+    builder.graph_->set_name(use_mul ? "gelu_pattern1_mul_graph" : "gelu_pattern1_graph");
 
     // input
     MakeTestInput<float>(builder, "input", input_def);
@@ -45,18 +46,27 @@ GetTestModelFn BuildGeluPattern1TestCase(const TestInputDef<float>& input_def) {
                     {"mul_half_out"},
                     kOnnxDomain);
 
-    // input -> Div(sqrt2) -> div_out
-    builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
-    builder.AddNode("Div_sqrt2",
-                    "Div",
-                    {"input", "sqrt2"},
-                    {"div_out"},
-                    kOnnxDomain);
+    // input -> Div(sqrt2) or Mul(1/sqrt2) -> norm_out
+    if (use_mul) {
+      builder.MakeScalarInitializer<float>("inv_sqrt2", inv_sqrt_2);
+      builder.AddNode("Mul_inv_sqrt2",
+                      "Mul",
+                      {"input", "inv_sqrt2"},
+                      {"norm_out"},
+                      kOnnxDomain);
+    } else {
+      builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
+      builder.AddNode("Div_sqrt2",
+                      "Div",
+                      {"input", "sqrt2"},
+                      {"norm_out"},
+                      kOnnxDomain);
+    }
 
-    // div_out -> Erf -> erf_out
+    // norm_out -> Erf -> erf_out
     builder.AddNode("Erf",
                     "Erf",
-                    {"div_out"},
+                    {"norm_out"},
                     {"erf_out"},
                     kOnnxDomain);
 
@@ -84,31 +94,41 @@ GetTestModelFn BuildGeluPattern1TestCase(const TestInputDef<float>& input_def) {
 //                   +------------------------------------+
 //                   |                                    |
 //                   |                                    v
-//                [root] --> Div -----> Erf  --> Add --> Mul -->Mul ==>
-//                          (B=1.4142...)        (1)            (0.5)
-GetTestModelFn BuildGeluPattern2TestCase(const TestInputDef<float>& input_def) {
-  return [input_def](ModelTestBuilder& builder) -> void {
+//                [root] --> Div/Mul -----> Erf  --> Add --> Mul -->Mul ==>
+//                          (1.4142... or 1/1.4142...)   (1)            (0.5)
+GetTestModelFn BuildGeluPattern2TestCase(const TestInputDef<float>& input_def, bool use_mul = false) {
+  return [input_def, use_mul](ModelTestBuilder& builder) -> void {
     constexpr float sqrt_2 = 1.4142135381698608f;
+    constexpr float inv_sqrt_2 = 0.7071067690849304f;  // 1 / sqrt(2)
     constexpr float half = 0.5f;
     constexpr float one = 1.0f;
 
-    builder.graph_->set_name("gelu_pattern2_graph");
+    builder.graph_->set_name(use_mul ? "gelu_pattern2_mul_graph" : "gelu_pattern2_graph");
 
     // input
     MakeTestInput<float>(builder, "input", input_def);
 
-    // input -> Div(sqrt2) -> div_out
-    builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
-    builder.AddNode("Div_sqrt2",
-                    "Div",
-                    {"input", "sqrt2"},
-                    {"div_out"},
-                    kOnnxDomain);
+    // input -> Div(sqrt2) or Mul(1/sqrt2) -> norm_out
+    if (use_mul) {
+      builder.MakeScalarInitializer<float>("inv_sqrt2", inv_sqrt_2);
+      builder.AddNode("Mul_inv_sqrt2",
+                      "Mul",
+                      {"input", "inv_sqrt2"},
+                      {"norm_out"},
+                      kOnnxDomain);
+    } else {
+      builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
+      builder.AddNode("Div_sqrt2",
+                      "Div",
+                      {"input", "sqrt2"},
+                      {"norm_out"},
+                      kOnnxDomain);
+    }
 
-    // div_out -> Erf -> erf_out
+    // norm_out -> Erf -> erf_out
     builder.AddNode("Erf",
                     "Erf",
-                    {"div_out"},
+                    {"norm_out"},
                     {"erf_out"},
                     kOnnxDomain);
 
@@ -144,30 +164,40 @@ GetTestModelFn BuildGeluPattern2TestCase(const TestInputDef<float>& input_def) {
 //                   +-------------------------------------------+
 //                   |                                           |
 //                   |                                           v
-//                [root] --> Div -----> Erf --> Mul --> Add --> Mul ==>
-//                          (B=1.4142...)      (0.5)   (0.5)
-GetTestModelFn BuildGeluPattern3TestCase(const TestInputDef<float>& input_def) {
-  return [input_def](ModelTestBuilder& builder) -> void {
+//                [root] --> Div/Mul -----> Erf --> Mul --> Add --> Mul ==>
+//                          (1.4142... or 1/1.4142...)  (0.5)   (0.5)
+GetTestModelFn BuildGeluPattern3TestCase(const TestInputDef<float>& input_def, bool use_mul = false) {
+  return [input_def, use_mul](ModelTestBuilder& builder) -> void {
     constexpr float sqrt_2 = 1.4142135381698608f;
+    constexpr float inv_sqrt_2 = 0.7071067690849304f;  // 1 / sqrt(2)
     constexpr float half = 0.5f;
 
-    builder.graph_->set_name("gelu_pattern3_graph");
+    builder.graph_->set_name(use_mul ? "gelu_pattern3_mul_graph" : "gelu_pattern3_graph");
 
     // input
     MakeTestInput<float>(builder, "input", input_def);
 
-    // input -> Div(sqrt2) -> div_out
-    builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
-    builder.AddNode("Div_sqrt2",
-                    "Div",
-                    {"input", "sqrt2"},
-                    {"div_out"},
-                    kOnnxDomain);
+    // input -> Div(sqrt2) or Mul(1/sqrt2) -> norm_out
+    if (use_mul) {
+      builder.MakeScalarInitializer<float>("inv_sqrt2", inv_sqrt_2);
+      builder.AddNode("Mul_inv_sqrt2",
+                      "Mul",
+                      {"input", "inv_sqrt2"},
+                      {"norm_out"},
+                      kOnnxDomain);
+    } else {
+      builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
+      builder.AddNode("Div_sqrt2",
+                      "Div",
+                      {"input", "sqrt2"},
+                      {"norm_out"},
+                      kOnnxDomain);
+    }
 
-    // div_out -> Erf -> erf_out
+    // norm_out -> Erf -> erf_out
     builder.AddNode("Erf",
                     "Erf",
-                    {"div_out"},
+                    {"norm_out"},
                     {"erf_out"},
                     kOnnxDomain);
 
@@ -453,6 +483,8 @@ ProviderOptions GetProviderOptions() {
 // Test GELU Pattern 1 with float32 model (for baseline comparison)
 TEST_F(QnnHTPBackendTests, GeluFusionPattern1_Float32) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
+
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern1_Float32";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -461,9 +493,18 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_Float32) {
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
-  auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
 
-  RunQnnModelTest(BuildGeluPattern1TestCase(input_def),
+  // Test with Div
+  RunQnnModelTest(BuildGeluPattern1TestCase(input_def, false),
+                  provider_options,
+                  /*opset_version=*/13,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-3f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+
+  // Test with Mul (Div replaced by Mul)
+  RunQnnModelTest(BuildGeluPattern1TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
@@ -475,6 +516,8 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_Float32) {
 // Test GELU Pattern 2 with float32 model (for baseline comparison)
 TEST_F(QnnHTPBackendTests, GeluFusionPattern2_Float32) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
+
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern2_Float32";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -483,9 +526,18 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_Float32) {
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
-  auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
 
-  RunQnnModelTest(BuildGeluPattern2TestCase(input_def),
+  // Test with Div
+  RunQnnModelTest(BuildGeluPattern2TestCase(input_def, false),
+                  provider_options,
+                  /*opset_version=*/13,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-3f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+
+  // Test with Mul (Div replaced by Mul)
+  RunQnnModelTest(BuildGeluPattern2TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
@@ -497,6 +549,8 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_Float32) {
 // Test GELU Pattern 3 (ErfMul Pattern) with float32 model
 TEST_F(QnnHTPBackendTests, GeluFusionPattern3_Float32) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
+
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern3_Float32";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -505,9 +559,18 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern3_Float32) {
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
-  auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
 
-  RunQnnModelTest(BuildGeluPattern3TestCase(input_def),
+  // Test with Div
+  RunQnnModelTest(BuildGeluPattern3TestCase(input_def, false),
+                  provider_options,
+                  /*opset_version=*/13,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-3f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+
+  // Test with Mul (Div replaced by Mul)
+  RunQnnModelTest(BuildGeluPattern3TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
@@ -563,6 +626,10 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_LargeInput) {
 // Test GELU Pattern 1 with 3D input
 TEST_F(QnnHTPBackendTests, GeluFusionPattern1_3D) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+// Test GELU Pattern 1 with 3D input
+TEST_F(QnnHTPBackendTests, GeluFusionPattern1_3D) {
+  auto input_def = TestInputDef<float>({1, 16, 32}, false, -1.0f, 1.0f);
+
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern1_3D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -571,9 +638,18 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_3D) {
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
-  auto input_def = TestInputDef<float>({1, 16, 32}, false, -1.0f, 1.0f);
 
-  RunQnnModelTest(BuildGeluPattern1TestCase(input_def),
+  // Test with Div
+  RunQnnModelTest(BuildGeluPattern1TestCase(input_def, false),
+                  provider_options,
+                  /*opset_version=*/13,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-3f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+
+  // Test with Mul (Div replaced by Mul)
+  RunQnnModelTest(BuildGeluPattern1TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
@@ -585,6 +661,8 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_3D) {
 // Test GELU Pattern 2 with 3D input
 TEST_F(QnnHTPBackendTests, GeluFusionPattern2_3D) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  auto input_def = TestInputDef<float>({1, 16, 32}, false, -1.0f, 1.0f);
+
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern2_3D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -593,9 +671,18 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_3D) {
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
-  auto input_def = TestInputDef<float>({1, 16, 32}, false, -1.0f, 1.0f);
 
-  RunQnnModelTest(BuildGeluPattern2TestCase(input_def),
+  // Test with Div
+  RunQnnModelTest(BuildGeluPattern2TestCase(input_def, false),
+                  provider_options,
+                  /*opset_version=*/13,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-3f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+
+  // Test with Mul (Div replaced by Mul)
+  RunQnnModelTest(BuildGeluPattern2TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
@@ -607,6 +694,8 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_3D) {
 // Test GELU Pattern 1 with 2D input (typical for linear layers)
 TEST_F(QnnHTPBackendTests, GeluFusionPattern1_2D) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  auto input_def = TestInputDef<float>({32, 512}, false, -1.5f, 1.5f);
+
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern1_2D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -615,9 +704,18 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_2D) {
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
-  auto input_def = TestInputDef<float>({32, 512}, false, -1.5f, 1.5f);
 
-  RunQnnModelTest(BuildGeluPattern1TestCase(input_def),
+  // Test with Div
+  RunQnnModelTest(BuildGeluPattern1TestCase(input_def, false),
+                  provider_options,
+                  /*opset_version=*/13,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/2e-3f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+
+  // Test with Mul (Div replaced by Mul)
+  RunQnnModelTest(BuildGeluPattern1TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
@@ -629,6 +727,8 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_2D) {
 // Test GELU Pattern 2 with 2D input (typical for linear layers)
 TEST_F(QnnHTPBackendTests, GeluFusionPattern2_2D) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  auto input_def = TestInputDef<float>({32, 512}, false, -1.5f, 1.5f);
+
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern2_2D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -637,9 +737,18 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_2D) {
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
-  auto input_def = TestInputDef<float>({32, 512}, false, -1.5f, 1.5f);
 
-  RunQnnModelTest(BuildGeluPattern2TestCase(input_def),
+  // Test with Div
+  RunQnnModelTest(BuildGeluPattern2TestCase(input_def, false),
+                  provider_options,
+                  /*opset_version=*/13,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/2e-3f);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+
+  // Test with Mul (Div replaced by Mul)
+  RunQnnModelTest(BuildGeluPattern2TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
