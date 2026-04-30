@@ -42,9 +42,11 @@ jobs:
       build_android_aarch64: true
       build_android_aarch64_aar: true
       build_linux_aarch64_oe_gcc11_2: true
+      build_linux_x86_64: true
       linux_aarch64_manylinux_2_34_target_py_vsns: "['3.11','3.12','3.13','3.14']"
       windows_target_archs: "['arm64', 'arm64ec', 'x86_64']"
       windows_target_py_vsns: "['3.11','3.12','3.13','3.14']"
+      windows_arm64_build_archive: true
 
   publish-wheel-workflow:
     name: "Publish distribution to PyPI"
@@ -256,10 +258,10 @@ jobs:
         with:
           name: android-aarch64-pom
 
-      - name: Download ARM64 Windows NuGet Package from Artifactory
+      - name: Download ARM64 (ARM64x) Windows NuGet Package from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
-          name: windows-arm64-py3.11-nuget
+          name: windows-arm64x-py3.11-nuget
 
       - name: Download ARM64 Windows Zip Package
         uses: ./.github/actions/download-ci-artifact
