@@ -32,14 +32,15 @@ ProviderOptions MakeHtpProviderOptions() {
 
 }  // namespace
 
-// Trailing Cast keeps scatter_out non-graph-output.
+// Trailing Cast keeps scatter_out non-graph-output. `data` is a runtime input
+// so ConstantFolding doesn't erase the ScatterND before partitioning.
 TEST_F(QnnHTPBackendTests, ScatterNDInternalOutputNegativeIndex) {
   constexpr int64_t kRows = 1;
   constexpr int64_t kCols = 50;
 
   auto build_model = [=](ModelTestBuilder& builder) {
     std::vector<int32_t> data(kRows * kCols, 0);
-    builder.MakeInitializer<int32_t>("data", {kRows, kCols}, data);
+    builder.MakeInput<int32_t>("data", {kRows, kCols}, data);
 
     std::vector<int64_t> indices = {0, -1};  // -> [0, kCols-1] after normalize
     builder.MakeInitializer<int64_t>("indices", {1, 1, 2}, indices);
@@ -66,7 +67,7 @@ TEST_F(QnnHTPBackendTests, ScatterNDMultipleNegativeIndicesAcrossColumns) {
 
   auto build_model = [=](ModelTestBuilder& builder) {
     std::vector<int32_t> data(kDim0 * kDim1, 0);
-    builder.MakeInitializer<int32_t>("data", {kDim0, kDim1}, data);
+    builder.MakeInput<int32_t>("data", {kDim0, kDim1}, data);
 
     // Two index tuples, both containing negative values across columns.
     // Tuple 0: (-1, -1) -> (kDim0-1, kDim1-1)
@@ -94,14 +95,15 @@ TEST_F(QnnHTPBackendTests, ScatterNDReductionAddWithNegativeIndices) {
   constexpr int64_t kCols = 8;
 
   auto build_model = [=](ModelTestBuilder& builder) {
-    std::vector<int32_t> data(kRows * kCols, 0);
-    builder.MakeInitializer<int32_t>("data", {kRows, kCols}, data);
+    // int64 data matches the reduction-add path QNN HTP supports.
+    std::vector<int64_t> data(kRows * kCols, 0);
+    builder.MakeInput<int64_t>("data", {kRows, kCols}, data);
 
     std::vector<int64_t> indices = {0, -2};  // -> [0, kCols-2]
     builder.MakeInitializer<int64_t>("indices", {1, 1, 2}, indices);
 
-    std::vector<int32_t> updates = {5};
-    builder.MakeInitializer<int32_t>("updates", {1, 1}, updates);
+    std::vector<int64_t> updates = {5};
+    builder.MakeInitializer<int64_t>("updates", {1, 1}, updates);
 
     builder.AddNode("scatter", "ScatterND", {"data", "indices", "updates"},
                     {"scatter_out"}, kOnnxDomain,
@@ -126,7 +128,8 @@ TEST_F(QnnHTPBackendTests, ScatterNDEndToEndNegativeIndexInGraph) {
     for (int64_t i = 0; i < kRows * kCols; ++i) {
       data[i] = static_cast<float>(i) * 0.01f;
     }
-    builder.MakeInitializer<float>("data_src", {kRows, kCols}, data);
+    // Runtime input so ConstantFolding doesn't erase the ScatterND node.
+    builder.MakeInput<float>("data_src", {kRows, kCols}, data);
 
     std::vector<float> bias(kRows * kCols, 0.5f);
     builder.MakeInitializer<float>("bias", {kRows, kCols}, bias);
@@ -148,8 +151,9 @@ TEST_F(QnnHTPBackendTests, ScatterNDEndToEndNegativeIndexInGraph) {
     builder.MakeOutput("Y");
   };
 
+  // HTP fp16 path -- loosen tolerance vs. CPU fp32 reference.
   RunQnnModelTest(build_model, MakeHtpProviderOptions(), 17,
-                  ExpectedEPNodeAssignment::All);
+                  ExpectedEPNodeAssignment::All, 1e-2f);
 }
 
 // Verifies the rename avoids collisions when a shared initializer is rewritten.
@@ -160,8 +164,8 @@ TEST_F(QnnHTPBackendTests, ScatterNDSharedNegativeIndicesInitializer) {
   auto build_model = [=](ModelTestBuilder& builder) {
     std::vector<int32_t> data_a(kRows * kCols, 0);
     std::vector<int32_t> data_b(kRows * kCols, 0);
-    builder.MakeInitializer<int32_t>("dataA", {kRows, kCols}, data_a);
-    builder.MakeInitializer<int32_t>("dataB", {kRows, kCols}, data_b);
+    builder.MakeInput<int32_t>("dataA", {kRows, kCols}, data_a);
+    builder.MakeInput<int32_t>("dataB", {kRows, kCols}, data_b);
 
     std::vector<int64_t> indices = {0, -1};
     builder.MakeInitializer<int64_t>("indices", {1, 1, 2}, indices);
