@@ -159,7 +159,7 @@ jobs:
       build_pdb_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       upload_pdb_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
 
-  build-windows-arm64x-nuget:
+  build-windows-arm64x:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
