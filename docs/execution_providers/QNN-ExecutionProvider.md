@@ -599,7 +599,8 @@ The QNN EP includes a Genie execution pathway for accelerated LLM inference on W
 Genie is Qualcomm's generative AI framework (part of the QAIRT SDK) that the QNN EP can delegate token-to-logit inference
 for auto-regressive LLM generation to using pre-compiled DLC (Deep Learning Container) models.
 
-For dialog functionalities, onnxruntime-qnn should be used with onnxruntime-genai.
+For complete dialog functionalities, including tokenization, sampling, autoregressive looping, etc., a higher-level
+framework such as onnxruntime-genai should be used.
 
 ### Requirements
 
@@ -655,18 +656,18 @@ run_options = ort.RunOptions()
 run_options.add_run_config_entry("kvcache_rewind", "0")
 
 # Run one auto-regressive step: input = token IDs, output = logits
-input_tokens = np.array([[42, 73, 101]], dtype=np.int32)
+input_tokens = np.array([[1, 128]], dtype=np.int32)
 logits = sess.run(None, {"input_ids": input_tokens}, run_options)[0]
 
 # Subsequent steps reuse the KV-cache (no rewind needed)
-next_tokens = np.array([[202]], dtype=np.int32)
+next_tokens = np.array([[1, 128]], dtype=np.int32)
 logits = sess.run(None, {"input_ids": next_tokens})[0]
 
 del sess
 ort.unregister_execution_provider_library(ep_registration_name)
 ```
 
-For a more complete sample, see [`qcom/samples/test_genie.py`](../../qcom/samples/test_genie.py).
+For an out-of-the-box example, see [`qcom/samples/test_genie.py`](../../qcom/samples/test_genie.py).
 
 ## QNN context binary cache feature
 There's a QNN context which contains QNN graphs after converting, compiling, finalizing the model. QNN can serialize the context into binary file, so that user can use it for futher inference directly (without the QDQ model) to improve the model loading cost.
