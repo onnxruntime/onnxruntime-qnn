@@ -1777,7 +1777,9 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
 
   // Analyze nodes for QNN support
   std::vector<const OrtNode*> supported_nodes;
-  ep->GetSupportedNodes(graph, node_unit_map, node_unit_holder.size(), supported_nodes);
+  std::vector<utils::QnnNodeGroupInfo> node_groups;
+  std::unordered_map<const OrtNodeUnit*, size_t> node_unit_to_group_id;
+  ep->GetSupportedNodes(graph, node_unit_map, node_unit_holder.size(), supported_nodes, node_groups, node_unit_to_group_id);
 
   // Helper function that returns a string that lists all unsupported nodes.
   // Ex: { name: mul_123, type: Mul }, {}, ...
@@ -1810,7 +1812,10 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                                                                   ep->ort_api,
                                                                                                   supported_nodes,
                                                                                                   ep->name_,
-                                                                                                  node_unit_map);
+                                                                                                  node_unit_map,
+                                                                                                  node_groups,
+                                                                                                  node_unit_to_group_id,
+                                                                                                  ep->logger_);
 
   // Filter out partitions that consist of a single QuantizeLinear or DequantizeLinear node.
   // We also count the number of supported nodes in all valid partitions.
