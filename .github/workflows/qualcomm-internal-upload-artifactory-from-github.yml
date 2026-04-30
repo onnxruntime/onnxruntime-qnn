@@ -257,7 +257,7 @@ jobs:
           uv pip install -r .\qcom\requirements.txt
 
           . ".\qcom\scripts\upleveling\upload_nupkg_to_artifactory.ps1" `
-            -InputDir "${{ github.workspace }}\build\windows-arm64\Release"
+            -InputDir "${{ github.workspace }}\build\windows-arm64x\Release"
 
   upload-zip-workflow:
     name: "Upload zip artifacts to Artifactory"
