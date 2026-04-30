@@ -456,6 +456,7 @@ class TaskLibrary:
                         self.__qairt_sdk_root,
                         "build",
                         extra_args=extra_args,
+                        build_archive=self.__build_archive,
                     )
                 )
             else:
@@ -492,6 +493,7 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
+                    build_archive=self.__build_archive,
                 )
             )
 
@@ -523,6 +525,7 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
+                    build_archive=self.__build_archive,
                 )
             )
 
