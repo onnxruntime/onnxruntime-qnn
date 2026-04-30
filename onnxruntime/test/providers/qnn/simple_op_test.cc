@@ -217,7 +217,7 @@ static void RunOpTest(const std::string& op_type,
                       const std::string& op_domain = kOnnxDomain,
                       float fp32_abs_err = 1e-5f,
                       bool enable_htp_fp16_precision = false,
-                      std::optional<std::string> soc_model = std::nullopt) {
+                      [[maybe_unused]] std::optional<std::string> soc_model = std::nullopt) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
