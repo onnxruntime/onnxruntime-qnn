@@ -52,7 +52,7 @@ function run_model_test() {
         --plugin_eps qnn \
         -i "backend_type|${backend}" \
         "${test_path}" 2>&1 | tee "${model_log}"
-    test_result=$?
+    test_return_code=$?
     set -e
 
     if [ -f "${model_log}" ]; then
@@ -60,7 +60,7 @@ function run_model_test() {
             "${model_log}" > "${model_xml}"
     fi
 
-    if [ ${test_result} -ne 0 ]; then
+    if [ ${test_return_code} -ne 0 ]; then
         errors=$(($errors+1))
     fi
 }
@@ -93,13 +93,12 @@ exclude_args=()
 count_errors ./ctest --verbose --timeout 10800 --stop-on-failure "${exclude_args[@]}"
 
 # TODO: We will support python wheel in linux
-# TODO: [AISW-164203] ORT test failures on Rubik Pi
-
 # log_info "-=-=-=- Running Python tests -=-=-=-"
 # mapfile -t PYTHON_TEST_FILES < "python_test_files.txt"
 
 # for python_file in "${PYTHON_TEST_FILES[@]}"; do
 #     if [ -f "${python_file}" ]; then
+#         # TODO: [AISW-164203] ORT test failures on Rubik Pi
 #         if [[ "${python_file}" =~ ^(onnxruntime_test_python(_compile_api|_mlops)?.py)$ ]]; then
 #             log_warn "Skipping ${python_file} due to known failures."
 #         else
@@ -140,6 +139,7 @@ for runner in "${model_test_runners[@]}"; do
     if [ "$(uname -m)" != "aarch64" ]; then
         "${runner}" cpu float32
         "${runner}" htp qdq
+
         log_debug "Scrubbing old context caches"
         find "testdata/qdq-with-context-cache" -name "*_ctx.onnx" -print -delete
         "${runner}" htp qdq-with-context-cache

@@ -642,7 +642,7 @@ void QnnIRBackendTests::SetUp() {
 }
 
 #if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-// TODO: Remove or set to SUPPORTED once HTP emulation is supported on win arm64.
+// TODO: Remove or set to SUPPORTED once HTP emulation is supported on win arm64 and Linux ARM64.
 BackendSupport QnnHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORT_UNKNOWN;
 
 // TODO: Remove or set to SUPPORTED once CPU backend works on win arm64 (pipeline VM).
@@ -650,7 +650,7 @@ BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORT
 #else
 BackendSupport QnnHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORTED;
 BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORTED;
-#endif  // defined(_WIN32)
+#endif  // defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
 
 BackendSupport QnnHTPBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnIRBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
