@@ -100,7 +100,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateSimpleOpBuilder("QuantizeLinear", *this);
   CreateSimpleOpBuilder("Relu", *this);
   CreateSimpleOpBuilder("Round", *this);
-  CreateSimpleOpBuilder("ScatterElements", *this);
+  CreateScatterElementsOpBuilder("ScatterElements", *this);
   CreateScatterNDOpBuilder("ScatterND", *this);
   CreateSimpleOpBuilder("Sigmoid", *this);
   CreateSimpleOpBuilder("Sign", *this);
