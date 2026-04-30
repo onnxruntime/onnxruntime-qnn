@@ -155,6 +155,29 @@ class BuildEpWindowsTask(RunPowershellScriptsTask):
         super().__init__(group_name, [cmd], env=ort_build_env_vars())
 
 
+class GenerateCoverageTask(BashScriptsWithVenvTask):
+    """Run generate_coverage.sh to collect gcov data and produce an HTML coverage report.
+
+    Uses BashScriptsWithVenvTask (rather than BashScriptsTask) intentionally:
+    Phase 2 will invoke Python tools (e.g. lcov_cobertura, diff-cover) that require
+    the venv to be active.
+    """
+
+    def __init__(
+        self,
+        group_name: str | None,
+        venv: Path | None,
+        build_dir: Path,
+        config: str = "RelWithDebInfo",
+    ) -> None:
+        cmd = [
+            str(REPO_ROOT / "qcom" / "scripts" / "linux" / "generate_coverage.sh"),
+            f"--build-dir={build_dir}",
+            f"--config={config}",
+        ]
+        super().__init__(group_name, venv, [cmd])
+
+
 class AdbTestsTask(RunInTempDirectoryTask):
     def __init__(
         self,

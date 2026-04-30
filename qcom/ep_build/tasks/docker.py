@@ -116,7 +116,7 @@ class DockerBuildAndTestTask(DockerRunTask):
 
         if qairt_sdk_root is not None:
             volumes_with_caches[qairt_sdk_root] = Path("/ort_caches/qairt")
-            cmd.append("--qairt-sdk-root=/ort_caches/qairt")
+            cmd.append("--qairt-sdk=/ort_caches/qairt")
 
         if ccache_root is not None:
             volumes_with_caches[ccache_root] = Path("/ort_caches/ccache")
