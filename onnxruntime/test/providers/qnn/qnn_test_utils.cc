@@ -276,17 +276,8 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                      float fp32_abs_err, OrtLoggingLevel log_severity, bool verify_outputs,
                      std::function<void(const Graph&)>* ep_graph_checker) {
-  std::string backend_name = "htp";
-  if (provider_options.find("backend_type") != provider_options.end()) {
-    backend_name = provider_options.at("backend_type");
-  }
-
-  if (backend_name == "htp") {
-    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-      GTEST_SKIP() << "Test requires HTP FP16/FP32 support (arch > v68)";
-    }
-  } else if (backend_name == "gpu") {
-    QNN_SKIP_TEST_ON_AARCH64("Test requires GPU support on Linux ARM64 (arch > v68)");
+  if (ShouldSkipFp16TestOnV68(provider_options)) {
+    GTEST_SKIP() << "Test requires " << GetCapitalizedBackendName(provider_options) << " FP16/FP32 support (arch > v68)";
   }
 
   std::filesystem::path output_dir;
