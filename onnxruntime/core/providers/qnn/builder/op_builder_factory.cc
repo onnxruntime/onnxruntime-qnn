@@ -101,7 +101,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateSimpleOpBuilder("Relu", *this);
   CreateSimpleOpBuilder("Round", *this);
   CreateSimpleOpBuilder("ScatterElements", *this);
-  CreateSimpleOpBuilder("ScatterND", *this);
+  CreateScatterNDOpBuilder("ScatterND", *this);
   CreateSimpleOpBuilder("Sigmoid", *this);
   CreateSimpleOpBuilder("Sign", *this);
   CreateSimpleOpBuilder("Sin", *this);
