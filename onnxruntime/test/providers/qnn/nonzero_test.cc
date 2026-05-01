@@ -53,17 +53,8 @@ static void RunNonZeroTest(const GetTestModelFn& build_test_case,
   ModelTestBuilder helper;
   build_test_case(helper);
 
-  std::string backend_name = "htp";
-  if (provider_options.find("backend_type") != provider_options.end()) {
-    backend_name = provider_options.at("backend_type");
-  }
-
-  if (backend_name == "htp") {
-    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-      GTEST_SKIP() << "Test requires HTP FP16/FP32 support (arch > v68)";
-    }
-  } else if (backend_name == "gpu") {
-    QNN_SKIP_TEST_ON_AARCH64("Test requires GPU support on Linux ARM64 (arch > v68)");
+  if (ShouldSkipFp16TestOnV68(provider_options)) {
+    GTEST_SKIP() << "Test requires " << GetCapitalizedBackendName(provider_options) << " FP16/FP32 support (arch > v68)";
   }
 
   for (const auto& [domain, version] : domain_to_version) {
@@ -202,8 +193,8 @@ TEST_F(QnnHTPBackendTests, NonZero_Gather_1D_Int32) {
   std::vector<int32_t> data2 = {100, 200, 300, 400, 500};
   int64_t num_elements = 5;
 
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP16/FP32 support (arch > v68)";
+  if (ShouldSkipFp16TestOnV68(HtpProviderOptions())) {
+    GTEST_SKIP() << "Test requires " << GetCapitalizedBackendName(HtpProviderOptions()) << " FP16/FP32 support (arch > v68)";
   }
 
   auto build_model = [mask_data, data1, data2, num_elements](ModelTestBuilder& builder) {
