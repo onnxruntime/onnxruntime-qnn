@@ -36,15 +36,7 @@
 #include "onnxruntime_run_options_config_keys.h"
 #include "onnxruntime_session_options_config_keys.h"
 
-#ifndef ORT_UNIT_TEST_BUILD
-#include "core/providers/qnn/common/inlined_containers.h"
-#else
-#include "core/common/inlined_containers.h"
-#endif
 #include "core/providers/qnn/common/int4.h"
-
-#include "core/common/span_utils.h"
-#include "core/graph/constants.h"
 
 namespace onnxruntime {
 

@@ -20,6 +20,7 @@
 
 #include "HTP/QnnHtpGraph.h"
 
+#include "core/providers/qnn/common/qnn_graph_utils.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_provider_factory.h"
 #include "core/providers/qnn/shared_context.h"
