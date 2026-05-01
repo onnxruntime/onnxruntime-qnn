@@ -1113,7 +1113,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                                   const std::string& qnn_ctx_model_path = "",
                                   const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
   if (ShouldSkipFp16TestOnV68(qnn_options)) {
-    GTEST_SKIP() << "Test requires " << GetCapitalizedBackendName(qnn_options) << " FP32/FP16 support (arch > v68)";
+    GTEST_SKIP() << "Test requires " << GetCapitalizedBackendName(qnn_options) << " FP16/FP32 support (arch > v68)";
   }
 
   std::filesystem::path output_dir;
@@ -1610,7 +1610,7 @@ class QnnHTPBackendTests : public ::testing::Test {
     return HasPlatformAttributes() && GetPlatformAttributes().htp_arch <= arch;
 #else
     return false;
-#endif
+#endif  // defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
   }
 
   // Query QNN platform attributes by directly calling QNN APIs
