@@ -626,6 +626,7 @@ class TaskLibrary:
                             self.__qairt_sdk_root,
                             "build",
                             build_as_x=True,
+                            build_nuget=self.__build_nuget,
                         ),
                     ],
                 )
