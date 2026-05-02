@@ -15,12 +15,11 @@
 
 #include <gsl/gsl>
 
+#include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/ort_api.h"
 
 namespace onnxruntime {
 namespace qnn {
-
-class QnnModelWrapper;
 
 namespace utils {
 
@@ -30,16 +29,18 @@ namespace utils {
 template <typename SrcType>
 bool NormalizeIndicesBytes(gsl::span<const uint8_t> onnx_bytes,
                            const std::function<int64_t(size_t)>& axis_dim_for_element,
-                           std::vector<uint8_t>& qnn_bytes);
+                           std::vector<uint8_t>& qnn_bytes,
+                           bool& has_negative_indices);
 
-// ScatterND: indices' last dim is tuple depth; column c bounds `data_shape[c]`.
-Ort::Status NormalizeIndicesForScatterND(
-    QnnModelWrapper& qnn_model_wrapper,
-    const OrtNodeUnitIODef& indices_input,
-    const std::vector<uint32_t>& data_shape,
-    const Ort::Logger& logger,
-    std::vector<std::string>& input_names,
-    bool do_op_validation);
+// Registers the indices tensor; for dynamic INT_64 inputs, inserts a
+// runtime Cast(INT_32) so downstream QNN ops see INT_32.
+Ort::Status AddNormalizedIndicesTensor(QnnModelWrapper& qnn_model_wrapper,
+                                       TensorInfo indices_info,
+                                       const std::string& indices_tensor_name,
+                                       std::vector<uint8_t>&& qnn_indices_bytes,
+                                       const Ort::Logger& logger,
+                                       std::vector<std::string>& input_names,
+                                       bool do_op_validation);
 
 }  // namespace utils
 }  // namespace qnn
