@@ -839,17 +839,15 @@ const nlohmann::json& QnnJSONGraph::Finalize() {
 
 Ort::Status GetQnnDataType(const bool is_quantized_tensor,
                            const ONNXTensorElementDataType onnx_data_type,
-                           Qnn_DataType_t& tensor_data_type) {
-  RETURN_IF_NOT(OnnxDataTypeToQnnDataType(onnx_data_type, tensor_data_type, is_quantized_tensor),
+                           Qnn_DataType_t& tensor_data_type, bool is_backend_gpu) {
+  RETURN_IF_NOT(OnnxDataTypeToQnnDataType(onnx_data_type, tensor_data_type, is_quantized_tensor, is_backend_gpu),
                 "Failed to map Onnx data type to Qnn data type!");
 
   return Ort::Status();
 }
 
-bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
-                               Qnn_DataType_t& qnn_data_type,
-                               bool is_quantized) {
-  const std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> onnx_to_qnn_data_type = {
+std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> CreateMap(bool is_backend_gpu) {
+  std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> onnx_to_qnn_data_type = {
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, QNN_DATATYPE_INT_8},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16, QNN_DATATYPE_INT_16},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT32, QNN_DATATYPE_INT_32},
@@ -866,6 +864,16 @@ bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
 
   const std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> onnx_to_qnn_data_type_quantized = {
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2, QNN_DATATYPE_SFIXED_POINT_8},
+  if (is_backend_gpu) {
+    onnx_to_qnn_data_type[ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4] = QNN_DATATYPE_SFIXED_POINT_4;
+    onnx_to_qnn_data_type[ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4] = QNN_DATATYPE_UFIXED_POINT_4;
+  }
+
+  return onnx_to_qnn_data_type;
+}
+
+std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> CreateMapQuantize(bool is_backend_gpu) {
+  std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> onnx_to_qnn_data_type_quantized = {
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4, QNN_DATATYPE_SFIXED_POINT_8},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8, QNN_DATATYPE_SFIXED_POINT_8},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_INT16, QNN_DATATYPE_SFIXED_POINT_16},
@@ -882,6 +890,21 @@ bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_DOUBLE, QNN_DATATYPE_FLOAT_64},
       {ONNX_TENSOR_ELEMENT_DATA_TYPE_BOOL, QNN_DATATYPE_BOOL_8},
   };
+
+  if (is_backend_gpu) {
+    onnx_to_qnn_data_type_quantized[ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4] = QNN_DATATYPE_SFIXED_POINT_4;
+    onnx_to_qnn_data_type_quantized[ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4] = QNN_DATATYPE_UFIXED_POINT_4;
+  }
+
+  return onnx_to_qnn_data_type_quantized;
+}
+
+bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
+                               Qnn_DataType_t& qnn_data_type,
+                               bool is_quantized,
+                               bool is_backend_gpu) {
+  const auto onnx_to_qnn_data_type = CreateMap(is_backend_gpu);
+  const auto onnx_to_qnn_data_type_quantized = CreateMapQuantize(is_backend_gpu);
 
   const auto do_type_mapping = [](const std::unordered_map<ONNXTensorElementDataType,
                                                            Qnn_DataType_t>& mapping_table,
