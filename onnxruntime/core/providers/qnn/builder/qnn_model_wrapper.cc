@@ -844,7 +844,7 @@ Ort::Status QnnModelWrapper::IsPerChannelQuantized(const OrtNodeUnitIODef& io_de
   return Ort::Status();
 }
 
-Ort::Status QnnModelWrapper::GetTensorInfo(const OrtNodeUnitIODef& tensor, TensorInfo& tensor_info) const {
+Ort::Status QnnModelWrapper::GetTensorInfo(const OrtNodeUnitIODef& tensor, TensorInfo& tensor_info, bool is_backend_gpu) const {
   const std::string& name = tensor.name;
 
   // Fill in quantization param info.
@@ -854,7 +854,8 @@ Ort::Status QnnModelWrapper::GetTensorInfo(const OrtNodeUnitIODef& tensor, Tenso
   tensor_info.qnn_data_type = QNN_DATATYPE_FLOAT_32;
   RETURN_IF_ERROR(utils::GetQnnDataType(tensor.quant_param.has_value(),
                                         tensor.type,
-                                        tensor_info.qnn_data_type));
+                                        tensor_info.qnn_data_type,
+                                        is_backend_gpu));
 
   // Fill in shape.
   RETURN_IF_NOT(GetOnnxShape(tensor.shape, tensor_info.shape), "Cannot get shape");

@@ -125,7 +125,8 @@ std::ostream& operator<<(std::ostream& out, const QnnOpConfigWrapper& op_conf_wr
 
 Ort::Status GetQnnDataType(const bool is_quantized_tensor,
                            const ONNXTensorElementDataType onnx_data_type,
-                           Qnn_DataType_t& tensor_data_type);
+                           Qnn_DataType_t& tensor_data_type,
+                           bool is_backend_gpu = false);
 
 // Name generator that produces unique QNN node names by appending a counter suffix,
 // (e.g., "_2") when the same base + suffix combination is requested more than once.
@@ -142,9 +143,13 @@ class UniqueNameGeneratorImpl {
 
 UniqueNameGeneratorImpl& UniqueNameGenerator();
 
+std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> CreateMap(bool is_backend_gpu);
+std::unordered_map<ONNXTensorElementDataType, Qnn_DataType_t> CreateMapQuantize(bool is_backend_gpu);
+
 bool OnnxDataTypeToQnnDataType(const ONNXTensorElementDataType onnx_data_type,
                                Qnn_DataType_t& qnn_data_type,
-                               bool is_quantized = false);
+                               bool is_quantized = false,
+                               bool is_backend_gpu = false);
 
 inline Ort::Status GetOnnxTensorElemDataType(const OrtValueInfo* value_info,
                                              /*out*/ ONNXTensorElementDataType& onnx_data_type) {
