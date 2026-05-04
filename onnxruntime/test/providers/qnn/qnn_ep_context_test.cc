@@ -24,16 +24,6 @@
 #include "HTP/QnnHtpCommon.h"
 #include "QnnSdkBuildId.h"
 
-// Needed by the NonConsecutiveMainContexts regression test below.
-#if !defined(ORT_MINIMAL_BUILD) && BUILD_QNN_EP_STATIC_LIB
-#include "core/graph/ep_api_types.h"
-#include "core/graph/graph.h"
-#include "core/graph/model.h"
-#include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
-#include "test/util/include/asserts.h"
-#include "test/util/include/test/test_environment.h"
-#endif
-
 #define ORT_MODEL_FOLDER ORT_TSTR("testdata/")
 
 using namespace ONNX_NAMESPACE;
