@@ -299,7 +299,7 @@ else {
                 $BuildOutputDir = (Join-Path $BuildDir $Config)
                 Use-PyVenv -PyVenv $BuildVEnv {
                     Assert-Success -ErrorMessage "Failed to build" {
-                        & $BuildBatPath --build --skip_tests $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg $BuildArchiveArgs
+                        & $BuildBatPath --build $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg $BuildArchiveArgs
                     }
                 }
 
