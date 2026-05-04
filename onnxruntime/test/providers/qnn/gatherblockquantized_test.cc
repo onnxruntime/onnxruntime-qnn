@@ -175,8 +175,8 @@ TEST_F(QnnGPUBackendTests, GatherBlockQuantized_Basic) {
 
 TEST_F(QnnGPUBackendTests, GatherBlockQuantized_LargerIndices) {
   GatherBQTestParams params;
-  params.vocab_size = 2048;
-  params.hidden_size = 1024;
+  params.vocab_size = 201088;
+  params.hidden_size = 2880;
   params.batch_size = 1;
   params.seq_len = 64;
   params.block_size = 32;
