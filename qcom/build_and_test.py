@@ -244,7 +244,6 @@ class TaskLibrary:
     def _build_ort_linux_aarch64_manylinux_2_34(self, plan: Plan) -> str:
         """In-container build steps for aarch64-manylinux_2_34. Not to be used outside of Docker."""
         extra_args = [
-            "--no-warnings-as-errors",
             "--qnn-arch-abi=aarch64-oe-linux-gcc11.2",
         ]
 
