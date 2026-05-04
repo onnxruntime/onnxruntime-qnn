@@ -151,8 +151,6 @@ jobs:
       test_wheel: false
       # For each arch, upload the test archive with the first Python version we encounter
       upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
-      build_nuget: false
-      upload_nuget: false
       build_archive: ${{ inputs.windows_arm64_build_archive && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       upload_archive: ${{ inputs.windows_arm64_build_archive && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       # For each arch, build and upload a PDB archive with the first python version we encounter
@@ -165,19 +163,10 @@ jobs:
     with:
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
-      target_os: windows
       target_arch: arm64x
       target_py_vsn: ${{ fromJSON(inputs.windows_target_py_vsns)[0] }}
       build_runner_arch: ARM64
-      build_test_same_runner: true
-      test_runner_arch: ARM64
       run_tests: false
-      test_wheel: false
-      upload_test_archive: false
       upload_wheel: false
       build_nuget: true
       upload_nuget: true
-      build_archive: false
-      upload_archive: false
-      build_pdb_archive: false
-      upload_pdb_archive: false
