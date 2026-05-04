@@ -95,6 +95,7 @@ void CreatePoolOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_
 void CreateQuickGeluOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateRandomNormalLikeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateRandomUniformLikeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateRangeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateReciprocalOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateReduceOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateReshapeOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);

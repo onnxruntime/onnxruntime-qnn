@@ -1,0 +1,112 @@
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
+
+#if !defined(ORT_MINIMAL_BUILD)
+
+#include <string>
+
+#include "core/graph/graph.h"
+#include "test/providers/qnn/qnn_test_utils.h"
+
+#include "gtest/gtest.h"
+
+namespace onnxruntime {
+namespace test {
+
+// ONNX Range has no native QNN op. All three inputs must be graph initializers
+// and the op is constant-folded by the QNN EP at graph-build time on any
+// backend (CPU or HTP).
+template <typename T>
+static void RunRangeOpTest(T start, T limit, T delta,
+                           int opset_version,
+                           ExpectedEPNodeAssignment expected_ep_assignment,
+                           const std::string& backend_name = "cpu") {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = backend_name;
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  if (backend_name == "htp") {
+    provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+  }
+#endif
+
+  std::vector<TestInputDef<T>> scalar_inputs = {
+      TestInputDef<T>({}, /*is_initializer=*/true, {start}),
+      TestInputDef<T>({}, /*is_initializer=*/true, {limit}),
+      TestInputDef<T>({}, /*is_initializer=*/true, {delta}),
+  };
+  std::vector<TestInputDef<int64_t>> unused_inputs;
+
+  RunQnnModelTest(BuildOpTestCase<T, int64_t>("Range_node", "Range",
+                                              scalar_inputs,
+                                              unused_inputs,
+                                              /*attrs=*/{}),
+                  provider_options,
+                  opset_version,
+                  expected_ep_assignment);
+}
+
+// ---------------------------------------------------------------------------
+// CPU backend tests — run on x86/x64 Windows and Linux.
+// ---------------------------------------------------------------------------
+
+TEST_F(QnnCPUBackendTests, Range_float32_ascending) {
+  RunRangeOpTest<float>(0.0f, 5.0f, 1.0f, 11, ExpectedEPNodeAssignment::All, "cpu");
+}
+
+TEST_F(QnnCPUBackendTests, Range_float32_fractional_delta) {
+  RunRangeOpTest<float>(1.0f, 5.0f, 0.5f, 11, ExpectedEPNodeAssignment::All, "cpu");
+}
+
+TEST_F(QnnCPUBackendTests, Range_float32_descending) {
+  RunRangeOpTest<float>(10.0f, 0.0f, -2.0f, 11, ExpectedEPNodeAssignment::All, "cpu");
+}
+
+TEST_F(QnnCPUBackendTests, Range_int32_ascending) {
+  RunRangeOpTest<int32_t>(0, 8, 1, 11, ExpectedEPNodeAssignment::All, "cpu");
+}
+
+TEST_F(QnnCPUBackendTests, Range_int32_step) {
+  RunRangeOpTest<int32_t>(2, 20, 3, 11, ExpectedEPNodeAssignment::All, "cpu");
+}
+
+TEST_F(QnnCPUBackendTests, Range_int64_ascending) {
+  RunRangeOpTest<int64_t>(0, 16, 1, 11, ExpectedEPNodeAssignment::All, "cpu");
+}
+
+// ---------------------------------------------------------------------------
+// HTP backend tests — only register on ARM64 or Linux (matches the repo
+// convention used by cumsum_test.cc, etc.; HTP runtime requires those hosts).
+// ---------------------------------------------------------------------------
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+
+TEST_F(QnnHTPBackendTests, Range_float32_ascending) {
+  RunRangeOpTest<float>(0.0f, 5.0f, 1.0f, 11, ExpectedEPNodeAssignment::All, "htp");
+}
+
+TEST_F(QnnHTPBackendTests, Range_float32_fractional_delta) {
+  RunRangeOpTest<float>(1.0f, 5.0f, 0.5f, 11, ExpectedEPNodeAssignment::All, "htp");
+}
+
+TEST_F(QnnHTPBackendTests, Range_float32_descending) {
+  RunRangeOpTest<float>(10.0f, 0.0f, -2.0f, 11, ExpectedEPNodeAssignment::All, "htp");
+}
+
+TEST_F(QnnHTPBackendTests, Range_int32_ascending) {
+  RunRangeOpTest<int32_t>(0, 8, 1, 11, ExpectedEPNodeAssignment::All, "htp");
+}
+
+TEST_F(QnnHTPBackendTests, Range_int32_step) {
+  RunRangeOpTest<int32_t>(2, 20, 3, 11, ExpectedEPNodeAssignment::All, "htp");
+}
+
+TEST_F(QnnHTPBackendTests, Range_int64_ascending) {
+  RunRangeOpTest<int64_t>(0, 16, 1, 11, ExpectedEPNodeAssignment::All, "htp");
+}
+
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+
+}  // namespace test
+}  // namespace onnxruntime
+
+#endif  // !defined(ORT_MINIMAL_BUILD)
