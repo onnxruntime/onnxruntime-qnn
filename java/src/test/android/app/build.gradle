@@ -6,6 +6,8 @@ plugins {
 	id 'kotlin-android'
 }
 
+// minSdkVer defaults to 27: QNN EP requires Android 8.1+ (API 27) for the HTP backend.
+// Override with -PminSdkVer=<N> if testing on older devices against CPU/GPU backends only.
 def minSdkVer = System.properties.get("minSdkVer")?:27
 def qnnVersion = System.properties['qnnVersion']
 def ortVersion = System.properties['ortVersion']

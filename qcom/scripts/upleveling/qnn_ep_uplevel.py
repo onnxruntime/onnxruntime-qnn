@@ -184,8 +184,17 @@ class ArtifactUpleveler(ABC):
         if response.status_code != 200:
             raise RuntimeError(f"Unable to fetch artifacts from {url}")
 
-        # Extract artifact file links
-        artifact_list = [line.split('"')[1] for line in response.text.splitlines() if self.artifact_suffix in line]
+        # Extract artifact file links from Artifactory's HTML directory listing.
+        # Parse href values rather than splitting on quotes to handle varied HTML formatting.
+        artifact_list = [
+            m.group(1)
+            for m in (
+                re.search(r'href=["\']([^"\']*' + re.escape(self.artifact_suffix) + r')["\']', line)
+                for line in response.text.splitlines()
+                if self.artifact_suffix in line
+            )
+            if m
+        ]
 
         if not artifact_list:
             raise RuntimeError(
@@ -700,8 +709,10 @@ class MavenUpleveler(ArtifactUpleveler):
         if resp.status_code != 200:
             raise RuntimeError(f"Failed to list {dir_url}: HTTP {resp.status_code}")
 
-        # HTML directory listing — same scraping technique as the base download_artifacts.
-        candidates = [line.split('"')[1] for line in resp.text.splitlines() if '"' in line]
+        # Extract filenames from Artifactory's HTML directory listing via href values.
+        candidates = [
+            m.group(1) for m in (re.search(r'href=["\']([^"\']+)["\']', line) for line in resp.text.splitlines()) if m
+        ]
 
         result: dict[tuple[str, str], str] = {}
         for ext, classifier in files:
@@ -765,6 +776,11 @@ class MavenUpleveler(ArtifactUpleveler):
         config.read(INI_FILE)
         return config.get(self.args.index_server_from, "repository").rstrip("/")
 
+    def _artifactory_upload_base_url(self) -> str:
+        config = ConfigParser()
+        config.read(INI_FILE)
+        return config.get(self.args.index_server_to, "repository").rstrip("/")
+
     def _download_file(self, url: str, dest: Path) -> None:
         username, password = self._get_credentials(self.args.index_server_from)
         resp = requests.get(
@@ -784,7 +800,7 @@ class MavenUpleveler(ArtifactUpleveler):
         dry_run = getattr(self.args, "dry_run", False)
 
         username, password = self._get_credentials(self.args.index_server_to)
-        repo_url = self._artifactory_base_url().replace(f"/{MAVEN_GROUP_PATH}", "")
+        repo_url = self._artifactory_upload_base_url().replace(f"/{MAVEN_GROUP_PATH}", "")
         repo_id = "snapshots" if version_to.endswith("-SNAPSHOT") else "releases"
 
         logging.info(
@@ -811,7 +827,7 @@ class MavenUpleveler(ArtifactUpleveler):
         )
 
         with (
-            maven_publish_utils.render_settings_xml(username, password, repo_url, repo_id) as settings_xml,
+            maven_publish_utils.render_settings_xml(username, password, repo_url) as settings_xml,
         ):
             ssl_opts, truststore = maven_publish_utils.qualcomm_ssl_opts()
             try:
@@ -873,7 +889,7 @@ class MavenUpleveler(ArtifactUpleveler):
                 "[dry-run] Would arrange com/qualcomm/qti/%s/%s/ bundle, "
                 "run `mvn -f checksumpom.xml package` to generate .md5/.sha1, "
                 "GPG-sign each .aar/.pom/.jar -> .asc, "
-                "zip into bundle.zip, "
+                "zip into <artifact_id>-<version>.zip, "
                 "and upload to https://central.sonatype.com/api/v1/publisher/upload"
                 "?publishingType=USER_MANAGED",
                 artifact_id,
@@ -921,7 +937,7 @@ class MavenUpleveler(ArtifactUpleveler):
                 )
 
         # 4. Zip the bundle
-        bundle_zip = dist / f"{artifact_id}-{version}-bundle.zip"
+        bundle_zip = dist / f"{artifact_id}-{version}.zip"
         shutil.make_archive(
             str(bundle_zip.with_suffix("")),
             "zip",

@@ -150,7 +150,7 @@ def main() -> None:
         else:
             ssl_opts, truststore = qualcomm_ssl_opts()
             try:
-                with render_settings_xml(username, password, args.repository_url, args.repository_id) as settings_xml:
+                with render_settings_xml(username, password, args.repository_url) as settings_xml:
                     mvn_deploy_file(
                         aar=aar,
                         pom=pom,

@@ -115,42 +115,52 @@ PROJECT_CACHE_DIR="${TEMP_DIR}/gradle-cache"
 ARTIFACTORY_CA_PATH="${REPO_ROOT}/qcom/scripts/upleveling/certs/artifactory-ca.pem"
 SYSTEM_CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"
 
-GRADLE_OPTS=""
+# Write JVM SSL flags to a Gradle JVM config file instead of GRADLE_OPTS to
+# avoid exposing the truststore password in the process environment.
+GRADLE_JVM_CONFIG=""
 if [[ -f "${ARTIFACTORY_CA_PATH}" ]]; then
-    TRUSTSTORE_PATH="${TEMP_DIR}/truststore.jks"
+    TRUSTSTORE_PATH="${TEMP_DIR}/truststore.p12"
     TRUSTSTORE_PASSWORD=$(openssl rand -hex 16)
     CERTS_DIR="${TEMP_DIR}/certs"
     mkdir -p "${CERTS_DIR}"
 
     # Split system CA bundle into individual certificates
     if [[ -f "${SYSTEM_CA_BUNDLE}" ]]; then
-        awk -v certs_dir="${CERTS_DIR}" 'BEGIN {cert=0} /BEGIN CERTIFICATE/ {cert++} {print > certs_dir"/cert-"cert".pem"}' "${SYSTEM_CA_BUNDLE}"
+        awk -v certs_dir="${CERTS_DIR}" '
+            /BEGIN CERTIFICATE/ { cert++; in_cert=1 }
+            in_cert             { print > certs_dir"/cert-"cert".pem" }
+            /END CERTIFICATE/   { in_cert=0 }
+        ' "${SYSTEM_CA_BUNDLE}"
 
         # Import each certificate
         for cert_file in "${CERTS_DIR}"/cert-*.pem; do
             if [[ -f "${cert_file}" ]]; then
                 cert_num=$(basename "${cert_file}" .pem)
                 keytool -import -noprompt -trustcacerts -alias "system-${cert_num}" -file "${cert_file}" \
-                    -keystore "${TRUSTSTORE_PATH}" -storepass "${TRUSTSTORE_PASSWORD}" 2>/dev/null || true
+                    -storetype PKCS12 -keystore "${TRUSTSTORE_PATH}" -storepass "${TRUSTSTORE_PASSWORD}" 2>/dev/null || true
             fi
         done
     fi
 
     # Import Qualcomm CA
     keytool -import -noprompt -trustcacerts -alias qualcomm-ca -file "${ARTIFACTORY_CA_PATH}" \
-        -keystore "${TRUSTSTORE_PATH}" -storepass "${TRUSTSTORE_PASSWORD}" 2>/dev/null
+        -storetype PKCS12 -keystore "${TRUSTSTORE_PATH}" -storepass "${TRUSTSTORE_PASSWORD}" 2>/dev/null
 
     if [[ -f "${TRUSTSTORE_PATH}" ]]; then
         CERT_COUNT=$(keytool -list -keystore "${TRUSTSTORE_PATH}" -storepass "${TRUSTSTORE_PASSWORD}" 2>/dev/null | grep -c "trustedCertEntry" || echo 0)
-        echo "Built JKS truststore with ${CERT_COUNT} certificates"
-        GRADLE_OPTS="-Djavax.net.ssl.trustStore=${TRUSTSTORE_PATH} -Djavax.net.ssl.trustStorePassword=${TRUSTSTORE_PASSWORD}"
+        echo "Built PKCS12 truststore with ${CERT_COUNT} certificates"
+        # Write SSL flags to gradle.properties under GRADLE_USER_HOME so the
+        # password is never in the process environment or visible in `ps` output.
+        mkdir -p "${GRADLE_USER_HOME}"
+        cat >> "${GRADLE_USER_HOME}/gradle.properties" <<EOF
+org.gradle.jvmargs=-Djavax.net.ssl.trustStore=${TRUSTSTORE_PATH} -Djavax.net.ssl.trustStoreType=PKCS12 -Djavax.net.ssl.trustStorePassword=${TRUSTSTORE_PASSWORD}
+EOF
     else
-        echo "WARNING: Failed to build JKS truststore"
+        echo "WARNING: Failed to build PKCS12 truststore"
     fi
 else
     echo "WARNING: Qualcomm CA cert not found at ${ARTIFACTORY_CA_PATH}"
 fi
-export GRADLE_OPTS
 "${GRADLEW}" -p "${ANDROID_DIR}" \
     --init-script "${INIT_SCRIPT}" \
     --project-cache-dir "${PROJECT_CACHE_DIR}" \

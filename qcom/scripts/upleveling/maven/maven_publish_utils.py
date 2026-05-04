@@ -213,7 +213,6 @@ def render_settings_xml(
     username: str,
     password: str,
     repository_url: str,
-    repository_id: str,
 ) -> Iterator[Path]:
     """Render settings.xml.template into a 600-mode temp file.
 
@@ -223,7 +222,7 @@ def render_settings_xml(
     """
     content = _fill_template(
         _SETTINGS_TEMPLATE_PATH,
-        {"username": username, "password": password, "repository_url": repository_url, "repository_id": repository_id},
+        {"username": username, "password": password, "repository_url": repository_url},
     )
     with _secure_tempfile(suffix="-settings.xml") as settings_path:
         settings_path.write_text(content, encoding="utf-8")
@@ -372,10 +371,6 @@ def mvn_deploy_file(
         "deploy:deploy-file",
     ]
 
-    # Add SSL options (PKCS12 truststore with Qualcomm CA)
-    if ssl_opts:
-        cmd.extend(ssl_opts)
-
     cmd.extend(
         [
             f"-DgroupId={group_id}",
@@ -401,7 +396,14 @@ def mvn_deploy_file(
         logger.info("[dry-run] Would run: %s", _redact_settings(cmd))
         return
 
-    _run(cmd)
+    # Pass SSL truststore opts via MAVEN_OPTS so they don't appear in argv
+    # (and thus are not visible in `ps aux` output).
+    env = os.environ.copy()
+    if ssl_opts:
+        existing = env.get("MAVEN_OPTS", "")
+        env["MAVEN_OPTS"] = " ".join([existing, *ssl_opts]).strip()
+
+    _run(cmd, env=env)
 
 
 def generate_checksums(
@@ -538,9 +540,9 @@ def upload_to_maven_central(
     return deployment_id
 
 
-def _run(cmd: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess:
+def _run(cmd: list[str], cwd: Path | None = None, env: dict | None = None) -> subprocess.CompletedProcess:
     logger.debug("Running: %s (cwd=%s)", _redact_settings(cmd), cwd)
-    return subprocess.run(cmd, check=True, cwd=cwd)
+    return subprocess.run(cmd, check=True, cwd=cwd, env=env)
 
 
 def _redact_settings(cmd: list[str]) -> list[str]:

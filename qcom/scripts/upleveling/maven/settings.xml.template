@@ -11,7 +11,7 @@
       <password>{{password}}</password>
     </server>
     <server>
-      <id>{{repository_id}}</id>
+      <id>snapshots</id>
       <username>{{username}}</username>
       <password>{{password}}</password>
     </server>

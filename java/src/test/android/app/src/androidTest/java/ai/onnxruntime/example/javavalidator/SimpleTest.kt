@@ -145,6 +145,7 @@ class SimpleTest {
             }
         } finally {
             runCatching { env.unregisterExecutionProviderLibrary(QNN_EP_REGISTRATION_NAME) }
+                .onFailure { Log.w("SimpleTest", "unregisterExecutionProviderLibrary failed", it) }
         }
     }
 }
