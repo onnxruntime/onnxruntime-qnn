@@ -1739,7 +1739,8 @@ void OrtSelectorManager::CreateSelectors() {
 
   // Register rmsnormalization ops
   OrtOpVersionsAndSelector::OpVersionsMap rmsnorm_ops = {
-      {"RMSNormalization", {}}};
+      {"RMSNormalization", {}},
+      {"SimplifiedLayerNormalization", {}}};
   ort_selectors_.RegisterSelector(rmsnorm_ops, std::make_unique<OrtRMSNormalizationNodeGroupSelector>());
 }
 
