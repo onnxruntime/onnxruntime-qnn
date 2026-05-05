@@ -834,10 +834,10 @@ void VerifyQDQOutput(const std::vector<Ort::Value>& cpu_qdq_outputs,
  */
 
 // Helper macro to check if QuantType is a supported QDQ type
-#define QNN_IS_SUPPORTED_QDQ_TYPE(QuantType)                                                             \
-  (std::is_same_v<QuantType, uint8_t> || std::is_same_v<QuantType, int8_t> ||                           \
-   std::is_same_v<QuantType, uint16_t> || std::is_same_v<QuantType, int16_t> ||                         \
-   std::is_same_v<QuantType, uint32_t> || std::is_same_v<QuantType, int32_t> ||                         \
+#define QNN_IS_SUPPORTED_QDQ_TYPE(QuantType) \
+  (std::is_same_v<QuantType, uint8_t> || std::is_same_v<QuantType, int8_t> || \
+   std::is_same_v<QuantType, uint16_t> || std::is_same_v<QuantType, int16_t> || \
+   std::is_same_v<QuantType, uint32_t> || std::is_same_v<QuantType, int32_t> || \
    std::is_same_v<QuantType, Int4x2> || std::is_same_v<QuantType, UInt4x2>)
 
 // Macro for test skip logic based on provider options and architecture
@@ -845,41 +845,41 @@ void VerifyQDQOutput(const std::vector<Ort::Value>& cpu_qdq_outputs,
 //             test_type (QDQ, FP16, FP32, GPU), QuantType (for QDQ tests)
 // Only skips tests on Linux ARM64 (__aarch64__)
 #if defined(__aarch64__)
-#define SKIP_TEST_ON_LINUX_ARM64(qnn_options, arch, test_type, ...)                                      \
-  if (::testing::internal::AlwaysTrue()) {                                                               \
-    std::string backend_name = "htp";                                                                    \
-    if ((qnn_options).find("backend_type") != (qnn_options).end()) {                                     \
-      backend_name = (qnn_options).at("backend_type");                                                   \
-    }                                                                                                     \
-                                                                                                          \
-    if ((test_type) == "QDQ") {                                                                          \
-      if (backend_name == "htp") {                                                                       \
-        if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo((arch))) {                         \
-          if (QNN_IS_SUPPORTED_QDQ_TYPE(__VA_ARGS__)) {                                                   \
-            GTEST_SKIP() << "QDQ test skipped on HTP architecture <= " << static_cast<int>(arch);        \
-          }                                                                                               \
-        }                                                                                                 \
-      } else if (backend_name == "gpu") {                                                                \
-        GTEST_SKIP() << "QDQ test skipped on GPU backend with ARM64 architecture";                     \
-      }                                                                                                   \
-    } else if ((test_type) == "FP16" || (test_type) == "FP32") {                                         \
-      if (backend_name == "htp") {                                                                       \
-        if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo((arch))) {                         \
-          GTEST_SKIP() << "FP16/FP32 HTP test skipped on architecture <= " << static_cast<int>(arch);   \
-        }                                                                                                 \
-      } else if (backend_name == "gpu") {                                                                \
-        GTEST_SKIP() << "FP16/FP32 test skipped on GPU backend with ARM64 architecture";               \
-      }                                                                                                   \
-    } else if ((test_type) == "GPU") {                                                                   \
-      if (backend_name == "gpu") {                                                                       \
-        GTEST_SKIP() << "GPU test skipped on ARM64 architecture";                                                                                                 \
-      }                                                                                                   \
-    }                                                                                                     \
-  } else                                                                                                  \
+#define SKIP_TEST_ON_LINUX_ARM64(qnn_options, arch, test_type, ...) \
+  if (::testing::internal::AlwaysTrue()) { \
+    std::string backend_name = "htp"; \
+    if ((qnn_options).find("backend_type") != (qnn_options).end()) { \
+      backend_name = (qnn_options).at("backend_type"); \
+    } \
+    \
+    if ((test_type) == "QDQ") { \
+      if (backend_name == "htp") { \
+        if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo((arch))) { \
+          if (QNN_IS_SUPPORTED_QDQ_TYPE(__VA_ARGS__)) { \
+            GTEST_SKIP() << "QDQ test skipped on HTP architecture <= " << static_cast<int>(arch); \
+          } \
+        } \
+      } else if (backend_name == "gpu") { \
+        GTEST_SKIP() << "QDQ test skipped on GPU backend with ARM64 architecture"; \
+      } \
+    } else if ((test_type) == "FP16" || (test_type) == "FP32") { \
+      if (backend_name == "htp") { \
+        if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo((arch))) { \
+          GTEST_SKIP() << "FP16/FP32 HTP test skipped on architecture <= " << static_cast<int>(arch); \
+        } \
+      } else if (backend_name == "gpu") { \
+        GTEST_SKIP() << "FP16/FP32 test skipped on GPU backend with ARM64 architecture"; \
+      } \
+    } else if ((test_type) == "GPU") { \
+      if (backend_name == "gpu") { \
+        GTEST_SKIP() << "GPU test skipped on ARM64 architecture"; \
+      } \
+    } \
+  } else \
     static_assert(true, "")
 #else
-#define SKIP_TEST_ON_LINUX_ARM64(qnn_options, arch, test_type, ...)                                      \
-  do {                                                                                                    \
+#define SKIP_TEST_ON_LINUX_ARM64(qnn_options, arch, test_type, ...) \
+  do { \
   } while (0)
 #endif
 
