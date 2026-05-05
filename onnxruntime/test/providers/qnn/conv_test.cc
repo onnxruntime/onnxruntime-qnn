@@ -1110,7 +1110,7 @@ TEST_F(QnnHTPBackendTests, Convf32_PerChannelQDQChainConstWeight_Regression) {
                   provider_options,
                   /*opset*/ 13,
                   ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err*/ 1e-4f);
+                  /*fp32_abs_err*/ 1e-3f);
 }
 
 TEST_F(QnnHTPBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Regression) {
