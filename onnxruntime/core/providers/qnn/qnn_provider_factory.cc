@@ -344,17 +344,71 @@ OrtStatus* ORT_API_CALL QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl
     _Out_ OrtCompiledModelCompatibility* model_compatibility) noexcept {
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
 
-  if (factory->qnn_ep_ == nullptr) {
-    // Currently we require EP must first be created as QNN backend is mandatory for validating the compatibility.
-    // Possibly consider creating a fake EP for validation only if necessary.
+  // Early return for empty or null compatibility info - no need to create an EP.
+  if (compatibility_info == nullptr || compatibility_info[0] == '\0') {
     *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
-    return factory->ort_api.CreateStatus(ORT_EP_FAIL, "Unable to validate model compatibility without EP created.");
+    return nullptr;
   }
 
-  return factory->qnn_ep_->ValidateCompiledModelCompatibilityInfo(devices,
-                                                                  num_devices,
-                                                                  compatibility_info,
-                                                                  model_compatibility);
+  if (factory->qnn_ep_ != nullptr) {
+    return factory->qnn_ep_->ValidateCompiledModelCompatibilityInfo(devices,
+                                                                    num_devices,
+                                                                    compatibility_info,
+                                                                    model_compatibility);
+  }
+
+  // EP has not been created yet. Create a temporary QNN EP for validation.
+  const auto provider_prefix = GetProviderOptionPrefix(factory->ep_name_);
+
+  // Determine backend type from the provided devices (prefer NPU, then GPU).
+  std::string backend_type;
+  for (size_t i = 0; i < num_devices; ++i) {
+    auto device_type = factory->ort_api.HardwareDevice_Type(devices[i]);
+    auto it = kSupportedBackendTypes.find(device_type);
+    if (it != kSupportedBackendTypes.end()) {
+      if (device_type == OrtHardwareDeviceType_NPU) {
+        backend_type = it->second;
+        break;
+      } else if (backend_type.empty() && device_type != OrtHardwareDeviceType_CPU) {
+        backend_type = it->second;
+      }
+    }
+  }
+
+  if (backend_type.empty()) {
+    backend_type = "htp";  // Default to HTP if no suitable device found.
+  }
+
+  using SessionOptionsUniquePtr = std::unique_ptr<OrtSessionOptions, std::function<void(OrtSessionOptions*)>>;
+  OrtSessionOptions* temp_session_options = nullptr;
+  RETURN_IF_NOT_NULL(factory->ort_api.CreateSessionOptions(&temp_session_options));
+  SessionOptionsUniquePtr session_options(temp_session_options, factory->ort_api.ReleaseSessionOptions);
+
+  RETURN_IF_NOT_NULL(factory->ort_api.AddSessionConfigEntry(session_options.get(),
+                                                            (provider_prefix + "backend_type").c_str(),
+                                                            backend_type.c_str()));
+
+  if (!OrtLoggingManager::HasDefaultLogger()) {
+    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
+    return factory->ort_api.CreateStatus(ORT_FAIL, "Default logger is not available for model compatibility check.");
+  }
+  const OrtLogger* logger = OrtLoggingManager::GetDefaultLoggerPtr();
+
+  std::unique_ptr<QnnEp> temp_qnn_ep;
+  try {
+    temp_qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *session_options.get(), logger);
+  } catch (const std::runtime_error& e) {
+    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
+    return factory->ort_api.CreateStatus(ORT_FAIL, e.what());
+  } catch (...) {
+    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
+    return factory->ort_api.CreateStatus(ORT_FAIL, "Unknown exception occurred while creating temporary QNN EP for compatibility check.");
+  }
+
+  return temp_qnn_ep->ValidateCompiledModelCompatibilityInfo(devices,
+                                                             num_devices,
+                                                             compatibility_info,
+                                                             model_compatibility);
 }
 
 OrtStatus* ORT_API_CALL QnnEpFactory::GetHardwareDeviceIncompatibilityDetailsImpl(

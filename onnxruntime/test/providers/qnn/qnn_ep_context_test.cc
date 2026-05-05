@@ -6,14 +6,9 @@
 #include <filesystem>
 #include <string>
 
-#include "core/session/onnxruntime_cxx_api.h"
-#include "core/session/onnxruntime_ep_device_ep_metadata_keys.h"
-#include "core/session/onnxruntime_session_options_config_keys.h"
-#include "core/session/inference_session.h"
-#include "core/graph/model_saving_options.h"
-#include "core/session/utils.h"
-#include "core/session/abi_devices.h"
-#include "core/session/abi_session_options_impl.h"
+#include "onnxruntime_cxx_api.h"
+#include "onnxruntime_ep_device_ep_metadata_keys.h"
+#include "onnxruntime_session_options_config_keys.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
 
@@ -3672,16 +3667,27 @@ static void TestModelCompatibilityApiValidate(const CompatibilityTestInfo& test_
                        onnxruntime::kQnnExecutionProvider,
                        {{"backend_type", "htp"}, {"num_graph_prepare_threads", "1"}});
 
-  OrtEpFactory* ep_factory = registered_ep_device->GetMutableFactory();
-  OrtEp* ep = nullptr;
-  ep_factory->CreateEp(ep_factory, nullptr, nullptr, 0, so, nullptr, &ep);
+  const OrtEpDevice* const* ep_devices = nullptr;
+  size_t num_ep_devices = 0;
+  Ort::GetApi().GetEpDevices(*GetOrtEnv(), &ep_devices, &num_ep_devices);
+  std::cout << "num_ep_devices: " << num_ep_devices << std::endl;
+  const OrtEpDevice* qcom_npu_device = nullptr;
+  for (size_t i = 0; i < num_ep_devices ; i++) {
+    const char* name = Ort::GetApi().EpDevice_EpName(ep_devices[i]);
+    const char* vendor_name = Ort::GetApi().EpDevice_EpVendor(ep_devices[i]);
+    const OrtHardwareDevice* ep_hw_device = Ort::GetApi().EpDevice_Device(ep_devices[i]);
+    if (name && std::string(name) == "QNNExecutionProvider" &&
+        Ort::GetApi().HardwareDevice_Type(ep_hw_device) == OrtHardwareDeviceType_NPU) {
+      qcom_npu_device = ep_devices[i];
+    }
+  }
+  std::cout << "name: " << Ort::GetApi().EpDevice_EpName(qcom_npu_device) << std::endl;
+  std::cout << "vendor_name: " << Ort::GetApi().EpDevice_EpVendor(qcom_npu_device) << std::endl;
+  std::cout << "ep_hw_device: " << Ort::GetApi().HardwareDevice_Type(Ort::GetApi().EpDevice_Device(qcom_npu_device)) << std::endl;
 
-  const OrtEpDevice* ep_device = registered_ep_device.get();
-  OrtCompiledModelCompatibility out_status;
-  Ort::GetApi().GetModelCompatibilityForEpDevices(&ep_device, 1, test_info.ToString().c_str(), &out_status);
+  OrtCompiledModelCompatibility out_status = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
+  Ort::GetApi().GetModelCompatibilityForEpDevices(&qcom_npu_device, 1, test_info.ToString().c_str(), &out_status);
   ASSERT_EQ(out_status, expected_compatibility);
-
-  ep_factory->ReleaseEp(ep_factory, ep);
 }
 
 TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate) {
@@ -3697,10 +3703,10 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_NoEp) {
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, {{"backend_type", "htp"}});
 
   const OrtEpDevice* ep_device = registered_ep_device.get();
-  OrtCompiledModelCompatibility out_status;
+  OrtCompiledModelCompatibility out_status = OrtCompiledModelCompatibility_EP_UNSUPPORTED;
   OrtStatus* status = Ort::GetApi().GetModelCompatibilityForEpDevices(&ep_device, 1, "", &out_status);
-  std::string message(Ort::GetApi().GetErrorMessage(status));
-  ASSERT_TRUE(message.find("Unable to validate model compatibility without EP created.") != std::string::npos);
+  ASSERT_EQ(status, nullptr);
+  ASSERT_EQ(out_status, OrtCompiledModelCompatibility_EP_NOT_APPLICABLE);
 }
 
 TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_DiffBackend) {
