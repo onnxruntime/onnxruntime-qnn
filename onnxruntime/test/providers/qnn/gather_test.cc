@@ -457,6 +457,42 @@ TEST_F(QnnHTPBackendTests, GatherNDOp_QDQ_IndicesDynamicInt64_BatchDims0) {
       ExpectedEPNodeAssignment::All);
 }
 
+// Two GatherND nodes share the same negative-indices initializer but consume
+// `data` inputs with different shapes along the indexed columns, so the
+// per-axis remap produces different bytes. Without a rename on rewrite, the
+// second node would alias the first's tensor (wrong bytes for its own bounds).
+TEST_F(QnnHTPBackendTests, GatherNdSharedStaticNegIndicesDifferentDataShapes) {
+  auto build_model = [](ModelTestBuilder& builder) {
+    // data_a shape [3, 5]: indices [[0, -1]] -> [[0, 4]].
+    std::vector<float> data_a(3 * 5);
+    for (size_t i = 0; i < data_a.size(); ++i) data_a[i] = static_cast<float>(i);
+    builder.MakeInput<float>("data_a", {3, 5}, data_a);
+
+    // data_b shape [3, 7]: same indices [[0, -1]] -> [[0, 6]].
+    std::vector<float> data_b(3 * 7);
+    for (size_t i = 0; i < data_b.size(); ++i) data_b[i] = static_cast<float>(i);
+    builder.MakeInput<float>("data_b", {3, 7}, data_b);
+
+    // Shared indices. Column 1 bounds differ (5 vs 7), so rewritten bytes differ.
+    std::vector<int64_t> indices = {0, -1};
+    builder.MakeInitializer<int64_t>("indices", {1, 2}, indices);
+
+    builder.AddNode("gnd_a", "GatherND", {"data_a", "indices"}, {"Y0"}, kOnnxDomain);
+    builder.AddNode("gnd_b", "GatherND", {"data_b", "indices"}, {"Y1"}, kOnnxDomain);
+    builder.MakeOutput("Y0");
+    builder.MakeOutput("Y1");
+  };
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+
+  RunQnnModelTest(build_model, provider_options, 13, ExpectedEPNodeAssignment::All);
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 }  // namespace test
 }  // namespace onnxruntime
