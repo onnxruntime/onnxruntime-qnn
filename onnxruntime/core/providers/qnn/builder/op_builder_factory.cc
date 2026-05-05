@@ -25,6 +25,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateFusedMatMulOpBuilder("FusedMatMul", *this);
   CreateGatherOpBuilder("Gather", *this);
   CreateGatherOpBuilder("GatherElements", *this);
+  CreateGatherBlockQuantizedOpBuilder("GatherBlockQuantized", *this);
   CreateGatherNDOpBuilder("GatherND", *this);
   CreateGemmOpBuilder("Gemm", *this);
   CreateGroupNormalizationOpBuilder("GroupNormalization", *this);
