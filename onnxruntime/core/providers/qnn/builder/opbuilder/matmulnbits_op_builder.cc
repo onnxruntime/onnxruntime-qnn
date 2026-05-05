@@ -21,7 +21,7 @@ namespace qnn {
     Inputs
       - A           :                 : (fp16/32) : [batch_size{1}, sequence_len, K]
       - B           : Init            : (uint8)   : [N, K/block_size, (block_size * bits) / 8]
-      - scales      : Init            : (fp32)    : [N * K / block_size]
+      - scales      : Init            : (fp16/32) : [N * K / block_size]
       - zero_points : (optional)Init  : (uint8)   : [N * K / (block_size * 2)]
       - bias        : (optional)Init  : [fp16/32] : [N]
     Outputs
@@ -123,8 +123,6 @@ Ort::Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
 
   const auto& inputs = node_unit.Inputs();
   // 1. input : Datatype should be float16 or float32
-  // Float16 Dlc serialization failing, Skipping float16 support for this op builder
-  // TODO :: Add Float16 Support
   {
     const OrtNodeUnitIODef& input_tensor = inputs[0];
     TensorInfo input_info{};
@@ -132,7 +130,7 @@ Ort::Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
     RETURN_IF_ERROR(utils::GetQnnDataType(input_tensor.quant_param.has_value(),
                                           input_tensor.type,
                                           input_datatype));
-    RETURN_IF(input_datatype != QNN_DATATYPE_FLOAT_32, "Unsupported Input datatype");
+    RETURN_IF(input_datatype != QNN_DATATYPE_FLOAT_32 && input_datatype != QNN_DATATYPE_FLOAT_16, "Unsupported Input datatype");
   }
 
   // 2. weight : weight supported with packed int4 into int8.
@@ -151,7 +149,7 @@ Ort::Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
                   "Invalid B dimensions. Qnn Gpu Only Supports MatMulNBits with bits == 4 in packed format");
   }
 
-  // 3. scales : scales only float32 datatype
+  // 3. scales : Datatype should be float16 or float32
   {
     const OrtNodeUnitIODef& input_tensor = inputs[2];
     TensorInfo input_info{};
@@ -159,7 +157,8 @@ Ort::Status MatMulNBitsOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapp
     RETURN_IF_ERROR(utils::GetQnnDataType(input_tensor.quant_param.has_value(),
                                           input_tensor.type,
                                           input_datatype));
-    RETURN_IF(input_datatype != QNN_DATATYPE_FLOAT_32, "Unsupported Input datatype");
+    RETURN_IF(input_datatype != QNN_DATATYPE_FLOAT_32 && input_datatype != QNN_DATATYPE_FLOAT_16,
+              "Unsupported scales datatype");
   }
 
   // 4. If input 3 exists, it has to be zero point.
@@ -254,11 +253,34 @@ Ort::Status MatMulNBitsOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapp
       std::vector<uint8_t> per_block_uint8_scale;
       const OrtValueInfo* scale_tensor_proto = qnn_model_wrapper.GetConstantTensor(scales_tensor.name);
       RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(scale_tensor_proto, per_block_uint8_scale));
-      RETURN_IF_NOT(per_block_uint8_scale.size() == (num_blocks * sizeof(float)),
+
+      const OrtTypeInfo* type_info = nullptr;
+      const auto& ort_api = qnn_model_wrapper.GetOrtApi();
+      ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(scale_tensor_proto, &type_info));
+      const OrtTensorTypeAndShapeInfo* tensor_type_and_shape_info = nullptr;
+      ORT_CXX_RETURN_ON_API_FAIL(ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_type_and_shape_info));
+      ONNXTensorElementDataType onnx_data_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+      ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetTensorElementType(tensor_type_and_shape_info, &onnx_data_type));
+
+      RETURN_IF(onnx_data_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT &&
+                    onnx_data_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16,
+                "Unsupported scales datatype");
+
+      const size_t elem_byte_size = qnn::utils::GetElementSizeByType(onnx_data_type);
+      RETURN_IF_NOT(per_block_uint8_scale.size() == (num_blocks * elem_byte_size),
                     "Scale Initializer Invalid Size");
-      float* per_block_float_scale_ptr = reinterpret_cast<float*>(per_block_uint8_scale.data());
-      const std::vector<float> per_block_float_scale(per_block_float_scale_ptr,
-                                                     per_block_float_scale_ptr + num_blocks);
+
+      std::vector<float> per_block_float_scale;
+      if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+        float* per_block_float_scale_ptr = reinterpret_cast<float*>(per_block_uint8_scale.data());
+        per_block_float_scale = std::vector<float>(per_block_float_scale_ptr, per_block_float_scale_ptr + num_blocks);
+      } else {
+        Ort::Float16_t* per_block_fp16_scale_ptr = reinterpret_cast<Ort::Float16_t*>(per_block_uint8_scale.data());
+        per_block_float_scale.reserve(num_blocks);
+        for (int64_t i = 0; i < num_blocks; i++) {
+          per_block_float_scale.emplace_back(static_cast<float>(per_block_fp16_scale_ptr[i]));
+        }
+      }
 
       // 2.3 Quantization Offsets : QNN Support only symmetric quantization with default value of 0
       std::vector<int32_t> per_block_int32_offset(num_blocks, 0);

@@ -17,32 +17,33 @@ namespace test {
 
 constexpr int QBits = 4;
 
-void QuantizeDequantize(std::vector<float>& raw_vals,
+template <typename T>
+void QuantizeDequantize(std::vector<T>& raw_vals,
                         std::vector<uint8_t>& quant_vals,
-                        std::vector<float>& scales,
+                        std::vector<T>& scales,
                         std::vector<uint8_t>* zp,
                         int32_t N,
                         int32_t K,
                         int32_t block_size) {
-  QuantizeBlockwise<float, QBits>(quant_vals.data(),
-                                  scales.data(),
-                                  zp != nullptr ? zp->data() : nullptr,
-                                  raw_vals.data(),
-                                  block_size,
-                                  true,
-                                  K,
-                                  N,
-                                  N);
+  QuantizeBlockwise<T, QBits>(quant_vals.data(),
+                              scales.data(),
+                              zp != nullptr ? zp->data() : nullptr,
+                              raw_vals.data(),
+                              block_size,
+                              true,
+                              K,
+                              N,
+                              N);
 
   // Note that raw_vals is NxK after dequant
-  DequantizeBlockwise<float, QBits>(raw_vals.data(),                       // dequantized output
-                                    quant_vals.data(),                     // quantized input
-                                    scales.data(),                         // quantization scales
-                                    zp != nullptr ? zp->data() : nullptr,  // quantization zero points
-                                    block_size,                            // quantization block size
-                                    true,                                  // columnwise quantization
-                                    K,                                     // number of rows
-                                    N);                                    // number of columns
+  DequantizeBlockwise<T, QBits>(raw_vals.data(),                       // dequantized output
+                                quant_vals.data(),                     // quantized input
+                                scales.data(),                         // quantization scales
+                                zp != nullptr ? zp->data() : nullptr,  // quantization zero points
+                                block_size,                            // quantization block size
+                                true,                                  // columnwise quantization
+                                K,                                     // number of rows
+                                N);                                    // number of columns
 }
 
 struct TestParams4Bits {
@@ -59,6 +60,7 @@ struct TestParams4Bits {
   bool has_bias{false};
 };
 
+template <typename DataType>
 static void RunMatMul4BitsTest(const TestParams4Bits params,
                                ExpectedEPNodeAssignment expected_ep_assignment = ExpectedEPNodeAssignment::All,
                                const std::string& backend_name = "gpu",
@@ -71,13 +73,15 @@ static void RunMatMul4BitsTest(const TestParams4Bits params,
     std::vector<std::string> input_names;
 
     RandomValueGenerator random{1234};
-    std::vector<float> input0_vals(random.Gaussian<float>(AsSpan({params.batch_count, params.M, params.K}),
-                                                          0.0f,
-                                                          0.25f));
-    std::vector<float> input1_f_vals(random.Gaussian<float>(AsSpan({params.K, params.N}), 0.0f, 0.25f));
+    std::vector<DataType> input0_vals(random.Gaussian<DataType>(AsSpan({params.batch_count, params.M, params.K}),
+                                                                static_cast<DataType>(0.0f),
+                                                                static_cast<DataType>(0.25f)));
+    std::vector<DataType> input1_f_vals(random.Gaussian<DataType>(AsSpan({params.K, params.N}),
+                                                                  static_cast<DataType>(0.0f),
+                                                                  static_cast<DataType>(0.25f)));
 
-    auto input0_def = TestInputDef<float>({params.batch_count, params.M, params.K}, false, input0_vals);
-    MakeTestInput<float>(builder, "input0", input0_def);
+    auto input0_def = TestInputDef<DataType>({params.batch_count, params.M, params.K}, false, input0_vals);
+    MakeTestInput<DataType>(builder, "input0", input0_def);
     input_names.push_back("input0");
 
     int64_t k_blocks = (params.K + params.block_size - 1) / params.block_size;
@@ -88,7 +92,7 @@ static void RunMatMul4BitsTest(const TestParams4Bits params,
     size_t q_zp_size_in_bytes = static_cast<size_t>(params.N * zero_point_blob_size);  // packed as UInt4x2
 
     std::vector<uint8_t> input1_vals(q_data_size_in_bytes);
-    std::vector<float> scales(q_scale_size);
+    std::vector<DataType> scales(q_scale_size);
     // TODO
     // Not sure why zp is not calculated from QuantizeDequantize. Since QNN GPU only support zp=8, hardcode it here
     // as workaround.
@@ -106,8 +110,8 @@ static void RunMatMul4BitsTest(const TestParams4Bits params,
     MakeTestInput<uint8_t>(builder, "input1", input1_def);
     input_names.push_back("input1");
 
-    auto scales_def = TestInputDef<float>({params.N, k_blocks}, true, scales);
-    MakeTestInput<float>(builder, "scales", scales_def);
+    auto scales_def = TestInputDef<DataType>({params.N, k_blocks}, true, scales);
+    MakeTestInput<DataType>(builder, "scales", scales_def);
     input_names.push_back("scales");
 
     if (params.has_zero_point) {
@@ -144,40 +148,76 @@ static void RunMatMul4BitsTest(const TestParams4Bits params,
 
 // QNN GPU only support FP16 activations and Q4_0 weights, with zero_points = 8
 // Accumulation with larger channel accumulates more error. Set higher abs_error with respect to K.
-TEST_F(QnnGPUBackendTests, MatMulNBits_Basic_M1_N128_K512_withZp) {
+TEST_F(QnnGPUBackendTests, MatMulNBits_Basic_Fp32_M1_N128_K512_withZp) {
   TestParams4Bits params;
   params.M = 1;
   params.N = 128;
   params.K = 512;
   params.has_zero_point = true;
-  RunMatMul4BitsTest(params);
+  RunMatMul4BitsTest<float>(params);
 }
 
-TEST_F(QnnGPUBackendTests, MatMulNBits_Basic_M1_N128_K512) {
+TEST_F(QnnGPUBackendTests, MatMulNBits_Basic_Fp16_M1_N128_K512_withZp) {
+  TestParams4Bits params;
+  params.M = 1;
+  params.N = 128;
+  params.K = 512;
+  params.has_zero_point = true;
+  RunMatMul4BitsTest<Ort::Float16_t>(params);
+}
+
+TEST_F(QnnGPUBackendTests, MatMulNBits_Basic_Fp32_M1_N128_K512) {
   TestParams4Bits params;
   params.M = 1;
   params.N = 128;
   params.K = 512;
   params.has_zero_point = false;
-  RunMatMul4BitsTest(params);
+  RunMatMul4BitsTest<float>(params);
 }
 
-TEST_F(QnnGPUBackendTests, MatMulNBits_Basic_M10_N128_K512_withZp) {
+TEST_F(QnnGPUBackendTests, MatMulNBits_Basic_Fp16_M1_N128_K512) {
+  TestParams4Bits params;
+  params.M = 1;
+  params.N = 128;
+  params.K = 512;
+  params.has_zero_point = false;
+  RunMatMul4BitsTest<Ort::Float16_t>(params);
+}
+
+TEST_F(QnnGPUBackendTests, MatMulNBits_Basic_Fp32_M10_N128_K512_withZp) {
   TestParams4Bits params;
   params.M = 10;
   params.N = 128;
   params.K = 512;
   params.has_zero_point = true;
-  RunMatMul4BitsTest(params);
+  RunMatMul4BitsTest<float>(params);
 }
 
-TEST_F(QnnGPUBackendTests, MatMulNBits_Basic_M10_N128_K512) {
+TEST_F(QnnGPUBackendTests, MatMulNBits_Basic_Fp16_M10_N128_K512_withZp) {
+  TestParams4Bits params;
+  params.M = 10;
+  params.N = 128;
+  params.K = 512;
+  params.has_zero_point = true;
+  RunMatMul4BitsTest<Ort::Float16_t>(params);
+}
+
+TEST_F(QnnGPUBackendTests, MatMulNBits_Basic_Fp32_M10_N128_K512) {
   TestParams4Bits params;
   params.M = 10;
   params.N = 128;
   params.K = 512;
   params.has_zero_point = false;
-  RunMatMul4BitsTest(params);
+  RunMatMul4BitsTest<float>(params);
+}
+
+TEST_F(QnnGPUBackendTests, MatMulNBits_Basic_Fp16_M10_N128_K512) {
+  TestParams4Bits params;
+  params.M = 10;
+  params.N = 128;
+  params.K = 512;
+  params.has_zero_point = false;
+  RunMatMul4BitsTest<Ort::Float16_t>(params);
 }
 #endif
 

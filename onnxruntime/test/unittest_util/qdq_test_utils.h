@@ -86,7 +86,7 @@ inline void QuantizeBlockwise(
     int columns,
     int leading_dimension) {
   static_assert(qbits == 4, "Only 4-bit quantization is supported");
-  static_assert(std::is_same<T, float>::value, "Only float type is supported");
+  static_assert(std::is_same<T, float>::value || std::is_same<T, Ort::Float16_t>::value, "Only float type is supported");
 
   if (!columnwise) {
     throw std::runtime_error("Only column-wise quantization is supported in test utilities");
@@ -223,7 +223,7 @@ inline void DequantizeBlockwise(
     int rows,
     int columns) {
   static_assert(qbits == 4, "Only 4-bit quantization is supported");
-  static_assert(std::is_same<T, float>::value, "Only float type is supported");
+  static_assert(std::is_same<T, float>::value || std::is_same<T, Ort::Float16_t>::value, "Only float type is supported");
 
   if (!columnwise) {
     throw std::runtime_error("Only column-wise dequantization is supported in test utilities");

@@ -143,6 +143,20 @@ class RandomValueGenerator {
     return val;
   }
 
+  // Gaussian distribution for float16
+  template <typename TFloat16>
+  typename std::enable_if<
+      std::is_same_v<TFloat16, Ort::Float16_t> || std::is_same_v<TFloat16, Ort::BFloat16_t>,
+      std::vector<TFloat16>>::type
+  Gaussian(gsl::span<const int64_t> dims, TFloat16 mean, TFloat16 stddev) {
+    std::vector<TFloat16> val(SizeFromDims(dims));
+    std::normal_distribution<float> distribution(static_cast<float>(mean), static_cast<float>(stddev));
+    for (size_t i = 0; i < val.size(); ++i) {
+      val[i] = TFloat16(static_cast<float>(distribution(generator_)));
+    }
+    return val;
+  }
+
   // Gaussian distribution for Integer
   template <typename TInt>
   typename std::enable_if<
