@@ -13,10 +13,6 @@
 #include <string>
 #include <vector>
 
-// SafeInt wrapper that avoids the GetStackTrace dependency from core/common/safeint.h.
-// See qnn_safeint.h for details.
-#include "core/providers/qnn/qnn_safeint.h"
-
 // This compilation unit (ort_api.h/.cc) encapsulates the interface between the EP and ORT in a manner
 // that allows QNN EP to built either as a static library or a dynamic shared library.
 // The preprocessor macro `BUILD_QNN_EP_STATIC_LIB` is defined and set to 1 if QNN EP
@@ -37,6 +33,7 @@
 #include "onnxruntime_session_options_config_keys.h"
 
 #include "core/providers/qnn/common/int4.h"
+#include "core/providers/qnn/common/qnn_safeint.h"
 
 namespace onnxruntime {
 

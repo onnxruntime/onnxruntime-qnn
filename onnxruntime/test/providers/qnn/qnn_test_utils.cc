@@ -138,6 +138,10 @@ TestInputDef<Ort::Float16_t> ConvertToFP16InputDef(const TestInputDef<float>& in
   }
 }
 
+// Mirrors SafeIntExceptionHandler in core/providers/qnn/common/qnn_safeint.h.
+// Defined here because that header cannot be included in test builds:
+// ORT's core/common/safeint.h declares SafeIntExceptionHandler as a class
+// template, which conflicts with qnn_safeint.h's concrete class definition.
 class SafeIntExceptionHandler : public std::exception {
  public:
   [[noreturn]] static void SafeIntOnOverflow() {

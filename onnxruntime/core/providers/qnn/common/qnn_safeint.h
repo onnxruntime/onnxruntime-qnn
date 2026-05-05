@@ -20,6 +20,11 @@
 // DO NOT replace this header with core/common/safeint.h — doing so will introduce
 // a hidden runtime dependency on GetStackTrace that only manifests when the EP is
 // loaded as a plugin (not in test builds).
+//
+// An equivalent handler is also defined locally in qnn_test_utils.cc for test
+// builds. It cannot be consolidated here because ORT's core/common/safeint.h
+// (included transitively in test builds) declares SafeIntExceptionHandler as a
+// class template, which is incompatible with this concrete class definition.
 #ifndef SafeIntDefaultExceptionHandler
 class SafeIntExceptionHandler : public std::exception {
  public:
