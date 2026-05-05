@@ -330,9 +330,7 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 #endif
   }
 
-  // Constant-fold standalone DQ/Q on constant inputs. Avoid emitting a QNN op for them so
-  // their fp32 (DQ) or quantized (Q) output appears as a STATIC tensor in the graph rather
-  // than as an APP_WRITE input crossing the partition boundary.
+  // Emit a STATIC tensor instead of an APP_WRITE input for standalone Q/DQ on constant inputs.
   if (CanFoldConstantQdq(qnn_model_wrapper, node_unit)) {
     Ort::Status fold_status = TryFoldConstantQDQ(qnn_model_wrapper, node_unit);
     if (fold_status.IsOK()) {

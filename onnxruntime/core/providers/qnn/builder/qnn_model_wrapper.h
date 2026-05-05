@@ -195,8 +195,6 @@ class QnnModelWrapper {
     return is_constant_initializer;
   }
 
-  // Mark a tensor as a compile-time-folded constant (e.g. output of a Q/DQ on a constant
-  // initializer that we statically computed). Used by op builders to chain folds.
   void MarkTensorAsFoldedConstant(const std::string& tensor_name) {
     folded_constant_tensors_.insert(tensor_name);
   }
@@ -205,7 +203,7 @@ class QnnModelWrapper {
     return folded_constant_tensors_.count(tensor_name) > 0;
   }
 
-  // Effectively constant = real graph initializer OR a tensor we already folded.
+  // Real graph initializer OR a tensor produced by a previous compile-time fold.
   bool IsEffectivelyConstantInput(const std::string& tensor_name) const {
     return IsConstantInput(tensor_name) || IsFoldedConstant(tensor_name);
   }
@@ -505,9 +503,7 @@ class QnnModelWrapper {
 
   std::unordered_map<std::string, std::string>* tensor_name_overrides_ = nullptr;
 
-  // Set of tensor names whose data was folded at compile time and that should be
-  // treated as constant by downstream op builders. Used to chain constant-folding
-  // across multiple Q/DQ ops on a constant initializer.
+  // Tensor names produced by compile-time Q/DQ folds; chained across hops.
   std::unordered_set<std::string> folded_constant_tensors_;
 };  // QnnModelWrapper
 

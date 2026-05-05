@@ -934,14 +934,9 @@ TEST_F(QnnCPUBackendTests, ConvTranspose1Df32_DynamicWeights_DefaultBias) {
                 ExpectedEPNodeAssignment::All);
 }
 
-// Regression test for chained Q/DQ on a per-channel constant Conv weight:
-//   weight_q0 initializer -> DQ -> Q -> DQ -> Conv
-// Without folded-constant propagation, the chain stops folding after the first hop and the
-// final DQ output can leak into the QNN graph as an extra runtime input.
-//
-// `scale1`/`zp1` configure the second Q/DQ hop. When they differ from `scale0`/`zp0`, the
-// fold path must perform real quant arithmetic on the intermediate STATIC tensor instead
-// of round-tripping bytes verbatim. Caller picks tolerance accordingly.
+// Builds: weight_q0 (int8 init) -> DQ -> Q -> DQ -> Conv.
+// Used to regression-test chained folding; differing scale0/scale1 exercises real requant
+// on the intermediate STATIC tensor rather than a byte round-trip.
 static GetTestModelFn BuildPerChannelQDQChainConstWeightConvTestCase(
     const std::vector<float>& scale0,
     const std::vector<int8_t>& zp0,
@@ -953,7 +948,6 @@ static GetTestModelFn BuildPerChannelQDQChainConstWeightConvTestCase(
     const std::vector<int64_t> input_shape = {1, in_ch, 1, 1};
     const std::vector<int64_t> weight_shape = {out_ch, in_ch, 1, 1};
 
-    // Float dynamic activation input.
     builder.MakeInput<float>("input", input_shape, -1.0f, 1.0f);
 
     builder.MakeInitializer<int8_t>("weight_q0", weight_shape, std::vector<int8_t>{1, 2, 3, 4, 5, 6});
@@ -972,7 +966,6 @@ static GetTestModelFn BuildPerChannelQDQChainConstWeightConvTestCase(
     builder.AddNode("WeightDQ1", "DequantizeLinear", {"weight_q1", "scale1", "zp1"}, {"weight_dq1"},
                     kOnnxDomain, axis_attrs);
 
-    // Float Conv consuming the dequantized constant weight directly.
     builder.MakeOutput("output");
     std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
     conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
@@ -985,8 +978,6 @@ static GetTestModelFn BuildPerChannelQDQChainConstWeightConvTestCase(
   };
 }
 
-// Identity-scale chain: structural regression. Asserts the chain folds and the final DQ
-// output does not leak into the QNN graph as an APP_WRITE input.
 TEST_F(QnnCPUBackendTests, Convf32_PerChannelQDQChainConstWeight_Regression) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";
@@ -1001,9 +992,6 @@ TEST_F(QnnCPUBackendTests, Convf32_PerChannelQDQChainConstWeight_Regression) {
                   /*fp32_abs_err*/ 1e-4f);
 }
 
-// Non-identity Q/DQ chain: stresses real quant arithmetic on the intermediate fold output.
-// scale1 != scale0 and zp1 != 0, so the fold path must dequant->requant the intermediate
-// STATIC tensor; a buggy implementation that re-uses input bytes verbatim would fail.
 TEST_F(QnnCPUBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Regression) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "cpu";

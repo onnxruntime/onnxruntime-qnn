@@ -20,9 +20,7 @@ namespace qnn {
 
 namespace {
 
-// Fetch raw bytes of a constant input tensor. Works whether the tensor is a real
-// graph initializer or a previously folded constant tensor we placed in the
-// model wrapper.
+// Fetch raw bytes from either a real initializer or a previously-folded STATIC tensor.
 Ort::Status GetConstantTensorBytes(QnnModelWrapper& qnn_model_wrapper,
                                    const std::string& tensor_name,
                                    /*out*/ std::vector<uint8_t>& bytes) {
@@ -42,13 +40,7 @@ Ort::Status GetConstantTensorBytes(QnnModelWrapper& qnn_model_wrapper,
   return MAKE_EP_FAIL("Tensor is not a constant initializer or folded constant.");
 }
 
-// Constant-fold a standalone DequantizeLinear whose input is effectively constant.
-// Computes the dequantized fp32 data at compile time and emits a STATIC fp32
-// tensor for the DQ output. The DQ op itself is not added to the QNN graph.
-//
-// Note: only fp32 DQ output is supported. ONNX opset >= 21 also allows fp16
-// (and other) DQ outputs; those are rejected here so the caller falls back to
-// emitting a normal QNN op.
+// Only fp32 DQ output is supported; opset >= 21 fp16/bf16 outputs fall back to the normal op.
 Ort::Status FoldConstantDequantizeLinear(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& node_unit) {
   const auto& input_def = node_unit.Inputs()[0];
@@ -78,9 +70,7 @@ Ort::Status FoldConstantDequantizeLinear(QnnModelWrapper& qnn_model_wrapper,
     offsets.assign(scales.size(), 0);
   }
 
-  // Use SafeInt to detect a malicious model whose shape product overflows size_t.
-  // The downstream allocation would fail anyway, but explicit bounds turn silent
-  // wrap into an immediate, attributable error.
+  // SafeInt catches overflow from an adversarial shape before allocation.
   SafeInt<size_t> safe_num_elems = 1;
   for (uint32_t d : input_info.shape) {
     safe_num_elems *= d;
@@ -116,13 +106,7 @@ Ort::Status FoldConstantDequantizeLinear(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
-// Constant-fold a standalone QuantizeLinear whose input is effectively constant.
-// Computes the quantized data at compile time and emits a STATIC quantized
-// tensor for the Q output. The Q op itself is not added to the QNN graph.
-//
-// Note: only fp32 input is supported. fp16 sources would require an additional
-// fp16 -> fp32 conversion step before quantization; not needed by current
-// targets.
+// Only fp32 Q input is supported; fp16/bf16 sources fall back to the normal op.
 Ort::Status FoldConstantQuantizeLinear(QnnModelWrapper& qnn_model_wrapper,
                                        const OrtNodeUnit& node_unit) {
   const auto& input_def = node_unit.Inputs()[0];
@@ -169,8 +153,7 @@ Ort::Status FoldConstantQuantizeLinear(QnnModelWrapper& qnn_model_wrapper,
     axis = per_chan_axis;
   }
 
-  // GetQnnTensorDataSizeInBytes correctly accounts for sub-byte dtypes (e.g. int4),
-  // unlike GetElementSizeByType which rounds up to a byte per element.
+  // Needed over GetElementSizeByType to correctly size sub-byte dtypes (e.g. int4).
   const size_t total_bytes = utils::GetQnnTensorDataSizeInBytes(num_elems, output_info.qnn_data_type);
   std::vector<uint8_t> quant_bytes(total_bytes);
 
@@ -195,8 +178,7 @@ Ort::Status FoldConstantQuantizeLinear(QnnModelWrapper& qnn_model_wrapper,
 
 bool CanFoldConstantQdq(const QnnModelWrapper& qnn_model_wrapper,
                         const OrtNodeUnit& node_unit) {
-  // Only standalone Q/DQ. QDQGroup-typed units have a non-Q/DQ target node and would
-  // already be handled by the corresponding op builder.
+  // QDQGroup units are owned by the target op builder; only standalone Q/DQ are foldable here.
   if (node_unit.UnitType() != OrtNodeUnit::Type::SingleNode) {
     return false;
   }
