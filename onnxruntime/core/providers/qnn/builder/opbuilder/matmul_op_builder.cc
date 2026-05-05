@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include <numeric>
+
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
@@ -90,15 +92,26 @@ Ort::Status ProcessInput0(QnnModelWrapper& qnn_model_wrapper,
                           const std::string& original_input_0_name,
                           std::vector<std::string>& input_names,
                           const Ort::Logger& logger,
-                          bool do_op_validation) {
-  bool reshape_input_0 = input_0_info.shape.size() == 1;
+                          bool do_op_validation,
+                          bool use_fully_connected) {
+  const bool is_rank1 = input_0_info.shape.size() == 1;
+  const bool reshape_input_0 = is_rank1 || (use_fully_connected && input_0_info.shape.size() > 2);
   std::string actual_input_0_name = original_input_0_name;
 
   if (reshape_input_0) {
     actual_input_0_name = utils::UniqueNameGenerator().New(original_input_0_name, "_reshape");
-    std::vector<uint32_t> shape_2d{1, input_0_info.shape[0]};
+    std::vector<uint32_t> shape_2d;
+    if (is_rank1) {
+      shape_2d = {1, input_0_info.shape[0]};
+    } else {
+      const uint32_t batch = std::accumulate(input_0_info.shape.begin(), input_0_info.shape.end() - 1,
+                                             static_cast<uint32_t>(1), std::multiplies<uint32_t>());
+      shape_2d = {batch, input_0_info.shape.back()};
+    }
     QnnQuantParamsWrapper quant_param_2d = input_0_info.quant_param.Copy();
-    RETURN_IF_ERROR(quant_param_2d.HandleUnsqueeze<uint32_t>(input_0_info.shape, shape_2d));
+    if (is_rank1) {
+      RETURN_IF_ERROR(quant_param_2d.HandleUnsqueeze<uint32_t>(input_0_info.shape, shape_2d));
+    }
 
     // If input_0 is initializer, unpack it and add the tensor with new quantization parameter and shape.
     // Otherwise, add a Reshape node.
@@ -172,7 +185,7 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnMatMul(QnnModelWrapper& qnn_mode
 
   const std::string& org_input_0_name = inputs[0].name;
   RETURN_IF_ERROR(ProcessInput0(qnn_model_wrapper, input_info_0, org_input_0_name, input_names,
-                                logger, do_op_validation));
+                                logger, do_op_validation, /*use_fully_connected=*/false));
 
   // Process input 1.
   const std::string& org_input_1_name = inputs[1].name;
@@ -291,7 +304,7 @@ Ort::Status MatMulOpBuilder::ProcessInputsForQnnFullyConnected(QnnModelWrapper& 
 
   const std::string& org_input_0_name = inputs[0].name;
   RETURN_IF_ERROR(ProcessInput0(qnn_model_wrapper, input_info_0, org_input_0_name, input_names,
-                                logger, do_op_validation));
+                                logger, do_op_validation, /*use_fully_connected=*/true));
 
   // Process input 1.
   const std::string& org_input_1_name = inputs[1].name;
