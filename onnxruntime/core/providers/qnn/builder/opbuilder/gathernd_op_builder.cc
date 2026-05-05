@@ -47,12 +47,13 @@ Ort::Status ProcessGatherNDIndices(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(indices_input, indices_info));
 
   const uint32_t index_tuple_size = indices_info.shape.back();
-  const size_t batch_dims_size = static_cast<size_t>(batch_dims);
+  const auto num_batch_dims = static_cast<size_t>(batch_dims);
 
+  // Column `col` of an index tuple addresses data dim `num_batch_dims + col`.
   const auto axis_dim_for_element =
-      [index_tuple_size, batch_dims_size, &data_shape](size_t element_index) -> int64_t {
+      [index_tuple_size, num_batch_dims, &data_shape](size_t element_index) -> int64_t {
     const size_t col = element_index % static_cast<size_t>(index_tuple_size);
-    return static_cast<int64_t>(data_shape[batch_dims_size + col]);
+    return static_cast<int64_t>(data_shape[num_batch_dims + col]);
   };
 
   std::vector<uint8_t> qnn_indices_bytes;
@@ -123,7 +124,7 @@ Ort::Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
   }
 
   OrtNodeAttrHelper node_helper(node_unit);
-  int64_t batch_dims = node_helper.Get("batch_dims", static_cast<int64_t>(0));
+  const int64_t batch_dims = node_helper.Get("batch_dims", static_cast<int64_t>(0));
 
   Qnn_Scalar_t batch_dims_scalar = QNN_SCALAR_INIT;
   batch_dims_scalar.dataType = QNN_DATATYPE_UINT_32;
@@ -138,28 +139,27 @@ Ort::Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
   const auto& data_tensor_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]);
   const auto& indices_tensor_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]);
 
-  // Calculate the QNN output shape for GatherND
-  std::vector<uint32_t> qnn_output_shape;
   const auto& data_dims = data_tensor_wrapper.GetTensorDims();
   const auto& indices_dims = indices_tensor_wrapper.GetTensorDims();
 
-  // GatherND output shape calculation:
-  size_t batch_dims_size = static_cast<size_t>(batch_dims);
-  size_t indices_last_dim = indices_dims.back();
+  // ONNX GatherND output shape:
+  //   data[:num_batch_dims] ++ indices[:-1] ++ data[num_batch_dims + indices.back():]
+  const auto num_batch_dims = static_cast<size_t>(batch_dims);
+  const size_t index_tuple_size = indices_dims.back();
+  const size_t first_trailing_data_dim = num_batch_dims + index_tuple_size;
 
-  // Add batch dimensions from data
-  for (size_t i = 0; i < batch_dims_size && i < data_dims.size(); ++i) {
+  std::vector<uint32_t> qnn_output_shape;
+
+  // Batch dims come from data.
+  for (size_t i = 0; i < num_batch_dims && i < data_dims.size(); ++i) {
     qnn_output_shape.push_back(data_dims[i]);
   }
-
-  // Add indices dimensions except the last one
+  // All indices dims except the innermost index-tuple dim.
   for (size_t i = 0; i < indices_dims.size() - 1; ++i) {
     qnn_output_shape.push_back(indices_dims[i]);
   }
-
-  // Add remaining data dimensions after batch_dims + indices_last_dim
-  size_t start_dim = batch_dims_size + indices_last_dim;
-  for (size_t i = start_dim; i < data_dims.size(); ++i) {
+  // Trailing (un-indexed) data dims.
+  for (size_t i = first_trailing_data_dim; i < data_dims.size(); ++i) {
     qnn_output_shape.push_back(data_dims[i]);
   }
 
