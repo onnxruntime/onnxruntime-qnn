@@ -833,12 +833,55 @@ void VerifyQDQOutput(const std::vector<Ort::Value>& cpu_qdq_outputs,
  *                         EP assignment.
  */
 
-// Forward declarations for helper functions (defined after QnnHTPBackendTests class)
-inline bool ShouldSkipGpuTestOnArm64(const ProviderOptions& qnn_options);
-template <typename QuantType>
-inline bool ShouldSkipQDQTestOnV68(const ProviderOptions& qnn_options);
-inline bool ShouldSkipFp16TestOnV68(const ProviderOptions& qnn_options);
-inline std::string GetCapitalizedBackendName(const ProviderOptions& qnn_options);
+// Helper macro to check if QuantType is a supported QDQ type
+#define QNN_IS_SUPPORTED_QDQ_TYPE(QuantType)                                                             \
+  (std::is_same_v<QuantType, uint8_t> || std::is_same_v<QuantType, int8_t> ||                           \
+   std::is_same_v<QuantType, uint16_t> || std::is_same_v<QuantType, int16_t> ||                         \
+   std::is_same_v<QuantType, uint32_t> || std::is_same_v<QuantType, int32_t> ||                         \
+   std::is_same_v<QuantType, Int4x2> || std::is_same_v<QuantType, UInt4x2>)
+
+// Macro for test skip logic based on provider options and architecture
+// Parameters: qnn_options (const ProviderOptions&), arch (QnnHtpDevice_Arch_t),
+//             test_type (QDQ, FP16, FP32, GPU), QuantType (for QDQ tests)
+// Only skips tests on Linux ARM64 (__aarch64__)
+#if defined(__aarch64__)
+#define SKIP_TEST_ON_LINUX_ARM64(qnn_options, arch, test_type, ...)                                      \
+  if (::testing::internal::AlwaysTrue()) {                                                               \
+    std::string backend_name = "htp";                                                                    \
+    if ((qnn_options).find("backend_type") != (qnn_options).end()) {                                     \
+      backend_name = (qnn_options).at("backend_type");                                                   \
+    }                                                                                                     \
+                                                                                                          \
+    if ((test_type) == "QDQ") {                                                                          \
+      if (backend_name == "htp") {                                                                       \
+        if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo((arch))) {                         \
+          if (QNN_IS_SUPPORTED_QDQ_TYPE(__VA_ARGS__)) {                                                   \
+            GTEST_SKIP() << "QDQ test skipped on HTP architecture <= " << static_cast<int>(arch);        \
+          }                                                                                               \
+        }                                                                                                 \
+      } else if (backend_name == "gpu") {                                                                \
+        GTEST_SKIP() << "QDQ test skipped on GPU backend with ARM64 architecture";                     \
+      }                                                                                                   \
+    } else if ((test_type) == "FP16" || (test_type) == "FP32") {                                         \
+      if (backend_name == "htp") {                                                                       \
+        if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo((arch))) {                         \
+          GTEST_SKIP() << "FP16/FP32 HTP test skipped on architecture <= " << static_cast<int>(arch);   \
+        }                                                                                                 \
+      } else if (backend_name == "gpu") {                                                                \
+        GTEST_SKIP() << "FP16/FP32 test skipped on GPU backend with ARM64 architecture";               \
+      }                                                                                                   \
+    } else if ((test_type) == "GPU") {                                                                   \
+      if (backend_name == "gpu") {                                                                       \
+        GTEST_SKIP() << "GPU test skipped on ARM64 architecture";                                                                                                 \
+      }                                                                                                   \
+    }                                                                                                     \
+  } else                                                                                                  \
+    static_assert(true, "")
+#else
+#define SKIP_TEST_ON_LINUX_ARM64(qnn_options, arch, test_type, ...)                                      \
+  do {                                                                                                    \
+  } while (0)
+#endif
 
 template <typename QuantType>
 inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
@@ -851,9 +894,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                                  std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
                                  std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr) {
-  if (ShouldSkipQDQTestOnV68<QuantType>(qnn_options)) {
-    GTEST_SKIP() << "Test requires " << GetCapitalizedBackendName(qnn_options) << " quantization support (arch > v68)";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "QDQ", QuantType);
 
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
@@ -1112,9 +1153,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                                   OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                                   const std::string& qnn_ctx_model_path = "",
                                   const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
-  if (ShouldSkipFp16TestOnV68(qnn_options)) {
-    GTEST_SKIP() << "Test requires " << GetCapitalizedBackendName(qnn_options) << " FP16/FP32 support (arch > v68)";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
 
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
@@ -1726,69 +1765,6 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
   do {                                        \
   } while (0)
 #endif
-
-// Helper to check if we should skip GPU backend tests on Linux ARM64
-inline bool ShouldSkipGpuTestOnArm64(const ProviderOptions& qnn_options) {
-  std::string backend_name = "htp";
-  if (qnn_options.find("backend_type") != qnn_options.end()) {
-    backend_name = qnn_options.at("backend_type");
-  }
-
-  if (backend_name == "gpu") {
-#if defined(__aarch64__)
-    return true;
-#endif
-  }
-  return false;
-}
-
-// Helper to check if we should skip QDQ tests on v68
-template <typename QuantType>
-inline bool ShouldSkipQDQTestOnV68(const ProviderOptions& qnn_options) {
-  std::string backend_name = "htp";
-  if (qnn_options.find("backend_type") != qnn_options.end()) {
-    backend_name = qnn_options.at("backend_type");
-  }
-
-  if (backend_name == "htp") {
-    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-      if (std::is_same_v<QuantType, uint8_t> || std::is_same_v<QuantType, int8_t> ||
-          std::is_same_v<QuantType, uint16_t> || std::is_same_v<QuantType, int16_t> ||
-          std::is_same_v<QuantType, uint32_t> || std::is_same_v<QuantType, int32_t> ||
-          std::is_same_v<QuantType, Int4x2> || std::is_same_v<QuantType, UInt4x2>) {
-        return true;
-      }
-    }
-  }
-  return ShouldSkipGpuTestOnArm64(qnn_options);
-}
-
-// Helper to check if we should skip FP16 tests on v68
-inline bool ShouldSkipFp16TestOnV68(const ProviderOptions& qnn_options) {
-  std::string backend_name = "htp";
-  if (qnn_options.find("backend_type") != qnn_options.end()) {
-    backend_name = qnn_options.at("backend_type");
-  }
-
-  if (backend_name == "htp") {
-    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-      return true;
-    }
-  }
-  return ShouldSkipGpuTestOnArm64(qnn_options);
-}
-
-// Helper to get capitalized backend name
-inline std::string GetCapitalizedBackendName(const ProviderOptions& qnn_options) {
-  std::string backend_name = "htp";
-  if (qnn_options.find("backend_type") != qnn_options.end()) {
-    backend_name = qnn_options.at("backend_type");
-  }
-  for (char& c : backend_name) {
-    c = std::toupper(c);
-  }
-  return backend_name;
-}
 
 }  // namespace test
 }  // namespace onnxruntime
