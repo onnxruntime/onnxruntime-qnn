@@ -37,19 +37,15 @@ on:
       linux_aarch64_manylinux_2_34_target_py_vsns:
         description: "JSON list of Python versions to build for aarch64 manylinux_2_34"
         type: string
-        default: "['3.10','3.11','3.12','3.13']"
+        default: "['3.11','3.12','3.13','3.14']"
       windows_target_archs:
         description: "JSON list of Windows architectures to build"
         type: string
-        default: "['arm64', 'arm64x']"
+        default: "['arm64', 'arm64ec', 'x86_64']"
       windows_target_py_vsns:
         description: "JSON list of Python versions to build for Windows"
         type: string
         default: "['3.11','3.12','3.13','3.14']"
-      windows_arm64_build_nuget:
-        description: "If true, build a NuGet package with the first ARM64 build."
-        type: boolean
-        default: true
       windows_arm64_build_archive:
         description: "If true, build an archive with the first ARM64 build."
         type: boolean
@@ -155,11 +151,22 @@ jobs:
       test_wheel: false
       # For each arch, upload the test archive with the first Python version we encounter
       upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
-      # On ARM64, build NuGet/Archive with the first python version we encounter
-      build_nuget: ${{ inputs.windows_arm64_build_nuget && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
-      upload_nuget: ${{ inputs.windows_arm64_build_nuget && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       build_archive: ${{ inputs.windows_arm64_build_archive && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       upload_archive: ${{ inputs.windows_arm64_build_archive && matrix.target_arch == 'arm64' && matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       # For each arch, build and upload a PDB archive with the first python version we encounter
       build_pdb_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
       upload_pdb_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
+
+  build-windows-arm64x:
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      version_suffix: ${{ inputs.version_suffix }}
+      target_arch: arm64x
+      target_py_vsn: ${{ fromJSON(inputs.windows_target_py_vsns)[0] }}
+      build_runner_arch: ARM64
+      run_tests: false
+      upload_wheel: false
+      build_nuget: true
+      upload_nuget: true

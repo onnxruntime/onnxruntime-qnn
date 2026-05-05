@@ -217,12 +217,17 @@ Ort::Status TryGetMaxSpillFillSize(const OrtGraph** graphs,
   max_spill_fill_size = 0;
   int max_size_index = 0;
   for (uint32_t idx = 0; idx < total_context_size; ++idx) {
+    // 'graphs' contains ALL EPContext subgraphs, not just main contexts. Indirect through
+    // 'main_context_pos_list' to pick out the main-context graph at this iteration.
+    // Using 'idx' directly would read non-main (or unrelated) graphs when main contexts
+    // are at non-consecutive positions, producing a wrong max spill-fill size.
+    int graph_idx = main_context_pos_list[idx];
     size_t num_nodes = 0;
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNumNodes(graphs[idx], &num_nodes));
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNumNodes(graphs[graph_idx], &num_nodes));
     RETURN_IF(num_nodes != 1, "OrtGraph should have only one EPContext node.");
 
     std::vector<const OrtNode*> nodes(num_nodes);
-    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNodes(graphs[idx], nodes.data(), nodes.size()));
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNodes(graphs[graph_idx], nodes.data(), nodes.size()));
 
     const OrtNode* ep_context_node = nodes[0];
 
