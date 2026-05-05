@@ -6,6 +6,7 @@
 #include <map>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "nlohmann/json.hpp"
@@ -194,6 +195,21 @@ class QnnModelWrapper {
     return is_constant_initializer;
   }
 
+  // Mark a tensor as a compile-time-folded constant (e.g. output of a Q/DQ on a constant
+  // initializer that we statically computed). Used by op builders to chain folds.
+  void MarkTensorAsFoldedConstant(const std::string& tensor_name) {
+    folded_constant_tensors_.insert(tensor_name);
+  }
+
+  bool IsFoldedConstant(const std::string& tensor_name) const {
+    return folded_constant_tensors_.count(tensor_name) > 0;
+  }
+
+  // Effectively constant = real graph initializer OR a tensor we already folded.
+  bool IsEffectivelyConstantInput(const std::string& tensor_name) const {
+    return IsConstantInput(tensor_name) || IsFoldedConstant(tensor_name);
+  }
+
   // static bool GetOnnxShape(const NodeArg& node_arg, std::vector<uint32_t>& shape);
   static bool GetOnnxShape(const std::optional<std::vector<int64_t>>& onnx_shape, std::vector<uint32_t>& shape);
 
@@ -212,7 +228,7 @@ class QnnModelWrapper {
   }
 
   Qnn_TensorType_t GetTensorType(const std::string& tensor_name) const {
-    if (IsConstantInput(tensor_name)) {
+    if (IsConstantInput(tensor_name) || IsFoldedConstant(tensor_name)) {
       return QNN_TENSOR_TYPE_STATIC;
     } else if (IsGraphInput(tensor_name)) {
       return QNN_TENSOR_TYPE_APP_WRITE;
@@ -488,6 +504,11 @@ class QnnModelWrapper {
   const ApiPtrs api_ptrs_;
 
   std::unordered_map<std::string, std::string>* tensor_name_overrides_ = nullptr;
+
+  // Set of tensor names whose data was folded at compile time and that should be
+  // treated as constant by downstream op builders. Used to chain constant-folding
+  // across multiple Q/DQ ops on a constant initializer.
+  std::unordered_set<std::string> folded_constant_tensors_;
 };  // QnnModelWrapper
 
 template <typename T>
