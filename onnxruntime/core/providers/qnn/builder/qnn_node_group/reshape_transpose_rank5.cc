@@ -43,22 +43,26 @@ std::optional<std::vector<int64_t>> GetTensorShape(const OrtApi& ort_api, const 
   }
 
   const OrtTypeInfo* type_info = nullptr;
-  if (ort_api.GetValueInfoTypeInfo(value_info, &type_info) != nullptr) {
+  if (OrtStatus* status = ort_api.GetValueInfoTypeInfo(value_info, &type_info); status != nullptr) {
+    ort_api.ReleaseStatus(status);
     return std::nullopt;
   }
 
   const OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
-  if (ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info) != nullptr) {
+  if (OrtStatus* status = ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info); status != nullptr) {
+    ort_api.ReleaseStatus(status);
     return std::nullopt;
   }
 
   size_t dims_count = 0;
-  if (ort_api.GetDimensionsCount(tensor_info, &dims_count) != nullptr) {
+  if (OrtStatus* status = ort_api.GetDimensionsCount(tensor_info, &dims_count); status != nullptr) {
+    ort_api.ReleaseStatus(status);
     return std::nullopt;
   }
 
   std::vector<int64_t> dims(dims_count);
-  if (ort_api.GetDimensions(tensor_info, dims.data(), dims_count) != nullptr) {
+  if (OrtStatus* status = ort_api.GetDimensions(tensor_info, dims.data(), dims_count); status != nullptr) {
+    ort_api.ReleaseStatus(status);
     return std::nullopt;
   }
 

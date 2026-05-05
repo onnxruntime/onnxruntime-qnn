@@ -1244,18 +1244,21 @@ void QnnEp::InitQnnHtpGraphConfigs(
 
 static bool EpSharedContextsHasAllGraphs(const OrtGraph* graph, const OrtApi& ort_api, const Ort::Logger& logger) {
   size_t num_nodes = 0;
-  if (ort_api.Graph_GetNumNodes(graph, &num_nodes) != nullptr) {
+  if (OrtStatus* status = ort_api.Graph_GetNumNodes(graph, &num_nodes); status != nullptr) {
+    ort_api.ReleaseStatus(status);
     return false;
   }
 
   std::vector<const OrtNode*> graph_nodes(num_nodes);
-  if (ort_api.Graph_GetNodes(graph, graph_nodes.data(), graph_nodes.size()) != nullptr) {
+  if (OrtStatus* status = ort_api.Graph_GetNodes(graph, graph_nodes.data(), graph_nodes.size()); status != nullptr) {
+    ort_api.ReleaseStatus(status);
     return false;
   }
 
   for (const OrtNode* node : graph_nodes) {
     const char* op_type = nullptr;
-    if (ort_api.Node_GetOperatorType(node, &op_type) != nullptr) {
+    if (OrtStatus* status = ort_api.Node_GetOperatorType(node, &op_type); status != nullptr) {
+      ort_api.ReleaseStatus(status);
       return false;
     }
 
@@ -1264,7 +1267,8 @@ static bool EpSharedContextsHasAllGraphs(const OrtGraph* graph, const OrtApi& or
 
     if (op_type == qnn::EPCONTEXT_OP && (cache_source == "qnnexecutionprovider" || cache_source == "qnn")) {
       const char* node_name = nullptr;
-      if (ort_api.Node_GetName(node, &node_name) != nullptr) {
+      if (OrtStatus* status = ort_api.Node_GetName(node, &node_name); status != nullptr) {
+        ort_api.ReleaseStatus(status);
         return false;
       }
 
@@ -1288,12 +1292,14 @@ static void GetMainEPCtxNodes(const OrtGraph* graph,
                               std::unordered_set<const OrtNode*>& ep_context_nodes,
                               const Ort::Logger& logger) {
   size_t num_nodes = 0;
-  if (ort_api.Graph_GetNumNodes(graph, &num_nodes) != nullptr) {
+  if (OrtStatus* status = ort_api.Graph_GetNumNodes(graph, &num_nodes); status != nullptr) {
+    ort_api.ReleaseStatus(status);
     return;
   }
 
   std::vector<const OrtNode*> graph_nodes(num_nodes);
-  if (ort_api.Graph_GetNodes(graph, graph_nodes.data(), graph_nodes.size()) != nullptr) {
+  if (OrtStatus* status = ort_api.Graph_GetNodes(graph, graph_nodes.data(), graph_nodes.size()); status != nullptr) {
+    ort_api.ReleaseStatus(status);
     return;
   }
 
@@ -1301,7 +1307,8 @@ static void GetMainEPCtxNodes(const OrtGraph* graph,
     const OrtNode* node = graph_nodes[node_idx];
 
     const char* op_type = nullptr;
-    if (ort_api.Node_GetOperatorType(node, &op_type) != nullptr) {
+    if (OrtStatus* status = ort_api.Node_GetOperatorType(node, &op_type); status != nullptr) {
+      ort_api.ReleaseStatus(status);
       continue;
     }
 
@@ -1335,12 +1342,14 @@ static void GetMainEPCtxNodes(const OrtGraph* graph,
 void QnnEp::PartitionCtxModel(const OrtGraph* graph, OrtEpGraphSupportInfo* graph_support_info) {
   // Get all nodes from the graph
   size_t num_nodes = 0;
-  if (ort_api.Graph_GetNumNodes(graph, &num_nodes) != nullptr) {
+  if (OrtStatus* status = ort_api.Graph_GetNumNodes(graph, &num_nodes); status != nullptr) {
+    ort_api.ReleaseStatus(status);
     return;
   }
 
   std::vector<const OrtNode*> graph_nodes(num_nodes);
-  if (ort_api.Graph_GetNodes(graph, graph_nodes.data(), graph_nodes.size()) != nullptr) {
+  if (OrtStatus* status = ort_api.Graph_GetNodes(graph, graph_nodes.data(), graph_nodes.size()); status != nullptr) {
+    ort_api.ReleaseStatus(status);
     return;
   }
 
@@ -1351,7 +1360,8 @@ void QnnEp::PartitionCtxModel(const OrtGraph* graph, OrtEpGraphSupportInfo* grap
     const OrtNode* node = graph_nodes[node_idx];
 
     const char* op_type = nullptr;
-    if (ort_api.Node_GetOperatorType(node, &op_type) != nullptr) {
+    if (OrtStatus* status = ort_api.Node_GetOperatorType(node, &op_type); status != nullptr) {
+      ort_api.ReleaseStatus(status);
       continue;
     }
 
@@ -1421,14 +1431,16 @@ OrtStatus* ORT_API_CALL QnnEp::GetGenieCapability(OrtEp* this_ptr,
   ep->genie_api_loader_ = std::make_shared<GenieApiLoader>((ep->genie_backend_manager_)->GetGenieBackendHandle());
   // Get all nodes from the graph
   size_t num_nodes = 0;
-  if (ep->ort_api.Graph_GetNumNodes(graph, &num_nodes) != nullptr) {
+  if (OrtStatus* status = ep->ort_api.Graph_GetNumNodes(graph, &num_nodes); status != nullptr) {
+    ep->ort_api.ReleaseStatus(status);
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Graph_GetNumNodes failed");
   }
   if (num_nodes != 1) {
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Number of nodes must be 1 for Genie");
   }
   std::vector<const OrtNode*> graph_nodes(num_nodes);
-  if (ep->ort_api.Graph_GetNodes(graph, graph_nodes.data(), graph_nodes.size()) != nullptr) {
+  if (OrtStatus* status = ep->ort_api.Graph_GetNodes(graph, graph_nodes.data(), graph_nodes.size()); status != nullptr) {
+    ep->ort_api.ReleaseStatus(status);
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Graph Creation error");
   }
 
@@ -1442,6 +1454,7 @@ OrtStatus* ORT_API_CALL QnnEp::GetGenieCapability(OrtEp* this_ptr,
                                                                  supported_group.size(),
                                                                  &node_fusion_options);
   if (add_status != nullptr) {
+    ep->ort_api.ReleaseStatus(add_status);
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Error adding Node.");
   }
   return nullptr;

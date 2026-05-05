@@ -166,6 +166,7 @@ bool IsQOrDQScalePositiveConstantScalar(const OrtGraph* graph, const OrtApi& ort
   size_t num_dims = 0;
   ORT_RETURN_FALSE_ON_ERROR(ort_api.GetDimensionsCount(tensor_info, &num_dims), ort_api);
   if (num_dims != 0) {  // Scalar has 0 dimensions
+    ort_api.ReleaseTensorTypeAndShapeInfo(tensor_info);
     return false;
   }
 
