@@ -71,9 +71,7 @@ ProviderOptions GetProviderOptions() {
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializer) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Scale Softmax Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionScalarInitializer";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -95,9 +93,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializer) {
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstant) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Scale Softmax Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionScalarConstant";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -119,9 +115,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstant) {
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializerReversed) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Scale Softmax Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionScalarInitializerReversed";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -143,9 +137,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializerReversed) {
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstantReversed) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Scale Softmax Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionScalarConstantReversed";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -167,9 +159,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstantReversed) {
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSoftmaxNegativeAxis) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Scale Softmax Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionSoftmaxNegativeAxis";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -192,9 +182,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSoftmaxNegativeAxis) {
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar4d) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Scale Softmax Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionSkipNoScalar4d";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -217,9 +205,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar4d) {
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar1d) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Scale Softmax Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionSkipNoScalar1d";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));

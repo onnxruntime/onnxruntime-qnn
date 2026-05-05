@@ -78,9 +78,7 @@ ProviderOptions GetProviderOptions() {
 TEST_F(QnnHTPBackendTests, LayerNormFusion_3D_1D_GammaBeta) {
   const std::filesystem::path json_dir = "LayerNormFusion_3D_1D_GammaBeta";
   std::filesystem::remove_all(json_dir);
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Layer Norm Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   ASSERT_TRUE(std::filesystem::create_directory(json_dir));
   auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
 
@@ -105,9 +103,7 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_3D_1D_GammaBeta) {
 TEST_F(QnnHTPBackendTests, LayerNormFusion_3D_PaddedGammaBeta) {
   const std::filesystem::path json_dir = "LayerNormFusion_3D_PaddedGammaBeta";
   std::filesystem::remove_all(json_dir);
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Layer Norm Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   ASSERT_TRUE(std::filesystem::create_directory(json_dir));
   auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
 
@@ -132,9 +128,7 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_3D_PaddedGammaBeta) {
 TEST_F(QnnHTPBackendTests, LayerNormFusion_4D_1D_GammaBeta) {
   const std::filesystem::path json_dir = "LayerNormFusion_4D_1D_GammaBeta";
   std::filesystem::remove_all(json_dir);
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Layer Norm Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   ASSERT_TRUE(std::filesystem::create_directory(json_dir));
   auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
 
@@ -159,9 +153,7 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_4D_1D_GammaBeta) {
 TEST_F(QnnHTPBackendTests, LayerNormFusion_TransformerShape) {
   const std::filesystem::path json_dir = "LayerNormFusion_TransformerShape";
   std::filesystem::remove_all(json_dir);
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Layer Norm Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   ASSERT_TRUE(std::filesystem::create_directory(json_dir));
   auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
 
@@ -186,9 +178,7 @@ TEST_F(QnnHTPBackendTests, LayerNormFusion_TransformerShape) {
 TEST_F(QnnHTPBackendTests, LayerNormFusion_Skip_InvalidGammaShape) {
   const std::filesystem::path json_dir = "LayerNormFusion_Skip_InvalidGammaShape";
   std::filesystem::remove_all(json_dir);
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Layer Norm Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   ASSERT_TRUE(std::filesystem::create_directory(json_dir));
   auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
 

@@ -452,9 +452,7 @@ ProviderOptions GetProviderOptions() {
 
 // Test GELU Pattern 1 with float32 model (for baseline comparison)
 TEST_F(QnnHTPBackendTests, GeluFusionPattern1_Float32) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Gelu Fusion Pattern.";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern1_Float32";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -476,9 +474,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_Float32) {
 
 // Test GELU Pattern 2 with float32 model (for baseline comparison)
 TEST_F(QnnHTPBackendTests, GeluFusionPattern2_Float32) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Gelu Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern2_Float32";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -500,9 +496,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_Float32) {
 
 // Test GELU Pattern 3 (ErfMul Pattern) with float32 model
 TEST_F(QnnHTPBackendTests, GeluFusionPattern3_Float32) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Gelu Fusion Pattern.";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern3_Float32";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -524,9 +518,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern3_Float32) {
 
 // Test GELU Pattern 1 with larger input shape
 TEST_F(QnnHTPBackendTests, GeluFusionPattern1_LargeInput) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Gelu Fusion Pattern.";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern1_LargeInput";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -548,9 +540,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_LargeInput) {
 
 // Test GELU Pattern 2 with larger input shape
 TEST_F(QnnHTPBackendTests, GeluFusionPattern2_LargeInput) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Gelu Fusion Pattern.";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern2_LargeInput";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -572,9 +562,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_LargeInput) {
 
 // Test GELU Pattern 1 with 3D input
 TEST_F(QnnHTPBackendTests, GeluFusionPattern1_3D) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Gelu Fusion Pattern.";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern1_3D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -596,9 +584,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_3D) {
 
 // Test GELU Pattern 2 with 3D input
 TEST_F(QnnHTPBackendTests, GeluFusionPattern2_3D) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Gelu Fusion Pattern.";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern2_3D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -620,9 +606,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_3D) {
 
 // Test GELU Pattern 1 with 2D input (typical for linear layers)
 TEST_F(QnnHTPBackendTests, GeluFusionPattern1_2D) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Gelu Fusion Pattern.";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern1_2D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -644,9 +628,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_2D) {
 
 // Test GELU Pattern 2 with 2D input (typical for linear layers)
 TEST_F(QnnHTPBackendTests, GeluFusionPattern2_2D) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Gelu Fusion Pattern.";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern2_2D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -668,9 +650,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_2D) {
 
 // Test GELU Pattern 1 with QDQ
 TEST_F(QnnHTPBackendTests, GeluFusionPattern1_QDQ_U8) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Gelu Fusion Pattern.";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern1_QDQ_U8";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -694,9 +674,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_QDQ_U8) {
 TEST_F(QnnHTPBackendTests, GeluFusionPattern2_QDQ_U8) {
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern2_QDQ_U8";
   std::filesystem::remove_all(json_qnn_graph_dir);
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Gelu Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
   auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
 
@@ -716,9 +694,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_QDQ_U8) {
 
 // Test GELU Pattern 3 with QDQ
 TEST_F(QnnHTPBackendTests, GeluFusionPattern3_QDQ_U8) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Gelu Fusion Pattern.";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern3_QDQ_U8";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));

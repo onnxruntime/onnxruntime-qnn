@@ -229,9 +229,7 @@ TEST(QnnEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
 // Tests that the QNN EP is registered when added via the public C++ API.
 // Loads a simple ONNX model that adds floats.
 TEST_F(QnnHTPBackendTests, TestAddEpUsingPublicApi) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   onnxruntime::ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnHtp.dll";
@@ -1164,9 +1162,7 @@ void VerifyFileExistsAndIsNonEmpty(const std::string& filepath) {
 }
 
 TEST_F(QnnHTPBackendTests, ProfilingTest) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   onnxruntime::ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -1201,9 +1197,7 @@ TEST_F(QnnHTPBackendTests, ProfilingTest) {
 }
 
 TEST_F(QnnHTPBackendTests, OptraceTest) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   onnxruntime::ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -1532,9 +1526,7 @@ static GetTestModelFn QDQBuildSigmoidForTensorNameTest(const TestInputDef<float>
 
 // Test that DLC I/O tensor names match original ONNX names when offload_graph_io_quantization=1.
 TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationTensorNameOverrides) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP32/FP16 support (arch > V68).";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   ProviderOptions provider_options;
 #if defined(_WIN32)
   provider_options["backend_path"] = "QnnHtp.dll";
@@ -1980,9 +1972,7 @@ TEST_F(QnnHTPBackendTests, TestMismatchedGraphInputAndTensorWrapperCount) {
 // Compile a QDQ model to a context binary with offload_graph_io_quantization=1,
 // then load and run the context binary. Regression test for PR #234.
 TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationContextBinaryRoundTrip) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP16/FP32 support (arch > v68)";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   const std::string ctx_model_file = "./offload_qdq_ctx_test.onnx";
   std::remove(ctx_model_file.c_str());
   auto cleanup = gsl::finally([&]() { std::remove(ctx_model_file.c_str()); });

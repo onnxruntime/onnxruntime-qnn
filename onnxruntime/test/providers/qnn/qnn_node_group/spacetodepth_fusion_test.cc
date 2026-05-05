@@ -348,9 +348,7 @@ TEST_F(QnnCPUBackendTests, DISABLED_SpaceToDepthFusion_Float_DCR) {
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped4Node_Head_Float_CRD) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Space To Depth Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   RunWrappedPatternSpaceToDepthFusionTest("SpaceToDepthFusionWrapped4NodeHeadFloatCRD_HTP",
                                           BuildHeadWrappedSpaceToDepthTestCase<>(/*use_qdq=*/false,
                                                                                  /*use_contrib_qdq=*/false),
@@ -358,9 +356,7 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped4Node_Head_Float_CRD) {
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped4Node_Head_QDQ_CRD) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Space To Depth Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   RunWrappedPatternSpaceToDepthFusionTest("SpaceToDepthFusionWrapped4NodeHeadQDQCRD_HTP",
                                           BuildHeadWrappedSpaceToDepthTestCase<>(/*use_qdq=*/true,
                                                                                  /*use_contrib_qdq=*/false),
@@ -369,9 +365,7 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped4Node_Head_QDQ_CRD) {
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped4Node_Tail_Float_CRD) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Space To Depth Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   RunWrappedPatternSpaceToDepthFusionTest("SpaceToDepthFusionWrapped4NodeTailFloatCRD_HTP",
                                           BuildTailWrappedSpaceToDepthTestCase<>(/*use_qdq=*/false,
                                                                                  /*use_contrib_qdq=*/false),
@@ -379,9 +373,7 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped4Node_Tail_Float_CRD) {
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped4Node_Tail_QDQ_CRD) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Space To Depth Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   RunWrappedPatternSpaceToDepthFusionTest("SpaceToDepthFusionWrapped4NodeTailQDQCRD_HTP",
                                           BuildTailWrappedSpaceToDepthTestCase<>(/*use_qdq=*/true,
                                                                                  /*use_contrib_qdq=*/false),
@@ -417,9 +409,7 @@ TEST_F(QnnCPUBackendTests, DISABLED_SpaceToDepthFusion_Float_UnequalBlockSize_CR
 // Fails with Accuracy mismatch
 // * Tracking issue: https://jira-dc.qualcomm.com/jira/browse/AISW-175353
 TEST_F(QnnHTPBackendTests, DISABLED_SpaceToDepthFusion_Float_DCR) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Space To Depth Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   RunSpaceToDepthFusionTest("SpaceToDepthFusionFloatDCR",
                             /*input_shape=*/{1, 2, 4, 4},
                             /*block_height=*/2,
@@ -431,9 +421,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_SpaceToDepthFusion_Float_DCR) {
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_DCR) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Space To Depth Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   RunSpaceToDepthFusionTest("SpaceToDepthFusionFloatDCRQDQ",
                             /*input_shape=*/{1, 2, 4, 4},
                             /*block_height=*/2,
@@ -446,9 +434,7 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_DCR) {
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Float_CRD) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Space To Depth Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   RunSpaceToDepthFusionTest("SpaceToDepthFusionFloatCRD",
                             /*input_shape=*/{1, 2, 4, 4},
                             /*block_height=*/2,
@@ -460,9 +446,7 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Float_CRD) {
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Space To Depth Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   RunSpaceToDepthFusionTest("SpaceToDepthFusionQDQ_CRD",
                             /*input_shape=*/{1, 2, 4, 4},
                             /*block_height=*/2,
@@ -477,9 +461,7 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_CRD) {
 // Fails with Accuracy mismatch
 // * Tracking issue: https://jira-dc.qualcomm.com/jira/browse/AISW-175353
 TEST_F(QnnHTPBackendTests, DISABLED_SpaceToDepthFusion_UnequalBlockSize_DCR) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Space To Depth Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   RunSpaceToDepthFusionTest("SpaceToDepthFusionUnequalBlock",
                             /*input_shape=*/{1, 2, 4, 6},
                             /*block_height=*/2,
@@ -491,9 +473,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_SpaceToDepthFusion_UnequalBlockSize_DCR) {
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_CRD) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Space To Depth Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   RunSpaceToDepthFusionTest("SpaceToDepthFusionUnequalBlockCRD",
                             /*input_shape=*/{1, 2, 4, 6},
                             /*block_height=*/2,
@@ -505,9 +485,7 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_CRD) {
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_QDQ) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Space To Depth Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   RunSpaceToDepthFusionTest("SpaceToDepthFusionUnequalBlockQDQ",
                             /*input_shape=*/{1, 2, 4, 6},
                             /*block_height=*/2,
@@ -520,9 +498,7 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_QDQ) {
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_QDQ_CRD) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Space To Depth Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   RunSpaceToDepthFusionTest("SpaceToDepthFusionUnequalBlockQDQ_CRD",
                             /*input_shape=*/{1, 2, 4, 6},
                             /*block_height=*/2,
@@ -535,9 +511,7 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_QDQ_CRD) {
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_U16_DCR) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Space To Depth Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   RunSpaceToDepthFusionTest<uint16_t>("SpaceToDepthFusionQDQ_U16_DCR",
                                       /*input_shape=*/{1, 2, 4, 4},
                                       /*block_height=*/2,
@@ -549,9 +523,7 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_U16_DCR) {
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_U16_CRD) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Space To Depth Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   RunSpaceToDepthFusionTest<uint16_t>("SpaceToDepthFusionQDQ_U16_CRD",
                                       /*input_shape=*/{1, 2, 4, 4},
                                       /*block_height=*/2,
@@ -563,9 +535,7 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_QDQ_U16_CRD) {
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_QDQ_U16) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Space To Depth Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   RunSpaceToDepthFusionTest<uint16_t>("SpaceToDepthFusionUnequalBlockQDQ_U16",
                                       /*input_shape=*/{1, 2, 4, 6},
                                       /*block_height=*/2,
@@ -577,9 +547,7 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_QDQ_U16) {
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_UnequalBlockSize_QDQ_U16_CRD) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires arch > v68 for Space To Depth Fusion Pattern";
-  }
+  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
   RunSpaceToDepthFusionTest<uint16_t>("SpaceToDepthFusionUnequalBlockQDQ_U16_CRD",
                                       /*input_shape=*/{1, 2, 4, 6},
                                       /*block_height=*/2,
