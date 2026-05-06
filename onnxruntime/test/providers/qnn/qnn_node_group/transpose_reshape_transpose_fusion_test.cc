@@ -92,7 +92,7 @@ ProviderOptions GetProviderOptions() {
 // Transpose2 perm=[1, 0] -> [2, 12] (A, B*C)
 // This is equivalent to Reshape [2, 3, 4] -> [2, 12]
 TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_Basic) {
-  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "TransposeReshapeTransposeFusion_Basic";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -123,7 +123,7 @@ TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_Basic) {
 // Test Case 2: Fusable pattern with surrounding ops
 // Same as Test Case 1 but with Add ops before and after
 TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_WithContext) {
-  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "TransposeReshapeTransposeFusion_WithContext";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -157,7 +157,7 @@ TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_WithContext) {
 // Transpose [1, 0] -> [2, 12]
 // Equivalent to Reshape [1, 2, 3, 4] -> [2, 12]
 TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_4D) {
-  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68)
   const std::filesystem::path json_qnn_graph_dir = "TransposeReshapeTransposeFusion_4D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -192,7 +192,7 @@ TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_4D) {
 // Transpose2 perm=[0, 1] (identity) -> [2, 12]
 // Equivalent to Reshape [2, 3, 4] -> [2, 12]
 TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_IdentityTransposes) {
-  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "TransposeReshapeTransposeFusion_IdentityTransposes";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -227,7 +227,7 @@ TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_IdentityTransposes) {
 // Transpose2 perm=[0, 1] (identity) -> [6, 4]
 // Equivalent to Reshape [2, 3, 4] -> [6, 4]
 TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_MergeFirstTwoDims) {
-  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "TransposeReshapeTransposeFusion_MergeFirstTwoDims";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -263,7 +263,7 @@ TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_MergeFirstTwoDims) {
 // NOT fusable because output dim 0 is original dim 2 (C), not dim 0 (A)
 // final_mapping = [[2], [0, 1]] -> order check: expect 0, got 2 -> FAIL
 TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_NotFusable_Reordered) {
-  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "TransposeReshapeTransposeFusion_NotFusable_Reordered";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -297,7 +297,7 @@ TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_NotFusable_Reordered)
 // Transpose2 perm=[1, 0] -> [8, 512]
 // Equivalent to Reshape [8, 16, 32] -> [8, 512]
 TEST_F(QnnHTPBackendTests, TransposeReshapeTransposeFusion_LargerTensor) {
-  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "TransposeReshapeTransposeFusion_LargerTensor";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));

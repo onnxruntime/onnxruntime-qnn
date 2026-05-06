@@ -193,7 +193,7 @@ ProviderOptions GetProviderOptions() {
 
 // Test 2-node fusion: Reshape -> Gemm (3D input)
 TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_3D) {
-  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmFusion_3D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -215,7 +215,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_3D) {
 
 // Test 3-node fusion: Reshape -> Gemm -> Reshape (3D input)
 TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_3D) {
-  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmReshapeFusion_3D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -238,7 +238,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_3D) {
 
 // Test 3-node fusion: Reshape -> Gemm -> Reshape (4D input)
 TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_4D) {
-  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmReshapeFusion_4D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -261,7 +261,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_4D) {
 
 // Test 4-node fusion: Reshape -> Gemm -> Reshape -> Reshape
 TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeReshapeFusion_3D) {
-  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmReshapeReshapeFusion_3D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -285,7 +285,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeReshapeFusion_3D) {
 // Test 3-node fusion with ViT-like pattern: keep first dim, flatten last dims
 // [197, 1, 12, 64] -> [197, 768] -> Gemm -> [197, 768] -> [197, 1, 768]
 TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_ViTPattern) {
-  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmReshapeFusion_ViTPattern";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -308,7 +308,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_ViTPattern) {
 
 // Test with transformer-like shape (smaller for unit test)
 TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_Transformer) {
-  SKIP_TEST_ON_LINUX_ARM64(ProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmReshapeFusion_Transformer";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));

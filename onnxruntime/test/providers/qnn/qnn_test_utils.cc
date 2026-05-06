@@ -276,7 +276,7 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                      float fp32_abs_err, OrtLoggingLevel log_severity, bool verify_outputs,
                      std::function<void(const Graph&)>* ep_graph_checker) {
-  SKIP_TEST_ON_LINUX_ARM64(provider_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
+  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(provider_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
 
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||

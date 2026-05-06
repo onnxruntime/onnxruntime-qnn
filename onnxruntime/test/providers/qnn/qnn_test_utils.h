@@ -40,9 +40,9 @@ namespace test {
 // Forward declaration for QnnHTPBackendTests used in template functions below
 class QnnHTPBackendTests;
 
-// Forward declaration of CheckAndSkipTest — defined after QnnHTPBackendTests below.
+// Forward declaration of ConditionalCheckAndSkipTestOnLinuxARM64 — defined after QnnHTPBackendTests below.
 template <typename QuantType = void>
-inline bool CheckAndSkipTest(const ProviderOptions& qnn_options,
+inline bool ConditionalCheckAndSkipTestOnLinuxARM64(const ProviderOptions& qnn_options,
                              QnnHtpDevice_Arch_t arch,
                              std::string_view test_type,
                              std::string& skip_reason);
@@ -852,15 +852,15 @@ void VerifyQDQOutput(const std::vector<Ort::Value>& cpu_qdq_outputs,
 //             test_type (QDQ, FP16, FP32, GPU), QuantType (optional, for QDQ tests)
 // Only skips tests on Linux ARM64 (__aarch64__)
 #if defined(__aarch64__)
-#define SKIP_TEST_ON_LINUX_ARM64(qnn_options, arch, test_type, ...)                       \
+#define CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, arch, test_type, ...)                       \
   do {                                                                                    \
     std::string skip_reason;                                                              \
-    if (CheckAndSkipTest<__VA_ARGS__>((qnn_options), (arch), (test_type), skip_reason)) { \
+    if (ConditionalCheckAndSkipTestOnLinuxARM64<__VA_ARGS__>((qnn_options), (arch), (test_type), skip_reason)) { \
       GTEST_SKIP() << skip_reason;                                                        \
     }                                                                                     \
   } while (0)
 #else
-#define SKIP_TEST_ON_LINUX_ARM64(qnn_options, arch, test_type, ...) \
+#define CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, arch, test_type, ...) \
   do {                                                              \
   } while (0)
 #endif  // defined(__aarch64__)
@@ -876,7 +876,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                                  std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
                                  std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr) {
-  SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "QDQ", QuantType);
+  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "QDQ", QuantType);
 
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
@@ -1135,7 +1135,7 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
                                   OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                                   const std::string& qnn_ctx_model_path = "",
                                   const std::unordered_map<std::string, std::string>& session_option_pairs = {}) {
-  SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
+  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
 
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
@@ -1661,22 +1661,26 @@ class QnnCPUBackendTests : public ::testing::Test {
   static BackendSupport cached_cpu_support_;  // Set by the first test using this fixture.
 };
 
-// Template function implementing the test skip logic for SKIP_TEST_ON_LINUX_ARM64.
+// Template function implementing the test skip logic for CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64.
 // Placed after the class definitions so QnnHTPBackendTests is fully defined.
 // QuantType defaults to void (no type specified); when provided, skipping is gated on QNN_IS_SUPPORTED_QDQ_TYPE.
 // Returns true if the test should be skipped, and sets skip_reason with the reason.
 template <typename QuantType>
-inline bool CheckAndSkipTest(const ProviderOptions& qnn_options,
+inline bool ConditionalCheckAndSkipTestOnLinuxARM64(const ProviderOptions& qnn_options,
                              QnnHtpDevice_Arch_t arch,
                              std::string_view test_type,
                              std::string& skip_reason) {
   std::string backend_name = "htp";
   if (qnn_options.find("backend_type") != qnn_options.end()) {
     backend_name = qnn_options.at("backend_type");
+    std::transform(backend_name.begin(), backend_name.end(), backend_name.begin(), ::tolower);
   }
 
-  if (test_type == "QDQ") {
-    if (backend_name == "htp") {
+  if (backend_name == "gpu" || test_type == "GPU") {
+    skip_reason = "GPU test skipped on ARM64 architecture";
+    return true;
+  } else if (backend_name == "htp") {
+    if (test_type == "QDQ") {
       if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(arch)) {
         if constexpr (std::is_same_v<QuantType, void>) {
           skip_reason = "QDQ test skipped on HTP architecture <= " + std::to_string(static_cast<int>(arch));
@@ -1686,24 +1690,11 @@ inline bool CheckAndSkipTest(const ProviderOptions& qnn_options,
           return true;
         }
       }
-    } else if (backend_name == "gpu") {
-      skip_reason = "QDQ test skipped on GPU backend with ARM64 architecture";
-      return true;
-    }
-  } else if (test_type == "FP16" || test_type == "FP32") {
-    if (backend_name == "htp") {
+    } else if (test_type == "FP16" || test_type == "FP32") {
       if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(arch)) {
         skip_reason = "FP16/FP32 HTP test skipped on architecture <= " + std::to_string(static_cast<int>(arch));
         return true;
       }
-    } else if (backend_name == "gpu") {
-      skip_reason = "FP16/FP32 test skipped on GPU backend with ARM64 architecture";
-      return true;
-    }
-  } else if (test_type == "GPU") {
-    if (backend_name == "gpu") {
-      skip_reason = "GPU test skipped on ARM64 architecture";
-      return true;
     }
   }
   return false;
@@ -1795,6 +1786,14 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
   do {                                        \
   } while (0)
 #endif
+
+#define SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(arch) \
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(arch)) { \
+    if (::testing::internal::AlwaysTrue()) { \
+      GTEST_SKIP() << "HTP test skipped on architecture <= " + std::to_string(static_cast<int>(arch)); \
+    } else \
+      static_assert(true, ""); \
+  }
 
 }  // namespace test
 }  // namespace onnxruntime
