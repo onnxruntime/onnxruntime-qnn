@@ -34,15 +34,17 @@
 //     - Basic 4-D input, standard order  (LayerNorm rstd pattern)
 //     - Basic 4-D input, commuted order
 //
-//   Negative / no-fusion cases (fusion blocked; op-builder path taken instead)
-//     - Reciprocal output consumed by two nodes  => blocked by GetChildNodeUnitAllowQdq
-//                                                   (single-consumer guard);
-//                                                   no fusion; 1 ElementWiseDivide (op-builder)
-//                                                   + 2 ElementWiseMultiply
-//     - Reciprocal output is a graph output      => blocked by GetChildNodeUnitAllowQdq
+//   Negative / no-fusion cases (fusion blocked)
+//     - Reciprocal output is a graph output (float32)
+//                                                => blocked by GetChildNodeUnitAllowQdq
 //                                                   (graph-output guard);
-//                                                   no fusion; 1 ElementWiseDivide (op-builder)
-//                                                   + 1 ElementWiseMultiply
+//                                                   no fusion; float32 Reciprocal is also
+//                                                   unsupported by ReciprocalOpBuilder on HTP,
+//                                                   so Reciprocal falls back to CPU EP;
+//                                                   the Mul node runs independently on QNN EP
+//                                                   as ElementWiseMultiply;
+//                                                   0 ElementWiseDivide + 1 ElementWiseMultiply
+//                                                   in the QNN graph
 //     - QDQ-wrapped Reciprocal with two Mul consumers
 //                                                => blocked by GetChildNodeUnitAllowQdq
 //                                                   (single-consumer guard);
@@ -718,20 +720,23 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQGroup_U8_CommutedOrder) {
 // Negative / no-fusion tests
 // =============================================================================
 
-// When the Reciprocal output is ALSO a graph output, GetOnlyChildOfType's
-// graph-output guard (Ort::ConstValueInfo::IsGraphOutput()) detects the
-// condition and returns nullptr, blocking the fusion.  The Reciprocal node
-// is then lowered by ReciprocalOpBuilder as a standalone
-// ElementWiseDivide(1.0, denominator) node, and the Mul node is lowered
-// independently as an ElementWiseMultiply node.
+// When the Reciprocal output is ALSO a graph output, GetChildNodeUnitAllowQdq's
+// graph-output guard (outputs[0].IsGraphOutput()) detects the condition and
+// returns nullptr, blocking the fusion.
 //
-// Structural assertions that distinguish the op-builder path from the fusion:
-//   ElementWiseDivide   count=1  (ReciprocalOpBuilder: 1.0 / denominator)
-//   ElementWiseMultiply count=1  (standalone Mul node; fusion did NOT absorb it)
+// For float32 inputs on the HTP backend, ReciprocalOpBuilder::IsOpSupported
+// also rejects the standalone Reciprocal node (unquantized float inputs are
+// not supported by ElementWiseDivide(static_1.0, dynamic_x) on HTP).  As a
+// result, the Reciprocal node falls back to CPU EP.
 //
-// If the fusion were to fire incorrectly, the Mul would be absorbed into the
-// Div and ElementWiseMultiply would be absent — the second assertion would
-// catch that regression.
+// The Mul node, however, is a valid standalone ElementWiseMultiply on QNN HTP:
+// its inputs are a graph input (numerator) and recip_out, which is a graph
+// output produced by CPU EP and passed to QNN EP as a cross-EP tensor.  The
+// Mul node is therefore assigned to QNN EP and appears in the QNN graph as
+// a single ElementWiseMultiply node.
+//
+// Expected QNN graph: 0 ElementWiseDivide, 1 ElementWiseMultiply.
+// Expected EP assignment: Some (Reciprocal on CPU EP, Mul on QNN EP).
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_ReciprocalOutputIsGraphOutput_NoFusion) {
   const std::filesystem::path json_dir = "ReciprocalMulFusion_ReciprocalOutputIsGraphOutput_NoFusion";
   std::filesystem::remove_all(json_dir);
@@ -745,16 +750,18 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_ReciprocalOutputIsGraphOutput_NoF
   const auto numerator_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
   const auto denominator_def = TestInputDef<float>({1, 2, 3, 4}, false, 0.5f, 2.0f);
 
+  // Fusion is blocked (recip_out is a graph output) and ReciprocalOpBuilder
+  // rejects float32 Reciprocal on HTP, so Reciprocal falls back to CPU EP.
+  // The Mul node is a valid standalone ElementWiseMultiply on QNN HTP and
+  // is assigned to QNN EP.
   RunQnnModelTest(BuildReciprocalOutputIsGraphOutputTestCase(numerator_def, denominator_def),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some,
                   /*fp32_abs_err=*/2e-3f);
 
-  // Fusion did NOT fire: Reciprocal was lowered by ReciprocalOpBuilder as a
-  // standalone ElementWiseDivide(1.0, denominator), and the Mul node was
-  // lowered independently as an ElementWiseMultiply.
-  AssertOpInQnnGraph(json_dir, "ElementWiseDivide", /*count=*/1);
+  // No fused Div node; the Mul runs as a standalone ElementWiseMultiply on QNN EP.
+  AssertOpInQnnGraph(json_dir, "ElementWiseDivide", /*count=*/0);
   AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", /*count=*/1);
 }
 
