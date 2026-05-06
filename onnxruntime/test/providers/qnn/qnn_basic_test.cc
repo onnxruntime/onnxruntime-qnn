@@ -410,12 +410,6 @@ static Ort::Session InitNHWCResizeModel(const ORTCHAR_T* ort_model_path,
   so.AddConfigEntry(kOrtSessionOptionsConfigStrictShapeTypeInference, "1");
   so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
 
-  // Honor QNN_VERBOSE=1 for tests that go through this helper (e.g. QnnSaver_OutputFiles),
-  // matching the behavior in qnn_test_utils.cc.
-  if (QNNTestEnvironment::GetInstance().verbose()) {
-    so.SetLogSeverityLevel(OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
-  }
-
   onnxruntime::ProviderOptions options;
   options["offload_graph_io_quantization"] = "0";
 
@@ -471,7 +465,7 @@ static Ort::Session InitNHWCResizeModel(const ORTCHAR_T* ort_model_path,
 // The models passed to this function are subgraphs extracted from a larger model that exhibited
 // shape inferencing issues on QNN. Thus, the models are expected to have a specific input/output
 // types and shapes.
-static void  RunNHWCResizeModel(const ORTCHAR_T* ort_model_path,
+static void RunNHWCResizeModel(const ORTCHAR_T* ort_model_path,
                                TestBackend backend,
                                std::optional<TestBackend> serializer_backend = std::nullopt,
                                std::string htp_graph_finalization_opt_mode = "",
@@ -565,56 +559,16 @@ TEST_F(QnnCPUBackendTests, QnnSaver_OutputFiles) {
   std::filesystem::remove("params.bin");
   std::filesystem::remove_all("saver_output");
 
-  const auto cwd_before = std::filesystem::current_path();
-  std::cout << "[AISW-163150] cwd = " << cwd_before << "\n";
-  if (const char* v = std::getenv("LD_LIBRARY_PATH")) {
-    std::cout << "[AISW-163150] LD_LIBRARY_PATH  = " << v << "\n";
-  } else {
-    std::cout << "[AISW-163150] LD_LIBRARY_PATH  = (unset)\n";
-  }
-  if (const char* v = std::getenv("ADSP_LIBRARY_PATH")) {
-    std::cout << "[AISW-163150] ADSP_LIBRARY_PATH = " << v << "\n";
-  }
-
-  // Snapshot cwd so we can show what Saver added during the session.
-  std::unordered_set<std::string> cwd_snapshot;
-  for (const auto& entry : std::filesystem::directory_iterator(cwd_before)) {
-    cwd_snapshot.insert(entry.path().string());
-  }
-
   RunNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
                      TestBackend::Cpu,
                      TestBackend::Saver);
 
-  const auto cwd_after = std::filesystem::current_path();
-  std::cout << "[AISW-163150] Entries added to cwd during session:\n";
-  int new_count = 0;
-  for (const auto& entry : std::filesystem::directory_iterator(cwd_after)) {
-    if (cwd_snapshot.count(entry.path().string())) continue;
-    std::cout << "  " << entry.path().filename();
-    if (entry.is_regular_file()) {
-      std::cout << " (" << std::filesystem::file_size(entry.path()) << " bytes)";
-    } else if (entry.is_directory()) {
-      std::cout << " (dir):";
-      for (const auto& sub : std::filesystem::directory_iterator(entry.path())) {
-        std::cout << "\n    " << sub.path().filename();
-        if (sub.is_regular_file()) {
-          std::cout << " (" << std::filesystem::file_size(sub.path()) << " bytes)";
-        }
-      }
-    }
-    std::cout << "\n";
-    ++new_count;
-  }
-  if (new_count == 0) {
-    std::cout << "  (none)\n";
-  }
-
   // Accept saver_output.c / params.bin anywhere in cwd or one level of subdirectory.
   // QnnSaver writes flat to cwd on Linux aarch64 and to ./saver_output/ on Windows.
+  const auto cwd = std::filesystem::current_path();
   auto find_saver_file = [&](const std::string& filename) -> bool {
-    if (std::filesystem::exists(cwd_after / filename)) return true;
-    for (const auto& entry : std::filesystem::directory_iterator(cwd_after)) {
+    if (std::filesystem::exists(cwd / filename)) return true;
+    for (const auto& entry : std::filesystem::directory_iterator(cwd)) {
       if (entry.is_directory() && std::filesystem::exists(entry.path() / filename)) return true;
     }
     return false;
