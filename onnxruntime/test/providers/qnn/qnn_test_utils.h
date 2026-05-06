@@ -43,9 +43,9 @@ class QnnHTPBackendTests;
 // Forward declaration of ConditionalCheckAndSkipTestOnLinuxARM64 — defined after QnnHTPBackendTests below.
 template <typename QuantType = void>
 inline bool ConditionalCheckAndSkipTestOnLinuxARM64(const ProviderOptions& qnn_options,
-                             QnnHtpDevice_Arch_t arch,
-                             std::string_view test_type,
-                             std::string& skip_reason);
+                                                    QnnHtpDevice_Arch_t arch,
+                                                    std::string_view test_type,
+                                                    std::string& skip_reason);
 
 // Signature for function that builds a float32 model.
 using GetTestModelFn = std::function<void(ModelTestBuilder& builder)>;
@@ -852,16 +852,16 @@ void VerifyQDQOutput(const std::vector<Ort::Value>& cpu_qdq_outputs,
 //             test_type (QDQ, FP16, FP32, GPU), QuantType (optional, for QDQ tests)
 // Only skips tests on Linux ARM64 (__aarch64__)
 #if defined(__aarch64__)
-#define CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, arch, test_type, ...)                       \
-  do {                                                                                    \
-    std::string skip_reason;                                                              \
+#define CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, arch, test_type, ...)                                  \
+  do {                                                                                                           \
+    std::string skip_reason;                                                                                     \
     if (ConditionalCheckAndSkipTestOnLinuxARM64<__VA_ARGS__>((qnn_options), (arch), (test_type), skip_reason)) { \
-      GTEST_SKIP() << skip_reason;                                                        \
-    }                                                                                     \
+      GTEST_SKIP() << skip_reason;                                                                               \
+    }                                                                                                            \
   } while (0)
 #else
 #define CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, arch, test_type, ...) \
-  do {                                                              \
+  do {                                                                          \
   } while (0)
 #endif  // defined(__aarch64__)
 
@@ -1667,9 +1667,9 @@ class QnnCPUBackendTests : public ::testing::Test {
 // Returns true if the test should be skipped, and sets skip_reason with the reason.
 template <typename QuantType>
 inline bool ConditionalCheckAndSkipTestOnLinuxARM64(const ProviderOptions& qnn_options,
-                             QnnHtpDevice_Arch_t arch,
-                             std::string_view test_type,
-                             std::string& skip_reason) {
+                                                    QnnHtpDevice_Arch_t arch,
+                                                    std::string_view test_type,
+                                                    std::string& skip_reason) {
   std::string backend_name = "htp";
   if (qnn_options.find("backend_type") != qnn_options.end()) {
     backend_name = qnn_options.at("backend_type");
@@ -1787,12 +1787,12 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
   } while (0)
 #endif
 
-#define SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(arch) \
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(arch)) { \
-    if (::testing::internal::AlwaysTrue()) { \
+#define SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(arch)                                              \
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(arch)) {                              \
+    if (::testing::internal::AlwaysTrue()) {                                                           \
       GTEST_SKIP() << "HTP test skipped on architecture <= " + std::to_string(static_cast<int>(arch)); \
-    } else \
-      static_assert(true, ""); \
+    } else                                                                                             \
+      static_assert(true, "");                                                                         \
   }
 
 }  // namespace test
