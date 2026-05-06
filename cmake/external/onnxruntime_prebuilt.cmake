@@ -95,8 +95,6 @@ else()
         endif()
     else()
         # Windows
-        list(APPEND ORT_BUILD_COMMAND --cmake_extra_defines)
-        list(APPEND ORT_BUILD_COMMAND "CMAKE_OBJECT_PATH_MAX=240")
         if(NOT (${CMAKE_GENERATOR} STREQUAL "Ninja") AND (${ORT_PLATFORM} STREQUAL "arm64" OR ${ORT_PLATFORM} STREQUAL "arm64ec"))
             list(APPEND ORT_BUILD_COMMAND --${ORT_PLATFORM})
         endif()

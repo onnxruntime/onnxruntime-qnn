@@ -50,12 +50,12 @@ on:
         description: "If true, build an archive with the first ARM64 build."
         type: boolean
         default: true
-      do_windows_arm64x_debug:
-        description: "If true, also build Windows ARM64X in Debug configuration."
+      do_windows_arm64_debug:
+        description: "If true, also build Windows ARM64 in Debug configuration."
         type: boolean
         default: false
-      do_windows_arm64x_relwithdebinfo:
-        description: "If true, also build Windows ARM64X in RelWithDebInfo configuration."
+      do_windows_arm64_relwithdebinfo:
+        description: "If true, also build Windows ARM64 in RelWithDebInfo configuration."
         type: boolean
         default: false
 
@@ -179,32 +179,40 @@ jobs:
       build_nuget: true
       upload_nuget: true
 
-  build-windows-arm64x-debug:
-    if: ${{ inputs.do_windows_arm64x_debug }}
+  arm-debug:
+    if: ${{ inputs.do_windows_arm64_debug }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
       target_os: windows
-      target_arch: arm64x
+      target_arch: arm64
       build_config: Debug
       target_py_vsn: ${{ fromJSON(inputs.windows_target_py_vsns)[0] }}
       build_runner_arch: ARM64
       run_tests: false
-      upload_wheel: true
+      test_wheel: false
+      upload_test_archive: true
+      build_archive: ${{ inputs.windows_arm64_build_archive }}
+      upload_archive: ${{ inputs.windows_arm64_build_archive }}
+      upload_wheel: false
 
-  build-windows-arm64x-relwithdebinfo:
-    if: ${{ inputs.do_windows_arm64x_relwithdebinfo }}
+  arm-relwithdebinfo:
+    if: ${{ inputs.do_windows_arm64_relwithdebinfo }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
       target_os: windows
-      target_arch: arm64x
+      target_arch: arm64
       build_config: RelWithDebInfo
       target_py_vsn: ${{ fromJSON(inputs.windows_target_py_vsns)[0] }}
       build_runner_arch: ARM64
       run_tests: false
-      upload_wheel: true
+      test_wheel: false
+      upload_test_archive: true
+      build_archive: ${{ inputs.windows_arm64_build_archive }}
+      upload_archive: ${{ inputs.windows_arm64_build_archive }}
+      upload_wheel: false

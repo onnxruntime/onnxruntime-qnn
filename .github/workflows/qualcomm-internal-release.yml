@@ -27,12 +27,12 @@ on:
         description: "Name of the build for QA purposes; leave blank to generate one based on today's date."
         type: string
         default: ''
-      do_windows_arm64x_debug:
-        description: "If true, also build Windows ARM64X in Debug configuration."
+      do_windows_arm64_debug:
+        description: "If true, also build Windows ARM64 in Debug configuration."
         type: boolean
         default: false
-      do_windows_arm64x_relwithdebinfo:
-        description: "If true, also build Windows ARM64X in RelWithDebInfo configuration."
+      do_windows_arm64_relwithdebinfo:
+        description: "If true, also build Windows ARM64 in RelWithDebInfo configuration."
         type: boolean
         default: false
   workflow_dispatch:
@@ -55,8 +55,8 @@ jobs:
       windows_target_archs: "['arm64', 'arm64ec', 'x86_64']"
       windows_target_py_vsns: "['3.11','3.12','3.13','3.14']"
       windows_arm64_build_archive: true
-      do_windows_arm64x_debug: ${{ inputs.do_windows_arm64x_debug }}
-      do_windows_arm64x_relwithdebinfo: ${{ inputs.do_windows_arm64x_relwithdebinfo }}
+      do_windows_arm64_debug: ${{ inputs.do_windows_arm64_debug }}
+      do_windows_arm64_relwithdebinfo: ${{ inputs.do_windows_arm64_relwithdebinfo }}
 
   publish-wheel-workflow:
     name: "Publish distribution to PyPI"
