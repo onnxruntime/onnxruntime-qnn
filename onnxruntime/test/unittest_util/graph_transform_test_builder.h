@@ -4,7 +4,14 @@
 
 #include <functional>
 #include <optional>
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wshorten-64-to-32"
+#endif
 #include <onnx/onnx_pb.h>
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 #include <type_traits>
 #include <vector>
 #include <random>

@@ -8,7 +8,14 @@
 #include <string>
 #include <vector>
 
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wshorten-64-to-32"
+#endif
 #include <onnx/onnx_pb.h>
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 #include "onnxruntime_cxx_api.h"
 
 #include "test/util/include/asserts.h"
