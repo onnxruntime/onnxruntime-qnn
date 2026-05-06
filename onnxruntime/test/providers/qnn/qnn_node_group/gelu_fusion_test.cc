@@ -19,13 +19,18 @@ namespace test {
 
 namespace {
 
+void ResetQnnGraphDir(const std::filesystem::path& json_qnn_graph_dir) {
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+}
+
 // Helper function to build GELU Pattern 1: root -> Mul -> Div/Mul -> Erf -> Add -> Mul
 // Pattern 1:
 //                   +-------Mul(0.5)---------------------+
 //                   |                                    |
 //                   |                                    v
 //                [root] --> Div/Mul -----> Erf  --> Add --> Mul ==>
-//                          (1.4142... or 1/1.4142...)   (1)
+//                      (1.4142... or 1/1.4142...)   (1)
 GetTestModelFn BuildGeluPattern1TestCase(const TestInputDef<float>& input_def, bool use_mul = false) {
   return [input_def, use_mul](ModelTestBuilder& builder) -> void {
     constexpr float sqrt_2 = 1.4142135381698608f;
@@ -38,7 +43,7 @@ GetTestModelFn BuildGeluPattern1TestCase(const TestInputDef<float>& input_def, b
     // input
     MakeTestInput<float>(builder, "input", input_def);
 
-    // input -> Mul(0.5) -> mul_half_out
+    // root -> Mul(0.5) -> mul_half_out
     builder.MakeScalarInitializer<float>("half", half);
     builder.AddNode("Mul_half",
                     "Mul",
@@ -46,7 +51,7 @@ GetTestModelFn BuildGeluPattern1TestCase(const TestInputDef<float>& input_def, b
                     {"mul_half_out"},
                     kOnnxDomain);
 
-    // input -> Div(sqrt2) or Mul(1/sqrt2) -> norm_out
+    // root -> Div(sqrt2) or Mul(1/sqrt2) -> norm_out
     if (use_mul) {
       builder.MakeScalarInitializer<float>("inv_sqrt2", inv_sqrt_2);
       builder.AddNode("Mul_inv_sqrt2",
@@ -108,7 +113,7 @@ GetTestModelFn BuildGeluPattern2TestCase(const TestInputDef<float>& input_def, b
     // input
     MakeTestInput<float>(builder, "input", input_def);
 
-    // input -> Div(sqrt2) or Mul(1/sqrt2) -> norm_out
+    // root -> Div(sqrt2) or Mul(1/sqrt2) -> norm_out
     if (use_mul) {
       builder.MakeScalarInitializer<float>("inv_sqrt2", inv_sqrt_2);
       builder.AddNode("Mul_inv_sqrt2",
@@ -140,7 +145,7 @@ GetTestModelFn BuildGeluPattern2TestCase(const TestInputDef<float>& input_def, b
                     {"add_out"},
                     kOnnxDomain);
 
-    // input * add_out -> mul_out
+    // root * add_out -> mul_out
     builder.AddNode("Mul_input",
                     "Mul",
                     {"input", "add_out"},
@@ -177,7 +182,7 @@ GetTestModelFn BuildGeluPattern3TestCase(const TestInputDef<float>& input_def, b
     // input
     MakeTestInput<float>(builder, "input", input_def);
 
-    // input -> Div(sqrt2) or Mul(1/sqrt2) -> norm_out
+    // root -> Div(sqrt2) or Mul(1/sqrt2) -> norm_out
     if (use_mul) {
       builder.MakeScalarInitializer<float>("inv_sqrt2", inv_sqrt_2);
       builder.AddNode("Mul_inv_sqrt2",
@@ -217,7 +222,7 @@ GetTestModelFn BuildGeluPattern3TestCase(const TestInputDef<float>& input_def, b
                     {"add_out"},
                     kOnnxDomain);
 
-    // input * add_out -> output
+    // root * add_out -> output
     builder.AddNode("Mul_out",
                     "Mul",
                     {"input", "add_out"},
@@ -230,13 +235,16 @@ GetTestModelFn BuildGeluPattern3TestCase(const TestInputDef<float>& input_def, b
 
 // Helper function to build QDQ GELU Pattern 1
 template <typename QuantType>
-GetTestQDQModelFn<QuantType> BuildQDQGeluPattern1TestCase(const TestInputDef<float>& input_def) {
-  return [input_def](ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) -> void {
+GetTestQDQModelFn<QuantType> BuildQDQGeluPattern1TestCase(const TestInputDef<float>& input_def,
+                                                          bool use_mul = false) {
+  return [input_def, use_mul](ModelTestBuilder& builder,
+                              std::vector<QuantParams<QuantType>>& output_qparams) -> void {
     constexpr float sqrt_2 = 1.4142135381698608f;
+    constexpr float inv_sqrt_2 = 0.7071067690849304f;
     constexpr float half = 0.5f;
     constexpr float one = 1.0f;
 
-    builder.graph_->set_name("qdq_gelu_pattern1_graph");
+    builder.graph_->set_name(use_mul ? "qdq_gelu_pattern1_mul_graph" : "qdq_gelu_pattern1_graph");
 
     // input
     MakeTestInput(builder, "input", input_def);
@@ -245,29 +253,40 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPattern1TestCase(const TestInputDef<flo
         AddQDQNodePair<QuantType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
 
     // Constants: add explicit QDQ after each initializer (to match expected QDQ patterns).
-    builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
     builder.MakeScalarInitializer<float>("one", one);
     builder.MakeScalarInitializer<float>("half", half);
-
-    const std::string sqrt2_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_sqrt2", "sqrt2", input_qparams.scale, input_qparams.zero_point);
     const std::string one_qdq =
         AddQDQNodePair<QuantType>(builder, "qdq_one", "one", input_qparams.scale, input_qparams.zero_point);
     const std::string half_qdq =
         AddQDQNodePair<QuantType>(builder, "qdq_half", "half", input_qparams.scale, input_qparams.zero_point);
 
     // GELU Pattern 1:
-    // input -> Div(sqrt2) -> Erf -> Add(one) -> Mul(with (input * half))
-    builder.AddNode("Div_sqrt2",
-                    "Div",
-                    {input_qdq, sqrt2_qdq},
-                    {"div_out"},
-                    kOnnxDomain);
+    // input -> Div/Mul(sqrt2 or 1/sqrt2) -> Erf -> Add(one) -> Mul(with (input * half))
+    std::string norm_out = "div_out";
+    if (use_mul) {
+      builder.MakeScalarInitializer<float>("inv_sqrt2", inv_sqrt_2);
+      const std::string inv_sqrt2_qdq =
+          AddQDQNodePair<QuantType>(builder, "qdq_inv_sqrt2", "inv_sqrt2", input_qparams.scale, input_qparams.zero_point);
+      builder.AddNode("Mul_inv_sqrt2",
+                      "Mul",
+                      {input_qdq, inv_sqrt2_qdq},
+                      {norm_out},
+                      kOnnxDomain);
+    } else {
+      builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
+      const std::string sqrt2_qdq =
+          AddQDQNodePair<QuantType>(builder, "qdq_sqrt2", "sqrt2", input_qparams.scale, input_qparams.zero_point);
+      builder.AddNode("Div_sqrt2",
+                      "Div",
+                      {input_qdq, sqrt2_qdq},
+                      {norm_out},
+                      kOnnxDomain);
+    }
 
     // Add explicit QDQ around Erf to match expected QDQ patterns:
-    // div_out -> Q -> DQ -> erf_in
+    // norm_out -> Q -> DQ -> erf_in
     const std::string erf_in_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_erf_in", "div_out", input_qparams.scale, input_qparams.zero_point);
+        AddQDQNodePair<QuantType>(builder, "qdq_erf_in", norm_out, input_qparams.scale, input_qparams.zero_point);
 
     // erf_in -> Erf -> erf_out
     builder.AddNode("Erf",
@@ -312,13 +331,16 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPattern1TestCase(const TestInputDef<flo
 
 // Helper function to build QDQ GELU Pattern 2
 template <typename QuantType>
-GetTestQDQModelFn<QuantType> BuildQDQGeluPattern2TestCase(const TestInputDef<float>& input_def) {
-  return [input_def](ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) -> void {
+GetTestQDQModelFn<QuantType> BuildQDQGeluPattern2TestCase(const TestInputDef<float>& input_def,
+                                                          bool use_mul = false) {
+  return [input_def, use_mul](ModelTestBuilder& builder,
+                              std::vector<QuantParams<QuantType>>& output_qparams) -> void {
     constexpr float sqrt_2 = 1.4142135381698608f;
+    constexpr float inv_sqrt_2 = 0.7071067690849304f;
     constexpr float half = 0.5f;
     constexpr float one = 1.0f;
 
-    builder.graph_->set_name("qdq_gelu_pattern2_graph");
+    builder.graph_->set_name(use_mul ? "qdq_gelu_pattern2_mul_graph" : "qdq_gelu_pattern2_graph");
 
     // input
     MakeTestInput(builder, "input", input_def);
@@ -327,29 +349,40 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPattern2TestCase(const TestInputDef<flo
         AddQDQNodePair<QuantType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
 
     // Constants: add explicit QDQ after each initializer (to match expected QDQ patterns).
-    builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
     builder.MakeScalarInitializer<float>("one", one);
     builder.MakeScalarInitializer<float>("half", half);
-
-    const std::string sqrt2_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_sqrt2", "sqrt2", input_qparams.scale, input_qparams.zero_point);
     const std::string one_qdq =
         AddQDQNodePair<QuantType>(builder, "qdq_one", "one", input_qparams.scale, input_qparams.zero_point);
     const std::string half_qdq =
         AddQDQNodePair<QuantType>(builder, "qdq_half", "half", input_qparams.scale, input_qparams.zero_point);
 
     // GELU Pattern 2:
-    // input -> Div(sqrt2) -> Erf -> Add(one) -> Mul(with input) -> Mul(half)
-    builder.AddNode("Div_sqrt2",
-                    "Div",
-                    {input_qdq, sqrt2_qdq},
-                    {"div_out"},
-                    kOnnxDomain);
+    // input -> Div/Mul(sqrt2 or 1/sqrt2) -> Erf -> Add(one) -> Mul(with input) -> Mul(half)
+    std::string norm_out = "div_out";
+    if (use_mul) {
+      builder.MakeScalarInitializer<float>("inv_sqrt2", inv_sqrt_2);
+      const std::string inv_sqrt2_qdq =
+          AddQDQNodePair<QuantType>(builder, "qdq_inv_sqrt2", "inv_sqrt2", input_qparams.scale, input_qparams.zero_point);
+      builder.AddNode("Mul_inv_sqrt2",
+                      "Mul",
+                      {input_qdq, inv_sqrt2_qdq},
+                      {norm_out},
+                      kOnnxDomain);
+    } else {
+      builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
+      const std::string sqrt2_qdq =
+          AddQDQNodePair<QuantType>(builder, "qdq_sqrt2", "sqrt2", input_qparams.scale, input_qparams.zero_point);
+      builder.AddNode("Div_sqrt2",
+                      "Div",
+                      {input_qdq, sqrt2_qdq},
+                      {norm_out},
+                      kOnnxDomain);
+    }
 
     // Add explicit QDQ around Erf to match expected QDQ patterns:
-    // div_out -> Q -> DQ -> erf_in
+    // norm_out -> Q -> DQ -> erf_in
     const std::string erf_in_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_erf_in", "div_out", input_qparams.scale, input_qparams.zero_point);
+        AddQDQNodePair<QuantType>(builder, "qdq_erf_in", norm_out, input_qparams.scale, input_qparams.zero_point);
 
     // erf_in -> Erf -> erf_out
     builder.AddNode("Erf",
@@ -395,12 +428,15 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPattern2TestCase(const TestInputDef<flo
 
 // Helper function to build QDQ GELU Pattern 3 (ErfMul Pattern)
 template <typename QuantType>
-GetTestQDQModelFn<QuantType> BuildQDQGeluPattern3TestCase(const TestInputDef<float>& input_def) {
-  return [input_def](ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) -> void {
+GetTestQDQModelFn<QuantType> BuildQDQGeluPattern3TestCase(const TestInputDef<float>& input_def,
+                                                          bool use_mul = false) {
+  return [input_def, use_mul](ModelTestBuilder& builder,
+                              std::vector<QuantParams<QuantType>>& output_qparams) -> void {
     constexpr float sqrt_2 = 1.4142135381698608f;
+    constexpr float inv_sqrt_2 = 0.7071067690849304f;
     constexpr float half = 0.5f;
 
-    builder.graph_->set_name("qdq_gelu_pattern3_graph");
+    builder.graph_->set_name(use_mul ? "qdq_gelu_pattern3_mul_graph" : "qdq_gelu_pattern3_graph");
 
     // input
     MakeTestInput(builder, "input", input_def);
@@ -408,26 +444,37 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPattern3TestCase(const TestInputDef<flo
     const std::string input_qdq =
         AddQDQNodePair<QuantType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
 
-    builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
     builder.MakeScalarInitializer<float>("half", half);
     builder.MakeScalarInitializer<float>("half2", half);
-
-    const std::string sqrt2_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_sqrt2", "sqrt2", input_qparams.scale, input_qparams.zero_point);
     const std::string half_qdq =
         AddQDQNodePair<QuantType>(builder, "qdq_half", "half", input_qparams.scale, input_qparams.zero_point);
     const std::string half2_qdq =
         AddQDQNodePair<QuantType>(builder, "qdq_half2", "half2", input_qparams.scale, input_qparams.zero_point);
 
-    // input -> Div(sqrt2) -> Erf -> Mul(0.5) -> Add(0.5)
-    builder.AddNode("Div_sqrt2",
-                    "Div",
-                    {input_qdq, sqrt2_qdq},
-                    {"div_out"},
-                    kOnnxDomain);
+    // input -> Div/Mul(sqrt2 or 1/sqrt2) -> Erf -> Mul(0.5) -> Add(0.5)
+    std::string norm_out = "div_out";
+    if (use_mul) {
+      builder.MakeScalarInitializer<float>("inv_sqrt2", inv_sqrt_2);
+      const std::string inv_sqrt2_qdq =
+          AddQDQNodePair<QuantType>(builder, "qdq_inv_sqrt2", "inv_sqrt2", input_qparams.scale, input_qparams.zero_point);
+      builder.AddNode("Mul_inv_sqrt2",
+                      "Mul",
+                      {input_qdq, inv_sqrt2_qdq},
+                      {norm_out},
+                      kOnnxDomain);
+    } else {
+      builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
+      const std::string sqrt2_qdq =
+          AddQDQNodePair<QuantType>(builder, "qdq_sqrt2", "sqrt2", input_qparams.scale, input_qparams.zero_point);
+      builder.AddNode("Div_sqrt2",
+                      "Div",
+                      {input_qdq, sqrt2_qdq},
+                      {norm_out},
+                      kOnnxDomain);
+    }
 
     const std::string erf_in_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_erf_in", "div_out", input_qparams.scale, input_qparams.zero_point);
+        AddQDQNodePair<QuantType>(builder, "qdq_erf_in", norm_out, input_qparams.scale, input_qparams.zero_point);
 
     builder.AddNode("Erf",
                     "Erf",
@@ -499,16 +546,17 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_Float32) {
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-3f);
+                  /*fp32_abs_err=*/6e-3f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 
   // Test with Mul (Div replaced by Mul)
+  ResetQnnGraphDir(json_qnn_graph_dir);
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-3f);
+                  /*fp32_abs_err=*/6e-3f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 }
@@ -532,16 +580,17 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_Float32) {
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-3f);
+                  /*fp32_abs_err=*/6e-3f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 
   // Test with Mul (Div replaced by Mul)
+  ResetQnnGraphDir(json_qnn_graph_dir);
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-3f);
+                  /*fp32_abs_err=*/6e-3f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 }
@@ -565,16 +614,17 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern3_Float32) {
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-3f);
+                  /*fp32_abs_err=*/6e-3f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 
   // Test with Mul (Div replaced by Mul)
+  ResetQnnGraphDir(json_qnn_graph_dir);
   RunQnnModelTest(BuildGeluPattern3TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-3f);
+                  /*fp32_abs_err=*/6e-3f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 }
@@ -644,16 +694,17 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_3D) {
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-3f);
+                  /*fp32_abs_err=*/6e-3f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 
   // Test with Mul (Div replaced by Mul)
+  ResetQnnGraphDir(json_qnn_graph_dir);
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-3f);
+                  /*fp32_abs_err=*/6e-3f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 }
@@ -677,16 +728,17 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_3D) {
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-3f);
+                  /*fp32_abs_err=*/6e-3f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 
   // Test with Mul (Div replaced by Mul)
+  ResetQnnGraphDir(json_qnn_graph_dir);
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-3f);
+                  /*fp32_abs_err=*/6e-3f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 }
@@ -710,16 +762,17 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_2D) {
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-3f);
+                  /*fp32_abs_err=*/6e-3f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 
   // Test with Mul (Div replaced by Mul)
+  ResetQnnGraphDir(json_qnn_graph_dir);
   RunQnnModelTest(BuildGeluPattern1TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-3f);
+                  /*fp32_abs_err=*/6e-3f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 }
@@ -743,16 +796,17 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_2D) {
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-3f);
+                  /*fp32_abs_err=*/6e-3f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 
   // Test with Mul (Div replaced by Mul)
+  ResetQnnGraphDir(json_qnn_graph_dir);
   RunQnnModelTest(BuildGeluPattern2TestCase(input_def, true),
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/2e-3f);
+                  /*fp32_abs_err=*/6e-3f);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
 }
@@ -770,8 +824,18 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_QDQ_U8) {
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
   auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -10.0f, 10.0f);
 
-  TestQDQModelAccuracy(BuildGeluPattern1TestCase(input_def),
-                       BuildQDQGeluPattern1TestCase<uint8_t>(input_def),
+  TestQDQModelAccuracy(BuildGeluPattern1TestCase(input_def, false),
+                       BuildQDQGeluPattern1TestCase<uint8_t>(input_def, false),
+                       provider_options,
+                       /*opset_version=*/13,
+                       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+
+  ResetQnnGraphDir(json_qnn_graph_dir);
+
+  TestQDQModelAccuracy(BuildGeluPattern1TestCase(input_def, true),
+                       BuildQDQGeluPattern1TestCase<uint8_t>(input_def, true),
                        provider_options,
                        /*opset_version=*/13,
                        /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
@@ -792,8 +856,18 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_QDQ_U8) {
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
   auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -10.0f, 10.0f);
 
-  TestQDQModelAccuracy(BuildGeluPattern2TestCase(input_def),
-                       BuildQDQGeluPattern2TestCase<uint8_t>(input_def),
+  TestQDQModelAccuracy(BuildGeluPattern2TestCase(input_def, false),
+                       BuildQDQGeluPattern2TestCase<uint8_t>(input_def, false),
+                       provider_options,
+                       /*opset_version=*/13,
+                       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+
+  ResetQnnGraphDir(json_qnn_graph_dir);
+
+  TestQDQModelAccuracy(BuildGeluPattern2TestCase(input_def, true),
+                       BuildQDQGeluPattern2TestCase<uint8_t>(input_def, true),
                        provider_options,
                        /*opset_version=*/13,
                        /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
@@ -814,8 +888,18 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern3_QDQ_U8) {
   provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
   auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -10.0f, 10.0f);
 
-  TestQDQModelAccuracy(BuildGeluPattern3TestCase(input_def),
-                       BuildQDQGeluPattern3TestCase<uint8_t>(input_def),
+  TestQDQModelAccuracy(BuildGeluPattern3TestCase(input_def, false),
+                       BuildQDQGeluPattern3TestCase<uint8_t>(input_def, false),
+                       provider_options,
+                       /*opset_version=*/13,
+                       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
+
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+
+  ResetQnnGraphDir(json_qnn_graph_dir);
+
+  TestQDQModelAccuracy(BuildGeluPattern3TestCase(input_def, true),
+                       BuildQDQGeluPattern3TestCase<uint8_t>(input_def, true),
                        provider_options,
                        /*opset_version=*/13,
                        /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);

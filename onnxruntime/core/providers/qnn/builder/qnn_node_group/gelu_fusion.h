@@ -49,7 +49,12 @@ class QnnModelWrapper;
 /// </summary>
 class GeluFusion : public IQnnNodeGroup {
  public:
-  GeluFusion(std::vector<const OrtNodeUnit*>&& node_units, const OrtNodeUnit* target_node_unit);
+  GeluFusion(std::vector<const OrtNodeUnit*>&& node_units,
+             const OrtNodeUnit* target_node_unit,
+             OrtNodeUnitIODef validate_root_input,
+             OrtNodeUnitIODef validate_final_output,
+             OrtNodeUnitIODef root_input,
+             OrtNodeUnitIODef final_output);
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(GeluFusion);
 
   Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
@@ -78,6 +83,10 @@ class GeluFusion : public IQnnNodeGroup {
  private:
   std::vector<const OrtNodeUnit*> node_units_;
   const OrtNodeUnit* target_node_unit_;
+  OrtNodeUnitIODef validate_root_input_;
+  OrtNodeUnitIODef validate_final_output_;
+  OrtNodeUnitIODef root_input_;
+  OrtNodeUnitIODef final_output_;
 };
 
 }  // namespace qnn
