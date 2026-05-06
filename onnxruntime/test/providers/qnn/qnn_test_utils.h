@@ -40,6 +40,12 @@ namespace test {
 // Forward declaration for QnnHTPBackendTests used in template functions below
 class QnnHTPBackendTests;
 
+// Forward declaration of CheckAndSkipTest — defined after QnnHTPBackendTests below.
+template <typename QuantType = void>
+inline void CheckAndSkipTest(const ProviderOptions& qnn_options,
+                             QnnHtpDevice_Arch_t arch,
+                             std::string_view test_type);
+
 // Signature for function that builds a float32 model.
 using GetTestModelFn = std::function<void(ModelTestBuilder& builder)>;
 
@@ -1655,7 +1661,7 @@ class QnnCPUBackendTests : public ::testing::Test {
 // Template function implementing the test skip logic for SKIP_TEST_ON_LINUX_ARM64.
 // Placed after the class definitions so QnnHTPBackendTests is fully defined.
 // QuantType defaults to void (no type specified); when provided, skipping is gated on QNN_IS_SUPPORTED_QDQ_TYPE.
-template <typename QuantType = void>
+template <typename QuantType>
 inline void CheckAndSkipTest(const ProviderOptions& qnn_options,
                              QnnHtpDevice_Arch_t arch,
                              std::string_view test_type) {
