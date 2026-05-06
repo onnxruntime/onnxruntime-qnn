@@ -2,8 +2,9 @@
 // Licensed under the MIT License.
 
 #ifdef _WIN32
-#include <io.h>
+#include <windows.h>
 #else
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 
@@ -24,49 +25,81 @@ namespace qnn {
 
 namespace {
 
-int RedirectStdout() {
-  // Save the current stdout file descriptor.
+// Saved state for stdout redirection.
+// On Windows, the QNN HTP backend DLL uses the Win32 STD_OUTPUT_HANDLE (obtained via
+// GetStdHandle) to write its finalization logs.  We suppress those logs by temporarily
+// replacing STD_OUTPUT_HANDLE with a NUL handle via SetStdHandle.  We deliberately do NOT
+// touch the C runtime's fd 1 (via _dup2) because UCRT's _dup2 calls SetStdHandle
+// internally, and the QNN DLL detects any change in the HANDLE value seen through
+// _get_osfhandle(1) and responds by internally calling freopen("NUL", "w", stdout),
+// which corrupts the FILE* internal state and silently discards all subsequent C stdio
+// writes — including gtest's result lines.
+struct StdoutSaveState {
 #ifdef _WIN32
-  int saved_stdout_fd = _dup(_fileno(stdout));
+  HANDLE win32_handle{INVALID_HANDLE_VALUE};
+  HANDLE null_handle{INVALID_HANDLE_VALUE};
 #else
-  int saved_stdout_fd = dup(fileno(stdout));
+  int fd{-1};
 #endif
-  if (saved_stdout_fd == -1) {
-    return saved_stdout_fd;
-  }
+};
 
-  // Redirect stdout to NUL.
-#ifdef _WIN32
-  const char* filename = "NUL";
-#else
-  const char* filename = "/dev/null";
-#endif
-#ifdef _WIN32
-  FILE* redirected = nullptr;
-  if (freopen_s(&redirected, filename, "w", stdout) != 0 || redirected == nullptr) {
-    _close(saved_stdout_fd);
-#else
-  if (freopen(filename, "w", stdout) == nullptr) {
-    close(saved_stdout_fd);
-#endif
-    return saved_stdout_fd;
-  }
+StdoutSaveState RedirectStdout() {
+  StdoutSaveState state;
 
-  return saved_stdout_fd;
+  // Flush any pending output BEFORE redirecting so nothing is lost.
+  fflush(stdout);
+
+#ifdef _WIN32
+  // Save the current Win32 STD_OUTPUT_HANDLE.
+  state.win32_handle = GetStdHandle(STD_OUTPUT_HANDLE);
+  // Open a NUL handle for the redirect.
+  state.null_handle = CreateFileW(L"NUL", GENERIC_WRITE,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                  nullptr, OPEN_EXISTING,
+                                  FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (state.null_handle == INVALID_HANDLE_VALUE) {
+    return state;  // redirect failed; state.win32_handle is still valid for restore
+  }
+  // Redirect only the Win32 layer.  fd 1 (C stdio stdout) is left untouched so
+  // that gtest's C stdio writes continue to reach real stdout after the redirect.
+  SetStdHandle(STD_OUTPUT_HANDLE, state.null_handle);
+#else
+  state.fd = dup(fileno(stdout));
+  if (state.fd == -1) {
+    return state;
+  }
+  int null_fd = open("/dev/null", O_WRONLY);
+  if (null_fd == -1) {
+    close(state.fd);
+    state.fd = -1;
+    return state;
+  }
+  dup2(null_fd, fileno(stdout));
+  close(null_fd);
+#endif
+
+  return state;
 }
 
-void RestoreStdout(int saved_stdout_fd) {
-  if (saved_stdout_fd == -1) {
+void RestoreStdout(const StdoutSaveState& state) {
+  // Flush any QNN output still buffered before restoring.
+  fflush(stdout);
+
+#ifdef _WIN32
+  // Restore Win32 STD_OUTPUT_HANDLE to the original value.
+  if (state.win32_handle != INVALID_HANDLE_VALUE) {
+    SetStdHandle(STD_OUTPUT_HANDLE, state.win32_handle);
+  }
+  if (state.null_handle != INVALID_HANDLE_VALUE) {
+    CloseHandle(state.null_handle);
+  }
+#else
+  if (state.fd == -1) {
     return;
   }
-
-  fflush(stdout);
-#ifdef _WIN32
-  _dup2(saved_stdout_fd, _fileno(stdout));
-  _close(saved_stdout_fd);
-#else
-  dup2(saved_stdout_fd, fileno(stdout));
-  close(saved_stdout_fd);
+  dup2(state.fd, fileno(stdout));
+  close(state.fd);
+  clearerr(stdout);
 #endif
 }
 
@@ -133,9 +166,9 @@ Ort::Status QnnCacheCompatibilityManager::CreateFakeContextBinary(std::unique_pt
             ("Failed to add node. Error: " + utils::GetQnnErrorMessage(qnn_interface, result)).c_str());
 
   // Finalize graph.
-  int saved_stdout_fd = RedirectStdout();  // Redirect stdout to avoid confusing user.
+  StdoutSaveState stdout_state = RedirectStdout();  // Redirect stdout to avoid confusing user.
   result = qnn_interface.graphFinalize(graph, nullptr, nullptr);
-  RestoreStdout(saved_stdout_fd);
+  RestoreStdout(stdout_state);
   RETURN_IF(result != QNN_GRAPH_NO_ERROR,
             ("Failed to finalize graph. Error: " + utils::GetQnnErrorMessage(qnn_interface, result)).c_str());
 
