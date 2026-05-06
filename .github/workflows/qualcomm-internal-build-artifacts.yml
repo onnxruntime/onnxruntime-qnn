@@ -189,7 +189,7 @@ jobs:
       target_os: windows
       target_arch: arm64x
       build_config: Debug
-      target_py_vsn: None
+      target_py_vsn: ${{ fromJSON(inputs.windows_target_py_vsns)[0] }}
       build_runner_arch: ARM64
       run_tests: false
       upload_wheel: true
@@ -204,7 +204,7 @@ jobs:
       target_os: windows
       target_arch: arm64x
       build_config: RelWithDebInfo
-      target_py_vsn: None
+      target_py_vsn: ${{ fromJSON(inputs.windows_target_py_vsns)[0] }}
       build_runner_arch: ARM64
       run_tests: false
       upload_wheel: true
