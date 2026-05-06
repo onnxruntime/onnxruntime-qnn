@@ -51,12 +51,12 @@ class QnnDeviceCompatibilityTests : public ::testing::Test {
   // Helper function to create a mock hardware device
   OrtStatus* CreateMockHardwareDevice(OrtHardwareDeviceType type, uint32_t vendor_id) {
     return ep_api_->CreateHardwareDevice(
-      type,
-      vendor_id,
-      0 /* device_id */,
-      "QCOM" /* vendor_name */,
-      nullptr /* metadata */,
-      &mock_hw_device);
+        type,
+        vendor_id,
+        0 /* device_id */,
+        "QCOM" /* vendor_name */,
+        nullptr /* metadata */,
+        &mock_hw_device);
   }
 
   const uint32_t qualcomm_vendor_id{'Q' | ('C' << 8) | ('O' << 16) | ('M' << 24)};

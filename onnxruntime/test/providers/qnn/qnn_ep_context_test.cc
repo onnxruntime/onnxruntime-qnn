@@ -2640,8 +2640,7 @@ TEST_F(QnnHTPBackendTests, LoadFromArrayWithQnnEpContextGenPathValidation) {
 
   try {
     Ort::Session session1(*ort_env, model_data_span.data(), model_data_span.size(), so);
-  }
-  catch(const std::exception& e) {
+  } catch (const std::exception& e) {
     ORT_HANDLE_EXCEPTION([&e]() {
       std::string e_message1(std::string(e.what()));
       ASSERT_TRUE(e_message1.find("Please specify a valid ep.context_file_path") != std::string::npos);
@@ -2651,8 +2650,7 @@ TEST_F(QnnHTPBackendTests, LoadFromArrayWithQnnEpContextGenPathValidation) {
   try {
     so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, "");
     Ort::Session session2(*ort_env, model_data_span.data(), model_data_span.size(), so);
-  }
-  catch(const std::exception& ex) {
+  } catch (const std::exception& ex) {
     ORT_HANDLE_EXCEPTION([&ex]() {
       std::string e_message2(std::string(ex.what()));
       ASSERT_TRUE(e_message2.find("Please specify a valid ep.context_file_path") != std::string::npos);
@@ -3022,13 +3020,11 @@ static OrtStatus* ORT_API_CALL TestHandleInitializerDataFunc(void* state,
     }
 
     *c_new_external_info = new_external_info.release();
-  }
-  catch(const Ort::Exception& ex) {
+  } catch (const Ort::Exception& ex) {
     ORT_HANDLE_EXCEPTION(([&ex, &final_status]() {
       final_status = Ort::Status{ex};
     }));
-  }
-  catch(const std::exception& ex) {
+  } catch (const std::exception& ex) {
     ORT_HANDLE_EXCEPTION(([&ex, &final_status]() {
       final_status = Ort::Status(ex.what(), ORT_FAIL);
     }));
@@ -3128,13 +3124,11 @@ static OrtStatus* ORT_API_CALL ReuseExternalInitializers(void* state,
 
     // If not originally external, save it within the generated compiled model
     *new_external_info = nullptr;
-  }
-  catch(const Ort::Exception& ex) {
+  } catch (const Ort::Exception& ex) {
     ORT_HANDLE_EXCEPTION(([&ex, &final_status]() {
       final_status = Ort::Status{ex};
     }));
-  }
-  catch(const std::exception& ex) {
+  } catch (const std::exception& ex) {
     ORT_HANDLE_EXCEPTION(([&ex, &final_status]() {
       final_status = Ort::Status(ex.what(), ORT_FAIL);
     }));
@@ -3453,8 +3447,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_SelfValidate_CbTradRtHnrd
     }
     // Compare to ModelCompatibility_SelfValidate_CbHnrdRtTrad, this testcase could get here if driver is as new as
     // compiled SDK.
-  }
-  catch(const Ort::Exception& e) {
+  } catch (const Ort::Exception& e) {
     ORT_HANDLE_EXCEPTION([&e]() {
       std::string message(e.what());
       ASSERT_TRUE(message.find("Compiled model is not supported by execution provider") != std::string::npos);
@@ -3502,8 +3495,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_SelfValidate_CbHnrdRtTrad
       Ort::Session session(*ort_env, output_model_file.wstring().c_str(), so);
     }
     FAIL() << "Expect compiled model not supported by execution provider.";  // Should not get here.
-  }
-  catch(const Ort::Exception& e) {
+  } catch (const Ort::Exception& e) {
     ORT_HANDLE_EXCEPTION([&e]() {
       std::string message(e.what());
       ASSERT_TRUE(message.find("Compiled model is not supported by execution provider") != std::string::npos);
@@ -3671,7 +3663,7 @@ static void TestModelCompatibilityApiValidate(const CompatibilityTestInfo& test_
   size_t num_ep_devices = 0;
   Ort::GetApi().GetEpDevices(*GetOrtEnv(), &ep_devices, &num_ep_devices);
   const OrtEpDevice* qcom_npu_device = nullptr;
-  for (size_t i = 0; i < num_ep_devices ; i++) {
+  for (size_t i = 0; i < num_ep_devices; i++) {
     const char* name = Ort::GetApi().EpDevice_EpName(ep_devices[i]);
     const char* vendor_name = Ort::GetApi().EpDevice_EpVendor(ep_devices[i]);
     const OrtHardwareDevice* ep_hw_device = Ort::GetApi().EpDevice_Device(ep_devices[i]);

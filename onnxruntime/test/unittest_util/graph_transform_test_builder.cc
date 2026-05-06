@@ -56,9 +56,9 @@ const ONNX_NAMESPACE::TensorProto* ModelTestBuilder::MakeInitializer(const std::
   tensor_proto->set_name(name);
   tensor_proto->set_data_type(elem_type);
   SetRawDataInTensorProto(
-    *tensor_proto,
-    raw_data.data(),
-    raw_data.size());
+      *tensor_proto,
+      raw_data.data(),
+      raw_data.size());
 
   for (auto& dim : shape) {
     tensor_proto->add_dims(dim);

@@ -625,16 +625,16 @@ class ModelTestBuilder {
                                                            ONNX_NAMESPACE::TensorProto_DataType zero_point_type,
                                                            const std::string& output_name,
                                                            bool use_ms_domain = false);
-  
+
   /**
-  * Wrapper function for set_raw_data.
-  * First calls the set_raw_data and then calls ConvertRawDataInTensorProto
-  * under big endian system.
-  * @param tensor_proto given initializer tensor
-  * @param raw_data     source raw_data pointer
-  * @param raw_data_len  length of raw_data
-  * @returns                 None
-  */
+   * Wrapper function for set_raw_data.
+   * First calls the set_raw_data and then calls ConvertRawDataInTensorProto
+   * under big endian system.
+   * @param tensor_proto given initializer tensor
+   * @param raw_data     source raw_data pointer
+   * @param raw_data_len  length of raw_data
+   * @returns                 None
+   */
   template <typename T1, typename T2>
   void SetRawDataInTensorProto(ONNX_NAMESPACE::TensorProto& tensor_proto, T1* raw_data, T2 raw_data_len) {
     using namespace ONNX_NAMESPACE;
@@ -710,7 +710,7 @@ class ModelTestBuilder {
     // Can not be UNDEFINED and can not be STRING but test for STRING is usually performed separately
     // to return an error
     return ten_proto.data_type() != ONNX_NAMESPACE::TensorProto::UNDEFINED &&
-          ten_proto.has_raw_data();  // XXX: Figure out how to do in proto3
+           ten_proto.has_raw_data();  // XXX: Figure out how to do in proto3
   }
 
   void ConvertRawDataInTensorProto(ONNX_NAMESPACE::TensorProto& tensor) {
