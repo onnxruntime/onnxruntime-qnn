@@ -48,32 +48,39 @@ class QnnModelWrapper;
 /// lets us replace the unsupported pair with a single, natively-supported
 /// ElementWiseDivide node, keeping the entire computation on the accelerator.
 ///
-/// Matched ONNX pattern
-/// --------------------
+/// Matched ONNX patterns
+/// ---------------------
+/// FP32 / FP16 (SingleNode):
 ///
 ///   [denominator] --> Reciprocal --+
 ///                                  v
 ///   [numerator]  ----------------> Mul --> [output]
 ///
-/// Emitted QNN graph
-/// -----------------
+/// Quantized (QDQGroup):
+///
+///   [denominator] --> DQ --> Reciprocal --> Q --+
+///                                               v
+///   [numerator]  --> DQ -----------------------> Mul --> Q --> [output]
+///
+/// Emitted QNN graph (both cases)
+/// --------------------------------
 ///
 ///   [numerator]   --> ElementWiseDivide --> [output]
 ///   [denominator] --+
 ///
-/// The intermediate tensor produced by Reciprocal is never registered in the
-/// QNN graph; it is completely absorbed by the fusion.
+/// The intermediate tensor(s) produced by Reciprocal (and the surrounding
+/// Q/DQ nodes for quantized models) are never registered in the QNN graph;
+/// they are completely absorbed by the fusion.
 ///
 /// Constraints
 /// -----------
-///   - The Reciprocal NodeUnit must be of type SingleNode (not inside a QDQ
-///     group).  QDQ-wrapped Reciprocal nodes are handled by a separate path.
+///   - The Reciprocal NodeUnit may be of type SingleNode or QDQGroup.
 ///   - The Reciprocal output must have exactly one consumer (the Mul node).
 ///   - The Reciprocal output must not be a graph-level output.
-///   - The Mul NodeUnit must also be of type SingleNode and must not already
-///     belong to another IQnnNodeGroup.
+///   - The Mul NodeUnit must not already belong to another IQnnNodeGroup.
 ///   - The Mul must have exactly 2 inputs, one of which is the Reciprocal
-///     output.  The other input becomes the numerator of the Div.
+///     output (or its downstream DQ output for QDQ groups).  The other input
+///     becomes the numerator of the Div.
 ///   - The fused ElementWiseDivide node must pass QNN capability validation.
 /// </summary>
 class ReciprocalMulFusion : public IQnnNodeGroup {

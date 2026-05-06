@@ -31,11 +31,26 @@
 // The intermediate tensor produced by Reciprocal (the "1/b" value) is never
 // registered in the QNN graph; it is completely absorbed by the fusion.
 //
+// QDQ support
+// -----------
+// Both SingleNode and QDQGroup Reciprocal units are handled.  In quantized
+// models the ORT graph partitioner wraps the Reciprocal in a QDQ group:
+//
+//   [denominator] --> DQ --> Reciprocal --> Q --+
+//                                               v
+//   [numerator]  --------------------------------> (DQ ->) Mul --> [output]
+//
+// GetChildNodeUnitAllowQdq is used to locate the downstream Mul, skipping
+// the Q -> DQ boundary that separates the two logical nodes.  The
+// OrtNodeUnit::Inputs() / Outputs() accessors already return the logical
+// (dequantized) tensor names for QDQ groups, so CreateOrValidateOnQnn
+// requires no changes to handle both cases.
+//
 // Tensor role mapping
 // -------------------
-//   ONNX input  : denominator  (Reciprocal's input)
-//   ONNX input  : numerator    (the other Mul input)
-//   ONNX output : result       (Mul's output, unchanged)
+//   ONNX input  : denominator  (Reciprocal's logical input  -- DQ output for QDQ)
+//   ONNX input  : numerator    (the other Mul logical input -- DQ output for QDQ)
+//   ONNX output : result       (Mul's logical output        -- Q  input  for QDQ)
 //
 //   QNN Div input[0]  = numerator
 //   QNN Div input[1]  = denominator
@@ -46,7 +61,6 @@
 #include "core/providers/qnn/builder/qnn_node_group/reciprocal_mul_fusion.h"
 
 #include <array>
-#include <cassert>
 #include <gsl/gsl>
 #include <memory>
 #include <string>
@@ -94,17 +108,27 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
 // The function walks the graph in a strictly forward (producer -> consumer)
 // direction:
 //
-//   1. Verify the entry node is a standalone Reciprocal (not inside a QDQ
-//      group, which would be handled by a different fusion path).
+//   1. Verify the entry node is a Reciprocal (SingleNode or QDQGroup).
 //   2. Confirm the Reciprocal has exactly one consumer and that consumer is
-//      a standalone Mul node that has not already been claimed.
+//      a Mul node (SingleNode or QDQGroup) that has not already been claimed.
+//      GetChildNodeUnitAllowQdq handles all of the following atomically:
+//        (a) For QDQ Reciprocal: follows the Q node's output, then skips the
+//            downstream DQ node to reach the true consumer.
+//        (b) That output is NOT a graph-level output.
+//        (c) That output has exactly one consumer node.
+//        (d) That consumer's op-type is "Mul".
+//        (e) The Mul NodeUnit has not already been claimed by another group.
 //   3. Confirm the Mul actually consumes the Reciprocal output (sanity check
-//      against malformed graphs where GetOnlyChildOfType might return a Mul
-//      that is connected via a different edge).
+//      against malformed graphs where the lookup might return a Mul that is
+//      connected via a different edge).
 //   4. Perform a QNN dry-run validation to ensure the backend can handle the
 //      resulting ElementWiseDivide node.
 //   5. Construct and return the ReciprocalMulFusion object.
 //
+// Note: explicit input/output count guards for Reciprocal (unary) and Mul
+// (binary) are intentionally absent — ONNX spec compliance is assumed per
+// the QNN EP review checklist [T06].  GetChildNodeUnitAllowQdq (Step 2) and
+// ValidateQnnNode (Step 4) already catch any malformed graphs.
 std::unique_ptr<IQnnNodeGroup> ReciprocalMulFusion::TryFusion(
     QnnModelWrapper& qnn_model_wrapper,
     const OrtNodeUnit& reciprocal_node_unit,
@@ -113,188 +137,123 @@ std::unique_ptr<IQnnNodeGroup> ReciprocalMulFusion::TryFusion(
     const Ort::Logger& logger) {
   ORT_UNUSED_PARAMETER(logger);
 
-  // -- Step 1: Gate on op-type and node-unit kind ---------------------------
+  // -- Step 1: Gate on op-type -----------------------------------------------
   //
-  // Only fuse standalone (SingleNode) Reciprocal units.  A Reciprocal that
-  // is already wrapped inside a QDQ group (DQ -> Reciprocal -> Q) is handled
-  // by a separate quantization-aware path and must not be touched here.
-  if (reciprocal_node_unit.OpType() != "Reciprocal" ||
-      reciprocal_node_unit.UnitType() != OrtNodeUnit::Type::SingleNode) {
+  // Accept both standalone (SingleNode) and QDQ-wrapped (QDQGroup) Reciprocal
+  // units.  In quantized models the ORT graph partitioner wraps the Reciprocal
+  // in a QDQ group (DQ -> Reciprocal -> Q); we must handle that case to keep
+  // the entire computation on the QNN accelerator.
+  if (reciprocal_node_unit.OpType() != "Reciprocal") {
     return nullptr;
   }
 
-  // -- Step 2: Reciprocal must have at least one input ----------------------
+  // -- Step 2: Locate the single Mul consumer of the Reciprocal output ------
   //
-  // ONNX Reciprocal is a unary op (output = 1 / input).  Guard against a
-  // malformed graph that somehow has no inputs.
-  const auto& recip_inputs = reciprocal_node_unit.Inputs();
-  if (recip_inputs.empty()) {
-    return nullptr;
-  }
-
-  // -- Step 3: Reciprocal output must have exactly one consumer and must NOT
-  //            be a graph-level output.
-  //
-  // Guard against two cases that prevent the intermediate tensor from being
-  // absorbed by the fusion:
-  //
-  //   (a) Multiple consumers: the Reciprocal output feeds more than one
-  //       downstream node (e.g. two Mul nodes).  The tensor cannot be removed
-  //       because other consumers still need it.
-  //
-  //   (b) Graph output: the Reciprocal output is exposed as a graph-level
-  //       output.  Removing it would change the observable outputs of the
-  //       model, so the fusion must not fire.
-  //
-  // For (a) we use ValueInfo_GetValueNumConsumers via the raw ORT C API.
-  // Note: this API counts only node consumers, not graph-output "consumers".
-  //
-  // For (b) we check by name against the ONNX graph's actual output list,
-  // obtained via ort_api.Graph_GetOutputs on the graph held by the model
-  // wrapper.  This is the same approach used in qnn_execution_provider.cc
-  // to build model_outputs and is reliable in both the IsSupported path
-  // (qnn_execution_provider.cc) and the ComposeGraph path (qnn_model.cc).
-  //
-  // We deliberately avoid:
-  //   - Ort::ConstValueInfo::IsGraphOutput()  — unreliable C++ wrapper;
-  //     the graph-output flag is not always propagated to node output infos.
-  //   - QnnModelWrapper::IsGraphOutput(name)  — checks graph_outputs_.indices
-  //     which is populated from the fused EPContext node's outputs; may not
-  //     include intermediate tensors that are also ONNX graph outputs when
-  //     the entire model is one partition.
-  //   - ort_api.ValueInfo_IsGraphOutput()     — operates on the OrtValueInfo*
-  //     returned by Node_GetOutputs, which is a different object from the
-  //     one in the graph's output list; the flag is not set on node outputs.
-  {
-    const OrtNode& recip_node = reciprocal_node_unit.GetNode();
-    const OrtApi& ort_api = qnn_model_wrapper.GetOrtApi();
-    const OrtGraph& ort_graph = qnn_model_wrapper.GetOrtGraph();
-
-    size_t num_outputs = 0;
-    if (ort_api.Node_GetNumOutputs(&recip_node, &num_outputs) != nullptr || num_outputs == 0) {
-      return nullptr;
-    }
-
-    std::vector<const OrtValueInfo*> recip_outputs(num_outputs);
-    if (ort_api.Node_GetOutputs(&recip_node, recip_outputs.data(), num_outputs) != nullptr) {
-      return nullptr;
-    }
-
-    // Reciprocal is a unary op with a single output; check that output's consumer count.
-    const OrtValueInfo* recip_output_vi = recip_outputs[0];
-    if (recip_output_vi == nullptr) {
-      return nullptr;
-    }
-
-    // (a) Multiple-consumer guard.
-    size_t num_consumers = 0;
-    if (ort_api.ValueInfo_GetValueNumConsumers(recip_output_vi, &num_consumers) != nullptr ||
-        num_consumers != 1) {
-      // Either the API call failed or there are zero / multiple consumers.
-      // In both cases the fusion must not fire.
-      return nullptr;
-    }
-
-    // (b) Graph-output guard: get the Reciprocal output's name, then scan
-    //     the graph's actual output list for a name match.
-    const char* recip_out_name_cstr = nullptr;
-    if (ort_api.GetValueInfoName(recip_output_vi, &recip_out_name_cstr) != nullptr ||
-        recip_out_name_cstr == nullptr) {
-      return nullptr;
-    }
-    const std::string recip_out_name(recip_out_name_cstr);
-
-    size_t num_graph_outputs = 0;
-    if (ort_api.Graph_GetNumOutputs(&ort_graph, &num_graph_outputs) != nullptr) {
-      // API call failed; conservatively block fusion.
-      return nullptr;
-    }
-
-    if (num_graph_outputs > 0) {
-      std::vector<const OrtValueInfo*> graph_outputs(num_graph_outputs);
-      if (ort_api.Graph_GetOutputs(&ort_graph, graph_outputs.data(), num_graph_outputs) != nullptr) {
-        // API call failed; conservatively block fusion.
-        return nullptr;
-      }
-
-      for (const OrtValueInfo* graph_out_vi : graph_outputs) {
-        if (graph_out_vi == nullptr) {
-          continue;
-        }
-        const char* graph_out_name_cstr = nullptr;
-        if (ort_api.GetValueInfoName(graph_out_vi, &graph_out_name_cstr) != nullptr ||
-            graph_out_name_cstr == nullptr) {
-          continue;
-        }
-        if (recip_out_name == graph_out_name_cstr) {
-          // The Reciprocal output is a graph-level output; block fusion.
-          return nullptr;
-        }
-      }
-    }
-  }
-
-  // -- Step 4: Locate the single Mul consumer of the Reciprocal output ------
-  //
-  // GetOnlyChildOfType performs all of the following checks atomically:
-  //   (a) The Reciprocal node has exactly one output tensor.
-  //   (b) That output tensor is NOT a graph-level output (i.e. it is an
-  //       internal intermediate value that can be safely removed).
-  //   (c) The output tensor has exactly one consumer node.
-  //   (d) That consumer is a SingleNode whose op-type is "Mul".
+  // GetChildNodeUnitAllowQdq performs all of the following checks atomically:
+  //   (a) For a QDQGroup Reciprocal: follows the Q node's output rather than
+  //       the target node's output, then skips the downstream DQ node to
+  //       reach the true consumer (the Mul or its DQ wrapper).
+  //   (b) That output tensor is NOT a graph-level output.
+  //   (c) That output has exactly one consumer node.
+  //   (d) That consumer's op-type is "Mul" (SingleNode or QDQGroup).
   //   (e) The Mul NodeUnit has not already been claimed by another
   //       IQnnNodeGroup (prevents double-fusion).
   //
   // If any condition fails, nullptr is returned and we bail out.
-  const std::array<std::string_view, 1> child_op_types{"Mul"};
   const OrtNodeUnit* mul_node_unit =
-      GetOnlyChildOfType(qnn_model_wrapper, reciprocal_node_unit, child_op_types,
-                         node_to_node_unit, node_unit_to_qnn_node_group);
+      GetChildNodeUnitAllowQdq(qnn_model_wrapper, reciprocal_node_unit, "Mul",
+                               node_to_node_unit, node_unit_to_qnn_node_group);
   if (mul_node_unit == nullptr) {
     return nullptr;
   }
 
-  // -- Step 5: Mul must have exactly 2 inputs --------------------------------
+  // -- Step 3: Verify the Reciprocal output is actually wired into the Mul --
   //
-  // ONNX Mul is a binary op.  One input must be the Reciprocal output
-  // (the denominator path); the other is the numerator.
-  const auto& mul_inputs = mul_node_unit->Inputs();
-  if (mul_inputs.size() < 2) {
-    return nullptr;
-  }
-
-  // -- Step 6: Verify the Reciprocal output is actually wired into the Mul --
-  //
-  // GetOnlyChildOfType guarantees the Mul is the sole consumer of the
+  // GetChildNodeUnitAllowQdq guarantees the Mul is the sole consumer of the
   // Reciprocal output, but it does not verify *which* input slot of the Mul
   // carries that value.  We do that here as a defence-in-depth check.
   //
+  // For a QDQ-wrapped Reciprocal the logical output name exposed by
+  // OrtNodeUnit::Outputs()[0] is the Q node's output (the quantized tensor),
+  // while the Mul's logical input name (OrtNodeUnit::Inputs()[i]) is the
+  // downstream DQ node's output (the dequantized tensor).  These two names
+  // differ, so we cannot compare them directly.  Instead we rely on
+  // GetChildNodeUnitAllowQdq having already confirmed the topological
+  // connection and skip the name-equality check for QDQ Reciprocal units.
+  //
+  // For SingleNode Reciprocal units the names are directly comparable.
+  //
   // ONNX Mul is commutative, so the Reciprocal result may appear in either
   // input[0] or input[1].
-  const auto& recip_outputs = reciprocal_node_unit.Outputs();
-  if (recip_outputs.empty()) {
-    return nullptr;
+  const auto& mul_inputs = mul_node_unit->Inputs();
+  bool recip_is_mul_input0 = false;
+  bool recip_is_mul_input1 = false;
+
+  if (reciprocal_node_unit.UnitType() == OrtNodeUnit::Type::SingleNode) {
+    // For a bare Reciprocal the output name is the intermediate tensor name
+    // that directly appears as one of the Mul's input names.
+    const std::string& recip_output_name = reciprocal_node_unit.Outputs()[0].name;
+    recip_is_mul_input0 = (mul_inputs[0].name == recip_output_name);
+    recip_is_mul_input1 = (mul_inputs[1].name == recip_output_name);
+
+    if (!recip_is_mul_input0 && !recip_is_mul_input1) {
+      // The Mul does not actually consume the Reciprocal output.  This can
+      // happen if the graph is malformed or if GetChildNodeUnitAllowQdq
+      // returned a Mul that is connected via a different edge.  Bail out.
+      return nullptr;
+    }
+
+    if (recip_is_mul_input0 && recip_is_mul_input1) {
+      // Degenerate case: Mul(1/b, 1/b) = 1/b² ≠ Div(anything, b); fusion
+      // semantics would diverge, bail out.
+      return nullptr;
+    }
+  } else {
+    // QDQGroup: GetChildNodeUnitAllowQdq already verified the topological
+    // connection (Q -> DQ boundary traversal).  We still need to determine
+    // which Mul input slot carries the Reciprocal's dequantized output so
+    // that CreateOrValidateOnQnn can identify the numerator correctly.
+    //
+    // The Reciprocal QDQ group's logical output (Outputs()[0]) is the Q
+    // node's output tensor.  The downstream DQ node dequantizes that tensor
+    // and its output is what appears in the Mul's Inputs() list.  We locate
+    // the DQ output name by following the Q node's single consumer.
+    const OrtNode* q_node = reciprocal_node_unit.GetQNodes().empty()
+                                ? nullptr
+                                : reciprocal_node_unit.GetQNodes()[0];
+    if (q_node == nullptr) {
+      return nullptr;
+    }
+
+    // The Q node has one output; its single consumer is the DQ node whose
+    // output feeds the Mul.  Retrieve that DQ output name.
+    const std::vector<Ort::ConstValueInfo> q_outputs = Ort::ConstNode(q_node).GetOutputs();
+    if (q_outputs.size() != 1) {
+      return nullptr;
+    }
+    const std::vector<Ort::ValueInfoConsumerProducerInfo> dq_consumers = q_outputs[0].GetConsumers();
+    if (dq_consumers.size() != 1 || dq_consumers[0].node == nullptr) {
+      return nullptr;
+    }
+    const std::vector<Ort::ConstValueInfo> dq_outputs =
+        Ort::ConstNode(dq_consumers[0].node).GetOutputs();
+    if (dq_outputs.size() != 1) {
+      return nullptr;
+    }
+    const std::string dq_output_name = dq_outputs[0].GetName();
+
+    recip_is_mul_input0 = (mul_inputs[0].name == dq_output_name);
+    recip_is_mul_input1 = (mul_inputs[1].name == dq_output_name);
+
+    if (!recip_is_mul_input0 && !recip_is_mul_input1) {
+      return nullptr;
+    }
+    if (recip_is_mul_input0 && recip_is_mul_input1) {
+      return nullptr;
+    }
   }
 
-  const std::string& recip_output_name = recip_outputs[0].name;
-  const bool recip_is_mul_input0 = (mul_inputs[0].name == recip_output_name);
-  const bool recip_is_mul_input1 = (mul_inputs[1].name == recip_output_name);
-
-  if (!recip_is_mul_input0 && !recip_is_mul_input1) {
-    // The Mul does not actually consume the Reciprocal output.  This can
-    // happen if the graph is malformed or if GetOnlyChildOfType returned a
-    // Mul that is connected via a different edge.  Bail out safely.
-    return nullptr;
-  }
-
-  if (recip_is_mul_input0 && recip_is_mul_input1) {
-    // Degenerate case: both Mul inputs are the Reciprocal output (e.g. 1/b * 1/b).
-    // The fusion intentionally drops the Reciprocal output tensor, so we cannot
-    // reference it as the numerator of the Div.
-    return nullptr;
-  }
-
-  // -- Step 7: QNN capability dry-run ----------------------------------------
+  // -- Step 4: QNN capability dry-run ----------------------------------------
   //
   // Ask the QNN backend whether it can handle an ElementWiseDivide node
   // with the tensor types and shapes inferred from the ONNX graph.  This
@@ -308,7 +267,7 @@ std::unique_ptr<IQnnNodeGroup> ReciprocalMulFusion::TryFusion(
     return nullptr;
   }
 
-  // -- Step 8: Commit to the fusion ------------------------------------------
+  // -- Step 5: Commit to the fusion ------------------------------------------
   //
   // All checks passed.  Construct the fusion object.  The actual QNN node
   // will be created later when AddToModelBuilder() is called.
@@ -406,37 +365,77 @@ const OrtNodeUnit* ReciprocalMulFusion::GetTargetNodeUnit() const {
 // Tensor roles
 // ------------
 //   input[0]  = numerator   -- the Mul input that is NOT the Reciprocal output
-//   input[1]  = denominator -- the Reciprocal's single input
-//   output[0] = result      -- the Mul's output (unchanged by the fusion)
+//   input[1]  = denominator -- the Reciprocal's logical input
+//                              (DQ output for QDQ groups)
+//   output[0] = result      -- the Mul's logical output
+//                              (Q input for QDQ groups)
 //
-// The intermediate tensor produced by Reciprocal ("recip_output") is
-// intentionally NOT registered in the QNN graph; it is absorbed by the fusion.
+// For both SingleNode and QDQGroup Reciprocal units,
+// OrtNodeUnit::Inputs()[0] returns the logical (dequantized) input tensor
+// and OrtNodeUnit::Outputs()[0] returns the logical output tensor.  The
+// intermediate Q/DQ tensors are never registered in the QNN graph.
 //
 static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& reciprocal_node_unit,
                                          const OrtNodeUnit& mul_node_unit,
                                          bool validate) {
-  assert(reciprocal_node_unit.OpType() == "Reciprocal");
-  assert(mul_node_unit.OpType() == "Mul");
+  RETURN_IF_NOT(reciprocal_node_unit.OpType() == "Reciprocal",
+                ("ReciprocalMulFusion: expected Reciprocal op, got " + reciprocal_node_unit.OpType()).c_str());
+  RETURN_IF_NOT(mul_node_unit.OpType() == "Mul",
+                ("ReciprocalMulFusion: expected Mul op, got " + mul_node_unit.OpType()).c_str());
 
   // -- Resolve tensor roles --------------------------------------------------
   //
-  // denominator: the single input fed into Reciprocal (the value being
-  //              inverted).  This becomes input[1] of the Div node.
+  // denominator: the logical input fed into Reciprocal (the value being
+  //              inverted).  For a QDQGroup this is the DQ node's output
+  //              (the dequantized tensor); OrtNodeUnit::Inputs()[0] returns
+  //              this name directly.  This becomes input[1] of the Div node.
   const OrtNodeUnitIODef& denominator_def = reciprocal_node_unit.Inputs()[0];
 
-  // Identify which Mul input slot carries the Reciprocal output so we can
-  // determine the numerator slot.  ONNX Mul is commutative, so either slot
-  // is valid.
-  const std::string& recip_output_name = reciprocal_node_unit.Outputs()[0].name;
+  // Identify which Mul input slot carries the Reciprocal's dequantized output
+  // so we can determine the numerator slot.  ONNX Mul is commutative, so
+  // either slot is valid.
+  //
+  // For a SingleNode Reciprocal the output name is the intermediate tensor
+  // that directly appears in the Mul's Inputs() list.
+  //
+  // For a QDQGroup Reciprocal the logical output (Outputs()[0]) is the Q
+  // node's output, while the Mul sees the downstream DQ node's output.  We
+  // therefore compare against the DQ output name, which was already resolved
+  // in TryFusion (Step 3) and is what OrtNodeUnit::Inputs() of the Mul
+  // exposes.  To keep CreateOrValidateOnQnn self-contained we re-derive it
+  // here by following the same Q -> DQ path.
   const auto& mul_inputs = mul_node_unit.Inputs();
-  const bool recip_is_input0 = (mul_inputs[0].name == recip_output_name);
+  bool recip_is_input0 = false;
+
+  if (reciprocal_node_unit.UnitType() == OrtNodeUnit::Type::SingleNode) {
+    const std::string& recip_output_name = reciprocal_node_unit.Outputs()[0].name;
+    recip_is_input0 = (mul_inputs[0].name == recip_output_name);
+  } else {
+    // QDQGroup: follow Q -> DQ to get the name seen by the Mul.
+    const OrtNode* q_node = reciprocal_node_unit.GetQNodes().empty()
+                                ? nullptr
+                                : reciprocal_node_unit.GetQNodes()[0];
+    RETURN_IF_NOT(q_node != nullptr,
+                  "ReciprocalMulFusion: QDQGroup Reciprocal has no Q node.");
+    const std::vector<Ort::ConstValueInfo> q_outputs = Ort::ConstNode(q_node).GetOutputs();
+    RETURN_IF_NOT(q_outputs.size() == 1,
+                  "ReciprocalMulFusion: Q node does not have exactly one output.");
+    const std::vector<Ort::ValueInfoConsumerProducerInfo> dq_consumers = q_outputs[0].GetConsumers();
+    RETURN_IF_NOT(dq_consumers.size() == 1 && dq_consumers[0].node != nullptr,
+                  "ReciprocalMulFusion: Q node output does not have exactly one consumer.");
+    const std::vector<Ort::ConstValueInfo> dq_outputs =
+        Ort::ConstNode(dq_consumers[0].node).GetOutputs();
+    RETURN_IF_NOT(dq_outputs.size() == 1,
+                  "ReciprocalMulFusion: DQ node does not have exactly one output.");
+    recip_is_input0 = (mul_inputs[0].name == dq_outputs[0].GetName());
+  }
 
   // numerator: whichever Mul input is NOT the Reciprocal output.
   //            This becomes input[0] of the Div node.
   const OrtNodeUnitIODef& numerator_def = recip_is_input0 ? mul_inputs[1] : mul_inputs[0];
 
-  // result: the Mul's output tensor becomes the Div output unchanged.
+  // result: the Mul's logical output tensor becomes the Div output unchanged.
   const OrtNodeUnitIODef& output_def = mul_node_unit.Outputs()[0];
 
   // -- Build QNN tensor descriptors ------------------------------------------

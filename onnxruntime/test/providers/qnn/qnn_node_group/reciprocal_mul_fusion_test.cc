@@ -23,17 +23,31 @@
 //   Float16 (fp16)
 //     - Basic 4-D input, standard order  (HTP fp16 path)
 //
-//   QDQ (uint8)
+//   QDQ (uint8) -- SingleNode Reciprocal (inputs quantized, Reciprocal bare)
 //     - Basic 4-D input, standard order
 //     - Basic 4-D input, commuted order
 //
-//   QDQ (uint16, contrib ops)
+//   QDQ (uint16, contrib ops) -- SingleNode Reciprocal
 //     - Basic 4-D input, standard order
 //
-//   Negative / no-fusion cases
-//     - Reciprocal output consumed by two nodes  => no fusion, both nodes on QNN
-//     - Reciprocal output is a graph output      => fusion fires (float32); 1 ElementWiseDivide
-//     - Reciprocal output is QDQ-wrapped, DQ output has two consumers => fusion fires; 1 ElementWiseDivide
+//   QDQ (uint8) -- QDQGroup Reciprocal (DQ -> Reciprocal -> Q)
+//     - Basic 4-D input, standard order  (LayerNorm rstd pattern)
+//     - Basic 4-D input, commuted order
+//
+//   Negative / no-fusion cases (fusion blocked; op-builder path taken instead)
+//     - Reciprocal output consumed by two nodes  => blocked by GetChildNodeUnitAllowQdq
+//                                                   (single-consumer guard);
+//                                                   no fusion; 1 ElementWiseDivide (op-builder)
+//                                                   + 2 ElementWiseMultiply
+//     - Reciprocal output is a graph output      => blocked by GetChildNodeUnitAllowQdq
+//                                                   (graph-output guard);
+//                                                   no fusion; 1 ElementWiseDivide (op-builder)
+//                                                   + 1 ElementWiseMultiply
+//     - QDQ-wrapped Reciprocal with two Mul consumers
+//                                                => blocked by GetChildNodeUnitAllowQdq
+//                                                   (single-consumer guard);
+//                                                   no fusion; 1 ElementWiseDivide (op-builder)
+//                                                   + 2 ElementWiseMultiply
 // =============================================================================
 
 #if !defined(ORT_MINIMAL_BUILD)
@@ -202,16 +216,99 @@ GetTestQDQModelFn<QuantType> BuildQDQReciprocalMulTestCase(
 }
 
 // ---------------------------------------------------------------------------
+// QDQ model builder -- QDQGroup Reciprocal (DQ -> Reciprocal -> Q)
+// ---------------------------------------------------------------------------
+
+// Builds the fully-quantized version of the fusion pattern where the
+// Reciprocal node itself is wrapped in a QDQ group:
+//
+//   denominator --> Q --> DQ --> Reciprocal --> Q --> DQ --> recip_qdq --+
+//                                                                        v
+//   numerator   --> Q --> DQ -----------------------------------------> Mul --> Q --> DQ --> output
+//
+// This is the pattern produced by quantization tools for models such as
+// LayerNorm (rstd computation).  The ORT graph partitioner groups the
+// DQ -> Reciprocal -> Q sequence into a single QDQGroup NodeUnit.
+// ReciprocalMulFusion must accept QDQGroup Reciprocal units and fuse the
+// whole sub-graph into a single ElementWiseDivide node.
+//
+// When commute=false  =>  Mul(numerator_qdq, recip_qdq)   [recip in slot 1]
+// When commute=true   =>  Mul(recip_qdq, numerator_qdq)   [recip in slot 0]
+template <typename QuantType>
+GetTestQDQModelFn<QuantType> BuildQDQGroupReciprocalMulTestCase(
+    const TestInputDef<float>& numerator_def,
+    const TestInputDef<float>& denominator_def,
+    bool commute = false,
+    bool use_contrib_qdq = false) {
+  return [numerator_def, denominator_def, commute, use_contrib_qdq](
+             ModelTestBuilder& builder,
+             std::vector<QuantParams<QuantType>>& output_qparams) -> void {
+    builder.graph_->set_name("qdq_group_reciprocal_mul_fusion_graph");
+
+    MakeTestInput<float>(builder, "numerator", numerator_def);
+    MakeTestInput<float>(builder, "denominator", denominator_def);
+
+    const QuantParams<QuantType> num_qparams = GetTestInputQuantParams<QuantType>(numerator_def);
+    const QuantParams<QuantType> den_qparams = GetTestInputQuantParams<QuantType>(denominator_def);
+
+    // Wrap inputs in QDQ pairs.
+    const std::string num_qdq = AddQDQNodePair<QuantType>(
+        builder, "qdq_num", "numerator", num_qparams.scale, num_qparams.zero_point, use_contrib_qdq);
+    const std::string den_qdq = AddQDQNodePair<QuantType>(
+        builder, "qdq_den", "denominator", den_qparams.scale, den_qparams.zero_point, use_contrib_qdq);
+
+    // den_qdq -> Reciprocal -> recip_out
+    builder.AddNode("Reciprocal_node",
+                    "Reciprocal",
+                    {den_qdq},
+                    {"recip_out"},
+                    kOnnxDomain);
+
+    // Wrap the Reciprocal output in a QDQ pair.  This causes the ORT graph
+    // partitioner to group the Q -> Reciprocal -> DQ sequence into a single
+    // QDQGroup NodeUnit.  ReciprocalMulFusion now accepts QDQGroup Reciprocal
+    // units and must fuse this pattern into a single ElementWiseDivide.
+    const QuantParams<QuantType> recip_qparams = GetTestInputQuantParams<QuantType>(denominator_def);
+    const std::string recip_qdq = AddQDQNodePair<QuantType>(
+        builder, "qdq_recip", "recip_out", recip_qparams.scale, recip_qparams.zero_point, use_contrib_qdq);
+
+    // recip_qdq feeds exactly ONE Mul node -- fusion must fire.
+    std::vector<std::string> mul_inputs = commute
+                                              ? std::vector<std::string>{recip_qdq, num_qdq}
+                                              : std::vector<std::string>{num_qdq, recip_qdq};
+
+    builder.AddNode("Mul_node",
+                    "Mul",
+                    mul_inputs,
+                    {"mul_out"},
+                    kOnnxDomain);
+
+    // Wrap Mul output in QDQ and expose as graph output.
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(
+        builder, "qdq_out", "mul_out",
+        output_qparams[0].scale, output_qparams[0].zero_point, use_contrib_qdq);
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Negative-case model builders
 // ---------------------------------------------------------------------------
 
 // Builds a QDQ graph where the Reciprocal output is wrapped in a QDQ pair
 // whose DQ output is then consumed by TWO Mul nodes.
 //
-// The fusion must NOT fire because GetOnlyChildOfType() requires the sole
-// consumer of the Reciprocal output to be a Mul node.  Here the sole consumer
-// of recip_out is a QuantizeLinear (Q) node, so GetOnlyChildOfType returns
-// nullptr and fusion is blocked.
+// The fusion must NOT fire because GetChildNodeUnitAllowQdq's single-consumer
+// guard detects that the Q node's output has two consumers (the two DQ nodes
+// feeding the two Mul nodes) and returns nullptr.
+//
+// With the fusion blocked, the QDQ-wrapped Reciprocal is lowered by
+// ReciprocalOpBuilder (reciprocal_op_builder.cc) as a standalone
+// ElementWiseDivide(1.0, denominator) node.  Each Mul node is lowered
+// independently as an ElementWiseMultiply node.
+//
+// Expected QNN graph:
+//   1 x ElementWiseDivide  (from ReciprocalOpBuilder, constant-1 numerator)
+//   2 x ElementWiseMultiply (Mul_A and Mul_B, lowered individually)
 //
 // Graph topology:
 //
@@ -255,12 +352,14 @@ GetTestQDQModelFn<QuantType> BuildQDQReciprocalMulNoFusionTestCase(
                     {"recip_out"},
                     kOnnxDomain);
 
-    // Wrap the Reciprocal output in a QDQ pair.  This means recip_out has
-    // exactly ONE consumer (the Q node), so the consumer-count check in
-    // TryFusion Step 3 passes.  However, GetOnlyChildOfType then looks for
-    // a Mul child of Reciprocal and finds a Q node instead — it returns
-    // nullptr, blocking the fusion.  All intermediate tensors remain
-    // quantized, so QNN HTP can finalize the graph without error.
+    // Wrap the Reciprocal output in a QDQ pair.  This causes the ORT graph
+    // partitioner to group the Q -> Reciprocal -> DQ sequence into a single
+    // QDQGroup NodeUnit.  The fusion is blocked NOT by the unit-type check
+    // (which now accepts QDQGroup) but by GetChildNodeUnitAllowQdq's
+    // single-consumer guard: the Q node's output feeds TWO DQ nodes (one
+    // for each Mul), so the guard returns nullptr and the fusion is skipped.
+    // All intermediate tensors remain quantized, so QNN HTP can finalize
+    // the graph without error.
     const QuantParams<QuantType> recip_qparams = GetTestInputQuantParams<QuantType>(denominator_def);
     const std::string recip_qdq = AddQDQNodePair<QuantType>(
         builder, "qdq_recip", "recip_out",
@@ -559,14 +658,82 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_FP16) {
 }
 
 // =============================================================================
+// QDQ uint8 tests -- QDQGroup Reciprocal (DQ -> Reciprocal -> Q)
+// =============================================================================
+
+// QDQ uint8, QDQGroup Reciprocal, standard Mul input order.
+// Verifies that a fully-quantized Reciprocal (wrapped in DQ -> Reciprocal -> Q)
+// is correctly fused into a single ElementWiseDivide node.  This is the
+// pattern produced by quantization tools for LayerNorm rstd computation.
+TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQGroup_U8_StandardOrder) {
+  const std::filesystem::path json_dir = "ReciprocalMulFusion_QDQGroup_U8_StandardOrder";
+  std::filesystem::remove_all(json_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_dir.string();
+
+  const auto numerator_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
+  const auto denominator_def = TestInputDef<float>({1, 2, 3, 4}, false, 0.5f, 2.0f);
+
+  TestQDQModelAccuracy(
+      BuildReciprocalMulTestCase(numerator_def, denominator_def, /*commute=*/false),
+      BuildQDQGroupReciprocalMulTestCase<uint8_t>(numerator_def, denominator_def, /*commute=*/false),
+      provider_options,
+      /*opset_version=*/13,
+      /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
+
+  // The QDQGroup Reciprocal fusion must have fired: one ElementWiseDivide,
+  // no standalone Reciprocal or separate Mul.
+  AssertOpInQnnGraph(json_dir, "ElementWiseDivide", /*count=*/1);
+}
+
+// QDQ uint8, QDQGroup Reciprocal, commuted Mul input order.
+TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQGroup_U8_CommutedOrder) {
+  const std::filesystem::path json_dir = "ReciprocalMulFusion_QDQGroup_U8_CommutedOrder";
+  std::filesystem::remove_all(json_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_dir.string();
+
+  const auto numerator_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
+  const auto denominator_def = TestInputDef<float>({1, 2, 3, 4}, false, 0.5f, 2.0f);
+
+  TestQDQModelAccuracy(
+      BuildReciprocalMulTestCase(numerator_def, denominator_def, /*commute=*/true),
+      BuildQDQGroupReciprocalMulTestCase<uint8_t>(numerator_def, denominator_def, /*commute=*/true),
+      provider_options,
+      /*opset_version=*/13,
+      /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
+
+  AssertOpInQnnGraph(json_dir, "ElementWiseDivide", /*count=*/1);
+}
+
+// =============================================================================
 // Negative / no-fusion tests
 // =============================================================================
 
-// When the Reciprocal output is also a graph output, the fusion still fires on
-// QNN HTP and produces a single ElementWiseDivide node.  The graph-output guard
-// in TryFusion Step 3 does not block the fusion in practice on this backend.
-TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_NoFusion_ReciprocalOutputIsGraphOutput) {
-  const std::filesystem::path json_dir = "ReciprocalMulFusion_NoFusion_ReciprocalOutputIsGraphOutput";
+// When the Reciprocal output is ALSO a graph output, GetOnlyChildOfType's
+// graph-output guard (Ort::ConstValueInfo::IsGraphOutput()) detects the
+// condition and returns nullptr, blocking the fusion.  The Reciprocal node
+// is then lowered by ReciprocalOpBuilder as a standalone
+// ElementWiseDivide(1.0, denominator) node, and the Mul node is lowered
+// independently as an ElementWiseMultiply node.
+//
+// Structural assertions that distinguish the op-builder path from the fusion:
+//   ElementWiseDivide   count=1  (ReciprocalOpBuilder: 1.0 / denominator)
+//   ElementWiseMultiply count=1  (standalone Mul node; fusion did NOT absorb it)
+//
+// If the fusion were to fire incorrectly, the Mul would be absorbed into the
+// Div and ElementWiseMultiply would be absent — the second assertion would
+// catch that regression.
+TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_ReciprocalOutputIsGraphOutput_NoFusion) {
+  const std::filesystem::path json_dir = "ReciprocalMulFusion_ReciprocalOutputIsGraphOutput_NoFusion";
   std::filesystem::remove_all(json_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_dir));
   auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
@@ -584,17 +751,35 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_NoFusion_ReciprocalOutputIsGraphO
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/2e-3f);
 
-  // Fusion fires — one ElementWiseDivide is present in the QNN graph.
-  AssertOpInQnnGraph(json_dir, "ElementWiseDivide", /*count=*/1);
+  // Fusion did NOT fire: Reciprocal was lowered by ReciprocalOpBuilder as a
+  // standalone ElementWiseDivide(1.0, denominator), and the Mul node was
+  // lowered independently as an ElementWiseMultiply.
+  AssertOpInQnnGraph(json_dir, "ElementWiseDivide",   /*count=*/1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", /*count=*/1);
 }
 
-// When the Reciprocal output is wrapped in a QDQ pair and the DQ output feeds
-// two Mul nodes, the fusion still fires on QNN HTP.  GetOnlyChildOfType finds
-// a Q node as the sole consumer of recip_out, but the QDQ group selector
-// resolves the Reciprocal into a SingleNode unit whose direct child is the
-// Q->DQ->Mul chain, so the fusion proceeds and emits one ElementWiseDivide.
-TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_NoFusion_QDQWrappedReciprocal) {
-  const std::filesystem::path json_dir = "ReciprocalMulFusion_NoFusion_QDQWrappedReciprocal";
+// When the Reciprocal output is wrapped in a QDQ pair, the ORT graph
+// partitioner groups the Q -> Reciprocal -> DQ sequence into a QDQGroup
+// NodeUnit.  ReciprocalMulFusion now accepts QDQGroup Reciprocal units, so
+// the unit-type check no longer blocks the fusion.  However, when the DQ
+// output feeds TWO Mul nodes, GetChildNodeUnitAllowQdq's single-consumer
+// guard detects the fan-out and returns nullptr, blocking the fusion.
+//
+// With the fusion blocked, the QDQ-wrapped Reciprocal is lowered by
+// ReciprocalOpBuilder as a standalone ElementWiseDivide(1.0, denominator)
+// node.  Each of the two Mul nodes is lowered independently as an
+// ElementWiseMultiply node.
+//
+// Structural assertions that distinguish the op-builder path from the fusion:
+//   ElementWiseDivide   count=1  (ReciprocalOpBuilder: 1.0 / denominator)
+//   ElementWiseMultiply count=2  (Mul_A and Mul_B lowered individually;
+//                                 fusion did NOT absorb either of them)
+//
+// If the fusion were to fire incorrectly, one or both Mul nodes would be
+// absorbed into a Div and ElementWiseMultiply count would drop below 2 --
+// the second assertion would catch that regression.
+TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQWrappedReciprocal_TwoConsumers_NoFusion) {
+  const std::filesystem::path json_dir = "ReciprocalMulFusion_QDQWrappedReciprocal_TwoConsumers_NoFusion";
   std::filesystem::remove_all(json_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_dir));
   auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
@@ -616,8 +801,11 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_NoFusion_QDQWrappedReciprocal) {
       /*opset_version=*/13,
       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
 
-  // Fusion fires — one ElementWiseDivide is present in the QNN graph.
-  AssertOpInQnnGraph(json_dir, "ElementWiseDivide", /*count=*/1);
+  // Fusion did NOT fire: Reciprocal was lowered by ReciprocalOpBuilder as a
+  // standalone ElementWiseDivide(1.0, denominator), and both Mul nodes were
+  // lowered independently as ElementWiseMultiply nodes.
+  AssertOpInQnnGraph(json_dir, "ElementWiseDivide",   /*count=*/1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", /*count=*/2);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

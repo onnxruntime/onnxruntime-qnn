@@ -3,6 +3,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 
@@ -37,7 +38,22 @@ Ort::Status ReciprocalOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrappe
   const auto& outputs = node_unit.Outputs();
   RETURN_IF_NOT(outputs.size() == 1, "Reciprocal operator must have exactly 1 output.");
 
-  // Check input type is float for CPU.
+  // On the HTP/NPU backend, unquantized (float32 or float16) Reciprocal nodes are NOT
+  // supported by this op builder.  The HTP backend cannot execute
+  // ElementWiseDivide(static_1.0, dynamic_x) with a static constant numerator.
+  // The only valid HTP path for float Reciprocal is via ReciprocalMulFusion, which
+  // fuses Reciprocal + Mul into a single ElementWiseDivide(numerator, denominator).
+  // Quantized (QDQ-wrapped) Reciprocal nodes are still handled here because the
+  // quantized constant 1.0 divisor is supported by the HTP backend.
+  if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
+    TensorInfo input_info{};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input_info));
+    RETURN_IF_NOT(input_info.quant_param.IsQuantized(),
+                  "QNN HTP backend does not support unquantized (float32/float16) Reciprocal. "
+                  "Use ReciprocalMulFusion (Reciprocal followed by Mul) for float inputs.");
+  }
+
+  // Check input type is float for CPU backend.
   RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, inputs[0].type, ""));
 
   return Ort::Status();
@@ -73,12 +89,12 @@ Ort::Status ReciprocalOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qn
     std::memcpy(divisor_data.data(), &quantized_divisor_value, element_size);
   } else if (divisor_qnn_data_type == QNN_DATATYPE_FLOAT_16) {
     // Ort::Float16_t(float) performs a proper round-to-nearest FP32->FP16
-    // conversion (via MLFloat16's constructor).  Copying through .val
-    // (the raw uint16_t bit-pattern) is the established codebase convention
-    // for serialising FP16 constants into a byte buffer.
+    // conversion (via MLFloat16's constructor).  Copy the whole object rather
+    // than reaching into the internal .val field; Ort::Float16_t is POD-like
+    // so sizeof(Ort::Float16_t) == sizeof(.val) and the result is identical.
     Ort::Float16_t one_fp16(1.0f);
     divisor_data.resize(sizeof(Ort::Float16_t));
-    std::memcpy(divisor_data.data(), &one_fp16.val, sizeof(Ort::Float16_t));
+    std::memcpy(divisor_data.data(), &one_fp16, sizeof(Ort::Float16_t));
   } else {
     // Create a float divisor tensor
     divisor_data.resize(sizeof(float));
