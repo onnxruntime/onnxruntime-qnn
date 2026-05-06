@@ -754,7 +754,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_ReciprocalOutputIsGraphOutput_NoF
   // Fusion did NOT fire: Reciprocal was lowered by ReciprocalOpBuilder as a
   // standalone ElementWiseDivide(1.0, denominator), and the Mul node was
   // lowered independently as an ElementWiseMultiply.
-  AssertOpInQnnGraph(json_dir, "ElementWiseDivide",   /*count=*/1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseDivide", /*count=*/1);
   AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", /*count=*/1);
 }
 
@@ -804,7 +804,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQWrappedReciprocal_TwoConsumers
   // Fusion did NOT fire: Reciprocal was lowered by ReciprocalOpBuilder as a
   // standalone ElementWiseDivide(1.0, denominator), and both Mul nodes were
   // lowered independently as ElementWiseMultiply nodes.
-  AssertOpInQnnGraph(json_dir, "ElementWiseDivide",   /*count=*/1);
+  AssertOpInQnnGraph(json_dir, "ElementWiseDivide", /*count=*/1);
   AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", /*count=*/2);
 }
 
