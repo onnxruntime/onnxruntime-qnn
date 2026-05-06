@@ -19,6 +19,10 @@ on:
         description: "Version suffix for released package. If set, the specified suffix will be appended to the version string."
         type: string
         default: ""
+      linux_aarch64_manylinux_2_34_target_py_vsns:
+        description: "JSON list of Python versions to build for aarch64 manylinux_2_34"
+        type: string
+        default: "['3.11','3.12','3.13','3.14']"
       windows_target_archs:
         description: "JSON list of Windows architectures to build"
         type: string
@@ -40,15 +44,16 @@ jobs:
     uses: ./.github/workflows/qualcomm-internal-build-artifacts.yml
     secrets: inherit
     with:
-      build_linux_x86_64: false
-      build_android_aarch64_aar: true
-      linux_aarch64_manylinux_2_34_target_py_vsns: "['3.11','3.12','3.13','3.14']"
-      windows_target_archs: ${{ inputs.windows_target_archs }}
-      windows_target_py_vsns: ${{ inputs.windows_target_py_vsns }}
-      windows_arm64_build_nuget: true
-      windows_arm64_build_archive: true
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
+      build_android_aarch64: false
+      build_android_aarch64_aar: true
+      build_linux_aarch64_oe_gcc11_2: false
+      build_linux_x86_64: false
+      linux_aarch64_manylinux_2_34_target_py_vsns: ${{ inputs.linux_aarch64_manylinux_2_34_target_py_vsns }}
+      windows_target_archs: ${{ inputs.windows_target_archs }}
+      windows_target_py_vsns: ${{ inputs.windows_target_py_vsns }}
+      windows_arm64_build_archive: true
 
   upload-wheel-workflow:
     name: "Upload python wheel artifacts to Artifactory"
@@ -226,7 +231,7 @@ jobs:
       - name: Download NuGet from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
-          name: windows-arm64-py3.11-nuget
+          name: windows-arm64x-py3.11-nuget
 
       - name: Verify NuGet artifact
         shell: powershell
@@ -252,7 +257,7 @@ jobs:
           uv pip install -r .\qcom\requirements.txt
 
           . ".\qcom\scripts\upleveling\upload_nupkg_to_artifactory.ps1" `
-            -InputDir "${{ github.workspace }}\build\windows-arm64\Release"
+            -InputDir "${{ github.workspace }}\build\windows-arm64x\Release"
 
   upload-zip-workflow:
     name: "Upload zip artifacts to Artifactory"
