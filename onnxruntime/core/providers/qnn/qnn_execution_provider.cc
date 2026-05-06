@@ -489,6 +489,24 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("User specified option - stop share EP contexts across sessions: " + stop_share_ep_contexts_str).c_str());
+
+    std::string prepare_only_str;
+    GetSessionConfigEntryOrDefault(ort_api,
+                                   session_options_,
+                                   "ep.context_prepare_only",
+                                   "0",
+                                   prepare_only_str);
+    prepare_only_ = prepare_only_str == "1";
+    ORT_CXX_LOG(logger_,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                ("User specified option - prepare only: " + prepare_only_str).c_str());
+
+    if (prepare_only_ && !context_cache_enabled_) {
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_WARNING,
+                  "prepare_only=1 requires context cache; auto-enabling ep.context_enable.");
+      context_cache_enabled_ = true;
+    }
   }
 
   std::string backend_path = kDefaultHtpBackendPath;
@@ -2061,7 +2079,9 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
       total_finalize_time += std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
 #endif
 
-      RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(ep->logger_));
+      if (!ep->prepare_only_) {
+        RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(ep->logger_));
+      }
 
       ep->qnn_models_.emplace(fused_node_name, std::move(qnn_model));
 
@@ -2090,7 +2110,9 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
       RETURN_IF_NOT_OK(std::move(model_info.result));
 
       auto qnn_model = std::move(model_info.model);
-      RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(ep->logger_));
+      if (!ep->prepare_only_) {
+        RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(ep->logger_));
+      }
 
       ep->qnn_models_.emplace(model_info.model_name, std::move(qnn_model));
 
@@ -2106,6 +2128,13 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
 
   if (ep->context_cache_enabled_) {
     RETURN_IF_NOT_NULL(ep->CreateEPContextNodes(graphs[0], fused_nodes, count, ep_context_nodes));
+  }
+
+  if (ep->prepare_only_) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
+                "prepare_only mode: context saved. Releasing QNN device resources.");
+    ep->qnn_models_.clear();
+    ep->qnn_backend_manager_.reset();
   }
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
   end = std::chrono::steady_clock::now();
@@ -2219,6 +2248,10 @@ bool QnnEp::GetPerThreadHtpPowerConfigs(qnn::PerThreadHtpPowerConfigs_t& per_thr
 OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const ::OrtRunOptions* run_options) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
+  if (ep->prepare_only_) {
+    return nullptr;
+  }
+
   auto backend_type = ep->qnn_backend_manager_->GetQnnBackendType();
   if (qnn::QnnBackendType::HTP != backend_type && qnn::QnnBackendType::DSP != backend_type) {
     return nullptr;
@@ -2249,6 +2282,10 @@ OrtStatus* ORT_API_CALL QnnEp::OnRunEndImpl(_In_ OrtEp* this_ptr,
                                             _In_ const ::OrtRunOptions* /*run_options*/,
                                             _In_ bool /*sync_stream*/) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+
+  if (ep->prepare_only_) {
+    return nullptr;
+  }
 
   auto backend_type = ep->qnn_backend_manager_->GetQnnBackendType();
   if (qnn::QnnBackendType::HTP != backend_type && qnn::QnnBackendType::DSP != backend_type) {
@@ -2284,6 +2321,10 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
                                                      _In_reads_(num_options) const char* const* option_values,
                                                      _In_ size_t num_options) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
+
+  if (ep->prepare_only_) {
+    return nullptr;
+  }
 
   for (size_t opt_idx = 0; opt_idx < num_options; ++opt_idx) {
     std::string key(option_keys[opt_idx]);
@@ -2373,6 +2414,12 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
                                                          size_t /*num_devices*/,
                                                          const char* compatibility_info,
                                                          OrtCompiledModelCompatibility* model_compatibility) noexcept {
+  if (qnn_backend_manager_ == nullptr) {
+    // Backend has been released (e.g., prepare_only mode); cannot validate.
+    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
+    return nullptr;
+  }
+
   std::string info_string(compatibility_info);
   if (info_string.empty()) {
     *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
@@ -2529,6 +2576,11 @@ OrtStatus* QnnEp::QnnNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_p
   auto* node_compute_info = static_cast<QnnNodeComputeInfo*>(this_ptr);
   QnnEp& ep = node_compute_info->ep;
 
+  if (ep.prepare_only_) {
+    *compute_state = nullptr;
+    return nullptr;
+  }
+
   std::string fused_node_name = ep.ep_api.NodeComputeContext_NodeName(compute_context);
   auto qnn_model_it = ep.qnn_models_.find(fused_node_name);
 
@@ -2553,6 +2605,12 @@ OrtStatus* QnnEp::QnnNodeComputeInfo::ComputeImpl(OrtNodeComputeInfo* this_ptr,
                                                   OrtKernelContext* kernel_context) {
   auto* node_compute_info = static_cast<QnnNodeComputeInfo*>(this_ptr);
   QnnEp& ep = node_compute_info->ep;
+
+  if (ep.prepare_only_) {
+    return ep.ort_api.CreateStatus(ORT_EP_FAIL,
+                                   "QNN EP is in prepare_only mode. Session.Run() is not supported. "
+                                   "Load the generated context model for inference.");
+  }
 
   qnn::QnnModel* model = reinterpret_cast<qnn::QnnModel*>(compute_state);
   RETURN_IF_NOT_OK(model->ExecuteGraph(kernel_context, ep.logger_));
