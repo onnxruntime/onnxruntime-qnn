@@ -350,8 +350,6 @@ block()
     target_compile_definitions(onnxruntime_provider_test PRIVATE ORT_UNIT_TEST_BUILD)
   endif()
 
-  target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT})
-
   # For onnxruntime_cxx_api.h
   target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session)
 

@@ -53,7 +53,7 @@ TEST(QnnEP, TestDisableCPUFallback_BackendNotFound) {
   Ort::SessionOptions so;
   so.AddConfigEntry(kOrtSessionOptionsDisableCPUEPFallback, "1");  // Disable fallback to the CPU EP.
 
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "DoesNotExist.dll";  // Invalid backend path!
 #else
@@ -61,7 +61,7 @@ TEST(QnnEP, TestDisableCPUFallback_BackendNotFound) {
 #endif
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "constant_floats.onnx";
 
@@ -82,7 +82,7 @@ TEST(QnnEP, TestDisableCPUFallback_ModelNotFullySupported) {
   Ort::SessionOptions so;
   so.AddConfigEntry(kOrtSessionOptionsDisableCPUEPFallback, "1");  // Disable fallback to the CPU EP.
 
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnCpu.dll";
 #else
@@ -91,7 +91,7 @@ TEST(QnnEP, TestDisableCPUFallback_ModelNotFullySupported) {
   options["offload_graph_io_quantization"] = "0";
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   // QNN EP doesn't support MatMulInteger.
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "qnn_ep_partial_support.onnx";
@@ -132,7 +132,7 @@ TEST(QnnEP, TestDisableCPUFallback_TryingToRunOnQnnCPU) {
   Ort::SessionOptions so;
   so.AddConfigEntry(kOrtSessionOptionsDisableCPUEPFallback, "1");  // Disable fallback to the CPU EP.
 
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnCpu.dll";
 #else
@@ -141,7 +141,7 @@ TEST(QnnEP, TestDisableCPUFallback_TryingToRunOnQnnCPU) {
   options["offload_graph_io_quantization"] = "0";
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   try {
     Ort::Session session(*ort_env, model_data.data(), model_data.size(), so);
@@ -160,7 +160,7 @@ TEST(QnnEP, TestDisableCPUFallback_ConflictingConfig) {
   Ort::SessionOptions so;
   so.AddConfigEntry(kOrtSessionOptionsDisableCPUEPFallback, "1");  // Disable fallback to the CPU EP.
 
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnCpu.dll";
 #else
@@ -169,7 +169,7 @@ TEST(QnnEP, TestDisableCPUFallback_ConflictingConfig) {
   options["offload_graph_io_quantization"] = "0";
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   // Invalid! Adds CPU EP to session, but also disables CPU fallback.
   so.AppendExecutionProvider_CPU(1);
@@ -192,7 +192,7 @@ TEST(QnnEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
   // Add this session option for GetEpGraphAssignmentInfo in SessionHasEp
   so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
 
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
   options["backend_type"] = "cpu";
 #if defined(_WIN32)
   options["backend_path"] = "QnnCpu.dll";
@@ -201,7 +201,7 @@ TEST(QnnEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
 #endif
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "constant_floats.onnx";
 
@@ -209,7 +209,7 @@ TEST(QnnEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
     Ort::Session session(*ort_env, ort_model_path, so);
     // FAIL();
     // TODO: Replace the following assertion with FAIL() once upstream completed.
-    ASSERT_FALSE(SessionHasEp(session, onnxruntime::kQnnExecutionProvider))
+    ASSERT_FALSE(SessionHasEp(session, kQnnExecutionProvider))
         << "QNN EP was found in registered providers for session "
         << "when both backend_type and backend_path were specified, which should not happen.";
   } catch (const Ort::Exception& e) {
@@ -223,7 +223,7 @@ TEST(QnnEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
 // Loads a simple ONNX model that adds floats.
 TEST_F(QnnHTPBackendTests, TestAddEpUsingPublicApi) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnHtp.dll";
 #else
@@ -249,12 +249,12 @@ TEST_F(QnnHTPBackendTests, TestAddEpUsingPublicApi) {
 #endif
 
     RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
     Ort::Session session(*ort_env, ort_model_path, so);
-    ASSERT_TRUE(SessionHasEp(session, onnxruntime::kQnnExecutionProvider))
+    ASSERT_TRUE(SessionHasEp(session, kQnnExecutionProvider))
         << "QNN EP was not found in registered providers for session "
-        << "when added to session with name '" << onnxruntime::kQnnExecutionProvider << "'";
+        << "when added to session with name '" << kQnnExecutionProvider << "'";
   }
 }
 
@@ -262,7 +262,7 @@ TEST_F(QnnHTPBackendTests, TestAddEpUsingPublicApi) {
 // errcode = 2 - The system cannot find the file specified.
 TEST_F(QnnHTPBackendTests, TestConvWithExternalData) {
   Ort::SessionOptions so;
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnHtp.dll";
 #else
@@ -277,7 +277,7 @@ TEST_F(QnnHTPBackendTests, TestConvWithExternalData) {
 #endif
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   so.AppendExecutionProvider_CPU(1);
 
@@ -293,7 +293,7 @@ TEST_F(QnnHTPBackendTests, RunConvInt4Model) {
 
   so.AddConfigEntry(kOrtSessionOptionsDisableCPUEPFallback, "1");  // Disable fallback to the CPU EP.
   so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
 
 #if defined(_WIN32)
   options["backend_path"] = "QnnHtp.dll";
@@ -308,7 +308,7 @@ TEST_F(QnnHTPBackendTests, RunConvInt4Model) {
 #endif
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "conv.int4_weights.qdq.onnx";
   {
@@ -367,7 +367,7 @@ static std::string ToBackendLibName(TestBackend backend) {
   }
 }
 
-static void AddSerializerConfigs(TestBackend serializer_backend, onnxruntime::ProviderOptions& options) {
+static void AddSerializerConfigs(TestBackend serializer_backend, ProviderOptions& options) {
   std::string serializer_lib = ToBackendLibName(serializer_backend);
   std::string serializer_path_key;
 
@@ -407,7 +407,7 @@ static Ort::Session InitNHWCResizeModel(const ORTCHAR_T* ort_model_path,
   so.AddConfigEntry(kOrtSessionOptionsConfigStrictShapeTypeInference, "1");
   so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
 
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
   options["offload_graph_io_quantization"] = "0";
 
   std::string backend_lib = ToBackendLibName(backend);
@@ -449,7 +449,7 @@ static Ort::Session InitNHWCResizeModel(const ORTCHAR_T* ort_model_path,
     options["device_id"] = std::move(device_id);
   }
 
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
   Ort::Session session(*ort_env, ort_model_path, so);
 
   return session;
@@ -686,7 +686,7 @@ TEST_F(QnnCPUBackendTests, MultithreadSessionRun) {
                                           TestInputDef<float>(shape, false, input_data)),
                       "add3.f32");
 
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnCpu.dll";
 #else
@@ -697,7 +697,7 @@ TEST_F(QnnCPUBackendTests, MultithreadSessionRun) {
   session_opts.SetLogId("logger0");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, session_opts, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, session_opts, kQnnExecutionProvider, options);
 
   {
     Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts);
@@ -763,7 +763,7 @@ TEST_F(QnnHTPBackendTests, MultithreadSessionRun) {
                                                    TestInputDef<float>(shape, false, input_data)),
                       "add3.qdq");
 
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnHtp.dll";
 #else
@@ -781,7 +781,7 @@ TEST_F(QnnHTPBackendTests, MultithreadSessionRun) {
   session_opts.SetLogId("logger0");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, session_opts, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, session_opts, kQnnExecutionProvider, options);
 
   {
     Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts);
@@ -815,7 +815,7 @@ TEST_F(QnnHTPBackendTests, MultithreadHtpPowerCfgSessionRunOption) {
                                                    TestInputDef<float>(shape, false, input_data)),
                       "add3.qdq");
 
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnHtp.dll";
 #else
@@ -837,7 +837,7 @@ TEST_F(QnnHTPBackendTests, MultithreadHtpPowerCfgSessionRunOption) {
   session_opts.SetLogId("logger0");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, session_opts, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, session_opts, kQnnExecutionProvider, options);
 
   {
     Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts);
@@ -877,7 +877,7 @@ TEST_F(QnnHTPBackendTests, MultithreadDefaultHtpPowerCfgFromEpOption) {
                                                    TestInputDef<float>(shape, false, input_data)),
                       "add3.qdq");
 
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnHtp.dll";
 #else
@@ -896,7 +896,7 @@ TEST_F(QnnHTPBackendTests, MultithreadDefaultHtpPowerCfgFromEpOption) {
   session_opts.SetLogId("logger0");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, session_opts, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, session_opts, kQnnExecutionProvider, options);
 
   {
     Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts);
@@ -930,7 +930,7 @@ TEST_F(QnnHTPBackendTests, MultithreadHtpPowerCfgDefaultAndRunOption) {
                                                    TestInputDef<float>(shape, false, input_data)),
                       "add3.qdq");
 
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnHtp.dll";
 #else
@@ -953,7 +953,7 @@ TEST_F(QnnHTPBackendTests, MultithreadHtpPowerCfgDefaultAndRunOption) {
   session_opts.SetLogId("logger0");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, session_opts, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, session_opts, kQnnExecutionProvider, options);
 
   {
     Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), session_opts);
@@ -1172,7 +1172,8 @@ void VerifyFileExistsAndIsNonEmpty(const std::string& filepath) {
 
 TEST_F(QnnHTPBackendTests, ProfilingTest) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  onnxruntime::ProviderOptions provider_options;
+  ProviderOptions provider_options;
+
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 #if defined(_WIN32)
@@ -1205,7 +1206,8 @@ TEST_F(QnnHTPBackendTests, ProfilingTest) {
 
 TEST_F(QnnHTPBackendTests, OptraceTest) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
-  onnxruntime::ProviderOptions provider_options;
+  ProviderOptions provider_options;
+
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 #if defined(_WIN32)
@@ -1382,13 +1384,12 @@ TEST_F(QnnHTPBackendTests, EPRejectsDynamicShapesF32) {
                   ExpectedEPNodeAssignment::Some,
                   /*abs_err*/ 1e-4f,
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                  /*verify_output*/ true,
-                  &ep_graph_checker);
+                  /*verify_output*/ true);
 }
 
 TEST_F(QnnHTPBackendTests, DumpJsonQNNGraph) {
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnHtp.dll";
 #else
@@ -1412,7 +1413,7 @@ TEST_F(QnnHTPBackendTests, DumpJsonQNNGraph) {
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   {
     Ort::Session session(*ort_env, ort_model_path, so);
@@ -1518,7 +1519,6 @@ TEST_F(QnnHTPBackendTests, EPOffloadsGraphIOQuantDequant) {
   for (auto op_type : op_types) {
     for (int offload_io_quant = 0; offload_io_quant <= 1; offload_io_quant++) {
       provider_options["offload_graph_io_quantization"] = offload_io_quant ? "1" : "0";
-      auto graph_checker = graph_checker_builder(offload_io_quant);
       auto expected_ep_assignment = offload_io_quant ? ExpectedEPNodeAssignment::Some : ExpectedEPNodeAssignment::All;
 
       float min_val = (op_type == "Sqrt") ? 0.0f : -10.0f;
@@ -1534,8 +1534,7 @@ TEST_F(QnnHTPBackendTests, EPOffloadsGraphIOQuantDequant) {
                                     OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                                     /*qnn_ctx_model_path*/ "",
                                     /*session_option_pairs*/ {},
-                                    /*graph_optimization_level*/ std::nullopt,
-                                    &graph_checker);
+                                    /*graph_optimization_level*/ std::nullopt);
     }
   }
 }
@@ -1598,7 +1597,7 @@ TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationTensorNameOverrides) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
   so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   {
     Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), so);
@@ -1649,7 +1648,7 @@ TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationTensorNameOverrides) {
 TEST_F(QnnHTPBackendTests, LoadingAndUnloadingOfQnnLibrary_FixSegFault) {
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx";
 
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
   options["backend_type"] = "htp";
   options["offload_graph_io_quantization"] = "0";
 
@@ -1662,7 +1661,7 @@ TEST_F(QnnHTPBackendTests, LoadingAndUnloadingOfQnnLibrary_FixSegFault) {
   {
     RegisteredEpDeviceUniquePtr registered_ep_device;
     Ort::SessionOptions so;
-    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
     EXPECT_NO_THROW(Ort::Session session(*ort_env, ort_model_path, so));
   }
@@ -1671,7 +1670,7 @@ TEST_F(QnnHTPBackendTests, LoadingAndUnloadingOfQnnLibrary_FixSegFault) {
   {
     RegisteredEpDeviceUniquePtr registered_ep_device;
     Ort::SessionOptions so;
-    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
     EXPECT_NO_THROW(Ort::Session session(*ort_env, ort_model_path, so));
   }
@@ -1854,7 +1853,7 @@ static bool CreateSessionWithQnnEpAndQnnHtpSharedMemoryAllocator(RegisteredEpDev
   const char* backend_path = use_htp_backend ? "libQnnHtp.so" : "libQnnCpu.so";
 #endif
 
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
   options["backend_path"] = backend_path;
   options["enable_htp_shared_memory_allocator"] = "1";
 
@@ -1865,7 +1864,7 @@ static bool CreateSessionWithQnnEpAndQnnHtpSharedMemoryAllocator(RegisteredEpDev
 #endif
 
   Ort::SessionOptions session_options;
-  RegisterQnnEpLibrary(registered_ep_device, session_options, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, options);
 
   try {
     session = Ort::Session{*ort_env, model_path, session_options};
@@ -2019,7 +2018,7 @@ TEST_F(QnnHTPBackendTests, io_binding_qnn_htp_shared) {
 // - However, these remaining inputs still appear in the graph inputs,
 //   resulting in a discrepancy in the input quantities.
 TEST_F(QnnHTPBackendTests, TestMismatchedGraphInputAndTensorWrapperCount) {
-  onnxruntime::ProviderOptions provider_options;
+  ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
   auto input_defs = {TestInputDef<float>({1, 3, 10, 10}, false, -10.0f, 10.0f),
@@ -2069,7 +2068,7 @@ TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationContextBinaryRoundTrip) {
     so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_model_file.c_str());
 
     RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
     Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), so);
     ASSERT_TRUE(std::filesystem::exists(ctx_model_file)) << "Context binary not generated";
@@ -2080,7 +2079,7 @@ TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationContextBinaryRoundTrip) {
     so2.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_model_file.c_str());
 
     RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so2, onnxruntime::kQnnExecutionProvider, provider_options);
+    RegisterQnnEpLibrary(registered_ep_device, so2, kQnnExecutionProvider, provider_options);
 
     std::ifstream ifs(ctx_model_file, std::ios::binary);
     std::string ctx_data((std::istreambuf_iterator<char>(ifs)), std::istreambuf_iterator<char>());
@@ -2202,7 +2201,7 @@ TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInput) {
   Ort::SessionOptions so;
   so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
 
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnCpu.dll";
 #else
@@ -2218,7 +2217,7 @@ TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInput) {
   options["dump_json_qnn_graph"] = "1";
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   {
     Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), so);
@@ -2296,7 +2295,7 @@ TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInputOffloadGraph
   Ort::SessionOptions so;
   so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
 
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnCpu.dll";
 #else
@@ -2313,7 +2312,7 @@ TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInputOffloadGraph
   options["dump_json_qnn_graph"] = "1";
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   {
     Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), so);
@@ -2394,7 +2393,7 @@ TEST_F(QnnCPUBackendTests, OffloadGraphIoQuantizationMultipleQDQPairsOnGraphInpu
   Ort::SessionOptions so;
   so.SetGraphOptimizationLevel(ORT_DISABLE_ALL);
 
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnCpu.dll";
 #else
@@ -2407,7 +2406,7 @@ TEST_F(QnnCPUBackendTests, OffloadGraphIoQuantizationMultipleQDQPairsOnGraphInpu
 #endif
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), so);
 
@@ -2479,7 +2478,7 @@ TEST_F(QnnCPUBackendTests, GraphInputOutputOrderMatchesOnnx) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
   so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   {
     Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), so);
@@ -2600,7 +2599,7 @@ TEST_F(QnnCPUBackendTests, GraphInputOutputOrderMatchesOnnxOffloadGraphIoQuantiz
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
   so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   {
     Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), so);

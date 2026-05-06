@@ -18,7 +18,6 @@
 #include "test/unittest_util/qdq_test_utils.h"
 #include "test/util/include/test_utils.h"
 #include "test/util/include/test/test_environment.h"
-#include "test/util/include/default_providers.h"
 
 #include "gtest/gtest.h"
 
@@ -40,6 +39,25 @@ inline bool ConditionalCheckAndSkipTestOnLinuxARM64(const ProviderOptions& qnn_o
                                                     QnnHtpDevice_Arch_t arch,
                                                     std::string_view test_type,
                                                     std::string& skip_reason);
+
+constexpr const char* kOnnxDomain = "";
+constexpr const char* kQnnExecutionProvider = "QNNExecutionProvider";
+
+#ifndef ORT_UNUSED_PARAMETER
+#define ORT_UNUSED_PARAMETER(x) (void)(x)
+#endif
+
+#ifndef ORT_HANDLE_EXCEPTION
+#define ORT_HANDLE_EXCEPTION(func) func()
+#endif
+
+inline gsl::span<const std::byte> AsByteSpan(const void* data, size_t size) {
+  return gsl::span<const std::byte>(reinterpret_cast<const std::byte*>(data), size);
+}
+
+inline gsl::span<const int64_t> AsSpan(std::initializer_list<int64_t> list) {
+  return gsl::span<const int64_t>(list.begin(), list.size());
+}
 
 // Signature for function that builds a float32 model.
 using GetTestModelFn = std::function<void(ModelTestBuilder& builder)>;
@@ -586,7 +604,6 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
  * \param output_vals Initialized to the inference results.
  * \param is_qnn_ep Ture: QNN EP is used. False: CPU EP is used (default).
  * \param session_option_pairs extra session options.
- * \param graph_checker Function called on the Graph.
  */
 void InferenceModelCPU(const std::string& model_data,
                        const char* log_id,
@@ -1011,8 +1028,7 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                    qnn_qdq_outputs,
                    log_severity,
                    session_option_pairs,
-                   graph_optimization_level,
-                   qnn_ep_graph_checker);
+                   graph_optimization_level);
   }
 
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
@@ -1053,11 +1069,11 @@ inline void VerifyFp16Output(const std::vector<Ort::Value>& cpu_f16_outputs,
 
     const size_t num_vals = output_vals[i].size();
     gsl::span<const float> cpu_f32_vals = output_vals[i];
-    const MLFloat16* cpu_f16_data = cpu_f16_outputs[i].GetTensorData<MLFloat16>();
-    const MLFloat16* qnn_f16_data = qnn_f16_outputs[i].GetTensorData<MLFloat16>();
+    const Ort::Float16_t* cpu_f16_data = cpu_f16_outputs[i].GetTensorData<Ort::Float16_t>();
+    const Ort::Float16_t* qnn_f16_data = qnn_f16_outputs[i].GetTensorData<Ort::Float16_t>();
     // Create spans over the data
-    gsl::span<const MLFloat16> cpu_f16_vals(cpu_f16_data, cpu_f16_info.GetElementCount());
-    gsl::span<const MLFloat16> qnn_f16_vals(qnn_f16_data, qnn_f16_info.GetElementCount());
+    gsl::span<const Ort::Float16_t> cpu_f16_vals(cpu_f16_data, cpu_f16_info.GetElementCount());
+    gsl::span<const Ort::Float16_t> qnn_f16_vals(qnn_f16_data, qnn_f16_info.GetElementCount());
 
     ASSERT_EQ(num_vals, cpu_f16_vals.size());
     ASSERT_EQ(num_vals, qnn_f16_vals.size());
@@ -1281,7 +1297,7 @@ template <typename T>
 inline void MakeTestInput(ModelTestBuilder& builder,
                           std::string name,
                           const TestInputDef<T>& input_def,
-                          AllocatorPtr allocator = nullptr) {
+                          void* allocator = nullptr) {
   const auto& shape = input_def.GetShape();
   const bool is_initializer = input_def.IsInitializer();
 
@@ -1310,7 +1326,7 @@ template <>
 inline void MakeTestInput(ModelTestBuilder& builder,
                           std::string name,
                           const TestInputDef<bool>& input_def,
-                          AllocatorPtr allocator) {
+                          void* allocator) {
   const auto& shape = input_def.GetShape();
   const bool is_initializer = input_def.IsInitializer();
 
@@ -1360,8 +1376,8 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
                                       const std::vector<TestInputDef<InputType1>>& input_defs_1,
                                       const std::vector<TestInputDef<InputType2>>& input_defs_2,
                                       const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                      const std::string& op_domain = kOnnxDomain,
-                                      AllocatorPtr input_allocator = nullptr) {
+                                      const std::string& op_domain = "",
+                                      void* input_allocator = nullptr) {
   return [node_name, op_type, input_defs_1, input_defs_2, attrs, op_domain, input_allocator](ModelTestBuilder& builder) {
     std::vector<std::string> op_input_names;
     op_input_names.reserve(input_defs_1.size() + input_defs_2.size());
@@ -1400,8 +1416,8 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
                                       const std::vector<TestInputDef<InputType2>>& input_defs_2,
                                       const std::vector<TestInputDef<InputType1>>& input_defs_3,
                                       const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                      const std::string& op_domain = kOnnxDomain,
-                                      AllocatorPtr input_allocator = nullptr) {
+                                      const std::string& op_domain = "",
+                                      void* input_allocator = nullptr) {
   return [node_name, op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain, input_allocator](ModelTestBuilder& builder) {
     std::vector<std::string> op_input_names;
     op_input_names.reserve(input_defs_1.size() + input_defs_2.size() + input_defs_3.size());
@@ -1454,9 +1470,9 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     const std::vector<TestInputDef<float>>& quant_input_defs,
     const std::vector<TestInputDef<OtherInputType>>& non_quant_input_defs,
     const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-    const std::string& op_domain = kOnnxDomain,
+    const std::string& op_domain = "",
     bool use_contrib_qdq = false,
-    AllocatorPtr input_allocator = nullptr) {
+    void* input_allocator = nullptr) {
   return [node_name, op_type, quant_input_defs, non_quant_input_defs, attrs, op_domain,
           use_contrib_qdq, input_allocator](
              ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
@@ -1504,9 +1520,9 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     const std::vector<TestInputDef<OtherInputType>>& non_quant_input_defs,
     const std::vector<TestInputDef<float>>& quant_input_defs_2,
     const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-    const std::string& op_domain = kOnnxDomain,
+    const std::string& op_domain = "",
     bool use_contrib_qdq = false,
-    AllocatorPtr input_allocator = nullptr,
+    void* input_allocator = nullptr,
     bool combine_quant_inputs_qparams = false) {
   return [node_name, op_type, quant_input_defs, non_quant_input_defs, quant_input_defs_2, attrs, op_domain,
           use_contrib_qdq, input_allocator, combine_quant_inputs_qparams](

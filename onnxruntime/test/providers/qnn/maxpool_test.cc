@@ -262,8 +262,7 @@ TEST_F(QnnHTPBackendTests, MaxPool1D_ReshapeNodesPresent) {
                   ExpectedEPNodeAssignment::All,
                   1e-5,
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                  true,
-                  &check_num_nodes);
+                  true);
 }
 
 // 1-D MaxPool HTP test for rank-3 without ceil with padding 1

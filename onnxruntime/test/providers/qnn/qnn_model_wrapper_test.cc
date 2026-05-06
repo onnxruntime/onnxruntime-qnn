@@ -11,7 +11,6 @@
 
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_def.h"
-#include "test/util/include/default_providers.h"
 #include "test/util/include/test_environment.h"
 
 using namespace onnxruntime;

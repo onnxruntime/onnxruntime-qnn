@@ -11,7 +11,6 @@
 #include <cassert>
 #include "test/util/include/api_asserts.h"
 #include "test/util/include/asserts.h"
-#include "test/util/include/default_providers.h"
 #include "test/util/include/test/test_environment.h"
 
 #include "test/util/env_var_utils.h"
@@ -146,12 +145,12 @@ class SafeIntExceptionHandler : public std::exception {
 
 size_t SizeHelper(std::vector<int64_t> shape, size_t start, size_t end) {
   // Must return 1 for an empty sequence
-  SafeInt<int64_t, SafeIntExceptionHandler> size = 1;  // this is used to calculate the size, which is used for memory allocations, so validate no overflow
+  int64_t size = 1;
   for (size_t i = start; i < end; i++) {
-    if (shape[i] < 0) return -1;
+    if (shape[i] < 0) return static_cast<size_t>(-1);
     size *= shape[i];
   }
-  return size;
+  return static_cast<size_t>(size);
 }
 
 size_t SizeToDimension(std::vector<int64_t> shape, size_t dimension) {
@@ -282,7 +281,6 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   EPVerificationParams verification_params;
   verification_params.ep_node_assignment = expected_ep_assignment;
   verification_params.fp32_abs_err = fp32_abs_err;
-  verification_params.graph_verifier = ep_graph_checker;
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 

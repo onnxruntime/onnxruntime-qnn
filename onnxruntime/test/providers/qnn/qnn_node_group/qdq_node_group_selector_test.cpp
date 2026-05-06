@@ -5,11 +5,10 @@
 
 #include <string>
 
-#include "onnxruntime_session_options_config_keys.h"
-
 #include "test/providers/qnn/qnn_test_utils.h"
 
 #include "gtest/gtest.h"
+#include "onnxruntime_session_options_config_keys.h"
 
 namespace onnxruntime {
 namespace test {

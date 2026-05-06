@@ -69,12 +69,12 @@ class QnnDeviceCompatibilityTests : public ::testing::Test {
 
 // Test that CPU devices are compatible
 TEST_F(QnnDeviceCompatibilityTests, CPUDeviceIsCompatible) {
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
   options["backend_type"] = "cpu";
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   ASSERT_NE(registered_ep_device, nullptr);
 
@@ -84,7 +84,7 @@ TEST_F(QnnDeviceCompatibilityTests, CPUDeviceIsCompatible) {
   // Check compatibility using the ORT C API
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
+      env_, kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   // Verify compatible (no incompatibility reasons)
@@ -101,12 +101,12 @@ TEST_F(QnnDeviceCompatibilityTests, CPUDeviceIsCompatible) {
 
 // Test that NPU devices with Qualcomm vendor ID are compatible
 TEST_F(QnnDeviceCompatibilityTests, NPUDeviceWithQualcommVendorIsCompatible) {
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
   options["backend_type"] = "htp";
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   ASSERT_NE(registered_ep_device, nullptr);
 
@@ -115,7 +115,7 @@ TEST_F(QnnDeviceCompatibilityTests, NPUDeviceWithQualcommVendorIsCompatible) {
   // Check compatibility using the ORT C API
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
+      env_, kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   // Verify compatible (no incompatibility reasons)
@@ -132,12 +132,12 @@ TEST_F(QnnDeviceCompatibilityTests, NPUDeviceWithQualcommVendorIsCompatible) {
 
 // Test that GPU devices with Qualcomm vendor ID are compatible
 TEST_F(QnnDeviceCompatibilityTests, GPUDeviceWithQualcommVendorIsCompatible) {
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
   options["backend_type"] = "gpu";
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   ASSERT_NE(registered_ep_device, nullptr);
 
@@ -146,7 +146,7 @@ TEST_F(QnnDeviceCompatibilityTests, GPUDeviceWithQualcommVendorIsCompatible) {
   // Check compatibility using the ORT C API
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
+      env_, kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   // Check if GPU device is incompatible for any reason - if so, skip this test
@@ -170,12 +170,12 @@ TEST_F(QnnDeviceCompatibilityTests, GPUDeviceWithQualcommVendorIsCompatible) {
 
 // Test that NPU devices with non-Qualcomm vendor ID are incompatible
 TEST_F(QnnDeviceCompatibilityTests, NPUDeviceWithNonQualcommVendorIsIncompatible) {
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
   options["backend_type"] = "htp";
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   ASSERT_NE(registered_ep_device, nullptr);
 
@@ -186,7 +186,7 @@ TEST_F(QnnDeviceCompatibilityTests, NPUDeviceWithNonQualcommVendorIsIncompatible
   // Check compatibility using the ORT C API
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
+      env_, kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   // Verify incompatible (should have incompatibility reasons)
@@ -199,12 +199,12 @@ TEST_F(QnnDeviceCompatibilityTests, NPUDeviceWithNonQualcommVendorIsIncompatible
 
 // Test that GPU devices with non-Qualcomm vendor ID are incompatible
 TEST_F(QnnDeviceCompatibilityTests, GPUDeviceWithNonQualcommVendorIsIncompatible) {
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
   options["backend_type"] = "gpu";
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   ASSERT_NE(registered_ep_device, nullptr);
 
@@ -215,7 +215,7 @@ TEST_F(QnnDeviceCompatibilityTests, GPUDeviceWithNonQualcommVendorIsIncompatible
   // Check compatibility using the ORT C API
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
+      env_, kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   // Verify incompatible (should have incompatibility reasons)
@@ -229,12 +229,12 @@ TEST_F(QnnDeviceCompatibilityTests, GPUDeviceWithNonQualcommVendorIsIncompatible
 // Test that CPU device incompatibility details include MISSING_DEPENDENCY and QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED
 // Note: This should be tested by manually removing the CPU dependency
 TEST_F(QnnDeviceCompatibilityTests, CPUDeviceIncompatibilityDetailsWithMissingDependency) {
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
   options["backend_type"] = "cpu";
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   ASSERT_NE(registered_ep_device, nullptr);
 
@@ -244,7 +244,7 @@ TEST_F(QnnDeviceCompatibilityTests, CPUDeviceIncompatibilityDetailsWithMissingDe
   // Check compatibility using the ORT C API
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
+      env_, kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   // Check if device is compatible - if so, skip this test
@@ -273,12 +273,12 @@ TEST_F(QnnDeviceCompatibilityTests, CPUDeviceIncompatibilityDetailsWithMissingDe
 // Test that NPU device incompatibility details include MISSING_DEPENDENCY and QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED
 // Note: This should be tested by manually removing the NPU dependency
 TEST_F(QnnDeviceCompatibilityTests, NPUDeviceIncompatibilityDetailsWithMissingDependency) {
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
   options["backend_type"] = "htp";
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   ASSERT_NE(registered_ep_device, nullptr);
 
@@ -288,7 +288,7 @@ TEST_F(QnnDeviceCompatibilityTests, NPUDeviceIncompatibilityDetailsWithMissingDe
   // Check compatibility using the ORT C API
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
+      env_, kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   // Check if device is compatible - if so, skip this test
@@ -317,12 +317,12 @@ TEST_F(QnnDeviceCompatibilityTests, NPUDeviceIncompatibilityDetailsWithMissingDe
 // Test that GPU device incompatibility details include MISSING_DEPENDENCY and QNN_COMMON_ERROR_PLATFORM_NOT_SUPPORTED
 // Note: This should be tested by manually removing the GPU dependency
 TEST_F(QnnDeviceCompatibilityTests, GPUDeviceIncompatibilityDetailsWithMissingDependency) {
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
   options["backend_type"] = "gpu";
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   ASSERT_NE(registered_ep_device, nullptr);
 
@@ -332,7 +332,7 @@ TEST_F(QnnDeviceCompatibilityTests, GPUDeviceIncompatibilityDetailsWithMissingDe
   // Check compatibility using the ORT C API
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
+      env_, kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   // Check if device is compatible - if so, skip this test
@@ -370,12 +370,12 @@ TEST_F(QnnDeviceCompatibilityTests, GPUDeviceIncompatibilityDetailsWithMissingDe
 // Skipped when the backend is fully compatible or when the library itself is missing.
 // Note: This should be tested by manually removing the GPU driver library
 TEST_F(QnnDeviceCompatibilityTests, GPUDeviceIncompatibilityDetailsWithDriverIncompatible) {
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
   options["backend_type"] = "gpu";
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   ASSERT_NE(registered_ep_device, nullptr);
 
@@ -383,7 +383,7 @@ TEST_F(QnnDeviceCompatibilityTests, GPUDeviceIncompatibilityDetailsWithDriverInc
 
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
+      env_, kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   uint32_t reasons_bitmask = 0;
@@ -420,12 +420,12 @@ TEST_F(QnnDeviceCompatibilityTests, GPUDeviceIncompatibilityDetailsWithDriverInc
 // Skipped when the backend is fully compatible or when the failure is not DEVICE_INCOMPATIBLE.
 // Note: This should be tested by manually removing the NPU driver library
 TEST_F(QnnDeviceCompatibilityTests, NPUDeviceIncompatibilityDetailsWithDeviceIncompatible) {
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
   options["backend_type"] = "htp";
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   ASSERT_NE(registered_ep_device, nullptr);
 
@@ -433,7 +433,7 @@ TEST_F(QnnDeviceCompatibilityTests, NPUDeviceIncompatibilityDetailsWithDeviceInc
 
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
   ASSERT_ORTSTATUS_OK(api_->GetHardwareDeviceEpIncompatibilityDetails(
-      env_, onnxruntime::kQnnExecutionProvider, mock_hw_device, &details));
+      env_, kQnnExecutionProvider, mock_hw_device, &details));
   ASSERT_NE(details, nullptr);
 
   uint32_t reasons_bitmask = 0;

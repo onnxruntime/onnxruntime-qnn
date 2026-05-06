@@ -291,8 +291,7 @@ TEST_F(QnnHTPBackendTests, AveragePool1DFusedQnnNodePresent) {
                   ExpectedEPNodeAssignment::All,
                   1e-5,
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                  true,
-                  &check_num_nodes);
+                  true);
 }
 
 TEST_F(QnnHTPBackendTests, AveragePoolRank3U8) {

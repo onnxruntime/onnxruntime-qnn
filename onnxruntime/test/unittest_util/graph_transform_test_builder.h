@@ -3,6 +3,8 @@
 #pragma once
 
 #include <functional>
+#include <optional>
+#include <onnx/onnx_pb.h>
 #include <type_traits>
 #include <vector>
 #include <random>
@@ -13,10 +15,11 @@
 #include "test/util/include/int4.h"
 #include "test/unittest_util/framework_test_utils.h"
 #include "test/util/include/test_random_seed.h"
-#include "test/util/include/inference_session_wrapper.h"
 
 namespace onnxruntime {
 namespace test {
+
+constexpr const char* kMSDomain = "com.microsoft";
 
 template <typename T>
 struct IsByteType : std::false_type {};
@@ -32,7 +35,7 @@ class RandomValueGenerator {
   using RandomEngine = std::default_random_engine;
   using RandomSeedType = RandomEngine::result_type;
 
-  explicit RandomValueGenerator(optional<RandomSeedType> seed = {})
+  explicit RandomValueGenerator(std::optional<RandomSeedType> seed = {})
       : random_seed_{seed.has_value() ? *seed : static_cast<RandomSeedType>(GetTestRandomSeed())},
         generator_{random_seed_},
         output_trace_{__FILE__, __LINE__, "ORT test random seed: " + std::to_string(random_seed_)} {
@@ -187,7 +190,7 @@ class RandomValueGenerator {
       }
     }
 
-    return narrow<size_t>(size);
+    return static_cast<size_t>(size);
   }
 };
 
@@ -234,7 +237,7 @@ class ModelTestBuilder {
   const ONNX_NAMESPACE::ValueInfoProto* MakeInput(const std::string& name,
                                                   const std::vector<int64_t>& shape,
                                                   const std::vector<T>& data,
-                                                  AllocatorPtr /* allocator */ = nullptr) {
+                                                  void* /* allocator */ = nullptr) {
     ONNX_NAMESPACE::ValueInfoProto* inp = graph_->add_input();
     inp->set_name(name);
     ONNX_NAMESPACE::TypeProto* type_proto = inp->mutable_type();
@@ -259,12 +262,12 @@ class ModelTestBuilder {
   template <typename T>
   const ONNX_NAMESPACE::ValueInfoProto* MakeInput(const std::string& name,
                                                   const std::vector<int64_t>& shape, T min, T max,
-                                                  AllocatorPtr allocator = nullptr) {
+                                                  void* allocator = nullptr) {
     return MakeInput<T>(name, shape, rand_gen_.Uniform<T>(shape, min, max), allocator);
   }
 
   const ONNX_NAMESPACE::ValueInfoProto* MakeInputBool(const std::string& name,
-                                                      const std::vector<int64_t>& shape, AllocatorPtr allocator = nullptr) {
+                                                      const std::vector<int64_t>& shape, void* allocator = nullptr) {
     std::vector<uint8_t> data_uint8 = rand_gen_.Uniform<uint8_t>(shape, 0, 1);
     std::vector<bool> data;
     for (uint8_t x : data_uint8) {
@@ -629,15 +632,15 @@ class ModelTestBuilder {
   void SetRawDataInTensorProto(ONNX_NAMESPACE::TensorProto& tensor_proto, T1* raw_data, T2 raw_data_len) {
     using namespace ONNX_NAMESPACE;
     tensor_proto.set_raw_data(raw_data, raw_data_len);
-    if constexpr (endian::native != endian::little) {
-      ConvertRawDataInTensorProto(tensor_proto);
-    }
+#if defined(__BIG_ENDIAN__) || (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+    ConvertRawDataInTensorProto(tensor_proto);
+#endif
   }
 
   ONNX_NAMESPACE::ModelProto model_;
   ONNX_NAMESPACE::GraphProto* graph_ = model_.mutable_graph();
   std::unordered_map<std::string, Ort::Value> feeds_;
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
 
  private:
   /** Gets the TensorProto_DataType corresponding to the template type `T`. */
@@ -802,28 +805,5 @@ class ModelTestBuilder {
     SwapByteOrderInplace(element_size, span);
   }
 };
-
-void TransformerTester(const std::function<void(ModelTestBuilder& helper)>& build_test_case,
-                       const std::function<void(InferenceSessionWrapper& session)>& check_transformed_graph,
-                       TransformerLevel baseline_level,
-                       TransformerLevel target_level,
-                       int opset_version = 12,
-                       double per_sample_tolerance = 0.0,
-                       double relative_per_sample_tolerance = 0.0,
-                       std::unique_ptr<GraphTransformer> transformer = nullptr,
-                       const std::function<void(SessionOptions&)>& add_session_options = {},
-                       const InlinedHashSet<std::string>& disabled_optimizers = {},
-                       std::unique_ptr<IExecutionProvider> ep = nullptr);
-
-void TransformerTester(const std::function<void(ModelTestBuilder& helper)>& build_test_case,
-                       const std::function<void(InferenceSessionWrapper& session)>& check_transformed_graph,
-                       TransformerLevel baseline_level,
-                       TransformerLevel target_level,
-                       const std::vector<int>& opset_versions,
-                       double per_sample_tolerance = 0.0,
-                       double relative_per_sample_tolerance = 0.0,
-                       std::unique_ptr<GraphTransformer> transformer = nullptr,  // must be null in this case.
-                       const std::function<void(SessionOptions&)>& add_session_options = {},
-                       const InlinedHashSet<std::string>& disabled_optimizers = {});
 }  // namespace test
 }  // namespace onnxruntime
