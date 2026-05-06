@@ -428,14 +428,17 @@ Ort::Status QnnModel::ExecuteGraph(OrtKernelContext* context,
     size_t length;
     tensor_status = ort_api.GetTensorShapeElementCount(tensor_type_and_shape, &length);
     if (tensor_status != nullptr) {
+      ort_api.ReleaseTensorTypeAndShapeInfo(tensor_type_and_shape);
       return 0;  // Return 0 on error, will be handled by caller
     }
     ONNXTensorElementDataType element_type;
     tensor_status = ort_api.GetTensorElementType(tensor_type_and_shape, &element_type);
     if (tensor_status != nullptr) {
+      ort_api.ReleaseTensorTypeAndShapeInfo(tensor_type_and_shape);
       return 0;  // Return 0 on error, will be handled by caller
     }
     size_t element_size = GetElementSizeByType(element_type);
+    ort_api.ReleaseTensorTypeAndShapeInfo(tensor_type_and_shape);
     return element_size * length;
   };
 

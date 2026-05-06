@@ -244,7 +244,6 @@ class TaskLibrary:
     def _build_ort_linux_aarch64_manylinux_2_34(self, plan: Plan) -> str:
         """In-container build steps for aarch64-manylinux_2_34. Not to be used outside of Docker."""
         extra_args = [
-            "--no-warnings-as-errors",
             "--qnn-arch-abi=aarch64-oe-linux-gcc11.2",
         ]
 
@@ -456,6 +455,7 @@ class TaskLibrary:
                         self.__qairt_sdk_root,
                         "build",
                         extra_args=extra_args,
+                        build_archive=self.__build_archive,
                     )
                 )
             else:
@@ -492,6 +492,7 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
+                    build_archive=self.__build_archive,
                 )
             )
 
@@ -523,6 +524,7 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
+                    build_archive=self.__build_archive,
                 )
             )
 
@@ -593,6 +595,8 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
+                    build_nuget=self.__build_nuget,
+                    build_archive=self.__build_archive,
                 )
             )
 
@@ -626,6 +630,8 @@ class TaskLibrary:
                             self.__qairt_sdk_root,
                             "build",
                             build_as_x=True,
+                            build_nuget=self.__build_nuget,
+                            build_archive=self.__build_archive,
                         ),
                     ],
                 )
@@ -658,6 +664,8 @@ class TaskLibrary:
                     self.__ort_prebuilt_root,
                     self.__qairt_sdk_root,
                     "build",
+                    build_nuget=self.__build_nuget,
+                    build_archive=self.__build_archive,
                 )
             )
 

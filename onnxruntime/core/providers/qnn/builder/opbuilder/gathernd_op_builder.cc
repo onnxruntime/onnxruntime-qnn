@@ -1,17 +1,18 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include <cassert>
-
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/normalize_indices_utils.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 
 namespace onnxruntime {
 namespace qnn {
 
-// Handles GatherND
+// Op builder for ONNX GatherND (https://onnx.ai/onnx/operators/onnx__GatherND.html).
+// ONNX allows negative and/or INT_64 indices; QNN accepts only non-negative INT_32.
+// Static indices are normalized at compile time; dynamic INT_64 indices get a Cast.
 class GatherNDOpBuilder : public BaseOpBuilder {
  public:
   GatherNDOpBuilder() : BaseOpBuilder("GatherNDOpBuilder") {}
@@ -31,42 +32,54 @@ class GatherNDOpBuilder : public BaseOpBuilder {
                                           bool do_op_validation) const override ORT_MUST_USE_RESULT;
 };
 
-// Fixes negative indices and converts int64 to uint32 for GatherND
-template <typename SrcType, typename DstType>
-bool FixStaticIndicesForGatherND(const std::vector<uint8_t>& onnx_bytes,
-                                 const std::vector<int64_t>& indices_shape,
-                                 const std::vector<int64_t>& data_shape,
-                                 int64_t batch_dims,
-                                 std::vector<uint8_t>& qnn_bytes) {
-  const int64_t index_tuple_size = indices_shape.back();
-  const size_t num_tuples = onnx_bytes.size() / (index_tuple_size * sizeof(SrcType));
+namespace {
 
-  gsl::span<const SrcType> onnx_indices{
-      reinterpret_cast<const SrcType*>(onnx_bytes.data()), num_tuples * index_tuple_size};
+Ort::Status ProcessGatherNDIndices(QnnModelWrapper& qnn_model_wrapper,
+                                   const OrtNodeUnitIODef& indices_input,
+                                   const std::vector<uint32_t>& data_shape,
+                                   int64_t batch_dims,
+                                   const Ort::Logger& logger,
+                                   std::vector<std::string>& input_names,
+                                   bool do_op_validation) {
+  std::string indices_tensor_name = indices_input.name;
 
-  qnn_bytes.resize(num_tuples * index_tuple_size * sizeof(DstType));
-  gsl::span<DstType> qnn_indices{
-      reinterpret_cast<DstType*>(qnn_bytes.data()), num_tuples * index_tuple_size};
+  TensorInfo indices_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(indices_input, indices_info));
 
-  for (size_t i = 0; i < num_tuples; ++i) {
-    for (int64_t j = 0; j < index_tuple_size; ++j) {
-      SrcType idx = onnx_indices[i * index_tuple_size + j];
-      int64_t dim = data_shape[batch_dims + j];
+  const uint32_t index_tuple_size = indices_info.shape.back();
+  const auto num_batch_dims = static_cast<size_t>(batch_dims);
 
-      if (idx < 0) {
-        idx += static_cast<SrcType>(dim);
-      }
+  // Column `col` of an index tuple addresses data dim `num_batch_dims + col`.
+  const auto axis_dim_for_element =
+      [index_tuple_size, num_batch_dims, &data_shape](size_t element_index) -> int64_t {
+    const size_t col = element_index % static_cast<size_t>(index_tuple_size);
+    return static_cast<int64_t>(data_shape[num_batch_dims + col]);
+  };
 
-      if (idx < 0 || static_cast<int64_t>(idx) >= dim) {
-        return false;  // Out-of-bounds index
-      }
+  std::vector<uint8_t> qnn_indices_bytes;
+  bool has_negative_indices = false;
 
-      qnn_indices[i * index_tuple_size + j] = static_cast<DstType>(idx);
+  if (indices_info.is_initializer) {
+    std::vector<uint8_t> onnx_indices_bytes;
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(indices_info.initializer_tensor,
+                                                            onnx_indices_bytes));
+
+    RETURN_IF_NOT(utils::NormalizeIndicesBytes<int64_t>(onnx_indices_bytes, axis_dim_for_element,
+                                                        qnn_indices_bytes, has_negative_indices),
+                  "QNN does not support out-of-range index values for GatherND.");
+    indices_info.qnn_data_type = QNN_DATATYPE_INT_32;
+
+    if (has_negative_indices) {
+      indices_tensor_name = utils::UniqueNameGenerator().New(indices_tensor_name, "_qnn_idx");
     }
   }
 
-  return true;
+  return utils::AddNormalizedIndicesTensor(qnn_model_wrapper, std::move(indices_info),
+                                           indices_tensor_name, std::move(qnn_indices_bytes),
+                                           logger, input_names, do_op_validation);
 }
+
+}  // namespace
 
 Ort::Status GatherNDOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
                                              const OrtNodeUnit& node_unit,
@@ -77,84 +90,14 @@ Ort::Status GatherNDOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[0], logger, input_names));
 
-  const auto& data_input = inputs[0];
-  const auto& indices_input = inputs[1];
-  const auto& indices_tensor_name = indices_input.name;
+  TensorInfo data_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], data_info));
 
-  TensorInfo indices_info = {};
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(indices_input, indices_info));
+  OrtNodeAttrHelper node_helper(node_unit);
+  const int64_t batch_dims = node_helper.Get("batch_dims", static_cast<int64_t>(0));
 
-  std::vector<uint8_t> qnn_indices_bytes;
-
-  if (indices_info.is_initializer) {
-    std::vector<uint8_t> onnx_indices_bytes;
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(indices_info.initializer_tensor, onnx_indices_bytes));
-
-    std::vector<uint32_t> data_shape;
-    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(data_input.shape, data_shape),
-                  "Failed to get data shape for GatherND.");
-
-    std::vector<uint32_t> indices_shape;
-    RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(indices_input.shape, indices_shape),
-                  "Failed to get indices shape for GatherND.");
-    RETURN_IF(indices_shape.empty(), "Indices shape is empty for GatherND.");
-
-    // Get batch_dims for proper index processing
-    OrtNodeAttrHelper node_helper(node_unit);
-    int64_t batch_dims = node_helper.Get("batch_dims", static_cast<int64_t>(0));
-
-    if (indices_info.qnn_data_type == QNN_DATATYPE_INT_64) {
-      RETURN_IF_NOT((FixStaticIndicesForGatherND<int64_t, int32_t>(
-                        onnx_indices_bytes,
-                        std::vector<int64_t>(indices_shape.begin(), indices_shape.end()),
-                        std::vector<int64_t>(data_shape.begin(), data_shape.end()),
-                        batch_dims,
-                        qnn_indices_bytes)),
-                    "QNN does not support negative or out-of-bounds indices for GatherND.");
-      indices_info.qnn_data_type = QNN_DATATYPE_INT_32;
-    } else {
-      qnn_indices_bytes = std::move(onnx_indices_bytes);
-    }
-  }
-
-  Qnn_TensorType_t tensor_type = qnn_model_wrapper.GetTensorType(indices_tensor_name);
-  std::vector<uint32_t> cast_output_shape(indices_info.shape);
-
-  if (!qnn_model_wrapper.IsQnnTensorWrapperExist(indices_tensor_name)) {
-    QnnTensorWrapper input_tensorwrapper(indices_tensor_name, tensor_type, indices_info.qnn_data_type,
-                                         QnnQuantParamsWrapper(), std::move(indices_info.shape),
-                                         std::move(qnn_indices_bytes));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(input_tensorwrapper)), "Failed to add tensor.");
-  }
-
-  std::string indices_casted_name{indices_tensor_name};
-  if (indices_info.qnn_data_type == QNN_DATATYPE_INT_64) {
-    assert(!indices_info.is_initializer);
-    indices_casted_name += "_int32";
-    if (qnn_model_wrapper.IsQnnTensorWrapperExist(indices_casted_name)) {
-      ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, ("Tensor already added, skip it: " + indices_casted_name).c_str());
-    } else {
-      QnnTensorWrapper indices_cast_tensor(indices_casted_name,
-                                           QNN_TENSOR_TYPE_NATIVE,
-                                           QNN_DATATYPE_INT_32,
-                                           QnnQuantParamsWrapper(),
-                                           std::move(cast_output_shape));
-      RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(indices_cast_tensor)),
-                    "Failed to add gather indices cast tensor.");
-      RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(indices_tensor_name, QNN_OP_CAST),
-                                                    QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                    QNN_OP_CAST,
-                                                    {indices_tensor_name},
-                                                    {indices_casted_name},
-                                                    {},
-                                                    do_op_validation),
-                    "Failed to add GatherNd indices cast node.");
-    }
-  }
-
-  input_names.push_back(indices_casted_name);
-
-  return Ort::Status();
+  return ProcessGatherNDIndices(qnn_model_wrapper, inputs[1], data_info.shape, batch_dims,
+                                logger, input_names, do_op_validation);
 }
 
 Ort::Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
@@ -181,7 +124,7 @@ Ort::Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
   }
 
   OrtNodeAttrHelper node_helper(node_unit);
-  int64_t batch_dims = node_helper.Get("batch_dims", static_cast<int64_t>(0));
+  const int64_t batch_dims = node_helper.Get("batch_dims", static_cast<int64_t>(0));
 
   Qnn_Scalar_t batch_dims_scalar = QNN_SCALAR_INIT;
   batch_dims_scalar.dataType = QNN_DATATYPE_UINT_32;
@@ -196,28 +139,27 @@ Ort::Status GatherNDOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
   const auto& data_tensor_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_names[0]);
   const auto& indices_tensor_wrapper = qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]);
 
-  // Calculate the QNN output shape for GatherND
-  std::vector<uint32_t> qnn_output_shape;
   const auto& data_dims = data_tensor_wrapper.GetTensorDims();
   const auto& indices_dims = indices_tensor_wrapper.GetTensorDims();
 
-  // GatherND output shape calculation:
-  size_t batch_dims_size = static_cast<size_t>(batch_dims);
-  size_t indices_last_dim = indices_dims.back();
+  // ONNX GatherND output shape:
+  //   data[:num_batch_dims] ++ indices[:-1] ++ data[num_batch_dims + indices.back():]
+  const auto num_batch_dims = static_cast<size_t>(batch_dims);
+  const size_t index_tuple_size = indices_dims.back();
+  const size_t first_trailing_data_dim = num_batch_dims + index_tuple_size;
 
-  // Add batch dimensions from data
-  for (size_t i = 0; i < batch_dims_size && i < data_dims.size(); ++i) {
+  std::vector<uint32_t> qnn_output_shape;
+
+  // Batch dims come from data.
+  for (size_t i = 0; i < num_batch_dims && i < data_dims.size(); ++i) {
     qnn_output_shape.push_back(data_dims[i]);
   }
-
-  // Add indices dimensions except the last one
+  // All indices dims except the innermost index-tuple dim.
   for (size_t i = 0; i < indices_dims.size() - 1; ++i) {
     qnn_output_shape.push_back(indices_dims[i]);
   }
-
-  // Add remaining data dimensions after batch_dims + indices_last_dim
-  size_t start_dim = batch_dims_size + indices_last_dim;
-  for (size_t i = start_dim; i < data_dims.size(); ++i) {
+  // Trailing (un-indexed) data dims.
+  for (size_t i = first_trailing_data_dim; i < data_dims.size(); ++i) {
     qnn_output_shape.push_back(data_dims[i]);
   }
 

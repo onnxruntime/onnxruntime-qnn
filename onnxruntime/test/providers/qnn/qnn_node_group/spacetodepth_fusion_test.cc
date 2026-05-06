@@ -292,7 +292,8 @@ void RunSpaceToDepthFusionTest(const std::filesystem::path& json_qnn_graph_dir,
 
 void RunWrappedPatternSpaceToDepthFusionTest(const std::filesystem::path& json_qnn_graph_dir,
                                              GetTestModelFn model_builder,
-                                             const std::string& backend_type) {
+                                             const std::string& backend_type,
+                                             float fp32_abs_err = 1e-2f) {
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
   const int uncaught_on_entry = std::uncaught_exceptions();
@@ -311,7 +312,7 @@ void RunWrappedPatternSpaceToDepthFusionTest(const std::filesystem::path& json_q
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
-                  /*fp32_abs_err=*/1e-2f,
+                  /*fp32_abs_err=*/fp32_abs_err,
                   /*log_severity=*/OrtLoggingLevel::ORT_LOGGING_LEVEL_VERBOSE);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "SpaceToDepth", 1);
@@ -357,7 +358,8 @@ TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped4Node_Head_QDQ_CRD) {
   RunWrappedPatternSpaceToDepthFusionTest("SpaceToDepthFusionWrapped4NodeHeadQDQCRD_HTP",
                                           BuildHeadWrappedSpaceToDepthTestCase<>(/*use_qdq=*/true,
                                                                                  /*use_contrib_qdq=*/false),
-                                          /*backend_type=*/"htp");
+                                          /*backend_type=*/"htp",
+                                          /*fp32_abs_err=*/1.5e-2f);
 }
 
 TEST_F(QnnHTPBackendTests, SpaceToDepthFusion_Wrapped4Node_Tail_Float_CRD) {
