@@ -20,7 +20,6 @@ import re
 import shutil
 import ssl
 import subprocess
-import sys
 import tempfile
 import zipfile
 from abc import ABC, abstractmethod
@@ -30,14 +29,10 @@ from typing import ClassVar
 from urllib.parse import urlparse
 
 import requests
+from maven import maven_publish_utils
 from requests.auth import HTTPBasicAuth
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-MAVEN_DIR = os.path.join(SCRIPT_DIR, "maven")
-if MAVEN_DIR not in sys.path:
-    sys.path.insert(0, MAVEN_DIR)
-
-import maven_publish_utils  # noqa: E402  (must follow sys.path manipulation above)
 
 ARTIFACTORY_CERTS_FILE = os.path.join(SCRIPT_DIR, "certs", "artifactory-ca.pem")
 PYPI_RC_FILE = os.path.join(SCRIPT_DIR, ".pypirc")
@@ -52,8 +47,6 @@ ARTIFACTORY_PREFIXES = {
 }
 
 ARTIFACT_SUFFIXES = {"wheel": ".whl", "nuget": ".nupkg", "zip": ".zip", "tgz": ".tgz"}
-
-MAVEN_GROUP_PATH = "com/qualcomm/qti"
 
 
 class ConfigManager:
@@ -800,7 +793,14 @@ class MavenUpleveler(ArtifactUpleveler):
         dry_run = getattr(self.args, "dry_run", False)
 
         username, password = self._get_credentials(self.args.index_server_to)
-        repo_url = self._artifactory_upload_base_url().replace(f"/{MAVEN_GROUP_PATH}", "")
+        group_path = group_id.replace(".", "/")
+        upload_base = self._artifactory_upload_base_url()
+        if not upload_base.endswith(f"/{group_path}"):
+            raise RuntimeError(
+                f"Upload base URL {upload_base!r} does not end with /{group_path}; "
+                f"check config.ini [artifactory-maven-virtual]"
+            )
+        repo_url = upload_base[: -len(f"/{group_path}")]
         repo_id = "snapshots" if version_to.endswith("-SNAPSHOT") else "releases"
 
         logging.info(

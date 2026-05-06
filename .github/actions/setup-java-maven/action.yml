@@ -10,13 +10,22 @@
 name: "Set up Java + Maven and import CA"
 description: "Install Java + Maven from packages.yml and import the Artifactory CA into the JDK cacerts."
 
+inputs:
+  venv-path:
+    description: "Path to the uplevel virtualenv (caller must have run create_uplevel_venv.sh first)"
+    default: "uplevel_venv"
+
 runs:
   using: composite
   steps:
     - name: Set up Java + Maven and import CA
       shell: bash
       run: |
-        source uplevel_venv/bin/activate
+        if [[ ! -d "${{ inputs.venv-path }}" ]]; then
+          echo "ERROR: ${{ inputs.venv-path }} not found; run create_uplevel_venv.sh before this action" >&2
+          exit 1
+        fi
+        source "${{ inputs.venv-path }}/bin/activate"
         source ./qcom/scripts/linux/tools.sh
 
         JAVA_BIN_DIR=$(get_java17_bindir)

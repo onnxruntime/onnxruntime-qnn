@@ -113,7 +113,24 @@ PROJECT_CACHE_DIR="${TEMP_DIR}/gradle-cache"
 
 # Set up SSL truststore with Qualcomm Artifactory CA certificate
 ARTIFACTORY_CA_PATH="${REPO_ROOT}/qcom/scripts/upleveling/certs/artifactory-ca.pem"
-SYSTEM_CA_BUNDLE="/etc/ssl/certs/ca-certificates.crt"
+# Probe known CA bundle locations in order; Debian/Ubuntu first, then RHEL/Fedora variants.
+_SYSTEM_CA_CANDIDATES=(
+    "/etc/ssl/certs/ca-certificates.crt"
+    "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem"
+    "/etc/pki/tls/certs/ca-bundle.crt"
+    "/etc/ssl/cert.pem"
+    "/var/lib/ca-certificates/ca-bundle.pem"
+)
+SYSTEM_CA_BUNDLE=""
+for _ca_candidate in "${_SYSTEM_CA_CANDIDATES[@]}"; do
+    if [[ -f "${_ca_candidate}" ]]; then
+        SYSTEM_CA_BUNDLE="${_ca_candidate}"
+        break
+    fi
+done
+if [[ -z "${SYSTEM_CA_BUNDLE}" ]]; then
+    echo "WARNING: system CA bundle not found at any known path; Maven Central SSL may fail" >&2
+fi
 
 # Write JVM SSL flags to a Gradle JVM config file instead of GRADLE_OPTS to
 # avoid exposing the truststore password in the process environment.
@@ -125,19 +142,22 @@ if [[ -f "${ARTIFACTORY_CA_PATH}" ]]; then
     mkdir -p "${CERTS_DIR}"
 
     # Split system CA bundle into individual certificates
-    if [[ -f "${SYSTEM_CA_BUNDLE}" ]]; then
+    if [[ -n "${SYSTEM_CA_BUNDLE}" ]]; then
         awk -v certs_dir="${CERTS_DIR}" '
             /BEGIN CERTIFICATE/ { cert++; in_cert=1 }
             in_cert             { print > certs_dir"/cert-"cert".pem" }
             /END CERTIFICATE/   { in_cert=0 }
         ' "${SYSTEM_CA_BUNDLE}"
 
-        # Import each certificate
+        # Import each certificate; keep || true so one bad cert doesn't abort the
+        # loop, but redirect stderr to a log file so failures are diagnosable.
+        KEYTOOL_LOG="${TEMP_DIR}/keytool-errors.log"
         for cert_file in "${CERTS_DIR}"/cert-*.pem; do
             if [[ -f "${cert_file}" ]]; then
                 cert_num=$(basename "${cert_file}" .pem)
                 keytool -import -noprompt -trustcacerts -alias "system-${cert_num}" -file "${cert_file}" \
-                    -storetype PKCS12 -keystore "${TRUSTSTORE_PATH}" -storepass "${TRUSTSTORE_PASSWORD}" 2>/dev/null || true
+                    -storetype PKCS12 -keystore "${TRUSTSTORE_PATH}" -storepass "${TRUSTSTORE_PASSWORD}" \
+                    2>>"${KEYTOOL_LOG}" || true
             fi
         done
     fi
@@ -149,9 +169,23 @@ if [[ -f "${ARTIFACTORY_CA_PATH}" ]]; then
     if [[ -f "${TRUSTSTORE_PATH}" ]]; then
         CERT_COUNT=$(keytool -list -keystore "${TRUSTSTORE_PATH}" -storepass "${TRUSTSTORE_PASSWORD}" 2>/dev/null | grep -c "trustedCertEntry" || echo 0)
         echo "Built PKCS12 truststore with ${CERT_COUNT} certificates"
+        # A healthy system CA bundle contains well over 100 certs.  Fewer than 50
+        # suggests wholesale import failure (corrupt truststore, JDK incompatibility,
+        # or a completely empty system bundle).  Fail early rather than letting Maven
+        # discover the problem as an SSL handshake error later.
+        MIN_EXPECTED_CERTS=50
+        if (( CERT_COUNT < MIN_EXPECTED_CERTS )); then
+            echo "ERROR: only ${CERT_COUNT} certs imported (expected >= ${MIN_EXPECTED_CERTS}); see ${KEYTOOL_LOG:-${TEMP_DIR}/keytool-errors.log} for details" >&2
+            exit 1
+        fi
         # Write SSL flags to gradle.properties under GRADLE_USER_HOME so the
-        # password is never in the process environment or visible in `ps` output.
+        # password is not visible in `ps` output or the process environment.
+        # Pre-create the file as 600 before writing so the password is never
+        # readable by other users even transiently (matches _secure_tempfile()
+        # in maven_publish_utils.py).  The file lives under TEMP_DIR which is
+        # removed on EXIT trap; SIGKILL survivors are bounded to TEMP_DIR.
         mkdir -p "${GRADLE_USER_HOME}"
+        install -m 600 /dev/null "${GRADLE_USER_HOME}/gradle.properties"
         cat >> "${GRADLE_USER_HOME}/gradle.properties" <<EOF
 org.gradle.jvmargs=-Djavax.net.ssl.trustStore=${TRUSTSTORE_PATH} -Djavax.net.ssl.trustStoreType=PKCS12 -Djavax.net.ssl.trustStorePassword=${TRUSTSTORE_PASSWORD}
 EOF

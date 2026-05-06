@@ -40,7 +40,6 @@ _SETTINGS_TEMPLATE_PATH = Path(__file__).parent / "settings.xml.template"
 _JARPOM_TEMPLATE_PATH = Path(__file__).parent / "jarpom.xml"
 _CHECKSUMPOM_TEMPLATE_PATH = Path(__file__).parent / "checksumpom.xml"
 _ARTIFACTORY_CA_PATH = Path(__file__).parent.parent / "certs" / "artifactory-ca.pem"
-_SYSTEM_CA_BUNDLE = Path("/etc/ssl/certs/ca-certificates.crt")
 
 
 def qualcomm_ssl_opts() -> tuple[list[str], Path | None]:
@@ -279,61 +278,6 @@ def generate_dummy_jars(
     return sources_jar, javadoc_jar
 
 
-def _find_java_cacerts() -> Path | None:
-    """Find the Java cacerts file by querying the Java installation.
-
-    Respects JAVA_HOME environment variable first, then queries the java command,
-    then falls back to common system paths.
-    """
-    # Check JAVA_HOME environment variable first (set by CI workflows)
-    java_home_env = os.environ.get("JAVA_HOME")
-    if java_home_env:
-        java_home = Path(java_home_env)
-        cacerts_path = java_home / "lib" / "security" / "cacerts"
-        if cacerts_path.exists():
-            logger.info("Found Java cacerts at %s (from JAVA_HOME)", cacerts_path)
-            return cacerts_path
-        # Also try jdk-X.X.X subdirectory (for packaged JDKs)
-        for subdir in java_home.iterdir():
-            if subdir.is_dir():
-                cacerts_path = subdir / "lib" / "security" / "cacerts"
-                if cacerts_path.exists():
-                    logger.info("Found Java cacerts at %s (from JAVA_HOME subdir)", cacerts_path)
-                    return cacerts_path
-
-    try:
-        result = subprocess.run(
-            ["java", "-XshowSettings:properties", "-version"],
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        output = result.stderr + result.stdout
-        for line in output.split("\n"):
-            if "java.home" in line:
-                java_home = line.split("=")[-1].strip()
-                cacerts_path = Path(java_home) / "lib" / "security" / "cacerts"
-                if cacerts_path.exists():
-                    logger.info("Found Java cacerts at %s (from java.home)", cacerts_path)
-                    return cacerts_path
-    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-        logger.debug("Could not query java.home: %s", e)
-
-    possible_paths = [
-        Path("/usr/lib/jvm/java-17-openjdk-amd64/lib/security/cacerts"),
-        Path("/usr/lib/jvm/java-11-openjdk-amd64/lib/security/cacerts"),
-        Path("/usr/lib/jvm/java-8-openjdk-amd64/jre/lib/security/cacerts"),
-    ]
-    for path in possible_paths:
-        if path.exists():
-            logger.info("Found Java cacerts at %s", path)
-            return path
-
-    logger.warning("Could not find Java cacerts file")
-    return None
-
-
 def mvn_deploy_file(
     aar: Path,
     pom: Path,
@@ -351,10 +295,9 @@ def mvn_deploy_file(
 ) -> None:
     """Run `mvn deploy:deploy-file` to publish to an Artifactory Maven repo.
 
-    This command requires a pom.xml in the current directory with artifact ID
-    and versions properly updated.  The pom.xml template is at
-    qcom/scripts/upleveling/maven/pom.xml and is rendered at runtime via
-    _fill_template() before this function is called.
+    Run mvn deploy:deploy-file with an explicit -DpomFile; the POM is supplied by the caller
+    (CI: produced by the Android Gradle maven-publish plugin;
+    uplevel: copied from the source artifactory repository).
 
     Credentials are passed via settings_xml (a 600-mode file rendered at runtime
     by render_settings_xml()).  No secret appears in argv.
