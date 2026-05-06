@@ -3621,7 +3621,7 @@ static void SetPrepareOnlyOptions(Ort::SessionOptions& so,
     so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
   }
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_path.c_str());
-  so.AddConfigEntry("ep.context_prepare_only", "1");
+  so.AddConfigEntry("ep.qnnexecutionprovider.enable_htp_prepare_only", "1");
 }
 
 // Test 1: prepare_only writes ctx.onnx and frees backend (session create succeeds).
@@ -3751,7 +3751,7 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_RunReturnsError) {
   // Get actual input/output names from the session — BuildGraphWithQAndNonQ uses
   // auto-generated output names so we cannot hardcode them.
   Ort::AllocatorWithDefaultOptions allocator;
-  auto input_name_ptr  = session.GetInputNameAllocated(0, allocator);
+  auto input_name_ptr = session.GetInputNameAllocated(0, allocator);
   auto output_name_ptr = session.GetOutputNameAllocated(0, allocator);
 
   std::vector<int64_t> input_dim{200, 200};
@@ -3760,7 +3760,7 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_RunReturnsError) {
   std::vector<Ort::Value> ort_inputs;
   ort_inputs.push_back(Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
                                                 input_dim.data(), input_dim.size()));
-  const char* input_names[]  = {input_name_ptr.get()};
+  const char* input_names[] = {input_name_ptr.get()};
   const char* output_names[] = {output_name_ptr.get()};
 
   ORT_TRY {

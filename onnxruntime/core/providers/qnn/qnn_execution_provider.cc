@@ -493,18 +493,18 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     std::string prepare_only_str;
     GetSessionConfigEntryOrDefault(ort_api,
                                    session_options_,
-                                   "ep.context_prepare_only",
+                                   FormatEPConfigKey("enable_htp_prepare_only"),
                                    "0",
                                    prepare_only_str);
     prepare_only_ = prepare_only_str == "1";
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_VERBOSE,
-                ("User specified option - prepare only: " + prepare_only_str).c_str());
+                ("User specified option - enable_htp_prepare_only: " + prepare_only_str).c_str());
 
     if (prepare_only_ && !context_cache_enabled_) {
       ORT_CXX_LOG(logger_,
                   ORT_LOGGING_LEVEL_WARNING,
-                  "prepare_only=1 requires context cache; auto-enabling ep.context_enable.");
+                  "enable_htp_prepare_only=1 requires context cache; auto-enabling ep.context_enable.");
       context_cache_enabled_ = true;
     }
   }
@@ -1555,9 +1555,10 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
   }
 
-  if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType())) {
+  if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType()) && !ep->prepare_only_) {
     // Set the power config id and the default power mode from provider option for main thread,
     // otherwise it will mess up the power mode if user just create session without run it.
+    // Skipped in prepare_only mode: the session will not run inference, so no power config is needed.
     ep->CreateHtpPowerConfigId();
   }
 
