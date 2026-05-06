@@ -842,46 +842,19 @@ void VerifyQDQOutput(const std::vector<Ort::Value>& cpu_qdq_outputs,
 
 // Macro for test skip logic based on provider options and architecture
 // Parameters: qnn_options (const ProviderOptions&), arch (QnnHtpDevice_Arch_t),
-//             test_type (QDQ, FP16, FP32, GPU), QuantType (for QDQ tests)
+//             test_type (QDQ, FP16, FP32, GPU), QuantType (optional, for QDQ tests)
 // Only skips tests on Linux ARM64 (__aarch64__)
 #if defined(__aarch64__)
-#define SKIP_TEST_ON_LINUX_ARM64(qnn_options, arch, test_type, ...)                                   \
-  if (::testing::internal::AlwaysTrue()) {                                                            \
-    std::string backend_name = "htp";                                                                 \
-    if ((qnn_options).find("backend_type") != (qnn_options).end()) {                                  \
-      backend_name = (qnn_options).at("backend_type");                                                \
-    }                                                                                                 \
-                                                                                                      \
-    if (std::string_view(test_type) == "QDQ") {                                                       \
-      if (backend_name == "htp") {                                                                    \
-        if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo((arch))) {                     \
-          if (QNN_IS_SUPPORTED_QDQ_TYPE(__VA_ARGS__)) {                                               \
-            GTEST_SKIP() << "QDQ test skipped on HTP architecture <= " << static_cast<int>(arch);     \
-          }                                                                                           \
-        }                                                                                             \
-      } else if (backend_name == "gpu") {                                                             \
-        GTEST_SKIP() << "QDQ test skipped on GPU backend with ARM64 architecture";                    \
-      }                                                                                               \
-    } else if (std::string_view(test_type) == "FP16" || std::string_view(test_type) == "FP32") {      \
-      if (backend_name == "htp") {                                                                    \
-        if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo((arch))) {                     \
-          GTEST_SKIP() << "FP16/FP32 HTP test skipped on architecture <= " << static_cast<int>(arch); \
-        }                                                                                             \
-      } else if (backend_name == "gpu") {                                                             \
-        GTEST_SKIP() << "FP16/FP32 test skipped on GPU backend with ARM64 architecture";              \
-      }                                                                                               \
-    } else if (std::string_view(test_type) == "GPU") {                                                \
-      if (backend_name == "gpu") {                                                                    \
-        GTEST_SKIP() << "GPU test skipped on ARM64 architecture";                                     \
-      }                                                                                               \
-    }                                                                                                 \
-  } else                                                                                              \
+#define SKIP_TEST_ON_LINUX_ARM64(qnn_options, arch, test_type, ...)    \
+  if (::testing::internal::AlwaysTrue()) {                             \
+    CheckAndSkipTest<__VA_ARGS__>((qnn_options), (arch), (test_type)); \
+  } else                                                               \
     static_assert(true, "")
 #else
 #define SKIP_TEST_ON_LINUX_ARM64(qnn_options, arch, test_type, ...) \
   do {                                                              \
   } while (0)
-#endif
+#endif  // defined(__aarch64__)
 
 template <typename QuantType>
 inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
@@ -1678,6 +1651,45 @@ class QnnCPUBackendTests : public ::testing::Test {
 
   static BackendSupport cached_cpu_support_;  // Set by the first test using this fixture.
 };
+
+// Template function implementing the test skip logic for SKIP_TEST_ON_LINUX_ARM64.
+// Placed after the class definitions so QnnHTPBackendTests is fully defined.
+// QuantType defaults to void (no type specified); when provided, skipping is gated on QNN_IS_SUPPORTED_QDQ_TYPE.
+template <typename QuantType = void>
+inline void CheckAndSkipTest(const ProviderOptions& qnn_options,
+                             QnnHtpDevice_Arch_t arch,
+                             std::string_view test_type) {
+  std::string backend_name = "htp";
+  if (qnn_options.find("backend_type") != qnn_options.end()) {
+    backend_name = qnn_options.at("backend_type");
+  }
+
+  if (test_type == "QDQ") {
+    if (backend_name == "htp") {
+      if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(arch)) {
+        if constexpr (std::is_same_v<QuantType, void>) {
+          GTEST_SKIP() << "QDQ test skipped on HTP architecture <= " << static_cast<int>(arch);
+        } else if (QNN_IS_SUPPORTED_QDQ_TYPE(QuantType)) {
+          GTEST_SKIP() << "QDQ test skipped on HTP architecture <= " << static_cast<int>(arch);
+        }
+      }
+    } else if (backend_name == "gpu") {
+      GTEST_SKIP() << "QDQ test skipped on GPU backend with ARM64 architecture";
+    }
+  } else if (test_type == "FP16" || test_type == "FP32") {
+    if (backend_name == "htp") {
+      if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(arch)) {
+        GTEST_SKIP() << "FP16/FP32 HTP test skipped on architecture <= " << static_cast<int>(arch);
+      }
+    } else if (backend_name == "gpu") {
+      GTEST_SKIP() << "FP16/FP32 test skipped on GPU backend with ARM64 architecture";
+    }
+  } else if (test_type == "GPU") {
+    if (backend_name == "gpu") {
+      GTEST_SKIP() << "GPU test skipped on ARM64 architecture";
+    }
+  }
+}
 
 // Testing fixture class for tests that require the QNN Ir backend. Checks if QNN IR is available before the test
 // begins. The test is skipped if the IR backend is unavailable (may occur with certain QNN versions).
