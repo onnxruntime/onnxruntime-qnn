@@ -4,6 +4,7 @@
 
 #include "core/providers/qnn/builder/qnn_backend_manager.h"
 
+#include <atomic>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -979,6 +980,15 @@ Qnn_ErrorHandle_t QnnBackendManager::MapDmaData(Qnn_ContextBinaryDataRequest_t r
   auto fd = rpcmem_library_->Api().to_fd(unaligned_data_ptr);
   if (fd == -1) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Failed to register DMA data mapping to RPCMEM");
+    // Deregister to avoid leaving stale state in the FASTRPC session. Without this, the
+    // partial registration survives until the FASTRPC session is torn down (during QnnHtp.dll
+    // unload), where it can cause a hardware fault that terminates the process before gtest
+    // can print the test result.
+    rpcmem_library_->Api().register_buf(unaligned_data_ptr, size, -1,
+                                        rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
+    // Disable file mapping so that subsequent MapDmaData calls fail fast instead of
+    // retrying the same failing RPCMEM path for every weight tensor.
+    file_mapped_weights_enabled_ = false;
     return QNN_COMMON_ERROR_SYSTEM;
   }
 
@@ -1776,8 +1786,87 @@ Ort::Status QnnBackendManager::SetupBackend(
   if (enable_file_mapped_weights && !file_mapper_ && GetQnnBackendType() == QnnBackendType::HTP) {
     RETURN_IF(!rpcmem_library, "RPCMem Library is required for file mapping but is uninitialized.");
     rpcmem_library_ = rpcmem_library;
-    file_mapped_weights_enabled_ = true;
-    file_mapper_ = std::make_unique<WindowsFileMapper>(*logger_ptr_);
+
+    // Probe RPCMEM with a real file-mapped region before enabling file mapping.
+    // Heap probes give false positives on devices where heap is DMA-accessible but file-mapped
+    // memory is not: RPCMEM registers heap but cannot register file-mapped sub-ranges, causing
+    // MapDmaData to fail → QnnSignal_trigger → background thread → TerminateProcess(0).
+    // Testing at unaligned offset +1 mirrors the actual per-tensor registrations in MapDmaData.
+    //
+    // The probe result is cached in a process-wide static so it runs only once.  The temp-file
+    // I/O takes ~100 ms; without the cache a second session's SetupBackend would exceed the
+    // ~280 ms window before QNN's DSP-monitoring background thread fires TerminateProcess,
+    // preventing gtest from printing [  OK  ] for context-binary round-trip tests.
+    //
+    //   -1 = probe not yet run   0 = file mapping NOT supported   1 = file mapping supported
+    static std::atomic<int8_t> s_rpcmem_file_mapped_probe{-1};
+
+    bool file_mapping_probe_ok = false;
+    int8_t cached_probe = s_rpcmem_file_mapped_probe.load(std::memory_order_relaxed);
+    if (cached_probe == 1) {
+      file_mapping_probe_ok = true;  // Use cached positive result immediately.
+    } else if (cached_probe == -1) {
+      // Probe not yet run: perform the file-mapped DMA test and cache the result.
+#if defined(_WIN32)
+      {
+        WCHAR temp_path[MAX_PATH + 1] = {};
+        WCHAR temp_file_path[MAX_PATH + 1] = {};
+        if (GetTempPathW(MAX_PATH, temp_path) &&
+            GetTempFileNameW(temp_path, L"qnn", 0, temp_file_path)) {
+          // Open with FILE_FLAG_DELETE_ON_CLOSE so it is removed automatically.
+          HANDLE hFile = CreateFileW(temp_file_path,
+                                     GENERIC_READ | GENERIC_WRITE, 0, NULL,
+                                     OPEN_EXISTING, FILE_FLAG_DELETE_ON_CLOSE, NULL);
+          if (hFile != INVALID_HANDLE_VALUE) {
+            // Write two pages worth of data so the mapping is large enough to probe at offset +1.
+            const DWORD kProbeFileBytes = 8192;
+            std::vector<char> zeros(kProbeFileBytes, 0);
+            DWORD written = 0;
+            if (WriteFile(hFile, zeros.data(), kProbeFileBytes, &written, NULL) &&
+                written == kProbeFileBytes) {
+              HANDLE hMapping = CreateFileMappingW(hFile, NULL, PAGE_READONLY,
+                                                   0, kProbeFileBytes, NULL);
+              if (hMapping && hMapping != INVALID_HANDLE_VALUE) {
+                void* mapped = MapViewOfFile(hMapping, FILE_MAP_READ, 0, 0, kProbeFileBytes);
+                if (mapped) {
+                  // Test at an unaligned offset — identical to what MapDmaData does for tensors.
+                  void* probe_ptr = static_cast<char*>(mapped) + 1;
+                  constexpr uint32_t kProbeSz = 4095;
+                  rpcmem_library_->Api().register_buf(probe_ptr, kProbeSz, NULL,
+                      rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
+                  auto probe_fd = rpcmem_library_->Api().to_fd(probe_ptr);
+                  if (probe_fd != -1) {
+                    // Probe succeeded: deregister so this entry does not linger.
+                    rpcmem_library_->Api().register_buf(probe_ptr, kProbeSz, -1,
+                        rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
+                    file_mapping_probe_ok = true;
+                  }
+                  // On failure: do NOT deregister — a failed register_buf has no RPCMEM state
+                  // to clean up, and calling register_buf with -1 on a failed entry may corrupt
+                  // the FASTRPC state, causing contextCreateFromBinary to trigger TerminateProcess.
+                  UnmapViewOfFile(mapped);
+                }
+                CloseHandle(hMapping);
+              }
+            }
+            CloseHandle(hFile);  // FILE_FLAG_DELETE_ON_CLOSE removes the file.
+          }
+        }
+      }
+#endif  // _WIN32
+      s_rpcmem_file_mapped_probe.store(file_mapping_probe_ok ? 1 : 0,
+                                       std::memory_order_relaxed);
+    }
+    // cached_probe == 0: file mapping not supported; file_mapping_probe_ok stays false.
+
+    if (file_mapping_probe_ok) {
+      file_mapped_weights_enabled_ = true;
+      file_mapper_ = std::make_unique<WindowsFileMapper>(*logger_ptr_);
+    } else {
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
+                      "Unaligned file-mapped memory is not DMA-accessible on this device; "
+                      "disabling file-mapped weights to prevent QnnSignal_trigger TerminateProcess.");
+    }
   }
 #else
   ORT_UNUSED_PARAMETER(enable_file_mapped_weights);
@@ -1810,6 +1899,24 @@ Ort::Status QnnBackendManager::SetupBackend(
   if (status.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "InitializeBackend succeed.");
   }
+
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  // QAIRT 2.45.40+ changed deviceCreate to require the FASTRPC channel to be
+  // open before the call.  The file-mapping probe in the block above opens it
+  // as a side effect, but only when enable_file_mapped_weights is true.  For
+  // embed-mode contexts (and any other path where the probe is skipped),
+  // explicitly open the FASTRPC channel here using a minimal register_buf call
+  // on a heap buffer.  The return value of to_fd() is not checked; register_buf
+  // alone is sufficient to open the channel.
+  if (status.IsOK() && rpcmem_library != nullptr &&
+      GetQnnBackendType() == QnnBackendType::HTP && !file_mapped_weights_enabled_) {
+    std::vector<char> fastrpc_init_buf(4096);
+    rpcmem_library->Api().register_buf(
+        fastrpc_init_buf.data(), static_cast<uint32_t>(fastrpc_init_buf.size()),
+        NULL, rpcmem::RPCMEM_ATTR_IMPORT_BUFFER | rpcmem::RPCMEM_ATTR_READ_ONLY);
+    rpcmem_library->Api().to_fd(fastrpc_init_buf.data());
+  }
+#endif
 
   if (status.IsOK()) {
     status = CreateDevice();

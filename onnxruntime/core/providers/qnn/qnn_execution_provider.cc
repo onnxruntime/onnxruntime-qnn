@@ -942,6 +942,23 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     }
   }
 
+#ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
+  // QAIRT 2.45.40+ changed deviceCreate to require FASTRPC to be pre-initialized.
+  // The SetupBackend file-mapping probe does this as a side effect, but only when
+  // enable_file_mapped_weights_ is true.  For embed-mode contexts the probe is
+  // skipped, leaving FASTRPC uninitialized and causing a 90-second deviceCreate hang.
+  // Ensure the RPCMEM library is always loaded so SetupBackend can initialize FASTRPC
+  // regardless of embed mode or other options that disable file-mapped weights.
+  if (!rpcmem_library_) {
+    try {
+      rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
+    } catch (...) {
+      // RPCMEM not available on this platform; deviceCreate may hang on QAIRT 2.45.40+
+      // if FASTRPC was not already initialized by another means.
+    }
+  }
+#endif
+
   dump_json_qnn_graph_ = ParseBoolOption(ort_api,
                                          session_options_,
                                          FormatEPConfigKey("dump_json_qnn_graph"),
