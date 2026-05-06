@@ -1343,14 +1343,19 @@ TEST_F(QnnHTPBackendTests, EPRejectsDynamicShapesF32) {
   };
 
   // Local function that checks that the nodes with dynamic shape I/O were assigned to CPU EP.
-  std::function<void(const Graph&)> ep_graph_checker = [](const Graph& graph) {
-    for (const Node& node : graph.Nodes()) {
-      const std::string& ep_name = node.GetExecutionProviderType();
-      const std::string& op_type = node.OpType();
-      if (op_type == "Reshape" || op_type == "Softmax") {
-        EXPECT_EQ(ep_name, kCpuExecutionProvider);
-      } else {
-        EXPECT_TRUE((ep_name == kQnnExecutionProvider) || (ep_name == onnxruntime::kQnnExecutionProvider));
+  std::function<void(const Ort::Session&)> ep_graph_checker = [](const Ort::Session& session) {
+    std::vector<Ort::ConstEpAssignedSubgraph> subgraphs = session.GetEpGraphAssignmentInfo();
+    for (const auto& subgraph : subgraphs) {
+      std::string ep_name = subgraph.GetEpName();
+      for (const auto& node : subgraph.GetNodes()) {
+        std::string op_type = node.GetOperatorType();
+        if (op_type == "Reshape" || op_type == "Softmax") {
+          EXPECT_NE(ep_name, kQnnExecutionProvider)
+              << op_type << " should NOT be assigned to QNN EP";
+        } else {
+          EXPECT_EQ(ep_name, kQnnExecutionProvider)
+              << op_type << " should be assigned to QNN EP";
+        }
       }
     }
   };
@@ -1432,35 +1437,39 @@ TEST_F(QnnHTPBackendTests, DumpJsonQNNGraph) {
 TEST_F(QnnHTPBackendTests, EPOffloadsGraphIOQuantDequant) {
   // Returns a function that checks that the Q/DQ ops at the graph IO boundary are offloaded to CPU
   // if the corresponding provider option is enabled.
-  auto graph_checker_builder = [](bool offload_graph_io_quantization) -> std::function<void(const Graph&)> {
-    return [offload_graph_io_quantization](const Graph& graph) {
-      size_t num_q = 0;
-      size_t num_dq = 0;
-      size_t num_qnn_fused_node = 0;
+  auto graph_checker_builder = [](bool offload_graph_io_quantization) -> std::function<void(const Ort::Session&)> {
+    return [offload_graph_io_quantization](const Ort::Session& session) {
+      // The public API returns pre-fusion nodes grouped by EP subgraph.
+      // We verify:
+      //   offload=0: exactly 1 QNN subgraph (all nodes fused), 0 CPU nodes
+      //   offload=1: exactly 1 QNN subgraph (inner DQ+Op+Q fused), 2 CPU nodes (boundary Q + DQ)
+      size_t num_qnn_subgraphs = 0;
+      size_t num_cpu_nodes = 0;
 
-      for (const Node& node : graph.Nodes()) {
-        const std::string& ep_name = node.GetExecutionProviderType();
-        const std::string& op_type = node.OpType();
-
-        if (offload_graph_io_quantization && op_type == "QuantizeLinear") {
-          const bool consumes_graph_input = graph.IsInputsIncludingInitializers(node.InputDefs()[0]);
-          EXPECT_EQ(ep_name, kCpuExecutionProvider);
-          EXPECT_TRUE(consumes_graph_input);
-          num_q += 1;
-        } else if (offload_graph_io_quantization && op_type == "DequantizeLinear") {
-          const bool produces_graph_output = graph.IsOutput(node.OutputDefs()[0]);
-          EXPECT_EQ(ep_name, kCpuExecutionProvider);
-          EXPECT_TRUE(produces_graph_output);
-          num_dq += 1;
+      std::vector<Ort::ConstEpAssignedSubgraph> subgraphs = session.GetEpGraphAssignmentInfo();
+      for (const auto& subgraph : subgraphs) {
+        std::string ep_name = subgraph.GetEpName();
+        if (ep_name == kQnnExecutionProvider) {
+          num_qnn_subgraphs++;
         } else {
-          EXPECT_TRUE((ep_name == kQnnExecutionProvider) || (ep_name == onnxruntime::kQnnExecutionProvider));
-          num_qnn_fused_node += 1;
+          // CPU EP should only receive Q/DQ boundary nodes when offloading is enabled.
+          for (const auto& node : subgraph.GetNodes()) {
+            if (offload_graph_io_quantization) {
+              std::string op_type = node.GetOperatorType();
+              EXPECT_TRUE(op_type == "QuantizeLinear" || op_type == "DequantizeLinear")
+                  << op_type << " should not be on CPU EP when IO quantization offloading is enabled";
+            }
+            num_cpu_nodes++;
+          }
         }
       }
 
-      EXPECT_EQ(num_q, static_cast<size_t>(offload_graph_io_quantization));
-      EXPECT_EQ(num_dq, static_cast<size_t>(offload_graph_io_quantization));
-      EXPECT_EQ(num_qnn_fused_node, 1);
+      EXPECT_EQ(num_qnn_subgraphs, 1u) << "Expected all QNN-assigned nodes fused into 1 subgraph";
+      if (offload_graph_io_quantization) {
+        EXPECT_EQ(num_cpu_nodes, 2u) << "Expected 2 boundary Q/DQ nodes offloaded to CPU EP";
+      } else {
+        EXPECT_EQ(num_cpu_nodes, 0u) << "Expected no CPU nodes when IO quantization offloading is disabled";
+      }
     };
   };
 
