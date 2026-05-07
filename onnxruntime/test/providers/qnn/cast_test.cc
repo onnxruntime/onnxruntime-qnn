@@ -119,7 +119,7 @@ static void RunCastFP64OpTest(const std::vector<int64_t>& shape,
                               ExpectedEPNodeAssignment expected_ep_assignment,
                               const std::string& backend_name = "cpu") {
 #if defined(_WIN32)
-  if (backend_name == "htp" ) {
+  if (backend_name == "htp") {
     SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   }
 #endif
