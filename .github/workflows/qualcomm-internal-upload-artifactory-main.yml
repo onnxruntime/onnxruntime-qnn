@@ -1,7 +1,7 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
-name: Publish of ONNX Runtime Execution Provider wheel, nuget and zip on each RC
+name: Publish of ONNX Runtime Execution Provider wheel, nuget, archive and maven on each RC
 
 permissions:
   checks: write
