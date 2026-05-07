@@ -1350,11 +1350,9 @@ TEST_F(QnnHTPBackendTests, EPRejectsDynamicShapesF32) {
       for (const auto& node : subgraph.GetNodes()) {
         std::string op_type = node.GetOperatorType();
         if (op_type == "Reshape" || op_type == "Softmax") {
-          EXPECT_NE(ep_name, kQnnExecutionProvider)
-              << op_type << " should NOT be assigned to QNN EP";
+          EXPECT_EQ(ep_name, kCpuExecutionProvider) << op_type << " should be assigned to CPU EP";
         } else {
-          EXPECT_EQ(ep_name, kQnnExecutionProvider)
-              << op_type << " should be assigned to QNN EP";
+          EXPECT_EQ(ep_name, kQnnExecutionProvider) << op_type << " should be assigned to QNN EP";
         }
       }
     }
@@ -1441,10 +1439,22 @@ TEST_F(QnnHTPBackendTests, EPOffloadsGraphIOQuantDequant) {
     return [offload_graph_io_quantization](const Ort::Session& session) {
       // The public API returns pre-fusion nodes grouped by EP subgraph.
       // We verify:
-      //   offload=0: exactly 1 QNN subgraph (all nodes fused), 0 CPU nodes
-      //   offload=1: exactly 1 QNN subgraph (inner DQ+Op+Q fused), 2 CPU nodes (boundary Q + DQ)
+      //   offload=0: exactly 1 QNN subgraph (all QNN-eligible ops grouped), 0 CPU nodes
+      //   offload=1: exactly 1 QNN subgraph (all QNN-eligible ops grouped), 2 CPU nodes (boundary Q + DQ)
       size_t num_qnn_subgraphs = 0;
       size_t num_cpu_nodes = 0;
+      std::vector<std::string> cpu_op_types;
+
+      // For offload=1 verify the CPU Q/DQ are the graph-IO boundary nodes, not interior ones.
+      // ConstEpAssignedNode exposes only GetName/GetDomain/GetOperatorType — no input/output
+      // tensor name accessors — so we proxy the boundary check via the node names assigned by
+      // AddQDQNodePair / AddQDQNodePairWithOutputAsGraphOutput in BuildQDQOpTestCase:
+      //   input-side boundary Q   → "qdq_in0_q"  (consumes graph input "quant_input_defs_0")
+      //   output-side boundary DQ → "qdq_out_dq" (produces graph output "qdq_out_dq_out")
+      // Interior counterparts are "qdq_in0_dq" and "qdq_out_q"; ending up on CPU would mean
+      // the partitioner sent the wrong nodes to the CPU EP.
+      bool found_boundary_q = false;
+      bool found_boundary_dq = false;
 
       std::vector<Ort::ConstEpAssignedSubgraph> subgraphs = session.GetEpGraphAssignmentInfo();
       for (const auto& subgraph : subgraphs) {
@@ -1454,21 +1464,37 @@ TEST_F(QnnHTPBackendTests, EPOffloadsGraphIOQuantDequant) {
         } else {
           // CPU EP should only receive Q/DQ boundary nodes when offloading is enabled.
           for (const auto& node : subgraph.GetNodes()) {
+            std::string op_type = node.GetOperatorType();
+            std::string node_name = node.GetName();
+            cpu_op_types.push_back(op_type);
             if (offload_graph_io_quantization) {
-              std::string op_type = node.GetOperatorType();
               EXPECT_TRUE(op_type == "QuantizeLinear" || op_type == "DequantizeLinear")
                   << op_type << " should not be on CPU EP when IO quantization offloading is enabled";
+              if (op_type == "QuantizeLinear") {
+                found_boundary_q = (node_name == "qdq_in0_q");
+              } else if (op_type == "DequantizeLinear") {
+                found_boundary_dq = (node_name == "qdq_out_dq");
+              }
             }
             num_cpu_nodes++;
           }
         }
       }
 
-      EXPECT_EQ(num_qnn_subgraphs, 1u) << "Expected all QNN-assigned nodes fused into 1 subgraph";
+      EXPECT_EQ(num_qnn_subgraphs, 1u) << "Expected all QNN-assigned nodes grouped into 1 subgraph";
       if (offload_graph_io_quantization) {
+        const std::vector<std::string> graph_inputs = session.GetInputNames();
+        const std::vector<std::string> graph_outputs = session.GetOutputNames();
         EXPECT_EQ(num_cpu_nodes, 2u) << "Expected 2 boundary Q/DQ nodes offloaded to CPU EP";
+        EXPECT_TRUE(found_boundary_q)
+            << "Expected input-side boundary Q (qdq_in0_q) on CPU EP consuming a graph input; "
+            << "graph inputs: " << testing::PrintToString(graph_inputs);
+        EXPECT_TRUE(found_boundary_dq)
+            << "Expected output-side boundary DQ (qdq_out_dq) on CPU EP producing a graph output; "
+            << "graph outputs: " << testing::PrintToString(graph_outputs);
       } else {
-        EXPECT_EQ(num_cpu_nodes, 0u) << "Expected no CPU nodes when IO quantization offloading is disabled";
+        EXPECT_EQ(num_cpu_nodes, 0u) << "Expected no CPU nodes when IO quantization offloading is disabled, "
+                                     << "got: " << testing::PrintToString(cpu_op_types);
       }
     };
   };

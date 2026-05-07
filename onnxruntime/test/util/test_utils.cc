@@ -9,6 +9,7 @@
 #include "core/graph/onnx_protobuf.h"
 #include "core/session/inference_session.h"
 #include "core/session/onnxruntime_cxx_api.h"
+#include "core/session/onnxruntime_session_options_config_keys.h"
 #include "core/framework/tensorprotoutils.h"
 
 #include "test/util/include/asserts.h"
@@ -265,6 +266,10 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
 
   std::vector<Ort::Value> expected_fetches;
   RunWithEP(cpu_session, cpu_run_options, feeds, expected_fetches);
+
+  if (params.graph_verifier) {
+    ort_so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
+  }
 
   // Run with EP and verify the result
   Ort::Session ort_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), ort_so);
