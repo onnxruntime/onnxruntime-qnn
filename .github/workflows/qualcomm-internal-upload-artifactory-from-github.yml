@@ -1,7 +1,7 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
-name: Publish ONNX Runtime Execution Provider wheel, nuget and zip from GitHub workflow
+name: Publish ONNX Runtime Execution Provider wheel, nuget, archive and maven from GitHub workflow
 
 permissions:
   checks: write
@@ -352,8 +352,8 @@ jobs:
           # Clean up the temporary .netrc file
           rm -f "$NETRC_FILE"
 
-  upload-android-aar-workflow:
-    name: "Upload Android AAR artifacts to Artifactory"
+  upload-android-maven-workflow:
+    name: "Upload Android Maven artifacts to Artifactory"
     runs-on: [Linux, self-hosted, Build]
     needs: [build-artifacts]
 
@@ -380,4 +380,36 @@ jobs:
         with:
           name: android-aarch64-pom
 
-      # TODO: add Publish phase
+      - name: Install Dependencies
+        run: ./qcom/scripts/upleveling/create_uplevel_venv.sh
+
+      - name: Set up Java + Maven and import CA
+        uses: ./.github/actions/setup-java-maven
+
+      - name: Read version
+        id: version
+        run: echo "version=$(cat VERSION_NUMBER)-SNAPSHOT" >> $GITHUB_OUTPUT
+
+      - name: Publish Maven artifact snapshot to Internal Artifactory
+        if: ${{ !inputs.skip_publish }}
+        env:
+          AISW_MAVEN_ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          AISW_MAVEN_ARTIFACTORY_PASSWORD: ${{ secrets.AISW_MAVEN_ARTIFACTORY_PASSWORD }}
+        run: |
+          source uplevel_venv/bin/activate
+          python ./qcom/scripts/upleveling/maven/publish_maven_snapshot.py \
+            --aar-path    "${{ github.workspace }}/build/android-aarch64/Release/java/build/android-qnn-ep/outputs/aar/onnxruntime-android-qnn.aar" \
+            --pom-path    "${{ github.workspace }}/build/android-aarch64/Release/java/build/android-qnn-ep/outputs/aar/onnxruntime-android-qnn.pom" \
+            --version     "${{ steps.version.outputs.version }}" \
+            --group-id    com.qualcomm.qti \
+            --artifact-id onnxruntime-android-qnn \
+            --repository-id  snapshots \
+            --repository-url https://artifactory-qdc-global.qualcomm.com/artifactory/aisw-maven-virtual/
+
+      - name: Validate APK build against snapshot
+        if: ${{ !inputs.skip_publish }}
+        env:
+          AAR_MAVEN_COORD: "com.qualcomm.qti:onnxruntime-android-qnn:${{ steps.version.outputs.version }}"
+          AISW_MAVEN_ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          AISW_MAVEN_ARTIFACTORY_PASSWORD: ${{ secrets.AISW_MAVEN_ARTIFACTORY_PASSWORD }}
+        run: ./qcom/scripts/upleveling/maven/validate_apk.sh

@@ -21,7 +21,24 @@ allprojects {
 	repositories {
 		google()
 		mavenCentral()
-		flatDir{dirs 'libs'}
+		// Skipped when the caller supplies its own flatDir via --init-script
+		// (e.g. build_apk_from_aar.sh passes -PskipLibsFlatDir=true).
+		if (!project.hasProperty("skipLibsFlatDir")) {
+			flatDir{dirs 'libs'}
+		}
+		// Internal Artifactory Maven repository — used when AAR_MAVEN_COORD is set
+		// (post-publish APK validation in CI).  No-op in local dev builds where the
+		// env var is absent.
+		if (System.getenv("AAR_MAVEN_COORD")) {
+			maven {
+				name = "aisw-maven-virtual"
+				url = "https://artifactory-qdc-global.qualcomm.com/artifactory/aisw-maven-virtual/"
+				credentials {
+					username = System.getenv("AISW_MAVEN_ARTIFACTORY_USERNAME") ?: ""
+					password = System.getenv("AISW_MAVEN_ARTIFACTORY_PASSWORD") ?: ""
+				}
+			}
+		}
 	}
 }
 
