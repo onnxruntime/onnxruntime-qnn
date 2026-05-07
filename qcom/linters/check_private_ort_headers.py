@@ -52,8 +52,7 @@ def check_cc_file(path: str) -> list[dict]:
                             "replacement": None,
                             "description": (
                                 f"Private ORT Core header: {line.strip()!r}. "
-                                "Copy the required code into qnn/common/ instead. "
-                                "See CLAUDE.md."
+                                "Copy the required code into onnxruntime/core/providers/qnn/common/ instead."
                             ),
                         }
                     )
@@ -67,8 +66,7 @@ def check_cc_file(path: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 # Exact set of include directories approved for onnxruntime_providers_qnn.
-# Any deviation (addition or removal) requires updating this list after careful
-# review — see the cmake include paths section in CLAUDE.md.
+# Any deviation (addition or removal) requires updating this list after careful review.
 APPROVED_CMAKE_INCLUDES: frozenset[str] = frozenset(
     {
         "${CMAKE_CURRENT_BINARY_DIR}",
@@ -133,7 +131,7 @@ def check_cmake_file(path: str) -> list[dict]:
                                 f"Unapproved include directory {token!r} added to "
                                 f"{_CMAKE_TARGET}. Update APPROVED_CMAKE_INCLUDES in "
                                 "qcom/linters/check_private_ort_headers.py only after "
-                                "careful review. See CLAUDE.md."
+                                "careful review."
                             ),
                         }
                     )
