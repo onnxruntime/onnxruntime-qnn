@@ -1545,7 +1545,8 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                           ep->enable_file_mapped_weights_,
                                                           ep->rpcmem_library_,
                                                           context_bin_map,
-                                                          ep->enable_htp_extended_udma_mode_);
+                                                          ep->enable_htp_extended_udma_mode_,
+                                                          ep->prepare_only_);
 
   context_bin_map.clear();
 
