@@ -191,7 +191,7 @@ TEST_F(QnnHTPBackendTests, NonZero_Gather_1D_Int32) {
   std::vector<int32_t> data2 = {100, 200, 300, 400, 500};
   int64_t num_elements = 5;
 
-  SKIP_TEST_ON_LINUX_ARM64(HtpProviderOptions(), QNN_HTP_DEVICE_ARCH_V68, "FP16");
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   auto build_model = [mask_data, data1, data2, num_elements](ModelTestBuilder& builder) {
     TestInputDef<float> mask_def({num_elements}, false, mask_data);
