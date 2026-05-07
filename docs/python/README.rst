@@ -9,11 +9,6 @@ This repository is maintained by Qualcomm. For the general ONNX Runtime project,
 Changes
 -------
 
-2.2.0
-^^^^^^
-
-Release Notes : https://github.com/onnxruntime/onnxruntime-qnn/releases/tag/v2.2.0
-
 2.1.0
 ^^^^^^
 
