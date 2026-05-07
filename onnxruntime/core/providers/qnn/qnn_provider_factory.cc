@@ -344,12 +344,6 @@ OrtStatus* ORT_API_CALL QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl
     _Out_ OrtCompiledModelCompatibility* model_compatibility) noexcept {
   auto* factory = static_cast<QnnEpFactory*>(this_ptr);
 
-  // Early return for empty or null compatibility info - no need to create an EP.
-  if (compatibility_info == nullptr || compatibility_info[0] == '\0') {
-    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
-    return nullptr;
-  }
-
   if (factory->qnn_ep_ != nullptr) {
     return factory->qnn_ep_->ValidateCompiledModelCompatibilityInfo(devices,
                                                                     num_devices,
@@ -397,7 +391,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl
   std::unique_ptr<QnnEp> temp_qnn_ep;
   try {
     temp_qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *session_options.get(), logger);
-  } catch (const std::runtime_error& e) {
+  } catch (const std::exception& e) {
     *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
     return factory->ort_api.CreateStatus(ORT_FAIL, e.what());
   } catch (...) {

@@ -9,6 +9,8 @@
 
 #include "test/providers/qnn/qnn_test_utils.h"
 #include <cassert>
+#include <limits>
+#include <stdexcept>
 #include "test/util/include/api_asserts.h"
 #include "test/util/include/asserts.h"
 #include "test/util/include/test/test_environment.h"
@@ -148,6 +150,9 @@ size_t SizeHelper(std::vector<int64_t> shape, size_t start, size_t end) {
   int64_t size = 1;
   for (size_t i = start; i < end; i++) {
     if (shape[i] < 0) return static_cast<size_t>(-1);
+    if (shape[i] != 0 && size > std::numeric_limits<int64_t>::max() / shape[i]) {
+      throw std::overflow_error("Integer overflow in SizeHelper");
+    }
     size *= shape[i];
   }
   return static_cast<size_t>(size);
