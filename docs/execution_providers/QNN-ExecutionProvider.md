@@ -12,7 +12,7 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 
 - [Install Pre-requisites (Build from Source Only)](#install-pre-requisites-build-from-source-only)
 - [Build (Windows)](#build-windows)
-- [Pre-built Packages (Windows Only)](#pre-built-packages-windows-only)
+- [Pre-built Packages](#pre-built-packages)
 - [Qualcomm AI Hub](#qualcomm-ai-hub)
 - [Configuration Options](#configuration-options)
 - [Supported ONNX operators](#supported-onnx-operators)
@@ -45,7 +45,7 @@ ONNX Runtime QNN EP has been built and tested with the following SDK version com
 ## Build (Windows)
 For build instructions, please see the [BUILD page](./build.md).
 
-## Pre-built Packages (Windows Only)
+## Pre-built Packages
 - [NuGet package](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN)
   - **Note**: The NuGet package only supports Windows ARM64 platform
 - [Python package](https://pypi.org/project/onnxruntime-qnn/)
@@ -55,6 +55,14 @@ For build instructions, please see the [BUILD page](./build.md).
     - Python 3.11.x
     - Numpy 1.25.2 or >= 1.26.4
   - Install: `pip install onnxruntime-qnn`
+- Maven package (Android)
+  - **Note**: The Maven package supports Android ARM64
+  - Group ID / Artifact ID: `com.qualcomm.qti:onnxruntime-android-qnn`
+  - This release is validated against the following dependency versions:
+    | Dependency | Maven Coordinate | Version |
+    |---|---|---|
+    | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.24.3` |
+    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.45.0` |
 
 ## Qualcomm AI Hub
 Qualcomm AI Hub can be used to optimize and run models on Qualcomm hosted devices.
