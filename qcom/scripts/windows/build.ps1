@@ -191,6 +191,7 @@ if ($BuildAsX) {
     $CommonArgs += "--buildasx"
 }
 
+$BuildNugetArgs = @()
 if ($BuildNuget) {
     $TargetNugetDir = (Get-NugetBinDir)
     $env:Path = "$TargetNugetDir;" + $env:Path
@@ -199,7 +200,7 @@ if ($BuildNuget) {
         Get-Command nuget.exe -ErrorAction SilentlyContinue
     }
     Write-Host "Building Nuget using $TargetNugetExe"
-    $CommonArgs += "--build_nuget"
+    $BuildNugetArgs += "--build_nuget"
 }
 
 if ($CMakeGenerator -eq "Ninja") {
@@ -299,7 +300,7 @@ else {
                 $BuildOutputDir = (Join-Path $BuildDir $Config)
                 Use-PyVenv -PyVenv $BuildVEnv {
                     Assert-Success -ErrorMessage "Failed to build" {
-                        & $BuildBatPath --build $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg $BuildArchiveArgs
+                        & $BuildBatPath --build $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg $BuildNugetArgs $BuildArchiveArgs
                     }
                 }
 
@@ -333,20 +334,12 @@ else {
                 }
 
                 if ($BuildNuget) {
-                    Use-PyVenv -PyVenv $BuildVEnv {
-                        Use-WorkingDir -Path $BuildOutputDir {
-                            Assert-Success -ErrorMessage "Failed to build nuget" {
-                                & $BuildBatPath --skip_tests $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg
-
-                                $DistDir = Join-Path $BinDir "dist"
-                                if (-not (Test-Path $DistDir)) {
-                                    New-Item -ItemType Directory -Path $DistDir | Out-Null
-                                }
-                                foreach ($Pkg in (Get-ChildItem -File -Recurse -Path $BinDir -Filter "Qualcomm.ML.OnnxRuntime.QNN*.nupkg")) {
-                                    Copy-Item -Path $Pkg.FullName -Destination $DistDir
-                                }
-                            }
-                        }
+                    $DistDir = Join-Path $BinDir "dist"
+                    if (-not (Test-Path $DistDir)) {
+                        New-Item -ItemType Directory -Path $DistDir | Out-Null
+                    }
+                    foreach ($Pkg in (Get-ChildItem -File -Recurse -Path $BinDir -Filter "Qualcomm.ML.OnnxRuntime.QNN*.nupkg")) {
+                        Copy-Item -Path $Pkg.FullName -Destination $DistDir
                     }
                 }
             }
