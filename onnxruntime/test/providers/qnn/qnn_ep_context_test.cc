@@ -3205,10 +3205,8 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_CtxFileWritten) {
   CleanUpCtxFile(ctx_path);
 }
 
-// Test 2: prepare_only without explicit ep.context_enable does not crash — session creates successfully.
-// Note: ORT core needs kOrtSessionOptionEpContextEnable=1 at session-option level to allocate ep_context_nodes,
-// so the auto-enable only guards internal EP state. The session still runs cleanly.
-TEST_F(QnnHTPBackendTests, PrepareOnly_AutoEnablesContextCache) {
+// Test 2: prepare_only without explicit ep.context_enable gets disabled with a warning — session still creates.
+TEST_F(QnnHTPBackendTests, PrepareOnly_DisabledWhenContextCacheNotSet) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -3234,22 +3232,20 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_AutoEnablesContextCache) {
   std::remove(ctx_path.c_str());
 
   Ort::SessionOptions so;
-  // Intentionally omit kOrtSessionOptionEpContextEnable — session must still create without error.
+  // Intentionally omit kOrtSessionOptionEpContextEnable — prepare_only_ should be disabled with warning.
   SetPrepareOnlyOptions(so, ctx_path, /*explicit_context_enable=*/false);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
 
-  // Session creation must not throw even without explicit context_enable.
+  // since ep.context_enable was not set. Session falls back to normal (non-prepare_only) mode.
   ORT_TRY {
     Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
-    // Without kOrtSessionOptionEpContextEnable, ORT core does not allocate ep_context_nodes,
-    // so ctx file is not written — that is expected.
     SUCCEED();
   }
   ORT_CATCH(const std::exception& e) {
     ORT_HANDLE_EXCEPTION([&e]() {
-      FAIL() << "Session creation should not throw with prepare_only=1: " << e.what();
+      FAIL() << "Session creation should not throw: " << e.what();
     });
   }
 }

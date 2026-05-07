@@ -500,13 +500,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_VERBOSE,
                 ("User specified option - enable_htp_prepare_only: " + prepare_only_str).c_str());
-
-    if (prepare_only_ && !context_cache_enabled_) {
-      ORT_CXX_LOG(logger_,
-                  ORT_LOGGING_LEVEL_WARNING,
-                  "enable_htp_prepare_only=1 requires context cache; auto-enabling ep.context_enable.");
-      context_cache_enabled_ = true;
-    }
   }
 
   std::string backend_path = kDefaultHtpBackendPath;
@@ -1470,6 +1463,13 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
                                                  OrtEpGraphSupportInfo* graph_support_info) noexcept {
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
+  if (ep->prepare_only_ && !ep->context_cache_enabled_) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
+                "enable_htp_prepare_only=1 requires ep.context_enable=1. "
+                "Disabling enable_htp_prepare_only since context cache is not enabled.");
+    ep->prepare_only_ = false;
+  }
+
   const OrtNode* parent_node = nullptr;
   RETURN_IF_NOT_NULL(ep->ort_api.Graph_GetParentNode(graph, &parent_node));
   if (parent_node != nullptr) {
@@ -1556,10 +1556,9 @@ OrtStatus* ORT_API_CALL QnnEp::GetCapabilityImpl(OrtEp* this_ptr,
     return ep->ort_api.CreateStatus(ORT_EP_FAIL, message.c_str());
   }
 
-  if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType()) && !ep->prepare_only_) {
+  if (qnn::IsNpuBackend(ep->qnn_backend_manager_->GetQnnBackendType())) {
     // Set the power config id and the default power mode from provider option for main thread,
     // otherwise it will mess up the power mode if user just create session without run it.
-    // Skipped in prepare_only mode: the session will not run inference, so no power config is needed.
     ep->CreateHtpPowerConfigId();
   }
 
@@ -2081,6 +2080,8 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
       total_finalize_time += std::chrono::duration_cast<std::chrono::milliseconds>(end - finalize_start);
 #endif
 
+      // SetupQnnInputOutput populates qnn_input_infos_/qnn_output_infos_ which are only consumed
+      // in ExecuteGraph during inference. In prepare_only mode inference never runs, so skip.
       if (!ep->prepare_only_) {
         RETURN_IF_NOT_OK(qnn_model->SetupQnnInputOutput(ep->logger_));
       }
@@ -2132,12 +2133,6 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
     RETURN_IF_NOT_NULL(ep->CreateEPContextNodes(graphs[0], fused_nodes, count, ep_context_nodes));
   }
 
-  if (ep->prepare_only_) {
-    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
-                "prepare_only mode: context saved. Releasing QNN device resources.");
-    ep->qnn_models_.clear();
-    ep->qnn_backend_manager_.reset();
-  }
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
   end = std::chrono::steady_clock::now();
   auto total_compile_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - compile_start);
@@ -2149,6 +2144,13 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
               ORT_LOGGING_LEVEL_VERBOSE,
               ("Total compile time for all fused nodes: " + std::to_string(total_compile_time.count()) + " ms").c_str());
 #endif
+
+  if (ep->prepare_only_) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO,
+                "prepare_only mode: context saved. Releasing QNN device resources.");
+    ep->qnn_models_.clear();
+    ep->qnn_backend_manager_.reset();
+  }
 
   return nullptr;
 }
@@ -2251,6 +2253,8 @@ OrtStatus* ORT_API_CALL QnnEp::OnRunStartImpl(_In_ OrtEp* this_ptr, _In_ const :
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
   if (ep->prepare_only_) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                "Skipping OnRunStart in enable_htp_prepare_only mode.");
     return nullptr;
   }
 
@@ -2286,6 +2290,8 @@ OrtStatus* ORT_API_CALL QnnEp::OnRunEndImpl(_In_ OrtEp* this_ptr,
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
   if (ep->prepare_only_) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                "Skipping OnRunEnd in enable_htp_prepare_only mode.");
     return nullptr;
   }
 
@@ -2325,6 +2331,8 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
 
   if (ep->prepare_only_) {
+    ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
+                "SetDynamicOptions is a no-op in enable_htp_prepare_only mode.");
     return nullptr;
   }
 
@@ -2374,7 +2382,7 @@ OrtStatus* ORT_API_CALL QnnEp::SetDynamicOptionsImpl(_In_ OrtEp* this_ptr,
                   ("EP Dynamic Option \"" + key + "\" is not currently supported.").c_str());
       return ep->ort_api.CreateStatus(ORT_INVALID_ARGUMENT, "Unsupported EP Dynamic Option");
     }
-  }
+  }  // end for loop
 
   return nullptr;
 }
@@ -2416,12 +2424,6 @@ OrtStatus* QnnEp::ValidateCompiledModelCompatibilityInfo(const OrtHardwareDevice
                                                          size_t /*num_devices*/,
                                                          const char* compatibility_info,
                                                          OrtCompiledModelCompatibility* model_compatibility) noexcept {
-  if (qnn_backend_manager_ == nullptr) {
-    // Backend has been released (e.g., prepare_only mode); cannot validate.
-    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
-    return nullptr;
-  }
-
   std::string info_string(compatibility_info);
   if (info_string.empty()) {
     *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
@@ -2579,6 +2581,8 @@ OrtStatus* QnnEp::QnnNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_p
   QnnEp& ep = node_compute_info->ep;
 
   if (ep.prepare_only_) {
+    ORT_CXX_LOG(ep.logger_, ORT_LOGGING_LEVEL_VERBOSE,
+                "Skipping CreateState in enable_htp_prepare_only mode.");
     *compute_state = nullptr;
     return nullptr;
   }

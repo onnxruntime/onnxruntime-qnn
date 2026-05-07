@@ -346,7 +346,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   Ort::Status ReleaseProfilehandle();
 
   Ort::Status CreateContext(bool enable_htp_weight_sharing, bool enable_htp_extended_udma_mode,
-                            bool enable_htp_prepare_only = false);
+                            bool enable_htp_prepare_only);
 
   Ort::Status GetFileSizeIfValid(const std::string& filepath, size_t& file_size);
 
