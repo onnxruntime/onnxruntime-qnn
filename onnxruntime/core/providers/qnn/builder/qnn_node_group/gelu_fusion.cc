@@ -414,8 +414,13 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
   }
 
   // Build-time GELU should remain float-in/float-out so surrounding DQ/Q nodes can be lowered separately.
-  const OrtNodeUnitIODef* root_input = &div_inputs[0];
-  const OrtNodeUnitIODef* validate_root_input = root_input;
+  if (div_inputs.empty()) {
+    return nullptr;
+  }
+
+  // Copy IODef values to avoid dangling references from temporary vectors returned by Inputs()/Outputs().
+  OrtNodeUnitIODef root_input = div_inputs[0];
+  OrtNodeUnitIODef validate_root_input = root_input;
 
   const OrtNodeUnit* root_input_parent = GetParentOfInput(qnn_model_wrapper,
                                                           *div_node_unit,
@@ -423,32 +428,44 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
                                                           node_to_node_unit,
                                                           node_unit_to_qnn_node_group);
   if (root_input_parent != nullptr &&
-      root_input_parent->OpType() == DEQUANTIZE_LINEAR &&
-      !root_input_parent->Inputs().empty()) {
-    validate_root_input = &root_input_parent->Inputs()[0];
+      root_input_parent->OpType() == DEQUANTIZE_LINEAR) {
+    const auto& parent_inputs = root_input_parent->Inputs();
+    if (parent_inputs.empty()) {
+      return nullptr;
+    }
+    validate_root_input = parent_inputs[0];
   }
 
-  if (pattern_match.final_mul_node_unit == nullptr || pattern_match.final_mul_node_unit->Outputs().empty()) {
+  if (pattern_match.final_mul_node_unit == nullptr) {
     return nullptr;
   }
-  const OrtNodeUnitIODef* final_output = &pattern_match.final_mul_node_unit->Outputs()[0];
-  const OrtNodeUnitIODef* validate_final_output = final_output;
+
+  const auto& final_mul_outputs = pattern_match.final_mul_node_unit->Outputs();
+  if (final_mul_outputs.empty()) {
+    return nullptr;
+  }
+
+  OrtNodeUnitIODef final_output = final_mul_outputs[0];
+  OrtNodeUnitIODef validate_final_output = final_output;
 
   const OrtNodeUnit* final_output_child = GetOnlyChildOfOutput(qnn_model_wrapper,
                                                                *pattern_match.final_mul_node_unit,
-                                                               pattern_match.final_mul_node_unit->Outputs()[0],
+                                                               final_mul_outputs[0],
                                                                node_to_node_unit,
                                                                node_unit_to_qnn_node_group);
   if (final_output_child != nullptr &&
-      final_output_child->OpType() == QUANTIZE_LINEAR &&
-      !final_output_child->Outputs().empty()) {
-    validate_final_output = &final_output_child->Outputs()[0];
+      final_output_child->OpType() == QUANTIZE_LINEAR) {
+    const auto& child_outputs = final_output_child->Outputs();
+    if (child_outputs.empty()) {
+      return nullptr;
+    }
+    validate_final_output = child_outputs[0];
   }
 
   Ort::Status status = ValidateOnQnn(qnn_model_wrapper,
                                      pattern_match.node_units,
-                                     *validate_root_input,
-                                     *validate_final_output);
+                                     validate_root_input,
+                                     validate_final_output);
   if (!status.IsOK()) {
     ORT_CXX_LOG(logger,
                 ORT_LOGGING_LEVEL_WARNING,
@@ -460,10 +477,10 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
 
   return std::make_unique<GeluFusion>(std::move(pattern_match.node_units),
                                       &erf_node_unit,
-                                      *validate_root_input,
-                                      *validate_final_output,
-                                      *root_input,
-                                      *final_output);
+                                      validate_root_input,
+                                      validate_final_output,
+                                      root_input,
+                                      final_output);
 }
 
 GeluFusion::GeluFusion(std::vector<const OrtNodeUnit*>&& node_units,
