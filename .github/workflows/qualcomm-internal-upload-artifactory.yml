@@ -1,7 +1,7 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
-name: Publish ONNX Runtime Execution Provider wheel, nuget, zip and tgz
+name: Publish ONNX Runtime Execution Provider wheel, nuget, archive and maven
 
 permissions:
   checks: write
@@ -10,12 +10,16 @@ permissions:
 
 on:
   workflow_call:
-    inputs:
+    inputs: &common_inputs
       product_name:
+        description:  |
+          The product name.
+          For Maven format, it should be "onnxruntime-android-qnn".
+          For other formats, it should be "onnxruntime-qnn".
         type: string
         default: "onnxruntime-qnn"
       artifact_format:
-        description: "The format of artifact. Choose one of [wheel, nuget, zip, tgz, all]."
+        description: "The format of artifact. Choose one of [wheel, nuget, zip, tgz, maven, all]."
         type: string
         default: "wheel"
       version_from:
@@ -25,6 +29,7 @@ on:
             And the suffix should be <letters><numbers>.
           For nuget package, the format should be <version>.<version>.<version>-<suffix>.
             Please note that underscore (_) is not allowed in the version format.
+          For Maven artifact, the format should be <version><-SNAPSHOT>.
         type: string
         default: "0.1.0test"
       version_to:
@@ -34,60 +39,26 @@ on:
             And the suffix should be <letters><numbers>.
           For nuget package, the format should be <version>.<version>.<version>-<suffix>.
             Please note that underscore (_) is not allowed in the version format.
+          For Maven artifact, the format should be <version><-SNAPSHOT>.
         type: string
         default: "0.1.0rctest"
       index_server_from:
         description: |
           From which server the artifact is located. Choose one of
-          ["pypi, testpypi, nuget, testnuget, test-users, test-project, project, public]
+          ["pypi, testpypi, nuget, testnuget, test-users, test-project, project, public,
+           artifactory-maven-virtual, maven-central]
         type: string
         default: "test-users"
       index_server_to:
         description: |
           To which server to store the artifact. Choose one of
-          ["pypi, testpypi, nuget, testnuget, test-users, test-project, project, public]
+          ["pypi, testpypi, nuget, testnuget, test-users, test-project, project, public,
+           artifactory-maven-virtual, maven-central]
         type: string
         default: "test-users"
 
   workflow_dispatch:
-    inputs:
-      product_name:
-        type: string
-        default: "onnxruntime-qnn"
-      artifact_format:
-        description: "The format of artifact. Choose one of [wheel, nuget, zip, tgz, all]."
-        type: string
-        default: "wheel"
-      version_from:
-        description: |
-          Source version of artifact.
-          For python wheel, the format should be <version>.<version>.<version><.><suffix>.
-            And the suffix should be <letters><numbers>.
-          For nuget package, the format should be <version>.<version>.<version>-<suffix>.
-            Please note that underscore (_) is not allowed in the version format.
-        type: string
-        default: "0.1.0test"
-      version_to:
-        description: |
-          Target version of artifact.
-          For python wheel, the format should be <version>.<version>.<version><.><suffix>.
-            And the suffix should be <letters><numbers>.
-          For nuget package, the format should be <version>.<version>.<version>-<suffix>.
-            Please note that underscore (_) is not allowed in the version format.
-        type: string
-        default: "0.1.0rctest"
-      index_server_from:
-        description: |
-          From which server the artifact is located. Choose one of
-          [pypi, testpypi, nuget, testnuget, test-users, test-project, project, public]
-        type: string
-        default: "test-users"
-      index_server_to:
-        description: |
-          To which server to store the artifact. Choose one of
-          [pypi, testpypi, nuget, testnuget, test-users, test-project, project, public]
-        type: string
-        default: "test-users"
+    inputs: *common_inputs
 
 jobs:
   check-admin-permission:
@@ -271,3 +242,43 @@ jobs:
 
           # Clean up the temporary .netrc file
           rm -f "$NETRC_FILE"
+
+  publish-maven-workflow:
+    if: ${{ inputs.artifact_format == 'maven' || inputs.artifact_format == 'all' }}
+    name: "Publish Maven artifact"
+    runs-on: [Linux, self-hosted, Build]
+    needs: check-admin-permission
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Dependencies
+        run: ./qcom/scripts/upleveling/create_uplevel_venv.sh
+
+      - name: Set up Java + Maven and import CA
+        uses: ./.github/actions/setup-java-maven
+
+      - name: Publish
+        env:
+          AISW_MAVEN_ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          AISW_MAVEN_ARTIFACTORY_PASSWORD: ${{ secrets.AISW_MAVEN_ARTIFACTORY_PASSWORD }}
+          # Consumed only when inputs.index_server_to == 'maven-central'; harmless otherwise.
+          MAVEN_CENTRAL_BEARER_TOKEN:     ${{ secrets.MAVEN_CENTRAL_BEARER_TOKEN }}
+          MAVEN_CENTRAL_GPG_PRIVATE_KEY:  ${{ secrets.MAVEN_CENTRAL_GPG_PRIVATE_KEY }}
+          MAVEN_CENTRAL_GPG_PASSPHRASE:   ${{ secrets.MAVEN_CENTRAL_GPG_PASSPHRASE }}
+        run: |
+          source uplevel_venv/bin/activate
+          python ./qcom/scripts/upleveling/qnn_ep_uplevel.py \
+            --product_name    ${{ inputs.product_name }} \
+            --artifact_format maven \
+            --version_from    ${{ inputs.version_from }} \
+            --version_to      ${{ inputs.version_to }} \
+            --index_server_from ${{ inputs.index_server_from }} \
+            --index_server_to   ${{ inputs.index_server_to }}
+
+      - name: Validate APK build
+        env:
+          AAR_MAVEN_COORD: "com.qualcomm.qti:${{ inputs.product_name }}:${{ inputs.version_to }}"
+          AISW_MAVEN_ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          AISW_MAVEN_ARTIFACTORY_PASSWORD: ${{ secrets.AISW_MAVEN_ARTIFACTORY_PASSWORD }}
+        run: ./qcom/scripts/upleveling/maven/validate_apk.sh
