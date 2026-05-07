@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
+#include <functional>
+#include <limits>
 #include <numeric>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -58,6 +60,17 @@ inline bool IsQuant16bit(Qnn_DataType_t qnn_data_type) {
   return qnn_data_type == QNN_DATATYPE_UFIXED_POINT_16 || qnn_data_type == QNN_DATATYPE_SFIXED_POINT_16;
 }
 
+// Flattens the leading dims of `shape` (all but the last) into a single uint32_t batch value.
+Ort::Status FlattenLeadingDims(const std::vector<uint32_t>& shape, uint32_t& batch) {
+  const int64_t batch_i64 = std::accumulate(shape.begin(), shape.end() - 1,
+                                            static_cast<int64_t>(1), std::multiplies<int64_t>());
+  RETURN_IF(batch_i64 <= 0 ||
+                batch_i64 > static_cast<int64_t>(std::numeric_limits<uint32_t>::max()),
+            "MatMul: flattened batch dimension product overflows uint32_t.");
+  batch = static_cast<uint32_t>(batch_i64);
+  return Ort::Status();
+}
+
 Ort::Status CheckInputs(const QnnModelWrapper& qnn_model_wrapper, const OrtNodeUnitIODef& input_def_0,
                         const OrtNodeUnitIODef& input_def_1, TensorInfo& input_info_0, TensorInfo& input_info_1,
                         bool& use_fully_connected) {
@@ -104,8 +117,8 @@ Ort::Status ProcessInput0(QnnModelWrapper& qnn_model_wrapper,
     if (is_rank1) {
       shape_2d = {1, input_0_info.shape[0]};
     } else {
-      const uint32_t batch = std::accumulate(input_0_info.shape.begin(), input_0_info.shape.end() - 1,
-                                             static_cast<uint32_t>(1), std::multiplies<uint32_t>());
+      uint32_t batch = 0;
+      RETURN_IF_ERROR(FlattenLeadingDims(input_0_info.shape, batch));
       shape_2d = {batch, input_0_info.shape.back()};
     }
     QnnQuantParamsWrapper quant_param_2d = input_0_info.quant_param.Copy();
@@ -439,9 +452,9 @@ Ort::Status MatMulOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   if (reshape_output) {
     op_output_name = utils::UniqueNameGenerator().New(org_output_name, "_reshape");
     if (use_fully_connected && input_info_0.shape.size() > 2) {
-      op_output_shape = {std::accumulate(input_info_0.shape.begin(), input_info_0.shape.end() - 1,
-                                         static_cast<uint32_t>(1), std::multiplies<uint32_t>()),
-                         reshape_input_1 ? 1 : input_info_1.shape.back()};
+      uint32_t batch = 0;
+      RETURN_IF_ERROR(FlattenLeadingDims(input_info_0.shape, batch));
+      op_output_shape = {batch, reshape_input_1 ? 1 : input_info_1.shape.back()};
       RETURN_IF(op_output_quant_param.IsPerChannel(), "QNN MatMul output does not support per-channel quant.");
     } else {
       // If both inputs are 1D tensors, the output shape is [1] instead of scalar. So if both inputs are 1D tensors,
