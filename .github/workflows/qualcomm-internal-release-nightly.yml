@@ -11,16 +11,6 @@ permissions:
 on:
   schedule:
     - cron: "0 9 * * *"  # Every day at 2am in San Diego/PDT (9am UTC)
-  workflow_dispatch:
-    inputs:
-      do_windows_arm64_debug:
-        description: "If true, also build Windows ARM64 in Debug configuration."
-        type: boolean
-        default: false
-      do_windows_arm64_relwithdebinfo:
-        description: "If true, also build Windows ARM64 in RelWithDebInfo configuration."
-        type: boolean
-        default: false
 
 jobs:
   publish-artifacts:
@@ -31,5 +21,5 @@ jobs:
       nightly_build: true
       skip_publish_qa: false
       skip_publish_wheel: false
-      do_windows_arm64_debug: ${{ inputs.do_windows_arm64_debug || false }}
-      do_windows_arm64_relwithdebinfo: ${{ inputs.do_windows_arm64_relwithdebinfo || false }}
+      do_windows_arm64_debug: true
+      do_windows_arm64_relwithdebinfo: true
