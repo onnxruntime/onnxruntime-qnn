@@ -45,8 +45,14 @@
 
     // Comma-separated list of ctest cases to skip
     // Default: null
-    // TODO: [AISW-163150] ORT test failures on qcs6490
     "skip_ctests": null,
+
+    // Individual gtest cases to skip (injected as --gtest_filter=-...) across all ctest executables.
+    // Default: null
+    // [AISW-163150] QnnCPUBackendTests.MaxPool_Rank3: QNN CPU backend Rank3 MaxPool bug on Linux;
+    //   root cause confirmed via qnn-net-run comparison — wrong output from QNN CPU backend itself.
+    //   Pending fix from QNN CPU team.
+    "skip_gtest_cases": ["QnnCPUBackendTests.MaxPool_Rank3"],
 
     // Comma-separated list of model test suites cases to skip
     // Default: null

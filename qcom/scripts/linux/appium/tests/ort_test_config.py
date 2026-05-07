@@ -42,6 +42,9 @@ class OrtTestConfig:
     # A list of test executables run by ctest to skip.
     _skip_ctests: list[str] | None = None
 
+    # A list of individual gtest cases to skip (injected as --gtest_filter=-...).
+    _skip_gtest_cases: list[str] | None = None
+
     # A list of model test suites to skip.
     _skip_model_tests: list[str] | None = None
 
@@ -113,6 +116,19 @@ class OrtTestConfig:
             self._skip_ctests = []
 
     @property
+    def skip_gtest_cases(self) -> list[str]:
+        return [] if self._skip_gtest_cases is None else self._skip_gtest_cases
+
+    @skip_gtest_cases.setter
+    def skip_gtest_cases(self, value: Iterable[str] | str | None) -> None:
+        if isinstance(value, str):
+            value = value.split(",") if len(value) > 0 else []
+        if isinstance(value, Iterable):
+            self._skip_gtest_cases = list(value)
+        else:
+            self._skip_gtest_cases = []
+
+    @property
     def skip_model_tests(self) -> list[str]:
         return [] if self._skip_model_tests is None else self._skip_model_tests
 
@@ -176,6 +192,7 @@ def _parse_test_config_obj(config_obj: dict) -> OrtTestConfig:
         "host_qcom_scripts_path",
         "qdc_host_path",
         "skip_ctests",
+        "skip_gtest_cases",
         "skip_model_tests",
     ]
 
