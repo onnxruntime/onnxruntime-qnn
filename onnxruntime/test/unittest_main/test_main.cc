@@ -55,7 +55,8 @@ extern "C" void ortenv_setup() {
       log_level = static_cast<OrtLoggingLevel>(*log_level_override);
     }
 
-    ort_env.reset(new Ort::Env(log_level, "Default"));
+    Ort::ThreadingOptions tpo;
+    ort_env.reset(new Ort::Env(tpo, log_level, "Default"));
   } catch (const std::exception& ex) {
     std::cerr << ex.what();
     std::exit(1);
