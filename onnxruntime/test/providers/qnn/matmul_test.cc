@@ -265,6 +265,11 @@ TEST_F(QnnCPUBackendTests, MatMulOp) {
 // HTP tests:
 //
 TEST_F(QnnHTPBackendTests, MatMulOp) {
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
   // RunMatMulOpTest(shape_0, shape_1, is_initializer_0, is_initializer_1, expected_ep_assignment,
   // opset, f32_abs_err)
   RunMatMulOpTest({2, 3}, {3, 2}, false, false, ExpectedEPNodeAssignment::All, "htp", 18, 1e-2f);
@@ -341,6 +346,11 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ) {
 // symmetric one.
 // Got specific shapes and input ranges (quant params) from customer model.
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_Regression_uint16_dynamic_inputs) {
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThan(QNN_HTP_DEVICE_ARCH_V73)) {
+    GTEST_SKIP() << "Test requires HTP arch >= V73 for U16 quantization.";
+  }
+#endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -397,6 +407,11 @@ TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_Regression_uint16_dynamic_inputs) {
 // This workaround prevents a validation error for this specific MatMul configuration.
 // Got specific shapes and input ranges (quant params) from customer model.
 TEST_F(QnnHTPBackendTests, MatMulOp_QDQ_Regression_uint16_static_weight) {
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThan(QNN_HTP_DEVICE_ARCH_V73)) {
+    GTEST_SKIP() << "Test requires HTP arch >= V73 for U16 quantization.";
+  }
+#endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";

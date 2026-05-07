@@ -628,16 +628,17 @@ void QnnIRBackendTests::SetUp() {
   }
 }
 
-#if defined(_WIN32)
-// TODO: Remove or set to SUPPORTED once HTP emulation is supported on win arm64.
+// Probe real hardware at runtime (Windows ARM64 devices, Linux aarch64 like qcs6490) so
+// arch-conditional skip guards (e.g. ShouldSkipIfHtpArchIsLessThanOrEqualTo) see populated
+// platform attrs. x86_64 Linux dev hosts have no device — short-circuit to avoid probe noise.
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+// TODO: split this branch — Linux aarch64 always needs the probe; Windows ARM64 may eventually short-circuit when HTP emulation is available.
 BackendSupport QnnHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORT_UNKNOWN;
-
-// TODO: Remove or set to SUPPORTED once CPU backend works on win arm64 (pipeline VM).
 BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORT_UNKNOWN;
 #else
 BackendSupport QnnHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORTED;
 BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORTED;
-#endif  // defined(_WIN32)
+#endif
 
 BackendSupport QnnHTPBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnIRBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;

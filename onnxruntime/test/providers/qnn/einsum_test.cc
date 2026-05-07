@@ -247,6 +247,11 @@ TEST_F(QnnCPUBackendTests, EinsumReduceSumMulBroadcastX) {
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 TEST_F(QnnHTPBackendTests, EinsumF16Rank2MatMul) {
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
   const std::vector<int64_t> shape0{2, 3};
   const std::vector<int64_t> shape1{3, 4};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
@@ -260,6 +265,11 @@ TEST_F(QnnHTPBackendTests, EinsumF16Rank2MatMul) {
 }
 
 TEST_F(QnnHTPBackendTests, EinsumF16Rank4MatMul) {
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
   const std::vector<int64_t> shape0{3, 1, 5, 2};
   const std::vector<int64_t> shape1{3, 1, 2, 5};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
@@ -273,6 +283,11 @@ TEST_F(QnnHTPBackendTests, EinsumF16Rank4MatMul) {
 }
 
 TEST_F(QnnHTPBackendTests, EinsumF16Rank4MatMulTransposeY) {
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
   const std::vector<int64_t> shape0{2, 3, 4, 2};
   const std::vector<int64_t> shape1{2, 3, 5, 2};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
@@ -286,6 +301,11 @@ TEST_F(QnnHTPBackendTests, EinsumF16Rank4MatMulTransposeY) {
 }
 
 TEST_F(QnnHTPBackendTests, EinsumF16Rank4MatMulTransposeY_QK) {
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
   const std::vector<int64_t> shape0{2, 3, 4, 2};
   const std::vector<int64_t> shape1{2, 3, 5, 2};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
@@ -299,6 +319,11 @@ TEST_F(QnnHTPBackendTests, EinsumF16Rank4MatMulTransposeY_QK) {
 }
 
 TEST_F(QnnHTPBackendTests, EinsumRank3MatMulTransposeY) {
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
   const std::vector<int64_t> shape0{2, 4, 2};
   const std::vector<int64_t> shape1{2, 5, 2};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
@@ -312,6 +337,11 @@ TEST_F(QnnHTPBackendTests, EinsumRank3MatMulTransposeY) {
 }
 
 TEST_F(QnnHTPBackendTests, EinsumRank3MatMulTransposeY_QK) {
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
   const std::vector<int64_t> shape0{2, 4, 2};
   const std::vector<int64_t> shape1{2, 5, 2};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
@@ -325,6 +355,11 @@ TEST_F(QnnHTPBackendTests, EinsumRank3MatMulTransposeY_QK) {
 }
 
 TEST_F(QnnHTPBackendTests, EinsumRank3MatMul_QK) {
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
   const std::vector<int64_t> shape0{2, 3, 4};
   const std::vector<int64_t> shape1{2, 4, 3};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
@@ -338,6 +373,11 @@ TEST_F(QnnHTPBackendTests, EinsumRank3MatMul_QK) {
 }
 
 TEST_F(QnnHTPBackendTests, EinsumF16Rank4MatMulTransposeAll1) {
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
   const std::vector<int64_t> shape0{1, 3, 1, 7};
   const std::vector<int64_t> shape1{1, 7, 1, 3};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
@@ -351,6 +391,11 @@ TEST_F(QnnHTPBackendTests, EinsumF16Rank4MatMulTransposeAll1) {
 }
 
 TEST_F(QnnHTPBackendTests, EinsumF16Rank4MatMulTransposeAll2) {
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
   const std::vector<int64_t> shape0{1, 4, 1, 4};
   const std::vector<int64_t> shape1{1, 9, 1, 4};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
@@ -364,6 +409,11 @@ TEST_F(QnnHTPBackendTests, EinsumF16Rank4MatMulTransposeAll2) {
 }
 
 TEST_F(QnnHTPBackendTests, EinsumF16MatMulBroadcastTransposeY) {
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
   const std::vector<int64_t> shape0{2, 3, 3, 4};
   const std::vector<int64_t> shape1{3, 3, 4};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
@@ -377,6 +427,11 @@ TEST_F(QnnHTPBackendTests, EinsumF16MatMulBroadcastTransposeY) {
 }
 
 TEST_F(QnnHTPBackendTests, EinsumF16ReduceSumMulBroadcastX) {
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
+#endif
   const std::vector<int64_t> shape0{1, 3, 2, 4};
   const std::vector<int64_t> shape1{2, 3, 4};
   const std::vector<float> data0 = GetSequentialFloatData(shape0, /*start=*/-0.1f, /*step=*/0.05f);
