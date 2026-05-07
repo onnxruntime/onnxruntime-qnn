@@ -7,4 +7,5 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 python3 -m venv uplevel_venv
 source uplevel_venv/bin/activate
 pip install uv
-uv pip install -r ${REPO_ROOT}/qcom/scripts/upleveling/requirements.txt
+uv pip install -r "${REPO_ROOT}/qcom/requirements.txt"
+uv pip install -r "${REPO_ROOT}/qcom/scripts/upleveling/requirements.txt"

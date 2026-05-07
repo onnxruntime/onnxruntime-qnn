@@ -179,7 +179,7 @@ jobs:
       build_nuget: true
       upload_nuget: true
 
-  arm-debug:
+  windows-arm64-debug:
     if: ${{ inputs.do_windows_arm64_debug }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
@@ -198,7 +198,7 @@ jobs:
       upload_archive: ${{ inputs.windows_arm64_build_archive }}
       upload_wheel: false
 
-  arm-relwithdebinfo:
+  windows-arm64-relwithdebinfo:
     if: ${{ inputs.do_windows_arm64_relwithdebinfo }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
