@@ -3672,6 +3672,9 @@ static void TestModelCompatibilityApiValidate(const CompatibilityTestInfo& test_
       qcom_npu_device = ep_devices[i];
     }
   }
+  if (qcom_npu_device == nullptr) {
+    GTEST_SKIP() << "No QNN NPU EP device found";
+  }
 
   OrtCompiledModelCompatibility out_status = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
   Ort::GetApi().GetModelCompatibilityForEpDevices(&qcom_npu_device, 1, test_info.ToString().c_str(), &out_status);
