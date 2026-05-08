@@ -92,6 +92,7 @@ ProviderOptions GetProviderOptions() {
 // Transpose Perm: [0, 1, 2, 4, 3, 5] (swap d3 and idx0) -> [1, 1, 1, 8, 32, 8]
 // Reshape: [1, 8, 32, 8]
 TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_RowMajor) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "GatherTransposeReshape_Fusion_RowMajor";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -135,6 +136,7 @@ TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_RowMajor) {
 // Transpose Perm: [0, 1, 2, 5, 4, 3] (reverse last 3) -> [1, 1, 1, 10, 10, 16]
 // Reshape: [1, 100, 16]
 TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_ColMajor) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "GatherTransposeReshape_Fusion_ColMajor";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -175,6 +177,7 @@ TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_ColMajor) {
 // Transpose Perm: [0, 1, 2, 4, 3, 5] -> [1, 1, 1, 6, 8, 8]
 // Reshape: [1, 6, 8, 8]
 TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_AsymmetricIndices) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "GatherTransposeReshape_Fusion_AsymmetricIndices";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -199,6 +202,7 @@ TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_AsymmetricIndices) {
 // Transpose Perm: [0, 1, 2, 5, 4, 3] -> [2, 3, 4, 6, 6, 16]
 // Reshape: [24, 36, 16]
 TEST_F(QnnHTPBackendTests, GatherTransposeReshape_Fusion_MergedBatchDims) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "GatherTransposeReshape_Fusion_MergedBatchDims";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));

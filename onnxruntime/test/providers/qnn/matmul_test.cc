@@ -249,7 +249,9 @@ TEST_F(QnnCPUBackendTests, MatMulOp) {
   RunMatMulOpTest({3}, {3, 3, 2}, true, false);
   RunMatMulOpTest({2, 3}, {3}, false, false);
   RunMatMulOpTest({2, 3}, {3}, true, false);
+  RunMatMulOpTest({2, 3, 4}, {4, 2}, false, true);
   RunMatMulOpTest({2, 3, 3, 3}, {3}, false, false);
+  RunMatMulOpTest({1, 1, 2, 2, 4}, {4, 2}, false, true);
 
   // Failed randomly on Linux
   // Expected: contains 36 values, where each value and its corresponding value in 16-byte object
@@ -284,7 +286,9 @@ TEST_F(QnnHTPBackendTests, MatMulOp) {
   RunMatMulOpTest({3}, {3, 3, 2}, true, false, ExpectedEPNodeAssignment::All, "htp", 18, 1e-2f);
   RunMatMulOpTest({2, 3}, {3}, false, false, ExpectedEPNodeAssignment::All, "htp", 18, 1e-2f);
   RunMatMulOpTest({2, 3}, {3}, true, false, ExpectedEPNodeAssignment::All, "htp", 18, 1e-2f);
+  RunMatMulOpTest({2, 3, 4}, {4, 2}, false, true, ExpectedEPNodeAssignment::All, "htp", 18, 1e-2f);
   RunMatMulOpTest({2, 3, 3, 3}, {3}, false, false, ExpectedEPNodeAssignment::All, "htp", 18, 1e-2f);
+  RunMatMulOpTest({1, 1, 2, 2, 4}, {4, 2}, false, true, ExpectedEPNodeAssignment::All, "htp", 18, 1e-2f);
 
   // Failed randomly on Linux
   // Expected: contains 18 values, where each value and its corresponding value in 16-byte object
