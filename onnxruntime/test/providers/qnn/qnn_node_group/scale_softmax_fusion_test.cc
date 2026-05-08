@@ -71,6 +71,7 @@ ProviderOptions GetProviderOptions() {
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializer) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionScalarInitializer";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -92,6 +93,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializer) {
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstant) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionScalarConstant";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -113,6 +115,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstant) {
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializerReversed) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionScalarInitializerReversed";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -134,6 +137,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarInitializerReversed) {
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstantReversed) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionScalarConstantReversed";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -155,6 +159,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionScalarConstantReversed) {
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSoftmaxNegativeAxis) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionSoftmaxNegativeAxis";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -177,6 +182,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSoftmaxNegativeAxis) {
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar4d) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionSkipNoScalar4d";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -199,6 +205,7 @@ TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar4d) {
 }
 
 TEST_F(QnnHTPBackendTests, ScaleSoftmaxFusionSkipNoScalar1d) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ScaleSoftmaxFusionSkipNoScalar1d";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));

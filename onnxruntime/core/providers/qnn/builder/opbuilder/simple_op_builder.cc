@@ -3,6 +3,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
+#include "core/providers/qnn/builder/opbuilder/qdq_constant_folding.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 
@@ -83,7 +84,10 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
     bool is_per_chan_quant = false;
     int64_t quant_axis = 0;
     RETURN_IF_ERROR(qnn_model_wrapper.IsPerChannelQuantized(node_unit.Inputs()[0], is_per_chan_quant, quant_axis));
-    RETURN_IF(is_per_chan_quant, "QNN EP does not support a standalone DQ op with per-channel quantization");
+    // Per-channel standalone DQ is allowed only if the input is a compile-time constant;
+    const bool is_input_const = qnn_model_wrapper.IsEffectivelyConstantInput(node_unit.Inputs()[0].name);
+    RETURN_IF(is_per_chan_quant && !is_input_const,
+              "QNN EP does not support a standalone DQ op with per-channel quantization");
 
     if (qnn_model_wrapper.GetModelSettings().offload_graph_io_quantization &&
         qnn_model_wrapper.IsGraphOutput(node_unit.Outputs()[0].name)) {
@@ -106,7 +110,10 @@ Ort::Status SimpleOpBuilder::ExplicitOpCheck(QnnModelWrapper& qnn_model_wrapper,
     bool is_per_chan_quant = false;
     int64_t quant_axis = 0;
     RETURN_IF_ERROR(qnn_model_wrapper.IsPerChannelQuantized(node_unit.Outputs()[0], is_per_chan_quant, quant_axis));
-    RETURN_IF(is_per_chan_quant, "QNN EP does not support a standalone Q op with per-channel quantization");
+    // Per-channel standalone Q is allowed only if the input is a compile-time constant;
+    const bool is_input_const = qnn_model_wrapper.IsEffectivelyConstantInput(node_unit.Inputs()[0].name);
+    RETURN_IF(is_per_chan_quant && !is_input_const,
+              "QNN EP does not support a standalone Q op with per-channel quantization");
 
     if (qnn_model_wrapper.GetModelSettings().offload_graph_io_quantization &&
         qnn_model_wrapper.IsGraphInput(node_unit.Inputs()[0].name)) {
@@ -321,6 +328,14 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
       }
     }
 #endif
+  }
+
+  // Emit a STATIC tensor instead of an APP_WRITE input for standalone Q/DQ on constant inputs.
+  if (CanFoldConstantQdq(qnn_model_wrapper, node_unit)) {
+    Ort::Status fold_status = TryFoldConstantQDQ(qnn_model_wrapper, node_unit);
+    if (fold_status.IsOK()) {
+      return Ort::Status();
+    }
   }
 
   std::vector<std::string> param_tensor_names;

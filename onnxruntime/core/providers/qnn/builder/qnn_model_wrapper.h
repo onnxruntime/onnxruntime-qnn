@@ -6,6 +6,7 @@
 #include <map>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "nlohmann/json.hpp"
@@ -194,6 +195,19 @@ class QnnModelWrapper {
     return is_constant_initializer;
   }
 
+  void MarkTensorAsFoldedConstant(const std::string& tensor_name) {
+    folded_constant_tensors_.insert(tensor_name);
+  }
+
+  bool IsFoldedConstant(const std::string& tensor_name) const {
+    return folded_constant_tensors_.count(tensor_name) > 0;
+  }
+
+  // Real graph initializer OR a tensor produced by a previous compile-time fold.
+  bool IsEffectivelyConstantInput(const std::string& tensor_name) const {
+    return IsConstantInput(tensor_name) || IsFoldedConstant(tensor_name);
+  }
+
   // static bool GetOnnxShape(const NodeArg& node_arg, std::vector<uint32_t>& shape);
   static bool GetOnnxShape(const std::optional<std::vector<int64_t>>& onnx_shape, std::vector<uint32_t>& shape);
 
@@ -212,7 +226,7 @@ class QnnModelWrapper {
   }
 
   Qnn_TensorType_t GetTensorType(const std::string& tensor_name) const {
-    if (IsConstantInput(tensor_name)) {
+    if (IsConstantInput(tensor_name) || IsFoldedConstant(tensor_name)) {
       return QNN_TENSOR_TYPE_STATIC;
     } else if (IsGraphInput(tensor_name)) {
       return QNN_TENSOR_TYPE_APP_WRITE;
@@ -488,6 +502,9 @@ class QnnModelWrapper {
   const ApiPtrs api_ptrs_;
 
   std::unordered_map<std::string, std::string>* tensor_name_overrides_ = nullptr;
+
+  // Tensor names produced by compile-time Q/DQ folds; chained across hops.
+  std::unordered_set<std::string> folded_constant_tensors_;
 };  // QnnModelWrapper
 
 template <typename T>

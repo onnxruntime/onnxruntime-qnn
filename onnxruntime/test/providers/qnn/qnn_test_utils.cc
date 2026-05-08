@@ -276,6 +276,8 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                      float fp32_abs_err, OrtLoggingLevel log_severity, bool verify_outputs,
                      std::function<void(const Graph&)>* ep_graph_checker) {
+  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(provider_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
+
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
       QNNTestEnvironment::GetInstance().dump_json() ||
@@ -628,8 +630,8 @@ void QnnIRBackendTests::SetUp() {
   }
 }
 
-#if defined(_WIN32)
-// TODO: Remove or set to SUPPORTED once HTP emulation is supported on win arm64.
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+// TODO: Remove or set to SUPPORTED once HTP emulation is supported on win arm64 and Linux ARM64.
 BackendSupport QnnHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORT_UNKNOWN;
 
 // TODO: Remove or set to SUPPORTED once CPU backend works on win arm64 (pipeline VM).
@@ -637,7 +639,7 @@ BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORT
 #else
 BackendSupport QnnHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORTED;
 BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORTED;
-#endif  // defined(_WIN32)
+#endif  // defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
 
 BackendSupport QnnHTPBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnIRBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
