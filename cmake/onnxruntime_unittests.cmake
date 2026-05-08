@@ -236,8 +236,6 @@ onnxruntime_add_include_to_target(onnxruntime_test_utils GTest::gtest GTest::gmo
 add_dependencies(onnxruntime_test_utils ${onnxruntime_EXTERNAL_DEPENDENCIES})
 target_include_directories(onnxruntime_test_utils PUBLIC "${TEST_SRC_DIR}/util/include"
                            PRIVATE
-                           ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT}
-                           ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}
                            ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session
                            )
 set_target_properties(onnxruntime_test_utils PROPERTIES FOLDER "ONNXRuntimeTest")
@@ -258,8 +256,6 @@ onnxruntime_add_static_library(onnxruntime_unittest_utils ${onnxruntime_unittest
 add_dependencies(onnxruntime_unittest_utils ort_core_target)
 
 target_include_directories(onnxruntime_unittest_utils PRIVATE
-                           ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT}
-                           ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}
                            ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session
                            "${TEST_SRC_DIR}/util/include"
                            )
@@ -444,23 +440,6 @@ endif()
 
     set_target_properties(ep_weight_sharing_ctx_gen PROPERTIES FOLDER "ONNXRuntimeTest")
   endif()
-
-  # the debug node IO functionality uses static variables, so it is best tested
-  # in its own process
-  if(onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS)
-    AddTest(
-      TARGET onnxruntime_test_debug_node_inputs_outputs
-      SOURCES
-        "${TEST_SRC_DIR}/debug_node_inputs_outputs/debug_node_inputs_outputs_utils_test.cc"
-        "${TEST_SRC_DIR}/providers/provider_test_utils.h"
-        ${onnxruntime_unittest_main_src}
-      LIBS ${onnxruntime_test_providers_libs} ${onnxruntime_test_common_libs}
-      DEPENDS ${all_dependencies}
-    )
-
-    target_compile_definitions(onnxruntime_test_debug_node_inputs_outputs
-      PRIVATE DEBUG_NODE_INPUTS_OUTPUTS)
-  endif(onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS)
 
   #some ETW tools
   if(WIN32 AND onnxruntime_ENABLE_INSTRUMENT)

@@ -5,8 +5,8 @@
 #include "command_args_parser.h"
 
 // onnxruntime dependencies
-#include "core/session/onnxruntime_cxx_api.h"
-#include "core/session/onnxruntime_session_options_config_keys.h"
+#include "onnxruntime_cxx_api.h"
+#include "onnxruntime_session_options_config_keys.h"
 
 // onnx dependencies
 #include "onnx/onnx_pb.h"
