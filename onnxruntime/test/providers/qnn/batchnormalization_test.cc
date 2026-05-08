@@ -385,11 +385,9 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_U16U8S32) {
 // Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.
 // Use an input of rank 4.
 TEST_F(QnnHTPBackendTests, BatchNorm2D_U16U16S32) {
-#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThan(QNN_HTP_DEVICE_ARCH_V73)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpU16QuantUnsupported()) {
     GTEST_SKIP() << "Test requires HTP arch >= V73 for U16 quantization.";
   }
-#endif
   constexpr int64_t num_channels = 2;
   std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
                                    -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
@@ -409,11 +407,9 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_U16U16S32) {
 // Check that QNN compiles DQ -> BatchNormalization -> Q as a single unit.
 // Use an input of rank 4.
 TEST_F(QnnHTPBackendTests, BatchNorm2D_U16S16S32) {
-#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThan(QNN_HTP_DEVICE_ARCH_V73)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpU16QuantUnsupported()) {
     GTEST_SKIP() << "Test requires HTP arch >= V73 for U16 quantization.";
   }
-#endif
   constexpr int64_t num_channels = 2;
   std::vector<float> input_data = {-8.0f, -6.0f, -4.0f, -2.0f, 0.0f, 1.1f, 3.3f, 8.0f,
                                    -7.0f, -5.0f, -3.0f, -1.0f, 0.0f, 2.1f, 4.3f, 7.0f};
