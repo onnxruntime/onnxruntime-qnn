@@ -56,6 +56,17 @@ jobs:
       # version of cpython that's installed on our Linux build machines.
       target_py_vsn: "3.10"
 
+  build-ort-home-linux-x86_64:
+    if: ${{ inputs.do_all }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      target_os: linux
+      target_arch: x86_64
+      target_py_vsn: "3.10"
+      use_ort_home: true
+
   build-linux-aarch64-oe-gcc11_2:
     if: ${{ inputs.do_all }}
     needs: [archive-testdata]
