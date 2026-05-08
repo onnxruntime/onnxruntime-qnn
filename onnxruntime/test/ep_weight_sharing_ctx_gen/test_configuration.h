@@ -8,9 +8,9 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
-#include "core/graph/constants.h"
-#include "core/framework/session_options.h"
+#include "onnxruntime_c_api.h"
 
 namespace onnxruntime {
 namespace qnnctxgen {
@@ -32,7 +32,7 @@ struct PluginEpConfig {
 };
 
 struct MachineConfig {
-  std::string provider_type_name{onnxruntime::kQnnExecutionProvider};
+  std::string provider_type_name{"QNNExecutionProvider"};
   std::optional<PluginEpConfig> plugin_ep_config = std::nullopt;
 };
 
