@@ -600,7 +600,7 @@ void InferenceModel(const std::string& model_data,
                     OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                     const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                     std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
-                    std::function<void(const Graph&)>* graph_checker = nullptr);
+                    std::function<void(const Ort::Session&)>* graph_checker = nullptr);
 
 /**
  * If the ORT_UNIT_TEST_ENABLE_QNN_SAVER environment variable is enabled (set to 1), this function modifies
@@ -836,8 +836,8 @@ void VerifyQDQOutput(const std::vector<Ort::Value>& cpu_qdq_outputs,
  * \param tolerance The percent tolerance (as fraction) QNN EP results are allowed to differ from the QDQ model
  *                  on CPU EP. This tolerance is a percentage of the output range.
  * \param log_severity The logger's severity setting.
- * \param ep_graph_checker Function called on the Graph generated for the QNN EP's session. Used to check node
- *                         EP assignment.
+ * \param ep_graph_checker Function called on the Session after EP assignment. Used to check node
+ *                         EP assignment via public API.
  */
 
 // Helper macro to check if QuantType is a supported QDQ type
@@ -875,9 +875,8 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                                  const std::string& qnn_ctx_model_path = "",
                                  const std::unordered_map<std::string, std::string>& session_option_pairs = {},
                                  std::optional<GraphOptimizationLevel> graph_optimization_level = std::nullopt,
-                                 std::function<void(const Graph&)>* qnn_ep_graph_checker = nullptr) {
+                                 std::function<void(const Ort::Session&)>* qnn_ep_graph_checker = nullptr) {
   CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "QDQ", QuantType);
-
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
       QNNTestEnvironment::GetInstance().dump_dlc() ||
@@ -1573,15 +1572,15 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
  * \param fp32_abs_err The acceptable error between CPU EP and QNN EP.
  * \param log_severity The logger's minimum severity level.
  * \param verify_outputs True to verify that the outputs match (within tolerance).
- * \param ep_graph_checker Function called on the Graph generated for the EP's session. Used to check node
- *                         EP assignment.
+ * \param ep_graph_checker Function called on the Session after EP assignment. Used to check node
+ *                         EP assignment via public API.
  */
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                      float fp32_abs_err = 1e-5f,
                      OrtLoggingLevel log_severity = OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                      bool verify_outputs = true,
-                     std::function<void(const Graph&)>* ep_graph_checker = nullptr);
+                     std::function<void(const Ort::Session&)>* ep_graph_checker = nullptr);
 
 enum class BackendSupport {
   SUPPORT_UNKNOWN,

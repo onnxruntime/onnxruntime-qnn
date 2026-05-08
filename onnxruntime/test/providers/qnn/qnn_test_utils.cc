@@ -18,7 +18,6 @@
 #include "core/framework/error_code_helper.h"
 #include "core/graph/ep_api_types.h"
 #include "core/graph/constants.h"
-#include "core/graph/graph.h"
 #include "core/session/abi_devices.h"
 #include "core/session/abi_ep_types.h"
 #include "core/session/onnxruntime_cxx_api.h"
@@ -275,9 +274,8 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                      float fp32_abs_err, OrtLoggingLevel log_severity, bool verify_outputs,
-                     std::function<void(const Graph&)>* ep_graph_checker) {
+                     std::function<void(const Ort::Session&)>* ep_graph_checker) {
   CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(provider_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
-
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
       QNNTestEnvironment::GetInstance().dump_json() ||
@@ -413,7 +411,7 @@ void InferenceModel(const std::string& model_data,
                     OrtLoggingLevel log_severity,
                     const std::unordered_map<std::string, std::string>& session_option_pairs,
                     std::optional<GraphOptimizationLevel> graph_optimization_level,
-                    std::function<void(const Graph&)>* graph_checker [[maybe_unused]]) {
+                    std::function<void(const Ort::Session&)>* graph_checker) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = "QNNExecutionProvider";
   Ort::SessionOptions session_options;
@@ -442,11 +440,9 @@ void InferenceModel(const std::string& model_data,
   Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
   ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(session, provider_type, expected_ep_assignment));
 
-  // TODO: Implement graph_checker once public API for ep partition is ready
-  // const auto& graph = ort_session.GetGraph();
-  // if (graph_checker) {
-  //   (*graph_checker)(graph);
-  // }
+  if (graph_checker) {
+    (*graph_checker)(session);
+  }
 
   RunWithEP(session, ort_run_options, feeds, output_vals);
 }
