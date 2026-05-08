@@ -43,12 +43,9 @@ struct EPVerificationParams {
   // the default of 1e-5f, especially for scenarios such as [Q -> Quantized op -> DQ]
   // Set this only if this is necessary
   float fp32_abs_err = 1e-5f;
-<<<<<<< HEAD
 
   // optional graph verification function (uses public ORT Session API)
   const std::function<void(const Ort::Session&)>* graph_verifier{nullptr};
-=======
->>>>>>> 5821e046c2 (Limit the headers search path and further clean up repository)
 };
 
 // Verify equality of two output tensors.

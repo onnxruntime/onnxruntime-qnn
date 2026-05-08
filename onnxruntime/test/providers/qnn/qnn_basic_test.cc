@@ -1384,7 +1384,8 @@ TEST_F(QnnHTPBackendTests, EPRejectsDynamicShapesF32) {
                   ExpectedEPNodeAssignment::Some,
                   /*abs_err*/ 1e-4f,
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                  /*verify_output*/ true);
+                  /*verify_output*/ true,
+                  &ep_graph_checker);
 }
 
 TEST_F(QnnHTPBackendTests, DumpJsonQNNGraph) {
@@ -1525,6 +1526,7 @@ TEST_F(QnnHTPBackendTests, EPOffloadsGraphIOQuantDequant) {
       TestInputDef<float> input_def({1, 2, 2, 2}, false, GetFloatDataInRange(min_val, 10.0f, 8));
       auto f32_model_build_fn = BuildOpTestCase<float>(op_type + "_node", op_type, {input_def}, {}, {});
       auto qdq_model_build_fn = BuildQDQOpTestCase<uint8_t>(op_type + "_node", op_type, {input_def}, {}, {});
+      auto graph_checker = graph_checker_builder(offload_io_quant != 0);
       TestQDQModelAccuracy<uint8_t>(f32_model_build_fn,
                                     qdq_model_build_fn,
                                     provider_options,
@@ -1534,7 +1536,8 @@ TEST_F(QnnHTPBackendTests, EPOffloadsGraphIOQuantDequant) {
                                     OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                                     /*qnn_ctx_model_path*/ "",
                                     /*session_option_pairs*/ {},
-                                    /*graph_optimization_level*/ std::nullopt);
+                                    /*graph_optimization_level*/ std::nullopt,
+                                    &graph_checker);
     }
   }
 }

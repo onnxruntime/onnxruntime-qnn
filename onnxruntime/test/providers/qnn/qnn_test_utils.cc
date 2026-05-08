@@ -286,6 +286,7 @@ void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions prov
   EPVerificationParams verification_params;
   verification_params.ep_node_assignment = expected_ep_assignment;
   verification_params.fp32_abs_err = fp32_abs_err;
+  verification_params.graph_verifier = ep_graph_checker;
   // Add kMSDomain to cover contrib op like Gelu
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
 

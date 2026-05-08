@@ -17,6 +17,7 @@
 #pragma clang diagnostic pop
 #endif
 #include "onnxruntime_cxx_api.h"
+#include "onnxruntime_session_options_config_keys.h"
 
 #include "test/util/include/asserts.h"
 #include "test/util/include/test/test_environment.h"

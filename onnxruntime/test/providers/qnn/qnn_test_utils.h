@@ -4,12 +4,14 @@
 #pragma once
 
 #include "onnxruntime_cxx_api.h"
+#include "onnxruntime_session_options_config_keys.h"
 #if !defined(ORT_MINIMAL_BUILD)
 #include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <unordered_map>
 
@@ -30,18 +32,10 @@
 
 namespace onnxruntime {
 namespace test {
-// Forward declaration for QnnHTPBackendTests used in template functions below
-class QnnHTPBackendTests;
-
-// Forward declaration of ConditionalCheckAndSkipTestOnLinuxARM64 — defined after QnnHTPBackendTests below.
-template <typename QuantType = void>
-inline bool ConditionalCheckAndSkipTestOnLinuxARM64(const ProviderOptions& qnn_options,
-                                                    QnnHtpDevice_Arch_t arch,
-                                                    std::string_view test_type,
-                                                    std::string& skip_reason);
 
 constexpr const char* kOnnxDomain = "";
 constexpr const char* kQnnExecutionProvider = "QNNExecutionProvider";
+constexpr const char* kCpuExecutionProvider = "CPUExecutionProvider";
 
 #ifndef ORT_UNUSED_PARAMETER
 #define ORT_UNUSED_PARAMETER(x) (void)(x)
@@ -62,6 +56,16 @@ inline gsl::span<const int64_t> AsSpan(std::initializer_list<int64_t> list) {
 // Signature for function that builds a float32 model.
 using GetTestModelFn = std::function<void(ModelTestBuilder& builder)>;
 using ProviderOptions = std::unordered_map<std::string, std::string>;
+
+// Forward declaration for QnnHTPBackendTests used in template functions below.
+class QnnHTPBackendTests;
+
+// Forward declaration of ConditionalCheckAndSkipTestOnLinuxARM64 — defined after QnnHTPBackendTests below.
+template <typename QuantType = void>
+inline bool ConditionalCheckAndSkipTestOnLinuxARM64(const ProviderOptions& qnn_options,
+                                                    QnnHtpDevice_Arch_t arch,
+                                                    std::string_view test_type,
+                                                    std::string& skip_reason);
 
 size_t SizeHelper(std::vector<int64_t> shape, size_t start, size_t end);
 size_t SizeToDimension(std::vector<int64_t> shape, size_t dimension);
@@ -1028,7 +1032,8 @@ inline void TestQDQModelAccuracy(const GetTestModelFn& f32_model_fn,
                    qnn_qdq_outputs,
                    log_severity,
                    session_option_pairs,
-                   graph_optimization_level);
+                   graph_optimization_level,
+                   qnn_ep_graph_checker);
   }
 
   if (expected_ep_assignment != ExpectedEPNodeAssignment::None) {
