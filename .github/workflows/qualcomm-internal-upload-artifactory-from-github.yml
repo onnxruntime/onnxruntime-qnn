@@ -226,7 +226,7 @@ jobs:
           login ${{ secrets.ARTIFACTORY_USERNAME }}
           password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
-          VERSION=$(ls "${{ github.workspace }}/build/dist/"*win_arm64*.whl 2>/dev/null | head -1 | xargs -I{} basename {} | sed 's/.*-\([0-9.]*rc[0-9]*\).*/\1/')
+          VERSION=$(ls "${{ github.workspace }}/build/dist/"*win_arm64*.whl 2>/dev/null | head -1 | xargs -I{} basename {} | sed 's/.*-\([0-9.]*rc[0-9]*\).*/\1/' | sed 's/-//g')
           chmod +x ./qcom/scripts/signing/upload_unsigned_to_artifactory.sh
           ./qcom/scripts/signing/upload_unsigned_to_artifactory.sh \
             "${{ github.workspace }}/build/dist/output/unsigned/wheels.zip" \
@@ -308,7 +308,7 @@ jobs:
           (Get-Item $netrcFile).Attributes = 'Hidden'
 
           $pkg = Get-ChildItem -Path "${{ github.workspace }}\build\windows-arm64x\Release\Release\dist" -Filter "*.nupkg" | Select-Object -First 1
-          $version = $pkg.BaseName -replace '^Qualcomm\.ML\.OnnxRuntime\.QNN\.' -replace '\.nupkg$'
+          $version = $pkg.BaseName -replace '^Qualcomm\.ML\.OnnxRuntime\.QNN\.' -replace '\.nupkg$' -replace '-', ''
 
           .\qcom\scripts\signing\upload_unsigned_to_artifactory.ps1 `
             -ZipFile "${{ github.workspace }}\build\dist\output\unsigned\nuget.zip" `
@@ -419,7 +419,7 @@ jobs:
           login ${{ secrets.ARTIFACTORY_USERNAME }}
           password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
-          VERSION=$(basename "$(ls "${{ github.workspace }}/build/windows-arm64/Release/dist/"*.zip 2>/dev/null | grep -v pdb | head -1)" | sed 's/.*-\([0-9.]*rc[0-9]*\).*/\1/')
+          VERSION=$(basename "$(ls "${{ github.workspace }}/build/windows-arm64/Release/dist/"*.zip 2>/dev/null | grep -v pdb | head -1)" | sed 's/.*-\([0-9.]*rc[0-9]*\).*/\1/' | sed 's/-//g')
           chmod +x ./qcom/scripts/signing/upload_unsigned_to_artifactory.sh
           ./qcom/scripts/signing/upload_unsigned_to_artifactory.sh \
             "${{ github.workspace }}/build/dist/output/unsigned/zip.zip" \
