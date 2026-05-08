@@ -56,12 +56,10 @@ static void RunRopeOpTest(const TestInputDef<DataType>& input_def,
 
 // Basic test with FP16 data type (QNN EP only supports FP16 for RotaryEmbedding)
 TEST_F(QnnHTPBackendTests, RotaryEmbedding_Basic) {
-#if defined(_WIN32)
-  // Skip test on Windows if HTP FP16 is not supported (V68 and below)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  // Skip test if HTP FP16 is not supported (V68 and below)
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
 
   constexpr int64_t batch_size = 1;
   constexpr int64_t num_heads = 2;

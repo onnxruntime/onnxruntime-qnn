@@ -413,11 +413,9 @@ static void RunQDQGatherNDOpTest(const TestInputDef<float>& input_def,
 
 // Non-QDQ model, GatherND with static input and dynamic int64 indices
 TEST_F(QnnHTPBackendTests, GatherNDOp_IndicesDynamicInt64) {
-#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
   RunOpTest<float, int64_t>(
       "GatherND",
       TestInputDef<float>({2, 2, 2}, true,  // Static input
@@ -444,11 +442,9 @@ TEST_F(QnnHTPBackendTests, GatherNDOp_Negative_IndicesInt64_BatchDims0) {
 
 // Static int64 indices with batch_dims = 0
 TEST_F(QnnHTPBackendTests, GatherNDOp_QDQ_IndicesStaticInt64_BatchDims0) {
-#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
   RunQDQGatherNDOpTest<uint8_t, int64_t>(
       TestInputDef<float>({2, 2, 2}, false, {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f}),
       TestInputDef<int64_t>({2, 2}, true, {0, 0, 1, 1}),
@@ -459,11 +455,9 @@ TEST_F(QnnHTPBackendTests, GatherNDOp_QDQ_IndicesStaticInt64_BatchDims0) {
 
 // Dynamic int64 indices with batch_dims = 0
 TEST_F(QnnHTPBackendTests, GatherNDOp_QDQ_IndicesDynamicInt64_BatchDims0) {
-#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
   RunQDQGatherNDOpTest<uint8_t, int64_t>(
       TestInputDef<float>({2, 2, 2}, false, {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f}),
       TestInputDef<int64_t>({2, 2}, false, {0, 0, 1, 1}),
@@ -477,11 +471,9 @@ TEST_F(QnnHTPBackendTests, GatherNDOp_QDQ_IndicesDynamicInt64_BatchDims0) {
 // per-axis remap produces different bytes. Without a rename on rewrite, the
 // second node would alias the first's tensor (wrong bytes for its own bounds).
 TEST_F(QnnHTPBackendTests, GatherNdSharedStaticNegIndicesDifferentDataShapes) {
-#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
   auto build_model = [](ModelTestBuilder& builder) {
     // data_a shape [3, 5]: indices [[0, -1]] -> [[0, 4]].
     std::vector<float> data_a(3 * 5);

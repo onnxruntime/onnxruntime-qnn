@@ -1601,7 +1601,8 @@ class QnnHTPBackendTests : public ::testing::Test {
 
   // Returns true if the test should be skipped because HTP FP16 is not supported on this platform.
   static bool ShouldSkipIfHtpFp16Unsupported() {
-#if defined(_WIN32)  // On Windows ARM64, FP16 is not supported if the HTP architecture is v68.
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+    // Windows ARM64 + Linux aarch64 (e.g. qcs6490 V68): HTP FP16 unsupported on V68.
     return ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68);
 #else
     return false;

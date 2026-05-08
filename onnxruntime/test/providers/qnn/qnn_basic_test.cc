@@ -230,6 +230,9 @@ TEST(QnnEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
 // Loads a simple ONNX model that adds floats.
 TEST_F(QnnHTPBackendTests, TestAddEpUsingPublicApi) {
   onnxruntime::ProviderOptions options;
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
 #if defined(_WIN32)
   options["backend_path"] = "QnnHtp.dll";
 #else
@@ -1178,11 +1181,9 @@ TEST_F(QnnHTPBackendTests, ProfilingTest) {
 
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
@@ -1213,11 +1214,9 @@ TEST_F(QnnHTPBackendTests, OptraceTest) {
 
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
@@ -1303,11 +1302,9 @@ TEST_F(QnnHTPBackendTests, Float32ModelWithFP16PrecisionTest) {
 #else
   provider_options["backend_path"] = "libQnnHtp.so";
 #endif
-#if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
@@ -1374,11 +1371,9 @@ TEST_F(QnnHTPBackendTests, EPRejectsDynamicShapesF32) {
   provider_options["backend_path"] = "libQnnHtp.so";
 #endif
   provider_options["offload_graph_io_quantization"] = "0";
-#if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
@@ -1959,6 +1954,9 @@ TEST_F(QnnHTPBackendTests, io_binding_qnn_htp_shared) {
 // - However, these remaining inputs still appear in the graph inputs,
 //   resulting in a discrepancy in the input quantities.
 TEST_F(QnnHTPBackendTests, TestMismatchedGraphInputAndTensorWrapperCount) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
   onnxruntime::ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
@@ -1983,6 +1981,9 @@ TEST_F(QnnHTPBackendTests, TestMismatchedGraphInputAndTensorWrapperCount) {
 // Compile a QDQ model to a context binary with offload_graph_io_quantization=1,
 // then load and run the context binary. Regression test for PR #234.
 TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationContextBinaryRoundTrip) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
   const std::string ctx_model_file = "./offload_qdq_ctx_test.onnx";
   std::remove(ctx_model_file.c_str());
   auto cleanup = gsl::finally([&]() { std::remove(ctx_model_file.c_str()); });

@@ -343,6 +343,9 @@ static void CheckEpContextNodeCounts(void* model_buffer, size_t model_buffer_siz
 //   - Recreates session with the compiled model.
 
 TEST_F(QnnHTPBackendTests, CompileApi_DisableEpCompile_ThenCompileExplicitly) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
   const ORTCHAR_T* input_model_file = ORT_TSTR("./compileapi_disable_compile_input.onnx");
   const ORTCHAR_T* output_model_file = ORT_TSTR("./compileapi_disable_compile_output.onnx");
   std::filesystem::remove(input_model_file);
@@ -408,6 +411,9 @@ TEST_F(QnnHTPBackendTests, CompileApi_DisableEpCompile_ThenCompileExplicitly) {
 //   - input model file
 //   - output model file
 TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelFromPath) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
   const ORTCHAR_T* input_model_file = ORT_TSTR("./compileapi_fromsessionoptions_inputmodelfrompath.onnx");
   const ORTCHAR_T* output_model_file = ORT_TSTR("./qnn_context_binary_multi_partition_test.onnx");
   std::filesystem::remove(input_model_file);
@@ -456,6 +462,9 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelFromPath) {
 //   - output model file
 //   - EPContext nodes in output model use embedded binary blobs.
 TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelAsBuffer_Embedded) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
   // Create a test model and serialize it to a buffer.
   TestModel test_model;
   CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
@@ -502,6 +511,9 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelAsBuffer_Embe
 //   - input model from file
 //   - save output model to a buffer
 TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
   const ORTCHAR_T* input_model_file = ORT_TSTR("./compileapi_fromsessionoptions_inputmodelfrompath.onnx");
   std::filesystem::remove(input_model_file);
 
@@ -556,6 +568,9 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer) {
 //   - save output model to buffer
 //   - test enabling AND disabling embed mode for context binary in EPContext node attributes
 TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputAndOutputModelsInBuffers) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
   // Create a test model and serialize it to a buffer.
   TestModel test_model;
   CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
@@ -661,6 +676,9 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputAndOutputModelsInB
 //   - save initializers (used by CPU EP) to external file.
 //   - EPContext nodes in output model use embedded binary blobs.
 TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer_OutputInitializersFile) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
+    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
+  }
   const ORTCHAR_T* input_model_file = ORT_TSTR("./compileapi_fromsessionoptions_outputmodelbuffer_initializers.onnx");
   const ORTCHAR_T* output_initializers_file = ORT_TSTR("./compileapi_initializers.bin");
   std::filesystem::remove(input_model_file);

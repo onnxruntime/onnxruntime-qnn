@@ -222,11 +222,9 @@ static void RunOpTest(const std::string& op_type,
   provider_options["backend_type"] = "htp";
 
   if (enable_htp_fp16_precision) {
-#if defined(_WIN32)
-    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
       GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
     }
-#endif
 #if defined(__linux__) && !defined(__aarch64__)
     provider_options["soc_model"] = soc_model.has_value() ? *soc_model : std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
@@ -257,11 +255,9 @@ static void RunOpTest(const std::string& op_type,
   provider_options["backend_type"] = "htp";
 
   if (enable_htp_fp16_precision) {
-#if defined(_WIN32)
-    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
       GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
     }
-#endif
 #if defined(__linux__) && !defined(__aarch64__)
     provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
@@ -919,11 +915,9 @@ TEST_F(QnnHTPBackendTests, BinaryOp_Add4D_FP64) {
 
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
-#if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
@@ -1893,11 +1887,9 @@ TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP32_as_FP16) {
   ProviderOptions provider_options;
 
   provider_options["backend_type"] = "htp";
-#if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
@@ -1920,11 +1912,9 @@ TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP32_as_FP16) {
 
 // Test FP16 fusion of HardSigmoid into HardSwish on the HTP backend.
 TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP16) {
-#if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 

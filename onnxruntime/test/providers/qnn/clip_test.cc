@@ -76,11 +76,9 @@ TEST_F(QnnCPUBackendTests, Clip_5D_f32) {
 // For example, a value of -4.54545403 could become -4.54687548 after the conversion.
 // The expected difference is approximately 0.00142145, so the tolerance is adjusted to 5e-3f.
 TEST_F(QnnHTPBackendTests, Clip_f32) {
-#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
   RunClipTest<float>(TestInputDef<float>({1, 1, 3, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 12)),
                      {TestInputDef<float>({}, true, {-5.0f}),
                       TestInputDef<float>({}, true, {5.0f})},

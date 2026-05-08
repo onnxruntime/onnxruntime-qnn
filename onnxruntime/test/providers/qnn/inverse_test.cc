@@ -129,11 +129,9 @@ static void RunQDQInverseOpTest(const TestInputDef<float>& input_defs,
 }
 
 TEST_F(QnnHTPBackendTests, Inverse_2d) {
-#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
@@ -146,11 +144,9 @@ TEST_F(QnnHTPBackendTests, Inverse_2d) {
 }
 
 TEST_F(QnnHTPBackendTests, Inverse_3d) {
-#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{10, 2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
@@ -163,11 +159,9 @@ TEST_F(QnnHTPBackendTests, Inverse_3d) {
 }
 
 TEST_F(QnnHTPBackendTests, Inverse_4d) {
-#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{1, 10, 2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
@@ -180,11 +174,9 @@ TEST_F(QnnHTPBackendTests, Inverse_4d) {
 }
 
 TEST_F(QnnHTPBackendTests, Inverse_qdq_2d) {
-#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -10.0f, 10.0f);
@@ -195,11 +187,9 @@ TEST_F(QnnHTPBackendTests, Inverse_qdq_2d) {
 }
 
 TEST_F(QnnHTPBackendTests, Inverse_qdq_3d) {
-#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
 #ifdef _M_ARM64
   // output_range=0.31888091564178467, tolerance=0.40000000596046448%.
   // Expected val (f32@CPU_EP): 0.069747790694236755
@@ -220,11 +210,9 @@ TEST_F(QnnHTPBackendTests, Inverse_qdq_3d) {
 }
 
 TEST_F(QnnHTPBackendTests, Inverse_qdq_4d) {
-#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
 #ifdef _M_ARM64
   // output_range=0.31888091564178467, tolerance=0.40000000596046448%.
   // Expected val (f32@CPU_EP): 0.069747790694236755

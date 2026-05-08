@@ -87,11 +87,9 @@ TEST_F(QnnCPUBackendTests, Mod_static_Divisor) {
 
 // Test that Mod with dynamic divisor.
 TEST_F(QnnHTPBackendTests, Mod_dynamic_Divisor) {
-#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> dividend_shape{1, 4, 5};
   auto dividend = rand_gen_.Uniform<int64_t>(dividend_shape, -100.0f, 100.0f);
@@ -116,11 +114,9 @@ TEST_F(QnnHTPBackendTests, Mod_dynamic_Divisor) {
 
 // Test that Mod with static divisor.
 TEST_F(QnnHTPBackendTests, Mod_static_Divisor) {
-#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
-#endif
   RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> dividend_shape{1, 4, 5};
   auto dividend = rand_gen_.Uniform<int64_t>(dividend_shape, -100.0f, 100.0f);
