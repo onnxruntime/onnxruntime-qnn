@@ -934,6 +934,78 @@ TEST_F(QnnCPUBackendTests, ConvTranspose1Df32_DynamicWeights_DefaultBias) {
                 ExpectedEPNodeAssignment::All);
 }
 
+// Builds: weight_q0 (int8 init) -> DQ -> Q -> DQ -> Conv.
+// Used to regression-test chained folding; differing scale0/scale1 exercises real requant
+// on the intermediate STATIC tensor rather than a byte round-trip.
+static GetTestModelFn BuildPerChannelQDQChainConstWeightConvTestCase(
+    const std::vector<float>& scale0,
+    const std::vector<int8_t>& zp0,
+    const std::vector<float>& scale1,
+    const std::vector<int8_t>& zp1) {
+  return [scale0, zp0, scale1, zp1](ModelTestBuilder& builder) {
+    constexpr int64_t out_ch = 2;
+    constexpr int64_t in_ch = 3;
+    const std::vector<int64_t> input_shape = {1, in_ch, 1, 1};
+    const std::vector<int64_t> weight_shape = {out_ch, in_ch, 1, 1};
+
+    builder.MakeInput<float>("input", input_shape, -1.0f, 1.0f);
+
+    builder.MakeInitializer<int8_t>("weight_q0", weight_shape, std::vector<int8_t>{1, 2, 3, 4, 5, 6});
+    builder.MakeInitializer<float>("scale0", {out_ch}, scale0);
+    builder.MakeInitializer<int8_t>("zp0", {out_ch}, zp0);
+    builder.MakeInitializer<float>("scale1", {out_ch}, scale1);
+    builder.MakeInitializer<int8_t>("zp1", {out_ch}, zp1);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> axis_attrs;
+    axis_attrs.push_back(builder.MakeScalarAttribute("axis", static_cast<int64_t>(0)));
+
+    builder.AddNode("WeightDQ0", "DequantizeLinear", {"weight_q0", "scale0", "zp0"}, {"weight_dq0"},
+                    kOnnxDomain, axis_attrs);
+    builder.AddNode("WeightQ1", "QuantizeLinear", {"weight_dq0", "scale1", "zp1"}, {"weight_q1"},
+                    kOnnxDomain, axis_attrs);
+    builder.AddNode("WeightDQ1", "DequantizeLinear", {"weight_q1", "scale1", "zp1"}, {"weight_dq1"},
+                    kOnnxDomain, axis_attrs);
+
+    builder.MakeOutput("output");
+    std::vector<ONNX_NAMESPACE::AttributeProto> conv_attrs;
+    conv_attrs.push_back(builder.MakeStringAttribute("auto_pad", "NOTSET"));
+    conv_attrs.push_back(builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}));
+    conv_attrs.push_back(builder.MakeIntsAttribute("dilations", std::vector<int64_t>{1, 1}));
+    conv_attrs.push_back(builder.MakeScalarAttribute("group", static_cast<int64_t>(1)));
+
+    builder.AddNode("Conv", "Conv", {"input", "weight_dq1"}, {"output"}, kOnnxDomain, conv_attrs);
+  };
+}
+
+TEST_F(QnnCPUBackendTests, Convf32_PerChannelQDQChainConstWeight_Regression) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildPerChannelQDQChainConstWeightConvTestCase(
+                      /*scale0*/ {0.1f, 0.2f}, /*zp0*/ {0, 0},
+                      /*scale1*/ {0.1f, 0.2f}, /*zp1*/ {0, 0}),
+                  provider_options,
+                  /*opset*/ 13,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err*/ 1e-4f);
+}
+
+TEST_F(QnnCPUBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Regression) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "cpu";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildPerChannelQDQChainConstWeightConvTestCase(
+                      /*scale0*/ {0.1f, 0.2f}, /*zp0*/ {0, 0},
+                      /*scale1*/ {0.05f, 0.4f}, /*zp1*/ {-2, 3}),
+                  provider_options,
+                  /*opset*/ 13,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err*/ 1e-4f);
+}
+
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 // The bug is from a QDQ model, and Conv node gets processed before it's producer Mul node
@@ -1025,6 +1097,34 @@ TEST_F(QnnHTPBackendTests, DISABLED_Test_QDQConvWithDynamicWeightsFromMul) {
                   provider_options,
                   13,
                   ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, Convf32_PerChannelQDQChainConstWeight_Regression) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildPerChannelQDQChainConstWeightConvTestCase(
+                      /*scale0*/ {0.1f, 0.2f}, /*zp0*/ {0, 0},
+                      /*scale1*/ {0.1f, 0.2f}, /*zp1*/ {0, 0}),
+                  provider_options,
+                  /*opset*/ 13,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err*/ 1e-3f);
+}
+
+TEST_F(QnnHTPBackendTests, Convf32_PerChannelQDQChainConstWeight_NonIdentity_Regression) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildPerChannelQDQChainConstWeightConvTestCase(
+                      /*scale0*/ {0.1f, 0.2f}, /*zp0*/ {0, 0},
+                      /*scale1*/ {0.05f, 0.4f}, /*zp1*/ {-2, 3}),
+                  provider_options,
+                  /*opset*/ 13,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err*/ 1e-3f);
 }
 
 // Check that QNN compiles DQ -> Conv -> Q as a single unit.
