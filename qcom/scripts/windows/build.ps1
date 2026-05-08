@@ -191,6 +191,7 @@ if ($BuildAsX) {
     $CommonArgs += "--buildasx"
 }
 
+$BuildNugetArgs = @()
 if ($BuildNuget) {
     $TargetNugetDir = (Get-NugetBinDir)
     $env:Path = "$TargetNugetDir;" + $env:Path
@@ -199,7 +200,7 @@ if ($BuildNuget) {
         Get-Command nuget.exe -ErrorAction SilentlyContinue
     }
     Write-Host "Building Nuget using $TargetNugetExe"
-    $CommonArgs += "--build_nuget"
+    $BuildNugetArgs += "--build_nuget"
 }
 
 if ($CMakeGenerator -eq "Ninja") {
@@ -210,6 +211,11 @@ if ($CMakeGenerator -eq "Ninja") {
 $VersionSuffixArg = @()
 if ($env:ORT_VERSION_SUFFIX) {
     $VersionSuffixArg += "--version_suffix", "$env:ORT_VERSION_SUFFIX"
+}
+
+$BuildArchiveArgs = @()
+if ($BuildArchive) {
+    $BuildArchiveArgs += "--build_archive_asset"
 }
 
 switch ($Mode) {
@@ -272,6 +278,7 @@ else {
     if ($GenerateBuild -or $DoBuild) {
         try {
             python.exe "$RepoRoot\qcom\scripts\all\fetch_cmake_deps.py"
+            $BuildBatPath = (Join-Path $RepoRoot "build.bat")
 
             if ($GenerateBuild) {
                 if (-not (Test-Path $BuildVEnv)) {
@@ -284,15 +291,17 @@ else {
                     Assert-Success { python.exe -m pip install uv }
                     Assert-Success { uv.exe pip install -r "$RepoRoot\tools\ci_build\github\windows\python\requirements.txt" --native-tls }
                     Assert-Success -ErrorMessage "Failed to generate build" {
-                        .\build.bat --update $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg
+                        & $BuildBatPath --update $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg
                     }
                 }
             }
 
             if ($DoBuild) {
                 $BuildOutputDir = (Join-Path $BuildDir $Config)
-                Assert-Success -ErrorMessage "Failed to build" {
-                    & cmake --build $BuildOutputDir --config $Config
+                Use-PyVenv -PyVenv $BuildVEnv {
+                    Assert-Success -ErrorMessage "Failed to build" {
+                        & $BuildBatPath --build $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg $BuildNugetArgs $BuildArchiveArgs
+                    }
                 }
 
                 if ($CMakeGenerator -in @("Visual Studio 17 2022", "Visual Studio 18 2026")) {
@@ -325,39 +334,12 @@ else {
                 }
 
                 if ($BuildNuget) {
-                    Use-PyVenv -PyVenv $BuildVEnv {
-                        Use-WorkingDir -Path $BuildOutputDir {
-                            $BuildBatPath = (Join-Path $RepoRoot "build.bat")
-                            Assert-Success -ErrorMessage "Failed to build nuget" {
-                                & $BuildBatPath --skip_tests $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg
-
-                                $DistDir = Join-Path $BinDir "dist"
-                                if (-not (Test-Path $DistDir)) {
-                                    New-Item -ItemType Directory -Path $DistDir | Out-Null
-                                }
-                                foreach ($Pkg in (Get-ChildItem -File -Recurse -Path $BinDir -Filter "Qualcomm.ML.OnnxRuntime.QNN*.nupkg")) {
-                                    Copy-Item -Path $Pkg.FullName -Destination $DistDir
-                                }
-                            }
-                        }
+                    $DistDir = Join-Path $BinDir "dist"
+                    if (-not (Test-Path $DistDir)) {
+                        New-Item -ItemType Directory -Path $DistDir | Out-Null
                     }
-                }
-                if ($BuildArchive) {
-                    Use-PyVenv -PyVenv $BuildVEnv {
-                        Use-WorkingDir -Path $BuildOutputDir {
-                            $PkgAssetsArgs = @(
-                                "--source", $RepoRoot,
-                                "--build_dir", $BuildDir,
-                                "--config", $Config,
-                                "--verbose"
-                            )
-                            if ($CMakeGenerator -eq "Ninja") {
-                                $PkgAssetsArgs += "--use_ninja"
-                            }
-                            Assert-Success -ErrorMessage "Failed to build archive" {
-                                python.exe (Join-Path $RepoRoot "tools\ci_build\pkg_assets.py") @PkgAssetsArgs $VersionSuffixArg
-                            }
-                        }
+                    foreach ($Pkg in (Get-ChildItem -File -Recurse -Path $BinDir -Filter "Qualcomm.ML.OnnxRuntime.QNN*.nupkg")) {
+                        Copy-Item -Path $Pkg.FullName -Destination $DistDir
                     }
                 }
             }

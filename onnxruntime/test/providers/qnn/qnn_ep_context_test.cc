@@ -343,9 +343,7 @@ static void CheckEpContextNodeCounts(void* model_buffer, size_t model_buffer_siz
 //   - Recreates session with the compiled model.
 
 TEST_F(QnnHTPBackendTests, CompileApi_DisableEpCompile_ThenCompileExplicitly) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ORTCHAR_T* input_model_file = ORT_TSTR("./compileapi_disable_compile_input.onnx");
   const ORTCHAR_T* output_model_file = ORT_TSTR("./compileapi_disable_compile_output.onnx");
   std::filesystem::remove(input_model_file);
@@ -411,9 +409,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_DisableEpCompile_ThenCompileExplicitly) {
 //   - input model file
 //   - output model file
 TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelFromPath) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ORTCHAR_T* input_model_file = ORT_TSTR("./compileapi_fromsessionoptions_inputmodelfrompath.onnx");
   const ORTCHAR_T* output_model_file = ORT_TSTR("./qnn_context_binary_multi_partition_test.onnx");
   std::filesystem::remove(input_model_file);
@@ -466,6 +462,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelAsBuffer_Embe
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
   // Create a test model and serialize it to a buffer.
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   TestModel test_model;
   CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
   std::string model_data = test_model.Serialize();
@@ -511,9 +508,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelAsBuffer_Embe
 //   - input model from file
 //   - save output model to a buffer
 TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ORTCHAR_T* input_model_file = ORT_TSTR("./compileapi_fromsessionoptions_inputmodelfrompath.onnx");
   std::filesystem::remove(input_model_file);
 
@@ -572,6 +567,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputAndOutputModelsInB
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
   // Create a test model and serialize it to a buffer.
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   TestModel test_model;
   CreateTestModel(BuildGraphWithQAndNonQ(false), 21, OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, test_model);
   std::string model_data = test_model.Serialize();
@@ -676,9 +672,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputAndOutputModelsInB
 //   - save initializers (used by CPU EP) to external file.
 //   - EPContext nodes in output model use embedded binary blobs.
 TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer_OutputInitializersFile) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ORTCHAR_T* input_model_file = ORT_TSTR("./compileapi_fromsessionoptions_outputmodelbuffer_initializers.onnx");
   const ORTCHAR_T* output_initializers_file = ORT_TSTR("./compileapi_initializers.bin");
   std::filesystem::remove(input_model_file);
@@ -739,6 +733,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer_Outpu
 // Test that the explicit compile API can be configured to return an error if the output model does not
 // have EPContext nodes.
 TEST_F(QnnHTPBackendTests, CompileApi_SetFlags_ErrorIfNoCompiledNodes) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
   const ORTCHAR_T* output_model_file = ORT_TSTR("should_not_be_generated.onnx");
   std::filesystem::remove(output_model_file);
@@ -762,6 +757,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_SetFlags_ErrorIfNoCompiledNodes) {
 // Test that the explicit compile API can be configured to return an error if the output model already exists and
 // would have been overwritten.
 TEST_F(QnnHTPBackendTests, CompileApi_SetFlags_ErrorIfOutputFileAlreadyExists) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
   const ORTCHAR_T* output_model_file = ORT_TSTR("mul_1_ctx_.onnx");
   std::filesystem::remove(output_model_file);
@@ -809,6 +805,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_SetFlags_ErrorIfOutputFileAlreadyExists) {
 // Tests that the explicit compile API returns an error if user tries to compile a compiled model.
 // This scenario is silently ignored in the original compilation approach with session option configs.
 TEST_F(QnnHTPBackendTests, CompileApi_ErrorIfCompilingACompiledModel) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
   const ORTCHAR_T* output_model_file = ORT_TSTR("mul_1_ctx_.onnx");
   std::filesystem::remove(output_model_file);
@@ -861,6 +858,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_ErrorIfCompilingACompiledModel) {
 // Test that ORT does not generate an output model if the model does not contain EPContext nodes.
 // Also, ORT should not return an error.
 TEST_F(QnnHTPBackendTests, QnnContextBinary_OriginalCompileApproach_NoCompiledNodesDoesntGenerateOutput) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
   const char* output_model_file = "should_not_be_generated.onnx";
 
@@ -878,6 +876,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_OriginalCompileApproach_NoCompiledNo
 // Test that ORT does not generate an output model if the input model is already compiled.
 // Also, ORT should not return an error.
 TEST_F(QnnHTPBackendTests, QnnContextBinary_OriginalCompileApproach_IgnoreCompilingOfCompiledModel) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const ORTCHAR_T* input_model_file = ORT_MODEL_FOLDER "mul_1.onnx";
   const std::string output_model_file = "mul_1_ctx.onnx";
   std::filesystem::remove(output_model_file);
@@ -937,12 +936,14 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_OriginalCompileApproach_IgnoreCompil
 // Test that models with 1 non-quantized FusedGemm node and 1 quantized Add node can still generate the context binary
 // The generated Onnx model has 1 FusedGemm node and 1 EPContext node
 TEST_F(QnnHTPBackendTests, QnnContextBinaryMultiPartitionSupport1) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   QnnContextBinaryMultiPartitionTestBody(true);
 }
 
 // Test that models with 2 non-quantized FusedGemm nodes and 2 quantized Add nodes can still generate the context binary
 // The generated Onnx model has 2 FusedGemm nodes and 1 EPContext nodes
 TEST_F(QnnHTPBackendTests, QnnContextBinaryMultiPartitionSupport2) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   QnnContextBinaryMultiPartitionTestBody(false);
 }
 
@@ -1571,6 +1572,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_QnnContextGenerationNodeNamePrefix) {
 // 1st run will generate the Qnn context cache onnx file
 // 2nd run directly loads and run from Qnn context cache model
 TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheEmbedModeTest) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -1626,6 +1628,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheEmbedModeTest) {
 // 1st run will generate the Onnx skeleton file + Qnn context cache binary file
 // 2nd run directly loads and run from Onnx skeleton file + Qnn context cache binary file
 TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -1714,6 +1717,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
 // 1st run will generate the Onnx skeleton file + Qnn context cache binary file
 // Then delete the context bin file to make the 2nd sesssion.Initialize() return the status with code INVALID_GRAPH
 TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_InvalidGraph) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -1922,6 +1926,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryFileEmptyStringTest) {
 // 1st run will generate the Qnn context cache onnx file
 // 2nd run directly loads and run from Qnn context cache model
 TEST_F(QnnHTPBackendTests, QnnContextBinary2InputsTest) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -1973,6 +1978,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary2InputsTest) {
 // This is to support backward compatible for the models generated before the PR that
 // make context generation support multi-partition
 TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphNameInCtx) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -2055,6 +2061,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphName
 
 // Model has 2 EPContext nodes, both with main_context=1 and embedded context binary
 TEST_F(QnnHTPBackendTests, QnnMultiContextEmbeded) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -2070,6 +2077,7 @@ TEST_F(QnnHTPBackendTests, QnnMultiContextEmbeded) {
 
 // Model has 2 EPContext nodes, both with main_context=1 and external context binary
 TEST_F(QnnHTPBackendTests, QnnMultiContextExternal) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -2189,6 +2197,8 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
+
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   // Create QDQ models
   std::vector<std::string> onnx_model_paths{"./weight_share1.onnx", "./weight_share2.onnx"};
@@ -2426,6 +2436,8 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
 
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
   // Create QDQ models
   std::vector<std::string> onnx_model_paths{"./weight_share1.onnx", "./weight_share2.onnx"};
   // cleanup in case some failure test doesn't remove them
@@ -2549,6 +2561,8 @@ TEST_F(QnnHTPBackendTests, QnnContextGenWeightSharingSessionAPI) {
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
 
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
   // Create QDQ models
   std::vector<std::string> onnx_model_paths{"./weight_share1.onnx", "./weight_share2.onnx"};
   // cleanup in case some failure test doesn't remove them
@@ -2667,6 +2681,8 @@ TEST_F(QnnHTPBackendTests, QnnEpDynamicOptions) {
   // unit tests due to overhead of thread creation/destruction
   provider_options["num_graph_prepare_threads"] = "1";
 #endif
+
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   Ort::SessionOptions so;
   so.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
@@ -3441,6 +3457,8 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility) {
 
   ProviderOptions qnn_options = {{"backend_type", "htp"}};
   qnn_options["htp_arch"] = std::to_string(htp_arch);
+
+  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(qnn_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
 
 #if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
   // By default, 8 is used, which will impact time to run all
