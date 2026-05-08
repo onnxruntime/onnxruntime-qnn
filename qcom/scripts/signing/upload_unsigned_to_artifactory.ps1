@@ -28,7 +28,7 @@ if (-not (Test-Path $NetrcFile)) {
 # Get the repository root directory
 $repoRoot = git rev-parse --show-toplevel
 
-Write-Host "Uploading $Filename (version: $Version)..."
+Write-Host "Uploading $Filename"
 
 $caCertPath = Join-Path $repoRoot "qcom/scripts/upleveling/certs/artifactory-ca.pem"
 $uploadUrl = "https://re-artifactory.qualcomm.com/artifactory/aisw-zip-test-project/onnxruntime-qnn/$Version/unsigned/$Filename"

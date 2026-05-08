@@ -30,7 +30,7 @@ fi
 # Get the repository root directory
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
-echo "Uploading $FILENAME (version: $VERSION)..."
+echo "Uploading $FILENAME"
 
 curl -s -T "$ZIP_FILE" \
     --cacert "$REPO_ROOT/qcom/scripts/upleveling/certs/artifactory-ca.pem" \
