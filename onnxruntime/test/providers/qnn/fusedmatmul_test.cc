@@ -280,9 +280,6 @@ TEST_F(QnnHTPBackendTests, FusedMatMul_BatchTranspose) {
 
 // Test 8-bit QDQ FusedMatMul with default attributes on HTP
 TEST_F(QnnHTPBackendTests, FusedMatMul_QDQ_U8_Default) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
   RunQDQFusedMatMulTest<uint8_t>(
       TestInputDef<float>({2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),  // input A
       TestInputDef<float>({3, 2}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),  // input B
@@ -296,9 +293,6 @@ TEST_F(QnnHTPBackendTests, FusedMatMul_QDQ_U8_Default) {
 
 // Test 8-bit QDQ FusedMatMul with batch dimension transposition on HTP
 TEST_F(QnnHTPBackendTests, FusedMatMul_QDQ_U8_BatchTranspose) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
   RunQDQFusedMatMulTest<uint8_t>(
       TestInputDef<float>({2, 2, 4}, false, GetFloatDataInRange(-1.0f, 1.0f, 16)),  // input A
       TestInputDef<float>({2, 4, 5}, false, GetFloatDataInRange(-1.0f, 1.0f, 40)),  // input B
@@ -312,9 +306,6 @@ TEST_F(QnnHTPBackendTests, FusedMatMul_QDQ_U8_BatchTranspose) {
 
 // Test 16-bit QDQ FusedMatMul with default attributes on HTP
 TEST_F(QnnHTPBackendTests, FusedMatMul_QDQ_U16_Default) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
   RunQDQFusedMatMulTest<uint16_t>(
       TestInputDef<float>({2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),  // input A
       TestInputDef<float>({3, 2}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),  // input B
@@ -330,9 +321,6 @@ TEST_F(QnnHTPBackendTests, FusedMatMul_QDQ_U16_Default) {
 
 // Test 16-bit QDQ FusedMatMul with batch dimension transposition on HTP
 TEST_F(QnnHTPBackendTests, FusedMatMul_QDQ_U16_BatchTranspose) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
   RunQDQFusedMatMulTest<uint16_t>(
       TestInputDef<float>({2, 2, 4}, false, GetFloatDataInRange(-1.0f, 1.0f, 16)),  // input A
       TestInputDef<float>({2, 4, 5}, false, GetFloatDataInRange(-1.0f, 1.0f, 40)),  // input B

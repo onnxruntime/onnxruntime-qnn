@@ -231,9 +231,6 @@ TEST(QnnEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
 TEST_F(QnnHTPBackendTests, TestAddEpUsingPublicApi) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   onnxruntime::ProviderOptions options;
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
 #if defined(_WIN32)
   options["backend_path"] = "QnnHtp.dll";
 #else

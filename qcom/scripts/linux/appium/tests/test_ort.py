@@ -69,11 +69,7 @@ class TestOrt(TestBase):
     def test_onnxruntime_test_suite(self, test_name: str, test_cmd: list[str]) -> None:
         if test_name in CONFIG.skip_ctests:
             pytest.skip()
-        cmd = list(test_cmd)
-        if CONFIG.skip_gtest_cases:
-            filter_str = "--gtest_filter=-" + ":".join(CONFIG.skip_gtest_cases)
-            cmd.append(filter_str)
-        self.__assert_passes(self.__get_test_cmd(cmd))
+        self.__assert_passes(self.__get_test_cmd(test_cmd))
 
     @pytest.mark.parametrize("test_def", MODEL_TEST_DEFINITIONS, ids=MODEL_TEST_IDS)
     def test_onnx_models(self, test_def: ModelTestDef) -> None:

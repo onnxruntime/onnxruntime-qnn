@@ -378,7 +378,7 @@ TEST_F(QnnHTPBackendTests, Clip_U8_QuantizedMinMax) {
 
 // Test FP16 Clip with min (FP16)
 TEST_F(QnnHTPBackendTests, Clip_FP16) {
-#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+#if defined(_WIN32)
   if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }

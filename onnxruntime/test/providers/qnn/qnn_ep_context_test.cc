@@ -458,9 +458,6 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelFromPath) {
 //   - output model file
 //   - EPContext nodes in output model use embedded binary blobs.
 TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelAsBuffer_Embedded) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
   // Create a test model and serialize it to a buffer.
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   TestModel test_model;
@@ -563,9 +560,6 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer) {
 //   - save output model to buffer
 //   - test enabling AND disabling embed mode for context binary in EPContext node attributes
 TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputAndOutputModelsInBuffers) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
   // Create a test model and serialize it to a buffer.
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   TestModel test_model;

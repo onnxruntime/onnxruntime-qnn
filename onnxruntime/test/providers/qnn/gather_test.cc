@@ -442,9 +442,6 @@ TEST_F(QnnHTPBackendTests, GatherNDOp_Negative_IndicesInt64_BatchDims0) {
 
 // Static int64 indices with batch_dims = 0
 TEST_F(QnnHTPBackendTests, GatherNDOp_QDQ_IndicesStaticInt64_BatchDims0) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
   RunQDQGatherNDOpTest<uint8_t, int64_t>(
       TestInputDef<float>({2, 2, 2}, false, {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f}),
       TestInputDef<int64_t>({2, 2}, true, {0, 0, 1, 1}),
@@ -455,9 +452,6 @@ TEST_F(QnnHTPBackendTests, GatherNDOp_QDQ_IndicesStaticInt64_BatchDims0) {
 
 // Dynamic int64 indices with batch_dims = 0
 TEST_F(QnnHTPBackendTests, GatherNDOp_QDQ_IndicesDynamicInt64_BatchDims0) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
   RunQDQGatherNDOpTest<uint8_t, int64_t>(
       TestInputDef<float>({2, 2, 2}, false, {0.0f, 1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f, 7.0f}),
       TestInputDef<int64_t>({2, 2}, false, {0, 0, 1, 1}),

@@ -1912,9 +1912,11 @@ TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP32_as_FP16) {
 
 // Test FP16 fusion of HardSigmoid into HardSwish on the HTP backend.
 TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP16) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
+#if defined(_WIN32)
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
     GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
   }
+#endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
