@@ -1633,23 +1633,8 @@ class QnnHTPBackendTests : public ::testing::Test {
 #endif  // defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
   }
 
-  // Returns true if the test should be skipped because HTP architecture is strictly less than the provided arch.
-  // Example: if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThan(QNN_HTP_DEVICE_ARCH_V73)) { GTEST_SKIP() << "..."; }
-  static bool ShouldSkipIfHtpArchIsLessThan(QnnHtpDevice_Arch_t arch) {
-    return HasPlatformAttributes() && GetPlatformAttributes().htp_arch < arch;
-  }
-
   // Query QNN platform attributes by directly calling QNN APIs
   Ort::Status QueryQnnPlatformAttributesDirectly(QnnPlatformAttributes& out, const Ort::Logger& logger);
-
-  // Returns true if the test should be skipped because HTP U16 quantization requires arch >= V73.
-  static bool ShouldSkipIfHtpU16QuantUnsupported() {
-#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-    return ShouldSkipIfHtpArchIsLessThan(QNN_HTP_DEVICE_ARCH_V73);
-#else
-    return false;
-#endif
-  }
 
   static std::optional<QnnHTPBackendTests::QnnPlatformAttributes> cached_platform_attrs_;  // Set by the first test using this fixture.
   static BackendSupport cached_htp_support_;                                               // Set by the first test using this fixture.
