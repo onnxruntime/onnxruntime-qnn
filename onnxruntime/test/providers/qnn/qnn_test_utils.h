@@ -1642,16 +1642,6 @@ class QnnHTPBackendTests : public ::testing::Test {
   // Query QNN platform attributes by directly calling QNN APIs
   Ort::Status QueryQnnPlatformAttributesDirectly(QnnPlatformAttributes& out, const Ort::Logger& logger);
 
-  // Returns true if the test should be skipped because HTP FP16 is not supported on this platform.
-  static bool ShouldSkipIfHtpFp16Unsupported() {
-#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
-    // Windows ARM64 + Linux aarch64 (e.g. qcs6490 V68): HTP FP16 unsupported on V68.
-    return ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68);
-#else
-    return false;
-#endif
-  }
-
   // Returns true if the test should be skipped because HTP U16 quantization requires arch >= V73.
   static bool ShouldSkipIfHtpU16QuantUnsupported() {
 #if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))

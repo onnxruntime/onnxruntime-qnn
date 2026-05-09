@@ -413,9 +413,7 @@ static void RunQDQGatherNDOpTest(const TestInputDef<float>& input_def,
 
 // Non-QDQ model, GatherND with static input and dynamic int64 indices
 TEST_F(QnnHTPBackendTests, GatherNDOp_IndicesDynamicInt64) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunOpTest<float, int64_t>(
       "GatherND",
       TestInputDef<float>({2, 2, 2}, true,  // Static input
@@ -465,9 +463,7 @@ TEST_F(QnnHTPBackendTests, GatherNDOp_QDQ_IndicesDynamicInt64_BatchDims0) {
 // per-axis remap produces different bytes. Without a rename on rewrite, the
 // second node would alias the first's tensor (wrong bytes for its own bounds).
 TEST_F(QnnHTPBackendTests, GatherNdSharedStaticNegIndicesDifferentDataShapes) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   auto build_model = [](ModelTestBuilder& builder) {
     // data_a shape [3, 5]: indices [[0, -1]] -> [[0, 4]].
     std::vector<float> data_a(3 * 5);

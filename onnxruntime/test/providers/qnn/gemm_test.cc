@@ -547,9 +547,7 @@ GetTestModelFn BuildGemmFromMatMulAddTestCase(int64_t K, int64_t N) {
 }  // namespace
 
 TEST_F(QnnHTPBackendTests, GemmFromMatMulAddNonStaticBias) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";

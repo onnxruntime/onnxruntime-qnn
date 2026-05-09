@@ -258,9 +258,7 @@ TEST_F(QnnHTPBackendTests, GlobalAveragePoolRank3U8) {
 }
 
 TEST_F(QnnHTPBackendTests, AveragePool1DFusedQnnNodePresent) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   auto build_test_case = [](ModelTestBuilder& builder) {
     MakeTestInput<float>(builder, "input", TestInputDef<float>({1, 3, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 9)));
     builder.MakeOutput("output");

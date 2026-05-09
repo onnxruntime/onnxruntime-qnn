@@ -17,9 +17,7 @@ namespace test {
 
 // Test GroupNormalization operator on HTP backend with default parameters
 TEST_F(QnnHTPBackendTests, GroupNorm_Float_Default) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   std::vector<float> input_data = {
       0.1f, 0.3f, 0.5f, 0.7f, 0.2f, 0.4f, 0.6f, 0.8f,
       0.15f, 0.35f, 0.55f, 0.75f, 0.25f, 0.45f, 0.65f, 0.85f,
@@ -90,9 +88,7 @@ TEST_F(QnnCPUBackendTests, GroupNorm_Float_CPU) {
 
 // Test GroupNormalization operator with multiple groups
 TEST_F(QnnHTPBackendTests, GroupNorm_Float_MultipleGroups) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   // Input with 4 channels, to be divided into 2 groups
   std::vector<float> input_data = {
       0.1f, 0.3f, 0.5f, 0.7f, 0.2f, 0.4f, 0.6f, 0.8f,
@@ -133,9 +129,7 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_MultipleGroups) {
 
 // Test GroupNormalization operator with different epsilon value
 TEST_F(QnnHTPBackendTests, GroupNorm_Float_LargeEpsilon) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   std::vector<float> input_data = {
       0.1f, 0.3f, 0.5f, 0.7f, 0.2f, 0.4f, 0.6f, 0.8f,
       0.15f, 0.35f, 0.55f, 0.75f, 0.25f, 0.45f, 0.65f, 0.85f,
@@ -172,9 +166,7 @@ TEST_F(QnnHTPBackendTests, GroupNorm_Float_LargeEpsilon) {
 
 // Test GroupNormalization operator with 3D input
 TEST_F(QnnHTPBackendTests, GroupNorm_Float_3D) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   std::vector<float> input_data = {
       0.1f, 0.3f, 0.5f, 0.7f,
       0.2f, 0.4f, 0.6f, 0.8f,

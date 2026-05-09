@@ -41,9 +41,7 @@ static void RunCumSumOpTest(const std::string& op_type,
 
 // Non-QDQ model, CumSum with float input and axis input as initializer with axis 0
 TEST_F(QnnHTPBackendTests, CumSum_float_int32_e0_r0_axis_0) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunCumSumOpTest<float, int32_t>("CumSum",
                                   TestInputDef<float>({3, 2}, false, {1.3f, 7.2f, 0.4f, 3.4f, 5.7f, 0.8f}),
                                   TestInputDef<int32_t>({}, true, {0}),
@@ -55,9 +53,7 @@ TEST_F(QnnHTPBackendTests, CumSum_float_int32_e0_r0_axis_0) {
 
 // Non-QDQ model, CumSum with float input and axis input as initializer with axis -1
 TEST_F(QnnHTPBackendTests, CumSum_float_int32_e0_r0_axis_neg1) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunCumSumOpTest<float, int32_t>("CumSum",
                                   TestInputDef<float>({3, 2}, false, {1.3f, 7.2f, 0.4f, 3.4f, 5.7f, 0.8f}),
                                   TestInputDef<int32_t>({}, true, {-1}),
@@ -69,9 +65,7 @@ TEST_F(QnnHTPBackendTests, CumSum_float_int32_e0_r0_axis_neg1) {
 
 // Test int64 axis
 TEST_F(QnnHTPBackendTests, CumSum_float_int64_e0_r0_axis_1) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunCumSumOpTest<float, int64_t>("CumSum",
                                   TestInputDef<float>({3, 2}, false, {1.3f, 7.2f, 0.4f, 3.4f, 5.7f, 0.8f}),
                                   TestInputDef<int64_t>({}, true, {1}),

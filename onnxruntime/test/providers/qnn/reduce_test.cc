@@ -92,9 +92,7 @@ static void RunReduceTest(const std::string& op_type,
   provider_options["offload_graph_io_quantization"] = "0";
   if (enable_fp16) {
     provider_options["backend_type"] = "htp";
-    if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-      GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-    }
+    SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #if defined(__linux__) && !defined(__aarch64__)
     provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif

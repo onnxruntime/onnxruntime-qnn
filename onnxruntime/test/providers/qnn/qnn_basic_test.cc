@@ -1179,9 +1179,7 @@ TEST_F(QnnHTPBackendTests, ProfilingTest) {
   onnxruntime::ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
@@ -1212,9 +1210,7 @@ TEST_F(QnnHTPBackendTests, OptraceTest) {
   onnxruntime::ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
@@ -1300,9 +1296,7 @@ TEST_F(QnnHTPBackendTests, Float32ModelWithFP16PrecisionTest) {
 #else
   provider_options["backend_path"] = "libQnnHtp.so";
 #endif
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
@@ -1372,9 +1366,7 @@ TEST_F(QnnHTPBackendTests, EPRejectsDynamicShapesF32) {
   provider_options["backend_path"] = "libQnnHtp.so";
 #endif
   provider_options["offload_graph_io_quantization"] = "0";
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 #endif
@@ -1988,9 +1980,7 @@ TEST_F(QnnHTPBackendTests, io_binding_qnn_htp_shared) {
 // - However, these remaining inputs still appear in the graph inputs,
 //   resulting in a discrepancy in the input quantities.
 TEST_F(QnnHTPBackendTests, TestMismatchedGraphInputAndTensorWrapperCount) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   onnxruntime::ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
@@ -2693,9 +2683,7 @@ TEST_F(QnnCPUBackendTests, GetUniqueNameResetBetweenCompilations) {
 // Test extended UDMA mode on supported hardware (should run successfully)
 #if defined(_WIN32)
 TEST_F(QnnHTPBackendTests, ExtendedUdmaModeTest) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V79)) {
-    GTEST_SKIP() << "Test requires HTP arch >= V81 for extended UDMA support.";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
   // Create provider options with extended UDMA mode enabled
   ProviderOptions options;
   options["backend_type"] = "htp";
