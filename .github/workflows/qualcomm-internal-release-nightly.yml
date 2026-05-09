@@ -11,6 +11,7 @@ permissions:
 on:
   schedule:
     - cron: "0 9 * * *"  # Every day at 2am in San Diego/PDT (9am UTC)
+      branches: [main, rel-2.3.0]
 
 jobs:
   publish-artifacts:
