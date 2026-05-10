@@ -104,13 +104,11 @@ static void RunNonZeroTest(const GetTestModelFn& build_test_case,
 
 // Input: [0, 1, 0, 2, 0] -> non-zero at indices 1, 3
 TEST_F(QnnHTPBackendTests, NonZero_1D_Float) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunNonZeroTest(BuildNonZeroTestCase<float>({5}, {0.0f, 1.0f, 0.0f, 2.0f, 0.0f}), 11);
 }
 
 // Input: [[1, 0, 3], [0, 5, 0]] -> non-zero at (0,0), (0,2), (1,1)
 TEST_F(QnnHTPBackendTests, NonZero_2D_Float) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunNonZeroTest(BuildNonZeroTestCase<float>({2, 3}, {1.0f, 0.0f, 3.0f, 0.0f, 5.0f, 0.0f}), 11);
 }
 
@@ -173,13 +171,11 @@ TEST_F(QnnHTPBackendTests, NonZero_3D_Bool_All_False) {
 
 // All non-zero: [[1, 2], [3, 4]] -> every element is non-zero
 TEST_F(QnnHTPBackendTests, NonZero_AllNonZero) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunNonZeroTest(BuildNonZeroTestCase<float>({2, 2}, {1.0f, 2.0f, 3.0f, 4.0f}), 11);
 }
 
 // All zero: [[0, 0], [0, 0]] -> every element is zero
 TEST_F(QnnHTPBackendTests, NonZero_AllZero) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunNonZeroTest(BuildNonZeroTestCase<float>({2, 2}, {0, 0, 0, 0}), 11);
 }
 
@@ -190,13 +186,10 @@ TEST_F(QnnHTPBackendTests, NonZero_AllZero) {
 // NonZero output is declared as a graph output with static shape [1, num_elements] so QNN EP can claim it.
 // All mask elements are non-zero to avoid CPU/QNN shape mismatch from NonZero padding.
 TEST_F(QnnHTPBackendTests, NonZero_Gather_1D_Int32) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   std::vector<float> mask_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};  // non-zero at indices 0,1,2,3,4
   std::vector<int32_t> data1 = {10, 20, 30, 40, 50};
   std::vector<int32_t> data2 = {100, 200, 300, 400, 500};
   int64_t num_elements = 5;
-
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   auto build_model = [mask_data, data1, data2, num_elements](ModelTestBuilder& builder) {
     TestInputDef<float> mask_def({num_elements}, false, mask_data);
