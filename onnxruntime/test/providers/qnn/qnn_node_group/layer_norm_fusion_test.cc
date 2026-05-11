@@ -62,6 +62,56 @@ GetTestModelFn BuildLayerNormFusionTestCase(
   };
 }
 
+// Builds the Sub→Cast→Pow variant of the decomposed LayerNorm pattern:
+//
+//                    +--------------------------------------------+
+//                    |                                            |
+//                    v                                            |
+//   [x] --> ReduceMean --> Sub --> Cast --> Pow(2) --> ReduceMean --> Add(eps) --> Sqrt --> Div --> Mul(gamma) --> Add(beta) ==>
+//                                  |                                                         ^
+//                                  |                                                         |
+//                                  +---------------------------------------------------------+
+//
+// Some models (e.g. opset-10 transformers) insert Cast(to=float32) between Sub and Pow
+// for numerical precision.
+GetTestModelFn BuildLayerNormFusionSubCastPowTestCase(
+    const TestInputDef<float>& input_def,
+    const std::vector<int64_t>& axes,
+    float epsilon,
+    const std::vector<int64_t>& gamma_shape,
+    const std::vector<float>& gamma_values,
+    const std::vector<int64_t>& beta_shape,
+    const std::vector<float>& beta_values) {
+  return [=](ModelTestBuilder& builder) -> void {
+    MakeTestInput<float>(builder, "input", input_def);
+
+    builder.MakeInitializer<float>("gamma", gamma_shape, gamma_values);
+    builder.MakeInitializer<float>("beta", beta_shape, beta_values);
+    builder.MakeScalarInitializer<float>("pow_exp", 2.0f);
+    builder.MakeScalarInitializer<float>("eps", epsilon);
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> rm_attrs;
+    rm_attrs.push_back(test::MakeAttribute("axes", axes));
+    rm_attrs.push_back(test::MakeAttribute("keepdims", static_cast<int64_t>(1)));
+
+    std::vector<ONNX_NAMESPACE::AttributeProto> cast_attrs;
+    cast_attrs.push_back(test::MakeAttribute("to", static_cast<int64_t>(1)));  // FLOAT
+
+    builder.AddNode("rm1", "ReduceMean", {"input"}, {"rm1_out"}, "", rm_attrs);
+    builder.AddNode("sub", "Sub", {"input", "rm1_out"}, {"sub_out"});
+    builder.AddNode("cast", "Cast", {"sub_out"}, {"cast_out"}, "", cast_attrs);
+    builder.AddNode("pow", "Pow", {"cast_out", "pow_exp"}, {"pow_out"});
+    builder.AddNode("rm2", "ReduceMean", {"pow_out"}, {"rm2_out"}, "", rm_attrs);
+    builder.AddNode("add_eps", "Add", {"rm2_out", "eps"}, {"add_eps_out"});
+    builder.AddNode("sqrt", "Sqrt", {"add_eps_out"}, {"sqrt_out"});
+    builder.AddNode("div", "Div", {"sub_out", "sqrt_out"}, {"div_out"});
+    builder.AddNode("mul_gamma", "Mul", {"div_out", "gamma"}, {"mul_out"});
+
+    builder.MakeOutput("output");
+    builder.AddNode("add_beta", "Add", {"mul_out", "beta"}, {"output"});
+  };
+}
+
 ProviderOptions GetProviderOptions() {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -73,6 +123,33 @@ ProviderOptions GetProviderOptions() {
 }
 
 }  // namespace
+
+// 3D input [1, 8, 16], axes=[-1], 1D gamma/beta {16}.
+// Validates the Sub→Cast→Pow variant (Cast inserts an explicit fp32 cast between Sub and Pow).
+TEST_F(QnnHTPBackendTests, LayerNormFusion_SubCastPow_3D) {
+  const std::filesystem::path json_dir = "LayerNormFusion_SubCastPow_3D";
+  std::filesystem::remove_all(json_dir);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
+  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+
+  ProviderOptions opts = GetProviderOptions();
+  opts["dump_json_qnn_graph"] = "1";
+  opts["json_qnn_graph_dir"] = json_dir.string();
+
+  const int64_t C = 16;
+  RunQnnModelTest(
+      BuildLayerNormFusionSubCastPowTestCase(
+          TestInputDef<float>({1, 8, C}, false, -2.0f, 2.0f),
+          {-1}, 1e-5f,
+          {C}, std::vector<float>(static_cast<size_t>(C), 1.0f),
+          {C}, std::vector<float>(static_cast<size_t>(C), 0.0f)),
+      opts, 13, ExpectedEPNodeAssignment::All, 1e-2f);
+
+  AssertOpInQnnGraph(json_dir, "LayerNorm", 1);
+  AssertOpInQnnGraph(json_dir, "ReduceMean", 0);
+  AssertOpInQnnGraph(json_dir, "Cast", 0);
+}
 
 // 3D input [1, 8, 16], axes=[-1], 1D gamma/beta {16}.
 TEST_F(QnnHTPBackendTests, LayerNormFusion_3D_1D_GammaBeta) {

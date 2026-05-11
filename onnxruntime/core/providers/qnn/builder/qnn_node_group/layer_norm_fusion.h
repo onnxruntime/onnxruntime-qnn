@@ -19,6 +19,8 @@ class QnnModelWrapper;
 /// <summary>
 /// Fuses a decomposed LayerNorm pattern into a single QNN LayerNorm operator.
 ///
+/// Standard variant:
+///
 ///                    +--------------------------------------------+
 ///                    |                                            |
 ///                    v                                            |
@@ -26,6 +28,16 @@ class QnnModelWrapper;
 ///                                  |                                               ^
 ///                                  |                                               |
 ///                                  +-----------------------------------------------+
+///
+/// Cast variant (Sub output is cast to float32 before Pow for numerical precision):
+///
+///                    +--------------------------------------------+
+///                    |                                            |
+///                    v                                            |
+///   [x] --> ReduceMean --> Sub --> Cast --> Pow(2) --> ReduceMean --> Add(eps) --> Sqrt --> Div --> Mul(gamma) --> Add(beta) ==>
+///                                  |                                                         ^
+///                                  |                                                         |
+///                                  +---------------------------------------------------------+
 ///
 /// All NodeUnits must be of type SingleNode.
 /// </summary>

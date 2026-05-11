@@ -109,7 +109,7 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     return nullptr;
   }
 
-  // Sub must have exactly 2 consumers: Pow and Div.
+  // Sub must have exactly 2 consumers: Pow (or Cast->Pow) and Div.
   const auto& sub_outputs = sub_node_unit->Outputs();
   if (sub_outputs.empty()) {
     return nullptr;
@@ -117,6 +117,7 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
 
   const OrtNodeUnit* pow_node_unit = nullptr;
   const OrtNodeUnit* div_from_sub_unit = nullptr;
+  const OrtNodeUnit* cast_node_unit = nullptr;
   {
     const Ort::ConstNode sub_node(&sub_node_unit->GetNode());
     const auto sub_node_outputs = sub_node.GetOutputs();
@@ -146,9 +147,20 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
         pow_node_unit = consumer_unit;
       } else if (op_type == "Div") {
         div_from_sub_unit = consumer_unit;
+      } else if (op_type == "Cast") {
+        cast_node_unit = consumer_unit;
       }
     }
   }
+
+  // If Pow was not a direct child but Cast was, follow Cast to find Pow.
+  if (pow_node_unit == nullptr && cast_node_unit != nullptr) {
+    const std::array<std::string_view, 1> pow_types{"Pow"};
+    pow_node_unit = GetOnlyChildOfType(qnn_model_wrapper, *cast_node_unit,
+                                       pow_types, node_to_node_unit,
+                                       node_unit_to_qnn_node_group);
+  }
+
   if (pow_node_unit == nullptr || div_from_sub_unit == nullptr) {
     return nullptr;
   }
@@ -313,9 +325,16 @@ std::unique_ptr<IQnnNodeGroup> LayerNormFusion::TryFusion(
     return nullptr;
   }
 
-  std::vector<const OrtNodeUnit*> node_units = {
-      &reduce_mean_node_unit, sub_node_unit, pow_node_unit, reduce_mean2_node_unit,
-      add_eps_node_unit, sqrt_node_unit, div_node_unit, mul_gamma_node_unit, add_beta_node_unit};
+  std::vector<const OrtNodeUnit*> node_units;
+  if (cast_node_unit != nullptr) {
+    node_units = {&reduce_mean_node_unit, sub_node_unit, cast_node_unit, pow_node_unit,
+                  reduce_mean2_node_unit, add_eps_node_unit, sqrt_node_unit, div_node_unit,
+                  mul_gamma_node_unit, add_beta_node_unit};
+  } else {
+    node_units = {&reduce_mean_node_unit, sub_node_unit, pow_node_unit, reduce_mean2_node_unit,
+                  add_eps_node_unit, sqrt_node_unit, div_node_unit, mul_gamma_node_unit,
+                  add_beta_node_unit};
+  }
 
   const OrtNodeUnitIODef& root_input = rm1_inputs[0];
   const OrtNodeUnitIODef& final_output = add_beta_node_unit->Outputs()[0];
