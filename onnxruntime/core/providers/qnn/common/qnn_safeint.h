@@ -26,6 +26,8 @@
 // (included transitively in test builds) declares SafeIntExceptionHandler as a
 // class template, which is incompatible with this concrete class definition.
 #ifndef SafeIntDefaultExceptionHandler
+#include <exception>
+#include <stdexcept>
 class SafeIntExceptionHandler : public std::exception {
  public:
   [[noreturn]] static void SafeIntOnOverflow() { throw std::runtime_error("Integer overflow"); }
