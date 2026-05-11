@@ -9,6 +9,7 @@
 #include "core/graph/onnx_protobuf.h"
 #include "core/session/inference_session.h"
 #include "core/session/onnxruntime_cxx_api.h"
+#include "core/session/onnxruntime_session_options_config_keys.h"
 #include "core/framework/tensorprotoutils.h"
 
 #include "test/util/include/asserts.h"
@@ -266,6 +267,10 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
   std::vector<Ort::Value> expected_fetches;
   RunWithEP(cpu_session, cpu_run_options, feeds, expected_fetches);
 
+  if (params.graph_verifier) {
+    ort_so.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
+  }
+
   // Run with EP and verify the result
   Ort::Session ort_session(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), ort_so);
 
@@ -281,15 +286,14 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
     VerifyOutputs(output_names, expected_fetches, fetches, params);
   }
 
-  // TODO: graph_verifier requires internal graph access, commented out for public API migration
-  // if (params.graph_verifier) {
-  //   (*params.graph_verifier)(ort_session.GetGraph());
-  // }
+  if (params.graph_verifier) {
+    (*params.graph_verifier)(ort_session);
+  }
 }
 
 void TestModelLoad(ModelPathOrBytes model_path_or_bytes,
                    std::unique_ptr<IExecutionProvider>, /* execution_provider */
-                   const std::function<void(const Graph&)>& /* check_graph */) {
+                   const std::function<void(const Ort::Session&)>& check_graph) {
   std::vector<std::byte> model_data_buffer{};
   const auto model_data = GetModelBytes(model_path_or_bytes, model_data_buffer);
 
@@ -299,10 +303,9 @@ void TestModelLoad(ModelPathOrBytes model_path_or_bytes,
   // These are not available in the public API, so we just test model loading
   OrtSessionWrapper session_object(*GetOrtEnv(), model_data.data(), static_cast<int>(model_data.size()), ort_so);
 
-  // Note: check_graph callback requires internal graph access, commented out for public API migration
-  // if (check_graph) {
-  //   check_graph(session_object.GetGraph());
-  // }
+  if (check_graph) {
+    check_graph(session_object);
+  }
 }
 
 void CheckShapeEquality(const ONNX_NAMESPACE::TensorShapeProto* shape1,
