@@ -188,10 +188,10 @@ ProviderOptions GetProviderOptions() {
 }
 
 void RunFusionTestAndAssertFused(const std::filesystem::path& json_qnn_graph_dir,
-                                  GetTestModelFn build_model,
-                                  size_t expected_dequantize_count,
-                                  size_t expected_add_count,
-                                  float fp32_abs_err = 1e-3f) {
+                                 GetTestModelFn build_model,
+                                 size_t expected_dequantize_count,
+                                 size_t expected_add_count,
+                                 float fp32_abs_err = 1e-3f) {
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
   auto cleanup =
@@ -264,7 +264,7 @@ TEST_F(QnnHTPBackendTests, DQConvIntegerFusion_NoBZp) {
   RunFusionTestAndAssertFused(
       "DQConvIntegerFusion_NoBZp",
       BuildDQConvIntegerFusionTestCase(/*include_bias=*/true, /*per_channel_scale=*/false,
-                                        /*include_a_zp=*/true, /*include_b_zp=*/false),
+                                       /*include_a_zp=*/true, /*include_b_zp=*/false),
       /*expected_dequantize_count=*/1,
       /*expected_add_count=*/1);
 }
@@ -285,9 +285,9 @@ TEST_F(QnnHTPBackendTests, DQConvIntegerFusion_NoAZp_RejectsFusion) {
   provider_options["json_qnn_graph_dir"] = json_dir.string();
 
   RunQnnModelTest(BuildDQConvIntegerFusionTestCase(/*include_bias=*/false,
-                                                    /*per_channel_scale=*/false,
-                                                    /*include_a_zp=*/false,
-                                                    /*include_b_zp=*/true),
+                                                   /*per_channel_scale=*/false,
+                                                   /*include_a_zp=*/false,
+                                                   /*include_b_zp=*/true),
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some,

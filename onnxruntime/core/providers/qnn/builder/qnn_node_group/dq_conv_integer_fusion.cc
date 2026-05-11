@@ -12,7 +12,6 @@
 #include <utility>
 #include <vector>
 
-#include "core/providers/qnn/builder/qnn_def.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_node_group/utils.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
@@ -36,8 +35,8 @@ constexpr char kOpAdd[] = "Add";
 constexpr std::string_view kFusionType = "DQConvIntegerFusion";
 
 struct DqlLookupResult {
-  const OrtNodeUnit* dql = nullptr;          // matched DQL NodeUnit, nullptr if not found
-  bool already_claimed_by_sibling = false;   // true iff DQL is already claimed by another DQConvIntegerFusion
+  const OrtNodeUnit* dql = nullptr;         // matched DQL NodeUnit, nullptr if not found
+  bool already_claimed_by_sibling = false;  // true iff DQL is already claimed by another DQConvIntegerFusion
 };
 
 // Walks up `conv_integer`'s a_q input to find the producer DynamicQuantizeLinear NodeUnit.
@@ -288,11 +287,6 @@ std::unique_ptr<IQnnNodeGroup> DQConvIntegerFusion::TryFusion(
                 (std::string("DQConvIntegerFusion rejected: ").append(reason)).c_str());
     return nullptr;
   };
-
-  // NPU-only: matches LPBQ fusions; CPU/GPU backends do not benefit from this rewrite.
-  if (!IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
-    return reject("not NPU backend");
-  }
 
   // The 2nd GetCapability pass sees ConvInteger in kMSInternalNHWCDomain only if ORT's layout
   // transformer rewrote it; the EP suppresses that via ShouldConvertDataLayoutForOp, but as a
@@ -607,7 +601,7 @@ Ort::Status DQConvIntegerFusion::CreateOrValidateOnQnn(QnnModelWrapper& qmw, boo
 
   std::vector<uint8_t> hwcn_weight_bytes;
   RETURN_IF_ERROR(utils::TransposeFromNchwToHwcn(qmw, b_info.initializer_tensor,
-                                                  hwcn_weight_bytes, /*is_3d=*/false));
+                                                 hwcn_weight_bytes, /*is_3d=*/false));
 
   // Build weight quant params on NCHW axis 0, then remap to HWCN axis 3.
   const std::string b_zp_name = has_b_zp_ ? ci_inputs[3].name : std::string{};
@@ -642,8 +636,8 @@ Ort::Status DQConvIntegerFusion::CreateOrValidateOnQnn(QnnModelWrapper& qmw, boo
 
   // Step 2: weight handed to Conv2d as a float HWCN tensor.
   //   Per-tensor:  static int8 weight + Dequantize op produces a NATIVE float weight.
-  //   Per-channel: pre-dequantize int8 -> float offline (HTP Dequantize doesn't support
-  //                per-channel inputs); emit a STATIC float weight directly, no Dequantize.
+  //   Per-channel: QNN's Dequantize op does not accept per-channel quantized inputs;
+  //                pre-dequantize int8 -> float offline and emit a STATIC float weight directly.
   std::vector<uint8_t> per_channel_float_bytes;  // populated only on per-channel + validate
   if (!is_per_channel) {
     QnnTensorWrapper w_int8(w_hwcn_i8_name, QNN_TENSOR_TYPE_STATIC,
@@ -671,8 +665,8 @@ Ort::Status DQConvIntegerFusion::CreateOrValidateOnQnn(QnnModelWrapper& qmw, boo
   } else {
     std::vector<uint8_t> float_bytes;
     RETURN_IF_ERROR(PreDequantizePerChannelWeight(qmw, b_scale_name_, b_zp_name, has_b_zp_,
-                                                   b_info.shape[0], hwcn_weight_bytes,
-                                                   float_bytes));
+                                                  b_info.shape[0], hwcn_weight_bytes,
+                                                  float_bytes));
     if (validate) {
       // Bytes are needed below to construct a STATIC handle for QNN's type check.
       per_channel_float_bytes = std::move(float_bytes);

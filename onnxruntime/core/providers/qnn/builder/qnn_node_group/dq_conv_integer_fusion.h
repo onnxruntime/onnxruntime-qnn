@@ -18,7 +18,7 @@ namespace qnn {
 class QnnModelWrapper;
 
 /// <summary>
-/// Fuses the dynamic-quantize ConvInteger pattern into a float QNN Conv2d (HTP only).
+/// Fuses the dynamic-quantize ConvInteger pattern into a float QNN Conv2d.
 ///
 /// Pattern (ONNX):
 ///   x --> DynamicQuantizeLinear --> (a_q, a_scale, a_zp)
@@ -30,7 +30,7 @@ class QnnModelWrapper;
 /// Rewrite (QNN). The pre-DQL float input feeds Conv2d's activation; the int8 weight is
 /// transposed NCHW->HWCN and either dequantized by a QNN Dequantize op (per-tensor B_scale)
 /// or pre-dequantized to float offline and emitted as a STATIC float weight (per-channel
-/// B_scale: HTP's Dequantize does not accept per-channel inputs).
+/// B_scale: QNN's Dequantize does not accept per-channel quantized inputs).
 ///
 ///   x --> Transpose(NCHW->NHWC) -----------------+
 ///                                                |   (activation input to Conv2d)
@@ -65,17 +65,17 @@ class DQConvIntegerFusion : public IQnnNodeGroup {
  private:
   // Aggregates everything TryFusion needs to hand off to the constructor.
   struct Pattern {
-    const OrtNodeUnit* dql;            // nullptr if a sibling fusion already claimed it
+    const OrtNodeUnit* dql;  // nullptr if a sibling fusion already claimed it
     const OrtNodeUnit* conv_integer;
     const OrtNodeUnit* cast;
     const OrtNodeUnit* parallel_mul;
     const OrtNodeUnit* requant_mul;
-    const OrtNodeUnit* add_bias;       // nullptr if no trailing Add
-    std::string float_input_name;      // pre-DQL float input feeds Conv's activation
-    std::string b_scale_name;          // B_scale initializer (from parallel_Mul)
+    const OrtNodeUnit* add_bias;   // nullptr if no trailing Add
+    std::string float_input_name;  // pre-DQL float input feeds Conv's activation
+    std::string b_scale_name;      // B_scale initializer (from parallel_Mul)
     std::string terminator_output_name;
-    std::string bias_name;             // empty if no trailing Add
-    bool has_b_zp;                     // true if ConvInteger has a B_zp input
+    std::string bias_name;  // empty if no trailing Add
+    bool has_b_zp;          // true if ConvInteger has a B_zp input
   };
 
   explicit DQConvIntegerFusion(Pattern pattern);
