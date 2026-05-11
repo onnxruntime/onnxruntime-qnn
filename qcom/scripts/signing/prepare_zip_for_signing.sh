@@ -1,7 +1,11 @@
 #!/bin/bash
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
 
-# Script to prepare zip files for signing
-# Usage: ./prepare_zip_for_signing.sh <ZipDirectory> <OutputDirectory>
+# Script to prepare wheels for signing
+# Usage: ./prepare_wheels_for_signing.sh <WheelDirectory> <OutputDirectory>
+
+set -euo pipefail
 
 ZIP_DIRECTORY="$1"
 OUTPUT_DIRECTORY="$2"
@@ -131,12 +135,14 @@ echo ""
 echo "Compressing unsigned zip libs"
 cd "$UNSIGNED_DIR/zip"
 python3 << 'PYTHON_EOF'
-import shutil
 import os
+import shutil
+import sys
 try:
     shutil.make_archive('../zip', 'zip', '.', '.')
-except Exception as e:
-    pass
+except Exception as error:
+    print(f"ERROR: Failed to create zip.zip: {error}", file=sys.stderr)
+    sys.exit(1)
 PYTHON_EOF
 
 if [ $? -eq 0 ]; then

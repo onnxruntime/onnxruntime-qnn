@@ -1,7 +1,11 @@
 #!/bin/bash
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
 
 # Script to prepare wheels for signing
 # Usage: ./prepare_wheels_for_signing.sh <WheelDirectory> <OutputDirectory>
+
+set -euo pipefail
 
 WHEEL_DIRECTORY="$1"
 OUTPUT_DIRECTORY="$2"
@@ -234,12 +238,14 @@ echo ""
 echo "Compressing unsigned wheel libs"
 cd "$UNSIGNED_DIR/wheels"
 python3 << 'PYTHON_EOF'
-import shutil
 import os
+import shutil
+import sys
 try:
     shutil.make_archive('../wheels', 'zip', '.', '.')
-except Exception as e:
-    exit
+except Exception as error:
+    print(f"ERROR: Failed to create wheels.zip: {error}", file=sys.stderr)
+    sys.exit(1)
 PYTHON_EOF
 
 if [ $? -eq 0 ]; then
