@@ -187,6 +187,20 @@ ProviderOptions GetProviderOptions() {
   return provider_options;
 }
 
+// Returns true if at least one QNN JSON graph file exists in `dump_dir`. Used to skip graph
+// assertions when the test was not executed (e.g., skipped on architectures where FP16/FP32
+// HTP is unavailable and no JSON dump is produced).
+bool HasQnnJsonGraph(const std::filesystem::path& dump_dir) {
+  if (!std::filesystem::exists(dump_dir)) return false;
+  for (const auto& entry : std::filesystem::directory_iterator{dump_dir}) {
+    if (entry.is_regular_file() && entry.path().extension() == ".json" &&
+        entry.path().filename().string().find("_tensor_log") == std::string::npos) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void RunFusionTestAndAssertFused(const std::filesystem::path& json_qnn_graph_dir,
                                  GetTestModelFn build_model,
                                  size_t expected_dequantize_count,
@@ -206,6 +220,12 @@ void RunFusionTestAndAssertFused(const std::filesystem::path& json_qnn_graph_dir
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   fp32_abs_err);
+
+  // If the test was skipped (e.g., FP16/FP32 HTP unavailable on this architecture) no JSON
+  // graph dump is produced; skip the graph assertions in that case.
+  if (!HasQnnJsonGraph(json_qnn_graph_dir)) {
+    return;
+  }
 
   // The fused QNN graph should contain the rewritten ops.
   AssertOpInQnnGraph(json_qnn_graph_dir, "Conv2d", /*count=*/1);
@@ -294,6 +314,10 @@ TEST_F(QnnHTPBackendTests, DQConvIntegerFusion_NoAZp_RejectsFusion) {
                   // Peripheral Cast/Mul on HTP fp16 introduces small rounding vs CPU EP reference.
                   /*fp32_abs_err=*/1e-3f);
 
+  if (!HasQnnJsonGraph(json_dir)) {
+    return;
+  }
+
   AssertOpInQnnGraph(json_dir, "Conv2d", /*count=*/0);
   AssertOpInQnnGraph(json_dir, "ConvInteger", /*count=*/0);
 }
@@ -318,6 +342,10 @@ TEST_F(QnnHTPBackendTests, DQConvIntegerFusion_TwoConvIntegersShareDQL) {
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-3f);
+
+  if (!HasQnnJsonGraph(json_dir)) {
+    return;
+  }
 
   AssertOpInQnnGraph(json_dir, "Conv2d", /*count=*/2);
   AssertOpInQnnGraph(json_dir, "ConvInteger", /*count=*/0);
