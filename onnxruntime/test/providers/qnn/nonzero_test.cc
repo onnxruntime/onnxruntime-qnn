@@ -52,6 +52,9 @@ static void RunNonZeroTest(const GetTestModelFn& build_test_case,
   const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
   ModelTestBuilder helper;
   build_test_case(helper);
+
+  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(provider_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
+
   for (const auto& [domain, version] : domain_to_version) {
     const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
     opset_id_proto->set_domain(domain);
@@ -187,6 +190,8 @@ TEST_F(QnnHTPBackendTests, NonZero_Gather_1D_Int32) {
   std::vector<int32_t> data1 = {10, 20, 30, 40, 50};
   std::vector<int32_t> data2 = {100, 200, 300, 400, 500};
   int64_t num_elements = 5;
+
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   auto build_model = [mask_data, data1, data2, num_elements](ModelTestBuilder& builder) {
     TestInputDef<float> mask_def({num_elements}, false, mask_data);

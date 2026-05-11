@@ -2434,7 +2434,7 @@ OrtStatus* QnnEp::GetHardwareDeviceIncompatibilityDetails(const OrtHardwareDevic
                                                           OrtDeviceEpIncompatibilityDetails* details) noexcept {
   // This function is always called by temporary QnnEp, so no need to check if backend is already setup.
   std::unordered_map<std::string, std::unique_ptr<std::vector<std::string>>> dummy_map;
-  Ort::Status status = qnn_backend_manager_->SetupBackend(true, true, false, false, false, nullptr, dummy_map);
+  Ort::Status status = qnn_backend_manager_->SetupBackend(false, false, false, false, false, nullptr, dummy_map);
 
   if (!status.IsOK()) {
     const std::string error_message = status.GetErrorMessage();

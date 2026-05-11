@@ -57,9 +57,7 @@ TEST_F(QnnHTPBackendTests, LeakyReluOpSet16) {
 // Test Leaky Relu where input is FP16 and alpha is FP32
 TEST_F(QnnHTPBackendTests, LeakyReluFP16OpSet16) {
 #if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
