@@ -176,6 +176,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool disable_cpu_ep_fallback_ = false;  // True if CPU EP fallback has been disabled for this session.
   bool qnn_context_embed_mode_ = true;
   bool stop_share_ep_contexts_ = false;
+  bool prepare_only_ = false;
   bool enable_spill_fill_buffer_ = false;
   bool enable_file_mapped_weights_ = true;
 #if defined(_WIN32)
