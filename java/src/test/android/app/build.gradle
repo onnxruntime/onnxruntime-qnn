@@ -6,7 +6,9 @@ plugins {
 	id 'kotlin-android'
 }
 
-def minSdkVer = System.properties.get("minSdkVer")?:24
+// minSdkVer defaults to 27: QNN EP requires Android 8.1+ (API 27) for the HTP backend.
+// Override with -PminSdkVer=<N> if testing on older devices against CPU/GPU backends only.
+def minSdkVer = System.properties.get("minSdkVer")?:27
 def qnnVersion = System.properties['qnnVersion']
 def ortVersion = System.properties['ortVersion']
 
@@ -92,9 +94,20 @@ dependencies {
 	// Dynamically check and use available version from Maven repository.
 	// Fallback versions (1.24.3, 2.45.0) are the previous known-good releases used when the
 	// requested version is not yet available in the Maven repository (e.g., same-day CI runs).
+	// See docs/execution_providers/QNN-ExecutionProvider.md for the validated version matrix.
 	def resolvedOrtVersion = getAvailableVersion('com.microsoft.onnxruntime:onnxruntime-android', ortVersion, '1.24.4', '1.24.3')
 	implementation "com.microsoft.onnxruntime:onnxruntime-android:${resolvedOrtVersion}"
-	implementation(name: 'onnxruntime-android-qnn', ext: 'aar')
+
+	// Use the Maven-published AAR when AAR_MAVEN_COORD is set (CI post-publish validation).
+	// Otherwise use the local flatDir AAR (normal dev / CI build path).
+	def aarMavenCoord = System.getenv("AAR_MAVEN_COORD")
+	if (aarMavenCoord) {
+		// AAR_MAVEN_COORD format: "group:artifact:version"
+		implementation aarMavenCoord
+	} else {
+		implementation(name: 'onnxruntime-android-qnn', ext: 'aar')
+	}
+
 	def resolvedQnnVersion = getAvailableVersion('com.qualcomm.qti:qnn-runtime', qnnVersion, '2.45.40', '2.45.0')
 	implementation "com.qualcomm.qti:qnn-runtime:${resolvedQnnVersion}"
 }

@@ -172,10 +172,10 @@ def generate_description(line_list, package_name):
     elif "Microsoft.ML.OnnxRuntime.Training" in package_name:  # This is a Microsoft.ML.OnnxRuntime.Training.* package
         description = (
             "The onnxruntime-training native shared library artifacts are designed to efficiently train and infer "
-            + "a wide range of ONNX models on edge devices, such as client machines, gaming consoles, and other "
-            + "portable devices with a focus on minimizing resource usage and maximizing accuracy."
-            + "See https://github.com/microsoft/onnxruntime-training-examples/tree/master/on_device_training for "
-            + "more details."
+            "a wide range of ONNX models on edge devices, such as client machines, gaming consoles, and other "
+            "portable devices with a focus on minimizing resource usage and maximizing accuracy."
+            "See https://github.com/microsoft/onnxruntime-training-examples/tree/master/on_device_training for "
+            "more details."
         )
     elif "ML.OnnxRuntime" in package_name:  # This is a *.ML.OnnxRuntime.* package
         description = (
@@ -283,7 +283,7 @@ def generate_release_notes(line_list, dependency_sdk_info):
     build_id = get_env_var("BUILD_BUILDID")
     line_list.append(
         "\t"
-        + "Build: https://github.com/onnxruntime/onnxruntime-qnn/actions/runs/"
+        "Build: https://github.com/onnxruntime/onnxruntime-qnn/actions/runs/"
         + (build_id if build_id is not None else "")
     )
 
@@ -366,11 +366,7 @@ def generate_files(line_list, args):
                 "<file src=" + '"' + os.path.join(args.native_build_path, "QnnGpu.dll") + runtimes + " />"
             )
             files_list.append(
-                "<file src="
-                + '"'
-                + os.path.join(args.native_build_path, "QnnHtpNetRunExtensions.dll")
-                + runtimes
-                + " />"
+                '<file src="' + os.path.join(args.native_build_path, "QnnHtpNetRunExtensions.dll") + runtimes + " />"
             )
             files_list.append(
                 "<file src=" + '"' + os.path.join(args.native_build_path, "QnnHtpPrepare.dll") + runtimes + " />"
@@ -381,24 +377,14 @@ def generate_files(line_list, args):
             for htp_arch in [73, 81]:
                 files_list.append(
                     "<file src="
-                    + '"'
-                    + os.path.join(args.native_build_path, f"QnnHtpV{htp_arch}Stub.dll")
-                    + runtimes
-                    + " />"
+                    '"' + os.path.join(args.native_build_path, f"QnnHtpV{htp_arch}Stub.dll") + runtimes + " />"
                 )
                 files_list.append(
                     "<file src="
-                    + '"'
-                    + os.path.join(args.native_build_path, f"libQnnHtpV{htp_arch}Skel.so")
-                    + runtimes
-                    + " />"
+                    '"' + os.path.join(args.native_build_path, f"libQnnHtpV{htp_arch}Skel.so") + runtimes + " />"
                 )
                 files_list.append(
-                    "<file src="
-                    + '"'
-                    + os.path.join(args.native_build_path, f"libqnnhtpv{htp_arch}.cat")
-                    + runtimes
-                    + " />"
+                    '<file src="' + os.path.join(args.native_build_path, f"libqnnhtpv{htp_arch}.cat") + runtimes + " />"
                 )
 
     is_ado_packaging_build = False
@@ -421,7 +407,7 @@ def generate_files(line_list, args):
     if args.execution_provider == "qnn" or (is_qnn_package and not is_ado_packaging_build):
         files_list.append(
             "<file src="
-            + '"'
+            '"'
             + os.path.join(args.native_build_path, nuget_dependencies["qnn_ep_shared_lib"])
             + runtimes_target
             + args.target_architecture
@@ -516,26 +502,18 @@ def generate_files(line_list, args):
     # Process License, ThirdPartyNotices, Privacy
     files_list.append("<file src=" + '"' + os.path.join(args.sources_path, "LICENSE") + '" target="LICENSE" />')
     files_list.append(
-        "<file src="
-        + '"'
-        + os.path.join(args.sources_path, "ThirdPartyNotices.txt")
-        + '" target="ThirdPartyNotices.txt" />'
+        '<file src="' + os.path.join(args.sources_path, "ThirdPartyNotices.txt") + '" target="ThirdPartyNotices.txt" />'
     )
     files_list.append(
         "<file src=" + '"' + os.path.join(args.sources_path, "docs", "Privacy.md") + '" target="Privacy.md" />'
     )
     files_list.append(
-        "<file src="
-        + '"'
-        + os.path.join(args.sources_path, "docs", "images", "header.png")
-        + '" target="header.png" />'
+        '<file src="' + os.path.join(args.sources_path, "docs", "images", "header.png") + '" target="header.png" />'
     )
     if is_qnn_package:
         files_list.append(
             "<file src="
-            + '"'
-            + os.path.join(args.native_build_path, "Qualcomm_LICENSE.pdf")
-            + '" target="Qualcomm_LICENSE.pdf" />'
+            '"' + os.path.join(args.native_build_path, "Qualcomm_LICENSE.pdf") + '" target="Qualcomm_LICENSE.pdf" />'
         )
     files_list.append("</files>")
 
