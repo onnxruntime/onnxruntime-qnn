@@ -23,9 +23,9 @@ namespace {
 // Build the pattern:
 //   input -> DynamicQuantizeLinear
 //     (a_q,  a_scale, a_zp)
-//   ConvInteger(a_q, W_int8, [a_zp], [W_zp_int8]) -> Cast(FLOAT)
-//                                                  \
-//   parallel_Mul(a_scale, b_scale_init) -> requant_Mul  -> (optional) Add(bias_init) -> output
+//   ConvInteger(a_q, W_int8, [a_zp], [W_zp_int8]) -> Cast(FLOAT) -> ci_out_f32
+//   parallel_Mul(a_scale, b_scale_init) -> requant_Mul(ci_out_f32, scale_product)
+//       -> (optional) Add(bias_init) -> output
 //
 // `include_bias` toggles the trailing Add. `per_channel_scale` uses a rank-4
 // [1, C_out, 1, 1] B_scale; otherwise a scalar. `include_a_zp` / `include_b_zp` toggle
