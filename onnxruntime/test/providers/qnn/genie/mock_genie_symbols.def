@@ -1,0 +1,20 @@
+EXPORTS
+    GenieNodeConfig_createFromJson
+    GenieDlcConfig_create
+    GenieDlcConfig_free
+    GenieDlc_create
+    GenieDlc_free
+    GenieDlc_getUseCases
+    GenieNodeConfig_createFromDlc
+    GenieNode_create
+    GenieNode_setData
+    GenieNode_getData
+    GenieNode_execute
+    GenieNode_free
+    GenieNode_reset
+    GenieNodeConfig_free
+    GenieLog_create
+    GenieNodeConfig_bindLogger
+    GenieLog_free
+    GetMockGenieCallCount
+    ResetMockGenieCallCounts

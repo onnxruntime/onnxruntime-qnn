@@ -3177,6 +3177,170 @@ TEST_F(QnnHTPBackendTests, CompileApi_InitializerHandler_ReuseExternalInitialize
 
   ASSERT_EQ(num_reused_ext_initializers, 2);  // Reused external conv weight and bias.
 }
+
+// ============================================================
+// prepare_only tests
+// ============================================================
+
+// Helper: build session options with prepare_only enabled.
+static void SetPrepareOnlyOptions(Ort::SessionOptions& so,
+                                  const std::string& ctx_path,
+                                  bool explicit_context_enable = true) {
+  if (explicit_context_enable) {
+    so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
+  }
+  so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ctx_path.c_str());
+  so.AddConfigEntry("ep.qnnexecutionprovider.enable_htp_prepare_only", "1");
+}
+
+// Test 1: prepare_only writes ctx.onnx and frees backend (session create succeeds).
+TEST_F(QnnHTPBackendTests, PrepareOnly_CtxFileWritten) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildGraphWithQAndNonQ()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  const std::string ctx_path = "./qnn_prepare_only_ctx_written_test.onnx";
+  std::remove(ctx_path.c_str());
+
+  Ort::SessionOptions so;
+  SetPrepareOnlyOptions(so, ctx_path);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+
+  {
+    Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
+    EXPECT_TRUE(std::filesystem::exists(ctx_path));
+  }
+
+  CleanUpCtxFile(ctx_path);
+}
+
+// Test 2: prepare_only without explicit ep.context_enable gets disabled with a warning — session still creates.
+TEST_F(QnnHTPBackendTests, PrepareOnly_DisabledWhenContextCacheNotSet) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildGraphWithQAndNonQ()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  const std::string ctx_path = "./qnn_prepare_only_auto_ctx_test.onnx";
+  std::remove(ctx_path.c_str());
+
+  Ort::SessionOptions so;
+  // Intentionally omit kOrtSessionOptionEpContextEnable — prepare_only_ should be disabled with warning.
+  SetPrepareOnlyOptions(so, ctx_path, /*explicit_context_enable=*/false);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+
+  // since ep.context_enable was not set. Session falls back to normal (non-prepare_only) mode.
+  ORT_TRY {
+    Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
+    SUCCEED();
+  }
+  ORT_CATCH(const std::exception& e) {
+    ORT_HANDLE_EXCEPTION([&e]() {
+      FAIL() << "Session creation should not throw: " << e.what();
+    });
+  }
+}
+
+// Test 3: Session.Run() on a prepare_only session returns EP_FAIL with the expected message.
+TEST_F(QnnHTPBackendTests, PrepareOnly_RunReturnsError) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+
+  ModelTestBuilder helper;
+  BuildGraphWithQAndNonQ()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  const std::string ctx_path = "./qnn_prepare_only_run_error_test.onnx";
+  std::remove(ctx_path.c_str());
+
+  Ort::SessionOptions so;
+  SetPrepareOnlyOptions(so, ctx_path);
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+
+  Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
+  ASSERT_TRUE(std::filesystem::exists(ctx_path));
+
+  // Get actual input/output names from the session — BuildGraphWithQAndNonQ uses
+  // auto-generated output names so we cannot hardcode them.
+  Ort::AllocatorWithDefaultOptions allocator;
+  auto input_name_ptr = session.GetInputNameAllocated(0, allocator);
+  auto output_name_ptr = session.GetOutputNameAllocated(0, allocator);
+
+  std::vector<int64_t> input_dim{200, 200};
+  std::vector<float> input_data(200 * 200, 0.0f);
+  Ort::MemoryInfo mem_info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+  std::vector<Ort::Value> ort_inputs;
+  ort_inputs.push_back(Ort::Value::CreateTensor(mem_info, input_data.data(), input_data.size(),
+                                                input_dim.data(), input_dim.size()));
+  const char* input_names[] = {input_name_ptr.get()};
+  const char* output_names[] = {output_name_ptr.get()};
+
+  ORT_TRY {
+    session.Run(Ort::RunOptions{}, input_names, ort_inputs.data(), 1, output_names, 1);
+    FAIL() << "Expected Session.Run() to fail in prepare_only mode";
+  }
+  ORT_CATCH(const std::exception& e) {
+    ORT_HANDLE_EXCEPTION([&e]() {
+      ASSERT_THAT(e.what(), testing::HasSubstr("prepare_only mode"));
+    });
+  }
+
+  CleanUpCtxFile(ctx_path);
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 // Utility class to help create enviornment using HNRD for testing.

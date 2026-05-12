@@ -9,6 +9,7 @@
 
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/builder/qnn_model.h"
+#include "core/providers/qnn/common/qnn_graph_utils.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/shared_context.h"
 

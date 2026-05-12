@@ -6,6 +6,7 @@
 #include "core/providers/qnn/builder/opbuilder/qdq_constant_folding.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/common/qnn_graph_utils.h"
 
 namespace onnxruntime {
 namespace qnn {

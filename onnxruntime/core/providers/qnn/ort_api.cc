@@ -6,6 +6,7 @@
 #include <fcntl.h>
 
 #include <algorithm>
+#include <numeric>
 #include <memory>
 #include <string>
 #include <utility>
