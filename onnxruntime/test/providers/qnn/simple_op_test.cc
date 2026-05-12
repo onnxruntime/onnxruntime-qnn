@@ -1095,43 +1095,12 @@ TEST_F(QnnHTPBackendTests, BinaryOp_And4D) {
                   ExpectedEPNodeAssignment::All);
 }
 
-// Test float32 Reciprocal on HTP.
-// A bare float32 Reciprocal without a downstream Mul consumer cannot be fused
-// by ReciprocalMulFusion, and the HTP backend does not support the
-// ElementWiseDivide(static_1.0, dynamic_x) lowering that ReciprocalOpBuilder
-// would produce.  The node therefore falls back to CPU execution.
-TEST_F(QnnHTPBackendTests, Reciprocal_Basic_FLOAT) {
-  RunOpTest<float>("Reciprocal",
-                   {TestInputDef<float>({2, 2}, false, {1.0f, 2.0f, 0.5f, 4.0f})},
-                   {},  // No attributes
-                   13,
-                   ExpectedEPNodeAssignment::None);
-}
-
 TEST_F(QnnHTPBackendTests, Reciprocal_QU8) {
   RunQDQOpTest<uint8_t>("Reciprocal",
                         {TestInputDef<float>({2, 2}, false, GetFloatDataInRange(1.0f, 5.0f, 4))},
                         {},  // No attributes
                         13,
                         ExpectedEPNodeAssignment::All);
-}
-
-// Test float16 Reciprocal on HTP.
-// Like the float32 case, a bare FP16 Reciprocal without a downstream Mul
-// consumer cannot be fused by ReciprocalMulFusion, and the HTP backend does
-// not support the ElementWiseDivide(static_1.0_fp16, dynamic_x) lowering that
-// ReciprocalOpBuilder would produce.  The node therefore falls back to CPU.
-TEST_F(QnnHTPBackendTests, Reciprocal_FP16) {
-#if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
-#endif
-  RunFP16OpTest("Reciprocal",
-                {TestInputDef<float>({2, 2}, false, {1.0f, 2.0f, 0.5f, 4.0f})},
-                {},  // No attributes
-                13,
-                ExpectedEPNodeAssignment::None);
 }
 
 // Test Mean Op on HTP

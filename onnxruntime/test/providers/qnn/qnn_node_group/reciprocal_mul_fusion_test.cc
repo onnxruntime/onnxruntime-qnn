@@ -36,15 +36,6 @@
 //
 //   Negative / no-fusion cases (fusion blocked)
 //     - Reciprocal output is a graph output (float32)
-//                                                => blocked by GetChildNodeUnitAllowQdq
-//                                                   (graph-output guard);
-//                                                   no fusion; float32 Reciprocal is also
-//                                                   unsupported by ReciprocalOpBuilder on HTP,
-//                                                   so Reciprocal falls back to CPU EP;
-//                                                   the Mul node runs independently on QNN EP
-//                                                   as ElementWiseMultiply;
-//                                                   0 ElementWiseDivide + 1 ElementWiseMultiply
-//                                                   in the QNN graph
 //     - QDQ-wrapped Reciprocal with two Mul consumers
 //                                                => blocked by GetChildNodeUnitAllowQdq
 //                                                   (single-consumer guard);
@@ -479,20 +470,30 @@ ProviderOptions GetProviderOptions() {
 
 }  // namespace
 
+// NOTE: The json_qnn_graph_dir paths below are CWD-relative strings (e.g.
+// "ReciprocalMulFusion_Float32_4D_StandardOrder").  This is consistent with
+// the pattern used in channel_shuffle_fusion_test.cc,
+// gather_transpose_reshape_fusion_test.cc, and other fusion tests in this
+// directory.  The fragility of CWD-relative paths under --gtest_repeat /
+// --gtest_shuffle and across CI runners with different working directories is
+// a known limitation shared by all fusion tests.  A future cleanup PR should
+// introduce a shared RAII helper based on std::filesystem::temp_directory_path()
+// to make all fusion tests hermetic.  See PR review comment [N-5].
+
 // =============================================================================
 // Float32 tests
 // =============================================================================
 
 // Basic 4-D input, standard Mul input order: Mul(numerator, recip_out)
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_4D_StandardOrder) {
-  const std::filesystem::path json_dir = "ReciprocalMulFusion_Float32_4D_StandardOrder";
-  std::filesystem::remove_all(json_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
-  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+  const std::filesystem::path json_qnn_graph_dir = "ReciprocalMulFusion_Float32_4D_StandardOrder";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
 
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_dir.string();
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   // Use non-zero denominator values to avoid division-by-zero.
   const auto numerator_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
@@ -504,20 +505,20 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_4D_StandardOrder) {
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-3f);
 
-  AssertOpInQnnGraph(json_dir, "ElementWiseDivide");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseDivide");
 }
 
 // Basic 4-D input, commuted Mul input order: Mul(recip_out, numerator)
 // Verifies that the fusion handles both Mul input slot orderings correctly.
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_4D_CommutedOrder) {
-  const std::filesystem::path json_dir = "ReciprocalMulFusion_Float32_4D_CommutedOrder";
-  std::filesystem::remove_all(json_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
-  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+  const std::filesystem::path json_qnn_graph_dir = "ReciprocalMulFusion_Float32_4D_CommutedOrder";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
 
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_dir.string();
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   const auto numerator_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
   const auto denominator_def = TestInputDef<float>({1, 2, 3, 4}, false, 0.5f, 2.0f);
@@ -528,7 +529,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_4D_CommutedOrder) {
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-3f);
 
-  AssertOpInQnnGraph(json_dir, "ElementWiseDivide");
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseDivide");
 }
 
 // =============================================================================
@@ -537,14 +538,14 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_4D_CommutedOrder) {
 
 // QDQ uint8, standard Mul input order
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQ_U8_StandardOrder) {
-  const std::filesystem::path json_dir = "ReciprocalMulFusion_QDQ_U8_StandardOrder";
-  std::filesystem::remove_all(json_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
-  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+  const std::filesystem::path json_qnn_graph_dir = "ReciprocalMulFusion_QDQ_U8_StandardOrder";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
 
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_dir.string();
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   const auto numerator_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
   const auto denominator_def = TestInputDef<float>({1, 2, 3, 4}, false, 0.5f, 2.0f);
@@ -558,19 +559,19 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQ_U8_StandardOrder) {
 
   // QDQ Reciprocal is a SingleNode unit (no surrounding Q/DQ on the Reciprocal itself),
   // so the fusion fires and the compiled graph must contain a single ElementWiseDivide.
-  AssertOpInQnnGraph(json_dir, "ElementWiseDivide", /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseDivide", /*count=*/1);
 }
 
 // QDQ uint8, commuted Mul input order
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQ_U8_CommutedOrder) {
-  const std::filesystem::path json_dir = "ReciprocalMulFusion_QDQ_U8_CommutedOrder";
-  std::filesystem::remove_all(json_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
-  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+  const std::filesystem::path json_qnn_graph_dir = "ReciprocalMulFusion_QDQ_U8_CommutedOrder";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
 
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_dir.string();
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   const auto numerator_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
   const auto denominator_def = TestInputDef<float>({1, 2, 3, 4}, false, 0.5f, 2.0f);
@@ -582,7 +583,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQ_U8_CommutedOrder) {
       /*opset_version=*/13,
       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
 
-  AssertOpInQnnGraph(json_dir, "ElementWiseDivide", /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseDivide", /*count=*/1);
 }
 
 // =============================================================================
@@ -595,14 +596,14 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQ_U16_StandardOrder) {
     GTEST_SKIP() << "uint16 QDQ requires HTP arch > v68";
   }
 
-  const std::filesystem::path json_dir = "ReciprocalMulFusion_QDQ_U16_StandardOrder";
-  std::filesystem::remove_all(json_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
-  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+  const std::filesystem::path json_qnn_graph_dir = "ReciprocalMulFusion_QDQ_U16_StandardOrder";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
 
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_dir.string();
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   const auto numerator_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
   const auto denominator_def = TestInputDef<float>({1, 2, 3, 4}, false, 0.5f, 2.0f);
@@ -615,7 +616,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQ_U16_StandardOrder) {
       /*opset_version=*/13,
       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
 
-  AssertOpInQnnGraph(json_dir, "ElementWiseDivide", /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseDivide", /*count=*/1);
 }
 
 // =============================================================================
@@ -627,18 +628,18 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQ_U16_StandardOrder) {
 // model on QNN EP, then checks that the fused graph contains a single
 // ElementWiseDivide node (not a separate Reciprocal + Mul pair).
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_FP16) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpFp16Unsupported()) {
-    GTEST_SKIP() << "FP16 fusion requires HTP arch > V68";
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "uint16 QDQ requires HTP arch > v68";
   }
 
-  const std::filesystem::path json_dir = "ReciprocalMulFusion_FP16";
-  std::filesystem::remove_all(json_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
-  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+  const std::filesystem::path json_qnn_graph_dir = "ReciprocalMulFusion_FP16";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
 
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_dir.string();
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   const auto numerator_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
   const auto denominator_def = TestInputDef<float>({1, 2, 3, 4}, false, 0.5f, 2.0f);
@@ -656,7 +657,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_FP16) {
                         /*tolerance=*/0.004f);
 
   // The fusion must have fired: one ElementWiseDivide, no standalone Reciprocal.
-  AssertOpInQnnGraph(json_dir, "ElementWiseDivide", /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseDivide", /*count=*/1);
 }
 
 // =============================================================================
@@ -668,14 +669,14 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_FP16) {
 // is correctly fused into a single ElementWiseDivide node.  This is the
 // pattern produced by quantization tools for LayerNorm rstd computation.
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQGroup_U8_StandardOrder) {
-  const std::filesystem::path json_dir = "ReciprocalMulFusion_QDQGroup_U8_StandardOrder";
-  std::filesystem::remove_all(json_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
-  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+  const std::filesystem::path json_qnn_graph_dir = "ReciprocalMulFusion_QDQGroup_U8_StandardOrder";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
 
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_dir.string();
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   const auto numerator_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
   const auto denominator_def = TestInputDef<float>({1, 2, 3, 4}, false, 0.5f, 2.0f);
@@ -689,19 +690,19 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQGroup_U8_StandardOrder) {
 
   // The QDQGroup Reciprocal fusion must have fired: one ElementWiseDivide,
   // no standalone Reciprocal or separate Mul.
-  AssertOpInQnnGraph(json_dir, "ElementWiseDivide", /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseDivide", /*count=*/1);
 }
 
 // QDQ uint8, QDQGroup Reciprocal, commuted Mul input order.
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQGroup_U8_CommutedOrder) {
-  const std::filesystem::path json_dir = "ReciprocalMulFusion_QDQGroup_U8_CommutedOrder";
-  std::filesystem::remove_all(json_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
-  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+  const std::filesystem::path json_qnn_graph_dir = "ReciprocalMulFusion_QDQGroup_U8_CommutedOrder";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
 
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_dir.string();
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   const auto numerator_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
   const auto denominator_def = TestInputDef<float>({1, 2, 3, 4}, false, 0.5f, 2.0f);
@@ -713,7 +714,7 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQGroup_U8_CommutedOrder) {
       /*opset_version=*/13,
       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
 
-  AssertOpInQnnGraph(json_dir, "ElementWiseDivide", /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseDivide", /*count=*/1);
 }
 
 // =============================================================================
@@ -724,45 +725,38 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQGroup_U8_CommutedOrder) {
 // graph-output guard (outputs[0].IsGraphOutput()) detects the condition and
 // returns nullptr, blocking the fusion.
 //
-// For float32 inputs on the HTP backend, ReciprocalOpBuilder::IsOpSupported
-// also rejects the standalone Reciprocal node (unquantized float inputs are
-// not supported by ElementWiseDivide(static_1.0, dynamic_x) on HTP).  As a
-// result, the Reciprocal node falls back to CPU EP.
+// With the fusion blocked, the standalone float32 Reciprocal is lowered by
+// ReciprocalOpBuilder as ElementWiseDivide(static_1.0, dynamic_x).  The Mul
+// node is lowered independently as an ElementWiseMultiply node.
 //
-// The Mul node, however, is a valid standalone ElementWiseMultiply on QNN HTP:
-// its inputs are a graph input (numerator) and recip_out, which is a graph
-// output produced by CPU EP and passed to QNN EP as a cross-EP tensor.  The
-// Mul node is therefore assigned to QNN EP and appears in the QNN graph as
-// a single ElementWiseMultiply node.
-//
-// Expected QNN graph: 0 ElementWiseDivide, 1 ElementWiseMultiply.
-// Expected EP assignment: Some (Reciprocal on CPU EP, Mul on QNN EP).
+// Expected QNN graph:
+//   1 x ElementWiseDivide  (ReciprocalOpBuilder: 1.0 / denominator)
+//   1 x ElementWiseMultiply (Mul lowered individually; fusion did NOT fire)
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_ReciprocalOutputIsGraphOutput_NoFusion) {
-  const std::filesystem::path json_dir = "ReciprocalMulFusion_ReciprocalOutputIsGraphOutput_NoFusion";
-  std::filesystem::remove_all(json_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
-  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+  const std::filesystem::path json_qnn_graph_dir = "ReciprocalMulFusion_ReciprocalOutputIsGraphOutput_NoFusion";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
 
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_dir.string();
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   const auto numerator_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
   const auto denominator_def = TestInputDef<float>({1, 2, 3, 4}, false, 0.5f, 2.0f);
 
-  // Fusion is blocked (recip_out is a graph output) and ReciprocalOpBuilder
-  // rejects float32 Reciprocal on HTP, so Reciprocal falls back to CPU EP.
-  // The Mul node is a valid standalone ElementWiseMultiply on QNN HTP and
-  // is assigned to QNN EP.
   RunQnnModelTest(BuildReciprocalOutputIsGraphOutputTestCase(numerator_def, denominator_def),
                   provider_options,
                   /*opset_version=*/13,
-                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/2e-3f);
 
-  // No fused Div node; the Mul runs as a standalone ElementWiseMultiply on QNN EP.
-  AssertOpInQnnGraph(json_dir, "ElementWiseDivide", /*count=*/0);
-  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", /*count=*/1);
+  // Fusion did NOT fire (Reciprocal output is a graph output):
+  // ReciprocalOpBuilder lowered the standalone Reciprocal as
+  // ElementWiseDivide(1.0, denominator), and the Mul was lowered
+  // independently as ElementWiseMultiply.
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseDivide", /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", /*count=*/1);
 }
 
 // When the Reciprocal output is wrapped in a QDQ pair, the ORT graph
@@ -786,14 +780,14 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_ReciprocalOutputIsGraphOutput_NoF
 // absorbed into a Div and ElementWiseMultiply count would drop below 2 --
 // the second assertion would catch that regression.
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQWrappedReciprocal_TwoConsumers_NoFusion) {
-  const std::filesystem::path json_dir = "ReciprocalMulFusion_QDQWrappedReciprocal_TwoConsumers_NoFusion";
-  std::filesystem::remove_all(json_dir);
-  ASSERT_TRUE(std::filesystem::create_directory(json_dir));
-  auto cleanup = gsl::finally([&json_dir]() { std::filesystem::remove_all(json_dir); });
+  const std::filesystem::path json_qnn_graph_dir = "ReciprocalMulFusion_QDQWrappedReciprocal_TwoConsumers_NoFusion";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
 
   ProviderOptions provider_options = GetProviderOptions();
   provider_options["dump_json_qnn_graph"] = "1";
-  provider_options["json_qnn_graph_dir"] = json_dir.string();
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
 
   const auto numerator_def = TestInputDef<float>({1, 2, 3, 4}, false, -1.0f, 1.0f);
   const auto denominator_def = TestInputDef<float>({1, 2, 3, 4}, false, 0.5f, 2.0f);
@@ -811,8 +805,8 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQWrappedReciprocal_TwoConsumers
   // Fusion did NOT fire: Reciprocal was lowered by ReciprocalOpBuilder as a
   // standalone ElementWiseDivide(1.0, denominator), and both Mul nodes were
   // lowered independently as ElementWiseMultiply nodes.
-  AssertOpInQnnGraph(json_dir, "ElementWiseDivide", /*count=*/1);
-  AssertOpInQnnGraph(json_dir, "ElementWiseMultiply", /*count=*/2);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseDivide", /*count=*/1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "ElementWiseMultiply", /*count=*/2);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

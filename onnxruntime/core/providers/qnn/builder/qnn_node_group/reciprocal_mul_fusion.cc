@@ -86,16 +86,17 @@ namespace qnn {
 //
 //   validate=true  => dry-run capability check; does NOT modify the model wrapper.
 //   validate=false => build path; registers tensors and creates the QNN node.
-#define ValidateOnQnn(qnn_model_wrapper, reciprocal_node_unit, mul_node_unit) \
-  CreateOrValidateOnQnn((qnn_model_wrapper), (reciprocal_node_unit), (mul_node_unit), /*validate=*/true)
-#define CreateOnQnn(qnn_model_wrapper, reciprocal_node_unit, mul_node_unit) \
-  CreateOrValidateOnQnn((qnn_model_wrapper), (reciprocal_node_unit), (mul_node_unit), /*validate=*/false)
+#define ValidateOnQnn(qnn_model_wrapper, reciprocal_node_unit, mul_node_unit, recip_is_mul_input0) \
+  CreateOrValidateOnQnn((qnn_model_wrapper), (reciprocal_node_unit), (mul_node_unit), (recip_is_mul_input0), /*validate=*/true)
+#define CreateOnQnn(qnn_model_wrapper, reciprocal_node_unit, mul_node_unit, recip_is_mul_input0) \
+  CreateOrValidateOnQnn((qnn_model_wrapper), (reciprocal_node_unit), (mul_node_unit), (recip_is_mul_input0), /*validate=*/false)
 
 // Forward declaration so the use sites of the macros above can be parsed before
 // the full definition appears at the bottom of this translation unit.
 static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& reciprocal_node_unit,
                                          const OrtNodeUnit& mul_node_unit,
+                                         bool recip_is_mul_input0,
                                          bool validate);
 
 // =============================================================================
@@ -204,8 +205,13 @@ std::unique_ptr<IQnnNodeGroup> ReciprocalMulFusion::TryFusion(
     }
 
     if (recip_is_mul_input0 && recip_is_mul_input1) {
-      // Degenerate case: Mul(1/b, 1/b) = 1/b² ≠ Div(anything, b); fusion
-      // semantics would diverge, bail out.
+      // Defence-in-depth: Mul(1/b, 1/b) = 1/b² ≠ Div(anything, b), so
+      // fusing would change semantics.  In practice this branch is
+      // unreachable: GetChildNodeUnitAllowQdq's single-consumer guard
+      // already prevents the Reciprocal output from feeding both Mul
+      // input slots simultaneously (that would require the same tensor
+      // to be its own sole consumer twice).  The check is kept here
+      // only as a belt-and-suspenders safeguard against future refactors.
       return nullptr;
     }
   } else {
@@ -249,6 +255,9 @@ std::unique_ptr<IQnnNodeGroup> ReciprocalMulFusion::TryFusion(
       return nullptr;
     }
     if (recip_is_mul_input0 && recip_is_mul_input1) {
+      // Defence-in-depth: same reasoning as the SingleNode branch above.
+      // GetChildNodeUnitAllowQdq's single-consumer guard makes this
+      // unreachable in practice; kept for belt-and-suspenders safety.
       return nullptr;
     }
   }
@@ -262,16 +271,18 @@ std::unique_ptr<IQnnNodeGroup> ReciprocalMulFusion::TryFusion(
   //
   // If the backend rejects the node (e.g. unsupported data type or rank),
   // we return nullptr so the two nodes fall back to individual handling.
-  if (Ort::Status status = ValidateOnQnn(qnn_model_wrapper, reciprocal_node_unit, *mul_node_unit);
+  if (Ort::Status status = ValidateOnQnn(qnn_model_wrapper, reciprocal_node_unit, *mul_node_unit, recip_is_mul_input0);
       !status.IsOK()) {
     return nullptr;
   }
 
   // -- Step 5: Commit to the fusion ------------------------------------------
   //
-  // All checks passed.  Construct the fusion object.  The actual QNN node
-  // will be created later when AddToModelBuilder() is called.
-  return std::make_unique<ReciprocalMulFusion>(reciprocal_node_unit, *mul_node_unit);
+  // All checks passed.  Construct the fusion object, caching recip_is_mul_input0
+  // so that CreateOrValidateOnQnn does not need to repeat the Q -> DQ traversal
+  // during the build phase.  The actual QNN node will be created later when
+  // AddToModelBuilder() is called.
+  return std::make_unique<ReciprocalMulFusion>(reciprocal_node_unit, *mul_node_unit, recip_is_mul_input0);
 }
 
 // =============================================================================
@@ -279,8 +290,10 @@ std::unique_ptr<IQnnNodeGroup> ReciprocalMulFusion::TryFusion(
 // =============================================================================
 
 ReciprocalMulFusion::ReciprocalMulFusion(const OrtNodeUnit& reciprocal_node_unit,
-                                         const OrtNodeUnit& mul_node_unit)
-    : node_units_{&reciprocal_node_unit, &mul_node_unit} {
+                                         const OrtNodeUnit& mul_node_unit,
+                                         bool recip_is_mul_input0)
+    : node_units_{&reciprocal_node_unit, &mul_node_unit},
+      recip_is_mul_input0_{recip_is_mul_input0} {
 }
 
 // =============================================================================
@@ -295,7 +308,7 @@ ReciprocalMulFusion::ReciprocalMulFusion(const OrtNodeUnit& reciprocal_node_unit
 Ort::Status ReciprocalMulFusion::IsSupported(QnnModelWrapper& qmw,
                                              const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
-  return ValidateOnQnn(qmw, *node_units_[0], *node_units_[1]);
+  return ValidateOnQnn(qmw, *node_units_[0], *node_units_[1], recip_is_mul_input0_);
 }
 
 // AddToModelBuilder
@@ -305,7 +318,7 @@ Ort::Status ReciprocalMulFusion::IsSupported(QnnModelWrapper& qmw,
 Ort::Status ReciprocalMulFusion::AddToModelBuilder(QnnModelWrapper& qmw,
                                                    const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
-  return CreateOnQnn(qmw, *node_units_[0], *node_units_[1]);
+  return CreateOnQnn(qmw, *node_units_[0], *node_units_[1], recip_is_mul_input0_);
 }
 
 // GetNodeUnits
@@ -378,6 +391,7 @@ const OrtNodeUnit* ReciprocalMulFusion::GetTargetNodeUnit() const {
 static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& reciprocal_node_unit,
                                          const OrtNodeUnit& mul_node_unit,
+                                         bool recip_is_mul_input0,
                                          bool validate) {
   RETURN_IF_NOT(reciprocal_node_unit.OpType() == "Reciprocal",
                 ("ReciprocalMulFusion: expected Reciprocal op, got " + reciprocal_node_unit.OpType()).c_str());
@@ -392,64 +406,18 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   //              this name directly.  This becomes input[1] of the Div node.
   const OrtNodeUnitIODef& denominator_def = reciprocal_node_unit.Inputs()[0];
 
-  // Identify which Mul input slot carries the Reciprocal's dequantized output
-  // so we can determine the numerator slot.  ONNX Mul is commutative, so
-  // either slot is valid.
-  //
-  // For a SingleNode Reciprocal the output name is the intermediate tensor
-  // that directly appears in the Mul's Inputs() list.
-  //
-  // For a QDQGroup Reciprocal the logical output (Outputs()[0]) is the Q
-  // node's output, while the Mul sees the downstream DQ node's output.  We
-  // therefore compare against the DQ output name, which was already resolved
-  // in TryFusion (Step 3) and is what OrtNodeUnit::Inputs() of the Mul
-  // exposes.  To keep CreateOrValidateOnQnn self-contained we re-derive it
-  // here by following the same Q -> DQ path.
+  // recip_is_mul_input0 was resolved once in TryFusion (Step 3) and cached
+  // on the fusion object.  It tells us which Mul input slot carries the
+  // Reciprocal's output so we can identify the numerator without repeating
+  // the Q -> DQ graph traversal here.
   const auto& mul_inputs = mul_node_unit.Inputs();
-  bool recip_is_input0 = false;
-
-  if (reciprocal_node_unit.UnitType() == OrtNodeUnit::Type::SingleNode) {
-    const std::string& recip_output_name = reciprocal_node_unit.Outputs()[0].name;
-    recip_is_input0 = (mul_inputs[0].name == recip_output_name);
-  } else {
-    // QDQGroup: follow Q -> DQ to get the name seen by the Mul.
-    const OrtNode* q_node = reciprocal_node_unit.GetQNodes().empty()
-                                ? nullptr
-                                : reciprocal_node_unit.GetQNodes()[0];
-    RETURN_IF_NOT(q_node != nullptr,
-                  "ReciprocalMulFusion: QDQGroup Reciprocal has no Q node.");
-    const std::vector<Ort::ConstValueInfo> q_outputs = Ort::ConstNode(q_node).GetOutputs();
-    RETURN_IF_NOT(q_outputs.size() == 1,
-                  "ReciprocalMulFusion: Q node does not have exactly one output.");
-    const std::vector<Ort::ValueInfoConsumerProducerInfo> dq_consumers = q_outputs[0].GetConsumers();
-    RETURN_IF_NOT(dq_consumers.size() == 1 && dq_consumers[0].node != nullptr,
-                  "ReciprocalMulFusion: Q node output does not have exactly one consumer.");
-    const std::vector<Ort::ConstValueInfo> dq_outputs =
-        Ort::ConstNode(dq_consumers[0].node).GetOutputs();
-    RETURN_IF_NOT(dq_outputs.size() == 1,
-                  "ReciprocalMulFusion: DQ node does not have exactly one output.");
-    recip_is_input0 = (mul_inputs[0].name == dq_outputs[0].GetName());
-  }
 
   // numerator: whichever Mul input is NOT the Reciprocal output.
   //            This becomes input[0] of the Div node.
-  const OrtNodeUnitIODef& numerator_def = recip_is_input0 ? mul_inputs[1] : mul_inputs[0];
+  const OrtNodeUnitIODef& numerator_def = recip_is_mul_input0 ? mul_inputs[1] : mul_inputs[0];
 
   // result: the Mul's logical output tensor becomes the Div output unchanged.
   const OrtNodeUnitIODef& output_def = mul_node_unit.Outputs()[0];
-
-  // -- Build QNN tensor descriptors ------------------------------------------
-  //
-  // MakeTensorWrapper reads the tensor's shape, element data-type, and
-  // quantisation parameters from the ONNX graph and produces a
-  // Qnn_Tensor_t descriptor that can be passed to the QNN API.
-  QnnTensorWrapper numerator_tensor;
-  QnnTensorWrapper denominator_tensor;
-  QnnTensorWrapper output_tensor;
-
-  RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(numerator_def, numerator_tensor));
-  RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(denominator_def, denominator_tensor));
-  RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(output_def, output_tensor));
 
   // Use the Reciprocal node's unique name as the fused node name.  This
   // keeps the QNN graph node name stable and traceable back to the original
@@ -459,11 +427,24 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   if (validate) {
     // -- Dry-run: capability query only ---------------------------------------
     //
-    // ValidateQnnNode queries the QNN backend for support without touching
-    // the model wrapper's internal tensor/node tables.  A failure here means
-    // the backend cannot handle this Div configuration (e.g. unsupported
-    // data type or tensor rank), so we return the error to the caller which
-    // will then fall back to individual node handling.
+    // Build temporary tensor descriptors solely to satisfy the ValidateQnnNode
+    // signature.  MakeTensorWrapper reads the tensor's shape, element
+    // data-type, and quantisation parameters from the ONNX graph.  These
+    // descriptors are intentionally local to this block: ValidateQnnNode does
+    // NOT modify the model wrapper's internal tables, so the wrappers are
+    // discarded after the call returns.
+    //
+    // A failure here means the backend cannot handle this Div configuration
+    // (e.g. unsupported data type or tensor rank), so we return the error to
+    // the caller which will then fall back to individual node handling.
+    QnnTensorWrapper numerator_tensor;
+    QnnTensorWrapper denominator_tensor;
+    QnnTensorWrapper output_tensor;
+
+    RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(numerator_def, numerator_tensor));
+    RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(denominator_def, denominator_tensor));
+    RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(output_def, output_tensor));
+
     RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(
         node_name,
         QNN_OP_PACKAGE_NAME_QTI_AISW,
@@ -477,25 +458,37 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
     // Tensor registration policy
     // --------------------------
     // Graph inputs and initializers may already be registered by an earlier
-    // node that shares the same tensor.  IsQnnTensorWrapperExist() guards
-    // against double-registration, which would corrupt the internal tables.
+    // node that shares the same tensor (e.g. the denominator is a graph input
+    // also consumed by another op, or the numerator is shared across a
+    // LayerNorm-like pattern).  IsQnnTensorWrapperExist() guards against
+    // double-registration, which would corrupt the internal tables.
     //
-    // The intermediate Reciprocal output tensor (recip_output_name) is
-    // intentionally NEVER registered here.  It does not exist in the QNN
-    // graph; the fusion replaces it with a direct edge from the denominator
-    // to the Div node.
+    // Crucially, MakeTensorWrapper is called only when the tensor is NOT yet
+    // registered.  Calling it unconditionally and then discarding the result
+    // wastes a GetTensorInfo + shape resolution + quant-param extraction +
+    // vector allocation for every already-registered tensor.
+    //
+    // The intermediate Reciprocal output tensor is intentionally NEVER
+    // registered here.  It does not exist in the QNN graph; the fusion
+    // replaces it with a direct edge from the denominator to the Div node.
 
     if (!qnn_model_wrapper.IsQnnTensorWrapperExist(numerator_def.name)) {
+      QnnTensorWrapper numerator_tensor;
+      RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(numerator_def, numerator_tensor));
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(numerator_tensor)),
                     "ReciprocalMulFusion: failed to add numerator tensor wrapper.");
     }
 
     if (!qnn_model_wrapper.IsQnnTensorWrapperExist(denominator_def.name)) {
+      QnnTensorWrapper denominator_tensor;
+      RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(denominator_def, denominator_tensor));
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(denominator_tensor)),
                     "ReciprocalMulFusion: failed to add denominator tensor wrapper.");
     }
 
     if (!qnn_model_wrapper.IsQnnTensorWrapperExist(output_def.name)) {
+      QnnTensorWrapper output_tensor;
+      RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(output_def, output_tensor));
       RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)),
                     "ReciprocalMulFusion: failed to add output tensor wrapper.");
     }

@@ -87,7 +87,8 @@ class ReciprocalMulFusion : public IQnnNodeGroup {
  public:
   /// Constructs the fusion from the two already-validated NodeUnits.
   /// Callers should use TryFusion() rather than constructing directly.
-  ReciprocalMulFusion(const OrtNodeUnit& reciprocal_node_unit, const OrtNodeUnit& mul_node_unit);
+  ReciprocalMulFusion(const OrtNodeUnit& reciprocal_node_unit, const OrtNodeUnit& mul_node_unit,
+                      bool recip_is_mul_input0);
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(ReciprocalMulFusion);
 
   // -- IQnnNodeGroup interface -----------------------------------------------
@@ -140,6 +141,14 @@ class ReciprocalMulFusion : public IQnnNodeGroup {
   //   [0] = Reciprocal  (producer of the intermediate 1/x tensor)
   //   [1] = Mul         (consumer; becomes the fused Div node)
   std::array<const OrtNodeUnit*, 2> node_units_;
+
+  // True  => the Reciprocal output feeds Mul input[0]  (recip_out is numerator slot)
+  // False => the Reciprocal output feeds Mul input[1]  (recip_out is denominator slot)
+  //
+  // Resolved once in TryFusion (Step 3) and cached here so that
+  // CreateOrValidateOnQnn can consume it directly without repeating the
+  // Q -> DQ graph traversal that was already performed during fusion matching.
+  bool recip_is_mul_input0_{false};
 };
 
 }  // namespace qnn
