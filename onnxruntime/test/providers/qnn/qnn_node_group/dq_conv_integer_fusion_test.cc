@@ -23,18 +23,21 @@ namespace {
 // Build the pattern:
 //   input -> DynamicQuantizeLinear
 //     (a_q,  a_scale, a_zp)
-//   ConvInteger(a_q, W_int8, [a_zp], [W_zp_int8]) -> Cast(FLOAT) -> ci_out_f32
+//   ConvInteger(a_q, W, [a_zp], [W_zp]) -> Cast(FLOAT) -> ci_out_f32
 //   parallel_Mul(a_scale, b_scale_init) -> requant_Mul(ci_out_f32, scale_product)
 //       -> (optional) Add(bias_init) -> output
 //
 // `include_bias` toggles the trailing Add. `per_channel_scale` uses a rank-4
 // [1, C_out, 1, 1] B_scale; otherwise a scalar. `include_a_zp` / `include_b_zp` toggle
-// whether ConvInteger consumes the corresponding zero-point input.
+// whether ConvInteger consumes the corresponding zero-point input. `weight_signed` selects
+// int8 weight (zp 0) or uint8 weight (symmetric zp 128); the underlying float weights are the
+// same so output values match the int8 case within numerical tolerance.
 GetTestModelFn BuildDQConvIntegerFusionTestCase(bool include_bias,
                                                 bool per_channel_scale,
                                                 bool include_a_zp = true,
-                                                bool include_b_zp = true) {
-  return [include_bias, per_channel_scale, include_a_zp, include_b_zp](
+                                                bool include_b_zp = true,
+                                                bool weight_signed = true) {
+  return [include_bias, per_channel_scale, include_a_zp, include_b_zp, weight_signed](
              ModelTestBuilder& builder) -> void {
     constexpr int64_t N = 1;
     constexpr int64_t C_in = 3;
@@ -42,6 +45,7 @@ GetTestModelFn BuildDQConvIntegerFusionTestCase(bool include_bias,
     constexpr int64_t W = 8;
     constexpr int64_t C_out = 4;
     constexpr int64_t K = 3;
+    constexpr int kUint8Zp = 128;  // symmetric zero-point used for uint8 weight tests
 
     // Float input.
     auto input_def = TestInputDef<float>({N, C_in, H, W}, /*is_initializer=*/false, -1.0f, 1.0f);
@@ -51,16 +55,27 @@ GetTestModelFn BuildDQConvIntegerFusionTestCase(bool include_bias,
     builder.AddNode("dql", "DynamicQuantizeLinear", {"input"},
                     {"a_q", "a_scale", "a_zp"});
 
-    // Weight B (int8 NCHW).
-    std::vector<int8_t> b_values(C_out * C_in * K * K);
-    for (size_t i = 0; i < b_values.size(); ++i) {
-      b_values[i] = static_cast<int8_t>((i % 7) - 3);  // small deterministic int8 values
-    }
-    builder.MakeInitializer<int8_t>("B", {C_out, C_in, K, K}, b_values);
-
-    // Optional weight zero-point (int8 scalar). When omitted, ConvInteger defaults to 0.
-    if (include_b_zp) {
-      builder.MakeScalarInitializer<int8_t>("B_zp", static_cast<int8_t>(0));
+    // Weight B (int8 or uint8 NCHW). For uint8 we shift by 128 around a symmetric zero-point so
+    // the float-domain weight matches the int8 case for like-for-like accuracy comparisons.
+    const size_t w_count = static_cast<size_t>(C_out * C_in * K * K);
+    if (weight_signed) {
+      std::vector<int8_t> b_values(w_count);
+      for (size_t i = 0; i < w_count; ++i) {
+        b_values[i] = static_cast<int8_t>((i % 7) - 3);  // small deterministic int8 values
+      }
+      builder.MakeInitializer<int8_t>("B", {C_out, C_in, K, K}, b_values);
+      if (include_b_zp) {
+        builder.MakeScalarInitializer<int8_t>("B_zp", static_cast<int8_t>(0));
+      }
+    } else {
+      std::vector<uint8_t> b_values(w_count);
+      for (size_t i = 0; i < w_count; ++i) {
+        b_values[i] = static_cast<uint8_t>(static_cast<int>((i % 7) - 3) + kUint8Zp);
+      }
+      builder.MakeInitializer<uint8_t>("B", {C_out, C_in, K, K}, b_values);
+      if (include_b_zp) {
+        builder.MakeScalarInitializer<uint8_t>("B_zp", static_cast<uint8_t>(kUint8Zp));
+      }
     }
 
     // Build the ConvInteger input list with empty strings for absent optional inputs.
@@ -292,9 +307,9 @@ TEST_F(QnnHTPBackendTests, DQConvIntegerFusion_NoBZp) {
 TEST_F(QnnHTPBackendTests, DQConvIntegerFusion_NoAZp_RejectsFusion) {
   // ConvInteger without A_zp: ConvInteger silently treats A_zp as 0, but the fused float Conv
   // takes the pre-DQL float input which still carries DQL's offset, so the rewrite would
-  // change semantics. The fusion must decline. ConvInteger and DQL fall back to CPU EP;
-  // peripheral Cast/Mul nodes may still land on QNN, so we don't assert ExpectedEPNodeAssignment
-  // strictly - the load-bearing check is that the QNN graph contains no Conv2d.
+  // change semantics. The fusion must decline. ConvInteger and DQL fall back to CPU EP, while
+  // peripheral Cast/Mul nodes still land on QNN, so EP assignment is Some (not All). The
+  // load-bearing check is that the QNN graph contains no Conv2d.
   std::filesystem::path json_dir{"DQConvIntegerFusion_NoAZp_RejectsFusion"};
   std::filesystem::remove_all(json_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_dir));
@@ -325,9 +340,9 @@ TEST_F(QnnHTPBackendTests, DQConvIntegerFusion_NoAZp_RejectsFusion) {
 TEST_F(QnnHTPBackendTests, DQConvIntegerFusion_TwoConvIntegersShareDQL) {
   // Two ConvIntegers consume a_q (and a_scale via two parallel_Muls) from the same DQL. Both
   // fusions must fire and emit float QNN Conv nodes. The first fusion to be processed claims
-  // DQL on behalf of the sibling; the second detects the existing claim and passes nullptr for
-  // kDqlSlot so it does not double-claim. Keeping DQL in the QNN partition is what allows the
-  // pattern walk-up to still succeed in the second GetCapability pass.
+  // DQL on behalf of its sibling; the second detects the existing claim and constructs its
+  // Pattern with `dql=nullptr` so it does not double-claim. Keeping DQL in the QNN partition
+  // is what allows the pattern walk-up to still succeed in the second GetCapability pass.
   std::filesystem::path json_dir{"DQConvIntegerFusion_TwoConvIntegersShareDQL"};
   std::filesystem::remove_all(json_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_dir));
@@ -350,6 +365,44 @@ TEST_F(QnnHTPBackendTests, DQConvIntegerFusion_TwoConvIntegersShareDQL) {
   AssertOpInQnnGraph(json_dir, "Conv2d", /*count=*/2);
   AssertOpInQnnGraph(json_dir, "ConvInteger", /*count=*/0);
   AssertOpInQnnGraph(json_dir, "DynamicQuantizeLinear", /*count=*/0);
+}
+
+TEST_F(QnnHTPBackendTests, DQConvIntegerFusion_Uint8Weight_WithBias) {
+  // uint8 weight with symmetric B_zp=128 + bias. Per-tensor B_scale: emits Dequantize(uint8) + Add.
+  RunFusionTestAndAssertFused(
+      "DQConvIntegerFusion_Uint8Weight_WithBias",
+      BuildDQConvIntegerFusionTestCase(/*include_bias=*/true, /*per_channel_scale=*/false,
+                                       /*include_a_zp=*/true, /*include_b_zp=*/true,
+                                       /*weight_signed=*/false),
+      /*expected_dequantize_count=*/1,
+      /*expected_add_count=*/1);
+}
+
+TEST_F(QnnHTPBackendTests, DQConvIntegerFusion_Uint8Weight_PerChannelBScale) {
+  // uint8 weight with per-channel B_scale + bias: weight is pre-dequantized offline through the
+  // unsigned dispatch path (no Dequantize op in the QNN graph).
+  RunFusionTestAndAssertFused(
+      "DQConvIntegerFusion_Uint8Weight_PerChannelBScale",
+      BuildDQConvIntegerFusionTestCase(/*include_bias=*/true, /*per_channel_scale=*/true,
+                                       /*include_a_zp=*/true, /*include_b_zp=*/true,
+                                       /*weight_signed=*/false),
+      /*expected_dequantize_count=*/0,
+      /*expected_add_count=*/1,
+      /*fp32_abs_err=*/2e-3f);
+}
+
+TEST_F(QnnHTPBackendTests, DQConvIntegerFusion_Uint8Weight_NoBZp) {
+  // uint8 weight without B_zp input: ConvInteger defaults to zero. The dequantized float
+  // weights are then `scale * [125..131]` (vs `scale * [-3..3]` when B_zp=128 is included),
+  // so the conv output magnitude is ~40x larger and fp16 abs error scales with it.
+  RunFusionTestAndAssertFused(
+      "DQConvIntegerFusion_Uint8Weight_NoBZp",
+      BuildDQConvIntegerFusionTestCase(/*include_bias=*/true, /*per_channel_scale=*/false,
+                                       /*include_a_zp=*/true, /*include_b_zp=*/false,
+                                       /*weight_signed=*/false),
+      /*expected_dequantize_count=*/1,
+      /*expected_add_count=*/1,
+      /*fp32_abs_err=*/5e-2f);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64)

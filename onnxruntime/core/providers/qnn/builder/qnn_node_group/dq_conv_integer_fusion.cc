@@ -21,8 +21,6 @@ namespace onnxruntime {
 namespace qnn {
 namespace {
 
-// Inverse of nchw2hwcn_perm {2,3,1,0}; remaps NCHW per-channel quant axis to HWCN axis.
-constexpr std::array<size_t, 4> kNchwToHwcnInversePerm = {3, 2, 0, 1};
 constexpr std::array<uint32_t, 4> kPermNchwToNhwc = {0, 2, 3, 1};
 constexpr std::array<uint32_t, 4> kPermNhwcToNchw = {0, 3, 1, 2};
 
@@ -152,11 +150,12 @@ Ort::Status ReadFloatInitializer(const QnnModelWrapper& qmw,
   return Ort::Status();
 }
 
-// Reads B_zp as int32. Empty `name` returns an empty vector. Only INT8 is accepted (B is
-// constrained to int8 in this fusion, so by ONNX spec B_zp must match).
-Ort::Status ReadInt8ZeroPointAsInt32(const QnnModelWrapper& qmw,
-                                     const std::string& name,
-                                     std::vector<int32_t>& out) {
+// Reads a zero-point initializer (INT8 or UINT8) as int32 values. Empty `name` returns an
+// empty vector. Per ONNX spec the zero-point dtype matches its corresponding tensor's dtype;
+// callers should already have validated the weight dtype before calling this.
+Ort::Status ReadZeroPointAsInt32(const QnnModelWrapper& qmw,
+                                 const std::string& name,
+                                 std::vector<int32_t>& out) {
   out.clear();
   if (name.empty()) {
     return Ort::Status();
@@ -172,34 +171,43 @@ Ort::Status ReadInt8ZeroPointAsInt32(const QnnModelWrapper& qmw,
 
   ONNXTensorElementDataType elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetTensorElementType(tensor_info, &elem_type));
-  RETURN_IF_NOT(elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8,
-                ("Expected INT8 zero-point for " + name).c_str());
+  RETURN_IF_NOT(elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8 ||
+                    elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8,
+                ("Expected INT8 or UINT8 zero-point for " + name).c_str());
 
   std::vector<uint8_t> bytes;
   RETURN_IF_ERROR(qmw.UnpackInitializerData(info, bytes));
 
   out.resize(bytes.size());
-  const int8_t* src = reinterpret_cast<const int8_t*>(bytes.data());
-  for (size_t i = 0; i < bytes.size(); ++i) {
-    out[i] = static_cast<int32_t>(src[i]);
+  if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
+    const int8_t* src = reinterpret_cast<const int8_t*>(bytes.data());
+    for (size_t i = 0; i < bytes.size(); ++i) {
+      out[i] = static_cast<int32_t>(src[i]);
+    }
+  } else {
+    for (size_t i = 0; i < bytes.size(); ++i) {
+      out[i] = static_cast<int32_t>(bytes[i]);
+    }
   }
   return Ort::Status();
 }
 
-// Builds the int8 weight quant params. ONNX zero-point is negated to match QNN's offset
-// convention (QNN: x = scale * (q - offset); offset = -ONNX_zp).
+// Builds the weight quant params (int8 or uint8). ONNX zero-point is negated to match QNN's
+// offset convention (QNN: x = scale * (q - offset); offset = -ONNX_zp). For per-channel B_scale
+// the result is only used to detect per-channel via IsPerChannel(); the per-channel emission
+// path pre-dequantizes to float offline and does not consume these quant params, so the axis
+// value carried here is informational only.
 Ort::Status BuildWeightQuantParams(const QnnModelWrapper& qmw,
                                    const std::string& b_scale_name,
                                    const std::string& b_zp_name_or_empty,
                                    uint32_t out_channels,
-                                   int32_t out_channel_axis,
                                    QnnQuantParamsWrapper& out_params) {
   std::vector<float> scales;
   RETURN_IF_ERROR(ReadFloatInitializer(qmw, b_scale_name, scales));
   RETURN_IF_NOT(!scales.empty(), "B_scale has zero elements");
 
   std::vector<int32_t> offsets;
-  RETURN_IF_ERROR(ReadInt8ZeroPointAsInt32(qmw, b_zp_name_or_empty, offsets));
+  RETURN_IF_ERROR(ReadZeroPointAsInt32(qmw, b_zp_name_or_empty, offsets));
   for (int32_t& v : offsets) v = -v;
 
   if (scales.size() == 1) {
@@ -221,19 +229,20 @@ Ort::Status BuildWeightQuantParams(const QnnModelWrapper& qmw,
 
   out_params = QnnQuantParamsWrapper(gsl::span<const float>(scales),
                                      gsl::span<const int32_t>(offsets),
-                                     out_channel_axis,
+                                     /*axis=*/0,
                                      /*is_int4=*/false);
   return Ort::Status();
 }
 
-// Pre-dequantizes per-channel int8 HWCN weight bytes to float32 HWCN bytes (out_channels axis
-// is HWCN's last axis).
+// Pre-dequantizes per-channel int8 / uint8 HWCN weight bytes to float32 bytes (out_channels
+// axis is HWCN's last axis).
 Ort::Status PreDequantizePerChannelWeight(const QnnModelWrapper& qmw,
                                           const std::string& b_scale_name,
                                           const std::string& b_zp_name_or_empty,
                                           bool has_b_zp,
+                                          bool is_signed_weight,
                                           uint32_t out_channels,
-                                          const std::vector<uint8_t>& hwcn_int8_bytes,
+                                          const std::vector<uint8_t>& hwcn_quant_bytes,
                                           std::vector<uint8_t>& out_float_bytes) {
   std::vector<float> scales;
   RETURN_IF_ERROR(ReadFloatInitializer(qmw, b_scale_name, scales));
@@ -242,7 +251,7 @@ Ort::Status PreDequantizePerChannelWeight(const QnnModelWrapper& qmw,
 
   std::vector<int32_t> zps_onnx;
   if (has_b_zp) {
-    RETURN_IF_ERROR(ReadInt8ZeroPointAsInt32(qmw, b_zp_name_or_empty, zps_onnx));
+    RETURN_IF_ERROR(ReadZeroPointAsInt32(qmw, b_zp_name_or_empty, zps_onnx));
   }
   if (zps_onnx.empty()) {
     zps_onnx.assign(scales.size(), 0);
@@ -252,7 +261,7 @@ Ort::Status PreDequantizePerChannelWeight(const QnnModelWrapper& qmw,
     RETURN_IF_NOT(zps_onnx.size() == scales.size(), "Per-channel B_zp length mismatch");
   }
 
-  const size_t num_elems = hwcn_int8_bytes.size();
+  const size_t num_elems = hwcn_quant_bytes.size();
   const size_t c_out = static_cast<size_t>(out_channels);
   RETURN_IF_NOT(c_out > 0 && num_elems % c_out == 0,
                 "Weight byte count not divisible by C_out");
@@ -260,10 +269,18 @@ Ort::Status PreDequantizePerChannelWeight(const QnnModelWrapper& qmw,
   // Dequantize into a typed float buffer first to avoid uint8_t-to-float aliasing issues,
   // then memcpy out to the byte buffer that QnnTensorWrapper expects.
   std::vector<float> floats(num_elems);
-  const int8_t* int8_ptr = reinterpret_cast<const int8_t*>(hwcn_int8_bytes.data());
-  for (size_t i = 0; i < num_elems; ++i) {
-    const size_t c = i % c_out;
-    floats[i] = scales[c] * static_cast<float>(int8_ptr[i] - zps_onnx[c]);
+  if (is_signed_weight) {
+    const int8_t* src = reinterpret_cast<const int8_t*>(hwcn_quant_bytes.data());
+    for (size_t i = 0; i < num_elems; ++i) {
+      const size_t c = i % c_out;
+      floats[i] = scales[c] * static_cast<float>(static_cast<int32_t>(src[i]) - zps_onnx[c]);
+    }
+  } else {
+    const uint8_t* src = hwcn_quant_bytes.data();
+    for (size_t i = 0; i < num_elems; ++i) {
+      const size_t c = i % c_out;
+      floats[i] = scales[c] * static_cast<float>(static_cast<int32_t>(src[i]) - zps_onnx[c]);
+    }
   }
 
   out_float_bytes.resize(num_elems * sizeof(float));
@@ -320,8 +337,10 @@ std::unique_ptr<IQnnNodeGroup> DQConvIntegerFusion::TryFusion(
     return reject("weight B is not a constant initializer");
   }
   if (b_info.qnn_data_type != QNN_DATATYPE_SFIXED_POINT_8 &&
-      b_info.qnn_data_type != QNN_DATATYPE_INT_8) {
-    return reject("weight B is not int8");
+      b_info.qnn_data_type != QNN_DATATYPE_INT_8 &&
+      b_info.qnn_data_type != QNN_DATATYPE_UFIXED_POINT_8 &&
+      b_info.qnn_data_type != QNN_DATATYPE_UINT_8) {
+    return reject("weight B is not int8 or uint8");
   }
 
   const bool has_a_zp = ci_inputs.size() >= 3 && ci_inputs[2].Exists();
@@ -603,20 +622,21 @@ Ort::Status DQConvIntegerFusion::CreateOrValidateOnQnn(QnnModelWrapper& qmw, boo
   RETURN_IF_ERROR(utils::TransposeFromNchwToHwcn(qmw, b_info.initializer_tensor,
                                                  hwcn_weight_bytes, /*is_3d=*/false));
 
-  // Build weight quant params on NCHW axis 0, then remap to HWCN axis 3.
+  // Build weight quant params from B_scale / B_zp. Used only on the per-tensor path (the
+  // per-channel path pre-dequantizes the weight bytes offline and does not consume these).
   const std::string b_zp_name = has_b_zp_ ? ci_inputs[3].name : std::string{};
   QnnQuantParamsWrapper weight_qparams;
   RETURN_IF_ERROR(BuildWeightQuantParams(qmw, b_scale_name_, b_zp_name,
-                                         b_info.shape[0], /*out_channel_axis=*/0, weight_qparams));
-  if (weight_qparams.IsPerChannel()) {
-    RETURN_IF_ERROR(weight_qparams.HandleTranspose<size_t>(
-        gsl::span<const size_t>(kNchwToHwcnInversePerm)));
-  }
+                                         b_info.shape[0], weight_qparams));
   const bool is_per_channel = weight_qparams.IsPerChannel();
+  const bool is_signed_weight = (b_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8 ||
+                                 b_info.qnn_data_type == QNN_DATATYPE_INT_8);
+  const Qnn_DataType_t weight_quant_qnn_type = is_signed_weight ? QNN_DATATYPE_SFIXED_POINT_8
+                                                                : QNN_DATATYPE_UFIXED_POINT_8;
 
   const std::string node_base = utils::UniqueNameGenerator().New(conv_integer);
   const std::string t_in_name = node_base + "_input_nhwc";
-  const std::string w_hwcn_i8_name = node_base + "_w_hwcn_i8";
+  const std::string w_hwcn_quant_name = node_base + "_w_hwcn_quant";
   const std::string w_hwcn_f32_name = node_base + "_w_hwcn_f32";
   const std::string conv_out_nhwc_name = node_base + "_conv_nhwc";
   const std::string deq_node_name = node_base + "_weight_dq";
@@ -635,36 +655,38 @@ Ort::Status DQConvIntegerFusion::CreateOrValidateOnQnn(QnnModelWrapper& qmw, boo
   }
 
   // Step 2: weight handed to Conv2d as a float HWCN tensor.
-  //   Per-tensor:  static int8 weight + Dequantize op produces a NATIVE float weight.
+  //   Per-tensor:  static int8/uint8 weight + Dequantize op produces a NATIVE float weight.
   //   Per-channel: QNN's Dequantize op does not accept per-channel quantized inputs;
-  //                pre-dequantize int8 -> float offline and emit a STATIC float weight directly.
+  //                pre-dequantize int8/uint8 -> float offline and emit a STATIC float weight directly.
   std::vector<uint8_t> per_channel_float_bytes;  // populated only on per-channel + validate
   if (!is_per_channel) {
-    QnnTensorWrapper w_int8(w_hwcn_i8_name, QNN_TENSOR_TYPE_STATIC,
-                            QNN_DATATYPE_SFIXED_POINT_8, weight_qparams.Copy(),
-                            std::vector<uint32_t>(hwcn_weight_shape),
-                            std::move(hwcn_weight_bytes));
+    QnnTensorWrapper w_quant(w_hwcn_quant_name, QNN_TENSOR_TYPE_STATIC,
+                             weight_quant_qnn_type, weight_qparams.Copy(),
+                             std::vector<uint32_t>(hwcn_weight_shape),
+                             std::move(hwcn_weight_bytes));
     QnnTensorWrapper w_float_native(w_hwcn_f32_name, QNN_TENSOR_TYPE_NATIVE,
                                     QNN_DATATYPE_FLOAT_32, QnnQuantParamsWrapper(),
                                     std::vector<uint32_t>(hwcn_weight_shape));
     if (validate) {
       RETURN_IF_ERROR(qmw.ValidateQnnNode(deq_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW,
                                           QNN_OP_DEQUANTIZE,
-                                          {w_int8.GetQnnTensor()},
+                                          {w_quant.GetQnnTensor()},
                                           {w_float_native.GetQnnTensor()}, {}));
     } else {
-      RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(w_int8)), "Failed to add int8 weight tensor");
+      RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(w_quant)),
+                    "Failed to add quantized weight tensor");
       RETURN_IF_NOT(qmw.AddTensorWrapper(std::move(w_float_native)),
                     "Failed to add float weight tensor");
       RETURN_IF_NOT(qmw.CreateQnnNode(deq_node_name, QNN_OP_PACKAGE_NAME_QTI_AISW,
                                       QNN_OP_DEQUANTIZE,
-                                      {w_hwcn_i8_name}, {w_hwcn_f32_name},
+                                      {w_hwcn_quant_name}, {w_hwcn_f32_name},
                                       {}, /*do_op_validation=*/false),
                     "Failed to create weight Dequantize node");
     }
   } else {
     std::vector<uint8_t> float_bytes;
     RETURN_IF_ERROR(PreDequantizePerChannelWeight(qmw, b_scale_name_, b_zp_name, has_b_zp_,
+                                                  is_signed_weight,
                                                   b_info.shape[0], hwcn_weight_bytes,
                                                   float_bytes));
     if (validate) {
