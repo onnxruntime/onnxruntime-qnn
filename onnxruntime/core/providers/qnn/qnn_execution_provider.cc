@@ -20,6 +20,7 @@
 
 #include "HTP/QnnHtpGraph.h"
 
+#include "core/providers/qnn/common/qnn_graph_utils.h"
 #include "core/providers/qnn/ort_api.h"
 #include "core/providers/qnn/qnn_provider_factory.h"
 #include "core/providers/qnn/shared_context.h"
@@ -52,6 +53,10 @@ const std::string kDefaultHtpBackendPath = MakeSharedLibraryPath("QnnHtp");
 const std::string kDefaultSaverBackendPath = MakeSharedLibraryPath("QnnSaver");
 const std::string kDefaultIrBackendPath = MakeSharedLibraryPath("QnnIr");
 
+// File-scope (unlike the other backend type name constants defined inside ParseBackendTypeName)
+// because kGenieBackendTypeName is also referenced from other call sites in this file.
+constexpr std::string_view kGenieBackendTypeName{"genie"};
+
 static bool ParseBackendTypeName(std::string_view backend_type_name,
                                  std::string& backend_path,
                                  const Ort::Logger& logger) {
@@ -63,6 +68,7 @@ static bool ParseBackendTypeName(std::string_view backend_type_name,
 
   constexpr std::array kAllowedBackendTypeNames{
       kCpuBackendTypeName,
+      kGenieBackendTypeName,
       kGpuBackendTypeName,
       kHtpBackendTypeName,
       kSaverBackendTypeName,
@@ -72,6 +78,8 @@ static bool ParseBackendTypeName(std::string_view backend_type_name,
   std::optional<std::string> associated_backend_path{};
   if (backend_type_name == kCpuBackendTypeName) {
     associated_backend_path = kDefaultCpuBackendPath;
+  } else if (backend_type_name == kGenieBackendTypeName) {
+    associated_backend_path = kDefaultGenieBackendPath;
   } else if (backend_type_name == kGpuBackendTypeName) {
     associated_backend_path = kDefaultGpuBackendPath;
   } else if (backend_type_name == kHtpBackendTypeName) {
@@ -1422,8 +1430,16 @@ OrtStatus* ORT_API_CALL QnnEp::GetGenieCapability(OrtEp* this_ptr,
   // CREATE GENIE_BACKEND_MANAGER
   QnnEp* ep = static_cast<QnnEp*>(this_ptr);
   if (!ep->genie_backend_manager_) {
+    std::string genie_path = kDefaultGenieBackendPath;
+    std::string backend_path_option;
+    GetSessionConfigEntryOrDefault(ep->ort_api, ep->session_options_,
+                                   ep->FormatEPConfigKey("backend_path"), "",
+                                   backend_path_option);
+    if (!backend_path_option.empty()) {
+      genie_path = backend_path_option;
+    }
     ep->genie_backend_manager_ = qnn::GenieBackendManager::Create(
-        qnn::GenieBackendManagerConfig{kDefaultGenieBackendPath}, ep->logger_);
+        qnn::GenieBackendManagerConfig{genie_path}, ep->logger_);
     auto setup_st = ep->genie_backend_manager_->SetupBackend();
     if (!setup_st.IsOK()) {
       return ep->ort_api.CreateStatus(ORT_EP_FAIL, setup_st.GetErrorMessage().c_str());
