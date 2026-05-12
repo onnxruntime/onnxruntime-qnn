@@ -68,6 +68,10 @@ class QnnModelWrapper {
         model_settings_(model_settings),
         api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}),
         tensor_name_overrides_(tensor_name_overrides) {
+    // Invariant: validator interface and handle must both be set or both be null.
+    // They are populated together by QnnBackendManager::LoadQnnSerializerBackend() (QnnIr flow).
+    assert((backend_validator_handle == nullptr) ==
+           (qnn_validator_interface.backendValidateOpConfig == nullptr));
   }
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
@@ -103,9 +107,6 @@ class QnnModelWrapper {
                               std::vector<Qnn_Tensor_t>&& input_tensors,
                               std::vector<Qnn_Tensor_t>&& output_tensors,
                               std::vector<Qnn_Param_t>&& params) const;
-
-  Ort::Status ValidateQnnNode(QnnOpConfigWrapper& op_config_wrapper,
-                              std::string& error_msg) const;
 
   bool CreateQnnNode(const std::string& name,
                      const std::string& package_name,
@@ -431,6 +432,9 @@ class QnnModelWrapper {
   }
 
  private:
+  Ort::Status ValidateQnnNode(QnnOpConfigWrapper& op_config_wrapper,
+                              std::string& error_msg) const;
+
   bool CreateQnnInputOutputTensors(const std::string& qnn_node_name,
                                    const std::vector<std::string>& names,
                                    std::vector<Qnn_Tensor_t>& tensor_wrappers,

@@ -407,6 +407,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
                                     Qnn_LogHandle_t& log_handle,
                                     const std::string& backend_label);
 
+  Ort::Status SetQnnLogLevelCommon(const QNN_INTERFACE_VER_TYPE& interface,
+                                   Qnn_LogHandle_t log_handle,
+                                   QnnLog_Level_t qnn_log_level,
+                                   const std::string& label);
+
   // Terminate logging in the backend
   // NOTE: This function locks the internal `logger_recursive_mutex_`.
   Ort::Status TerminateQnnLog();
@@ -584,6 +589,10 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   const std::string backend_path_;
   std::recursive_mutex logger_recursive_mutex_;
   QNN_INTERFACE_VER_TYPE qnn_interface_ = QNN_INTERFACE_VER_TYPE_INIT;
+  // Invariant: qnn_validator_interface_ and validator_backend_handle_ are always set together
+  // by LoadQnnSerializerBackend() (serializer flow: QnnIr). Both remain zero/null in all other flows.
+  // QnnModelWrapper::ValidateQnnNode() uses validator_backend_handle_ != nullptr as the sole signal
+  // to route backendValidateOpConfig to the validator interface rather than qnn_interface_.
   QNN_INTERFACE_VER_TYPE qnn_validator_interface_ = QNN_INTERFACE_VER_TYPE_INIT;
   QNN_SYSTEM_INTERFACE_VER_TYPE qnn_sys_interface_ = QNN_SYSTEM_INTERFACE_VER_TYPE_INIT;
   void* backend_lib_handle_ = nullptr;
