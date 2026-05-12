@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-#include "onnx/onnx_pb.h"
+#include "core/providers/qnn/common/onnx_protobuf.h"
 
 namespace onnxruntime {
 namespace qnn {

@@ -10,7 +10,7 @@
 #include <string>
 #include <vector>
 
-#include "onnx/onnx_pb.h"
+#include "core/providers/qnn/common/onnx_protobuf.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "gtest/gtest.h"
