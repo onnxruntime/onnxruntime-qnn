@@ -204,6 +204,8 @@ class QnnEp : public OrtEp, public ApiPtrs {
 
   bool dump_json_qnn_graph_ = false;
   std::string json_qnn_graph_dir_ = "";
+  bool dump_onnx_subgraph_ = false;
+  std::string onnx_subgraph_dir_ = "";
   bool enable_htp_extended_udma_mode_ = false;
 
   // Whether this is set depends on a session option enabling it and if the RPCMEM dynamic library is available.

@@ -33,6 +33,7 @@
 #include "core/providers/qnn/builder/qnn_node_group/qnn_node_group.h"
 #include "core/providers/qnn/builder/qnn_thread_pool.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
+#include "core/providers/qnn/builder/onnx_subgraph_dumper.h"
 #include "core/providers/qnn/qnn_ep_utils.h"
 
 // Forward declarations for NodeUnit-related classes
@@ -983,6 +984,32 @@ QnnEp::QnnEp(QnnEpFactory& factory,
       ORT_CXX_LOG(logger_,
                   ORT_LOGGING_LEVEL_WARNING,
                   "Provided a directory for dumping QNN JSON graphs, but did not enable dumping of QNN JSON graphs.");
+    }
+  }
+
+  dump_onnx_subgraph_ = ParseBoolOption(ort_api,
+                                        session_options_,
+                                        FormatEPConfigKey("dump_onnx_subgraph"),
+                                        false,
+                                        logger_);
+
+  static const std::string ONNX_SUBGRAPH_DUMP_DIR = "onnx_subgraph_dir";
+  std::string onnx_subgraph_dir_str;
+  GetSessionConfigEntryOrDefault(ort_api,
+                                 session_options_,
+                                 FormatEPConfigKey(ONNX_SUBGRAPH_DUMP_DIR),
+                                 "",
+                                 onnx_subgraph_dir_str);
+
+  if (!onnx_subgraph_dir_str.empty()) {
+    onnx_subgraph_dir_ = onnx_subgraph_dir_str;
+    if (dump_onnx_subgraph_) {
+      ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_INFO,
+                  ("ONNX subgraph dump directory: " + onnx_subgraph_dir_).c_str());
+    } else {
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_WARNING,
+                  "Provided a directory for dumping ONNX subgraphs, but did not enable dump_onnx_subgraph.");
     }
   }
 
@@ -2017,6 +2044,25 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
       return ep->ort_api.CreateStatus(ORT_EP_FAIL, "Failed to get fused node name");
     }
     const std::string fused_node_name{name};
+
+    // Dump the ONNX-side view of this partition (pre-QNN op-builder translation, no QNN_OP_*
+    // prefix anywhere). The filename matches fused_node_name so it lines up 1:1 with the QNN
+    // graph name shown in profiling and dump_json_qnn_graph output. Skipped automatically on
+    // the EPContext / DLC-context load paths above (early-returned at lines 1984-1988).
+    if (ep->dump_onnx_subgraph_) {
+      namespace fs = std::filesystem;
+      fs::path out_path = fs::path(ep->onnx_subgraph_dir_) / (fused_node_name + ".onnx");
+      Ort::Status dump_status = qnn::DumpPartitionAsOnnxModel(ep->ort_api,
+                                                              *graph,
+                                                              fused_node_name,
+                                                              out_path,
+                                                              ep->logger_);
+      if (!dump_status.IsOK()) {
+        ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
+                    ("Failed to dump ONNX subgraph for '" + fused_node_name + "': " +
+                     dump_status.GetErrorMessage()).c_str());
+      }
+    }
 
     std::unique_ptr<qnn::QnnModel> qnn_model = std::make_unique<qnn::QnnModel>(
         ep->qnn_backend_manager_.get(), ApiPtrs{ep->ort_api, ep->ep_api, ep->model_editor_api});

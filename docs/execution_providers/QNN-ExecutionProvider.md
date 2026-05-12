@@ -205,6 +205,15 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |---|---|
 |Directory path (string)|Directory path for dumping QNN JSON graphs. Only effective when `dump_json_qnn_graph` is enabled.|
 
+|`"dump_onnx_subgraph"`|Description|
+|---|---|
+|'0'|Default. Disabled.|
+|'1'|Enable dumping each QNN-claimed partition as a self-contained, runnable ONNX model. The dump fires inside `Compile`, immediately before QNN op-builders translate the partition's ONNX ops into `QNN_OP_*` — so the dumped graph contains only raw ONNX ops. Each partition produces two files: `<fused_node_name>.onnx` (model proto) and `<fused_node_name>.onnx.data` (initializer bytes referenced via ONNX's standard `external_data` mechanism). The external-data layout is required to handle large models (e.g. gpt-oss-class) whose per-partition weight totals would exceed protobuf's 2 GB single-message serialization ceiling. Filenames match the QNN graph name shown in profiling and `dump_json_qnn_graph` output for direct 1:1 correlation. Useful for HTP debug: each dumped file can be loaded as a fresh model and (because every node was QNN-supported by construction) should be claimed by the QNN EP as a single all-HTP partition with zero CPU fallback. The dump is a no-op when loading a precompiled EPContext / DLC context model. Subgraph attributes (If/Loop bodies) are not supported in v1; affected partitions return an error and are skipped with a warning. For strict reproducibility when reloading a dumped model, set `graph_optimization_level=ORT_DISABLE_ALL` to prevent ORT from re-running graph optimizations.|
+
+|`"onnx_subgraph_dir"`|Description|
+|---|---|
+|Directory path (string)|Directory path for dumping ONNX subgraphs. Only effective when `dump_onnx_subgraph` is enabled. Both the `.onnx` and the `.onnx.data` sidecar are written to this directory.|
+
 |`"dump_qnn_ir_dlc"`|Description|
 |---|---|
 |'0'|Default. Disabled.|

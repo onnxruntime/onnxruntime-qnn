@@ -39,9 +39,9 @@
   endif()
 
   onnxruntime_add_shared_library_module(onnxruntime_providers_qnn ${onnxruntime_providers_qnn_all_srcs})
-  onnxruntime_add_include_to_target(onnxruntime_providers_qnn ${GSL_TARGET} safeint_interface nlohmann_json::nlohmann_json)
+  onnxruntime_add_include_to_target(onnxruntime_providers_qnn ${GSL_TARGET} safeint_interface nlohmann_json::nlohmann_json onnx onnx_proto)
 
-  target_link_libraries(onnxruntime_providers_qnn PRIVATE ${ABSEIL_LIBS})
+  target_link_libraries(onnxruntime_providers_qnn PRIVATE ${ABSEIL_LIBS} onnx onnx_proto)
 
   add_dependencies(onnxruntime_providers_qnn ort_core_target)
 
