@@ -49,6 +49,30 @@ ARTIFACTORY_PREFIXES = {
 ARTIFACT_SUFFIXES = {"wheel": ".whl", "nuget": ".nupkg", "zip": ".zip", "tgz": ".tgz"}
 
 
+def _str_to_bool(value: str) -> bool:
+    """Parse a True/False CLI argument."""
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in ("true", "1", "yes"):
+        return True
+    if normalized in ("false", "0", "no"):
+        return False
+    raise argparse.ArgumentTypeError(f"Boolean value expected (true/false), got: {value!r}")
+
+
+def _ensure_dir(path: str) -> None:
+    """Create a fresh directory; if it already exists, remove and recreate it.
+
+    Gives each run a clean output tree so state from prior jobs doesn't bleed in.
+    """
+    if os.path.exists(path):
+        logging.warning(f"Directory already exists, removing and recreating: {path}")
+        shutil.rmtree(path)
+    os.makedirs(path)
+    logging.info(f"Created directory: {path}")
+
+
 class ConfigManager:
     """Manages configuration file reading and URL generation."""
 
@@ -224,30 +248,39 @@ class ArtifactUpleveler(ABC):
     def upload_artifacts(self, distribution_dir: str) -> None:
         """Upload artifacts to repository. Must be implemented by subclasses."""
 
+    def _finalize_and_upload(self, artifact_list: list[str], source_dir: str) -> None:
+        """Run version update (if needed) then upload.
+
+        Shared between the standard run() and any subclass run() override that does
+        its own pre-upload work (e.g. wheel signing).
+        """
+        upload_dir = source_dir
+        if self.needs_version_update:
+            logging.info(
+                f"Updating {self.artifact_format}(s) version from "
+                f"'{self.args.version_from}' to '{self.args.version_to}'"
+            )
+            upload_dir = os.path.join(os.path.abspath(os.path.curdir), f"updated_{self.artifact_format}s")
+            if os.path.exists(upload_dir):
+                shutil.rmtree(upload_dir)
+            os.mkdir(upload_dir)
+            self.update_artifacts(artifact_list, source_dir, upload_dir)
+
+        logging.info(f"Uploading {self.artifact_format}s to {self.url_to_display}")
+        self.upload_artifacts(upload_dir)
+
+        # If a version bump created ./updated_<format>s/, remove it now that the
+        # upload has succeeded. On failure we'd never reach this line, leaving the
+        # directory available for inspection.
+        if self.needs_version_update and os.path.exists(upload_dir):
+            shutil.rmtree(upload_dir, ignore_errors=True)
+            logging.info(f"Cleaned up {upload_dir}")
+
     def run(self) -> None:
         """Execute the complete upleveling workflow."""
         with tempfile.TemporaryDirectory(prefix="run_upleveling_") as tmp_dir:
-            # Download artifacts
             artifact_list = self.download_artifacts(self.url_from_display, tmp_dir)
-
-            # Determine upload directory
-            upload_dir = tmp_dir
-            if self.needs_version_update:
-                logging.info(
-                    f"Updating {self.artifact_format}(s) version from "
-                    f"'{self.args.version_from}' to '{self.args.version_to}'"
-                )
-                upload_dir = os.path.join(os.path.abspath(os.path.curdir), f"updated_{self.artifact_format}s")
-                if os.path.exists(upload_dir):
-                    shutil.rmtree(upload_dir)
-                os.mkdir(upload_dir)
-
-                # Update artifacts with new version
-                self.update_artifacts(artifact_list, tmp_dir, upload_dir)
-
-            # Upload artifacts
-            logging.info(f"Uploading {self.artifact_format}s to {self.url_to_display}")
-            self.upload_artifacts(upload_dir)
+            self._finalize_and_upload(artifact_list, tmp_dir)
 
         logging.info(f"Up-leveling for {self.artifact_format} completed successfully!")
 
@@ -258,6 +291,233 @@ class WheelUpleveler(ArtifactUpleveler):
     @property
     def artifact_format(self) -> str:
         return "wheel"
+
+    def _setup_signing_dirs(self) -> None:
+        """Create the output/{signed,unsigned}_artifacts/wheel directory tree."""
+        output_dir = os.path.join(os.path.abspath(os.path.curdir), "output")
+        signed_dir = os.path.join(output_dir, "signed_artifacts")
+        unsigned_dir = os.path.join(output_dir, "unsigned_artifacts")
+        for path in (
+            output_dir,
+            signed_dir,
+            unsigned_dir,
+            os.path.join(signed_dir, "wheel"),
+            os.path.join(unsigned_dir, "wheel"),
+            os.path.join(output_dir, "signed_libs"),
+        ):
+            _ensure_dir(path)
+
+    def _download_signed_libs(self, target_dir: str) -> str:
+        """Download wheels.zip (signed DLL bundle) to target_dir; return its path."""
+        api_key = os.environ.get("JFROG_API_KEY", "")
+        if not api_key:
+            raise RuntimeError("JFROG_API_KEY environment variable is required when --sign_wheel true")
+
+        url_template = os.environ.get("SIGNED_LIBS_ARTIFACTORY_URL", "")
+        if not url_template:
+            raise RuntimeError(
+                "SIGNED_LIBS_ARTIFACTORY_URL environment variable is required when --sign_wheel true"
+            )
+
+        url = f"{url_template.rstrip('/')}/{self.args.version_from}/signed/wheels.zip"
+        target_path = os.path.join(target_dir, "wheels.zip")
+
+        logging.info(f"Downloading signed libs for version {self.args.version_from}")
+        response = requests.get(url, auth=("", api_key), verify=ARTIFACTORY_CERTS_FILE, timeout=60)
+        if response.status_code != 200:
+            raise RuntimeError(f"Failed to download signed libs: HTTP {response.status_code}")
+
+        with open(target_path, "wb") as f:
+            f.write(response.content)
+        logging.info(f"Downloaded signed libs to {target_path}")
+        return target_path
+
+    def _extract_signed_libs(self, zip_path: str, target_dir: str) -> None:
+        """Extract wheels.zip into target_dir; remove the zip after extraction."""
+        logging.info(f"Extracting {zip_path} into {target_dir}")
+        with zipfile.ZipFile(zip_path) as zf:
+            zf.extractall(target_dir)
+        os.remove(zip_path)
+
+    def _replace_signed_dll(self, src: str, dst: str, label: str) -> bool:
+        """Copy signed DLL src→dst. Return True if src is missing (NOT replaced), else False."""
+        if not os.path.exists(src):
+            logging.warning(f"    {label.capitalize()} Signed DLL not found: {src}")
+            return True
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy(src, dst)
+        return False
+
+    def _repackage_wheels(self, wheel_dir: str, signed_libs_dir: str, output_dir: str) -> None:
+        """
+        For each *win_amd64.whl / *win_arm64.whl found recursively under wheel_dir:
+        extract, swap in the signed onnxruntime_providers_qnn.dll(s) from signed_libs_dir,
+        re-zip into output_dir/<original_name>.whl. Other .whl files are copied as-is.
+        """
+        win_pattern = re.compile(r"win_(amd64|arm64)\.whl$")
+        win_wheels: list[str] = []
+        other_wheels: list[str] = []
+        for root, _dirs, files in os.walk(wheel_dir):
+            for fn in files:
+                if not fn.endswith(".whl"):
+                    continue
+                full = os.path.join(root, fn)
+                (win_wheels if win_pattern.search(fn) else other_wheels).append(full)
+
+        if not win_wheels and not other_wheels:
+            logging.warning("No wheels found to repackage")
+            return
+
+        logging.info(f"Found {len(win_wheels)} Windows wheel(s) to repackage")
+        logging.info(f"Found {len(other_wheels)} other wheel(s) to copy as-is")
+
+        repackage_success = 0
+        repackage_failed: list[str] = []
+
+        for whl_path in win_wheels:
+            whl_name = os.path.basename(whl_path)
+            whl_no_ext = whl_name[: -len(".whl")]
+            extract_dir = os.path.join(output_dir, whl_no_ext)
+            logging.info(f"  Processing: {whl_name}")
+            try:
+                if os.path.exists(extract_dir):
+                    shutil.rmtree(extract_dir)
+                with zipfile.ZipFile(whl_path) as zf:
+                    zf.extractall(extract_dir)
+
+                if whl_name.endswith("win_amd64.whl"):
+                    amd64_missing = self._replace_signed_dll(
+                        src=os.path.join(
+                            signed_libs_dir, whl_no_ext, "amd64", "onnxruntime_providers_qnn.dll"
+                        ),
+                        dst=os.path.join(
+                            extract_dir, "onnxruntime_qnn", "libs", "amd64", "onnxruntime_providers_qnn.dll"
+                        ),
+                        label="amd64",
+                    )
+                    arm64ec_missing = self._replace_signed_dll(
+                        src=os.path.join(
+                            signed_libs_dir, whl_no_ext, "arm64ec", "onnxruntime_providers_qnn.dll"
+                        ),
+                        dst=os.path.join(
+                            extract_dir, "onnxruntime_qnn", "libs", "arm64ec", "onnxruntime_providers_qnn.dll"
+                        ),
+                        label="arm64ec",
+                    )
+                    if amd64_missing and arm64ec_missing:
+                        dll_replacement_failed = True
+                    else:
+                        dll_replacement_failed = False
+                else:
+                    arm64_missing = self._replace_signed_dll(
+                        src=os.path.join(signed_libs_dir, whl_no_ext, "onnxruntime_providers_qnn.dll"),
+                        dst=os.path.join(extract_dir, "onnxruntime_qnn", "onnxruntime_providers_qnn.dll"),
+                        label="arm64",
+                    )
+                    dll_replacement_failed = arm64_missing
+
+                # Re-zip extracted tree back into output_dir/<whl_name>
+                out_whl = os.path.join(output_dir, whl_name)
+                if os.path.exists(out_whl):
+                    os.remove(out_whl)
+                with zipfile.ZipFile(out_whl, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for r, _d, fs in os.walk(extract_dir):
+                        for f in fs:
+                            fp = os.path.join(r, f)
+                            zf.write(fp, os.path.relpath(fp, extract_dir))
+                if dll_replacement_failed:
+                    repackage_failed.append(whl_name)
+                    logging.warning(f"    Repackaged {whl_name} but signed DLL(s) were missing")
+                else:
+                    repackage_success += 1
+                    logging.info("    Successfully prepared signed wheel")
+            except Exception as error:
+                logging.error(f"    Failed to repackage {whl_name}: {error}")
+                repackage_failed.append(whl_name)
+            finally:
+                # Always remove the working extract directory, even if repackage errored
+                # mid-flow, so signed_artifacts/wheel/ contains only finished .whl files.
+                if os.path.exists(extract_dir):
+                    shutil.rmtree(extract_dir, ignore_errors=True)
+
+        other_success = 0
+        other_failed: list[str] = []
+        for whl_path in other_wheels:
+            whl_name = os.path.basename(whl_path)
+            try:
+                shutil.copy(whl_path, os.path.join(output_dir, whl_name))
+                other_success += 1
+                logging.info(f"  Copied as-is: {whl_name}")
+            except Exception as error:
+                logging.error(f"    Failed to copy {whl_name}: {error}")
+                other_failed.append(whl_name)
+
+        logging.info("")
+        logging.info("=== Processing Summary ===")
+        logging.info("")
+        logging.info("Repackaged and Reconstructed Wheels")
+        logging.info(f"  Total: {len(win_wheels)}")
+        logging.info(f"  Successful: {repackage_success}")
+        logging.info(f"  Failed: {len(repackage_failed)}")
+        for fw in repackage_failed:
+            logging.warning(f"    - {fw}")
+        logging.info("")
+        logging.info("Copied Other Wheels")
+        logging.info(f"  Total: {len(other_wheels)}")
+        logging.info(f"  Successful: {other_success}")
+        logging.info(f"  Failed: {len(other_failed)}")
+        for fw in other_failed:
+            logging.warning(f"    - {fw}")
+        logging.info("")
+        logging.info("=== End of Processing Summary ===")
+
+    def run(self) -> None:
+        """Execute wheel upleveling.
+
+        --sign_wheel false (default): standard tempdir-based flow.
+        --sign_wheel true: download to output/unsigned_artifacts/wheel/, fetch + extract
+        signed libs into output/signed_libs/, repackage Windows wheels with the signed DLLs
+        into output/signed_artifacts/wheel/, then re-version (if needed) and upload.
+        """
+        if not self.args.sign_wheel:
+            super().run()
+            return
+
+        self._setup_signing_dirs()
+        cwd = os.path.abspath(os.path.curdir)
+        output_dir = os.path.join(cwd, "output")
+        unsigned_wheel_dir = os.path.join(output_dir, "unsigned_artifacts", "wheel")
+        signed_wheel_dir = os.path.join(output_dir, "signed_artifacts", "wheel")
+        signed_libs_dir = os.path.join(output_dir, "signed_libs")
+
+        try:
+            # Download wheels into unsigned_artifacts/wheel/
+            self.download_artifacts(self.url_from_display, unsigned_wheel_dir)
+
+            # Pull signed DLL bundle and extract it
+            zip_path = self._download_signed_libs(signed_libs_dir)
+            self._extract_signed_libs(zip_path, signed_libs_dir)
+
+            # Repackage win wheels with signed DLLs into signed_artifacts/wheel/
+            self._repackage_wheels(unsigned_wheel_dir, signed_libs_dir, signed_wheel_dir)
+
+            # Re-enumerate after repackage (some wheels may have been skipped on failure),
+            # then hand off to the shared finalize+upload flow.
+            artifact_list = [
+                f
+                for f in os.listdir(signed_wheel_dir)
+                if f.endswith(".whl") and os.path.isfile(os.path.join(signed_wheel_dir, f))
+            ]
+            self._finalize_and_upload(artifact_list, signed_wheel_dir)
+        except Exception:
+            # Preserve output/ on failure so the partial state can be inspected.
+            logging.error(f"Wheel upleveling failed; preserving {output_dir} for inspection")
+            raise
+
+        # Success: tear down output/ now that the signed wheels have been uploaded.
+        shutil.rmtree(output_dir, ignore_errors=True)
+        logging.info(f"Cleaned up {output_dir}")
+        logging.info("Up-leveling for wheel completed successfully!")
 
     def update_artifacts(self, artifact_list: list[str], input_dir: str, output_dir: str) -> None:
         """Update wheel package versions."""
@@ -1046,6 +1306,12 @@ def parse_arguments() -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Print commands without executing (Maven format only).",
+    )
+    parser.add_argument(
+        "--sign_wheel",
+        type=_str_to_bool,
+        default=False,
+        help="Sign wheel artifacts (true/false). Default: false. Only applies to --artifact_format wheel.",
     )
 
     args = parser.parse_args()
