@@ -2,8 +2,8 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
-# Script to prepare wheels for signing
-# Usage: ./prepare_wheels_for_signing.sh <WheelDirectory> <OutputDirectory>
+# Script to prepare archives for signing
+# Usage: ./prepare_zip_for_signing.sh <ZipDirectory> <OutputDirectory>
 
 set -euo pipefail
 
