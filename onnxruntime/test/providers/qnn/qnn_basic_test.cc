@@ -568,7 +568,7 @@ TEST_F(QnnCPUBackendTests, QnnSaver_OutputFiles) {
   // QnnSaver writes flat to cwd on Linux aarch64 and to ./saver_output/ on Windows.
   const auto cwd = std::filesystem::current_path();
   const auto saver_dir = cwd / "saver_output";
-  auto find_saver_file = [&](const std::string& filename) -> bool {
+  auto find_saver_file = [&cwd, &saver_dir](const std::string& filename) -> bool {
     return std::filesystem::exists(cwd / filename) ||
            std::filesystem::exists(saver_dir / filename);
   };

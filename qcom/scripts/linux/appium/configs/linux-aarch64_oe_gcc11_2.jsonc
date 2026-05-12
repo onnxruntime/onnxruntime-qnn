@@ -45,7 +45,7 @@
 
     // Comma-separated list of ctest cases to skip
     // Default: null
-    "skip_ctests": "null",
+    "skip_ctests": null,
 
     // Comma-separated list of model test suites cases to skip
     // Default: null
