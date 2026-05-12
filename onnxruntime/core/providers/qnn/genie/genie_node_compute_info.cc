@@ -52,24 +52,36 @@ OrtStatus* GenieNodeComputeInfo::CreateStateImpl(OrtNodeComputeInfo* this_ptr,
   // Generate the Backend Extension json
   auto parent_folder_path = std::filesystem::path(builder->dlc_path).parent_path();
 
-  // Search for the backend extension overrides and pass that as part of the config
+  // Search for the backend extension overrides and pass that as part of the config.
+  // The extension file is optional: if the DLC path has no parent directory, or the
+  // directory does not exist on disk, we skip the search and proceed without extensions.
   std::string extension_path;
-  try {
-    for (const auto& entry : std::filesystem::directory_iterator(parent_folder_path)) {
-      if (entry.is_regular_file()) {
-        std::string filename = entry.path().filename().string();
-        // Check if filename matches pattern tmp**.json
-        if (filename.size() >= 8 &&  // "tmp" + some random number + ".json"
-            filename.substr(0, 3) == "tmp" &&
-            filename.substr(filename.size() - 5) == ".json") {
-          extension_path = entry.path().string();
-          break;
+  std::error_code dir_ec;
+  const bool parent_is_searchable = !parent_folder_path.empty() &&
+                                    std::filesystem::is_directory(parent_folder_path, dir_ec) &&
+                                    !dir_ec;
+  if (parent_is_searchable) {
+    try {
+      for (const auto& entry : std::filesystem::directory_iterator(parent_folder_path)) {
+        if (entry.is_regular_file()) {
+          const std::string filename = entry.path().filename().string();
+          if (filename.rfind("tmp", 0) == 0 &&
+              filename.size() >= 5 &&
+              filename.compare(filename.size() - 5, 5, ".json") == 0) {
+            extension_path = entry.path().string();
+            break;
+          }
         }
       }
+    } catch (const std::filesystem::filesystem_error& e) {
+      std::string error_msg = std::string("Error searching for extension file: ") + e.what();
+      return ep.ort_api.CreateStatus(ORT_EP_FAIL, error_msg.c_str());
     }
-  } catch (const std::filesystem::filesystem_error& e) {
-    std::string error_msg = std::string("Error searching for extension file: ") + e.what();
-    return ep.ort_api.CreateStatus(ORT_EP_FAIL, error_msg.c_str());
+  } else if (!parent_folder_path.empty()) {
+    ORT_CXX_LOG(ep.logger_, ORT_LOGGING_LEVEL_WARNING,
+                ("HTP extension directory '" + parent_folder_path.string() +
+                 "' is not accessible; continuing without HTP extensions.")
+                    .c_str());
   }
   // Replace single backslashes with double backslashes for JSON
   std::string escaped_extension_path;
