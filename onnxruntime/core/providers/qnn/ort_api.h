@@ -3,14 +3,15 @@
 
 #pragma once
 
+#include <cstring>
+#include <cstddef>
 #include <functional>
 #include <gsl/gsl>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <vector>
-
-#include <SafeInt.hpp>
 
 // This compilation unit (ort_api.h/.cc) encapsulates the interface between the EP and ORT in a manner
 // that allows QNN EP to built either as a static library or a dynamic shared library.
@@ -18,7 +19,12 @@
 // is built as a static library.
 // Includes when building QNN EP as a shared library
 // #include "core/providers/shared_library/provider_api.h"
+// ORT_UNIT_TEST_BUILD is defined when genie source files are recompiled directly
+// into the unit test binary. In that context, the test binary owns ORT API
+// initialization, so ORT_API_MANUAL_INIT must NOT be set (all TUs must agree).
+#ifndef ORT_UNIT_TEST_BUILD
 #define ORT_API_MANUAL_INIT
+#endif  // !ORT_UNIT_TEST_BUILD
 
 // Public headers from ORT Core
 #include "onnxruntime_c_api.h"
@@ -26,8 +32,8 @@
 #include "onnxruntime_run_options_config_keys.h"
 #include "onnxruntime_session_options_config_keys.h"
 
-#include "core/providers/qnn/common/inlined_containers.h"
 #include "core/providers/qnn/common/int4.h"
+#include "core/providers/qnn/common/qnn_safeint.h"
 
 namespace onnxruntime {
 
@@ -90,10 +96,31 @@ namespace onnxruntime {
     }                                                   \
   } while (0)
 
-// Convenient macro for logging with an Ort::Logger pointer, espeically in QnnBackendManager.
+// Ort::Logger must be standard-layout so that its first declared member (logger_) is
+// guaranteed to reside at offset 0 with no vtable or padding before it. If this assert
+// fires, ORT changed the class layout and IsNullLogger's memcpy approach must be revised.
+static_assert(std::is_standard_layout<Ort::Logger>::value,
+              "IsNullLogger requires Ort::Logger to be standard-layout");
+
+// Returns true if an Ort::Logger has a null internal OrtLogger pointer (i.e., was default-constructed
+// and never initialized). Ort::Logger is standard-layout; its first member
+// (const OrtLogger* logger_) is at offset 0, so memcpy is well-defined here.
+inline bool IsNullLogger(const Ort::Logger& logger) {
+  const OrtLogger* ptr = nullptr;
+  std::memcpy(&ptr, &logger, sizeof(ptr));
+  return ptr == nullptr;
+}
+
+// Convenient macro for logging with an Ort::Logger pointer, especially in QnnBackendManager.
 // This macro avoids the necessity of parentheses (i.e., (*logger_ptr)) in every ORT_CXX_LOG call.
+// Guards against a null-constructed Ort::Logger (no-op when logger is uninitialized).
 // This macro can be removed once ORT_CXX_LOG is fixed to properly wrap given logger with parentheses.
-#define ORT_CXX_LOG_PTR(logger_ptr, message_severity, message) ORT_CXX_LOG((*logger_ptr), message_severity, message)
+#define ORT_CXX_LOG_PTR(logger_ptr, message_severity, message) \
+  do {                                                         \
+    if ((logger_ptr) && !IsNullLogger(*logger_ptr)) {          \
+      ORT_CXX_LOG((*logger_ptr), message_severity, message);   \
+    }                                                          \
+  } while (false)
 
 // QNN-EP COPY START
 // Below are macors copied from core/common/common.h directly.
@@ -129,22 +156,6 @@ namespace onnxruntime {
 #else
 #define FILEPATH_TO_STRING(filepath) (filepath).string();
 #endif
-
-// QNN-EP COPY START
-// Below are GSL utilities copied from core/common/span_utils.h directly.
-template <class U, class T>
-[[nodiscard]] inline gsl::span<U> ReinterpretAsSpan(gsl::span<T> src) {
-  // adapted from gsl-lite span::as_span():
-  // https://github.com/gsl-lite/gsl-lite/blob/4720a2980a30da085b4ddb4a0ea2a71af7351a48/include/gsl/gsl-lite.hpp#L4102-L4108
-  Expects(src.size_bytes() % sizeof(U) == 0);
-  return gsl::span<U>(reinterpret_cast<U*>(src.data()), src.size_bytes() / sizeof(U));
-}
-
-// Below are constants copied from core/graph/constants.h directly.
-inline constexpr const char* kOnnxDomain = "";
-inline constexpr const char* kMSDomain = "com.microsoft";
-inline constexpr const char* kMSInternalNHWCDomain = "com.ms.internal.nhwc";
-// QNN-EP COPY END
 
 class OrtLoggingManager {
  public:

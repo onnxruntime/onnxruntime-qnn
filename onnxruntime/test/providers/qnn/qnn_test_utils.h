@@ -1660,6 +1660,13 @@ class QnnCPUBackendTests : public ::testing::Test {
   static BackendSupport cached_cpu_support_;  // Set by the first test using this fixture.
 };
 
+// Testing fixture class for Genie backend tests. Checks if the Genie backend is available before the test
+// begins. The test is skipped if the Genie backend is unavailable.
+class GenieBackendTests : public ::testing::Test {
+ protected:
+  void SetUp() override;
+};
+
 // Template function implementing the test skip logic for CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64.
 // Placed after the class definitions so QnnHTPBackendTests is fully defined.
 // QuantType defaults to void (no type specified); when provided, skipping is gated on QNN_IS_SUPPORTED_QDQ_TYPE.
@@ -1783,6 +1790,22 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version);
 #else
 #define QNN_SKIP_TEST_ON_LINUX_X86_64(reason) \
   do {                                        \
+  } while (0)
+#endif
+
+// Skips the test on every platform EXCEPT native ARM64 Windows.
+// The Genie execution pathway in the QNN EP is only available on ARM64 Windows
+// (_WIN32 + _M_ARM64 or __aarch64__). All other platforms must skip.
+// Uses AlwaysTrue() guard to prevent MSVC C4702 (unreachable code) after the skip.
+#if !defined(_WIN32) || (!defined(__aarch64__) && !defined(_M_ARM64))
+#define QNN_SKIP_TEST_ON_NON_ARM64_WINDOWS(reason) \
+  if (::testing::internal::AlwaysTrue()) {         \
+    GTEST_SKIP() << (reason);                      \
+  } else                                           \
+    static_assert(true, "")
+#else
+#define QNN_SKIP_TEST_ON_NON_ARM64_WINDOWS(reason) \
+  do {                                             \
   } while (0)
 #endif
 

@@ -137,6 +137,10 @@ TestInputDef<Ort::Float16_t> ConvertToFP16InputDef(const TestInputDef<float>& in
   }
 }
 
+// Mirrors SafeIntExceptionHandler in core/providers/qnn/common/qnn_safeint.h.
+// Defined here because that header cannot be included in test builds:
+// ORT's core/common/safeint.h declares SafeIntExceptionHandler as a class
+// template, which conflicts with qnn_safeint.h's concrete class definition.
 class SafeIntExceptionHandler : public std::exception {
  public:
   [[noreturn]] static void SafeIntOnOverflow() {
@@ -597,6 +601,11 @@ void QnnCPUBackendTests::SetUp() {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, "Failed to check if QNN CPU backend is available.");
     FAIL();
   }
+}
+
+void GenieBackendTests::SetUp() {
+  // Base fixture — derived fixtures (e.g. GenieSessionTest) are responsible
+  // for platform and availability checks.
 }
 
 static BackendSupport GetIRSupport() {
