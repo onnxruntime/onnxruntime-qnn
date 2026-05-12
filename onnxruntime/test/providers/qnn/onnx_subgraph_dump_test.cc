@@ -13,7 +13,6 @@
 #include "onnx/onnx_pb.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
-#include "test/unittest_util/qdq_test_utils.h"
 #include "gtest/gtest.h"
 
 extern std::unique_ptr<Ort::Env> ort_env;
@@ -25,40 +24,23 @@ namespace test {
 
 namespace {
 
-// Builds a QDQ Conv -> Relu test graph. All ops are HTP-supported, so the entire graph
-// becomes a single QNN partition.
-template <typename QuantType = uint8_t>
-GetTestModelFn BuildQDQConvReluTestCase(const std::vector<int64_t>& input_shape) {
-  return [=](ModelTestBuilder& builder) -> void {
+// Builds a small fp32 Conv -> Relu test graph. Both ops are supported by the QNN CPU backend,
+// so the whole graph becomes a single QNN partition (CI runs this on QnnCPUBackendTests, which
+// doesn't have HTP available — QDQ would only get partially claimed there).
+//
+// Avoids onnxruntime::test::TestInputDef<float> deliberately: GCC 13 with -Werror flags a
+// false-positive -Wmaybe-uninitialized inside std::variant when TestInputDef is captured by
+// value into the returned lambda. See the same issue in qnn_basic_test.cc:2637.
+GetTestModelFn BuildConvReluTestCase(const std::vector<int64_t>& input_shape) {
+  return [input_shape](ModelTestBuilder& builder) -> void {
     builder.graph_->set_name("qnn_dump_test_conv_relu");
 
-    const auto input_def = TestInputDef<float>(input_shape, false, -1.0f, 1.0f);
-    MakeTestInput<float>(builder, "input", input_def);
-
-    const QuantParams<QuantType> input_qp = GetTestInputQuantParams<QuantType>(input_def);
-    const std::string conv_input = AddQDQNodePair<QuantType>(builder, "qdq_input", "input",
-                                                             input_qp.scale, input_qp.zero_point,
-                                                             /*use_contrib_qdq=*/false);
-
+    builder.MakeInput<float>("input", input_shape, -1.0f, 1.0f);
     const int64_t c = input_shape[1];
-    const std::vector<int64_t> conv_weight_shape = {c, c, 1, 1};
-    builder.MakeInitializer<float>("conv_weight", conv_weight_shape, -1.f, 1.f);
-
-    builder.AddNode("conv0",
-                    "Conv",
-                    {conv_input, "conv_weight"},
-                    {"conv_out"},
-                    kOnnxDomain);
-
-    const std::string relu_input = AddQDQNodePair<QuantType>(builder, "qdq_after_conv", "conv_out",
-                                                             input_qp.scale, input_qp.zero_point,
-                                                             /*use_contrib_qdq=*/false);
-
-    builder.AddNode("relu0", "Relu", {relu_input}, {"relu_out"}, kOnnxDomain);
-
-    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq_out", "relu_out",
-                                                     input_qp.scale, input_qp.zero_point,
-                                                     /*use_contrib_qdq=*/false);
+    builder.MakeInitializer<float>("conv_weight", {c, c, 1, 1}, -1.f, 1.f);
+    builder.AddNode("conv0", "Conv", {"input", "conv_weight"}, {"conv_out"}, kOnnxDomain);
+    builder.AddNode("relu0", "Relu", {"conv_out"}, {"Y"}, kOnnxDomain);
+    builder.MakeOutput("Y");
   };
 }
 
@@ -69,7 +51,8 @@ ProviderOptions GetCpuProviderOptions() {
   return provider_options;
 }
 
-// Recursively count nodes whose op_type starts with "QNN_" (none should appear in the dump).
+// Counts nodes whose op_type starts with "QNN_" — none should appear in the dump (the dump
+// captures the pre-translation ONNX side, not the QNN op-builder output).
 size_t CountQnnPrefixedOps(const onnx::GraphProto& graph) {
   size_t count = 0;
   for (const auto& node : graph.node()) {
@@ -99,7 +82,7 @@ TEST_F(QnnCPUBackendTests, DumpOnnxSubgraph_SinglePartition_FileIsValidOnnx) {
   provider_options["dump_onnx_subgraph"] = "1";
   provider_options["onnx_subgraph_dir"] = dump_dir.string();
 
-  RunQnnModelTest(BuildQDQConvReluTestCase<uint8_t>({1, 4, 4, 4}),
+  RunQnnModelTest(BuildConvReluTestCase({1, 4, 4, 4}),
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
@@ -136,21 +119,15 @@ TEST_F(QnnCPUBackendTests, DumpOnnxSubgraph_SinglePartition_FileIsValidOnnx) {
   EXPECT_EQ(CountQnnPrefixedOps(model_proto.graph()), 0u)
       << "Dumped subgraph contains QNN_-prefixed op types — should be raw ONNX only.";
 
-  // Must contain QDQ structure + Conv + Relu (the actual ops in the test graph).
+  // Must contain Conv + Relu (the actual ops in the test graph) and nothing else of interest.
   bool has_conv = false;
   bool has_relu = false;
-  bool has_q = false;
-  bool has_dq = false;
   for (const auto& n : model_proto.graph().node()) {
     if (n.op_type() == "Conv") has_conv = true;
     if (n.op_type() == "Relu") has_relu = true;
-    if (n.op_type() == "QuantizeLinear") has_q = true;
-    if (n.op_type() == "DequantizeLinear") has_dq = true;
   }
   EXPECT_TRUE(has_conv) << "Dumped subgraph missing Conv.";
   EXPECT_TRUE(has_relu) << "Dumped subgraph missing Relu.";
-  EXPECT_TRUE(has_q) << "Dumped subgraph missing QuantizeLinear.";
-  EXPECT_TRUE(has_dq) << "Dumped subgraph missing DequantizeLinear.";
 
   // Boundary I/O must be typed.
   ASSERT_GT(model_proto.graph().input_size(), 0);
@@ -205,7 +182,7 @@ TEST_F(QnnCPUBackendTests, DumpOnnxSubgraph_Disabled_NoFilesWritten) {
   provider_options["dump_onnx_subgraph"] = "0";
   provider_options["onnx_subgraph_dir"] = dump_dir.string();  // dir set but feature disabled.
 
-  RunQnnModelTest(BuildQDQConvReluTestCase<uint8_t>({1, 4, 4, 4}),
+  RunQnnModelTest(BuildConvReluTestCase({1, 4, 4, 4}),
                   provider_options,
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
