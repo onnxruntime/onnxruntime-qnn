@@ -95,6 +95,29 @@ Ort::Status ConvertValueInfoToProto(const OrtApi& ort_api,
   return Ort::Status{nullptr};
 }
 
+// RAII helper: ensures that if DumpPartitionAsOnnxModel returns a non-OK status for ANY
+// reason after the output paths are known, both the `.onnx` and the `.onnx.data` are
+// removed from disk before we propagate the error. Disarmed via commit() once both files
+// have been fully written and flushed successfully. Without this guard, a mid-walk failure
+// (or a serialize failure after the sidecar was already populated) could leave behind a
+// partial/orphan pair on disk that round-trip tooling would then misread.
+struct OutputFilesGuard {
+  std::filesystem::path onnx_path;
+  std::filesystem::path data_path;
+  bool committed = false;
+
+  ~OutputFilesGuard() {
+    if (committed) {
+      return;
+    }
+    std::error_code ec;
+    std::filesystem::remove(onnx_path, ec);
+    std::filesystem::remove(data_path, ec);
+  }
+
+  void commit() noexcept { committed = true; }
+};
+
 // Sink for ONNX external_data writes. Each partition gets one of these so all of its
 // initializer bytes are streamed sequentially into a single sidecar file. Avoids protobuf's
 // 2 GB single-message ceiling that fires when inlining gpt-oss-sized weight tensors as raw_data.
@@ -417,6 +440,28 @@ Ort::Status DumpPartitionAsOnnxModel(const OrtApi& ort_api,
   // inputs/outputs computed. We can walk it directly using the standard Graph_* APIs.
   const OrtGraph* sg = &subgraph;
 
+  // Compute output paths and ensure the parent directory exists *before* opening either
+  // file or arming the cleanup guard, so a missing-dir failure can't leave half-written files.
+  std::filesystem::path sidecar_path = output_path;
+  sidecar_path += ".data";
+  {
+    std::error_code ec;
+    std::filesystem::path parent = output_path.parent_path();
+    if (!parent.empty() && !std::filesystem::exists(parent, ec)) {
+      std::filesystem::create_directories(parent, ec);
+      if (ec) {
+        return MAKE_EP_FAIL(("Failed to create output directory '" + parent.string() +
+                             "': " + ec.message())
+                                .c_str());
+      }
+    }
+  }
+
+  // RAII: any non-OK return from this point on removes both files. Disarmed via commit()
+  // at the very end after both writes have succeeded. Declared BEFORE `sink` and the .onnx
+  // ofstream so its destructor runs LAST (after both file handles have been closed).
+  OutputFilesGuard cleanup_guard{output_path, sidecar_path};
+
   ONNX_NAMESPACE::ModelProto model_proto;
 
   int64_t ir_version = 0;
@@ -448,12 +493,9 @@ Ort::Status DumpPartitionAsOnnxModel(const OrtApi& ort_api,
   auto* graph_proto = model_proto.mutable_graph();
   graph_proto->set_name(graph_name);
 
-  // Open the per-partition external-data sidecar. Filename is `<onnx_filename>.data` so the two
-  // files always live next to each other and ONNX loaders resolve the relative `location` ref
-  // against the .onnx file's directory automatically. We pre-create the directory above; the
-  // ofstream open here will fail loudly if the path is bad.
-  std::filesystem::path sidecar_path = output_path;
-  sidecar_path += ".data";
+  // Open the per-partition external-data sidecar. Filename is `<onnx_filename>.data` so the
+  // two files always live next to each other; ONNX loaders resolve the relative `location`
+  // ref against the .onnx file's directory automatically.
   ExternalDataSink sink;
   sink.relative_filename = sidecar_path.filename().string();
   sink.ofs.open(sidecar_path, std::ios::binary | std::ios::trunc);
@@ -518,17 +560,6 @@ Ort::Status DumpPartitionAsOnnxModel(const OrtApi& ort_api,
   }
 
   // Serialize.
-  std::error_code ec;
-  std::filesystem::path parent = output_path.parent_path();
-  if (!parent.empty() && !std::filesystem::exists(parent, ec)) {
-    std::filesystem::create_directories(parent, ec);
-    if (ec) {
-      return MAKE_EP_FAIL(("Failed to create output directory '" + parent.string() +
-                           "': " + ec.message())
-                              .c_str());
-    }
-  }
-
   // Close the sidecar before serializing the model proto. If no bytes were written (partition
   // had no non-empty initializers), drop the empty file to avoid leaving 0-byte artifacts.
   sink.ofs.flush();
@@ -550,6 +581,9 @@ Ort::Status DumpPartitionAsOnnxModel(const OrtApi& ort_api,
   if (!ofs.good()) {
     return MAKE_EP_FAIL(("Output stream not in good state after writing '" + output_path.string() + "'.").c_str());
   }
+
+  // Both files are fully written and flushed — disarm the cleanup guard.
+  cleanup_guard.commit();
 
   if (!IsNullLogger(logger)) {
     std::string msg = "Wrote ONNX subgraph dump: " + output_path.string();

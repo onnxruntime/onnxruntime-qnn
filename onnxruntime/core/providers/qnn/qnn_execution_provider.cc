@@ -2060,7 +2060,8 @@ OrtStatus* ORT_API_CALL QnnEp::CompileImpl(_In_ OrtEp* this_ptr,
       if (!dump_status.IsOK()) {
         ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_WARNING,
                     ("Failed to dump ONNX subgraph for '" + fused_node_name + "': " +
-                     dump_status.GetErrorMessage()).c_str());
+                     dump_status.GetErrorMessage())
+                        .c_str());
       }
     }
 
