@@ -103,7 +103,7 @@ TEST_F(QnnCPUBackendTests, MaxPool_Global) {
 
 TEST_F(QnnCPUBackendTests, MaxPool_Rank3) {
   QNN_SKIP_TEST_ON_AARCH64("Test not supported on Linux ARM64");
-  // TODO: [AISW-163150] QNN CPU backend produces incorrect rank-3 MaxPool results on Linux
+  // TODO: QNN CPU backend produces incorrect rank-3 MaxPool results on Linux
   // aarch64 (qcs6490) — verified by running the same DLC with qnn-net-run + CPU backend.
   // Re-enable once the QNN CPU team fixes the backend bug; ORT QNN EP itself is not at fault.
   RunPoolOpTest("MaxPool",

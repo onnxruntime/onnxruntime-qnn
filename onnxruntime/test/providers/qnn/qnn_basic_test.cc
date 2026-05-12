@@ -564,21 +564,19 @@ TEST_F(QnnCPUBackendTests, QnnSaver_OutputFiles) {
                      TestBackend::Cpu,
                      TestBackend::Saver);
 
-  // Accept saver_output.c / params.bin anywhere in cwd or one level of subdirectory.
+  // Accept saver_output.c / params.bin in flat cwd or in ./saver_output/ subdirectory.
   // QnnSaver writes flat to cwd on Linux aarch64 and to ./saver_output/ on Windows.
   const auto cwd = std::filesystem::current_path();
+  const auto saver_dir = cwd / "saver_output";
   auto find_saver_file = [&](const std::string& filename) -> bool {
-    if (std::filesystem::exists(cwd / filename)) return true;
-    for (const auto& entry : std::filesystem::directory_iterator(cwd)) {
-      if (entry.is_directory() && std::filesystem::exists(entry.path() / filename)) return true;
-    }
-    return false;
+    return std::filesystem::exists(cwd / filename) ||
+           std::filesystem::exists(saver_dir / filename);
   };
 
   EXPECT_TRUE(find_saver_file("saver_output.c"))
-      << "saver_output.c not found in cwd or any immediate subdirectory";
+      << "saver_output.c not found in cwd or ./saver_output/";
   EXPECT_TRUE(find_saver_file("params.bin"))
-      << "params.bin not found in cwd or any immediate subdirectory";
+      << "params.bin not found in cwd or ./saver_output/";
 }
 
 struct ModelAndBuilder {
