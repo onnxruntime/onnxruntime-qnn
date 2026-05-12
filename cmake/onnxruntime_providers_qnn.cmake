@@ -39,7 +39,22 @@
   endif()
 
   onnxruntime_add_shared_library_module(onnxruntime_providers_qnn ${onnxruntime_providers_qnn_all_srcs})
-  onnxruntime_add_include_to_target(onnxruntime_providers_qnn ${GSL_TARGET} safeint_interface nlohmann_json::nlohmann_json onnx onnx_proto)
+  onnxruntime_add_include_to_target(onnxruntime_providers_qnn ${GSL_TARGET} safeint_interface nlohmann_json::nlohmann_json)
+
+  # ONNX + protobuf headers are needed by builder/onnx_subgraph_dumper.cc, but they trip
+  # third-party warnings (e.g. -Wshorten-64-to-32 from protobuf's parse_context.h on the
+  # aarch64_oe_gcc11_2 clang toolchain that builds with -Werror). Bring them in as SYSTEM
+  # includes so warnings from those headers don't break the build.
+  foreach(onnx_dep_target onnx onnx_proto)
+    get_target_property(_onnx_inc_dirs ${onnx_dep_target} INTERFACE_INCLUDE_DIRECTORIES)
+    if(_onnx_inc_dirs)
+      target_include_directories(onnxruntime_providers_qnn SYSTEM PRIVATE ${_onnx_inc_dirs})
+    endif()
+    get_target_property(_onnx_compile_defs ${onnx_dep_target} INTERFACE_COMPILE_DEFINITIONS)
+    if(_onnx_compile_defs)
+      target_compile_definitions(onnxruntime_providers_qnn PRIVATE ${_onnx_compile_defs})
+    endif()
+  endforeach()
 
   target_link_libraries(onnxruntime_providers_qnn PRIVATE ${ABSEIL_LIBS} onnx onnx_proto)
 
