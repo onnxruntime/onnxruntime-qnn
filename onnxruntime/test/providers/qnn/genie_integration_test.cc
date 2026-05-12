@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 #include <memory>
+#include <optional>
 #include <string>
 
 #if defined(_WIN32)
@@ -71,44 +72,61 @@ static GetTestModelFn CreateDlcContextGraph() {
 }
 
 // ---------------------------------------------------------------------------
-// Shared helper: builds the serialised model bytes and creates a session
-// backed by MockGenie. Returns the session; registered_ep_device lifetime
-// must outlive the session.
+// RAII helper that jointly owns the registered EP device handle and the
+// Ort::Session, so the session is destroyed before the EP device handle is
+// unregistered.
+//
+// ORDER MATTERS — non-static members are destroyed in reverse declaration
+// order. registered_ep_device_ is declared first (destroyed last); session_
+// is declared second (destroyed first). Callers cannot violate the order.
 // ---------------------------------------------------------------------------
-static Ort::Session MakeGenieSession(
-    Ort::Env& env,
-    RegisteredEpDeviceUniquePtr& registered_ep_device) {
-  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
-  ModelTestBuilder helper;
-  CreateDlcContextGraph()(helper);
+class ScopedGenieSession {
+ public:
+  explicit ScopedGenieSession(Ort::Env& env) {
+    const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+    ModelTestBuilder helper;
+    CreateDlcContextGraph()(helper);
 
-  for (const auto& [domain, version] : domain_to_version) {
-    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{
-        helper.model_.add_opset_import()};
-    opset_id_proto->set_domain(domain);
-    opset_id_proto->set_version(version);
+    for (const auto& [domain, version] : domain_to_version) {
+      const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{
+          helper.model_.add_opset_import()};
+      opset_id_proto->set_domain(domain);
+      opset_id_proto->set_version(version);
+    }
+    helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+
+    std::string model_data;
+    helper.model_.SerializeToString(&model_data);
+    const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+    Ort::SessionOptions so;
+    ProviderOptions provider_options;
+    provider_options["backend_path"] = kMockGeniePath;
+    RegisterQnnEpLibrary(registered_ep_device_, so, "QNNExecutionProvider", provider_options);
+
+    session_.emplace(env, model_data_span.data(), model_data_span.size(), so);
   }
-  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
 
-  std::string model_data;
-  helper.model_.SerializeToString(&model_data);
-  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+  ScopedGenieSession(const ScopedGenieSession&) = delete;
+  ScopedGenieSession& operator=(const ScopedGenieSession&) = delete;
+  ScopedGenieSession(ScopedGenieSession&&) = delete;
+  ScopedGenieSession& operator=(ScopedGenieSession&&) = delete;
 
-  Ort::SessionOptions so;
-  ProviderOptions provider_options;
-  provider_options["backend_path"] = kMockGeniePath;
-  RegisterQnnEpLibrary(registered_ep_device, so, "QNNExecutionProvider", provider_options);
+  Ort::Session& session() { return *session_; }
+  const OrtEpDevice* ep_device() const { return registered_ep_device_.get(); }
 
-  return Ort::Session(env, model_data_span.data(), model_data_span.size(), so);
-}
+ private:
+  // ORDER MATTERS — destroyed in reverse decl order: session first, then EP device.
+  RegisteredEpDeviceUniquePtr registered_ep_device_;
+  std::optional<Ort::Session> session_;
+};
 
 // ---------------------------------------------------------------------------
 // Test: session creation with MockGenie succeeds (no exception thrown).
 // ---------------------------------------------------------------------------
 TEST_F(GenieSessionTest, CreateSession_Succeeds) {
-  RegisteredEpDeviceUniquePtr registered_ep_device;
   EXPECT_NO_THROW({
-    Ort::Session session = MakeGenieSession(*env_, registered_ep_device);
+    ScopedGenieSession scoped(*env_);
   });
 }
 
@@ -118,35 +136,32 @@ TEST_F(GenieSessionTest, CreateSession_Succeeds) {
 // at index 1, so the final output shape is {1, 1, 1}.
 // ---------------------------------------------------------------------------
 TEST_F(GenieSessionTest, Run_ProducesExpectedOutputShape) {
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  {
-    Ort::Session session = MakeGenieSession(*env_, registered_ep_device);
+  ScopedGenieSession scoped(*env_);
 
-    // Input: int32 tensor of shape {1, 1} — matches the graph definition.
-    std::vector<int32_t> input_data = {0};
-    const std::vector<int64_t> input_shape = {1, 1};
-    Ort::MemoryInfo mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-    Ort::Value input_tensor = Ort::Value::CreateTensor<int32_t>(
-        mem_info, input_data.data(), input_data.size(),
-        input_shape.data(), input_shape.size());
+  // Input: int32 tensor of shape {1, 1} — matches the graph definition.
+  std::vector<int32_t> input_data = {0};
+  const std::vector<int64_t> input_shape = {1, 1};
+  Ort::MemoryInfo mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+  Ort::Value input_tensor = Ort::Value::CreateTensor<int32_t>(
+      mem_info, input_data.data(), input_data.size(),
+      input_shape.data(), input_shape.size());
 
-    const char* input_names[] = {"genie_input"};
-    const char* output_names[] = {"genie_output"};
-    std::vector<Ort::Value> outputs;
+  const char* input_names[] = {"genie_input"};
+  const char* output_names[] = {"genie_output"};
+  std::vector<Ort::Value> outputs;
 
-    EXPECT_NO_THROW({
-      outputs = session.Run(Ort::RunOptions{nullptr},
-                            input_names, &input_tensor, 1,
-                            output_names, 1);
-    });
+  EXPECT_NO_THROW({
+    outputs = scoped.session().Run(Ort::RunOptions{nullptr},
+                                   input_names, &input_tensor, 1,
+                                   output_names, 1);
+  });
 
-    ASSERT_EQ(outputs.size(), 1u);
-    auto shape = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
-    ASSERT_EQ(shape.size(), 3u);
-    EXPECT_EQ(shape[0], 1);
-    EXPECT_EQ(shape[1], 1);
-    EXPECT_EQ(shape[2], 1);
-  }  // session destroyed before registered_ep_device
+  ASSERT_EQ(outputs.size(), 1u);
+  auto shape = outputs[0].GetTensorTypeAndShapeInfo().GetShape();
+  ASSERT_EQ(shape.size(), 3u);
+  EXPECT_EQ(shape[0], 1);
+  EXPECT_EQ(shape[1], 1);
+  EXPECT_EQ(shape[2], 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -162,11 +177,10 @@ TEST_F(GenieSessionTest, MockGenie_CallTrackingFunctions_Resolvable) {
   reset();
 
   EXPECT_EQ(get_count("DlcConfig_create"), 0);
-  RegisteredEpDeviceUniquePtr registered_ep_device;
   {
-    Ort::Session session = MakeGenieSession(*env_, registered_ep_device);
+    ScopedGenieSession scoped(*env_);
     EXPECT_EQ(get_count("DlcConfig_create"), 1);
-  }  // session destroyed before registered_ep_device
+  }
   reset();
   EXPECT_EQ(get_count("DlcConfig_create"), 0);
 }
@@ -184,17 +198,14 @@ TEST_F(GenieSessionTest, CreateState_InvokesExpectedApiSequence) {
   ASSERT_NE(get_count, nullptr);
   reset();
 
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  {
-    Ort::Session session = MakeGenieSession(*env_, registered_ep_device);
+  ScopedGenieSession scoped(*env_);
 
-    EXPECT_EQ(get_count("DlcConfig_create"), 1) << "GenieDlcConfig_create";
-    EXPECT_EQ(get_count("Dlc_create"), 1) << "GenieDlc_create";
-    EXPECT_EQ(get_count("NodeConfig_createFromDlc"), 1) << "GenieNodeConfig_createFromDlc";
-    EXPECT_EQ(get_count("Log_create"), 1) << "GenieLog_create";
-    EXPECT_EQ(get_count("NodeConfig_bindLogger"), 1) << "GenieNodeConfig_bindLogger";
-    EXPECT_EQ(get_count("Node_create"), 1) << "GenieNode_create";
-  }  // session destroyed before registered_ep_device
+  EXPECT_EQ(get_count("DlcConfig_create"), 1) << "GenieDlcConfig_create";
+  EXPECT_EQ(get_count("Dlc_create"), 1) << "GenieDlc_create";
+  EXPECT_EQ(get_count("NodeConfig_createFromDlc"), 1) << "GenieNodeConfig_createFromDlc";
+  EXPECT_EQ(get_count("Log_create"), 1) << "GenieLog_create";
+  EXPECT_EQ(get_count("NodeConfig_bindLogger"), 1) << "GenieNodeConfig_bindLogger";
+  EXPECT_EQ(get_count("Node_create"), 1) << "GenieNode_create";
 }
 
 // ---------------------------------------------------------------------------
@@ -211,29 +222,26 @@ TEST_F(GenieSessionTest, Compute_InvokesExpectedApiSequence) {
   ASSERT_NE(get_count, nullptr);
   reset();
 
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  {
-    Ort::Session session = MakeGenieSession(*env_, registered_ep_device);
+  ScopedGenieSession scoped(*env_);
 
-    std::vector<int32_t> input_data = {0};
-    const std::vector<int64_t> input_shape = {1, 1};
-    Ort::MemoryInfo mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-    Ort::Value input_tensor = Ort::Value::CreateTensor<int32_t>(
-        mem_info, input_data.data(), input_data.size(),
-        input_shape.data(), input_shape.size());
+  std::vector<int32_t> input_data = {0};
+  const std::vector<int64_t> input_shape = {1, 1};
+  Ort::MemoryInfo mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+  Ort::Value input_tensor = Ort::Value::CreateTensor<int32_t>(
+      mem_info, input_data.data(), input_data.size(),
+      input_shape.data(), input_shape.size());
 
-    const char* input_names[] = {"genie_input"};
-    const char* output_names[] = {"genie_output"};
-    session.Run(Ort::RunOptions{nullptr},
-                input_names, &input_tensor, 1,
-                output_names, 1);
+  const char* input_names[] = {"genie_input"};
+  const char* output_names[] = {"genie_output"};
+  scoped.session().Run(Ort::RunOptions{nullptr},
+                       input_names, &input_tensor, 1,
+                       output_names, 1);
 
-    EXPECT_EQ(get_count("Node_setData"), 1) << "GenieNode_setData";
-    EXPECT_EQ(get_count("Node_execute"), 1) << "GenieNode_execute";
-    EXPECT_EQ(get_count("Node_getData"), 1) << "GenieNode_getData";
-    // KV-cache rewind is not triggered on a fresh session (rewind_ starts at 1):
-    EXPECT_EQ(get_count("Node_reset"), 0) << "GenieNode_reset should not be called on first Run";
-  }  // session destroyed before registered_ep_device
+  EXPECT_EQ(get_count("Node_setData"), 1) << "GenieNode_setData";
+  EXPECT_EQ(get_count("Node_execute"), 1) << "GenieNode_execute";
+  EXPECT_EQ(get_count("Node_getData"), 1) << "GenieNode_getData";
+  // KV-cache rewind is not triggered on a fresh session (rewind_ starts at 1):
+  EXPECT_EQ(get_count("Node_reset"), 0) << "GenieNode_reset should not be called on first Run";
 }
 
 // ---------------------------------------------------------------------------
@@ -251,38 +259,33 @@ TEST_F(GenieSessionTest, TwoSequentialSessions_BothSucceed) {
   ASSERT_NE(get_count, nullptr);
 
   // First session — registers the EP library and creates the backend.
-  RegisteredEpDeviceUniquePtr ep1;
-  {
-    Ort::Session session1 = MakeGenieSession(*env_, ep1);
-    reset();
+  ScopedGenieSession scoped1(*env_);
+  reset();
 
-    // Second session — reuse ep1's registration; do NOT call RegisterQnnEpLibrary.
-    const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
-    ModelTestBuilder helper;
-    CreateDlcContextGraph()(helper);
-    for (const auto& [domain, version] : domain_to_version) {
-      const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{
-          helper.model_.add_opset_import()};
-      opset_id_proto->set_domain(domain);
-      opset_id_proto->set_version(version);
-    }
-    helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
-    std::string model_data;
-    helper.model_.SerializeToString(&model_data);
-    const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+  // Second session — reuse scoped1's registration; do NOT call RegisterQnnEpLibrary.
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+  ModelTestBuilder helper;
+  CreateDlcContextGraph()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{
+        helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
 
-    Ort::SessionOptions so2;
-    ProviderOptions provider_options;
-    provider_options["backend_path"] = kMockGeniePath;
-    so2.AppendExecutionProvider_V2(*GetOrtEnv(), {Ort::ConstEpDevice(ep1.get())}, provider_options);
-    {
-      Ort::Session session2(*env_, model_data_span.data(), model_data_span.size(), so2);
+  Ort::SessionOptions so2;
+  ProviderOptions provider_options;
+  provider_options["backend_path"] = kMockGeniePath;
+  so2.AppendExecutionProvider_V2(*GetOrtEnv(), {Ort::ConstEpDevice(scoped1.ep_device())}, provider_options);
+  // session2 is declared after scoped1, so it is destroyed first (reverse decl order).
+  Ort::Session session2(*env_, model_data_span.data(), model_data_span.size(), so2);
 
-      // session2's CreateStateImpl ran exactly once.
-      EXPECT_EQ(get_count("DlcConfig_create"), 1);
-    }  // session2 destroyed before ep1
-  }  // session1 destroyed before ep1
-  // ep1 destroyed here
+  // session2's CreateStateImpl ran exactly once.
+  EXPECT_EQ(get_count("DlcConfig_create"), 1);
 }
 
 }  // namespace test
