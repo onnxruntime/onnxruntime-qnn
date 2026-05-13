@@ -546,6 +546,7 @@ TEST_F(QnnHTPBackendTests, PadReflectModeNeg) {
 // Disabled: ORT v1.26.0 (microsoft/onnxruntime#27652) added strict reflect-pad
 // bounds in the CPU kernel, causing the FP32 baseline in TestQDQModelAccuracy
 // to throw before QNN's rejection can be verified.
+// TODO: [AISW-183490]
 TEST_F(QnnHTPBackendTests, DISABLED_PadReflectModeOutOfRangePadAmount) {
   bool has_constant_value_input = true;
   RunQDQPadOpTest<uint8_t>(TestInputDef<float>({3, 2}, false, {1.0f, 1.2f, 2.3f, 3.4f, 4.5f, 5.6f}),
