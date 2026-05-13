@@ -80,6 +80,12 @@ bool CheckShape(const QnnModelWrapper& qnn_model_wrapper, const OrtNode& reshape
   RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensionsCount(input_tensor_info, &input_dims_count), ort_api, false);
   RETURN_DEFAULT_IF_API_FAIL(ort_api.GetDimensionsCount(output_tensor_info, &output_dims_count), ort_api, false);
 
+  // QNN HTP FullyConnected only supports input rank <= 4. The fusion passes the input_reshape's
+  // original input directly to FC (bypassing the reshape), so reject rank > 4.
+  if (input_dims_count > 4) {
+    return false;
+  }
+
   // Output must be 2D [batch, n]
   if (output_dims_count != 2) {
     return false;
