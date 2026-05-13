@@ -77,7 +77,7 @@ for wheel in "${WHEEL_ARRAY[@]}"; do
     # Copy wheel and rename to .zip
     if ! cp "$wheel" "$ZIP_PATH" 2>/dev/null; then
         echo "  ERROR: Failed to process wheel - Could not copy wheel"
-        ((FAILED_WHEELS++))
+        FAILED_WHEELS=$((FAILED_WHEELS + 1))
         FAILED_WHEEL_NAMES="$FAILED_WHEEL_NAMES$WHEEL_NAME"$'\n'
         continue
     fi
@@ -91,7 +91,7 @@ for wheel in "${WHEEL_ARRAY[@]}"; do
         if ! python3 -m zipfile -e "$ZIP_PATH" "$TEMP_EXTRACT_DIR" 2>/dev/null; then
             echo "  ERROR: Failed to process wheel - Could not extract zip"
             rm -rf "$TEMP_EXTRACT_DIR" "$ZIP_PATH"
-            ((FAILED_WHEELS++))
+            FAILED_WHEELS=$((FAILED_WHEELS + 1))
             FAILED_WHEEL_NAMES="$FAILED_WHEEL_NAMES$WHEEL_NAME"$'\n'
             continue
         fi
@@ -102,7 +102,7 @@ for wheel in "${WHEEL_ARRAY[@]}"; do
         if [ -z "$DLL_PATH" ]; then
             echo "  ERROR: DLL not found in extracted wheel"
             rm -rf "$TEMP_EXTRACT_DIR"
-            ((FAILED_WHEELS++))
+            FAILED_WHEELS=$((FAILED_WHEELS + 1))
             FAILED_WHEEL_NAMES="$FAILED_WHEEL_NAMES$WHEEL_NAME"$'\n'
             continue
         fi
@@ -117,7 +117,7 @@ for wheel in "${WHEEL_ARRAY[@]}"; do
         if ! cp "$DLL_PATH" "$TARGET_DLL_PATH" 2>/dev/null; then
             echo "  ERROR: Failed to process wheel - Could not copy DLL"
             rm -rf "$TEMP_EXTRACT_DIR"
-            ((FAILED_WHEELS++))
+            FAILED_WHEELS=$((FAILED_WHEELS + 1))
             FAILED_WHEEL_NAMES="$FAILED_WHEEL_NAMES$WHEEL_NAME"$'\n'
             continue
         fi
@@ -136,7 +136,7 @@ for wheel in "${WHEEL_ARRAY[@]}"; do
         if ! python3 -m zipfile -e "$ZIP_PATH" "$TEMP_EXTRACT_DIR" 2>/dev/null; then
             echo "  ERROR: Failed to process wheel - Could not extract zip"
             rm -rf "$TEMP_EXTRACT_DIR" "$ZIP_PATH"
-            ((FAILED_WHEELS++))
+            FAILED_WHEELS=$((FAILED_WHEELS + 1))
             FAILED_WHEEL_NAMES="$FAILED_WHEEL_NAMES$WHEEL_NAME"$'\n'
             continue
         fi
@@ -147,7 +147,7 @@ for wheel in "${WHEEL_ARRAY[@]}"; do
         if [ -z "$LIBS_DIR" ]; then
             echo "  ERROR: libs directory not found in extracted wheel"
             rm -rf "$TEMP_EXTRACT_DIR"
-            ((FAILED_WHEELS++))
+            FAILED_WHEELS=$((FAILED_WHEELS + 1))
             FAILED_WHEEL_NAMES="$FAILED_WHEEL_NAMES$WHEEL_NAME"$'\n'
             continue
         fi
@@ -175,7 +175,7 @@ for wheel in "${WHEEL_ARRAY[@]}"; do
                 if ! cp "$SOURCE_DLL_PATH" "$TARGET_DLL_PATH" 2>/dev/null; then
                     echo "  ERROR: Failed to process wheel - Could not copy DLL"
                     rm -rf "$TEMP_EXTRACT_DIR" "$FINAL_EXTRACT_DIR"
-                    ((FAILED_WHEELS++))
+                    FAILED_WHEELS=$((FAILED_WHEELS + 1))
                     FAILED_WHEEL_NAMES="$FAILED_WHEEL_NAMES$WHEEL_NAME"$'\n'
                     COPY_FAILED=true
                     break
@@ -192,7 +192,7 @@ for wheel in "${WHEEL_ARRAY[@]}"; do
         if [ "$DLL_FOUND" = false ]; then
             echo "  ERROR: No DLLs found in libs subdirectories"
             rm -rf "$TEMP_EXTRACT_DIR" "$FINAL_EXTRACT_DIR"
-            ((FAILED_WHEELS++))
+            FAILED_WHEELS=$((FAILED_WHEELS + 1))
             FAILED_WHEEL_NAMES="$FAILED_WHEEL_NAMES$WHEEL_NAME"$'\n'
             continue
         fi
@@ -204,7 +204,7 @@ for wheel in "${WHEEL_ARRAY[@]}"; do
         EXTRACTED_PATH="$FINAL_EXTRACT_DIR"
     fi
 
-    ((PROCESSED_WHEELS++))
+    PROCESSED_WHEELS=$((PROCESSED_WHEELS + 1))
     echo "  Ready for signing"
 
     # Delete the zip file

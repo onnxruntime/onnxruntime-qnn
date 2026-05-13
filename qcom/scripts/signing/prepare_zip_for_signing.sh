@@ -70,7 +70,7 @@ for zipFile in "${ZIP_ARRAY[@]}"; do
     if ! python3 -m zipfile -e "$zipFile" "$TEMP_EXTRACT_DIR" 2>/dev/null; then
         echo "  ERROR: Failed to process zip - Could not extract zip"
         rm -rf "$TEMP_EXTRACT_DIR" "$FINAL_EXTRACT_DIR"
-        ((FAILED_ZIPS++))
+        FAILED_ZIPS=$((FAILED_ZIPS + 1))
         FAILED_ZIP_NAMES="$FAILED_ZIP_NAMES$ZIP_NAME"$'\n'
         continue
     fi
@@ -86,7 +86,7 @@ for zipFile in "${ZIP_ARRAY[@]}"; do
     if [ -z "$DLL_PATH" ]; then
         echo "  ERROR: DLL not found in extracted zip"
         rm -rf "$TEMP_EXTRACT_DIR" "$FINAL_EXTRACT_DIR"
-        ((FAILED_ZIPS++))
+        FAILED_ZIPS=$((FAILED_ZIPS + 1))
         FAILED_ZIP_NAMES="$FAILED_ZIP_NAMES$ZIP_NAME"$'\n'
         continue
     fi
@@ -96,7 +96,7 @@ for zipFile in "${ZIP_ARRAY[@]}"; do
     if ! cp "$DLL_PATH" "$TARGET_DLL_PATH" 2>/dev/null; then
         echo "  ERROR: Failed to process zip - Could not copy DLL"
         rm -rf "$TEMP_EXTRACT_DIR" "$FINAL_EXTRACT_DIR"
-        ((FAILED_ZIPS++))
+        FAILED_ZIPS=$((FAILED_ZIPS + 1))
         FAILED_ZIP_NAMES="$FAILED_ZIP_NAMES$ZIP_NAME"$'\n'
         continue
     fi
@@ -104,7 +104,7 @@ for zipFile in "${ZIP_ARRAY[@]}"; do
     # Clean up temporary extraction
     rm -rf "$TEMP_EXTRACT_DIR"
 
-    ((PROCESSED_ZIPS++))
+    PROCESSED_ZIPS=$((PROCESSED_ZIPS + 1))
     echo "  Ready for signing"
 done
 
