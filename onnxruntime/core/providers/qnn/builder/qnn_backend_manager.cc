@@ -342,6 +342,11 @@ void QnnBackendManager::SetQnnBackendType(uint32_t backend_id) {
 }
 
 Ort::Status QnnBackendManager::LoadBackend() {
+  if (backend_lib_handle_ != nullptr) {
+    // Backend already loaded
+    return Ort::Status();
+  }
+
 #if defined(__aarch64__) && defined(__linux__)
   // QNN requires ADSP_LIBRARY_PATH to be set in order to find skel libs on Linux
   static std::once_flag set_adsp_path_once;
@@ -2529,7 +2534,9 @@ Ort::Status QnnBackendManager::AddQnnContextHandle(Qnn_ContextHandle_t raw_conte
 
   // take ownership of `raw_context_handle`
   auto context_handle = UniqueQnnContextHandle(raw_context_handle, free_context_handle);
-  auto mem_handle_manager = std::make_unique<QnnContextMemHandleManager>(GetQnnInterface(), raw_context_handle);
+  auto mem_handle_manager = std::make_unique<QnnContextMemHandleManager>(GetQnnInterface(),
+                                                                         raw_context_handle,
+                                                                         qnn_backend_type_);
 
   auto context_handle_record = std::make_shared<QnnContextHandleRecord>();
   context_handle_record->context_handle = std::move(context_handle);
@@ -2570,7 +2577,8 @@ Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t
                                                             *logger_ptr_));
 
   if (did_register) {
-    HtpSharedMemoryAllocator::AllocationCleanUpFn unregister_mem_handle =
+    // The cleanup lambda is the same for both HTP and DX12: unregister the QNN mem handle when the allocation is freed.
+    auto unregister_mem_handle =
         [shared_memory_address,
          weak_backend_manager = weak_from_this(),
          weak_context_handle_record = std::weak_ptr{context_handle_record}](
@@ -2600,8 +2608,20 @@ Ort::Status QnnBackendManager::GetOrRegisterContextMemHandle(Qnn_ContextHandle_t
           }
         };
 
-    RETURN_IF_ERROR(HtpSharedMemoryAllocator::AddAllocationCleanUp(shared_memory_address,
-                                                                   std::move(unregister_mem_handle)));
+    Ort::Status add_cleanup_status = Ort::Status();
+    if (IsNpuBackend(GetQnnBackendType())) {
+      RETURN_IF_ERROR(HtpSharedMemoryAllocator::AddAllocationCleanUp(
+          shared_memory_address, HtpSharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)}));
+    }
+#ifdef _WIN32
+    else if (IsGpuBackend(GetQnnBackendType())) {
+      RETURN_IF_ERROR(Dx12SharedMemoryAllocator::AddAllocationCleanUp(
+          shared_memory_address, Dx12SharedMemoryAllocator::AllocationCleanUpFn{std::move(unregister_mem_handle)}));
+    }
+#endif  // _WIN32
+    else {
+      return MAKE_EP_FAIL("Cannot add allocation clean up function for unsupported backend.");
+    }
   }
 
   return Ort::Status();

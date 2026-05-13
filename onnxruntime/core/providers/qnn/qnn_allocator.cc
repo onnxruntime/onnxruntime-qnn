@@ -287,4 +287,273 @@ Ort::Status HtpSharedMemoryAllocator::AddAllocationCleanUpForThisAllocator(void*
   return Ort::Status();
 }
 
+#ifdef _WIN32
+
+namespace {
+
+// Tracks allocations made by Dx12SharedMemoryAllocator instances.
+// Parallel to AllocationTracker but typed for Dx12SharedMemoryAllocator.
+class Dx12AllocationTracker {
+ public:
+  struct Record {
+    void* base_address;
+    size_t size_in_bytes;
+    gsl::not_null<Dx12SharedMemoryAllocator*> allocator;
+  };
+
+  bool RegisterAllocation(void* base_address, size_t size_in_bytes, Dx12SharedMemoryAllocator& allocator);
+  bool UnregisterAllocation(void* base_address);
+  std::optional<Record> LookUp(void* address_within_allocation);
+
+ private:
+  std::map<const void*, Record> records_;
+  std::shared_mutex records_mutex_;
+};
+
+bool Dx12AllocationTracker::RegisterAllocation(void* base_address, size_t size_in_bytes,
+                                               Dx12SharedMemoryAllocator& allocator) {
+  Record record{base_address, size_in_bytes, &allocator};
+  std::unique_lock write_lock{records_mutex_};
+  return records_.emplace(base_address, std::move(record)).second;
+}
+
+bool Dx12AllocationTracker::UnregisterAllocation(void* base_address) {
+  std::unique_lock write_lock{records_mutex_};
+  return records_.erase(base_address) == 1;
+}
+
+std::optional<Dx12AllocationTracker::Record> Dx12AllocationTracker::LookUp(void* address_within_allocation) {
+  std::shared_lock read_lock{records_mutex_};
+
+  const auto first_larger_it = records_.upper_bound(address_within_allocation);
+  if (first_larger_it == records_.begin()) {
+    return std::nullopt;
+  }
+
+  const auto record_it = std::prev(first_larger_it);
+  const auto record = record_it->second;
+  assert(address_within_allocation >= record.base_address);
+
+  if (reinterpret_cast<std::byte*>(address_within_allocation) >=
+      reinterpret_cast<std::byte*>(record.base_address) + record.size_in_bytes) {
+    return std::nullopt;
+  }
+
+  return record;
+}
+
+Dx12AllocationTracker& GlobalDx12AllocationTracker() {
+  static Dx12AllocationTracker tracker{};
+  return tracker;
+}
+
+}  // namespace
+
+void* ORT_API_CALL Dx12SharedMemoryAllocator::AllocImpl(struct OrtAllocator* this_, size_t requested_size) {
+  Dx12SharedMemoryAllocator* allocator = static_cast<Dx12SharedMemoryAllocator*>(this_);
+
+  if (requested_size == 0) {
+    ORT_CXX_API_THROW("Dx12SharedMemoryAllocator: requested_size must be > 0.", ORT_EP_FAIL);
+  }
+
+  // Create a D3D12 buffer resource in an UPLOAD heap (CPU-writable, GPU-readable).
+  D3D12_RESOURCE_DESC buffer_desc = {};
+  buffer_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+  buffer_desc.Width = requested_size;
+  buffer_desc.Height = 1;
+  buffer_desc.DepthOrArraySize = 1;
+  buffer_desc.MipLevels = 1;
+  buffer_desc.Format = DXGI_FORMAT_UNKNOWN;
+  buffer_desc.SampleDesc.Count = 1;
+  buffer_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+  buffer_desc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+  D3D12_HEAP_PROPERTIES heap_props = {};
+  heap_props.Type = D3D12_HEAP_TYPE_UPLOAD;
+  heap_props.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+  heap_props.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+  heap_props.CreationNodeMask = 1;
+  heap_props.VisibleNodeMask = 1;
+
+  ID3D12Resource* d3d12_resource = nullptr;
+  HRESULT hr = allocator->dx12_device_->CreateCommittedResource(
+      &heap_props,
+      D3D12_HEAP_FLAG_NONE,
+      &buffer_desc,
+      D3D12_RESOURCE_STATE_COMMON,
+      nullptr,
+      IID_PPV_ARGS(&d3d12_resource));
+  if (FAILED(hr) || d3d12_resource == nullptr) {
+    ORT_CXX_API_THROW("Dx12SharedMemoryAllocator: CreateCommittedResource failed.", ORT_EP_FAIL);
+  }
+
+  // Map the resource to get a CPU-visible pointer (persistent mapping for UPLOAD heap).
+  void* mapped_ptr = nullptr;
+  hr = d3d12_resource->Map(0, nullptr, &mapped_ptr);
+  if (FAILED(hr) || mapped_ptr == nullptr) {
+    d3d12_resource->Release();
+    ORT_CXX_API_THROW("Dx12SharedMemoryAllocator: Map failed.", ORT_EP_FAIL);
+  }
+
+  // Store allocation record.
+  {
+    Dx12AllocationInfo dx12_info{};
+    dx12_info.resource = d3d12_resource;
+    dx12_info.offset = 0;
+    dx12_info.total_size = requested_size;
+
+    AllocationRecord allocation_record{};
+    allocation_record.dx12_info = std::move(dx12_info);
+
+    ORT_CXX_LOGF(allocator->logger_,
+                 ORT_LOGGING_LEVEL_INFO,
+                 "\nMaking DX12 allocation:"
+                 "\n  resource   = %p"
+                 "\n  offset     = %lu"
+                 "\n  total_size = %lu"
+                 "\n  mapped_ptr = %p\n",
+                 allocation_record.dx12_info.resource,
+                 allocation_record.dx12_info.offset,
+                 allocation_record.dx12_info.total_size,
+                 mapped_ptr);
+
+    std::scoped_lock g{allocator->allocations_mutex_};
+    const bool inserted = allocator->allocations_.emplace(mapped_ptr, std::move(allocation_record)).second;
+    if (!inserted) {
+      d3d12_resource->Unmap(0, nullptr);
+      d3d12_resource->Release();
+      ORT_CXX_API_THROW("Dx12SharedMemoryAllocator: Allocation record already exists for address.", ORT_EP_FAIL);
+    }
+  }
+
+  // Register with global DX12 allocation tracker.
+  {
+    const bool registered = GlobalDx12AllocationTracker().RegisterAllocation(mapped_ptr, requested_size, *allocator);
+    if (!registered) {
+      ORT_CXX_API_THROW("Dx12SharedMemoryAllocator: Attempted to register allocation but it is already tracked.", ORT_EP_FAIL);
+    }
+  }
+
+  return mapped_ptr;
+}
+
+void ORT_API_CALL Dx12SharedMemoryAllocator::FreeImpl(struct OrtAllocator* this_, void* allocation_address) {
+  Dx12SharedMemoryAllocator* allocator = static_cast<Dx12SharedMemoryAllocator*>(this_);
+
+  if (allocation_address == nullptr) {
+    return;
+  }
+
+  const auto allocation_node = [allocator, allocation_address]() {
+    std::scoped_lock g{allocator->allocations_mutex_};
+    return allocator->allocations_.extract(allocation_address);
+  }();
+
+  if (allocation_node.empty()) {
+    ORT_CXX_API_THROW("Dx12SharedMemoryAllocator: Failed to get allocation info for address.", ORT_EP_FAIL);
+  }
+
+  try {
+    const auto& allocation_record = allocation_node.mapped();
+    ID3D12Resource* resource = allocation_record.dx12_info.resource;
+
+    ORT_CXX_LOGF(allocator->logger_,
+                 ORT_LOGGING_LEVEL_INFO,
+                 "\nFreeing DX12 allocation:"
+                 "\n  resource           = %p"
+                 "\n  offset             = %lu"
+                 "\n  total_size         = %lu"
+                 "\n  allocation_address = %p\n",
+                 allocation_record.dx12_info.resource,
+                 allocation_record.dx12_info.offset,
+                 allocation_record.dx12_info.total_size,
+                 allocation_address);
+
+    // Unregister from global tracker.
+    {
+      const bool unregistered = GlobalDx12AllocationTracker().UnregisterAllocation(allocation_address);
+      if (!unregistered) {
+        std::ostringstream oss;
+        oss << "Dx12SharedMemoryAllocator: Attempted to deregister allocation but it is untracked for address ("
+            << allocation_address << ").";
+        ORT_CXX_LOG(allocator->logger_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
+      }
+    }
+
+    // Run cleanup callbacks (e.g., QNN mem handle deregistration).
+    for (const auto& clean_up_fn : allocation_record.clean_up_fns) {
+      try {
+        clean_up_fn(allocation_address);
+      } catch (const std::exception& e) {
+        std::ostringstream oss;
+        oss << "Dx12SharedMemoryAllocator: Exception in clean up callback for address ("
+            << allocation_address << "): " << e.what();
+        ORT_CXX_LOG(allocator->logger_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
+      }
+    }
+
+    // Unmap and release the D3D12 resource.
+    if (resource != nullptr) {
+      resource->Unmap(0, nullptr);
+      resource->Release();
+    }
+  } catch (const std::exception& e) {
+    std::ostringstream oss;
+    oss << "Dx12SharedMemoryAllocator: Exception while freeing address (" << allocation_address << "): " << e.what();
+    ORT_CXX_LOG(allocator->logger_, ORT_LOGGING_LEVEL_ERROR, oss.str().c_str());
+  }
+}
+
+Ort::Status Dx12SharedMemoryAllocator::GetAllocationDx12Info(void* address_within_allocation,
+                                                             Dx12AllocationInfo& allocation_info_out) {
+  const auto tracked_record = GlobalDx12AllocationTracker().LookUp(address_within_allocation);
+  RETURN_IF_NOT(tracked_record.has_value(), "Dx12SharedMemoryAllocator: Failed to look up tracked allocation.");
+
+  void* const base_address = tracked_record->base_address;
+  Dx12AllocationInfo dx12_info{};
+  RETURN_IF_ERROR(tracked_record->allocator->GetAllocationDx12InfoForThisAllocator(base_address, dx12_info));
+
+  // Adjust offset for address_within_allocation.
+  const auto offset_from_base = std::distance(reinterpret_cast<std::byte*>(base_address),
+                                              reinterpret_cast<std::byte*>(address_within_allocation));
+  dx12_info.offset += offset_from_base;
+
+  allocation_info_out = std::move(dx12_info);
+  return Ort::Status();
+}
+
+Ort::Status Dx12SharedMemoryAllocator::AddAllocationCleanUp(void* address_within_allocation,
+                                                            AllocationCleanUpFn&& allocation_clean_up) {
+  const auto tracked_record = GlobalDx12AllocationTracker().LookUp(address_within_allocation);
+  RETURN_IF_NOT(tracked_record.has_value(), "Dx12SharedMemoryAllocator: Failed to look up tracked allocation.");
+
+  void* const base_address = tracked_record->base_address;
+  return tracked_record->allocator->AddAllocationCleanUpForThisAllocator(base_address,
+                                                                         std::move(allocation_clean_up));
+}
+
+Ort::Status Dx12SharedMemoryAllocator::GetAllocationDx12InfoForThisAllocator(void* allocation_base_address,
+                                                                             Dx12AllocationInfo& allocation_info) {
+  std::scoped_lock g{allocations_mutex_};
+  const auto allocation_it = allocations_.find(allocation_base_address);
+  RETURN_IF(allocation_it == allocations_.end(), "Dx12SharedMemoryAllocator: Failed to get allocation info for address.");
+
+  allocation_info = allocation_it->second.dx12_info;
+  return Ort::Status();
+}
+
+Ort::Status Dx12SharedMemoryAllocator::AddAllocationCleanUpForThisAllocator(void* allocation_base_address,
+                                                                            AllocationCleanUpFn&& allocation_clean_up) {
+  RETURN_IF(allocation_clean_up == nullptr, "allocation_clean_up should not be empty.");
+
+  std::scoped_lock g{allocations_mutex_};
+  const auto allocation_it = allocations_.find(allocation_base_address);
+  RETURN_IF(allocation_it == allocations_.end(), "Dx12SharedMemoryAllocator: Failed to get allocation info for address.");
+
+  allocation_it->second.clean_up_fns.emplace_back(std::move(allocation_clean_up));
+  return Ort::Status();
+}
+
+#endif  // _WIN32
+
 }  // namespace onnxruntime::qnn

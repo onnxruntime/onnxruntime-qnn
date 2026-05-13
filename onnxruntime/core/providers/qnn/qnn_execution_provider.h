@@ -25,6 +25,11 @@
 #include "core/providers/qnn/genie/genie_node.h"
 #include "core/providers/qnn/genie/genie_node_compute_info.h"
 
+#ifdef _WIN32
+#include <d3d12.h>
+#include <wrl/client.h>
+#endif
+
 namespace onnxruntime {
 class QnnEpFactory;
 
