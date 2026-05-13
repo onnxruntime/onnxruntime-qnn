@@ -16,7 +16,7 @@
 namespace onnxruntime {
 namespace test {
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 namespace {
 
@@ -90,7 +90,7 @@ GetTestModelFn BuildDQConvIntegerFusionTestCase(bool include_bias,
     }
 
     builder.AddNode("conv_int", "ConvInteger",
-                    conv_int_inputs, {"ci_out"}, /*domain=*/"",
+                    conv_int_inputs, {"ci_out"}, kOnnxDomain,
                     {builder.MakeIntsAttribute("kernel_shape", std::vector<int64_t>{K, K}),
                      builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}),
                      builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}),
@@ -98,7 +98,7 @@ GetTestModelFn BuildDQConvIntegerFusionTestCase(bool include_bias,
                      builder.MakeScalarAttribute("group", static_cast<int64_t>(1))});
 
     // Cast int32 -> float.
-    builder.AddNode("cast_int_to_float", "Cast", {"ci_out"}, {"ci_out_f32"}, /*domain=*/"",
+    builder.AddNode("cast_int_to_float", "Cast", {"ci_out"}, {"ci_out_f32"}, kOnnxDomain,
                     {builder.MakeScalarAttribute("to",
                                                  static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType_FLOAT))});
 
@@ -166,14 +166,14 @@ GetTestModelFn BuildSharedDqlTwoConvIntegersTestCase() {
       builder.MakeScalarInitializer<int8_t>(b_zp_name, static_cast<int8_t>(0));
 
       builder.AddNode("conv_int_" + tag, "ConvInteger",
-                      {"a_q", b_name, "a_zp", b_zp_name}, {ci_out}, /*domain=*/"",
+                      {"a_q", b_name, "a_zp", b_zp_name}, {ci_out}, kOnnxDomain,
                       {builder.MakeIntsAttribute("kernel_shape", std::vector<int64_t>{K, K}),
                        builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}),
                        builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0}),
                        builder.MakeIntsAttribute("dilations", std::vector<int64_t>{1, 1}),
                        builder.MakeScalarAttribute("group", static_cast<int64_t>(1))});
 
-      builder.AddNode("cast_" + tag, "Cast", {ci_out}, {ci_out_f32}, /*domain=*/"",
+      builder.AddNode("cast_" + tag, "Cast", {ci_out}, {ci_out_f32}, kOnnxDomain,
                       {builder.MakeScalarAttribute("to",
                                                    static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType_FLOAT))});
 
@@ -188,7 +188,7 @@ GetTestModelFn BuildSharedDqlTwoConvIntegersTestCase() {
     const std::string out_b = add_branch("b", 0.013f);
 
     // Concatenate along channel axis to keep both fusions reachable from a graph output.
-    builder.AddNode("concat", "Concat", {out_a, out_b}, {"output"}, /*domain=*/"",
+    builder.AddNode("concat", "Concat", {out_a, out_b}, {"output"}, kOnnxDomain,
                     {builder.MakeScalarAttribute("axis", static_cast<int64_t>(1))});
 
     builder.MakeOutput("output");
@@ -405,7 +405,7 @@ TEST_F(QnnHTPBackendTests, DQConvIntegerFusion_Uint8Weight_NoBZp) {
       /*fp32_abs_err=*/5e-2f);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime
