@@ -16,7 +16,7 @@
 namespace onnxruntime {
 namespace test {
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 namespace {
 
@@ -85,7 +85,7 @@ GetTestModelFn BuildDQMatMulIntegerFusionTestCase(bool include_bias,
 
     builder.AddNode("mm_int", "MatMulInteger", mmi_inputs, {"mm_out"});
 
-    builder.AddNode("cast_int_to_float", "Cast", {"mm_out"}, {"mm_out_f32"}, /*domain=*/"",
+    builder.AddNode("cast_int_to_float", "Cast", {"mm_out"}, {"mm_out_f32"}, kOnnxDomain,
                     {builder.MakeScalarAttribute("to",
                                                  static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType_FLOAT))});
 
@@ -148,7 +148,7 @@ GetTestModelFn BuildSharedDqlTwoMatMulIntegersTestCase() {
       builder.AddNode("mm_int_" + tag, "MatMulInteger",
                       {"a_q", b_name, "a_zp", b_zp_name}, {mm_out});
 
-      builder.AddNode("cast_" + tag, "Cast", {mm_out}, {mm_out_f32}, /*domain=*/"",
+      builder.AddNode("cast_" + tag, "Cast", {mm_out}, {mm_out_f32}, kOnnxDomain,
                       {builder.MakeScalarAttribute("to",
                                                    static_cast<int64_t>(ONNX_NAMESPACE::TensorProto_DataType_FLOAT))});
 
@@ -161,7 +161,7 @@ GetTestModelFn BuildSharedDqlTwoMatMulIntegersTestCase() {
     const std::string out_a = add_branch("a", 0.01f);
     const std::string out_b = add_branch("b", 0.013f);
 
-    builder.AddNode("concat", "Concat", {out_a, out_b}, {"output"}, /*domain=*/"",
+    builder.AddNode("concat", "Concat", {out_a, out_b}, {"output"}, kOnnxDomain,
                     {builder.MakeScalarAttribute("axis", static_cast<int64_t>(1))});
 
     builder.MakeOutput("output");
@@ -368,7 +368,7 @@ TEST_F(QnnHTPBackendTests, DQMatMulIntegerFusion_Uint8Weight_NoBZp) {
       /*fp32_abs_err=*/5e-2f);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime

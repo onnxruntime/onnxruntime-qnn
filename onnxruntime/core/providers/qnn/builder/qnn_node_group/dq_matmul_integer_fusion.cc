@@ -122,20 +122,13 @@ bool ConsumersAreAllParallelMuls(
 }
 
 Ort::Status ReadFloatInitializer(const QnnModelWrapper& qmw,
-                                 const std::string& name,
+                                 const OrtNodeUnitIODef& iodef,
                                  std::vector<float>& out) {
+  const std::string& name = iodef.name;
   const OrtValueInfo* info = qmw.GetConstantTensor(name);
   RETURN_IF_NOT(info != nullptr, ("Constant tensor not found: " + name).c_str());
 
-  const OrtApi& ort_api = qmw.GetOrtApi();
-  const OrtTypeInfo* type_info = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(info, &type_info));
-  const OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info));
-
-  ONNXTensorElementDataType elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetTensorElementType(tensor_info, &elem_type));
-  RETURN_IF_NOT(elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
+  RETURN_IF_NOT(iodef.type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
                 ("Expected FLOAT initializer for " + name).c_str());
 
   std::vector<uint8_t> bytes;
@@ -147,27 +140,19 @@ Ort::Status ReadFloatInitializer(const QnnModelWrapper& qmw,
   return Ort::Status();
 }
 
-// Reads a zero-point initializer (INT8 or UINT8) as int32 values. Empty `name` returns an
-// empty vector. Per ONNX spec the zero-point dtype matches its corresponding tensor's dtype;
-// callers should already have validated the weight dtype before calling this.
+// Reads a zero-point initializer (INT8 or UINT8) as int32 values.
 Ort::Status ReadZeroPointAsInt32(const QnnModelWrapper& qmw,
-                                 const std::string& name,
+                                 const OrtNodeUnitIODef* zp_iodef,
                                  std::vector<int32_t>& out) {
   out.clear();
-  if (name.empty()) {
+  if (zp_iodef == nullptr || !zp_iodef->Exists()) {
     return Ort::Status();
   }
+  const std::string& name = zp_iodef->name;
   const OrtValueInfo* info = qmw.GetConstantTensor(name);
   RETURN_IF_NOT(info != nullptr, ("Constant tensor not found: " + name).c_str());
 
-  const OrtApi& ort_api = qmw.GetOrtApi();
-  const OrtTypeInfo* type_info = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(info, &type_info));
-  const OrtTensorTypeAndShapeInfo* tensor_info = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_info));
-
-  ONNXTensorElementDataType elem_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetTensorElementType(tensor_info, &elem_type));
+  const ONNXTensorElementDataType elem_type = zp_iodef->type;
   RETURN_IF_NOT(elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8 ||
                     elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8,
                 ("Expected INT8 or UINT8 zero-point for " + name).c_str());
@@ -195,16 +180,16 @@ Ort::Status ReadZeroPointAsInt32(const QnnModelWrapper& qmw,
 // the per-channel emission path pre-dequantizes to float offline and does not consume these
 // quant params, so the axis value carried here is informational only.
 Ort::Status BuildWeightQuantParams(const QnnModelWrapper& qmw,
-                                   const std::string& b_scale_name,
-                                   const std::string& b_zp_name_or_empty,
+                                   const OrtNodeUnitIODef& b_scale_iodef,
+                                   const OrtNodeUnitIODef* b_zp_iodef,
                                    uint32_t out_channels,
                                    QnnQuantParamsWrapper& out_params) {
   std::vector<float> scales;
-  RETURN_IF_ERROR(ReadFloatInitializer(qmw, b_scale_name, scales));
+  RETURN_IF_ERROR(ReadFloatInitializer(qmw, b_scale_iodef, scales));
   RETURN_IF_NOT(!scales.empty(), "B_scale has zero elements");
 
   std::vector<int32_t> offsets;
-  RETURN_IF_ERROR(ReadZeroPointAsInt32(qmw, b_zp_name_or_empty, offsets));
+  RETURN_IF_ERROR(ReadZeroPointAsInt32(qmw, b_zp_iodef, offsets));
   for (int32_t& v : offsets) v = -v;
 
   if (scales.size() == 1) {
@@ -234,22 +219,19 @@ Ort::Status BuildWeightQuantParams(const QnnModelWrapper& qmw,
 // Pre-dequantizes per-channel int8 / uint8 [K, N] weight bytes to float32 bytes (per-channel
 // scales / zps are along the output dimension N, which is the last axis).
 Ort::Status PreDequantizePerChannelWeight(const QnnModelWrapper& qmw,
-                                          const std::string& b_scale_name,
-                                          const std::string& b_zp_name_or_empty,
-                                          bool has_b_zp,
+                                          const OrtNodeUnitIODef& b_scale_iodef,
+                                          const OrtNodeUnitIODef* b_zp_iodef,
                                           bool is_signed_weight,
                                           uint32_t out_channels,
                                           const std::vector<uint8_t>& quant_bytes,
                                           std::vector<uint8_t>& out_float_bytes) {
   std::vector<float> scales;
-  RETURN_IF_ERROR(ReadFloatInitializer(qmw, b_scale_name, scales));
+  RETURN_IF_ERROR(ReadFloatInitializer(qmw, b_scale_iodef, scales));
   RETURN_IF_NOT(scales.size() == static_cast<size_t>(out_channels),
                 "Per-channel B_scale length mismatch");
 
   std::vector<int32_t> zps_onnx;
-  if (has_b_zp) {
-    RETURN_IF_ERROR(ReadZeroPointAsInt32(qmw, b_zp_name_or_empty, zps_onnx));
-  }
+  RETURN_IF_ERROR(ReadZeroPointAsInt32(qmw, b_zp_iodef, zps_onnx));
   if (zps_onnx.empty()) {
     zps_onnx.assign(scales.size(), 0);
   } else if (zps_onnx.size() == 1) {
@@ -522,7 +504,7 @@ std::unique_ptr<IQnnNodeGroup> DQMatMulIntegerFusion::TryFusion(
       /*requant_mul=*/requant_mul,
       /*add_bias=*/add_bias,
       /*float_input_name=*/dql_inputs[0].name,
-      /*b_scale_name=*/b_scale_def.name,
+      /*b_scale_iodef=*/&b_scale_def,
       /*terminator_output_name=*/std::move(terminator_output_name),
       /*bias_name=*/std::move(bias_name),
       /*has_b_zp=*/has_b_zp,
@@ -547,7 +529,7 @@ DQMatMulIntegerFusion::DQMatMulIntegerFusion(Pattern pattern)
       requant_mul_(pattern.requant_mul),
       add_bias_(pattern.add_bias),
       float_input_name_(std::move(pattern.float_input_name)),
-      b_scale_name_(std::move(pattern.b_scale_name)),
+      b_scale_iodef_(pattern.b_scale_iodef),
       terminator_output_name_(std::move(pattern.terminator_output_name)),
       bias_name_(std::move(pattern.bias_name)),
       has_b_zp_(pattern.has_b_zp) {
@@ -597,9 +579,9 @@ Ort::Status DQMatMulIntegerFusion::CreateOrValidateOnQnn(QnnModelWrapper& qmw, b
   std::vector<uint8_t> b_quant_bytes;
   RETURN_IF_ERROR(qmw.UnpackInitializerData(b_info.initializer_tensor, b_quant_bytes));
 
-  const std::string b_zp_name = has_b_zp_ ? mm_inputs[3].name : std::string{};
+  const OrtNodeUnitIODef* b_zp_iodef = has_b_zp_ ? &mm_inputs[3] : nullptr;
   QnnQuantParamsWrapper weight_qparams;
-  RETURN_IF_ERROR(BuildWeightQuantParams(qmw, b_scale_name_, b_zp_name, n, weight_qparams));
+  RETURN_IF_ERROR(BuildWeightQuantParams(qmw, *b_scale_iodef_, b_zp_iodef, n, weight_qparams));
   const bool is_per_channel = weight_qparams.IsPerChannel();
   const bool is_signed_weight = (b_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8 ||
                                  b_info.qnn_data_type == QNN_DATATYPE_INT_8);
@@ -655,7 +637,7 @@ Ort::Status DQMatMulIntegerFusion::CreateOrValidateOnQnn(QnnModelWrapper& qmw, b
     }
   } else {
     std::vector<uint8_t> float_bytes;
-    RETURN_IF_ERROR(PreDequantizePerChannelWeight(qmw, b_scale_name_, b_zp_name, has_b_zp_,
+    RETURN_IF_ERROR(PreDequantizePerChannelWeight(qmw, *b_scale_iodef_, b_zp_iodef,
                                                   is_signed_weight,
                                                   n, b_quant_bytes, float_bytes));
     if (validate) {

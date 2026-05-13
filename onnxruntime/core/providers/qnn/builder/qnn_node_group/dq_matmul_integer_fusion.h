@@ -71,9 +71,9 @@ class DQMatMulIntegerFusion : public IQnnNodeGroup {
     const OrtNodeUnit* cast;
     const OrtNodeUnit* parallel_mul;
     const OrtNodeUnit* requant_mul;
-    const OrtNodeUnit* add_bias;   // nullptr if no trailing Add
-    std::string float_input_name;  // pre-DQL float input feeds MatMul's input[0]
-    std::string b_scale_name;      // B_scale initializer (from parallel_Mul)
+    const OrtNodeUnit* add_bias;            // nullptr if no trailing Add
+    std::string float_input_name;           // pre-DQL float input feeds MatMul's input[0]
+    const OrtNodeUnitIODef* b_scale_iodef;  // B_scale initializer (from parallel_Mul)
     std::string terminator_output_name;
     std::string bias_name;  // empty if no trailing Add
     bool has_b_zp;          // true if MatMulInteger has a B_zp input
@@ -89,7 +89,7 @@ class DQMatMulIntegerFusion : public IQnnNodeGroup {
   const OrtNodeUnit* add_bias_;                 // nullptr if no trailing Add
 
   std::string float_input_name_;
-  std::string b_scale_name_;
+  const OrtNodeUnitIODef* b_scale_iodef_;
   std::string terminator_output_name_;
   std::string bias_name_;
   bool has_b_zp_;
