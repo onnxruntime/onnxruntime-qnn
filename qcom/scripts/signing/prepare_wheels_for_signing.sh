@@ -52,6 +52,20 @@ FAILED_WHEELS=0
 FAILED_WHEEL_NAMES=""
 TOTAL_WHEELS=$WHEEL_COUNT
 
+# Record a wheel failure: remove any partial output and update counters.
+# Usage: record_failure <wheel_name> <message> [path...]
+record_failure() {
+    local wheel_name="$1"
+    local message="$2"
+    shift 2
+    echo "  ERROR: $message"
+    if [ "$#" -gt 0 ]; then
+        rm -rf "$@"
+    fi
+    FAILED_WHEELS=$((FAILED_WHEELS + 1))
+    FAILED_WHEEL_NAMES="$FAILED_WHEEL_NAMES$wheel_name"$'\n'
+}
+
 # Process each wheel - use array to avoid subshell issues
 mapfile -t WHEEL_ARRAY <<< "$WHEELS"
 
@@ -76,9 +90,7 @@ for wheel in "${WHEEL_ARRAY[@]}"; do
 
     # Copy wheel and rename to .zip
     if ! cp "$wheel" "$ZIP_PATH" 2>/dev/null; then
-        echo "  ERROR: Failed to process wheel - Could not copy wheel"
-        FAILED_WHEELS=$((FAILED_WHEELS + 1))
-        FAILED_WHEEL_NAMES="$FAILED_WHEEL_NAMES$WHEEL_NAME"$'\n'
+        record_failure "$WHEEL_NAME" "Failed to process wheel - Could not copy wheel"
         continue
     fi
 
@@ -89,10 +101,7 @@ for wheel in "${WHEEL_ARRAY[@]}"; do
 
         # Extract the zip to temporary directory using Python
         if ! python3 -m zipfile -e "$ZIP_PATH" "$TEMP_EXTRACT_DIR" 2>/dev/null; then
-            echo "  ERROR: Failed to process wheel - Could not extract zip"
-            rm -rf "$TEMP_EXTRACT_DIR" "$ZIP_PATH"
-            FAILED_WHEELS=$((FAILED_WHEELS + 1))
-            FAILED_WHEEL_NAMES="$FAILED_WHEEL_NAMES$WHEEL_NAME"$'\n'
+            record_failure "$WHEEL_NAME" "Failed to process wheel - Could not extract zip" "$TEMP_EXTRACT_DIR" "$ZIP_PATH"
             continue
         fi
 
@@ -100,10 +109,7 @@ for wheel in "${WHEEL_ARRAY[@]}"; do
         DLL_PATH=$(find "$TEMP_EXTRACT_DIR" -name "onnxruntime_providers_qnn.dll" | head -1)
 
         if [ -z "$DLL_PATH" ]; then
-            echo "  ERROR: DLL not found in extracted wheel"
-            rm -rf "$TEMP_EXTRACT_DIR"
-            FAILED_WHEELS=$((FAILED_WHEELS + 1))
-            FAILED_WHEEL_NAMES="$FAILED_WHEEL_NAMES$WHEEL_NAME"$'\n'
+            record_failure "$WHEEL_NAME" "DLL not found in extracted wheel" "$TEMP_EXTRACT_DIR" "$ZIP_PATH"
             continue
         fi
 
@@ -115,10 +121,7 @@ for wheel in "${WHEEL_ARRAY[@]}"; do
         # Copy only the DLL to final directory
         TARGET_DLL_PATH="$FINAL_EXTRACT_DIR/onnxruntime_providers_qnn.dll"
         if ! cp "$DLL_PATH" "$TARGET_DLL_PATH" 2>/dev/null; then
-            echo "  ERROR: Failed to process wheel - Could not copy DLL"
-            rm -rf "$TEMP_EXTRACT_DIR"
-            FAILED_WHEELS=$((FAILED_WHEELS + 1))
-            FAILED_WHEEL_NAMES="$FAILED_WHEEL_NAMES$WHEEL_NAME"$'\n'
+            record_failure "$WHEEL_NAME" "Failed to process wheel - Could not copy DLL" "$TEMP_EXTRACT_DIR" "$FINAL_EXTRACT_DIR" "$ZIP_PATH"
             continue
         fi
 
@@ -134,10 +137,7 @@ for wheel in "${WHEEL_ARRAY[@]}"; do
 
         # Extract the zip to temporary directory using Python
         if ! python3 -m zipfile -e "$ZIP_PATH" "$TEMP_EXTRACT_DIR" 2>/dev/null; then
-            echo "  ERROR: Failed to process wheel - Could not extract zip"
-            rm -rf "$TEMP_EXTRACT_DIR" "$ZIP_PATH"
-            FAILED_WHEELS=$((FAILED_WHEELS + 1))
-            FAILED_WHEEL_NAMES="$FAILED_WHEEL_NAMES$WHEEL_NAME"$'\n'
+            record_failure "$WHEEL_NAME" "Failed to process wheel - Could not extract zip" "$TEMP_EXTRACT_DIR" "$ZIP_PATH"
             continue
         fi
 
@@ -145,10 +145,7 @@ for wheel in "${WHEEL_ARRAY[@]}"; do
         LIBS_DIR=$(find "$TEMP_EXTRACT_DIR" -type d -name "libs" | head -1)
 
         if [ -z "$LIBS_DIR" ]; then
-            echo "  ERROR: libs directory not found in extracted wheel"
-            rm -rf "$TEMP_EXTRACT_DIR"
-            FAILED_WHEELS=$((FAILED_WHEELS + 1))
-            FAILED_WHEEL_NAMES="$FAILED_WHEEL_NAMES$WHEEL_NAME"$'\n'
+            record_failure "$WHEEL_NAME" "libs directory not found in extracted wheel" "$TEMP_EXTRACT_DIR" "$ZIP_PATH"
             continue
         fi
 
@@ -173,10 +170,6 @@ for wheel in "${WHEEL_ARRAY[@]}"; do
 
                 TARGET_DLL_PATH="$TARGET_DIR/onnxruntime_providers_qnn.dll"
                 if ! cp "$SOURCE_DLL_PATH" "$TARGET_DLL_PATH" 2>/dev/null; then
-                    echo "  ERROR: Failed to process wheel - Could not copy DLL"
-                    rm -rf "$TEMP_EXTRACT_DIR" "$FINAL_EXTRACT_DIR"
-                    FAILED_WHEELS=$((FAILED_WHEELS + 1))
-                    FAILED_WHEEL_NAMES="$FAILED_WHEEL_NAMES$WHEEL_NAME"$'\n'
                     COPY_FAILED=true
                     break
                 fi
@@ -186,14 +179,12 @@ for wheel in "${WHEEL_ARRAY[@]}"; do
         done
 
         if [ "$COPY_FAILED" = true ]; then
+            record_failure "$WHEEL_NAME" "Failed to process wheel - Could not copy DLL" "$TEMP_EXTRACT_DIR" "$FINAL_EXTRACT_DIR" "$ZIP_PATH"
             continue
         fi
 
         if [ "$DLL_FOUND" = false ]; then
-            echo "  ERROR: No DLLs found in libs subdirectories"
-            rm -rf "$TEMP_EXTRACT_DIR" "$FINAL_EXTRACT_DIR"
-            FAILED_WHEELS=$((FAILED_WHEELS + 1))
-            FAILED_WHEEL_NAMES="$FAILED_WHEEL_NAMES$WHEEL_NAME"$'\n'
+            record_failure "$WHEEL_NAME" "No DLLs found in libs subdirectories" "$TEMP_EXTRACT_DIR" "$FINAL_EXTRACT_DIR" "$ZIP_PATH"
             continue
         fi
 

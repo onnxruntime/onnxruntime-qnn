@@ -52,6 +52,20 @@ FAILED_ZIPS=0
 FAILED_ZIP_NAMES=""
 TOTAL_ZIPS=$ZIP_COUNT
 
+# Record a zip failure: remove any partial output and update counters.
+# Usage: record_failure <zip_name> <message> [path...]
+record_failure() {
+    local zip_name="$1"
+    local message="$2"
+    shift 2
+    echo "  ERROR: $message"
+    if [ "$#" -gt 0 ]; then
+        rm -rf "$@"
+    fi
+    FAILED_ZIPS=$((FAILED_ZIPS + 1))
+    FAILED_ZIP_NAMES="$FAILED_ZIP_NAMES$zip_name"$'\n'
+}
+
 # Convert to array to avoid subshell issues
 mapfile -t ZIP_ARRAY <<< "$ZIP_FILES"
 
@@ -68,10 +82,7 @@ for zipFile in "${ZIP_ARRAY[@]}"; do
 
     # Extract the zip to temporary directory using Python
     if ! python3 -m zipfile -e "$zipFile" "$TEMP_EXTRACT_DIR" 2>/dev/null; then
-        echo "  ERROR: Failed to process zip - Could not extract zip"
-        rm -rf "$TEMP_EXTRACT_DIR" "$FINAL_EXTRACT_DIR"
-        FAILED_ZIPS=$((FAILED_ZIPS + 1))
-        FAILED_ZIP_NAMES="$FAILED_ZIP_NAMES$ZIP_NAME"$'\n'
+        record_failure "$ZIP_NAME" "Failed to process zip - Could not extract zip" "$TEMP_EXTRACT_DIR" "$FINAL_EXTRACT_DIR"
         continue
     fi
 
@@ -84,20 +95,14 @@ for zipFile in "${ZIP_ARRAY[@]}"; do
     DLL_PATH=$(find "$TEMP_EXTRACT_DIR" -name "onnxruntime_providers_qnn.dll" | head -1)
 
     if [ -z "$DLL_PATH" ]; then
-        echo "  ERROR: DLL not found in extracted zip"
-        rm -rf "$TEMP_EXTRACT_DIR" "$FINAL_EXTRACT_DIR"
-        FAILED_ZIPS=$((FAILED_ZIPS + 1))
-        FAILED_ZIP_NAMES="$FAILED_ZIP_NAMES$ZIP_NAME"$'\n'
+        record_failure "$ZIP_NAME" "DLL not found in extracted zip" "$TEMP_EXTRACT_DIR" "$FINAL_EXTRACT_DIR"
         continue
     fi
 
     # Copy only the DLL to final directory
     TARGET_DLL_PATH="$FINAL_EXTRACT_DIR/onnxruntime_providers_qnn.dll"
     if ! cp "$DLL_PATH" "$TARGET_DLL_PATH" 2>/dev/null; then
-        echo "  ERROR: Failed to process zip - Could not copy DLL"
-        rm -rf "$TEMP_EXTRACT_DIR" "$FINAL_EXTRACT_DIR"
-        FAILED_ZIPS=$((FAILED_ZIPS + 1))
-        FAILED_ZIP_NAMES="$FAILED_ZIP_NAMES$ZIP_NAME"$'\n'
+        record_failure "$ZIP_NAME" "Failed to process zip - Could not copy DLL" "$TEMP_EXTRACT_DIR" "$FINAL_EXTRACT_DIR"
         continue
     fi
 

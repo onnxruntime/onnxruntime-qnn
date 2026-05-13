@@ -30,9 +30,7 @@ if (-not (Test-Path $nugetDir -PathType Container)) {
 $OutputDirectory = $nugetDir
 
 # Find all NuGet packages matching the pattern
-$nugetPackages = Get-ChildItem -Path $NuGetDirectory -Filter "*.nupkg" | Where-Object {
-    $_.Name -match "\.nupkg$"
-}
+$nugetPackages = Get-ChildItem -Path $NuGetDirectory -Filter "*.nupkg"
 
 if ($nugetPackages.Count -eq 0) {
     Write-Host ""
