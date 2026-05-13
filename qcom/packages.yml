@@ -110,6 +110,11 @@ maven_linux_x86_64:
   sha256: 067672629075b740e3d0a928e21021dd615a53287af36d4ccca44e87e081d102
   content_root: apache-maven-{version}
   bindir: bin
+genai_models:
+  version: TBD
+  url: http://ort-ep-win-01.na.qualcomm.com:8000/genai-models/genai-models-{version}.zip
+  sha256: TBD
+  content_root: genai-models
 model_zoo:
   version: 2026-04-03
   url: http://ort-ep-win-01.na.qualcomm.com:8000/model-zoo/model-zoo-{version}.zip

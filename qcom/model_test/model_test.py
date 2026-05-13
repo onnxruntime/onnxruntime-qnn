@@ -22,7 +22,7 @@ DEFAULT_RTOL = 1e-3
 DEFAULT_ATOL = 1e-5
 DEFAULT_COSINE_SIMILARITY: float | None = None
 
-BackendT = Literal["cpu", "gpu", "htp"]
+BackendT = Literal["cpu", "gpu", "htp", "genie"]
 
 _ep_plugin_loaded = False
 
@@ -52,19 +52,23 @@ class ModelTestCase:
 
         session_options = onnxruntime.SessionOptions()
 
-        qnn_device, backend_path = get_qnn_ep_device(model_def.backend_type)
-        session_options.add_provider_for_devices([qnn_device], {"backend_path": str(backend_path)})
+        if model_def.backend_type == "genie":
+            genie_ep_devices = get_qnn_genie_ep_devices()
+            session_options.add_provider_for_devices(genie_ep_devices, {"genie_log_level": "error"})
+        else:
+            qnn_device, backend_path = get_qnn_ep_device(model_def.backend_type)
+            session_options.add_provider_for_devices([qnn_device], {"backend_path": str(backend_path)})
 
-        if not model_def.enable_cpu_fallback and model_def.backend_type != "cpu":
-            session_options.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
+            if not model_def.enable_cpu_fallback and model_def.backend_type != "cpu":
+                session_options.add_session_config_entry("session.disable_cpu_ep_fallback", "1")
 
-        if model_def.enable_context:
-            context_model_path = model_def.model_root / f"{model_def.model_root.name}_ctx.onnx"
-            if context_model_path.exists():
-                logging.debug(f"Clobbering stale context in {context_model_path}")
-                context_model_path.unlink()
-            session_options.add_session_config_entry("ep.context_enable", "1")
-            session_options.add_session_config_entry("ep.context_file_path", str(context_model_path))
+            if model_def.enable_context:
+                context_model_path = model_def.model_root / f"{model_def.model_root.name}_ctx.onnx"
+                if context_model_path.exists():
+                    logging.debug(f"Clobbering stale context in {context_model_path}")
+                    context_model_path.unlink()
+                session_options.add_session_config_entry("ep.context_enable", "1")
+                session_options.add_session_config_entry("ep.context_file_path", str(context_model_path))
 
         logging.info(f"Preparing {self.__model_root.name}")
         self.__session = onnxruntime.InferenceSession(
@@ -144,6 +148,18 @@ class ModelTestCase:
                 else:
                     np.testing.assert_allclose(actual[name], expected[ds_idx][name], atol=atol, rtol=rtol)
                     logging.info(f"{name} is close enough (rtol: {rtol}; atol: {atol})")
+
+    def run_and_check_nonempty(self) -> None:
+        inputs = self.load_inputs()
+        if len(inputs) == 0:
+            logging.info(f"{self.__model_root.name} has no reference data.")
+            return
+        logging.info(f"Running {self.__model_root.name} with {len(inputs)} reference datasets.")
+        for input_set in inputs:
+            outputs = self.__session.run(None, input_set)
+            assert len(outputs) > 0, f"{self.__model_root.name} produced no outputs."
+            for i, output in enumerate(outputs):
+                assert output.size > 0, f"{self.__model_root.name} output {i} is empty."
 
 
 class ModelTestSuite:
@@ -284,6 +300,18 @@ def get_qnn_ep_device(backend_type: BackendT) -> tuple[onnxruntime.OrtEpDevice, 
     ep_device = eps_and_devices[backend_type]
 
     return ep_device, get_qnn_backend_path(backend_type)
+
+
+def get_qnn_genie_ep_devices() -> list[onnxruntime.OrtEpDevice]:
+    global _ep_plugin_loaded  # noqa: PLW0603
+    if not _ep_plugin_loaded:
+        onnxruntime.register_execution_provider_library("QNNExecutionProvider", onnxruntime_qnn.get_library_path())
+        _ep_plugin_loaded = True
+
+    ep_names = onnxruntime_qnn.get_ep_names()
+    assert len(ep_names) == 1, f"Got {len(ep_names)} EP names, expected 1"
+
+    return [ed for ed in onnxruntime.get_ep_devices() if ed.ep_name == ep_names[0]]
 
 
 def initialize_logging(log_name: str) -> None:
