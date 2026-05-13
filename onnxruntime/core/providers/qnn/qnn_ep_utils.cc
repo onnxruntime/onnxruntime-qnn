@@ -1776,6 +1776,14 @@ std::vector<std::vector<const OrtNode*>> CreateSupportedPartitionNodeGroups(
   return supported_groups;
 }
 
+std::string MakeSharedLibraryPath(std::string_view name) {
+#if defined(_WIN32)
+  return std::string(name) + ".dll";
+#else
+  return "lib" + std::string(name) + ".so";
+#endif
+}
+
 }  // namespace utils
 
 // Implementation of GetQDQNodeUnits for OrtGraph

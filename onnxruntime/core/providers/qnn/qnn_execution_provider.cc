@@ -38,20 +38,12 @@
 // Forward declarations for NodeUnit-related classes
 namespace onnxruntime {
 
-static std::string MakeSharedLibraryPath(std::string_view name) {
-#if defined(_WIN32)
-  return std::string(name) + ".dll";
-#else
-  return "lib" + std::string(name) + ".so";
-#endif
-}
-
-const std::string kDefaultCpuBackendPath = MakeSharedLibraryPath("QnnCpu");
-const std::string kDefaultGenieBackendPath = MakeSharedLibraryPath("Genie");
-const std::string kDefaultGpuBackendPath = MakeSharedLibraryPath("QnnGpu");
-const std::string kDefaultHtpBackendPath = MakeSharedLibraryPath("QnnHtp");
-const std::string kDefaultSaverBackendPath = MakeSharedLibraryPath("QnnSaver");
-const std::string kDefaultIrBackendPath = MakeSharedLibraryPath("QnnIr");
+const std::string kDefaultCpuBackendPath = utils::MakeSharedLibraryPath("QnnCpu");
+const std::string kDefaultGenieBackendPath = utils::MakeSharedLibraryPath("Genie");
+const std::string kDefaultGpuBackendPath = utils::MakeSharedLibraryPath("QnnGpu");
+const std::string kDefaultHtpBackendPath = utils::MakeSharedLibraryPath("QnnHtp");
+const std::string kDefaultSaverBackendPath = utils::MakeSharedLibraryPath("QnnSaver");
+const std::string kDefaultIrBackendPath = utils::MakeSharedLibraryPath("QnnIr");
 
 // File-scope (unlike the other backend type name constants defined inside ParseBackendTypeName)
 // because kGenieBackendTypeName is also referenced from other call sites in this file.
