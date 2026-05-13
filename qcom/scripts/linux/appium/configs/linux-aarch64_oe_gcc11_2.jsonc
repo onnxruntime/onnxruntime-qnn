@@ -45,8 +45,7 @@
 
     // Comma-separated list of ctest cases to skip
     // Default: null
-    // TODO: [AISW-163150] ORT test failures on qcs6490
-    "skip_ctests": "onnxruntime_provider_test",
+    "skip_ctests": null,
 
     // Comma-separated list of model test suites cases to skip
     // Default: null
