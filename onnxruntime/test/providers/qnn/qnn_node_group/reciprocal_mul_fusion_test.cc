@@ -486,6 +486,10 @@ ProviderOptions GetProviderOptions() {
 
 // Basic 4-D input, standard Mul input order: Mul(numerator, recip_out)
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_4D_StandardOrder) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "FP32 HTP test skipped on architecture <= 68";
+  }
+
   const std::filesystem::path json_qnn_graph_dir = "ReciprocalMulFusion_Float32_4D_StandardOrder";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -511,6 +515,10 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_4D_StandardOrder) {
 // Basic 4-D input, commuted Mul input order: Mul(recip_out, numerator)
 // Verifies that the fusion handles both Mul input slot orderings correctly.
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_4D_CommutedOrder) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "FP32 HTP test skipped on architecture <= 68";
+  }
+
   const std::filesystem::path json_qnn_graph_dir = "ReciprocalMulFusion_Float32_4D_CommutedOrder";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -538,6 +546,10 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_Float32_4D_CommutedOrder) {
 
 // QDQ uint8, standard Mul input order
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQ_U8_StandardOrder) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "QDQ test skipped on HTP architecture <= 68";
+  }
+
   const std::filesystem::path json_qnn_graph_dir = "ReciprocalMulFusion_QDQ_U8_StandardOrder";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -564,6 +576,10 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQ_U8_StandardOrder) {
 
 // QDQ uint8, commuted Mul input order
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQ_U8_CommutedOrder) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "QDQ test skipped on HTP architecture <= 68";
+  }
+
   const std::filesystem::path json_qnn_graph_dir = "ReciprocalMulFusion_QDQ_U8_CommutedOrder";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -669,6 +685,10 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_FP16) {
 // is correctly fused into a single ElementWiseDivide node.  This is the
 // pattern produced by quantization tools for LayerNorm rstd computation.
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQGroup_U8_StandardOrder) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "QDQ test skipped on HTP architecture <= 68";
+  }
+
   const std::filesystem::path json_qnn_graph_dir = "ReciprocalMulFusion_QDQGroup_U8_StandardOrder";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -695,6 +715,10 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQGroup_U8_StandardOrder) {
 
 // QDQ uint8, QDQGroup Reciprocal, commuted Mul input order.
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQGroup_U8_CommutedOrder) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "QDQ test skipped on HTP architecture <= 68";
+  }
+
   const std::filesystem::path json_qnn_graph_dir = "ReciprocalMulFusion_QDQGroup_U8_CommutedOrder";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -733,6 +757,10 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQGroup_U8_CommutedOrder) {
 //   1 x ElementWiseDivide  (ReciprocalOpBuilder: 1.0 / denominator)
 //   1 x ElementWiseMultiply (Mul lowered individually; fusion did NOT fire)
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_ReciprocalOutputIsGraphOutput_NoFusion) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "FP32 HTP test skipped on architecture <= 68";
+  }
+
   const std::filesystem::path json_qnn_graph_dir = "ReciprocalMulFusion_ReciprocalOutputIsGraphOutput_NoFusion";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -780,6 +808,10 @@ TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_ReciprocalOutputIsGraphOutput_NoF
 // absorbed into a Div and ElementWiseMultiply count would drop below 2 --
 // the second assertion would catch that regression.
 TEST_F(QnnHTPBackendTests, ReciprocalMulFusion_QDQWrappedReciprocal_TwoConsumers_NoFusion) {
+  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
+    GTEST_SKIP() << "QDQ test skipped on HTP architecture <= 68";
+  }
+
   const std::filesystem::path json_qnn_graph_dir = "ReciprocalMulFusion_QDQWrappedReciprocal_TwoConsumers_NoFusion";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
