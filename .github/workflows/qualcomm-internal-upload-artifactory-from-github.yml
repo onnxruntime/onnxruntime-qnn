@@ -1,7 +1,7 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
-name: Publish ONNX Runtime Execution Provider wheel, nuget, archive, maven and libs for signing from GitHub workflow
+name: Publish ONNX Runtime Execution Provider wheel, nuget, archive, maven and windows libs for signing from GitHub workflow
 
 permissions:
   checks: write
@@ -211,7 +211,6 @@ jobs:
 
       - name: Prepare Windows Wheel libs for signing
         run: |
-          chmod +x ./qcom/scripts/signing/prepare_wheels_for_signing.sh
           ./qcom/scripts/signing/prepare_wheels_for_signing.sh \
             "${{ github.workspace }}/build/dist" \
             "${{ github.workspace }}/build/dist/output"
@@ -227,7 +226,6 @@ jobs:
           password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
           VERSION=$(ls "${{ github.workspace }}/build/dist/"*win_arm64*.whl 2>/dev/null | head -1 | xargs -I{} basename {} | sed 's/.*-\([0-9.]*rc[0-9]*\).*/\1/' | sed 's/-//g')
-          chmod +x ./qcom/scripts/signing/upload_unsigned_to_artifactory.sh
           ./qcom/scripts/signing/upload_unsigned_to_artifactory.sh \
             "${{ github.workspace }}/build/dist/output/unsigned/wheels.zip" \
             "wheels.zip" "$VERSION" "$NETRC_FILE"
@@ -404,7 +402,6 @@ jobs:
 
       - name: Prepare Windows Zip libs for signing
         run: |
-          chmod +x ./qcom/scripts/signing/prepare_zip_for_signing.sh && \
           ./qcom/scripts/signing/prepare_zip_for_signing.sh \
             "${{ github.workspace }}/build/windows-arm64/Release/dist" \
             "${{ github.workspace }}/build/dist/output"
@@ -420,7 +417,6 @@ jobs:
           password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           EOF
           VERSION=$(basename "$(ls "${{ github.workspace }}/build/windows-arm64/Release/dist/"*.zip 2>/dev/null | grep -v pdb | head -1)" | sed 's/.*-\([0-9.]*rc[0-9]*\).*/\1/' | sed 's/-//g')
-          chmod +x ./qcom/scripts/signing/upload_unsigned_to_artifactory.sh
           ./qcom/scripts/signing/upload_unsigned_to_artifactory.sh \
             "${{ github.workspace }}/build/dist/output/unsigned/zip.zip" \
             "zip.zip" "$VERSION" "$NETRC_FILE"
