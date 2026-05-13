@@ -45,7 +45,7 @@ struct QnnCompatibilityInfo {
   uint32_t backend_id = 0;
   QnnVersion sdk_version = QNN_VERSION_INIT;
   QnnVersion backend_api_version = QNN_VERSION_INIT;
-  QnnVersion context_blob_version = QNN_VERSION_INIT;
+  QnnVersion context_blob_version = QNN_VERSION_INIT;  // Deprecated.
   uint32_t htp_arch = 0;
   bool is_htp_usr_drv = false;
 };
@@ -55,14 +55,9 @@ class QnnCacheCompatibilityManager {
   QnnCacheCompatibilityManager(QnnBackendManager* qnn_backend_manager)
       : qnn_backend_manager_(qnn_backend_manager) {}
 
-  Ort::Status GetCompatibilityInfo(unsigned char* context_buffer,
-                                   uint64_t context_buffer_size,
-                                   QnnCompatibilityInfo& info);
+  Ort::Status GetCompatibilityInfo(QnnCompatibilityInfo& info);
 
   Ort::Status ValidateCompatibilityInfo(const QnnCompatibilityInfo& info, OrtCompiledModelCompatibility& compatibility);
-
- private:
-  Ort::Status CreateFakeContextBinary(std::unique_ptr<unsigned char[]>& context_buffer, uint64_t& context_buffer_size);
 
  private:
   QnnBackendManager* qnn_backend_manager_;
