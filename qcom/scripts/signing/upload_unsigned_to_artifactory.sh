@@ -32,7 +32,7 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 
 echo "Uploading $FILENAME"
 
-curl -s -T "$ZIP_FILE" \
+curl --fail -s -T "$ZIP_FILE" \
     --cacert "$REPO_ROOT/qcom/scripts/upleveling/certs/artifactory-ca.pem" \
     --netrc-file "$NETRC_FILE" \
     https://re-artifactory.qualcomm.com/artifactory/aisw-zip-test-project/onnxruntime-qnn/"${VERSION}"/unsigned/"$FILENAME" > /dev/null
