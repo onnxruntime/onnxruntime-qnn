@@ -551,21 +551,32 @@ TEST_F(QnnCPUBackendTests, TestNHWCResizeShapeInference_sizes_opset18) {
 }
 
 // Test that QNN Saver generates the expected files for a model meant to run on the QNN CPU backend.
-// TODO: [AISW-163150] ORT test failures on qcs6490
-TEST_F(QnnCPUBackendTests, DISABLED_QnnSaver_OutputFiles) {
-  const std::filesystem::path qnn_saver_output_dir = "saver_output";
-
-  // Remove pre-existing QNN Saver output files. Note that fs::remove_all() can handle non-existing paths.
-  std::filesystem::remove_all(qnn_saver_output_dir);
-  ASSERT_FALSE(std::filesystem::exists(qnn_saver_output_dir));
+// QnnSaver may write flat to cwd (Linux aarch64) or to a subdirectory (Windows); the test
+// accepts either location.
+TEST_F(QnnCPUBackendTests, QnnSaver_OutputFiles) {
+  // Clean up any pre-existing Saver output from prior runs, both flat in cwd and in the default
+  // subdirectory, so stale files don't cause a false pass.
+  std::filesystem::remove("saver_output.c");
+  std::filesystem::remove("params.bin");
+  std::filesystem::remove_all("saver_output");
 
   RunNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
-                     TestBackend::Cpu,     // backend
-                     TestBackend::Saver);  // serializer_backend
+                     TestBackend::Cpu,
+                     TestBackend::Saver);
 
-  // Check that QNN Saver output files exist.
-  EXPECT_TRUE(std::filesystem::exists(qnn_saver_output_dir / "saver_output.c"));
-  EXPECT_TRUE(std::filesystem::exists(qnn_saver_output_dir / "params.bin"));
+  // Accept saver_output.c / params.bin in flat cwd or in ./saver_output/ subdirectory.
+  // QnnSaver writes flat to cwd on Linux aarch64 and to ./saver_output/ on Windows.
+  const auto cwd = std::filesystem::current_path();
+  const auto saver_dir = cwd / "saver_output";
+  auto find_saver_file = [&cwd, &saver_dir](const std::string& filename) -> bool {
+    return std::filesystem::exists(cwd / filename) ||
+           std::filesystem::exists(saver_dir / filename);
+  };
+
+  EXPECT_TRUE(find_saver_file("saver_output.c"))
+      << "saver_output.c not found in cwd or ./saver_output/";
+  EXPECT_TRUE(find_saver_file("params.bin"))
+      << "params.bin not found in cwd or ./saver_output/";
 }
 
 struct ModelAndBuilder {
