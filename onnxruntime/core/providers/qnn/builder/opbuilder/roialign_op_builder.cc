@@ -48,17 +48,13 @@ Ort::Status RoiAlignOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   OrtNodeAttrHelper node_helper(node_unit);
 
   // Sanity checks on RoiAlign onnx attrs
-  // HTP supports only align=False which corresponds to coordinate_transformation_mode="output_half_pixel"
   std::string coordinate_transformation_mode = node_helper.Get("coordinate_transformation_mode", "half_pixel");  // ONNX default "half_pixel"
-  RETURN_IF_NOT(coordinate_transformation_mode == "output_half_pixel", "HTP only supports coordinate_transformation_mode=output_half_pixel.");
+  RETURN_IF_NOT(coordinate_transformation_mode == "output_half_pixel" || coordinate_transformation_mode == "half_pixel",
+                "QNN EP only supports coordinate_transformation_mode=output_half_pixel or half_pixel.");
 
   // HTP supports only average pooling
   std::string mode = node_helper.Get("mode", "avg");  // ONNX default "avg"
   RETURN_IF_NOT(mode == "avg", "HTP only supports avg pooling mode.");
-
-  // HTP doesn't support sampling_ratio = 0(adaptive mode)
-  int sampling_ratio = node_helper.Get("sampling_ratio", 0);
-  RETURN_IF_NOT(sampling_ratio != 0, "HTP doesn't support sampling ratio = 0.");
 
   // Sanity check on output_width output_height
   // Output tensor size [N, C, H, W]
@@ -112,6 +108,39 @@ Ort::Status RoiAlignOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
       std::move(img_size_ratio));
   param_tensor_names.push_back(roi_align_param_img_size_ratio.GetParamTensorName());
   qnn_model_wrapper.AddParamWrapper(std::move(roi_align_param_img_size_ratio));
+
+  // Map coordinate_transformation_mode to QNN aligned param:
+  //   "half_pixel"        -> aligned=true
+  //   "output_half_pixel" -> aligned=false
+  std::string coordinate_transformation_mode = node_helper.Get("coordinate_transformation_mode", "half_pixel");
+  Qnn_Scalar_t qnn_aligned = QNN_SCALAR_INIT;
+  qnn_aligned.dataType = QNN_DATATYPE_BOOL_8;
+  qnn_aligned.bool8Value = static_cast<uint8_t>(coordinate_transformation_mode == "half_pixel");
+  QnnParamWrapper aligned_param(node_unit.Index(), node_unit.Name(), QNN_OP_ROI_ALIGN_PARAM_ALIGNED, qnn_aligned);
+  param_tensor_names.push_back(aligned_param.GetParamTensorName());
+  qnn_model_wrapper.AddParamWrapper(std::move(aligned_param));
+
+  // Pass num_samples_y/x only when sampling_ratio > 0 (fixed sampling count).
+  // When sampling_ratio=0 (ONNX adaptive), omit the param so QNN uses its default (-1 = adaptive).
+  // Note: the QNN CPU backend does not support num_samples_y/x as explicit params.
+  int32_t sampling_ratio = static_cast<int32_t>(node_helper.Get("sampling_ratio", 0));
+  if (sampling_ratio > 0) {
+    Qnn_Scalar_t qnn_num_samples_y = QNN_SCALAR_INIT;
+    qnn_num_samples_y.dataType = QNN_DATATYPE_INT_32;
+    qnn_num_samples_y.int32Value = sampling_ratio;
+    QnnParamWrapper num_samples_y_param(node_unit.Index(), node_unit.Name(),
+                                        QNN_OP_ROI_ALIGN_PARAM_NUM_SAMPLES_Y, qnn_num_samples_y);
+    param_tensor_names.push_back(num_samples_y_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(num_samples_y_param));
+
+    Qnn_Scalar_t qnn_num_samples_x = QNN_SCALAR_INIT;
+    qnn_num_samples_x.dataType = QNN_DATATYPE_INT_32;
+    qnn_num_samples_x.int32Value = sampling_ratio;
+    QnnParamWrapper num_samples_x_param(node_unit.Index(), node_unit.Name(),
+                                        QNN_OP_ROI_ALIGN_PARAM_NUM_SAMPLES_X, qnn_num_samples_x);
+    param_tensor_names.push_back(num_samples_x_param.GetParamTensorName());
+    qnn_model_wrapper.AddParamWrapper(std::move(num_samples_x_param));
+  }
 
   return ProcessOutputs(qnn_model_wrapper,
                         node_unit,
