@@ -113,10 +113,10 @@ function Get-DefaultCMakeGenerator() {
 }
 
 function Get-HostArch() {
-    switch ((Get-CimInstance Win32_operatingsystem).OSArchitecture) {
-        "ARM 64-bit Processor" { "arm64" }
-        "64-bit" { "x86_64" }
-        default { throw "Unknown OS Architecture $OsArch." }
+    switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
+        ([System.Runtime.InteropServices.Architecture]::Arm64) { "arm64" }
+        ([System.Runtime.InteropServices.Architecture]::X64)   { "x86_64" }
+        default { throw "Unknown OS Architecture $_." }
     }
 }
 
