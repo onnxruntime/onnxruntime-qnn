@@ -319,13 +319,9 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
     return nullptr;
   }
 
+  // Reject fusion if QDQ nodes are found inside the GELU topology to possibly avoid accuracy variation.
   if (erf_node_unit.UnitType() == OrtNodeUnit::Type::QDQGroup) {
-    ORT_CXX_LOG(logger,
-                ORT_LOGGING_LEVEL_WARNING,
-                ("[GeluFusion] QDQ nodes were found inside the GELU topology (" + erf_node_unit.Name() +
-                 "). The fused GELU may cause accuracy variation. Re-generate the quantized model without internal "
-                 "GELU QDQ if possible.")
-                    .c_str());
+    return nullptr;
   }
 
   const auto& erf_inputs = erf_node_unit.Inputs();
@@ -469,8 +465,8 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
   if (!status.IsOK()) {
     ORT_CXX_LOG(logger,
                 ORT_LOGGING_LEVEL_WARNING,
-                ("[GeluFusion] ValidateOnQnn failed for Erf='" + erf_node_unit.Name() +
-                 "': " + std::string(status.GetErrorMessage()))
+                ("[GeluFusion] ValidateOnQnn failed for GELU pattern (target Erf='" + erf_node_unit.Name() +
+                 "'): " + std::string(status.GetErrorMessage()))
                     .c_str());
     return nullptr;
   }

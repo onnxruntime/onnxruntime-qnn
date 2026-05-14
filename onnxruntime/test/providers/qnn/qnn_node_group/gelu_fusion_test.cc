@@ -234,6 +234,7 @@ GetTestModelFn BuildGeluPattern3TestCase(const TestInputDef<float>& input_def, b
 }
 
 // Helper function to build QDQ GELU Pattern 1
+// QDQ is only at pattern boundaries (input and output), not around internal operators
 template <typename QuantType>
 GetTestQDQModelFn<QuantType> BuildQDQGeluPattern1TestCase(const TestInputDef<float>& input_def,
                                                           bool use_mul = false) {
@@ -252,75 +253,51 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPattern1TestCase(const TestInputDef<flo
     const std::string input_qdq =
         AddQDQNodePair<QuantType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
 
-    // Constants: add explicit QDQ after each initializer (to match expected QDQ patterns).
+    // Constants: float initializers (no QDQ to keep pattern operators as SingleNode)
     builder.MakeScalarInitializer<float>("one", one);
     builder.MakeScalarInitializer<float>("half", half);
-    const std::string one_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_one", "one", input_qparams.scale, input_qparams.zero_point);
-    const std::string half_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_half", "half", input_qparams.scale, input_qparams.zero_point);
 
     // GELU Pattern 1:
     // input -> Div/Mul(sqrt2 or 1/sqrt2) -> Erf -> Add(one) -> Mul(with (input * half))
     std::string norm_out = "div_out";
     if (use_mul) {
       builder.MakeScalarInitializer<float>("inv_sqrt2", inv_sqrt_2);
-      const std::string inv_sqrt2_qdq =
-          AddQDQNodePair<QuantType>(builder, "qdq_inv_sqrt2", "inv_sqrt2", input_qparams.scale, input_qparams.zero_point);
       builder.AddNode("Mul_inv_sqrt2",
                       "Mul",
-                      {input_qdq, inv_sqrt2_qdq},
+                      {input_qdq, "inv_sqrt2"},
                       {norm_out},
                       kOnnxDomain);
     } else {
       builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
-      const std::string sqrt2_qdq =
-          AddQDQNodePair<QuantType>(builder, "qdq_sqrt2", "sqrt2", input_qparams.scale, input_qparams.zero_point);
       builder.AddNode("Div_sqrt2",
                       "Div",
-                      {input_qdq, sqrt2_qdq},
+                      {input_qdq, "sqrt2"},
                       {norm_out},
                       kOnnxDomain);
     }
 
-    // Add explicit QDQ around Erf to match expected QDQ patterns:
-    // norm_out -> Q -> DQ -> erf_in
-    const std::string erf_in_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_erf_in", norm_out, input_qparams.scale, input_qparams.zero_point);
-
-    // erf_in -> Erf -> erf_out
+    // Erf operates on float (no QDQ around it)
     builder.AddNode("Erf",
                     "Erf",
-                    {erf_in_qdq},
+                    {norm_out},
                     {"erf_out"},
                     kOnnxDomain);
 
-    // erf_out -> Q -> DQ -> erf_out_qdq
-    const std::string erf_out_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_erf_out", "erf_out", input_qparams.scale, input_qparams.zero_point);
-
     builder.AddNode("Add_one",
                     "Add",
-                    {erf_out_qdq, one_qdq},
+                    {"erf_out", "one"},
                     {"add_out"},
                     kOnnxDomain);
 
-    // add_out -> Q -> DQ -> add_out_qdq
-    const std::string add_out_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_add_out", "add_out", input_qparams.scale, input_qparams.zero_point);
-
     builder.AddNode("Mul_half",
                     "Mul",
-                    {input_qdq, half_qdq},
+                    {input_qdq, "half"},
                     {"mul_half_out"},
                     kOnnxDomain);
 
-    const std::string mul_half_out_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_mul_half_out", "mul_half_out",
-                                  input_qparams.scale, input_qparams.zero_point);
     builder.AddNode("Mul_out",
                     "Mul",
-                    {add_out_qdq, mul_half_out_qdq},
+                    {"add_out", "mul_half_out"},
                     {"Y"},
                     kOnnxDomain);
 
@@ -330,6 +307,7 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPattern1TestCase(const TestInputDef<flo
 }
 
 // Helper function to build QDQ GELU Pattern 2
+// QDQ is only at pattern boundaries (input and output), not around internal operators
 template <typename QuantType>
 GetTestQDQModelFn<QuantType> BuildQDQGeluPattern2TestCase(const TestInputDef<float>& input_def,
                                                           bool use_mul = false) {
@@ -348,76 +326,51 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPattern2TestCase(const TestInputDef<flo
     const std::string input_qdq =
         AddQDQNodePair<QuantType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
 
-    // Constants: add explicit QDQ after each initializer (to match expected QDQ patterns).
+    // Constants: float initializers (no QDQ to keep pattern operators as SingleNode)
     builder.MakeScalarInitializer<float>("one", one);
     builder.MakeScalarInitializer<float>("half", half);
-    const std::string one_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_one", "one", input_qparams.scale, input_qparams.zero_point);
-    const std::string half_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_half", "half", input_qparams.scale, input_qparams.zero_point);
 
     // GELU Pattern 2:
     // input -> Div/Mul(sqrt2 or 1/sqrt2) -> Erf -> Add(one) -> Mul(with input) -> Mul(half)
     std::string norm_out = "div_out";
     if (use_mul) {
       builder.MakeScalarInitializer<float>("inv_sqrt2", inv_sqrt_2);
-      const std::string inv_sqrt2_qdq =
-          AddQDQNodePair<QuantType>(builder, "qdq_inv_sqrt2", "inv_sqrt2", input_qparams.scale, input_qparams.zero_point);
       builder.AddNode("Mul_inv_sqrt2",
                       "Mul",
-                      {input_qdq, inv_sqrt2_qdq},
+                      {input_qdq, "inv_sqrt2"},
                       {norm_out},
                       kOnnxDomain);
     } else {
       builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
-      const std::string sqrt2_qdq =
-          AddQDQNodePair<QuantType>(builder, "qdq_sqrt2", "sqrt2", input_qparams.scale, input_qparams.zero_point);
       builder.AddNode("Div_sqrt2",
                       "Div",
-                      {input_qdq, sqrt2_qdq},
+                      {input_qdq, "sqrt2"},
                       {norm_out},
                       kOnnxDomain);
     }
 
-    // Add explicit QDQ around Erf to match expected QDQ patterns:
-    // norm_out -> Q -> DQ -> erf_in
-    const std::string erf_in_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_erf_in", norm_out, input_qparams.scale, input_qparams.zero_point);
-
-    // erf_in -> Erf -> erf_out
+    // Erf operates on float (no QDQ around it)
     builder.AddNode("Erf",
                     "Erf",
-                    {erf_in_qdq},
+                    {norm_out},
                     {"erf_out"},
                     kOnnxDomain);
 
-    // erf_out -> Q -> DQ -> erf_out_qdq
-    const std::string erf_out_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_erf_out", "erf_out", input_qparams.scale, input_qparams.zero_point);
-
     builder.AddNode("Add_one",
                     "Add",
-                    {erf_out_qdq, one_qdq},
+                    {"erf_out", "one"},
                     {"add_out"},
                     kOnnxDomain);
 
-    // add_out -> Q -> DQ -> add_out_qdq
-    const std::string add_out_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_add_out", "add_out", input_qparams.scale, input_qparams.zero_point);
-
     builder.AddNode("Mul_input",
                     "Mul",
-                    {input_qdq, add_out_qdq},
+                    {input_qdq, "add_out"},
                     {"mul_out"},
                     kOnnxDomain);
 
-    // mul_out -> Q -> DQ -> mul_out_qdq
-    const std::string mul_out_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_mul_out", "mul_out", input_qparams.scale, input_qparams.zero_point);
-
     builder.AddNode("Mul_half",
                     "Mul",
-                    {mul_out_qdq, half_qdq},
+                    {"mul_out", "half"},
                     {"Y"},
                     kOnnxDomain);
 
@@ -427,6 +380,7 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPattern2TestCase(const TestInputDef<flo
 }
 
 // Helper function to build QDQ GELU Pattern 3 (ErfMul Pattern)
+// QDQ is only at pattern boundaries (input and output), not around internal operators
 template <typename QuantType>
 GetTestQDQModelFn<QuantType> BuildQDQGeluPattern3TestCase(const TestInputDef<float>& input_def,
                                                           bool use_mul = false) {
@@ -444,69 +398,51 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPattern3TestCase(const TestInputDef<flo
     const std::string input_qdq =
         AddQDQNodePair<QuantType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
 
+    // Constants: float initializers (no QDQ to keep pattern operators as SingleNode)
     builder.MakeScalarInitializer<float>("half", half);
     builder.MakeScalarInitializer<float>("half2", half);
-    const std::string half_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_half", "half", input_qparams.scale, input_qparams.zero_point);
-    const std::string half2_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_half2", "half2", input_qparams.scale, input_qparams.zero_point);
 
-    // input -> Div/Mul(sqrt2 or 1/sqrt2) -> Erf -> Mul(0.5) -> Add(0.5)
+    // input -> Div/Mul(sqrt2 or 1/sqrt2) -> Erf -> Mul(0.5) -> Add(0.5) -> Mul(input)
     std::string norm_out = "div_out";
     if (use_mul) {
-      builder.MakeScalarInitializer<float>("inv_sqrt2", inv_sqrt_2);
-      const std::string inv_sqrt2_qdq =
-          AddQDQNodePair<QuantType>(builder, "qdq_inv_sqrt2", "inv_sqrt2", input_qparams.scale, input_qparams.zero_point);
+      builder.MakeScalarInitializer<float>("inv_sqrt_2", inv_sqrt_2);
       builder.AddNode("Mul_inv_sqrt2",
                       "Mul",
-                      {input_qdq, inv_sqrt2_qdq},
+                      {input_qdq, "inv_sqrt_2"},
                       {norm_out},
                       kOnnxDomain);
     } else {
       builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
-      const std::string sqrt2_qdq =
-          AddQDQNodePair<QuantType>(builder, "qdq_sqrt2", "sqrt2", input_qparams.scale, input_qparams.zero_point);
       builder.AddNode("Div_sqrt2",
                       "Div",
-                      {input_qdq, sqrt2_qdq},
+                      {input_qdq, "sqrt2"},
                       {norm_out},
                       kOnnxDomain);
     }
 
-    const std::string erf_in_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_erf_in", norm_out, input_qparams.scale, input_qparams.zero_point);
-
+    // Erf operates on float (no QDQ around it)
     builder.AddNode("Erf",
                     "Erf",
-                    {erf_in_qdq},
+                    {norm_out},
                     {"erf_out"},
                     kOnnxDomain);
-
-    const std::string erf_out_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_erf_out", "erf_out", input_qparams.scale, input_qparams.zero_point);
 
     // ErfMul Pattern: Mul(erf_out, 0.5) -> Add(0.5) -> Mul(input)
     builder.AddNode("Mul_half",
                     "Mul",
-                    {erf_out_qdq, half_qdq},
+                    {"erf_out", "half"},
                     {"mul_out"},
                     kOnnxDomain);
 
-    const std::string mul_out_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_mul_out", "mul_out", input_qparams.scale, input_qparams.zero_point);
-
     builder.AddNode("Add_half",
                     "Add",
-                    {mul_out_qdq, half2_qdq},
+                    {"mul_out", "half2"},
                     {"add_out"},
                     kOnnxDomain);
 
-    const std::string add_out_qdq =
-        AddQDQNodePair<QuantType>(builder, "qdq_add_out", "add_out", input_qparams.scale, input_qparams.zero_point);
-
     builder.AddNode("Mul_out",
                     "Mul",
-                    {input_qdq, add_out_qdq},
+                    {input_qdq, "add_out"},
                     {"Y"},
                     kOnnxDomain);
 
@@ -905,6 +841,193 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern3_QDQ_U8) {
                        /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All);
 
   AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu");
+}
+
+// Negative test: GELU Pattern with internal QDQ nodes should NOT fuse
+// Helper function to build QDQ GELU Pattern with internal QDQ (around Erf)
+template <typename QuantType>
+GetTestQDQModelFn<QuantType> BuildQDQGeluPatternWithInternalQDQ(const TestInputDef<float>& input_def) {
+  return [input_def](ModelTestBuilder& builder,
+                     std::vector<QuantParams<QuantType>>& output_qparams) -> void {
+    constexpr float sqrt_2 = 1.4142135381698608f;
+    constexpr float half = 0.5f;
+    constexpr float one = 1.0f;
+
+    builder.graph_->set_name("qdq_gelu_internal_qdq_graph");
+
+    // input
+    MakeTestInput(builder, "input", input_def);
+    const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
+    const std::string input_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
+
+    // Constants with QDQ
+    builder.MakeScalarInitializer<float>("one", one);
+    builder.MakeScalarInitializer<float>("half", half);
+    builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
+    const std::string one_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_one", "one", input_qparams.scale, input_qparams.zero_point);
+    const std::string half_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_half", "half", input_qparams.scale, input_qparams.zero_point);
+    const std::string sqrt2_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_sqrt2", "sqrt2", input_qparams.scale, input_qparams.zero_point);
+
+    // Div node
+    builder.AddNode("Div_sqrt2",
+                    "Div",
+                    {input_qdq, sqrt2_qdq},
+                    {"div_out"},
+                    kOnnxDomain);
+
+    // INTERNAL QDQ around Erf (this makes Erf a QDQGroup and should prevent fusion)
+    const std::string erf_in_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_erf_in", "div_out", input_qparams.scale, input_qparams.zero_point);
+
+    builder.AddNode("Erf",
+                    "Erf",
+                    {erf_in_qdq},
+                    {"erf_out"},
+                    kOnnxDomain);
+
+    const std::string erf_out_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_erf_out", "erf_out", input_qparams.scale, input_qparams.zero_point);
+
+    builder.AddNode("Add_one",
+                    "Add",
+                    {erf_out_qdq, one_qdq},
+                    {"add_out"},
+                    kOnnxDomain);
+
+    const std::string add_out_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_add_out", "add_out", input_qparams.scale, input_qparams.zero_point);
+
+    builder.AddNode("Mul_half",
+                    "Mul",
+                    {input_qdq, half_qdq},
+                    {"mul_half_out"},
+                    kOnnxDomain);
+
+    const std::string mul_half_out_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_mul_half_out", "mul_half_out",
+                                  input_qparams.scale, input_qparams.zero_point);
+
+    builder.AddNode("Mul_out",
+                    "Mul",
+                    {add_out_qdq, mul_half_out_qdq},
+                    {"Y"},
+                    kOnnxDomain);
+
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq_out", "Y",
+                                                     output_qparams[0].scale, output_qparams[0].zero_point);
+  };
+}
+
+TEST_F(QnnHTPBackendTests, GeluFusionPattern_QDQ_InternalQDQ_ShouldNotFuse) {
+  const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern_QDQ_InternalQDQ";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+  auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -10.0f, 10.0f);
+
+  // This pattern has internal QDQ nodes around Erf, so fusion should be rejected.
+  // Expected: Individual nodes are assigned to QNN EP, but NOT fused as a GELU.
+  TestQDQModelAccuracy(BuildGeluPattern1TestCase(input_def, false),
+                       BuildQDQGeluPatternWithInternalQDQ<uint8_t>(input_def),
+                       provider_options,
+                       /*opset_version=*/13,
+                       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some);
+
+  // Verify that NO fused GELU op was created (count = 0)
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu", 0);
+}
+
+// Negative test: GELU Pattern with incorrect skip connection topology should NOT fuse
+// Helper function to build QDQ GELU Pattern with wrong skip connection
+template <typename QuantType>
+GetTestQDQModelFn<QuantType> BuildQDQGeluPatternWithWrongSkipConnection(const TestInputDef<float>& input_def) {
+  return [input_def](ModelTestBuilder& builder,
+                     std::vector<QuantParams<QuantType>>& output_qparams) -> void {
+    constexpr float sqrt_2 = 1.4142135381698608f;
+    constexpr float half = 0.5f;
+    constexpr float one = 1.0f;
+
+    builder.graph_->set_name("qdq_gelu_wrong_skip_graph");
+
+    // input
+    MakeTestInput(builder, "input", input_def);
+    const QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(input_def);
+    const std::string input_qdq =
+        AddQDQNodePair<QuantType>(builder, "qdq_in", "input", input_qparams.scale, input_qparams.zero_point);
+
+    // Constants: float initializers
+    builder.MakeScalarInitializer<float>("one", one);
+    builder.MakeScalarInitializer<float>("half", half);
+    builder.MakeScalarInitializer<float>("sqrt2", sqrt_2);
+
+    // GELU-like Pattern 1 BUT with wrong skip connection:
+    // Instead of using input for skip, we use a different tensor (div_out)
+    builder.AddNode("Div_sqrt2",
+                    "Div",
+                    {input_qdq, "sqrt2"},
+                    {"div_out"},
+                    kOnnxDomain);
+
+    builder.AddNode("Erf",
+                    "Erf",
+                    {"div_out"},
+                    {"erf_out"},
+                    kOnnxDomain);
+
+    builder.AddNode("Add_one",
+                    "Add",
+                    {"erf_out", "one"},
+                    {"add_out"},
+                    kOnnxDomain);
+
+    // WRONG: Using div_out instead of input for the skip connection
+    builder.AddNode("Mul_wrong_skip",
+                    "Mul",
+                    {"div_out", "half"},  // Should be input_qdq, not div_out
+                    {"mul_half_out"},
+                    kOnnxDomain);
+
+    builder.AddNode("Mul_out",
+                    "Mul",
+                    {"add_out", "mul_half_out"},
+                    {"Y"},
+                    kOnnxDomain);
+
+    AddQDQNodePairWithOutputAsGraphOutput<QuantType>(builder, "qdq_out", "Y",
+                                                     output_qparams[0].scale, output_qparams[0].zero_point);
+  };
+}
+
+TEST_F(QnnHTPBackendTests, GeluFusionPattern_QDQ_WrongSkipConnection_ShouldNotFuse) {
+  const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern_QDQ_WrongSkip";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+  auto input_def = TestInputDef<float>({1, 2, 3, 4}, false, -10.0f, 10.0f);
+
+  // This pattern has correct QDQ placement but wrong skip connection topology.
+  // The skip connection uses div_out instead of the original input.
+  // Expected: Individual nodes are assigned to QNN EP, but NOT fused as a GELU.
+  TestQDQModelAccuracy(BuildGeluPattern1TestCase(input_def, false),
+                       BuildQDQGeluPatternWithWrongSkipConnection<uint8_t>(input_def),
+                       provider_options,
+                       /*opset_version=*/13,
+                       /*expected_ep_assignment=*/ExpectedEPNodeAssignment::Some);
+
+  // Verify that NO fused GELU op was created (count = 0)
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Gelu", 0);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
