@@ -190,7 +190,7 @@ ProviderOptions GetProviderOptions() {
 }
 
 // Build a test case with rank-5 input: Reshape -> Gemm -> Reshape
-// Mirrors the ImageMattingV2 proj/MatMul pattern: [3,3,14,14,384] -> [1764,384] -> Gemm -> output
+// Mirrors the proj/MatMul pattern: [3,3,14,14,384] -> [1764,384] -> Gemm -> output
 // ReshapeGemmFusion must NOT fire because QNN HTP FC rejects rank-5 input.
 GetTestModelFn BuildReshapeGemmReshapeRank5InputTestCase() {
   return [](ModelTestBuilder& builder) -> void {
@@ -532,7 +532,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_DynamicWeight) {
 
 // Test: Fusion should NOT happen when the input Reshape's input has rank 5.
 // QNN HTP FullyConnected only supports input rank <= 4.
-// Mirrors the ImageMattingV2 proj/MatMul regression introduced by PR #232.
+// Mirrors the proj/MatMul regression introduced by PR #232.
 // All ops (Reshape, Gemm, Reshape) must still run on QNN EP via standalone builders.
 TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_Rank5Input) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
@@ -552,8 +552,9 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_Rank5Input) {
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-2f);
 
-  // Verify the fusion did NOT fire: no FullyConnected node in the QNN graph
-  AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 0);
+  // Verify the fusion did NOT fire: one FullyConnected node and two Reshape nodes in the QNN graph
+  AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 2);
 }
 
 // ============================================================================
