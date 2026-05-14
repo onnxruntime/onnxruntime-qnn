@@ -17,6 +17,7 @@ pip install onnxruntime-qnn==2.1.1
 ## Improvements
 
 - QNN EP: Switched `onnxruntime_providers_qnn.dll` to static MSVC runtime linkage, eliminating the runtime dependency on `MSVCP140.dll` and `VCRUNTIME140.dll`. ([#241](https://github.com/onnxruntime/onnxruntime-qnn/pull/241))
+- QNN EP: Reduced peak memory in model compatibility validation from ~200 MB to ~50 MB by removing the context blob version from compatibility checks, avoiding the fake context binary creation and preparation library load. ([#366](https://github.com/onnxruntime/onnxruntime-qnn/pull/366))
 
 ## Packaging
 
