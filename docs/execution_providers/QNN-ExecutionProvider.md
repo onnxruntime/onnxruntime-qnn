@@ -40,7 +40,7 @@ ONNX Runtime QNN EP has been built and tested with the following SDK version com
 |----------------|-------------------|----------------------|
 | v2.1.1         | v2.45.41          | v1.24.4              |
 
-> **Note**: ONNX Runtime QNN EP is built and tested by using the arm64 ONNX Runtime SDK (ex: onnxruntime-win-arm64-1.24.4.zip).
+> **Note**: ONNX Runtime QNN EP is built and tested by using the arm64 ONNX Runtime SDK (ex: onnxruntime-win-arm64-1.24.0.zip).
 
 ## Build (Windows)
 For build instructions, please see the [BUILD page](./build.md).
