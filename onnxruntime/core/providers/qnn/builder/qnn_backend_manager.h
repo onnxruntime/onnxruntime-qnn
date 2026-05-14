@@ -246,13 +246,11 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   void SetQnnBackendType(uint32_t backend_id);
   QnnBackendType GetQnnBackendType() { return qnn_backend_type_; }
 
+  Qnn_Version_t GetBackendApiVersion() { return backend_api_version_; }
+
   const std::string& GetSdkVersion() { return sdk_build_version_; }
 
-  Ort::Status GetHtpArch(QnnHtpDevice_Arch_t& htp_arch) {
-    RETURN_IF_ERROR(GetPlatformInfo());
-    htp_arch = htp_arch_internal_;
-    return Ort::Status();
-  }
+  QnnHtpDevice_Arch_t GetHtpArch() { return htp_arch_internal_; }
 
   // Get backend library directory by adopting identical logic as in LoadLib.
   std::string GetBackendLibDir() {
@@ -587,6 +585,7 @@ class QnnBackendManager : public std::enable_shared_from_this<QnnBackendManager>
   int htp_share_resource_optimization_ = -1;
 
   uint32_t backend_id_ = QNN_BACKEND_ID_CPU;
+  Qnn_Version_t backend_api_version_ = QNN_VERSION_INIT;
   bool file_mapped_weights_enabled_ = false;
 
 #ifdef QNN_FILE_MAPPED_WEIGHTS_AVAILABLE
