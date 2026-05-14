@@ -127,9 +127,6 @@ for wheel in "${WHEEL_ARRAY[@]}"; do
 
         # Clean up temporary extraction
         rm -rf "$TEMP_EXTRACT_DIR"
-
-        DLL_FULL_PATH="$FINAL_EXTRACT_DIR/onnxruntime_providers_qnn.dll"
-        EXTRACTED_PATH="$FINAL_EXTRACT_DIR"
     else
         # AMD64: Extract to temp, copy DLLs from libs subdirectories, then clean up
         TEMP_EXTRACT_DIR="$OUTPUT_DIRECTORY/${WHEEL_BASE_NAME}_temp"
@@ -190,9 +187,6 @@ for wheel in "${WHEEL_ARRAY[@]}"; do
 
         # Clean up temporary extraction
         rm -rf "$TEMP_EXTRACT_DIR"
-
-        DLL_FULL_PATH="$FINAL_EXTRACT_DIR"
-        EXTRACTED_PATH="$FINAL_EXTRACT_DIR"
     fi
 
     PROCESSED_WHEELS=$((PROCESSED_WHEELS + 1))
