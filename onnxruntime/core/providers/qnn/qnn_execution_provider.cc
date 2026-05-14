@@ -1917,9 +1917,7 @@ OrtStatus* QnnEp::CreateEPContextNodes(const OrtGraph* graph,
                                              name_));
 
   // Get compatibility info for later query in GetCompiledModelCompatibilityInfo.
-  Ort::Status status = qnn_cache_compatibility_manager_->GetCompatibilityInfo(context_buffer.get(),
-                                                                              buffer_size,
-                                                                              compatibility_info_);
+  Ort::Status status = qnn_cache_compatibility_manager_->GetCompatibilityInfo(compatibility_info_);
   if (!status.IsOK()) {
     ORT_CXX_LOG(logger_,
                 ORT_LOGGING_LEVEL_VERBOSE,
@@ -2410,7 +2408,6 @@ const char* ORT_API_CALL QnnEp::GetCompiledModelCompatibilityInfoImpl(_In_ OrtEp
   qnn::QnnCompatibilityInfo default_info;
   if (ep->compatibility_info_.sdk_version == default_info.sdk_version ||
       ep->compatibility_info_.backend_api_version == default_info.backend_api_version ||
-      ep->compatibility_info_.context_blob_version == default_info.context_blob_version ||
       ep->compatibility_info_.htp_arch == default_info.htp_arch) {
     return "";
   }
