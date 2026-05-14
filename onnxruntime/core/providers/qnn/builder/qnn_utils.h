@@ -375,6 +375,30 @@ Ort::Status UnpackInt4ToInt8(size_t num_int4_elems, std::vector<uint8_t>& data_b
   return Ort::Status();
 }
 
+// This function exploits bit-manipulation trick to transform from unsigned to signed.
+// Formally, an unsigned value subtracts zero point (i.e.,  1 << (bits - 1)) to become a signed value. This subtraction
+// is essentially "flipping" the most-significant bit, which can be achieved through XOR with the zero point. While
+// taking the data being packed into consideration, simultaneously flipping all packed values can be faster than a
+// sequence of shifting, subtracting, and repacking operations for each packed value one by one.
+inline Ort::Status TransformUnsignedToSignedFixedPoint(std::vector<uint8_t>& quant_data, int64_t bits) {
+  uint8_t mask = 0;
+  if (bits == 2) {
+    mask = 0b10101010;
+  } else if (bits == 4) {
+    mask = 0b10001000;
+  } else if (bits == 8) {
+    mask = 0b10000000;
+  } else {
+    return MAKE_EP_FAIL("Unsupported bits to transform data from unsigned to signed.");
+  }
+
+  for (size_t idx = 0; idx < quant_data.size(); ++idx) {
+    quant_data[idx] ^= mask;
+  }
+
+  return Ort::Status();
+}
+
 inline std::vector<int64_t> GetInitializerShape(const OrtValueInfo* initializer, const OrtApi& ort_api) {
   const OrtTypeInfo* type_info = nullptr;
   OrtStatus* status = ort_api.GetValueInfoTypeInfo(initializer, &type_info);
@@ -500,6 +524,38 @@ Ort::Status TwoDimensionTranspose(const QnnModelWrapper& qnn_model_wrapper,
                                   std::vector<uint8_t>& transposed_data,
                                   const Ort::Logger& logger,
                                   bool skip_output_data_copy = false);
+
+template <typename T>
+Ort::Status TwoDimensionTranspose(const std::vector<T>& data,
+                                  const std::vector<uint32_t>& data_shape,
+                                  /* out */ std::vector<T>& transposed_data,
+                                  const Ort::Logger& logger,
+                                  bool skip_output_data_copy = false) {
+  transposed_data.resize(data.size(), 0);
+
+  if (skip_output_data_copy) {
+    ORT_CXX_LOG(logger,
+                ORT_LOGGING_LEVEL_VERBOSE,
+                "Only shape and dtype validation are required, so we can use dummy tensor to avoid heavy memcpy.");
+    return Ort::Status();
+  }
+
+  const size_t rows = data_shape[0];
+  const size_t cols = data_shape[1];
+
+  for (size_t row = 0; row < rows; row++) {
+    for (size_t col = 0; col < cols; col++) {
+      const size_t src_index = (row * cols + col);
+      const size_t dst_index = (col * rows + row);
+      assert(src_index < data.size());
+      assert(dst_index < transposed_data.size());
+
+      transposed_data[dst_index] = data[src_index];
+    }
+  }
+
+  return Ort::Status();
+}
 
 Ort::Status InsertConvertOp(QnnModelWrapper& qnn_model_wrapper,
                             const std::string& convert_input_name,
