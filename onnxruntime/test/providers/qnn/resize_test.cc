@@ -3,6 +3,9 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
+#include <fstream>
+#include <functional>
 #include <optional>
 #include <string>
 #include <unordered_map>
@@ -550,13 +553,64 @@ TEST_F(QnnHTPBackendTests, Resize_DownSample_Linear_HalfPixel) {
 }
 
 // Test 2x QDQ Resize mode: "linear", coordinate_transformation_mode: "pytorch_half_pixel"
-// Maps to QNN's Resize operator.
+// Maps to QNN's ResizeBilinear operator (output spatial dims > 1, equivalent to half_pixel).
 TEST_F(QnnHTPBackendTests, ResizeU8_2xLinearPytorchHalfPixel) {
   std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
   RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
                               {1, 3, 8, 8}, "linear", "pytorch_half_pixel", "",
                               ExpectedEPNodeAssignment::All,
                               19);
+}
+
+// Asserts rank-4 linear + pytorch_half_pixel Resize lowers to QNN's ResizeBilinear
+// op when both output spatial dims > 1 (the other path tripped HTP op validation
+// with "Wrong number of Parameters 6 / ResizeBilinear failed 3110").
+TEST_F(QnnHTPBackendTests, ResizeU8_2xLinearPytorchHalfPixel_EmitsResizeBilinear) {
+  namespace fs = std::filesystem;
+  const fs::path graph_dir = fs::temp_directory_path() / "resize_pytorch_half_pixel_qnn_graph";
+  fs::remove_all(graph_dir);
+  fs::create_directories(graph_dir);
+
+  auto graph_checker_fn = [&graph_dir](const Ort::Session&) {
+    bool saw_resize_bilinear = false;
+    for (const auto& entry : fs::recursive_directory_iterator(graph_dir)) {
+      if (entry.path().extension() != ".json") continue;
+      std::ifstream in(entry.path());
+      std::string line;
+      while (std::getline(in, line)) {
+        if (line.find("\"ResizeBilinear\"") != std::string::npos) {
+          saw_resize_bilinear = true;
+          break;
+        }
+      }
+      if (saw_resize_bilinear) break;
+    }
+    EXPECT_TRUE(saw_resize_bilinear)
+        << "pytorch_half_pixel rank-4 linear Resize must lower to ResizeBilinear. "
+        << "JSON dumps under " << graph_dir;
+  };
+  std::function<void(const Ort::Session&)> graph_checker = graph_checker_fn;
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
+  TestQDQModelAccuracy<uint8_t>(
+      GetResizeModelBuilder(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
+                            {1, 3, 8, 8}, "linear", "pytorch_half_pixel", ""),
+      GetQDQResizeModelBuilder<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
+                                        {1, 3, 8, 8}, "linear", "pytorch_half_pixel", ""),
+      provider_options, /*opset_version=*/19, ExpectedEPNodeAssignment::All,
+      QDQTolerance(), OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, "", {}, std::nullopt,
+      &graph_checker);
+
+  fs::remove_all(graph_dir);
 }
 
 // Test 2x QDQ Resize mode: "linear", coordinate_transformation_mode: "half_pixel"
