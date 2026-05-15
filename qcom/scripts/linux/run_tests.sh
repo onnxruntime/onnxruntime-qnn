@@ -32,24 +32,35 @@ function run_model_test() {
     local suite="${2}"
     local test_path="${3:-testdata/${suite}}"
 
-    log_info "-=-=-=- Running onnx/models ${suite} tests with the ABI-stable EP plugin -=-=-=-=-"
+    local model_log="${build_dir}/${suite}_model_tests.log"
+    local model_xml="${build_dir}/${suite}_model_tests.results.xml"
 
-    # We don't use count_errors() because both sides of a piped command get run
-    # in subshells so ${errors} wouldn't get updated.
+    # Remove old log and XML files
+    if [ -f "${model_log}" ]; then
+        rm -f "${model_log}"
+    fi
+    if [ -f "${model_xml}" ]; then
+        rm -f "${model_xml}"
+    fi
+
+    log_info "-=-=-=- Running onnx/models ${suite} tests with the ABI-stable EP plugin -=-=-=-"
+
     set +e
     "${build_dir}/onnxruntime_plugin_ep_onnx_test" \
         -j 1 \
         --plugin_ep_libs "qnn|libonnxruntime_providers_qnn.so" \
         --plugin_eps qnn \
         -i "backend_type|${backend}" \
-        "${test_path}" 2>&1 | tee "${build_dir}/${suite}_model_tests.log"
-    rc=$?
+        "${test_path}" 2>&1 | tee "${model_log}"
+    test_return_code=$?
     set -e
 
-    "${python_exe}" "${REPO_ROOT}/qcom/scripts/all/model_test_log_to_junit_xml.py" \
-        "${build_dir}/${suite}_model_tests.log" > "${build_dir}/${suite}_model_tests.results.xml"
+    if [ -f "${model_log}" ]; then
+        "${python_exe}" "${REPO_ROOT}/qcom/scripts/all/model_test_log_to_junit_xml.py" \
+            "${model_log}" > "${model_xml}"
+    fi
 
-    if [ ${rc} -ne 0 ]; then
+    if [ ${test_return_code} -ne 0 ]; then
         errors=$(($errors+1))
     fi
 }
@@ -78,11 +89,7 @@ orig_build_dir=$(sed -n "s@# Build directory: @@p" CTestTestfile.cmake)
 sed --in-place=".bak" "s@${orig_build_dir}@${build_dir}@g" CTestTestfile.cmake
 
 log_info "-=-=-=- Running ctests -=-=-=-"
-# TODO: [AISW-164203] ORT test failures on Rubik Pi
 exclude_args=()
-if [ "$(uname -m)" == "aarch64" ]; then
-    exclude_args+=(--exclude-regex "onnxruntime_provider_test")
-fi
 count_errors ./ctest --verbose --timeout 10800 --stop-on-failure "${exclude_args[@]}"
 
 # TODO: We will support python wheel in linux
@@ -110,22 +117,34 @@ count_errors ./ctest --verbose --timeout 10800 --stop-on-failure "${exclude_args
 #     log_warn "Failed to find directory 'quantization' - may be OK on platforms which do not support Python."
 # fi
 
-log_info "-=-=-=- Running ONNX model tests -=-=-=-=-"
+log_info "-=-=-=- Running ONNX model tests -=-=-=-"
 
 cd "${onnx_models_root}"
 
 declare -a model_test_runners=("run_model_test")
 for runner in "${model_test_runners[@]}"; do
 
-    if [ "$(uname -m)" != "aarch64" ]; then  # TODO: [AISW-164203] ORT test failures on Rubik Pi
-        "${runner}" cpu node "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node"
+    # Following tests are not supported on ARM64 Linux Runner
+    # TODO: [AISW-163150]
+    if [ "$(uname -m)" == "aarch64" ]; then
+        rm -rf "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node/test_strnormalizer_export_monday_casesensintive_lower"
+        rm -rf "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node/test_strnormalizer_export_monday_casesensintive_nochangecase"
+        rm -rf "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node/test_strnormalizer_export_monday_casesensintive_upper"
+        rm -rf "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node/test_strnormalizer_export_monday_empty_output"
+    fi
+    
+    "${runner}" cpu node "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node"
+
+    #TODO: [AISW-164203] - Known issues with QDQ model suite
+    if [ "$(uname -m)" != "aarch64" ]; then
         "${runner}" cpu float32
         "${runner}" htp qdq
+
+        log_debug "Scrubbing old context caches"
+        find "testdata/qdq-with-context-cache" -name "*_ctx.onnx" -print -delete
+        "${runner}" htp qdq-with-context-cache
     fi
 
-    log_debug "Scrubbing old context caches"
-    find "testdata/qdq-with-context-cache" -name "*_ctx.onnx" -print -delete
-    "${runner}" htp qdq-with-context-cache
 done
 
 exit "${errors}"

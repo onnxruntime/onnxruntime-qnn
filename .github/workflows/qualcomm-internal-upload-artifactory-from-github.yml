@@ -1,7 +1,7 @@
 # Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: MIT
 
-name: Publish ONNX Runtime Execution Provider wheel, nuget, archive and maven from GitHub workflow
+name: Publish ONNX Runtime Execution Provider wheel, nuget, archive, maven and windows libs for signing from GitHub workflow
 
 permissions:
   checks: write
@@ -199,6 +199,28 @@ jobs:
           source uplevel_venv/bin/activate
           twine check ${{ github.workspace }}/build/dist/*.whl
 
+      - name: Prepare Windows Wheel libs for signing
+        run: |
+          ./qcom/scripts/signing/prepare_wheels_for_signing.sh \
+            "${{ github.workspace }}/build/dist" \
+            "${{ github.workspace }}/build/dist/output"
+
+      - name: Upload unsigned Windows Wheel libs to Artifactory
+        if: ${{ !inputs.skip_publish }}
+        run: |
+          NETRC_FILE=$(mktemp -p /tmp)
+          chmod 600 "$NETRC_FILE"
+          cat > "$NETRC_FILE" <<EOF
+          machine re-artifactory.qualcomm.com
+          login ${{ secrets.ARTIFACTORY_USERNAME }}
+          password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          EOF
+          VERSION=$(ls "${{ github.workspace }}/build/dist/"*win_arm64*.whl 2>/dev/null | head -1 | xargs -I{} basename {} | sed 's/.*-\([0-9.]*rc[0-9]*\).*/\1/' | sed 's/-//g')
+          ./qcom/scripts/signing/upload_unsigned_to_artifactory.sh \
+            "${{ github.workspace }}/build/dist/output/unsigned/wheels.zip" \
+            "wheels.zip" "$VERSION" "$NETRC_FILE"
+          rm -f "$NETRC_FILE"
+
       - name: Publish
         if: ${{ !inputs.skip_publish }}
         env:
@@ -239,6 +261,39 @@ jobs:
           $count = (Get-ChildItem -Path "${{ github.workspace }}\build" -Recurse -Filter "*.nupkg").Count
           Write-Host "Found $count NuGet package(s)"
           if ($count -ne 1) { Write-Error "Expected 1 NuGet package, found $count"; exit 1 }
+
+      - name: Prepare Windows NuGet libs for signing
+        shell: powershell
+        run: |
+          .\qcom\scripts\signing\prepare_nuget_for_signing.ps1 `
+            -NuGetDirectory "${{ github.workspace }}\build\windows-arm64x\Release\Release\dist" `
+            -OutputDirectory "${{ github.workspace }}\build\dist\output"
+
+      - name: Upload unsigned Windows NuGet libs to Artifactory
+        if: ${{ !inputs.skip_publish }}
+        shell: powershell
+        env:
+          ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
+          ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+        run: |
+          $netrcFile = New-TemporaryFile
+          @"
+          machine re-artifactory.qualcomm.com
+          login $env:ARTIFACTORY_USERNAME
+          password $env:ARTIFACTORY_PASSWORD
+          "@ | Set-Content -Path $netrcFile
+          icacls $netrcFile /inheritance:r /grant:r "${env:USERNAME}:(R,W)" | Out-Null
+
+          $pkg = Get-ChildItem -Path "${{ github.workspace }}\build\windows-arm64x\Release\Release\dist" -Filter "*.nupkg" | Select-Object -First 1
+          $version = $pkg.BaseName -replace '^Qualcomm\.ML\.OnnxRuntime\.QNN\.' -replace '\.nupkg$' -replace '-', ''
+
+          .\qcom\scripts\signing\upload_unsigned_to_artifactory.ps1 `
+            -ZipFile "${{ github.workspace }}\build\dist\output\unsigned\nuget.zip" `
+            -Filename "nuget.zip" `
+            -Version $version `
+            -NetrcFile $netrcFile
+
+          Remove-Item -Path $netrcFile -Force
 
       - name: Publish
         if: ${{ !inputs.skip_publish }}
@@ -313,6 +368,28 @@ jobs:
           count=$(find "${{ github.workspace }}/build" -name "*.tgz" | wc -l)
           echo "Found $count TGZ archive(s)"
           [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 TGZ archive, found $count"; exit 1; }
+
+      - name: Prepare Windows Zip libs for signing
+        run: |
+          ./qcom/scripts/signing/prepare_zip_for_signing.sh \
+            "${{ github.workspace }}/build/windows-arm64/Release/dist" \
+            "${{ github.workspace }}/build/dist/output"
+
+      - name: Upload unsigned Windows Zip libs to Artifactory
+        if: ${{ !inputs.skip_publish }}
+        run: |
+          NETRC_FILE=$(mktemp -p /tmp)
+          chmod 600 "$NETRC_FILE"
+          cat > "$NETRC_FILE" <<EOF
+          machine re-artifactory.qualcomm.com
+          login ${{ secrets.ARTIFACTORY_USERNAME }}
+          password ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          EOF
+          VERSION=$(basename "$(ls "${{ github.workspace }}/build/windows-arm64/Release/dist/"*.zip 2>/dev/null | grep -v pdb | head -1)" | sed 's/.*-\([0-9.]*rc[0-9]*\).*/\1/' | sed 's/-//g')
+          ./qcom/scripts/signing/upload_unsigned_to_artifactory.sh \
+            "${{ github.workspace }}/build/dist/output/unsigned/zip.zip" \
+            "zip.zip" "$VERSION" "$NETRC_FILE"
+          rm -f "$NETRC_FILE"
 
       - name: Publish
         if: ${{ !inputs.skip_publish }}

@@ -214,6 +214,84 @@ TEST(QnnModelWrapperTest, AddTensorWrapper_EmptyName_ReturnsFalse) {
   EXPECT_FALSE(wrapper->AddTensorWrapper(std::move(tensor)));
 }
 
+// Folded-constant tracking: regression coverage for per-channel constant DQ feeding
+// Conv weight that previously leaked the DQ output as a graph input.
+
+TEST(QnnModelWrapperTest, FoldedConstant_DefaultIsFalse) {
+  QnnModelWrapperTestContext ctx;
+  ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+
+  EXPECT_FALSE(wrapper->IsFoldedConstant("not_marked"));
+  EXPECT_FALSE(wrapper->IsEffectivelyConstantInput("not_marked"));
+}
+
+TEST(QnnModelWrapperTest, FoldedConstant_MarkMakesTensorFolded) {
+  QnnModelWrapperTestContext ctx;
+  ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+
+  wrapper->MarkTensorAsFoldedConstant("weight_dq");
+
+  EXPECT_TRUE(wrapper->IsFoldedConstant("weight_dq"));
+  EXPECT_TRUE(wrapper->IsEffectivelyConstantInput("weight_dq"));
+  EXPECT_FALSE(wrapper->IsFoldedConstant("other_tensor"));
+  EXPECT_FALSE(wrapper->IsEffectivelyConstantInput("other_tensor"));
+}
+
+TEST(QnnModelWrapperTest, FoldedConstant_MarkIsIdempotent) {
+  QnnModelWrapperTestContext ctx;
+  ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+
+  wrapper->MarkTensorAsFoldedConstant("weight_dq");
+  wrapper->MarkTensorAsFoldedConstant("weight_dq");
+
+  EXPECT_TRUE(wrapper->IsFoldedConstant("weight_dq"));
+  EXPECT_TRUE(wrapper->IsEffectivelyConstantInput("weight_dq"));
+}
+
+TEST(QnnModelWrapperTest, FoldedConstant_MultipleTensorsTrackedIndependently) {
+  QnnModelWrapperTestContext ctx;
+  ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+
+  wrapper->MarkTensorAsFoldedConstant("a");
+  wrapper->MarkTensorAsFoldedConstant("b");
+
+  EXPECT_TRUE(wrapper->IsFoldedConstant("a"));
+  EXPECT_TRUE(wrapper->IsFoldedConstant("b"));
+  EXPECT_FALSE(wrapper->IsFoldedConstant("c"));
+
+  EXPECT_TRUE(wrapper->IsEffectivelyConstantInput("a"));
+  EXPECT_TRUE(wrapper->IsEffectivelyConstantInput("b"));
+  EXPECT_FALSE(wrapper->IsEffectivelyConstantInput("c"));
+}
+
+// Marking is independent of AddTensorWrapper so op builders can mark before or after.
+TEST(QnnModelWrapperTest, FoldedConstant_DoesNotRequireTensorWrapper) {
+  QnnModelWrapperTestContext ctx;
+  ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+
+  wrapper->MarkTensorAsFoldedConstant("phantom_tensor");
+
+  EXPECT_TRUE(wrapper->IsFoldedConstant("phantom_tensor"));
+  EXPECT_TRUE(wrapper->IsEffectivelyConstantInput("phantom_tensor"));
+  EXPECT_FALSE(wrapper->IsQnnTensorWrapperExist("phantom_tensor"));
+}
+
+// Folded-constant outputs MUST map to STATIC (not NATIVE) so they aren't treated as runtime intermediates.
+TEST(QnnModelWrapperTest, FoldedConstant_GetTensorTypeIsStatic) {
+  QnnModelWrapperTestContext ctx;
+  ModelSettings settings{};
+  auto wrapper = ctx.CreateWrapper(settings);
+
+  EXPECT_EQ(wrapper->GetTensorType("unmarked"), QNN_TENSOR_TYPE_NATIVE);
+  wrapper->MarkTensorAsFoldedConstant("folded");
+  EXPECT_EQ(wrapper->GetTensorType("folded"), QNN_TENSOR_TYPE_STATIC);
+}
+
 }  // namespace test
 }  // namespace onnxruntime
 

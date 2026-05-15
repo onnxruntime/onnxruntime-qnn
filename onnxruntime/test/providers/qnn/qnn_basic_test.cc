@@ -229,6 +229,7 @@ TEST(QnnEP, TestInvalidSpecificationOfBothBackendTypeAndBackendPath) {
 // Tests that the QNN EP is registered when added via the public C++ API.
 // Loads a simple ONNX model that adds floats.
 TEST_F(QnnHTPBackendTests, TestAddEpUsingPublicApi) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   onnxruntime::ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnHtp.dll";
@@ -349,6 +350,7 @@ TEST_F(QnnHTPBackendTests, RunConvInt4Model) {
 
 enum class TestBackend {
   Cpu,
+  Gpu,
   Htp,
   Saver,
   Ir,
@@ -358,6 +360,8 @@ static std::string ToBackendLibName(TestBackend backend) {
   switch (backend) {
     case TestBackend::Cpu:
       return "Cpu";
+    case TestBackend::Gpu:
+      return "Gpu";
     case TestBackend::Htp:
       return "Htp";
     case TestBackend::Saver:
@@ -384,7 +388,7 @@ static void AddSerializerConfigs(TestBackend serializer_backend, onnxruntime::Pr
       serializer_path_key = "qnn_saver_path";
       break;
     default:
-      assert(false && "Invalid serializer backend.");
+      assert(false && "AddSerializerConfigs: only Ir and Saver are valid serializer backends.");
       return;
   }
 
@@ -550,21 +554,32 @@ TEST_F(QnnCPUBackendTests, TestNHWCResizeShapeInference_sizes_opset18) {
 }
 
 // Test that QNN Saver generates the expected files for a model meant to run on the QNN CPU backend.
-// TODO: [AISW-163150] ORT test failures on qcs6490
-TEST_F(QnnCPUBackendTests, DISABLED_QnnSaver_OutputFiles) {
-  const std::filesystem::path qnn_saver_output_dir = "saver_output";
-
-  // Remove pre-existing QNN Saver output files. Note that fs::remove_all() can handle non-existing paths.
-  std::filesystem::remove_all(qnn_saver_output_dir);
-  ASSERT_FALSE(std::filesystem::exists(qnn_saver_output_dir));
+// QnnSaver may write flat to cwd (Linux aarch64) or to a subdirectory (Windows); the test
+// accepts either location.
+TEST_F(QnnCPUBackendTests, QnnSaver_OutputFiles) {
+  // Clean up any pre-existing Saver output from prior runs, both flat in cwd and in the default
+  // subdirectory, so stale files don't cause a false pass.
+  std::filesystem::remove("saver_output.c");
+  std::filesystem::remove("params.bin");
+  std::filesystem::remove_all("saver_output");
 
   RunNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
-                     TestBackend::Cpu,     // backend
-                     TestBackend::Saver);  // serializer_backend
+                     TestBackend::Cpu,
+                     TestBackend::Saver);
 
-  // Check that QNN Saver output files exist.
-  EXPECT_TRUE(std::filesystem::exists(qnn_saver_output_dir / "saver_output.c"));
-  EXPECT_TRUE(std::filesystem::exists(qnn_saver_output_dir / "params.bin"));
+  // Accept saver_output.c / params.bin in flat cwd or in ./saver_output/ subdirectory.
+  // QnnSaver writes flat to cwd on Linux aarch64 and to ./saver_output/ on Windows.
+  const auto cwd = std::filesystem::current_path();
+  const auto saver_dir = cwd / "saver_output";
+  auto find_saver_file = [&cwd, &saver_dir](const std::string& filename) -> bool {
+    return std::filesystem::exists(cwd / filename) ||
+           std::filesystem::exists(saver_dir / filename);
+  };
+
+  EXPECT_TRUE(find_saver_file("saver_output.c"))
+      << "saver_output.c not found in cwd or ./saver_output/";
+  EXPECT_TRUE(find_saver_file("params.bin"))
+      << "params.bin not found in cwd or ./saver_output/";
 }
 
 struct ModelAndBuilder {
@@ -978,14 +993,16 @@ TEST_F(QnnHTPBackendTests, TestNHWCResizeShapeInference_qdq_sizes_opset18) {
   RunNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx", TestBackend::Htp);
 }
 
-// Test that QNN Ir generates the expected file for a model meant to run on the QNN HTP backend.
-
-TEST_F(QnnHTPBackendTests, QnnIr_OutputFiles) {
+// Test that QNN Ir generates the expected DLC file for a model meant to run on the QNN HTP backend,
+// using the HTP backend's validator.
+TEST_F(QnnHTPBackendTests, QnnIr_HtpValidator_OutputFiles) {
   BackendSupport ir_backend_support = IsIRBackendSupported();
   if (ir_backend_support == BackendSupport::UNSUPPORTED) {
     GTEST_SKIP() << "QNN IR backend is not available! Skipping test.";
   }
   ASSERT_NE(ir_backend_support, BackendSupport::SUPPORT_ERROR) << "Failed to check if QNN IR backend is available.";
+
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
@@ -995,7 +1012,7 @@ TEST_F(QnnHTPBackendTests, QnnIr_OutputFiles) {
   ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
 
   InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
-                      TestBackend::Htp,      // backend
+                      TestBackend::Htp,      // backend (also used as the validator)
                       registered_ep_device,  // registered_ep_device
                       TestBackend::Ir);      // serializer backend
 
@@ -1161,14 +1178,12 @@ void VerifyFileExistsAndIsNonEmpty(const std::string& filepath) {
 }
 
 TEST_F(QnnHTPBackendTests, ProfilingTest) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   onnxruntime::ProviderOptions provider_options;
-
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 #if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
@@ -1196,14 +1211,12 @@ TEST_F(QnnHTPBackendTests, ProfilingTest) {
 }
 
 TEST_F(QnnHTPBackendTests, OptraceTest) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   onnxruntime::ProviderOptions provider_options;
-
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
 #if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
@@ -1291,9 +1304,7 @@ TEST_F(QnnHTPBackendTests, Float32ModelWithFP16PrecisionTest) {
   provider_options["backend_path"] = "libQnnHtp.so";
 #endif
 #if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
@@ -1342,14 +1353,17 @@ TEST_F(QnnHTPBackendTests, EPRejectsDynamicShapesF32) {
   };
 
   // Local function that checks that the nodes with dynamic shape I/O were assigned to CPU EP.
-  std::function<void(const Graph&)> ep_graph_checker = [](const Graph& graph) {
-    for (const Node& node : graph.Nodes()) {
-      const std::string& ep_name = node.GetExecutionProviderType();
-      const std::string& op_type = node.OpType();
-      if (op_type == "Reshape" || op_type == "Softmax") {
-        EXPECT_EQ(ep_name, kCpuExecutionProvider);
-      } else {
-        EXPECT_TRUE((ep_name == kQnnExecutionProvider) || (ep_name == onnxruntime::kQnnExecutionProvider));
+  std::function<void(const Ort::Session&)> ep_graph_checker = [](const Ort::Session& session) {
+    std::vector<Ort::ConstEpAssignedSubgraph> subgraphs = session.GetEpGraphAssignmentInfo();
+    for (const auto& subgraph : subgraphs) {
+      std::string ep_name = subgraph.GetEpName();
+      for (const auto& node : subgraph.GetNodes()) {
+        std::string op_type = node.GetOperatorType();
+        if (op_type == "Reshape" || op_type == "Softmax") {
+          EXPECT_EQ(ep_name, kCpuExecutionProvider) << op_type << " should be assigned to CPU EP";
+        } else {
+          EXPECT_EQ(ep_name, kQnnExecutionProvider) << op_type << " should be assigned to QNN EP";
+        }
       }
     }
   };
@@ -1362,9 +1376,7 @@ TEST_F(QnnHTPBackendTests, EPRejectsDynamicShapesF32) {
 #endif
   provider_options["offload_graph_io_quantization"] = "0";
 #if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
@@ -1431,35 +1443,67 @@ TEST_F(QnnHTPBackendTests, DumpJsonQNNGraph) {
 TEST_F(QnnHTPBackendTests, EPOffloadsGraphIOQuantDequant) {
   // Returns a function that checks that the Q/DQ ops at the graph IO boundary are offloaded to CPU
   // if the corresponding provider option is enabled.
-  auto graph_checker_builder = [](bool offload_graph_io_quantization) -> std::function<void(const Graph&)> {
-    return [offload_graph_io_quantization](const Graph& graph) {
-      size_t num_q = 0;
-      size_t num_dq = 0;
-      size_t num_qnn_fused_node = 0;
+  auto graph_checker_builder = [](bool offload_graph_io_quantization) -> std::function<void(const Ort::Session&)> {
+    return [offload_graph_io_quantization](const Ort::Session& session) {
+      // The public API returns pre-fusion nodes grouped by EP subgraph.
+      // We verify:
+      //   offload=0: exactly 1 QNN subgraph (all QNN-eligible ops grouped), 0 CPU nodes
+      //   offload=1: exactly 1 QNN subgraph (all QNN-eligible ops grouped), 2 CPU nodes (boundary Q + DQ)
+      size_t num_qnn_subgraphs = 0;
+      size_t num_cpu_nodes = 0;
+      std::vector<std::string> cpu_op_types;
 
-      for (const Node& node : graph.Nodes()) {
-        const std::string& ep_name = node.GetExecutionProviderType();
-        const std::string& op_type = node.OpType();
+      // For offload=1 verify the CPU Q/DQ are the graph-IO boundary nodes, not interior ones.
+      // ConstEpAssignedNode exposes only GetName/GetDomain/GetOperatorType — no input/output
+      // tensor name accessors — so we proxy the boundary check via the node names assigned by
+      // AddQDQNodePair / AddQDQNodePairWithOutputAsGraphOutput in BuildQDQOpTestCase:
+      //   input-side boundary Q   → "qdq_in0_q"  (consumes graph input "quant_input_defs_0")
+      //   output-side boundary DQ → "qdq_out_dq" (produces graph output "qdq_out_dq_out")
+      // Interior counterparts are "qdq_in0_dq" and "qdq_out_q"; ending up on CPU would mean
+      // the partitioner sent the wrong nodes to the CPU EP.
+      bool found_boundary_q = false;
+      bool found_boundary_dq = false;
 
-        if (offload_graph_io_quantization && op_type == "QuantizeLinear") {
-          const bool consumes_graph_input = graph.IsInputsIncludingInitializers(node.InputDefs()[0]);
-          EXPECT_EQ(ep_name, kCpuExecutionProvider);
-          EXPECT_TRUE(consumes_graph_input);
-          num_q += 1;
-        } else if (offload_graph_io_quantization && op_type == "DequantizeLinear") {
-          const bool produces_graph_output = graph.IsOutput(node.OutputDefs()[0]);
-          EXPECT_EQ(ep_name, kCpuExecutionProvider);
-          EXPECT_TRUE(produces_graph_output);
-          num_dq += 1;
+      std::vector<Ort::ConstEpAssignedSubgraph> subgraphs = session.GetEpGraphAssignmentInfo();
+      for (const auto& subgraph : subgraphs) {
+        std::string ep_name = subgraph.GetEpName();
+        if (ep_name == kQnnExecutionProvider) {
+          num_qnn_subgraphs++;
         } else {
-          EXPECT_TRUE((ep_name == kQnnExecutionProvider) || (ep_name == onnxruntime::kQnnExecutionProvider));
-          num_qnn_fused_node += 1;
+          // CPU EP should only receive Q/DQ boundary nodes when offloading is enabled.
+          for (const auto& node : subgraph.GetNodes()) {
+            std::string op_type = node.GetOperatorType();
+            std::string node_name = node.GetName();
+            cpu_op_types.push_back(op_type);
+            if (offload_graph_io_quantization) {
+              EXPECT_TRUE(op_type == "QuantizeLinear" || op_type == "DequantizeLinear")
+                  << op_type << " should not be on CPU EP when IO quantization offloading is enabled";
+              if (op_type == "QuantizeLinear") {
+                found_boundary_q = (node_name == "qdq_in0_q");
+              } else if (op_type == "DequantizeLinear") {
+                found_boundary_dq = (node_name == "qdq_out_dq");
+              }
+            }
+            num_cpu_nodes++;
+          }
         }
       }
 
-      EXPECT_EQ(num_q, static_cast<size_t>(offload_graph_io_quantization));
-      EXPECT_EQ(num_dq, static_cast<size_t>(offload_graph_io_quantization));
-      EXPECT_EQ(num_qnn_fused_node, 1);
+      EXPECT_EQ(num_qnn_subgraphs, 1u) << "Expected all QNN-assigned nodes grouped into 1 subgraph";
+      if (offload_graph_io_quantization) {
+        const std::vector<std::string> graph_inputs = session.GetInputNames();
+        const std::vector<std::string> graph_outputs = session.GetOutputNames();
+        EXPECT_EQ(num_cpu_nodes, 2u) << "Expected 2 boundary Q/DQ nodes offloaded to CPU EP";
+        EXPECT_TRUE(found_boundary_q)
+            << "Expected input-side boundary Q (qdq_in0_q) on CPU EP consuming a graph input; "
+            << "graph inputs: " << testing::PrintToString(graph_inputs);
+        EXPECT_TRUE(found_boundary_dq)
+            << "Expected output-side boundary DQ (qdq_out_dq) on CPU EP producing a graph output; "
+            << "graph outputs: " << testing::PrintToString(graph_outputs);
+      } else {
+        EXPECT_EQ(num_cpu_nodes, 0u) << "Expected no CPU nodes when IO quantization offloading is disabled, "
+                                     << "got: " << testing::PrintToString(cpu_op_types);
+      }
     };
   };
 
@@ -1525,6 +1569,7 @@ static GetTestModelFn QDQBuildSigmoidForTensorNameTest(const TestInputDef<float>
 
 // Test that DLC I/O tensor names match original ONNX names when offload_graph_io_quantization=1.
 TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationTensorNameOverrides) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ProviderOptions provider_options;
 #if defined(_WIN32)
   provider_options["backend_path"] = "QnnHtp.dll";
@@ -1677,6 +1722,41 @@ TEST_F(QnnGPUBackendTests, AutoEp_PreferGpu) {
   }
 
   ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
+}
+
+// Test that QNN Ir generates the expected DLC file using the QNN GPU backend as the validator.
+// The GPU backend is used for op validation (backendValidateOpConfig) while QnnIr serializes
+// the graph to a .dlc file. Requires a GPU-capable device (Windows ARM64 with Adreno GPU).
+TEST_F(QnnGPUBackendTests, QnnIr_GpuValidator_OutputFiles) {
+  BackendSupport ir_backend_support = IsIRBackendSupported();
+  if (ir_backend_support == BackendSupport::UNSUPPORTED) {
+    GTEST_SKIP() << "QNN IR backend is not available! Skipping test.";
+  }
+  ASSERT_NE(ir_backend_support, BackendSupport::SUPPORT_ERROR) << "Failed to check if QNN IR backend is available.";
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
+
+  // Remove pre-existing QNN Ir output files. Note that fs::remove_all() can handle non-existing paths.
+  std::filesystem::remove_all(qnn_dlc_dir);
+  ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
+
+  InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
+                      TestBackend::Gpu,      // backend (used as op validator)
+                      registered_ep_device,  // registered_ep_device
+                      TestBackend::Ir);      // serializer backend (dumps to .dlc)
+
+  // File names are taken from graph node names. Just make sure that we got one .dlc
+  // in the expected directory.
+  ASSERT_TRUE(std::filesystem::exists(qnn_dlc_dir));
+
+  int file_count = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(qnn_dlc_dir)) {
+    EXPECT_TRUE(entry.is_regular_file());
+    EXPECT_EQ(entry.path().extension(), ".dlc");
+    ++file_count;
+  }
+  EXPECT_EQ(file_count, 1);
 }
 
 TEST_F(QnnHTPBackendTests, AutoEp_AllDevices) {
@@ -1970,6 +2050,7 @@ TEST_F(QnnHTPBackendTests, TestMismatchedGraphInputAndTensorWrapperCount) {
 // Compile a QDQ model to a context binary with offload_graph_io_quantization=1,
 // then load and run the context binary. Regression test for PR #234.
 TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationContextBinaryRoundTrip) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::string ctx_model_file = "./offload_qdq_ctx_test.onnx";
   std::remove(ctx_model_file.c_str());
   auto cleanup = gsl::finally([&]() { std::remove(ctx_model_file.c_str()); });
@@ -2049,8 +2130,15 @@ TEST_F(QnnCPUBackendTests, DISABLED_TestSimulatedQnnEp) {
 }
 #endif  // !BUILD_QNN_EP_STATIC_LIB
 
-// Test that QNN Ir generates the expected files for a model meant to run on any QNN backend.
-TEST_F(QnnIRBackendTests, QnnIr_OutputFiles) {
+// Test that QNN Ir generates the expected DLC file for a model meant to run on the QNN CPU backend,
+// using the CPU backend's validator.
+TEST_F(QnnCPUBackendTests, QnnIr_CpuValidator_OutputFiles) {
+  BackendSupport ir_backend_support = IsIRBackendSupported();
+  if (ir_backend_support == BackendSupport::UNSUPPORTED) {
+    GTEST_SKIP() << "QNN IR backend is not available! Skipping test.";
+  }
+  ASSERT_NE(ir_backend_support, BackendSupport::SUPPORT_ERROR) << "Failed to check if QNN IR backend is available.";
+
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
 
@@ -2059,7 +2147,34 @@ TEST_F(QnnIRBackendTests, QnnIr_OutputFiles) {
   ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
 
   InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
-                      TestBackend::Ir,       // backend
+                      TestBackend::Cpu,      // backend (also used as the validator)
+                      registered_ep_device,  // registered_ep_device
+                      TestBackend::Ir);      // serializer backend
+
+  ASSERT_TRUE(std::filesystem::exists(qnn_dlc_dir));
+
+  int file_count = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(qnn_dlc_dir)) {
+    EXPECT_TRUE(entry.is_regular_file());
+    EXPECT_EQ(entry.path().extension(), ".dlc");
+    ++file_count;
+  }
+  EXPECT_EQ(file_count, 1);
+}
+
+// Test that QNN Ir generates the expected DLC file using the QnnIr backend itself as the validator.
+// Only requires host-side compilation capability (backendCreate + backendValidateOpConfig) and does
+// NOT require inference hardware, so it can run on Windows x64 development hosts.
+TEST_F(QnnIRBackendTests, QnnIr_IrValidator_OutputFiles) {
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
+
+  // Remove pre-existing QNN Ir output files. Note that fs::remove_all() can handle non-existing paths.
+  std::filesystem::remove_all(qnn_dlc_dir);
+  ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
+
+  InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
+                      TestBackend::Ir,       // backend (also used as the validator)
                       registered_ep_device,  // registered_ep_device
                       TestBackend::Ir);      // serializer backend
 
@@ -2647,9 +2762,7 @@ TEST_F(QnnCPUBackendTests, GetUniqueNameResetBetweenCompilations) {
 // Test extended UDMA mode on supported hardware (should run successfully)
 #if defined(_WIN32)
 TEST_F(QnnHTPBackendTests, ExtendedUdmaModeTest) {
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V79)) {
-    GTEST_SKIP() << "Test requires HTP arch >= V81 for extended UDMA support.";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
   // Create provider options with extended UDMA mode enabled
   ProviderOptions options;
   options["backend_type"] = "htp";
