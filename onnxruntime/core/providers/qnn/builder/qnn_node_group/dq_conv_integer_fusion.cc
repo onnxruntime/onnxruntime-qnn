@@ -4,7 +4,6 @@
 #include "core/providers/qnn/builder/qnn_node_group/dq_conv_integer_fusion.h"
 
 #include <array>
-#include <cstring>
 #include <gsl/gsl>
 #include <memory>
 #include <string>
@@ -13,6 +12,7 @@
 #include <vector>
 
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn/builder/qnn_node_group/dq_integer_op_fusion_utils.h"
 #include "core/providers/qnn/builder/qnn_node_group/utils.h"
 #include "core/providers/qnn/builder/qnn_utils.h"
 #include "core/providers/qnn/common/qnn_graph_utils.h"
@@ -26,249 +26,60 @@ constexpr std::array<uint32_t, 4> kPermNchwToNhwc = {0, 2, 3, 1};
 constexpr std::array<uint32_t, 4> kPermNhwcToNchw = {0, 3, 1, 2};
 
 constexpr char kOpConvInteger[] = "ConvInteger";
-constexpr char kOpDynamicQuantizeLinear[] = "DynamicQuantizeLinear";
-constexpr char kOpCast[] = "Cast";
-constexpr char kOpMul[] = "Mul";
-constexpr char kOpAdd[] = "Add";
 
-constexpr std::string_view kFusionType = "DQConvIntegerFusion";
+constexpr std::string_view kFusionType = DQConvIntegerFusion::kType;
 
-struct DqlLookupResult {
-  const OrtNodeUnit* dql = nullptr;         // matched DQL NodeUnit, nullptr if not found
-  bool already_claimed_by_sibling = false;  // true iff DQL is already claimed by another DQConvIntegerFusion
-};
-
-// Walks up `conv_integer`'s a_q input to find the producer DynamicQuantizeLinear NodeUnit.
-// Tolerates DQL being claimed by a sibling DQConvIntegerFusion (multi-ConvInteger-shared-DQL
-// case): only the first sibling actually claims DQL; later siblings detect the existing claim
-// and skip the double-claim. Returns dql=nullptr if DQL is claimed by a non-DQConvIntegerFusion.
-DqlLookupResult FindParentDqlForConvInteger(
-    const OrtNodeUnit& conv_integer,
-    const OrtNodeUnitIODef& a_q_input,
-    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit,
-    const std::unordered_map<const OrtNodeUnit*, const IQnnNodeGroup*>& qnn_node_group_map) {
-  DqlLookupResult result;
-
-  const Ort::ConstNode conv_int_node(&conv_integer.GetNode());
-  const OrtNode* dql_node_raw = nullptr;
-  for (const Ort::ConstValueInfo& input_info : conv_int_node.GetInputs()) {
-    if (input_info.GetName() != a_q_input.name) {
-      continue;
-    }
-    const Ort::ConstNode parent = input_info.GetProducerNode().node;
-    dql_node_raw = static_cast<const OrtNode*>(parent);
-    break;
-  }
-  if (dql_node_raw == nullptr) {
-    return result;
-  }
-
-  const auto dql_it = node_to_node_unit.find(dql_node_raw);
-  if (dql_it == node_to_node_unit.end()) {
-    return result;
-  }
-
-  const auto claim_it = qnn_node_group_map.find(dql_it->second);
-  if (claim_it != qnn_node_group_map.end()) {
-    if (claim_it->second->Type() != kFusionType) {
-      return result;  // claimed by a non-DQConvIntegerFusion: cannot share
-    }
-    result.already_claimed_by_sibling = true;
-  }
-
-  result.dql = dql_it->second;
-  return result;
-}
-
-// True if every consumer of `value_info` is a ConvInteger SingleNode and `value_info` is not
-// itself a graph output. Used on DQL's a_q / a_zp outputs.
-bool ConsumersAreAllConvIntegers(
-    const Ort::ConstValueInfo& value_info,
-    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit) {
-  if (value_info.IsGraphOutput()) {
+// Mirrors TryFusion's input-side checks on a candidate ConvInteger. Used to pre-validate sibling
+// ConvIntegers sharing one DQL: if any sibling is not structurally fusible the partition cannot
+// be safely claimed, since the first sibling to fuse would absorb DQL and strand the rejected
+// sibling on CPU EP without a producing DQL. A "yes" here is necessary but not sufficient -
+// QNN's own validate may still reject.
+bool IsConvIntegerStructurallyFusible(const OrtNodeUnit& conv_integer,
+                                      QnnModelWrapper& qmw) {
+  if (conv_integer.Domain() == kMSInternalNHWCDomain) return false;
+  if (conv_integer.OpType() != kOpConvInteger ||
+      conv_integer.UnitType() != OrtNodeUnit::Type::SingleNode) {
     return false;
   }
-  for (const auto& c : value_info.GetConsumers()) {
-    if (c.node == nullptr) return false;
-    const auto it = node_to_node_unit.find(c.node);
-    if (it == node_to_node_unit.end()) return false;
-    const OrtNodeUnit* nu = it->second;
-    if (nu->OpType() != kOpConvInteger || nu->UnitType() != OrtNodeUnit::Type::SingleNode) {
-      return false;
-    }
-  }
-  return true;
-}
 
-// True if every consumer of `value_info` looks like a parallel_Mul: 2-input/1-output Mul
-// SingleNode whose other input is a constant initializer. Used on DQL's a_scale output.
-bool ConsumersAreAllParallelMuls(
-    const Ort::ConstValueInfo& value_info,
-    const QnnModelWrapper& qmw,
-    const std::unordered_map<const OrtNode*, const OrtNodeUnit*>& node_to_node_unit) {
-  if (value_info.IsGraphOutput()) {
+  const auto& ci_inputs = conv_integer.Inputs();
+  const auto& ci_outputs = conv_integer.Outputs();
+  if (ci_inputs.size() < 2 || ci_inputs.size() > 4 || ci_outputs.size() != 1) return false;
+
+  TensorInfo a_info{};
+  TensorInfo b_info{};
+  if (!qmw.GetTensorInfo(ci_inputs[0], a_info).IsOK() ||
+      !qmw.GetTensorInfo(ci_inputs[1], b_info).IsOK()) {
     return false;
   }
-  const std::string a_scale_name(value_info.GetName());
-  for (const auto& c : value_info.GetConsumers()) {
-    if (c.node == nullptr) return false;
-    const auto it = node_to_node_unit.find(c.node);
-    if (it == node_to_node_unit.end()) return false;
-    const OrtNodeUnit* nu = it->second;
-    if (nu->OpType() != kOpMul || nu->UnitType() != OrtNodeUnit::Type::SingleNode) return false;
-    if (nu->Inputs().size() != 2 || nu->Outputs().size() != 1) return false;
-    const auto& mul_inputs = nu->Inputs();
-    const std::string& other_name = (mul_inputs[0].name == a_scale_name) ? mul_inputs[1].name
-                                                                         : mul_inputs[0].name;
-    if (!qmw.IsConstantInput(other_name)) return false;
+  if (a_info.shape.size() != 4 || b_info.shape.size() != 4) return false;
+  if (!qmw.IsConstantInput(ci_inputs[1].name) || !b_info.is_initializer) return false;
+  if (b_info.qnn_data_type != QNN_DATATYPE_SFIXED_POINT_8 &&
+      b_info.qnn_data_type != QNN_DATATYPE_INT_8 &&
+      b_info.qnn_data_type != QNN_DATATYPE_UFIXED_POINT_8 &&
+      b_info.qnn_data_type != QNN_DATATYPE_UINT_8) {
+    return false;
   }
+
+  const bool has_a_zp = ci_inputs.size() >= 3 && ci_inputs[2].Exists();
+  const bool has_b_zp = ci_inputs.size() >= 4 && ci_inputs[3].Exists();
+  if (!has_a_zp) return false;  // mandatory: see TryFusion comment
+  if (has_b_zp && !qmw.IsConstantInput(ci_inputs[3].name)) return false;
+
+  OrtNodeAttrHelper attrs(conv_integer);
+  if (attrs.Get("auto_pad", std::string("NOTSET")) != "NOTSET") return false;
+  const auto strides = attrs.Get("strides", std::vector<uint32_t>{1u, 1u});
+  const auto dilations = attrs.Get("dilations", std::vector<uint32_t>{1u, 1u});
+  const auto pads = attrs.Get("pads", std::vector<uint32_t>{0u, 0u, 0u, 0u});
+  if (strides.size() != 2 || dilations.size() != 2 || pads.size() != 4) return false;
+
+  // Output shape must be fully static at fusion time so the rewrite can size the NHWC Conv
+  // output and the post-Conv Transpose.
+  std::vector<uint32_t> out_shape;
+  if (!qmw.GetOnnxShape(ci_outputs[0].shape, out_shape)) return false;
+  if (out_shape.size() != 4) return false;
+
   return true;
-}
-
-Ort::Status ReadFloatInitializer(const QnnModelWrapper& qmw,
-                                 const OrtNodeUnitIODef& iodef,
-                                 std::vector<float>& out) {
-  const std::string& name = iodef.name;
-  const OrtValueInfo* info = qmw.GetConstantTensor(name);
-  RETURN_IF_NOT(info != nullptr, ("Constant tensor not found: " + name).c_str());
-
-  RETURN_IF_NOT(iodef.type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT,
-                ("Expected FLOAT initializer for " + name).c_str());
-
-  std::vector<uint8_t> bytes;
-  RETURN_IF_ERROR(qmw.UnpackInitializerData(info, bytes));
-  RETURN_IF_NOT(bytes.size() % sizeof(float) == 0, "Unexpected byte count for float initializer");
-
-  out.resize(bytes.size() / sizeof(float));
-  std::memcpy(out.data(), bytes.data(), bytes.size());
-  return Ort::Status();
-}
-
-// Reads a zero-point initializer (INT8 or UINT8) as int32 values.
-Ort::Status ReadZeroPointAsInt32(const QnnModelWrapper& qmw,
-                                 const OrtNodeUnitIODef* zp_iodef,
-                                 std::vector<int32_t>& out) {
-  out.clear();
-  if (zp_iodef == nullptr || !zp_iodef->Exists()) {
-    return Ort::Status();
-  }
-  const std::string& name = zp_iodef->name;
-  const OrtValueInfo* info = qmw.GetConstantTensor(name);
-  RETURN_IF_NOT(info != nullptr, ("Constant tensor not found: " + name).c_str());
-
-  const ONNXTensorElementDataType elem_type = zp_iodef->type;
-  RETURN_IF_NOT(elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8 ||
-                    elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8,
-                ("Expected INT8 or UINT8 zero-point for " + name).c_str());
-
-  std::vector<uint8_t> bytes;
-  RETURN_IF_ERROR(qmw.UnpackInitializerData(info, bytes));
-
-  out.resize(bytes.size());
-  if (elem_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8) {
-    const int8_t* src = reinterpret_cast<const int8_t*>(bytes.data());
-    for (size_t i = 0; i < bytes.size(); ++i) {
-      out[i] = static_cast<int32_t>(src[i]);
-    }
-  } else {
-    for (size_t i = 0; i < bytes.size(); ++i) {
-      out[i] = static_cast<int32_t>(bytes[i]);
-    }
-  }
-  return Ort::Status();
-}
-
-// Builds the weight quant params (int8 or uint8). ONNX zero-point is negated to match QNN's
-// offset convention (QNN: x = scale * (q - offset); offset = -ONNX_zp). For per-channel B_scale
-// the result is only used to detect per-channel via IsPerChannel(); the per-channel emission
-// path pre-dequantizes to float offline and does not consume these quant params, so the axis
-// value carried here is informational only.
-Ort::Status BuildWeightQuantParams(const QnnModelWrapper& qmw,
-                                   const OrtNodeUnitIODef& b_scale_iodef,
-                                   const OrtNodeUnitIODef* b_zp_iodef,
-                                   uint32_t out_channels,
-                                   QnnQuantParamsWrapper& out_params) {
-  std::vector<float> scales;
-  RETURN_IF_ERROR(ReadFloatInitializer(qmw, b_scale_iodef, scales));
-  RETURN_IF_NOT(!scales.empty(), "B_scale has zero elements");
-
-  std::vector<int32_t> offsets;
-  RETURN_IF_ERROR(ReadZeroPointAsInt32(qmw, b_zp_iodef, offsets));
-  for (int32_t& v : offsets) v = -v;
-
-  if (scales.size() == 1) {
-    const int32_t offset = offsets.empty() ? 0 : offsets[0];
-    out_params = QnnQuantParamsWrapper(scales[0], offset);
-    return Ort::Status();
-  }
-
-  RETURN_IF_NOT(static_cast<uint32_t>(scales.size()) == out_channels,
-                "Per-channel B_scale length must equal weight out_channels");
-  if (offsets.empty()) {
-    offsets.assign(scales.size(), 0);
-  } else if (offsets.size() == 1) {
-    offsets.assign(scales.size(), offsets[0]);
-  } else {
-    RETURN_IF_NOT(offsets.size() == scales.size(),
-                  "B_zp length must equal B_scale length for per-channel");
-  }
-
-  out_params = QnnQuantParamsWrapper(gsl::span<const float>(scales),
-                                     gsl::span<const int32_t>(offsets),
-                                     /*axis=*/0,
-                                     /*is_int4=*/false);
-  return Ort::Status();
-}
-
-// Pre-dequantizes per-channel int8 / uint8 HWCN weight bytes to float32 bytes (out_channels
-// axis is HWCN's last axis).
-Ort::Status PreDequantizePerChannelWeight(const QnnModelWrapper& qmw,
-                                          const OrtNodeUnitIODef& b_scale_iodef,
-                                          const OrtNodeUnitIODef* b_zp_iodef,
-                                          bool is_signed_weight,
-                                          uint32_t out_channels,
-                                          const std::vector<uint8_t>& hwcn_quant_bytes,
-                                          std::vector<uint8_t>& out_float_bytes) {
-  std::vector<float> scales;
-  RETURN_IF_ERROR(ReadFloatInitializer(qmw, b_scale_iodef, scales));
-  RETURN_IF_NOT(scales.size() == static_cast<size_t>(out_channels),
-                "Per-channel B_scale length mismatch");
-
-  std::vector<int32_t> zps_onnx;
-  RETURN_IF_ERROR(ReadZeroPointAsInt32(qmw, b_zp_iodef, zps_onnx));
-  if (zps_onnx.empty()) {
-    zps_onnx.assign(scales.size(), 0);
-  } else if (zps_onnx.size() == 1) {
-    zps_onnx.assign(scales.size(), zps_onnx[0]);
-  } else {
-    RETURN_IF_NOT(zps_onnx.size() == scales.size(), "Per-channel B_zp length mismatch");
-  }
-
-  const size_t num_elems = hwcn_quant_bytes.size();
-  const size_t c_out = static_cast<size_t>(out_channels);
-  RETURN_IF_NOT(c_out > 0 && num_elems % c_out == 0,
-                "Weight byte count not divisible by C_out");
-
-  // Dequantize into a typed float buffer first to avoid uint8_t-to-float aliasing issues,
-  // then memcpy out to the byte buffer that QnnTensorWrapper expects.
-  std::vector<float> floats(num_elems);
-  if (is_signed_weight) {
-    const int8_t* src = reinterpret_cast<const int8_t*>(hwcn_quant_bytes.data());
-    for (size_t i = 0; i < num_elems; ++i) {
-      const size_t c = i % c_out;
-      floats[i] = scales[c] * static_cast<float>(static_cast<int32_t>(src[i]) - zps_onnx[c]);
-    }
-  } else {
-    const uint8_t* src = hwcn_quant_bytes.data();
-    for (size_t i = 0; i < num_elems; ++i) {
-      const size_t c = i % c_out;
-      floats[i] = scales[c] * static_cast<float>(static_cast<int32_t>(src[i]) - zps_onnx[c]);
-    }
-  }
-
-  out_float_bytes.resize(num_elems * sizeof(float));
-  std::memcpy(out_float_bytes.data(), floats.data(), out_float_bytes.size());
-  return Ort::Status();
 }
 
 }  // namespace
@@ -347,9 +158,22 @@ std::unique_ptr<IQnnNodeGroup> DQConvIntegerFusion::TryFusion(
     }
   }
 
+  // The Conv emission path reads the terminator NCHW shape from the ONNX graph to size the NHWC
+  // Conv output and the post-Conv Transpose. If those dims aren't statically known, the rewrite
+  // can't be sized at TryFusion time. Reject up-front so we don't claim DQL only to fail later
+  // (which would also strand sibling ConvIntegers - see the sibling pre-validation below).
+  {
+    std::vector<uint32_t> ci_out_shape;
+    if (!qnn_model_wrapper.GetOnnxShape(ci_outputs[0].shape, ci_out_shape) ||
+        ci_out_shape.size() != 4) {
+      return reject("ConvInteger output shape is not statically rank-4");
+    }
+  }
+
   // Walk up to DQL. Custom lookup tolerates DQL being claimed by a sibling DQConvIntegerFusion.
-  const DqlLookupResult dql_lookup = FindParentDqlForConvInteger(
-      conv_integer_node_unit, ci_inputs[0], node_to_node_unit, node_unit_to_qnn_node_group);
+  const DqlLookupResult dql_lookup = FindParentDql(
+      conv_integer_node_unit, ci_inputs[0], kFusionType,
+      node_to_node_unit, node_unit_to_qnn_node_group);
   if (dql_lookup.dql == nullptr ||
       dql_lookup.dql->OpType() != kOpDynamicQuantizeLinear ||
       dql_lookup.dql->UnitType() != OrtNodeUnit::Type::SingleNode) {
@@ -457,7 +281,6 @@ std::unique_ptr<IQnnNodeGroup> DQConvIntegerFusion::TryFusion(
 
   // Optional trailing Add(requant_Mul.out, Bias_init).
   const OrtNodeUnit* add_bias = nullptr;
-  std::string bias_name;
   std::string terminator_output_name = requant_mul->Outputs()[0].name;
   if (const OrtNodeUnit* maybe_add = GetOnlyChildOfOutput(
           qnn_model_wrapper, *requant_mul, requant_mul->Outputs()[0],
@@ -492,26 +315,39 @@ std::unique_ptr<IQnnNodeGroup> DQConvIntegerFusion::TryFusion(
       return reject("Bias shape is not [C_out] or [1,C_out,1,1]");
     }
     add_bias = maybe_add;
-    bias_name = bias_def.name;
     terminator_output_name = maybe_add->Outputs()[0].name;
   }
 
-  // DQL outputs may only feed sanctioned consumers (this fusion's nodes plus, optionally,
-  // sibling DQConvIntegerFusion candidates that share the same DQL). Any other consumer means
-  // we can't bypass DQL safely, so reject.
+  // DQL outputs may only feed sanctioned consumers (this fusion's nodes plus optional sibling
+  // DQConvIntegerFusion candidates sharing the same DQL). Any other consumer means we cannot
+  // bypass DQL safely. Additionally pre-validate every sibling ConvInteger so the first sibling
+  // to fuse does not claim DQL on behalf of a structurally-broken sibling that would then be
+  // stranded on CPU EP without a producing DQL.
   {
     const std::vector<Ort::ConstValueInfo> dql_outs = Ort::ConstNode(&dql.GetNode()).GetOutputs();
     if (dql_outs.size() != 3) {
       return reject("DQL does not have 3 outputs");
     }
-    if (!ConsumersAreAllConvIntegers(dql_outs[0], node_to_node_unit)) {
+    if (!ConsumersAreAllOfType(dql_outs[0], kOpConvInteger, node_to_node_unit)) {
       return reject("a_q has a consumer that is not a ConvInteger");
     }
     if (!ConsumersAreAllParallelMuls(dql_outs[1], qnn_model_wrapper, node_to_node_unit)) {
       return reject("a_scale has a consumer that is not a parallel_Mul");
     }
-    if (!ConsumersAreAllConvIntegers(dql_outs[2], node_to_node_unit)) {
+    if (!ConsumersAreAllOfType(dql_outs[2], kOpConvInteger, node_to_node_unit)) {
       return reject("a_zp has a consumer that is not a ConvInteger");
+    }
+
+    // Walk a_q's consumer list; every ConvInteger sibling must be structurally fusible.
+    for (const auto& c : dql_outs[0].GetConsumers()) {
+      if (c.node == nullptr) return reject("a_q consumer producer node is null");
+      const auto it = node_to_node_unit.find(c.node);
+      if (it == node_to_node_unit.end()) return reject("a_q consumer not in node_to_node_unit");
+      const OrtNodeUnit* sibling = it->second;
+      if (sibling == &conv_integer_node_unit) continue;  // self
+      if (!IsConvIntegerStructurallyFusible(*sibling, qnn_model_wrapper)) {
+        return reject("a sibling ConvInteger sharing this DQL is not structurally fusible");
+      }
     }
   }
 
@@ -526,7 +362,6 @@ std::unique_ptr<IQnnNodeGroup> DQConvIntegerFusion::TryFusion(
       /*float_input_name=*/dql_inputs[0].name,
       /*b_scale_iodef=*/&b_scale_def,
       /*terminator_output_name=*/std::move(terminator_output_name),
-      /*bias_name=*/std::move(bias_name),
       /*has_b_zp=*/has_b_zp,
   };
 
@@ -551,10 +386,8 @@ DQConvIntegerFusion::DQConvIntegerFusion(Pattern pattern)
       float_input_name_(std::move(pattern.float_input_name)),
       b_scale_iodef_(pattern.b_scale_iodef),
       terminator_output_name_(std::move(pattern.terminator_output_name)),
-      bias_name_(std::move(pattern.bias_name)),
       has_b_zp_(pattern.has_b_zp) {
-  // node_units_ records every NodeUnit this fusion claims, for ORT bookkeeping.
-  // Order is not required to be topological by the framework.
+  // Records the NodeUnits this fusion claims for ORT bookkeeping. Order need not be topological.
   if (pattern.dql != nullptr) node_units_.push_back(pattern.dql);
   node_units_.push_back(pattern.conv_integer);
   node_units_.push_back(pattern.cast);
@@ -610,7 +443,8 @@ Ort::Status DQConvIntegerFusion::CreateOrValidateOnQnn(QnnModelWrapper& qmw, boo
   const OrtNodeUnitIODef* b_zp_iodef = has_b_zp_ ? &ci_inputs[3] : nullptr;
   QnnQuantParamsWrapper weight_qparams;
   RETURN_IF_ERROR(BuildWeightQuantParams(qmw, *b_scale_iodef_, b_zp_iodef,
-                                         b_info.shape[0], weight_qparams));
+                                         b_info.shape[0], /*per_channel_axis=*/0,
+                                         weight_qparams));
   const bool is_per_channel = weight_qparams.IsPerChannel();
   const bool is_signed_weight = (b_info.qnn_data_type == QNN_DATATYPE_SFIXED_POINT_8 ||
                                  b_info.qnn_data_type == QNN_DATATYPE_INT_8);

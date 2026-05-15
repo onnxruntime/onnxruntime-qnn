@@ -45,16 +45,15 @@ class DQConvIntegerFusion : public IQnnNodeGroup {
  public:
   ORT_DISALLOW_COPY_AND_ASSIGNMENT(DQConvIntegerFusion);
 
+  // Used as Type() and to detect sibling claims on a shared DQL (see TryFusion).
+  static constexpr std::string_view kType = "DQConvIntegerFusion";
+
   Ort::Status IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   Ort::Status AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const override;
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override;
   const OrtNodeUnit* GetTargetNodeUnit() const override { return conv_integer_; }
-  std::string_view Type() const override { return "DQConvIntegerFusion"; }
+  std::string_view Type() const override { return kType; }
 
-  /// <summary>
-  /// Tries to match the DQL/ConvInteger/Cast/Mul/Mul/[Add] pattern starting at a ConvInteger.
-  /// Returns the fused IQnnNodeGroup on success, nullptr otherwise.
-  /// </summary>
   static std::unique_ptr<IQnnNodeGroup> TryFusion(
       QnnModelWrapper& qnn_model_wrapper,
       const OrtNodeUnit& conv_integer_node_unit,
@@ -63,7 +62,6 @@ class DQConvIntegerFusion : public IQnnNodeGroup {
       const Ort::Logger& logger);
 
  private:
-  // Aggregates everything TryFusion needs to hand off to the constructor.
   struct Pattern {
     const OrtNodeUnit* dql;  // nullptr if a sibling fusion already claimed it
     const OrtNodeUnit* conv_integer;
@@ -74,23 +72,21 @@ class DQConvIntegerFusion : public IQnnNodeGroup {
     std::string float_input_name;           // pre-DQL float input feeds Conv's activation
     const OrtNodeUnitIODef* b_scale_iodef;  // B_scale initializer (from parallel_Mul)
     std::string terminator_output_name;
-    std::string bias_name;  // empty if no trailing Add
-    bool has_b_zp;          // true if ConvInteger has a B_zp input
+    bool has_b_zp;
   };
 
   explicit DQConvIntegerFusion(Pattern pattern);
 
   Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qmw, bool validate) const;
 
-  std::vector<const OrtNodeUnit*> node_units_;  // nodes claimed by this fusion (for ORT bookkeeping)
-  const OrtNodeUnit* conv_integer_;             // target node, also used for attrs/inputs
-  const OrtNodeUnit* requant_mul_;              // used to read terminator output shape
-  const OrtNodeUnit* add_bias_;                 // nullptr if no trailing Add
+  std::vector<const OrtNodeUnit*> node_units_;
+  const OrtNodeUnit* conv_integer_;
+  const OrtNodeUnit* requant_mul_;
+  const OrtNodeUnit* add_bias_;  // nullptr if no trailing Add
 
   std::string float_input_name_;
   const OrtNodeUnitIODef* b_scale_iodef_;
   std::string terminator_output_name_;
-  std::string bias_name_;
   bool has_b_zp_;
 };
 
