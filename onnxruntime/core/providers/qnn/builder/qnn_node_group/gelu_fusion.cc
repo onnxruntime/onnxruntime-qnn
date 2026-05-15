@@ -114,7 +114,7 @@ bool WarnAndFailOnStandaloneQdq(const OrtNodeUnit* node_unit,
               ORT_LOGGING_LEVEL_WARNING,
               ("[GeluFusion] Mixed GELU topology detected. Culprit node unit " +
                GetNodeUnitDescription(*node_unit) +
-               ". GELU fusion expects pattern nodes to be all SingeNodeUnits or QDQGroups"
+               ". GELU fusion expects pattern nodes to be all SingleNodeUnits or QDQGroups"
                ", not partially grouped patterns with SingleNodeUnits.")
                   .c_str());
   return true;
