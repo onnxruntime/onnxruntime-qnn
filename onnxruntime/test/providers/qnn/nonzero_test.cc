@@ -259,8 +259,9 @@ TEST_F(QnnHTPBackendTests, NonZero_Gather_1D_Int32) {
   }
 }
 
-// Negative test: NonZero with dynamic output shape should not be assigned to QNN EP.
-TEST_F(QnnHTPBackendTests, NonZero_DynamicOutputShape_Negative) {
+// NonZero with dynamic output shape [rank, -1] is now supported.
+// QNN HTP outputs [rank, total_elements] with -1 fill; RunNonZeroTest compares only the valid region.
+TEST_F(QnnHTPBackendTests, NonZero_DynamicOutputShape) {
   auto build_model = [](ModelTestBuilder& builder) {
     TestInputDef<float> input_def({2, 3}, false, {1.0f, 0.0f, 3.0f, 0.0f, 5.0f, 0.0f});
     MakeTestInput<float>(builder, "X", input_def);
@@ -269,7 +270,7 @@ TEST_F(QnnHTPBackendTests, NonZero_DynamicOutputShape_Negative) {
     builder.MakeOutput<int64_t>("Y", std::vector<int64_t>{2, -1});
   };
 
-  RunNonZeroTest(build_model, 11, ExpectedEPNodeAssignment::None);
+  RunNonZeroTest(build_model, 11, ExpectedEPNodeAssignment::All);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

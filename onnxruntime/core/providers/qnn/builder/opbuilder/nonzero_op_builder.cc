@@ -45,15 +45,13 @@ Ort::Status NonZeroOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_NOT(qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP,
                 "NonZero is only supported on HTP backend.");
 
-  // NonZero output must have a static shape (no dynamic dims).
-  // The ONNX model should set the output shape to [rank, num_elements] where num_elements
-  // is the total number of elements in the input.
-  const auto& output = node_unit.Outputs()[0];
-  std::vector<uint32_t> output_shape;
-  RETURN_IF_NOT(QnnModelWrapper::GetOnnxShape(output.shape, output_shape),
-                "NonZero output shape must be static. Set shape to [rank, num_elements].");
+  // NonZero input must have a static shape so we can compute total_elements = max output size.
+  // The output shape may be dynamic ([rank, -1]); QNN HTP always outputs [rank, total_elements]
+  // with actual non-zero indices in the leading columns and -1 fill in the remainder.
+  TensorInfo input_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
 
-  const std::string& output_name = output.name;
+  const std::string& output_name = node_unit.Outputs()[0].name;
   if (qnn_model_wrapper.IsGraphOutput(output_name)) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
                 "NonZero output is a graph output. QNN HTP pads unused elements with -1.");
