@@ -14,6 +14,7 @@ pip install onnxruntime-qnn==2.2.0
 - QNN EP: Fixed `GlobalMaxPool` and `GlobalAveragePool` claiming support for rank-3 inputs but failing during QNN graph compile. The 3D→4D reshape path used by windowed pool ops is now unified across the global pool ops. ([#201](https://github.com/onnxruntime/onnxruntime-qnn/pull/201))
 - QNN EP: Restored backward-compatible Genie builds against QAIRT SDKs older than 2.45.0, where `GenieDlc.h` introduced a breaking change. Conditional compilation now keys off the Genie API version. ([#225](https://github.com/onnxruntime/onnxruntime-qnn/pull/225))
 - QNN EP: Fixed GCC 13 build failures (notably on Ubuntu 24.04). Corrected an invalid `memory_order_acq_rel` on `std::atomic::store()` to `memory_order_release`, and suppressed a false-positive `-Wmaybe-uninitialized` warning in `TestInputDef` / `parsed_value` via diagnostic pragmas plus value-initialization. ([#228](https://github.com/onnxruntime/onnxruntime-qnn/pull/228))
+- QNN EP: Fixed incorrect HNRD (Hexagon NPU Runtime Driver) compatibility checks being executed on x86 platforms where the hardware context is not applicable.. ([#319](https://github.com/onnxruntime/onnxruntime-qnn/pull/319))
 
 ## Improvements
 
