@@ -113,10 +113,13 @@ function Get-DefaultCMakeGenerator() {
 }
 
 function Get-HostArch() {
-    switch ([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture) {
-        ([System.Runtime.InteropServices.Architecture]::Arm64) { "arm64" }
-        ([System.Runtime.InteropServices.Architecture]::X64)   { "x86_64" }
-        default { throw "Unknown OS Architecture $_." }
+    # Read from machine-level registry entry set by the OS installer — locale-independent
+    # and unaffected by WOW64 or process architecture.
+    $arch = [System.Environment]::GetEnvironmentVariable("PROCESSOR_ARCHITECTURE", "Machine")
+    switch ($arch) {
+        "ARM64" { "arm64" }
+        "AMD64" { "x86_64" }
+        default { throw "Unknown OS Architecture $arch." }
     }
 }
 
