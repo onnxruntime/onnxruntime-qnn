@@ -22,9 +22,9 @@ if [ ! -d "$OUTPUT_DIRECTORY" ]; then
     mkdir -p "$OUTPUT_DIRECTORY"
 fi
 
-# Create unsigned/wheels subdirectories
-UNSIGNED_DIR="$OUTPUT_DIRECTORY/unsigned"
-WHEELS_DIR="$UNSIGNED_DIR/wheels"
+# Create unsigned/wheel subdirectories
+UNSIGNED_DIR="$OUTPUT_DIRECTORY/unsigned_libs"
+WHEELS_DIR="$UNSIGNED_DIR/wheel"
 
 if [ ! -d "$WHEELS_DIR" ]; then
     mkdir -p "$WHEELS_DIR"
@@ -221,26 +221,26 @@ echo "=== End of Summary ==="
 # Compress unsigned wheels for signing
 echo ""
 echo "Compressing unsigned wheel libs"
-cd "$UNSIGNED_DIR/wheels"
+cd "$UNSIGNED_DIR/wheel"
 python3 << 'PYTHON_EOF'
 import os
 import shutil
 import sys
 try:
-    shutil.make_archive('../wheels', 'zip', '.', '.')
+    shutil.make_archive('../wheel', 'zip', '.', '.')
 except Exception as error:
     print(f"ERROR: Failed to create wheels.zip: {error}", file=sys.stderr)
     sys.exit(1)
 PYTHON_EOF
 
 if [ $? -eq 0 ]; then
-    if [ -f "../wheels.zip" ]; then
-        echo "Successfully created wheels.zip"
+    if [ -f "../wheel.zip" ]; then
+        echo "Successfully created wheel.zip"
     else
-        echo "ERROR: wheels.zip was not created" >&2
+        echo "ERROR: wheel.zip was not created" >&2
         exit 1
     fi
 else
-    echo "ERROR: Failed to create wheels.zip" >&2
+    echo "ERROR: Failed to create wheel.zip" >&2
     exit 1
 fi

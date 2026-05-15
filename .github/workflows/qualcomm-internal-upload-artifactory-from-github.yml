@@ -217,7 +217,7 @@ jobs:
           EOF
           VERSION=$(ls "${{ github.workspace }}/build/dist/"*win_arm64*.whl 2>/dev/null | head -1 | xargs -I{} basename {} | sed 's/.*-\([0-9.]*rc[0-9]*\).*/\1/' | sed 's/-//g')
           ./qcom/scripts/signing/upload_unsigned_to_artifactory.sh \
-            "${{ github.workspace }}/build/dist/output/unsigned/wheels.zip" \
+            "${{ github.workspace }}/build/dist/output/unsigned_libs/wheel.zip" \
             "wheels.zip" "$VERSION" "$NETRC_FILE"
           rm -f "$NETRC_FILE"
 
@@ -288,7 +288,7 @@ jobs:
           $version = $pkg.BaseName -replace '^Qualcomm\.ML\.OnnxRuntime\.QNN\.' -replace '\.nupkg$' -replace '-', ''
 
           .\qcom\scripts\signing\upload_unsigned_to_artifactory.ps1 `
-            -ZipFile "${{ github.workspace }}\build\dist\output\unsigned\nuget.zip" `
+            -ZipFile "${{ github.workspace }}\build\dist\output\unsigned_libs\nuget.zip" `
             -Filename "nuget.zip" `
             -Version $version `
             -NetrcFile $netrcFile
@@ -387,7 +387,7 @@ jobs:
           EOF
           VERSION=$(basename "$(ls "${{ github.workspace }}/build/windows-arm64/Release/dist/"*.zip 2>/dev/null | grep -v pdb | head -1)" | sed 's/.*-\([0-9.]*rc[0-9]*\).*/\1/' | sed 's/-//g')
           ./qcom/scripts/signing/upload_unsigned_to_artifactory.sh \
-            "${{ github.workspace }}/build/dist/output/unsigned/zip.zip" \
+            "${{ github.workspace }}/build/dist/output/unsigned_libs/zip.zip" \
             "zip.zip" "$VERSION" "$NETRC_FILE"
           rm -f "$NETRC_FILE"
 
