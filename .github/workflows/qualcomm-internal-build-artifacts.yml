@@ -177,7 +177,6 @@ jobs:
     with:
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
-      target_os: windows
       target_arch: arm64
       build_config: Debug
       target_py_vsn: ${{ fromJSON(inputs.windows_target_py_vsns)[0] }}
@@ -195,7 +194,6 @@ jobs:
     with:
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
-      target_os: windows
       target_arch: arm64
       build_config: RelWithDebInfo
       target_py_vsn: ${{ fromJSON(inputs.windows_target_py_vsns)[0] }}
