@@ -36,10 +36,10 @@ Ort::Status GemmOpBuilder::ExplictOpCheck(const OrtNodeUnit& node_unit) const {
   auto alpha = node_helper.Get("alpha", (float)1.0);
   RETURN_IF(alpha != 1.0, "QNN FullyConnected Op only support alpha=1.0.");
   auto beta = node_helper.Get("beta", (float)1.0);
-  RETURN_IF(beta != 1.0, "QNN FullyConnected Op only support beta=1.0.");
+  RETURN_IF(beta != 1.0 && beta != 0.0, "QNN FullyConnected Op only support beta=1.0 or beta=0.0.");
 
-  // input C shape need to be [M] or [1, M]
-  if (node_unit.Inputs().size() == 3) {
+  // input C shape need to be [M] or [1, M] (skip validation when beta=0.0 — C is ignored)
+  if (node_unit.Inputs().size() == 3 && beta != 0.0f) {
     auto& inputB = node_unit.Inputs()[1];
     std::vector<uint32_t> inputB_shape;
     QnnModelWrapper::GetOnnxShape(inputB.shape, inputB_shape);
@@ -74,6 +74,7 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
   // for Input A, B, C: 1 -- need transpose, 0 -- not needed
   std::vector<int64_t> input_trans_flag(3, 0);
   OrtNodeAttrHelper node_helper(node_unit);
+  auto beta = node_helper.Get("beta", (float)1.0);
   input_trans_flag.at(0) = node_helper.Get("transA", (int64_t)0);
   auto transB = node_helper.Get("transB", (int64_t)0);
   // QNN input_1 [m, n] vs Onnx [n, m]
@@ -81,6 +82,11 @@ Ort::Status GemmOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper,
 
   const auto& inputs = node_unit.Inputs();
   for (size_t input_i = 0; input_i < inputs.size(); ++input_i) {
+    // beta=0.0: C has no effect on the output — skip it so FC receives only (A, B)
+    if (input_i == 2 && beta == 0.0f) {
+      continue;
+    }
+
     QnnQuantParamsWrapper quantize_param;
     RETURN_IF_ERROR(quantize_param.Init(qnn_model_wrapper, inputs[input_i]));
 
@@ -156,7 +162,9 @@ Ort::Status GemmOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   // 1. Bias (input C) has 2D shape [N, M] where N != 1 (FC doesn't support this shape), OR
   // 2. Bias is an intermediate (NATIVE) tensor produced by another op (QNN FC requires static bias).
   bool split_gemm = false;
-  if (node_unit.Inputs().size() == 3) {
+  OrtNodeAttrHelper node_helper(node_unit);
+  auto beta = node_helper.Get("beta", (float)1.0);
+  if (node_unit.Inputs().size() == 3 && beta != 0.0f) {
     auto& input_c = node_unit.Inputs()[2];
     std::vector<uint32_t> input_c_shape;
     QnnModelWrapper::GetOnnxShape(input_c.shape, input_c_shape);
