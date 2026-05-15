@@ -167,7 +167,7 @@ class BaseOpBuilder : public IOpBuilder {
         {"GridSample", QNN_OP_GRID_SAMPLE},
         {"GroupNormalization", QNN_OP_GROUP_NORM},
         {"HardSigmoid", QNN_OP_ELEMENT_WISE_NEURON},
-        {"HardSwish", QNN_OP_HARD_SWISH},
+        {"HardSwish", QNN_OP_ELEMENT_WISE_NEURON},
         {"InstanceNormalization", QNN_OP_INSTANCE_NORM},
         {"LRN", QNN_OP_LRN},
         {"LSTM", QNN_OP_LSTM},

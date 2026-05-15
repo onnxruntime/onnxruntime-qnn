@@ -392,6 +392,10 @@ Ort::Status SimpleOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
   }
 
+  if (op_type == "HardSwish") {
+    AddHardSwishNeuronParams(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), param_tensor_names);
+  }
+
   if (op_type == "HardSigmoid") {
     RETURN_IF_ERROR(ProcessNodeAttribute(qnn_model_wrapper, node_unit, "alpha",
                                          QNN_OP_ELEMENT_WISE_NEURON_PARAM_ALPHA,

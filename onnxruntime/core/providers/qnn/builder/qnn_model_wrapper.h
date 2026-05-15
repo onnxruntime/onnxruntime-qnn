@@ -602,5 +602,20 @@ class BF16ConversionGuard {
   std::vector<std::string> output_names_;  // Store by value, not reference
 };
 
+// Adds ElementWiseNeuron operation=HARD_SWISH param to the model wrapper
+// alpha/beta are not accepted by HTP and hence are not explicitly set here
+inline void AddHardSwishNeuronParams(QnnModelWrapper& qnn_model_wrapper,
+                                     size_t node_index,
+                                     const std::string& node_name,
+                                     std::vector<std::string>& param_tensor_names) {
+  Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
+  neuron_operation.dataType = QNN_DATATYPE_UINT_32;
+  neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_HARD_SWISH;
+  QnnParamWrapper operation_param(node_index, node_name,
+                                  QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
+  param_tensor_names.push_back(operation_param.GetParamTensorName());
+  qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
+}
+
 }  // namespace qnn
 }  // namespace onnxruntime
