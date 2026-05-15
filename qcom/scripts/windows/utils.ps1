@@ -113,9 +113,12 @@ function Get-DefaultCMakeGenerator() {
 }
 
 function Get-HostArch() {
-    # Read from machine-level registry entry set by the OS installer — locale-independent
-    # and unaffected by WOW64 or process architecture.
-    $arch = [System.Environment]::GetEnvironmentVariable("PROCESSOR_ARCHITECTURE", "Machine")
+    # PROCESSOR_ARCHITEW6432 is set on WOW64 / x64-emulated processes and reports the
+    # real host arch. Fall back to machine-scope PROCESSOR_ARCHITECTURE (locale-independent).
+    $arch = [System.Environment]::GetEnvironmentVariable("PROCESSOR_ARCHITEW6432", "Process")
+    if ([string]::IsNullOrEmpty($arch)) {
+        $arch = [System.Environment]::GetEnvironmentVariable("PROCESSOR_ARCHITECTURE", "Machine")
+    }
     switch ($arch) {
         "ARM64" { "arm64" }
         "AMD64" { "x86_64" }

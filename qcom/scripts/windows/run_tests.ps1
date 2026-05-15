@@ -12,6 +12,8 @@ param(
 $RootDir = (Resolve-Path -Path "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)").Path
 $RepoRoot= (Resolve-Path -Path ("$RootDir\..\..\.."))
 
+. (Join-Path $RootDir "utils.ps1")
+
 if (-not $OnnxModelsRoot) {
     $OnnxModelsRoot = (Join-Path $RootDir (Join-Path "model_tests" "onnx_models"))
 }
@@ -51,7 +53,7 @@ $NewBuildDirectoryBackslashes = ($NewBuildDirectory -replace "/", "\\")
     Out-File -Encoding ascii $CTestTestFile
 
 # Figure out if HTP is available
-if ((Get-CimInstance Win32_operatingsystem).OSArchitecture -eq "ARM 64-bit Processor") {
+if ((Get-HostArch) -eq "arm64") {
     $QdqBackend = "htp"
 } else {
     $QdqBackend = "cpu"
