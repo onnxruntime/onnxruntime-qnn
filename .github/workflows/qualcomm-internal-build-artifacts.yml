@@ -167,6 +167,7 @@ jobs:
       target_py_vsn: ${{ fromJSON(inputs.windows_target_py_vsns)[0] }}
       build_runner_arch: ARM64
       run_tests: false
-      upload_wheel: false
+      build_zip: true
+      upload_zip: true
       build_nuget: true
       upload_nuget: true
