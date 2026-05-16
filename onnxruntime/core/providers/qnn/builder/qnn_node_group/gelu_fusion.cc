@@ -87,6 +87,10 @@ struct GeluPatternMatchContext {
   std::string_view root_input_name;
 };
 
+// Checks if a NodeUnit consumes the GELU pattern's root tensor (or an equivalent duplicate).
+// When ORT creates QDQGroups with shared parent DQ nodes, it duplicates the tensor name with
+// suffixes like "/duplicated" or "/duplicated_token_*" to maintain unique tensor-to-QDQ mappings.
+// This canonicalizes both the input_name and the NodeUnit's inputs before comparing.
 bool HasInputWithEquivalentName(const OrtNodeUnit& node_unit, std::string_view input_name) {
   const std::string_view canonical_input_name = CanonicalizeRootTensorName(input_name);
   const auto& inputs = node_unit.Inputs();
@@ -481,26 +485,26 @@ std::unique_ptr<IQnnNodeGroup> GeluFusion::TryFusion(
 
 GeluFusion::GeluFusion(std::vector<const OrtNodeUnit*>&& node_units,
                        const OrtNodeUnit* target_node_unit,
-                       OrtNodeUnitIODef validate_root_input,
-                       OrtNodeUnitIODef validate_final_output,
-                       OrtNodeUnitIODef root_input,
-                       OrtNodeUnitIODef final_output)
+                       OrtNodeUnitIODef validation_root_input,
+                       OrtNodeUnitIODef validation_final_output,
+                       OrtNodeUnitIODef gelu_root_input,
+                       OrtNodeUnitIODef gelu_final_output)
     : node_units_(std::move(node_units)),
       target_node_unit_(target_node_unit),
-      validate_root_input_(std::move(validate_root_input)),
-      validate_final_output_(std::move(validate_final_output)),
-      root_input_(std::move(root_input)),
-      final_output_(std::move(final_output)) {
+      validation_root_input_(std::move(validation_root_input)),
+      validation_final_output_(std::move(validation_final_output)),
+      gelu_root_input_(std::move(gelu_root_input)),
+      gelu_final_output_(std::move(gelu_final_output)) {
 }
 
 Ort::Status GeluFusion::IsSupported(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
-  return ValidateOnQnn(qmw, node_units_, validate_root_input_, validate_final_output_);
+  return ValidateOnQnn(qmw, node_units_, validation_root_input_, validation_final_output_);
 }
 
 Ort::Status GeluFusion::AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
-  return CreateOnQnn(qmw, node_units_, root_input_, final_output_);
+  return CreateOnQnn(qmw, node_units_, gelu_root_input_, gelu_final_output_);
 }
 
 gsl::span<const OrtNodeUnit* const> GeluFusion::GetNodeUnits() const {
