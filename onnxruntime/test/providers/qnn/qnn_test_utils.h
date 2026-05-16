@@ -842,9 +842,7 @@ void VerifyQDQOutput(const std::vector<Ort::Value>& cpu_qdq_outputs,
 
 // Helper macro to check if QuantType is a supported QDQ type
 #define QNN_IS_SUPPORTED_QDQ_TYPE(QuantType)                                    \
-  (std::is_same_v<QuantType, uint8_t> || std::is_same_v<QuantType, int8_t> ||   \
-   std::is_same_v<QuantType, uint16_t> || std::is_same_v<QuantType, int16_t> || \
-   std::is_same_v<QuantType, uint32_t> || std::is_same_v<QuantType, int32_t> || \
+  (std::is_same_v<QuantType, uint32_t> || std::is_same_v<QuantType, int32_t> || \
    std::is_same_v<QuantType, Int4x2> || std::is_same_v<QuantType, UInt4x2>)
 
 // Macro for test skip logic based on provider options and architecture

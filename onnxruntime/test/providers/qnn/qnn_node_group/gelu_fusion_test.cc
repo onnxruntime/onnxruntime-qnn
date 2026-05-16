@@ -650,7 +650,6 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_2D) {
 
 // Test GELU Pattern 1 with QDQ
 TEST_F(QnnHTPBackendTests, GeluFusionPattern1_QDQ_U8) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern1_QDQ_U8";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -674,7 +673,6 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_QDQ_U8) {
 TEST_F(QnnHTPBackendTests, GeluFusionPattern2_QDQ_U8) {
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern2_QDQ_U8";
   std::filesystem::remove_all(json_qnn_graph_dir);
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
   auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
 
@@ -694,7 +692,6 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_QDQ_U8) {
 
 // Test GELU Pattern 3 with QDQ
 TEST_F(QnnHTPBackendTests, GeluFusionPattern3_QDQ_U8) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern3_QDQ_U8";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
