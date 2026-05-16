@@ -176,6 +176,10 @@ class ArtifactUpleveler(ABC):
         return ARTIFACT_SUFFIXES[self.artifact_format]
 
     @property
+    def _signed_libs_version(self) -> str:
+        return self.args.version_from
+
+    @property
     def needs_version_update(self) -> bool:
         """Check if version update is needed."""
         return self.args.version_from != self.args.version_to
@@ -327,7 +331,7 @@ class ArtifactUpleveler(ABC):
         url_template = "https://re-artifactory.qualcomm.com/artifactory/aisw-zip-test-project/onnxruntime-qnn/"
 
         zip_filename = f"{self.artifact_format}.zip"
-        url = f"{url_template.rstrip('/')}/{self.args.version_from}/signed_libs/{zip_filename}"
+        url = f"{url_template.rstrip('/')}/{self._signed_libs_version}/signed_libs/{zip_filename}"
         target_path = os.path.join(target_dir, zip_filename)
 
         logging.info(f"Downloading signed libs ({zip_filename}) for version {self.args.version_from}")
@@ -690,6 +694,10 @@ class NugetUpleveler(ArtifactUpleveler):
     @property
     def _sign_flag(self) -> bool:
         return self.args.sign_nuget
+
+    @property
+    def _signed_libs_version(self) -> str:
+        return self.args.version_from.replace("-", "")
 
     def _add_nuget_source(self, username: str, password: str, source_url: str, server: str, version: str) -> str:
         """Add a single NuGet source using PackageSourceCredentials environment variables."""
