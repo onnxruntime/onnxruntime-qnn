@@ -317,19 +317,14 @@ class ArtifactUpleveler(ABC):
             _ensure_dir(path)
 
     def _download_signed_libs(self, target_dir: str) -> str:
-        """Download <format>.zip from artifactory into target_dir; return its path.
-        """
+        """Download <format>.zip from artifactory into target_dir; return its path."""
         api_key = os.environ.get("JFROG_API_KEY", "")
         if not api_key:
             raise RuntimeError(
                 f"JFROG_API_KEY environment variable is required when --sign_{self.artifact_format} true"
             )
 
-        url_template = os.environ.get("SIGNED_LIBS_ARTIFACTORY_URL", "")
-        if not url_template:
-            raise RuntimeError(
-                f"SIGNED_LIBS_ARTIFACTORY_URL environment variable is required when --sign_{self.artifact_format} true"
-            )
+        url_template = "https://re-artifactory.qualcomm.com/artifactory/aisw-zip-test-project/onnxruntime-qnn/"
 
         zip_filename = f"{self.artifact_format}.zip"
         url = f"{url_template.rstrip('/')}/{self.args.version_from}/signed_libs/{zip_filename}"
@@ -366,9 +361,7 @@ class ArtifactUpleveler(ABC):
 
         Subclasses that support signing must override this.
         """
-        raise NotImplementedError(
-            f"Signing is not implemented for artifact_format '{self.artifact_format}'"
-        )
+        raise NotImplementedError(f"Signing is not implemented for artifact_format '{self.artifact_format}'")
 
     def _run_signing_flow(self) -> None:
         """Shared sign-mode pipeline: download → fetch signed libs → repackage → upload.
@@ -484,18 +477,14 @@ class WheelUpleveler(ArtifactUpleveler):
 
                 if whl_name.endswith("win_amd64.whl"):
                     amd64_missing = self._replace_signed_dll(
-                        src=os.path.join(
-                            signed_libs_dir, whl_no_ext, "amd64", "onnxruntime_providers_qnn.dll"
-                        ),
+                        src=os.path.join(signed_libs_dir, whl_no_ext, "amd64", "onnxruntime_providers_qnn.dll"),
                         dst=os.path.join(
                             extract_dir, "onnxruntime_qnn", "libs", "amd64", "onnxruntime_providers_qnn.dll"
                         ),
                         label="amd64",
                     )
                     arm64ec_missing = self._replace_signed_dll(
-                        src=os.path.join(
-                            signed_libs_dir, whl_no_ext, "arm64ec", "onnxruntime_providers_qnn.dll"
-                        ),
+                        src=os.path.join(signed_libs_dir, whl_no_ext, "arm64ec", "onnxruntime_providers_qnn.dll"),
                         dst=os.path.join(
                             extract_dir, "onnxruntime_qnn", "libs", "arm64ec", "onnxruntime_providers_qnn.dll"
                         ),
