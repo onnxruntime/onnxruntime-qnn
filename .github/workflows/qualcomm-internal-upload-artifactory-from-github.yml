@@ -383,7 +383,7 @@ jobs:
       - name: Prepare Windows ARM64 (ARM64x) Zip lib for signing
         run: |
           ./qcom/scripts/signing/prepare_zip_for_signing.sh \
-            "${{ github.workspace }}/build/windows-arm64x/Release/dist" \
+            "${{ github.workspace }}/build/windows-arm64x/Release/Release/dist" \
             "${{ github.workspace }}/build/dist/output"
 
       - name: Upload unsigned Windows Zip libs to Artifactory
@@ -424,7 +424,7 @@ jobs:
 
           # Upload Windows ARM64 (ARM64x) archive
           ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
-            "${{ github.workspace }}/build/windows-arm64x/Release/dist" \
+            "${{ github.workspace }}/build/windows-arm64x/Release/Release/dist" \
             "$NETRC_FILE"
 
           # Upload Linux aarch64 manylinux_2_34 zip
