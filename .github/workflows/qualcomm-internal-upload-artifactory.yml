@@ -56,6 +56,33 @@ on:
            artifactory-maven-virtual, maven-central]
         type: string
         default: "test-users"
+      sign_wheel:
+        description: |
+          Sign the Windows wheels by replacing the embedded
+          onnxruntime_providers_qnn.dll with the signed copy from the signed-libs
+          bundle in Artifactory. Only win_amd64 and win_arm64 wheels are repackaged;
+          other wheels (e.g. Linux aarch64) pass through unchanged. Applies only
+          when artifact_format is wheel (or all).
+        type: boolean
+        default: false
+      sign_nuget:
+        description: |
+          Sign the Windows NuGet packages by replacing the embedded native
+          win-arm64 onnxruntime_providers_qnn.dll AND the managed
+          Qualcomm.ML.OnnxRuntime.QNN.dll with their signed copies from the
+          signed-libs bundle in Artifactory. Applies only when artifact_format is
+          nuget (or all).
+        type: boolean
+        default: false
+      sign_zip:
+        description: |
+          Sign the Windows zip archives by replacing the embedded
+          onnxruntime_providers_qnn.dll with the signed copy from the signed-libs
+          bundle in Artifactory. Other release files (-pdb.zip) are
+          copied through unchanged. Applies only when artifact_format is zip
+          (or all).
+        type: boolean
+        default: false
 
   workflow_dispatch:
     inputs: *common_inputs
@@ -109,6 +136,9 @@ jobs:
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           PYPI_API_KEY: ${{ secrets.PYPI_UPLOADER_PASSWORD }}
           TEST_PYPI_API_KEY: ${{ secrets.TEST_PYPI_UPLOADER_PASSWORD }}
+          # Signed-libs auth + URL base; consumed only when sign_wheel is true.
+          JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
+          SIGNED_LIBS_ARTIFACTORY_URL: ${{ secrets.SIGNED_LIBS_ARTIFACTORY_URL }}
         run: |
           source uplevel_venv/bin/activate
           python ./qcom/scripts/upleveling/qnn_ep_uplevel.py \
@@ -117,7 +147,8 @@ jobs:
             --version_from ${{ inputs.version_from }} \
             --version_to ${{ inputs.version_to }} \
             --index_server_from ${{ inputs.index_server_from }} \
-            --index_server_to ${{ inputs.index_server_to }}
+            --index_server_to ${{ inputs.index_server_to }} \
+            --sign_wheel ${{ inputs.sign_wheel }}
 
   publish-nuget-workflow:
     if: ${{ inputs.artifact_format == 'nuget' || inputs.artifact_format == 'all' }}
@@ -135,6 +166,9 @@ jobs:
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           NUGET_API_KEY: ${{ secrets.NUGET_UPLOADER_PASSWORD }}
           TEST_NUGET_API_KEY: ${{ secrets.TEST_NUGET_UPLOADER_PASSWORD }}
+          # Signed-libs auth + URL base; consumed only when sign_nuget is true.
+          JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
+          SIGNED_LIBS_ARTIFACTORY_URL: ${{ secrets.SIGNED_LIBS_ARTIFACTORY_URL }}
         run: |
           py -m venv uplevel_venv
           .\uplevel_venv\Scripts\activate
@@ -151,7 +185,8 @@ jobs:
             -VersionFrom ${{ inputs.version_from }} `
             -VersionTo ${{ inputs.version_to }} `
             -IndexServerFrom ${{ inputs.index_server_from }} `
-            -IndexServerTo ${{ inputs.index_server_to }}
+            -IndexServerTo ${{ inputs.index_server_to }} `
+            -SignNuget $${{ inputs.sign_nuget }}
 
   publish-zip-workflow:
     if: ${{ inputs.artifact_format == 'zip' || inputs.artifact_format == 'all' }}
@@ -170,6 +205,9 @@ jobs:
         env:
           ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          # Signed-libs auth + URL base; consumed only when sign_zip is true.
+          JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
+          SIGNED_LIBS_ARTIFACTORY_URL: ${{ secrets.SIGNED_LIBS_ARTIFACTORY_URL }}
         run: |
           source uplevel_venv/bin/activate
 
@@ -193,7 +231,8 @@ jobs:
             --version_to ${{ inputs.version_to }} \
             --index_server_from ${{ inputs.index_server_from }} \
             --index_server_to ${{ inputs.index_server_to }} \
-            --netrc_file "$NETRC_FILE"
+            --netrc_file "$NETRC_FILE" \
+            --sign_zip ${{ inputs.sign_zip }}
 
           # Clean up the temporary .netrc file
           rm -f "$NETRC_FILE"
