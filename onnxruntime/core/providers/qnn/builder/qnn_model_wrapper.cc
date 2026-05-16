@@ -239,8 +239,19 @@ Ort::Status QnnModelWrapper::ValidateQnnNode(const std::string& node_name,
                                        std::move(params));
 
   std::string error_msg;
-  RETURN_IF_NOT(op_config_wrapper.QnnGraphOpValidation(qnn_interface_, backend_handle_, error_msg), error_msg.c_str());
+  return ValidateQnnNode(op_config_wrapper, error_msg);
+}
 
+Ort::Status QnnModelWrapper::ValidateQnnNode(QnnOpConfigWrapper& op_config, std::string& error_msg) const {
+  bool ok;
+  if (backend_validator_handle_ != nullptr) {
+    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Op validation using validator backend (e.g. HTP).");
+
+    ok = op_config.QnnGraphOpValidation(qnn_validator_interface_, backend_validator_handle_, error_msg);
+  } else {
+    ok = op_config.QnnGraphOpValidation(qnn_interface_, backend_handle_, error_msg);
+  }
+  RETURN_IF_NOT(ok, error_msg.c_str());
   return Ort::Status();
 }
 
@@ -488,14 +499,14 @@ bool QnnModelWrapper::CreateQnnNode(const std::string& qnn_node_name,
     ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, oss.str().c_str());
 
     std::string error_msg;
-    bool rt = op_config_wrapper.QnnGraphOpValidation(qnn_interface_, backend_handle_, error_msg);
+    Ort::Status validation_status = ValidateQnnNode(op_config_wrapper, error_msg);
 
-    if (!rt) {
+    if (!validation_status.IsOK()) {
       // TODO(adrianlizarraga): Return a Status with the error message so that aggregated logs show a more
       // specific validation error (instead of "failed to add node").
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_WARNING, error_msg.c_str());
     }
-    return rt;
+    return validation_status.IsOK();
   } else {
     // Standard execution - just add the node to the op list
     QnnOpProperty qnn_op(qnn_node_name, package_name, qnn_node_type,

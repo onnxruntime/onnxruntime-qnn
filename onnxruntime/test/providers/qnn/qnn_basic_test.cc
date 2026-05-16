@@ -350,6 +350,7 @@ TEST_F(QnnHTPBackendTests, RunConvInt4Model) {
 
 enum class TestBackend {
   Cpu,
+  Gpu,
   Htp,
   Saver,
   Ir,
@@ -359,6 +360,8 @@ static std::string ToBackendLibName(TestBackend backend) {
   switch (backend) {
     case TestBackend::Cpu:
       return "Cpu";
+    case TestBackend::Gpu:
+      return "Gpu";
     case TestBackend::Htp:
       return "Htp";
     case TestBackend::Saver:
@@ -385,7 +388,7 @@ static void AddSerializerConfigs(TestBackend serializer_backend, onnxruntime::Pr
       serializer_path_key = "qnn_saver_path";
       break;
     default:
-      assert(false && "Invalid serializer backend.");
+      assert(false && "AddSerializerConfigs: only Ir and Saver are valid serializer backends.");
       return;
   }
 
@@ -551,21 +554,32 @@ TEST_F(QnnCPUBackendTests, TestNHWCResizeShapeInference_sizes_opset18) {
 }
 
 // Test that QNN Saver generates the expected files for a model meant to run on the QNN CPU backend.
-// TODO: [AISW-163150] ORT test failures on qcs6490
-TEST_F(QnnCPUBackendTests, DISABLED_QnnSaver_OutputFiles) {
-  const std::filesystem::path qnn_saver_output_dir = "saver_output";
-
-  // Remove pre-existing QNN Saver output files. Note that fs::remove_all() can handle non-existing paths.
-  std::filesystem::remove_all(qnn_saver_output_dir);
-  ASSERT_FALSE(std::filesystem::exists(qnn_saver_output_dir));
+// QnnSaver may write flat to cwd (Linux aarch64) or to a subdirectory (Windows); the test
+// accepts either location.
+TEST_F(QnnCPUBackendTests, QnnSaver_OutputFiles) {
+  // Clean up any pre-existing Saver output from prior runs, both flat in cwd and in the default
+  // subdirectory, so stale files don't cause a false pass.
+  std::filesystem::remove("saver_output.c");
+  std::filesystem::remove("params.bin");
+  std::filesystem::remove_all("saver_output");
 
   RunNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
-                     TestBackend::Cpu,     // backend
-                     TestBackend::Saver);  // serializer_backend
+                     TestBackend::Cpu,
+                     TestBackend::Saver);
 
-  // Check that QNN Saver output files exist.
-  EXPECT_TRUE(std::filesystem::exists(qnn_saver_output_dir / "saver_output.c"));
-  EXPECT_TRUE(std::filesystem::exists(qnn_saver_output_dir / "params.bin"));
+  // Accept saver_output.c / params.bin in flat cwd or in ./saver_output/ subdirectory.
+  // QnnSaver writes flat to cwd on Linux aarch64 and to ./saver_output/ on Windows.
+  const auto cwd = std::filesystem::current_path();
+  const auto saver_dir = cwd / "saver_output";
+  auto find_saver_file = [&cwd, &saver_dir](const std::string& filename) -> bool {
+    return std::filesystem::exists(cwd / filename) ||
+           std::filesystem::exists(saver_dir / filename);
+  };
+
+  EXPECT_TRUE(find_saver_file("saver_output.c"))
+      << "saver_output.c not found in cwd or ./saver_output/";
+  EXPECT_TRUE(find_saver_file("params.bin"))
+      << "params.bin not found in cwd or ./saver_output/";
 }
 
 struct ModelAndBuilder {
@@ -979,14 +993,16 @@ TEST_F(QnnHTPBackendTests, TestNHWCResizeShapeInference_qdq_sizes_opset18) {
   RunNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx", TestBackend::Htp);
 }
 
-// Test that QNN Ir generates the expected file for a model meant to run on the QNN HTP backend.
-
-TEST_F(QnnHTPBackendTests, QnnIr_OutputFiles) {
+// Test that QNN Ir generates the expected DLC file for a model meant to run on the QNN HTP backend,
+// using the HTP backend's validator.
+TEST_F(QnnHTPBackendTests, QnnIr_HtpValidator_OutputFiles) {
   BackendSupport ir_backend_support = IsIRBackendSupported();
   if (ir_backend_support == BackendSupport::UNSUPPORTED) {
     GTEST_SKIP() << "QNN IR backend is not available! Skipping test.";
   }
   ASSERT_NE(ir_backend_support, BackendSupport::SUPPORT_ERROR) << "Failed to check if QNN IR backend is available.";
+
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
@@ -996,7 +1012,7 @@ TEST_F(QnnHTPBackendTests, QnnIr_OutputFiles) {
   ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
 
   InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
-                      TestBackend::Htp,      // backend
+                      TestBackend::Htp,      // backend (also used as the validator)
                       registered_ep_device,  // registered_ep_device
                       TestBackend::Ir);      // serializer backend
 
@@ -1708,6 +1724,41 @@ TEST_F(QnnGPUBackendTests, AutoEp_PreferGpu) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
+// Test that QNN Ir generates the expected DLC file using the QNN GPU backend as the validator.
+// The GPU backend is used for op validation (backendValidateOpConfig) while QnnIr serializes
+// the graph to a .dlc file. Requires a GPU-capable device (Windows ARM64 with Adreno GPU).
+TEST_F(QnnGPUBackendTests, QnnIr_GpuValidator_OutputFiles) {
+  BackendSupport ir_backend_support = IsIRBackendSupported();
+  if (ir_backend_support == BackendSupport::UNSUPPORTED) {
+    GTEST_SKIP() << "QNN IR backend is not available! Skipping test.";
+  }
+  ASSERT_NE(ir_backend_support, BackendSupport::SUPPORT_ERROR) << "Failed to check if QNN IR backend is available.";
+
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
+
+  // Remove pre-existing QNN Ir output files. Note that fs::remove_all() can handle non-existing paths.
+  std::filesystem::remove_all(qnn_dlc_dir);
+  ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
+
+  InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
+                      TestBackend::Gpu,      // backend (used as op validator)
+                      registered_ep_device,  // registered_ep_device
+                      TestBackend::Ir);      // serializer backend (dumps to .dlc)
+
+  // File names are taken from graph node names. Just make sure that we got one .dlc
+  // in the expected directory.
+  ASSERT_TRUE(std::filesystem::exists(qnn_dlc_dir));
+
+  int file_count = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(qnn_dlc_dir)) {
+    EXPECT_TRUE(entry.is_regular_file());
+    EXPECT_EQ(entry.path().extension(), ".dlc");
+    ++file_count;
+  }
+  EXPECT_EQ(file_count, 1);
+}
+
 TEST_F(QnnHTPBackendTests, AutoEp_AllDevices) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
@@ -2079,8 +2130,15 @@ TEST_F(QnnCPUBackendTests, DISABLED_TestSimulatedQnnEp) {
 }
 #endif  // !BUILD_QNN_EP_STATIC_LIB
 
-// Test that QNN Ir generates the expected files for a model meant to run on any QNN backend.
-TEST_F(QnnIRBackendTests, QnnIr_OutputFiles) {
+// Test that QNN Ir generates the expected DLC file for a model meant to run on the QNN CPU backend,
+// using the CPU backend's validator.
+TEST_F(QnnCPUBackendTests, QnnIr_CpuValidator_OutputFiles) {
+  BackendSupport ir_backend_support = IsIRBackendSupported();
+  if (ir_backend_support == BackendSupport::UNSUPPORTED) {
+    GTEST_SKIP() << "QNN IR backend is not available! Skipping test.";
+  }
+  ASSERT_NE(ir_backend_support, BackendSupport::SUPPORT_ERROR) << "Failed to check if QNN IR backend is available.";
+
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
 
@@ -2089,7 +2147,34 @@ TEST_F(QnnIRBackendTests, QnnIr_OutputFiles) {
   ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
 
   InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
-                      TestBackend::Ir,       // backend
+                      TestBackend::Cpu,      // backend (also used as the validator)
+                      registered_ep_device,  // registered_ep_device
+                      TestBackend::Ir);      // serializer backend
+
+  ASSERT_TRUE(std::filesystem::exists(qnn_dlc_dir));
+
+  int file_count = 0;
+  for (const auto& entry : std::filesystem::directory_iterator(qnn_dlc_dir)) {
+    EXPECT_TRUE(entry.is_regular_file());
+    EXPECT_EQ(entry.path().extension(), ".dlc");
+    ++file_count;
+  }
+  EXPECT_EQ(file_count, 1);
+}
+
+// Test that QNN Ir generates the expected DLC file using the QnnIr backend itself as the validator.
+// Only requires host-side compilation capability (backendCreate + backendValidateOpConfig) and does
+// NOT require inference hardware, so it can run on Windows x64 development hosts.
+TEST_F(QnnIRBackendTests, QnnIr_IrValidator_OutputFiles) {
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
+
+  // Remove pre-existing QNN Ir output files. Note that fs::remove_all() can handle non-existing paths.
+  std::filesystem::remove_all(qnn_dlc_dir);
+  ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
+
+  InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
+                      TestBackend::Ir,       // backend (also used as the validator)
                       registered_ep_device,  // registered_ep_device
                       TestBackend::Ir);      // serializer backend
 

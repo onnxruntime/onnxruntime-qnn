@@ -3581,9 +3581,7 @@ struct CompatibilityTestInfo {
             std::to_string(backend_api_version_major) + "." +
             std::to_string(backend_api_version_minor) + "." +
             std::to_string(backend_api_version_patch) + ":" +
-            std::to_string(context_blob_version_major) + "." +
-            std::to_string(context_blob_version_minor) + "." +
-            std::to_string(context_blob_version_patch) + ":" +
+            "0.0.0:" +  // Context blob version is deprecated.
             std::to_string(htp_arch) + ":" +
             (is_htp_usr_drv ? "1" : "0"));
   }
@@ -3712,6 +3710,16 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_DiffBackend) {
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }
 
+TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbTradRtTrad_CbOldApiVersion) {
+  CompatibilityTestInfo test_info;
+  test_info.backend_api_version_major = 0;
+  test_info.backend_api_version_minor = 0;
+  test_info.backend_api_version_patch = 0;
+  test_info.htp_arch = static_cast<uint32_t>(QnnHTPBackendTests::GetPlatformAttributes().htp_arch);
+
+  TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_SUPPORTED_OPTIMAL);
+}
+
 TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewApiVersion) {
   CompatibilityTestInfo test_info;
   test_info.backend_api_version_major = 9999;
@@ -3721,13 +3729,18 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewApiV
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
 }
 
-TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_CbTradRtTrad_CbNewBlobVersion) {
-  CompatibilityTestInfo test_info;
-  test_info.context_blob_version_major = 9999;
-  test_info.context_blob_version_minor = 9999;
-  test_info.context_blob_version_patch = 9999;
+// TODO: Re-enable once CI supports HNRD. One can still run the test on local WoS machine.
+TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbTradRtHnrd_CbOldSdkVersion) {
+  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
 
-  TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
+  QnnHtpDevice_Arch_t htp_arch = QnnHTPBackendTests::GetPlatformAttributes().htp_arch;
+  auto hnrd_test_handle = std::make_unique<HnrdTestHandle>(static_cast<uint32_t>(htp_arch));
+
+  CompatibilityTestInfo test_info;
+  test_info.sdk_build_id = "v0.0.0.0";
+  test_info.htp_arch = static_cast<uint32_t>(htp_arch);
+
+  TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_SUPPORTED_OPTIMAL);
 }
 
 // TODO: Re-enable once CI supports HNRD. One can still run the test on local WoS machine.
@@ -3744,18 +3757,18 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbTradRtHnrd_
 }
 
 // TODO: Re-enable once CI supports HNRD. One can still run the test on local WoS machine.
-TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbTradRtHnrd_CbNewBlobVersion) {
+TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbHnrdRtHnrd_CbOldSdkVersion) {
   QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
 
   QnnHtpDevice_Arch_t htp_arch = QnnHTPBackendTests::GetPlatformAttributes().htp_arch;
   auto hnrd_test_handle = std::make_unique<HnrdTestHandle>(static_cast<uint32_t>(htp_arch));
 
   CompatibilityTestInfo test_info;
-  test_info.context_blob_version_major = 9999;
-  test_info.context_blob_version_minor = 9999;
-  test_info.context_blob_version_patch = 9999;
+  test_info.sdk_build_id = "v0.0.0.0";
+  test_info.htp_arch = static_cast<uint32_t>(htp_arch);
+  test_info.is_htp_usr_drv = true;
 
-  TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
+  TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_SUPPORTED_OPTIMAL);
 }
 
 // TODO: Re-enable once CI supports HNRD. One can still run the test on local WoS machine.
@@ -3767,22 +3780,6 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbHnrdRtHnrd_
 
   CompatibilityTestInfo test_info;
   test_info.sdk_build_id = "v9999.9999.9999.9999";
-  test_info.is_htp_usr_drv = true;
-
-  TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
-}
-
-// TODO: Re-enable once CI supports HNRD. One can still run the test on local WoS machine.
-TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_ApiValidate_CbHnrdRtHnrd_CbNewBlobVersion) {
-  QNN_SKIP_TEST_IF_NO_PLATFORM_ATTRS();
-
-  QnnHtpDevice_Arch_t htp_arch = QnnHTPBackendTests::GetPlatformAttributes().htp_arch;
-  auto hnrd_test_handle = std::make_unique<HnrdTestHandle>(static_cast<uint32_t>(htp_arch));
-
-  CompatibilityTestInfo test_info;
-  test_info.context_blob_version_major = 9999;
-  test_info.context_blob_version_minor = 9999;
-  test_info.context_blob_version_patch = 9999;
   test_info.is_htp_usr_drv = true;
 
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_UNSUPPORTED);
