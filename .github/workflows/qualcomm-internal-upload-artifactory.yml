@@ -136,9 +136,7 @@ jobs:
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           PYPI_API_KEY: ${{ secrets.PYPI_UPLOADER_PASSWORD }}
           TEST_PYPI_API_KEY: ${{ secrets.TEST_PYPI_UPLOADER_PASSWORD }}
-          # Signed-libs auth + URL base; consumed only when sign_wheel is true.
           JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
-          SIGNED_LIBS_ARTIFACTORY_URL: ${{ secrets.SIGNED_LIBS_ARTIFACTORY_URL }}
         run: |
           source uplevel_venv/bin/activate
           python ./qcom/scripts/upleveling/qnn_ep_uplevel.py \
@@ -166,9 +164,7 @@ jobs:
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           NUGET_API_KEY: ${{ secrets.NUGET_UPLOADER_PASSWORD }}
           TEST_NUGET_API_KEY: ${{ secrets.TEST_NUGET_UPLOADER_PASSWORD }}
-          # Signed-libs auth + URL base; consumed only when sign_nuget is true.
           JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
-          SIGNED_LIBS_ARTIFACTORY_URL: ${{ secrets.SIGNED_LIBS_ARTIFACTORY_URL }}
         run: |
           py -m venv uplevel_venv
           .\uplevel_venv\Scripts\activate
@@ -205,9 +201,7 @@ jobs:
         env:
           ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
-          # Signed-libs auth + URL base; consumed only when sign_zip is true.
           JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
-          SIGNED_LIBS_ARTIFACTORY_URL: ${{ secrets.SIGNED_LIBS_ARTIFACTORY_URL }}
         run: |
           source uplevel_venv/bin/activate
 
