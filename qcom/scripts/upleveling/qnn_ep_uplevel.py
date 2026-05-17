@@ -1131,15 +1131,23 @@ class ZipUpleveler(ArtifactUpleveler):
                 upload_url = os.path.join(self.url_to_display, zip_file)
                 cmd = [
                     "curl",
+                    "-s",
                     "-T",
                     zip_path,
                     "--cacert",
                     ARTIFACTORY_CERTS_FILE,
                     "--netrc-file",
                     netrc_path,
+                    "-w",
+                    "\n%{http_code}",
                     upload_url,
                 ]
-                subprocess.run(cmd, check=True)
+                result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+                http_code = result.stdout.strip().splitlines()[-1]
+                if http_code.startswith("2"):
+                    logging.info(f"Uploaded {zip_file} successfully (HTTP {http_code})")
+                else:
+                    raise RuntimeError(f"Upload failed for {zip_file}: HTTP {http_code}")
         finally:
             # Clean up the temporary .netrc file only if we created it
             if cleanup_netrc and os.path.exists(netrc_path):
