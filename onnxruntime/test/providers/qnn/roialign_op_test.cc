@@ -124,8 +124,6 @@ static void RunQDQRoiAlignOpTest(const TestInputDef<float>& input_def,
 //
 // CPU tests:
 //
-// CPU tests:
-//
 TEST_F(QnnCPUBackendTests, TestRoialign) {
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
@@ -139,7 +137,7 @@ TEST_F(QnnCPUBackendTests, TestRoialign) {
                     ExpectedEPNodeAssignment::All);
 }
 
-// QNN CPU EP only supports output_half_pixel; half_pixel causes hangs during inference.
+// QNN CPU EP supports output_half_pixel and half_pixel.
 TEST_F(QnnCPUBackendTests, TestRoialign_half_pixel) {
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
