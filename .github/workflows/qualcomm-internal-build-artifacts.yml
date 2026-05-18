@@ -102,17 +102,17 @@ jobs:
       upload_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_aarch64_manylinux_2_34_target_py_vsns)[0] }}
 
   build-linux-aarch64-oe-gcc11_2:
-      if: ${{ inputs.build_linux_aarch64_oe_gcc11_2 }}
-      uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
-      secrets: inherit
-      with:
-        nightly_build: ${{ inputs.nightly_build }}
-        target_os: linux
-        target_arch: aarch64_oe_gcc11_2
-        target_py_vsn: None
-        run_tests: false
-        upload_test_archive: true
-        upload_wheel: false
+    if: ${{ inputs.build_linux_aarch64_oe_gcc11_2 }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      target_os: linux
+      target_arch: aarch64_oe_gcc11_2
+      target_py_vsn: None
+      run_tests: false
+      upload_test_archive: true
+      upload_wheel: false
 
   build-linux-x86_64:
     if: ${{ inputs.build_linux_x86_64 }}

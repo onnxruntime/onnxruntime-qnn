@@ -23,7 +23,7 @@ if [ ! -d "$OUTPUT_DIRECTORY" ]; then
 fi
 
 # Create unsigned/zip subdirectories
-UNSIGNED_DIR="$OUTPUT_DIRECTORY/unsigned"
+UNSIGNED_DIR="$OUTPUT_DIRECTORY/unsigned_libs"
 ZIP_DIR="$UNSIGNED_DIR/zip"
 
 if [ ! -d "$ZIP_DIR" ]; then
