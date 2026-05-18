@@ -282,11 +282,27 @@ class AdbTestsTask(RunInTempDirectoryTask):
                     },
                 ),
                 ExtractArchiveTask(
-                    "Extracting ONNX Runtime test package",
+                    "Extracting per-arch test archive",
                     REPO_ROOT
                     / "build"
                     / f"onnxruntime-tests-{self.__platform}-{self.__target_arch}.{test_archive_ext}",
                     tmpdir,
+                ),
+                BashScriptsWithVenvTask(
+                    "Extracting testdata archive",
+                    None,
+                    [
+                        [
+                            "python3",
+                            str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
+                            "--target-platform",
+                            f"{self.__platform}-{self.__target_arch}",
+                            "--archive",
+                            str(REPO_ROOT / "build" / f"onnxruntime-testdata.{test_archive_ext}"),
+                            "--repo-root",
+                            str(tmpdir),
+                        ]
+                    ],
                 ),
                 PyTestTask(
                     "Testing ONNX Runtime with a local device",
@@ -321,6 +337,9 @@ class QdcTestsTask(RunExecutablesWithVenvTask):
 
         if extra_args is not None:
             cmd.extend(extra_args)
+
+        testdata_archive = REPO_ROOT / "build" / "onnxruntime-testdata.zip"
+        cmd.append(f"--testdata-archive={testdata_archive}")
 
         if is_host_github_runner():
             actor = os.environ["GITHUB_ACTOR"]

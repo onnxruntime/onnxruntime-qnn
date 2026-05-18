@@ -244,6 +244,20 @@ jobs:
         with:
           name: windows-x86_64-py3.11-tests
 
+      # --------------------------
+      # Download testdata archives
+      # --------------------------
+
+      - name: Download testdata zip from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: testdata-zip
+
+      - name: Download testdata tar.bz2 from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: testdata-tarbz2
+
       # -----------------------------
       # Download other distributables
       # -----------------------------
@@ -336,14 +350,14 @@ jobs:
         run: |
           count=$(find "${{ github.workspace }}/build" -name "*.tar.bz2" | wc -l)
           echo "Found $count .tar.bz2 archive(s)"
-          [ "$count" -eq 3 ] || { echo "ERROR: Expected 3 .tar.bz2 archives, found $count"; exit 1; }
+          [ "$count" -eq 4 ] || { echo "ERROR: Expected 4 .tar.bz2 archives, found $count"; exit 1; }
 
       - name: Verify Zip artifacts
         run: |
-          # 4 test archives + 1 Windows ARM64 zip + 1 Windows ARM64 (ARM64x) zip + 4 PDB archives = 10 zips
+          # 4 test archives + 1 testdata-zip + 1 Windows ARM64 zip + 1 Windows ARM64 (ARM64x) zip + 4 PDB archives = 11 zips
           count=$(find "${{ github.workspace }}/build" -name "*.zip" | wc -l)
           echo "Found $count Zip archive(s)"
-          [ "$count" -eq 10 ] || { echo "ERROR: Expected 10 Zip archives, found $count"; exit 1; }
+          [ "$count" -eq 11 ] || { echo "ERROR: Expected 11 Zip archives, found $count"; exit 1; }
 
       - name: Verify TGZ artifact
         run: |
