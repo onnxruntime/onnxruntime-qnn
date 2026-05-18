@@ -4,12 +4,11 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <filesystem>
-#include <fstream>
-#include <functional>
 #include <optional>
 #include <string>
 #include <unordered_map>
 
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
 
@@ -570,26 +569,7 @@ TEST_F(QnnHTPBackendTests, ResizeU8_2xLinearPytorchHalfPixel_EmitsResizeBilinear
   const fs::path graph_dir = fs::temp_directory_path() / "resize_pytorch_half_pixel_qnn_graph";
   fs::remove_all(graph_dir);
   fs::create_directories(graph_dir);
-
-  auto graph_checker_fn = [&graph_dir](const Ort::Session&) {
-    bool saw_resize_bilinear = false;
-    for (const auto& entry : fs::recursive_directory_iterator(graph_dir)) {
-      if (entry.path().extension() != ".json") continue;
-      std::ifstream in(entry.path());
-      std::string line;
-      while (std::getline(in, line)) {
-        if (line.find("\"ResizeBilinear\"") != std::string::npos) {
-          saw_resize_bilinear = true;
-          break;
-        }
-      }
-      if (saw_resize_bilinear) break;
-    }
-    EXPECT_TRUE(saw_resize_bilinear)
-        << "pytorch_half_pixel rank-4 linear Resize must lower to ResizeBilinear. "
-        << "JSON dumps under " << graph_dir;
-  };
-  std::function<void(const Ort::Session&)> graph_checker = graph_checker_fn;
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
 
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -606,11 +586,10 @@ TEST_F(QnnHTPBackendTests, ResizeU8_2xLinearPytorchHalfPixel_EmitsResizeBilinear
                             {1, 3, 8, 8}, "linear", "pytorch_half_pixel", ""),
       GetQDQResizeModelBuilder<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
                                         {1, 3, 8, 8}, "linear", "pytorch_half_pixel", ""),
-      provider_options, /*opset_version=*/19, ExpectedEPNodeAssignment::All,
-      QDQTolerance(), OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR, "", {}, std::nullopt,
-      &graph_checker);
+      provider_options, /*opset_version=*/19, ExpectedEPNodeAssignment::All);
 
-  fs::remove_all(graph_dir);
+  AssertOpInQnnGraph(graph_dir, "ResizeBilinear", 1);
+  AssertOpInQnnGraph(graph_dir, "Resize", 0);
 }
 
 // Test 2x QDQ Resize mode: "linear", coordinate_transformation_mode: "half_pixel"
