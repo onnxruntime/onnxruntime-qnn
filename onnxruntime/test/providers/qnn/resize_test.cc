@@ -588,6 +588,10 @@ TEST_F(QnnHTPBackendTests, ResizeU8_2xLinearPytorchHalfPixel_EmitsResizeBilinear
                                         {1, 3, 8, 8}, "linear", "pytorch_half_pixel", ""),
       provider_options, /*opset_version=*/19, ExpectedEPNodeAssignment::All);
 
+  // TestQDQModelAccuracy may GTEST_SKIP on HTP arch <= 68 (e.g., QCS6490),
+  // in which case no QNN graph is emitted and the assertions below would fail.
+  if (IsSkipped()) return;
+
   AssertOpInQnnGraph(graph_dir, "ResizeBilinear", 1);
   AssertOpInQnnGraph(graph_dir, "Resize", 0);
 }
