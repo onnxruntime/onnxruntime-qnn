@@ -13,12 +13,13 @@ from ..task import (
     ExtractArchiveTask,
     PyTestTask,
     RemovePathsTask,
+    RunExecutablesTask,
     RunExecutablesWithVenvTask,
     RunInTempDirectoryTask,
     UpdateJsonFileTask,
 )
 from ..typing import BuildConfigT, TargetArchLinuxT, TargetArchWindowsT, TargetPyVersionT
-from ..util import REPO_ROOT, git_head_sha
+from ..util import BASH_EXECUTABLE, REPO_ROOT, git_head_sha
 from .docker import DOCKER_REPO_ROOT, MANYLINUX_2_34_AARCH64_TAG, DockerBuildAndTestTask
 from .windows import RunPowershellScriptsTask
 
@@ -176,6 +177,56 @@ class GenerateCoverageTask(BashScriptsWithVenvTask):
             f"--config={config}",
         ]
         super().__init__(group_name, venv, [cmd])
+
+
+class GenerateDiffCoverageTask(CompositeTask):
+    """Generate patch/diff coverage report using diff-cover.
+
+    Chains three steps:
+      1. git fetch origin <base_branch>   — ensures the base ref is available locally.
+      2. git diff <base_branch>...HEAD    — captures the PR diff as a unified diff file.
+      3. generate_diff_coverage.sh        — converts coverage.xml + patch.diff into an
+                                            HTML/text diff-cover report.
+
+    Prerequisite: coverage.xml must already exist under <build_dir>/<config>/coverage/,
+    i.e. GenerateCoverageTask must have run first (enforced via @depends in build_and_test.py).
+    """
+
+    def __init__(
+        self,
+        group_name: str | None,
+        venv: Path | None,
+        build_dir: Path,
+        config: str = "RelWithDebInfo",
+        base_branch: str = "origin/main",
+    ) -> None:
+        diff_file = build_dir / config / "patch.diff"
+        coverage_xml = build_dir / config / "coverage" / "coverage.xml"
+
+        diff_script_cmd = [
+            str(REPO_ROOT / "qcom" / "scripts" / "linux" / "generate_diff_coverage.sh"),
+            f"--coverage-xml={coverage_xml}",
+            f"--diff-file={diff_file}",
+        ]
+
+        super().__init__(
+            group_name,
+            [
+                RunExecutablesTask(
+                    "Fetching base branch",
+                    [["git", "fetch", "origin", base_branch.removeprefix("origin/")]],
+                ),
+                RunExecutablesTask(
+                    "Generating git diff",
+                    [[BASH_EXECUTABLE, "-c", f"git diff {base_branch}...HEAD > {diff_file}"]],
+                ),
+                BashScriptsWithVenvTask(
+                    "Generating diff coverage report",
+                    venv,
+                    [diff_script_cmd],
+                ),
+            ],
+        )
 
 
 class AdbTestsTask(RunInTempDirectoryTask):

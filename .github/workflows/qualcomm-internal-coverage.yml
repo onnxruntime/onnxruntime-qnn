@@ -6,31 +6,121 @@ name: Qualcomm Internal Coverage
 permissions:
   contents: read
   checks: write
+  pull-requests: write
 
 on:
+  workflow_call:
   workflow_dispatch:
 
 jobs:
   coverage-linux-x86_64:
     name: "coverage-linux-x86_64"
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
+    env:
+      COVERAGE_DIR: build/linux-x86_64/RelWithDebInfo/coverage
     steps:
       - uses: actions/checkout@v6
         with:
-          submodules: recursive
+          fetch-depth: 0
+          # submodules omitted here; initialized below only when coverage is needed.
 
-      - name: Run Coverage (Linux x86_64, always RelWithDebInfo)
+      - name: Check if coverage is needed
+        id: gate
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "run=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          base_ref="${{ github.base_ref }}"
+          if [ -z "${base_ref}" ]; then
+            echo "::error::github.base_ref is empty (event_name=${{ github.event_name }})"
+            exit 1
+          fi
+
+          if ! changed=$(git diff --name-only "origin/${base_ref}...HEAD"); then
+            echo "::error::git diff against origin/${base_ref}...HEAD failed"
+            exit 1
+          fi
+
+          if echo "${changed}" | grep -qE 'onnxruntime/(core|test)/providers/qnn/'; then
+            echo "run=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "run=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Initialize submodules
+        if: steps.gate.outputs.run == 'true'
+        run: git submodule update --init --recursive
+
+      - name: Run Coverage and Diff Coverage (Linux x86_64, always RelWithDebInfo)
+        if: steps.gate.outputs.run == 'true'
         run: |
           # Python version does not affect C++ code coverage results.
           # 3.10 matches DEFAULT_PYTHON_LINUX in qcom/ep_build/util.py.
           python3 qcom/build_and_test.py \
             --target-py-version 3.10 \
-            coverage_linux_x86_64
+            diff_coverage_linux_x86_64
 
       - name: Upload Coverage Report
         uses: actions/upload-artifact@v7
-        if: always()
+        if: steps.gate.outputs.run == 'true'
         with:
           name: "coverage-linux-x86_64-${{ github.sha }}"
-          retention-days: 7
-          path: build/linux-x86_64/RelWithDebInfo/coverage/
+          retention-days: 3
+          path: |
+            ${{ env.COVERAGE_DIR }}/coverage_lcov_filtered.info
+            ${{ env.COVERAGE_DIR }}/README.md
+            ${{ env.COVERAGE_DIR }}/diff-coverage.html
+            ${{ env.COVERAGE_DIR }}/diff-coverage.txt
+
+      - name: Show Diff Coverage Summary
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          txt="${COVERAGE_DIR}/diff-coverage.txt"
+          if [ -f "${txt}" ]; then
+            echo '```' >> "${GITHUB_STEP_SUMMARY}"
+            cat "${txt}" >> "${GITHUB_STEP_SUMMARY}"
+            echo '```' >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Post Diff Coverage to PR
+        if: steps.gate.outputs.run == 'true' && github.event_name != 'workflow_dispatch'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const txtPath = `${process.env.COVERAGE_DIR}/diff-coverage.txt`;
+            if (!fs.existsSync(txtPath)) {
+              console.log('diff-coverage.txt not found, skipping PR comment.');
+              return;
+            }
+            const txt = fs.readFileSync(txtPath, 'utf8');
+
+            const marker = '<!-- diff-coverage-report -->';
+            const body = `${marker}\n## Diff Coverage\n\`\`\`\n${txt}\n\`\`\``;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }

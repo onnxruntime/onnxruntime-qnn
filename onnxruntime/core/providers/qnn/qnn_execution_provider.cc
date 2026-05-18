@@ -2212,6 +2212,13 @@ OrtStatus* ORT_API_CALL QnnEp::ShouldConvertDataLayoutForOpImpl(_In_ OrtEp* this
     *should_convert = 1;
   }
 
+  if (std::string(domain) == kOnnxDomain && std::string(op_type) == "ConvInteger") {
+    // DQConvIntegerFusion handles NCHW->NHWC transposition internally via QNN Transpose ops.
+    // Suppress ORT's layout transformer so it does not rewrite ConvInteger to kMSInternalNHWCDomain,
+    // which would break the fusion's pattern-matching on the second GetCapability pass.
+    *should_convert = 0;
+  }
+
   return nullptr;
 }
 
