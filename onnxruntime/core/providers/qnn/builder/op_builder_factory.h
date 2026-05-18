@@ -76,6 +76,7 @@ void CreateHardSigmoidOpBuilder(const std::string& op_type, OpBuilderRegistratio
 void CreateIdentityOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateInstanceNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateInverseOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateIsInfOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateIsNaNOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateLayerNormalizationOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateLRNOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
