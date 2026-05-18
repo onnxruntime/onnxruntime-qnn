@@ -287,13 +287,13 @@ Ort::Status QuantizeData(gsl::span<const float> data, gsl::span<const uint32_t> 
 //   - Any block scale is negative or non-finite.
 //   - Input sizes are inconsistent.
 Ort::Status ConvertBlockQuantScalesToLpbq(gsl::span<const float> bq_scales,
-                                             gsl::span<const int32_t> bq_offsets,
-                                             uint32_t num_blocks_per_channel,
-                                             uint32_t num_channels,
-                                             uint32_t bitwidth,
-                                             /*out*/ std::vector<float>& per_channel_scales,
-                                             /*out*/ std::vector<uint8_t>& per_block_int_scales,
-                                             /*out*/ std::vector<int32_t>& offsets);
+                                          gsl::span<const int32_t> bq_offsets,
+                                          uint32_t num_blocks_per_channel,
+                                          uint32_t num_channels,
+                                          uint32_t bitwidth,
+                                          /*out*/ std::vector<float>& per_channel_scales,
+                                          /*out*/ std::vector<uint8_t>& per_block_int_scales,
+                                          /*out*/ std::vector<int32_t>& offsets);
 
 // Quantizes the given float data using the provided Low Power Block Quantization parameters
 // (float channel_scales, int block_scales and offsets)
