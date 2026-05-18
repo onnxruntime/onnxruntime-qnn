@@ -114,8 +114,6 @@ static void RunOpTestOnCPU(const std::string& op_type,
   Ort::CustomOpDomain v2_domain{onnx_domain.c_str()};
   std::unique_ptr<Ort::Custom::OrtLiteCustomOp> MyAdd_op_ptr{Ort::Custom::CreateLiteCustomOp<MyAdd>("MyAdd", "CPUExecutionProvider")};
   v2_domain.Add(MyAdd_op_ptr.get());
-  std::shared_ptr<Ort::SessionOptions> session_options = std::make_shared<Ort::SessionOptions>();
-  session_options->Add(v2_domain);
 
   RunQnnModelTest(BuildUDOTestCase<float>(op_type, input_def, attrs, onnx_domain),
                   provider_options,
@@ -125,7 +123,7 @@ static void RunOpTestOnCPU(const std::string& op_type,
                   OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
                   true,
                   nullptr,
-                  session_options);
+                  &v2_domain);
 }
 
 // Runs a QDQ model on the QNN HTP backend and compares output to CPU EP.
@@ -143,8 +141,6 @@ static void RunOpTestOnHTP(const std::string& op_type,
   Ort::CustomOpDomain v2_domain{onnx_domain.c_str()};
   std::unique_ptr<Ort::Custom::OrtLiteCustomOp> MyAdd_op_ptr{Ort::Custom::CreateLiteCustomOp<MyAdd>("MyAdd", "CPUExecutionProvider")};
   v2_domain.Add(MyAdd_op_ptr.get());
-  std::shared_ptr<Ort::SessionOptions> session_options = std::make_shared<Ort::SessionOptions>();
-  session_options->Add(v2_domain);
 
   TestQDQModelAccuracy<uint8_t>(BuildUDOTestCase<float>(op_type, input_def, attrs, onnx_domain),       // baseline float32 model
                                 BuildUDOQDQTestCase<uint8_t>(op_type, input_def, attrs, onnx_domain),  // QDQ model
@@ -157,7 +153,7 @@ static void RunOpTestOnHTP(const std::string& op_type,
                                 {},
                                 std::nullopt,
                                 nullptr,
-                                session_options);
+                                &v2_domain);
 }
 
 std::string getLibPath(std::string backend) {

@@ -24,7 +24,7 @@ Qnn_ErrorHandle_t execute(CustomOp* operation) {
 
   // Calculate number of element of input
   size_t numInputs = 1;
-  for (size_t i = 0; i < (int)in->rank; ++i) {
+  for (uint32_t i = 0; i < in->rank; ++i) {
     numInputs *= in->currentDimensions[i];
   }
   for (size_t i = 0; i < numInputs; i++) {

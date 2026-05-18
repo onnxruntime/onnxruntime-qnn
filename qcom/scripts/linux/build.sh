@@ -113,7 +113,8 @@ fi
 
 cmake_bindir="$(get_cmake_bindir)"
 llvm_contentdir="$(get_llvm_contentdir)"
-hexagon_sdk_contentdir="$(get_hexagon_sdk_contentdir)"
+# Trigger Hexagon SDK download/extract; cmake discovers the path via ORT_BUILD_TOOLS_PATH or its fallback.
+get_hexagon_sdk_contentdir > /dev/null
 PATH="${cmake_bindir}:$(get_ninja_bindir):${llvm_contentdir}/bin:${PATH}"
 
 mkdir -p "${build_dir}/${config}"

@@ -235,10 +235,12 @@ static void ParseOpPackages(const std::string& op_packages_string,
     // On Windows, paths include a drive letter followed by ":" (e.g., "C:\").
     // This can cause the previous split logic to fail when extracting the library path.
     // Adjust the path handling to correctly process such cases, e.g., "C:\XXX\YYY\IncrementOp.dll".
-    std::filesystem::path possibleAbsPath = std::filesystem::path(std::string(splitStrings[1]) + ":" + std::string(splitStrings[2]));
-    if (possibleAbsPath.is_absolute() && std::filesystem::exists(possibleAbsPath)) {
-      splitStrings[1] = std::string(splitStrings[1]) + ":" + std::string(splitStrings[2]);
-      splitStrings.erase(splitStrings.begin() + 2);
+    if (splitStrings.size() >= 3) {
+      std::filesystem::path possibleAbsPath = std::filesystem::path(std::string(splitStrings[1]) + ":" + std::string(splitStrings[2]));
+      if (possibleAbsPath.is_absolute() && std::filesystem::exists(possibleAbsPath)) {
+        splitStrings[1] = std::string(splitStrings[1]) + ":" + std::string(splitStrings[2]);
+        splitStrings.erase(splitStrings.begin() + 2);
+      }
     }
 #endif
     if (splitStrings.size() < 3 || splitStrings.size() > 4) {

@@ -28,8 +28,8 @@ The configuration defines:
 - Backend information
 
 Schema references are available in the QNN SDK. You can also
-see [MyAddOpPackageCpu.xml](../../../../onnxruntime/test/providers/qnn/udo/MyAddOpPackageCpu.xml) for CPU backend
-and [MyAddOpPackageHtp.xml](../../../../onnxruntime/test/providers/qnn/udo/MyAddOpPackageHtp.xml) for HTP backend.
+see [MyAddOpPackageCpu.xml](../onnxruntime/test/providers/qnn/udo/MyAddOpPackageCpu.xml) for CPU backend
+and [MyAddOpPackageHtp.xml](../onnxruntime/test/providers/qnn/udo/MyAddOpPackageHtp.xml) for HTP backend.
 
 ---
 
@@ -53,8 +53,8 @@ The generator creates:
 Fill in the generated skeleton:
 
 Your custom logic goes into `src/ops/*.cpp`.
-see [MyAddCPU.cpp](../../../../onnxruntime/test/providers/qnn/udo/MyAddCPU.cpp) for CPU backend
-and [MyAddHTP.cpp](../../../../onnxruntime/test/providers/qnn/udo/MyAddHTP.cpp) for HTP backend.
+see [MyAddCPU.cpp](../onnxruntime/test/providers/qnn/udo/MyAddCPU.cpp) for CPU backend
+and [MyAddHTP.cpp](../onnxruntime/test/providers/qnn/udo/MyAddHTP.cpp) for HTP backend.
 
 ---
 
@@ -87,7 +87,7 @@ export HEXAGON_SDK_ROOT=$(realpath Hexagon_SDK)
 ./onnx_test_runner -v -e qnn -j 1 -i "backend_path|./libQnnCpu.so op_packages|<op_type>:<op_package_path>:<interface_symbol_name>[:<target>],<op_type2>:<op_package_path2>:<interface_symbol_nam2e>[:<target2>]" <models>
 ```
 
-For the whole pipeline, refer [udo unit test](../../../../cmake/qnn_udo_unittest.cmake)
+For the whole pipeline, refer [udo unit test](../cmake/onnxruntime_unittests_udo.cmake)
 
 ---
 

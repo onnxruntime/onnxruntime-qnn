@@ -8,6 +8,8 @@
 
 # QNN EP udo tests not require CPU EP op implementations for accuracy evaluation
 find_package(Python REQUIRED COMPONENTS Interpreter)
+set(_LLVM_VERSION "21.1.8")
+set(_HEXAGON_SDK_VERSION "6.5.0.0")
 if(UNIX)
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND onnxruntime_target_platform STREQUAL "x86_64")
         find_program(MAKE_EXECUTABLE make)
@@ -19,7 +21,7 @@ if(UNIX)
             set(_TOOLS_DIR "${CMAKE_CURRENT_BINARY_DIR}/../../tools")
         endif()
         get_filename_component(LLVM_TOOL_DIR
-            "llvm_linux_x86_64-21.1.8/LLVM-21.1.8-Linux-X64"
+            "LLVM-${_LLVM_VERSION}-Linux-X64"
             REALPATH
             BASE_DIR "${_TOOLS_DIR}"
         )
@@ -61,12 +63,12 @@ if(UNIX)
             set(_TOOLS_DIR "${CMAKE_CURRENT_BINARY_DIR}/../../tools")
         endif()
         get_filename_component(LLVM_TOOL_DIR
-            "llvm_linux_x86_64-21.1.8/LLVM-21.1.8-Linux-X64"
+            "LLVM-${_LLVM_VERSION}-Linux-X64"
             REALPATH
             BASE_DIR "${_TOOLS_DIR}"
         )
         get_filename_component(HEXAGON_SDK_ROOT
-            "hexagon_linux_x86_64-6.5.0.0/Hexagon_SDK"
+            "hexagon_linux_x86_64-${_HEXAGON_SDK_VERSION}/Hexagon_SDK"
             REALPATH
             BASE_DIR "${_TOOLS_DIR}"
         )
@@ -89,7 +91,7 @@ if(UNIX)
             # build op package
             COMMAND ${CMAKE_COMMAND} -E env QNN_SDK_ROOT=${onnxruntime_QNN_HOME}
                                             PATH=${LLVM_TOOL_DIR}/bin/:$ENV{PATH}
-                                            HEXAGON_SDK_ROOT=${HEXAGON_SDK_ROOT}/6.5.0.0
+                                            HEXAGON_SDK_ROOT=${HEXAGON_SDK_ROOT}/${_HEXAGON_SDK_VERSION}
             ${MAKE_EXECUTABLE} -C ${CMAKE_CURRENT_BINARY_DIR}/qnn_udo_build/htp/MyAddOpPackage
                                "X86_CXX=clang++ -stdlib=libc++"
                                htp_x86
@@ -102,9 +104,9 @@ if(UNIX)
                 ${TEST_SRC_DIR}/providers/qnn/udo/MyAddHTP.cpp
                 ${TEST_SRC_DIR}/providers/qnn/udo/HTP_Makefile
         )
-        list(APPEND onnxruntime_test_providers_dependencies QnnUDO_MyAdd_HTP)
         add_custom_target(QnnUDO_MyAdd_HTP
           DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/libMyAddOpPackage_htp.so
         )
+        list(APPEND onnxruntime_test_providers_dependencies QnnUDO_MyAdd_HTP)
     endif()
 endif()
