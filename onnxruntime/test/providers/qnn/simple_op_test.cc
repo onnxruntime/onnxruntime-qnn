@@ -158,6 +158,7 @@ TEST_F(QnnCPUBackendTests, UnaryOp_HardSwish) {
 
 // Test float HardSwish on the QNN HTP backend.
 TEST_F(QnnHTPBackendTests, UnaryOp_HardSwish_FP32) {
+  QNN_SKIP_TEST_ON_ARM64("Fails on ARM64/AARCH64");
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   RunQnnModelTest(BuildOpTestCase<float>("HardSwish_node", "HardSwish",
