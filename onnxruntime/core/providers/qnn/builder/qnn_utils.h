@@ -275,7 +275,7 @@ Ort::Status QuantizeData(gsl::span<const float> data, gsl::span<const uint32_t> 
 // instead of 0, the caller must transpose the scale data before calling this function.
 //
 // Algorithm :
-//   max_int_scale   = 2^bitwidth  (256 for int8, 16 for int4)
+//   max_int_scale   = 2^bitwidth - 1  (255 for int8, 15 for int4)
 //   per_channel_scale[c]      = max(bq_scales[:, c]) / max_int_scale
 //   per_block_int_scale[c, b] = clamp(round(bq_scales[b, c] / per_channel_scale[c]), 1, max_int_scale)
 //
@@ -286,7 +286,7 @@ Ort::Status QuantizeData(gsl::span<const float> data, gsl::span<const uint32_t> 
 //   - The encoding is asymmetric (non-zero offsets), which LPBQ does not support.
 //   - Any block scale is negative or non-finite.
 //   - Input sizes are inconsistent.
-Ort::Status TryConvertBlockQuantScalesToLpbq(gsl::span<const float> bq_scales,
+Ort::Status ConvertBlockQuantScalesToLpbq(gsl::span<const float> bq_scales,
                                              gsl::span<const int32_t> bq_offsets,
                                              uint32_t num_blocks_per_channel,
                                              uint32_t num_channels,

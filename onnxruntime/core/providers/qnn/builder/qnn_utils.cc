@@ -387,8 +387,8 @@ std::ostream& operator<<(std::ostream& out, const Qnn_QuantizeParams_t& quantize
       out << " axis=" << lpbq.axis
           << " numBlocksPerAxis=" << lpbq.numBlocksPerAxis
           << " blockScaleBitwidth=" << lpbq.blockScaleBitwidth;
-      // For lpbq, num_elems are not present in the quantize_params,
-      // we are using numBlocksPerAxis instead to print the first few scale offset values
+      // For LPBQ, num_elems are not present in the quantize_params,
+      // we are using numBlocksPerAxis instead to print the first numBlocksPerAxis scale offset values
       size_t num_elems = lpbq.numBlocksPerAxis;
       bool truncate = num_elems > 20;
       num_elems = truncate ? 20 : num_elems;
@@ -1205,21 +1205,21 @@ Ort::Status DequantizePerChannel(gsl::span<const uint8_t> quant_bytes, gsl::span
   return Ort::Status();
 }
 
-Ort::Status TryConvertBlockQuantScalesToLpbq(gsl::span<const float> bq_scales,
-                                             gsl::span<const int32_t> bq_offsets,
-                                             uint32_t num_blocks_per_channel,
-                                             uint32_t num_channels,
-                                             uint32_t bitwidth,
-                                             /*out*/ std::vector<float>& per_channel_scales,
-                                             /*out*/ std::vector<uint8_t>& per_block_int_scales,
-                                             /*out*/ std::vector<int32_t>& offsets) {
+Ort::Status ConvertBlockQuantScalesToLpbq(gsl::span<const float> bq_scales,
+                                          gsl::span<const int32_t> bq_offsets,
+                                          uint32_t num_blocks_per_channel,
+                                          uint32_t num_channels,
+                                          uint32_t bitwidth,
+                                          /*out*/ std::vector<float>& per_channel_scales,
+                                          /*out*/ std::vector<uint8_t>& per_block_int_scales,
+                                          /*out*/ std::vector<int32_t>& offsets) {
   RETURN_IF_NOT(bq_scales.size() == static_cast<size_t>(num_blocks_per_channel) * num_channels,
                 "BQ scales size does not match num_blocks_per_channel * num_channels");
   RETURN_IF_NOT(bq_offsets.empty() || bq_offsets.size() == bq_scales.size(),
                 "BQ offsets size must be empty or equal to bq_scales size");
   RETURN_IF_NOT(bitwidth > 0 && bitwidth <= 16, "bitwidth must be in range [1, 16]");
 
-  const uint32_t max_int_scale = 1u << bitwidth;  // 2^bitwidth
+  const uint32_t max_int_scale = (1u << bitwidth) - 1u;
 
   // Require symmetric quantization (all offsets must be zero).
   if (!bq_offsets.empty()) {
@@ -1236,7 +1236,7 @@ Ort::Status TryConvertBlockQuantScalesToLpbq(gsl::span<const float> bq_scales,
   }
 
   // Algorithm:
-  //   max_int_scale   = 2^bitwidth
+  //   max_int_scale             = 2^bitwidth - 1
   //   per_channel_scale[c]      = max(bq_scales[:, c]) / max_int_scale
   //   per_block_int_scale[c, b] = clamp(round(bq_scales[b, c] / per_channel_scale[c]), 1, max_int_scale)
   //
