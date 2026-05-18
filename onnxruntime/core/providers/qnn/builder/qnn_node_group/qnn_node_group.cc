@@ -13,6 +13,7 @@
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_node_group/cast_lone_q_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/channel_shuffle_fusion.h"
+#include "core/providers/qnn/builder/qnn_node_group/dq_conv_integer_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/dq_matmul_integer_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/dq_q_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/gather_transpose_reshape_fusion.h"
@@ -87,6 +88,7 @@ using FusionFunc = std::function<std::unique_ptr<IQnnNodeGroup>(QnnModelWrapper&
 static std::unordered_map<std::string, std::vector<FusionFunc>> fusions = {
     {"DequantizeLinear", {DQQFusion::TryFusion}},
     {"MatMulInteger", {DQMatMulIntegerFusion::TryFusion}},
+    {"ConvInteger", {DQConvIntegerFusion::TryFusion}},
     {"Gather", {GatherTransposeReshapeFusion::TryFusion}},
     {"HardSigmoid", {HardSigmoidMulFusion::TryFusion}},
     {"MatMul", {LowPowerBlockQuantizedMatMulFusion::TryFusion}},

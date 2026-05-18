@@ -20,7 +20,7 @@ if (-not (Test-Path $OutputDirectory -PathType Container)) {
 }
 
 # Create unsigned/nuget subdirectories
-$unsignedDir = Join-Path $OutputDirectory "unsigned"
+$unsignedDir = Join-Path $OutputDirectory "unsigned_libs"
 $nugetDir = Join-Path $unsignedDir "nuget"
 
 if (-not (Test-Path $nugetDir -PathType Container)) {
