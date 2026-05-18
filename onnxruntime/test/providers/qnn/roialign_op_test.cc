@@ -112,7 +112,7 @@ static void RunQDQRoiAlignOpTest(const TestInputDef<float>& input_def,
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
-  provider_options["soc_model"] = "87";
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
 
   TestQDQModelAccuracy(BuildRoialignTestCase(input_def, roi_def, batch_indices_def, attrs),
                        BuildRoialignQDQTestCase<QuantType>(input_def, roi_def, batch_indices_def, attrs),
@@ -124,7 +124,8 @@ static void RunQDQRoiAlignOpTest(const TestInputDef<float>& input_def,
 //
 // CPU tests:
 //
-// Disabling CPU tests. CPU kernel tests have potential problems that stalls on CI.
+// CPU tests:
+//
 TEST_F(QnnCPUBackendTests, TestRoialign) {
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
@@ -138,6 +139,7 @@ TEST_F(QnnCPUBackendTests, TestRoialign) {
                     ExpectedEPNodeAssignment::All);
 }
 
+// QNN CPU EP only supports output_half_pixel; half_pixel causes hangs during inference.
 TEST_F(QnnCPUBackendTests, TestRoialign_half_pixel) {
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
@@ -165,7 +167,7 @@ TEST_F(QnnCPUBackendTests, TestRoialign_Unsupported_mode_max) {
                     ExpectedEPNodeAssignment::None);
 }
 
-// sampling_ratio=0 is the ONNX adaptive default; maps to QNN num_samples=-1
+// sampling_ratio=0 (ONNX adaptive default): num_samples computed from output dimensions
 TEST_F(QnnCPUBackendTests, TestRoialign_sampling_ratio_0) {
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
