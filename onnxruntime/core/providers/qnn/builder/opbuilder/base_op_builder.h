@@ -221,7 +221,8 @@ class BaseOpBuilder : public IOpBuilder {
         {"Transpose", QNN_OP_TRANSPOSE},
         {"Unsqueeze", QNN_OP_RESHAPE},
         {"Upsample", QNN_OP_RESIZE},
-        {"Where", QNN_OP_ELEMENT_WISE_SELECT}};
+        {"Where", QNN_OP_ELEMENT_WISE_SELECT},
+        {"Xor", QNN_OP_ELEMENT_WISE_XOR}};
     auto it = onnx_op_type_to_qnn_op_type.find(onnx_op_type);
     if (it == onnx_op_type_to_qnn_op_type.end()) {
       ORT_CXX_API_THROW(("Unable to map given ONNX op type to QNN" + onnx_op_type).c_str(), ORT_EP_FAIL);

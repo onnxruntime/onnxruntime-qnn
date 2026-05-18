@@ -112,6 +112,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateSimpleOpBuilder("Sum", *this);
   CreateSimpleOpBuilder("Tanh", *this);
   CreateSimpleOpBuilder("Where", *this);
+  CreateSimpleOpBuilder("Xor", *this);
   CreateSliceOpBuilder("Slice", *this);
   CreateSoftmaxOpBuilder("LogSoftmax", *this);
   CreateSoftmaxOpBuilder("Softmax", *this);
