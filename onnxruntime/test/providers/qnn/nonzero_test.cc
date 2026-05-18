@@ -273,6 +273,51 @@ TEST_F(QnnHTPBackendTests, NonZero_DynamicOutputShape) {
   RunNonZeroTest(build_model, 11, ExpectedEPNodeAssignment::All);
 }
 
+// NonZero with dynamic output → Reshape (static shape tensor) → graph output.
+// Input is all non-zero so there is no -1 padding: CPU and QNN produce identical results.
+TEST_F(QnnHTPBackendTests, NonZero_DynamicOutputShape_WithReshape) {
+  // All 6 elements non-zero: NonZero returns [2, 6] on both CPU and QNN (no padding).
+  // Reshape [2, -1] -> [12] gives identical output on both.
+  auto build_model = [](ModelTestBuilder& builder) {
+    TestInputDef<float> input_def({2, 3}, false, {1.0f, 2.0f, 3.0f, 4.0f, 5.0f, 6.0f});
+    MakeTestInput<float>(builder, "X", input_def);
+    builder.AddNode("nonzero_node", "NonZero", {"X"}, {"nz_out"}, kOnnxDomain);
+    builder.Make1DInitializer<int64_t>("reshape_shape", {12});
+    builder.AddNode("reshape_node", "Reshape", {"nz_out", "reshape_shape"}, {"Y"}, kOnnxDomain);
+    builder.MakeOutput<int64_t>("Y", std::vector<int64_t>{12});
+  };
+
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+  ModelTestBuilder helper;
+  build_model(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+
+  std::vector<Ort::Value> expected;
+  InferenceModelCPU(model_data, "NonZero_Reshape_CPU", helper.feeds_, expected);
+
+  std::vector<Ort::Value> actual;
+  InferenceModel(model_data, "NonZero_Reshape_QNN", HtpProviderOptions(),
+                 ExpectedEPNodeAssignment::All, helper.feeds_, actual);
+
+  auto exp_shape = expected[0].GetTensorTypeAndShapeInfo().GetShape();
+  auto act_shape = actual[0].GetTensorTypeAndShapeInfo().GetShape();
+  ASSERT_EQ(exp_shape, act_shape);
+
+  auto element_count = expected[0].GetTensorTypeAndShapeInfo().GetElementCount();
+  const int64_t* exp_data = expected[0].GetTensorData<int64_t>();
+  const int64_t* act_data = actual[0].GetTensorData<int64_t>();
+  for (size_t i = 0; i < element_count; ++i) {
+    EXPECT_EQ(exp_data[i], act_data[i]) << "Mismatch at index " << i;
+  }
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test

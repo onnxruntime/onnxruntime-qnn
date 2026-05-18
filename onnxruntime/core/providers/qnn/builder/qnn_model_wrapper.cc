@@ -838,8 +838,13 @@ Ort::Status QnnModelWrapper::GetTensorInfo(const OrtNodeUnitIODef& tensor, Tenso
                                         tensor.type,
                                         tensor_info.qnn_data_type));
 
-  // Fill in shape.
-  RETURN_IF_NOT(GetOnnxShape(tensor.shape, tensor_info.shape), "Cannot get shape");
+  // Fill in shape. When the ONNX shape is dynamic, fall back to the registered QNN tensor shape
+  // if a prior op already built this tensor (e.g., NonZero output padded to [rank, total_elements]).
+  if (!GetOnnxShape(tensor.shape, tensor_info.shape)) {
+    RETURN_IF_NOT(IsQnnTensorWrapperExist(name),
+                  ("Cannot get shape for tensor: " + name).c_str());
+    tensor_info.shape = GetQnnTensorWrapper(name).GetTensorDims();
+  }
 
   // Fill in initializer info.
   tensor_info.is_initializer = IsConstantInput(name);

@@ -63,18 +63,16 @@ Ort::Status BaseOpBuilder::ProcessDataTypes(QnnModelWrapper& qnn_model_wrapper,
     if (IsOptionalOrtNodeUnitIODef(input)) {
       continue;
     }
-    TensorInfo tensor_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(input, tensor_info));
-    Qnn_DataType_t qnn_data_type = tensor_info.qnn_data_type;
+    Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
+    RETURN_IF_ERROR(utils::GetQnnDataType(input.quant_param.has_value(), input.type, qnn_data_type));
     input_qnn_dtypes.push_back(qnn_data_type);
   }
   for (auto output : outputs) {
     if (IsOptionalOrtNodeUnitIODef(output)) {
       continue;
     }
-    TensorInfo tensor_info = {};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(output, tensor_info));
-    Qnn_DataType_t qnn_data_type = tensor_info.qnn_data_type;
+    Qnn_DataType_t qnn_data_type = QNN_DATATYPE_FLOAT_32;
+    RETURN_IF_ERROR(utils::GetQnnDataType(output.quant_param.has_value(), output.type, qnn_data_type));
     output_qnn_dtypes.push_back(qnn_data_type);
   }
   if (IsCpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
