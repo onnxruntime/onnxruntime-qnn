@@ -23,6 +23,14 @@ on:
         description: "If true, don't publish the Wheel."
         type: boolean
         default: true
+      build_windows_arm64_debug:
+        description: "If true, download and verify the Windows ARM64 Debug archive."
+        type: boolean
+        default: false
+      build_windows_arm64_relwithdebinfo:
+        description: "If true, download and verify the Windows ARM64 RelWithDebInfo archive."
+        type: boolean
+        default: false
       qa_tag:
         description: "Name of the build for QA purposes; leave blank to generate one based on today's date."
         type: string
@@ -47,6 +55,8 @@ jobs:
       windows_target_archs: "['arm64', 'arm64ec', 'x86_64']"
       windows_target_py_vsns: "['3.11','3.12','3.13','3.14']"
       windows_arm64_build_archive: true
+      build_windows_arm64_debug: ${{ inputs.build_windows_arm64_debug }}
+      build_windows_arm64_relwithdebinfo: ${{ inputs.build_windows_arm64_relwithdebinfo }}
 
   publish-wheel-workflow:
     name: "Publish distribution to PyPI"
@@ -268,6 +278,18 @@ jobs:
         with:
           name: windows-arm64-py3.11-zip
 
+      - name: Download ARM64 Windows Debug Zip Package from Artifactory
+        if: ${{ inputs.build_windows_arm64_debug }}
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64-py3.11-Debug-zip
+
+      - name: Download ARM64 Windows RelWithDebInfo Zip Package from Artifactory
+        if: ${{ inputs.build_windows_arm64_relwithdebinfo }}
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64-py3.11-RelWithDebInfo-zip
+
       - name: Download aarch64 manylinux_2_34 Linux TGZ Package from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -331,9 +353,13 @@ jobs:
       - name: Verify Zip artifact
         run: |
           # 4 test archives + 1 windows zip + 3 PDB archives = 8 zips
+          # Each enabled debug build adds one more zip (Debug and/or RelWithDebInfo).
+          expected=8
+          [ "${{ inputs.build_windows_arm64_debug }}" = "true" ] && expected=$((expected + 1))
+          [ "${{ inputs.build_windows_arm64_relwithdebinfo }}" = "true" ] && expected=$((expected + 1))
           count=$(find "${{ github.workspace }}/build" -name "*.zip" | wc -l)
           echo "Found $count Zip archive(s)"
-          [ "$count" -eq 8 ] || { echo "ERROR: Expected 8 Zip archives, found $count"; exit 1; }
+          [ "$count" -eq "$expected" ] || { echo "ERROR: Expected $expected Zip archives, found $count"; exit 1; }
 
       - name: Verify TGZ artifact
         run: |

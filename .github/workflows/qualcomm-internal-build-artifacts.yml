@@ -50,6 +50,14 @@ on:
         description: "If true, build an archive with the first ARM64 build."
         type: boolean
         default: true
+      build_windows_arm64_debug:
+        description: "If true, build a Windows ARM64 Debug archive."
+        type: boolean
+        default: false
+      build_windows_arm64_relwithdebinfo:
+        description: "If true, build a Windows ARM64 RelWithDebInfo archive."
+        type: boolean
+        default: false
 
   workflow_dispatch:
     inputs: *common_inputs
@@ -171,36 +179,28 @@ jobs:
       build_nuget: true
       upload_nuget: true
 
-  windows-arm64-debug:
+  build-windows-arm64-debug-builds:
+    name: build-windows-arm64-${{ matrix.suffix }}
+    if: ${{ (matrix.build_config == 'Debug' && inputs.build_windows_arm64_debug) || (matrix.build_config == 'RelWithDebInfo' && inputs.build_windows_arm64_relwithdebinfo) }}
+    strategy:
+      matrix:
+        include:
+          - build_config: Debug
+            suffix: debug
+          - build_config: RelWithDebInfo
+            suffix: relwithdebinfo
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
       target_arch: arm64
-      build_config: Debug
+      build_config: ${{ matrix.build_config }}
       target_py_vsn: ${{ fromJSON(inputs.windows_target_py_vsns)[0] }}
       build_runner_arch: ARM64
       run_tests: false
       test_wheel: false
-      upload_test_archive: true
-      build_archive: ${{ inputs.windows_arm64_build_archive }}
-      upload_archive: ${{ inputs.windows_arm64_build_archive }}
-      upload_wheel: false
-
-  windows-arm64-relwithdebinfo:
-    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
-    secrets: inherit
-    with:
-      nightly_build: ${{ inputs.nightly_build }}
-      version_suffix: ${{ inputs.version_suffix }}
-      target_arch: arm64
-      build_config: RelWithDebInfo
-      target_py_vsn: ${{ fromJSON(inputs.windows_target_py_vsns)[0] }}
-      build_runner_arch: ARM64
-      run_tests: false
-      test_wheel: false
-      upload_test_archive: true
-      build_archive: ${{ inputs.windows_arm64_build_archive }}
-      upload_archive: ${{ inputs.windows_arm64_build_archive }}
+      upload_test_archive: false
+      build_archive: true
+      upload_archive: true
       upload_wheel: false

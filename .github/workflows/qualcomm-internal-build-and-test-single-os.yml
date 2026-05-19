@@ -219,7 +219,7 @@ jobs:
         if: ${{ inputs.upload_archive }}
         uses: ./.github/actions/upload-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-${{ inputs.build_config != 'Release' && format('{0}-', inputs.build_config) || '' }}${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime-qnn*.${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}"
 
       - name: Upload AAR to Artifactory
@@ -332,6 +332,7 @@ jobs:
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
           --target-py-version ${{inputs.target_py_vsn}}
+          --config ${{ inputs.build_config }}
           create_venv
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}_pysmoke
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}}_pygpu --only
