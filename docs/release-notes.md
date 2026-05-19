@@ -23,7 +23,7 @@ pip install onnxruntime-qnn==2.2.0
 
 ## Known Issues
 
-- **WoS AMD64 Python 3.11 — inference broken** — On Windows on Snapdragon, `ep.get_library_path()` returns the `amd64` folder path instead of `arm64ec`, causing inference to fail in the AMD64 Python 3.11 environment. As a workaround, manually construct the path to the `arm64ec` library. This issue affects Python 3.11 only.
+- **WoS AMD64 — Python 3.11 installer issue causes inference failure** — On Windows on Snapdragon, `ep.get_library_path()` returns the `amd64` folder path instead of `arm64ec`, causing inference to fail in the AMD64 Python 3.11 environment, due to a known issue with the installer. As a workaround, manually construct the path to the `arm64ec` library. This issue affects Python 3.11 only.
 
 ### Platform Support
 
