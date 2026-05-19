@@ -4,6 +4,8 @@
 # Python packages required by QCOM internal CI pipeline
 backoff >= 2.2.1, == 2.*
 certifi >= 2025.4.26
+diff-cover >= 9.2.0, == 9.*
+lcov_cobertura >= 2.0.2, == 2.*
 json-with-comments >= 1.2.10, == 1.2.*
 prettytable >= 3.16.0, == 3.*
 pyyaml >= 6.0.2, == 6.*
