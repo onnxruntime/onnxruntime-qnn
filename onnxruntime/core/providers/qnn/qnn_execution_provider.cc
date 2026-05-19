@@ -2,6 +2,7 @@
 // Licensed under the MIT License
 
 #include "core/providers/qnn/qnn_execution_provider.h"
+#include "core/providers/qnn/soc_utils.h"
 
 #include <algorithm>
 #include <cctype>
@@ -750,6 +751,22 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                       .c_str());
     } else {
       soc_model = static_cast<uint32_t>(value);
+    }
+  }
+
+  // PATCH A: auto-detect soc_model from ACPI PPTT when the user did not pass
+  // one explicitly. Without this, every Windows-on-Snapdragon user runs with
+  // soc_model=QNN_SOC_MODEL_UNKNOWN, which prevents the HTP backend from
+  // selecting SoC-specific code paths (e.g. the X-Elite-tuned FP16 fast path).
+  if (soc_model == QNN_SOC_MODEL_UNKNOWN) {
+    uint32_t detected = qnn::soc::DetectQnnSocModel();
+    if (detected != QNN_SOC_MODEL_UNKNOWN) {
+      soc_model = detected;
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_INFO,
+                  ("Auto-detected QNN soc_model = " + std::to_string(soc_model) +
+                   " from ACPI PPTT (no explicit soc_model in session options).")
+                      .c_str());
     }
   }
 

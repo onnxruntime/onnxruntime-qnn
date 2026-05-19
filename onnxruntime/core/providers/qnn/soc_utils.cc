@@ -111,10 +111,18 @@ typedef struct _PPTT {
 #define MAX_FADT_PPTT_SIZE 65536
 #define LEVEL_ID(LV1, LV2) ((LV1 << 32) | (LV2))
 
-// Note that the table is intentionally kept compact as Makena is the only expected usage.
-// (level1_ID | level2_ID), SOC_ID
+// PATCH A: legacy table extended with Snapdragon X Elite. The new
+// qnn_soc_model_mappings table maps PPTT (L1, L2) -> QNN_SOC_MODEL_*
+// integer that the QNN HTP backend wants in QnnHtpDevice_CustomConfig_t.
+// (level1_ID << 32) | level2_ID,  legacy SoC-recognition value
 static std::unordered_map<uint64_t, int> pptt_mappings = {
-    {LEVEL_ID(113ULL, 449ULL), 435},  // Makena
+    {LEVEL_ID(113ULL, 449ULL), 435},    // Makena
+    {LEVEL_ID(0x88ULL, 0x22bULL), 60},  // Snapdragon X Elite (X1E*, SC8380XP)
+};
+
+// (level1_ID << 32) | level2_ID,  QNN_SOC_MODEL_* (see QnnTypes.h)
+static std::unordered_map<uint64_t, uint32_t> qnn_soc_model_mappings = {
+    {LEVEL_ID(0x88ULL, 0x22bULL), 60},  // QNN_SOC_MODEL_SC8380XP (X Elite)
 };
 
 int getSocId() {
@@ -145,13 +153,24 @@ int getSocId() {
   }
 
   pptt = (PPPTT)buf;
+  // PATCH A: fixed PPTT walker stride (i += ptn->Length) and bound
+  // (Header.Length - sizeof(DESCRIPTION_HEADER) from &HierarchyNodes[0]).
   uint64_t key = 0;
-  for (uint32_t i = 0; i < pptt->Header.Length; i++) {
-    PPROC_TOPOLOGY_NODE ptn = (PPROC_TOPOLOGY_NODE)((BYTE*)&(pptt->HierarchyNodes[0]) + i);
-    // According to ACPI spec, type = 2 is the PPTT_ID_TABLE_TYPE
-    if (ptn->Type == 2) {
-      key = (ptn->IdNode.Level1 << 32) | (ptn->IdNode.Level2);
-      break;
+  if (pptt->Header.Length > sizeof(DESCRIPTION_HEADER)) {
+    const uint32_t nodes_bytes =
+        pptt->Header.Length - static_cast<uint32_t>(sizeof(DESCRIPTION_HEADER));
+    BYTE* const nodes_base = (BYTE*)&(pptt->HierarchyNodes[0]);
+    uint32_t i = 0;
+    while (i + 4u <= nodes_bytes) {
+      PPROC_TOPOLOGY_NODE ptn = (PPROC_TOPOLOGY_NODE)(nodes_base + i);
+      if (ptn->Length == 0 || ptn->Length > nodes_bytes - i) {
+        break;
+      }
+      if (ptn->Type == 2) {  // PPTT_ID_TABLE_TYPE
+        key = (ptn->IdNode.Level1 << 32) | (ptn->IdNode.Level2);
+        break;
+      }
+      i += ptn->Length;
     }
   }
   free(buf);
@@ -178,6 +197,40 @@ int getSocId() {
 int GetSocId() {
   static int cached_soc_id = getSocId();
   return cached_soc_id;
+}
+
+// PATCH A: PPTT-key-based auto-detection of QNN_SOC_MODEL_* (Windows only).
+uint32_t DetectQnnSocModel() {
+#ifdef _WIN32
+  BYTE* buf = (BYTE*)malloc(MAX_FADT_PPTT_SIZE);
+  if (!buf) return 0;
+  DWORD needed = GetSystemFirmwareTable('ACPI', 'TTPP', 0, 0);
+  if (!needed) { free(buf); return 0; }
+  if (needed > MAX_FADT_PPTT_SIZE) needed = MAX_FADT_PPTT_SIZE;
+  if (!GetSystemFirmwareTable('ACPI', 'TTPP', buf, needed)) { free(buf); return 0; }
+  PPPTT pptt = (PPPTT)buf;
+  uint64_t key = 0;
+  if (pptt->Header.Length > sizeof(DESCRIPTION_HEADER)) {
+    const uint32_t nodes_bytes =
+        pptt->Header.Length - static_cast<uint32_t>(sizeof(DESCRIPTION_HEADER));
+    BYTE* const nodes_base = (BYTE*)&(pptt->HierarchyNodes[0]);
+    uint32_t i = 0;
+    while (i + 4u <= nodes_bytes) {
+      PPROC_TOPOLOGY_NODE ptn = (PPROC_TOPOLOGY_NODE)(nodes_base + i);
+      if (ptn->Length == 0 || ptn->Length > nodes_bytes - i) break;
+      if (ptn->Type == 2) {
+        key = (ptn->IdNode.Level1 << 32) | (ptn->IdNode.Level2);
+        break;
+      }
+      i += ptn->Length;
+    }
+  }
+  free(buf);
+  auto it = qnn_soc_model_mappings.find(key);
+  return (it != qnn_soc_model_mappings.end()) ? it->second : 0;
+#else
+  return 0;
+#endif
 }
 
 }  // namespace soc
