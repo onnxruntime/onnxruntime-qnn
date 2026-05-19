@@ -163,8 +163,9 @@ TEST_F(QnnHTPBackendTests, Selu_FP16_CustomAlphaGamma) {
 }
 
 // HTP BF16 mode: float32 model executed at BF16 precision (opset 22 type extension).
-// Similar to bf16_test.cc, disabled
-TEST_F(QnnHTPBackendTests, DISABLED_Selu_HTP_BF16_DefaultAttrs) {
+// Only supported on v81+ Architecture
+TEST_F(QnnHTPBackendTests, Selu_HTP_BF16_DefaultAttrs) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
   RunSeluHTPBF16Test({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
                      {},
                      ExpectedEPNodeAssignment::All,
@@ -172,8 +173,9 @@ TEST_F(QnnHTPBackendTests, DISABLED_Selu_HTP_BF16_DefaultAttrs) {
 }
 
 // HTP BF16 mode with custom alpha and gamma.
-// Similar to bf16_test.cc, disabled
-TEST_F(QnnHTPBackendTests, DISABLED_Selu_HTP_BF16_CustomAlphaGamma) {
+// Only supported on v81+ Architecture
+TEST_F(QnnHTPBackendTests, Selu_HTP_BF16_CustomAlphaGamma) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
   RunSeluHTPBF16Test({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
                      {test::MakeAttribute("alpha", 1.0f),
                       test::MakeAttribute("gamma", 2.0f)},
