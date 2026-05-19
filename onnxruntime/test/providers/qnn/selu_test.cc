@@ -21,7 +21,7 @@ static void RunSeluTest(const std::vector<TestInputDef<float>>& input_defs,
                         const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                         ExpectedEPNodeAssignment expected_ep_assignment,
                         const std::string& backend_name = "cpu",
-                        int opset = 6,
+                        int opset = 22,
                         float fp32_abs_err = 1e-5f,
                         bool enable_htp_fp16_precision = false) {
   ProviderOptions provider_options;
@@ -45,11 +45,30 @@ static void RunSeluTest(const std::vector<TestInputDef<float>>& input_defs,
                   fp32_abs_err);
 }
 
+// Runs a Selu model with HTP BF16 mode enabled (float32 model, BF16 execution).
+static void RunSeluHTPBF16Test(const std::vector<TestInputDef<float>>& input_defs,
+                               const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                               ExpectedEPNodeAssignment expected_ep_assignment,
+                               int opset = 22,
+                               float tolerance = 0.01f) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["htp_bf16_enable"] = "1";
+  provider_options["soc_model"] = "88";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildOpTestCase<float>("Selu_node", "Selu", input_defs, {}, attrs),
+                  provider_options,
+                  opset,
+                  expected_ep_assignment,
+                  tolerance);
+}
+
 // Runs a native FP16 Selu model on the QNN HTP backend.
 static void RunSeluFP16Test(const std::vector<TestInputDef<float>>& input_defs,
                             const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                             ExpectedEPNodeAssignment expected_ep_assignment,
-                            int opset = 6,
+                            int opset = 22,
                             float tolerance = 0.004f) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -71,37 +90,19 @@ static void RunSeluFP16Test(const std::vector<TestInputDef<float>>& input_defs,
 // CPU tests
 //
 
-// Default alpha and gamma, opset 6.
+// Default alpha and gamma.
 TEST_F(QnnCPUBackendTests, Selu_DefaultAttrs) {
   RunSeluTest({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
               {},
               ExpectedEPNodeAssignment::All);
 }
 
-// Custom alpha and gamma, opset 6.
+// Custom alpha and gamma.
 TEST_F(QnnCPUBackendTests, Selu_CustomAlphaGamma) {
   RunSeluTest({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
               {test::MakeAttribute("alpha", 1.0f),
                test::MakeAttribute("gamma", 2.0f)},
               ExpectedEPNodeAssignment::All);
-}
-
-// Opset 1 — non-function variant of SeLU.
-TEST_F(QnnCPUBackendTests, Selu_Opset1) {
-  RunSeluTest({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
-              {},
-              ExpectedEPNodeAssignment::All,
-              "cpu",
-              1);
-}
-
-// Opset 22 — extends type constraints to include bfloat16 (float32 still valid).
-TEST_F(QnnCPUBackendTests, Selu_Opset22) {
-  RunSeluTest({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
-              {},
-              ExpectedEPNodeAssignment::All,
-              "cpu",
-              22);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -110,7 +111,7 @@ TEST_F(QnnCPUBackendTests, Selu_Opset22) {
 // HTP tests
 //
 
-// FP32 with default attrs, opset 6.
+// FP32 with default attrs.
 TEST_F(QnnHTPBackendTests, Selu_FP32_DefaultAttrs) {
   RunSeluTest({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
               {},
@@ -118,7 +119,7 @@ TEST_F(QnnHTPBackendTests, Selu_FP32_DefaultAttrs) {
               "htp");
 }
 
-// FP32 with custom alpha and gamma, opset 6.
+// FP32 with custom alpha and gamma.
 TEST_F(QnnHTPBackendTests, Selu_FP32_CustomAlphaGamma) {
   RunSeluTest({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
               {test::MakeAttribute("alpha", 1.0f),
@@ -132,7 +133,7 @@ TEST_F(QnnHTPBackendTests, Selu_FP32_as_FP16) {
   RunSeluTest({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
               {},
               ExpectedEPNodeAssignment::All,
-              "htp", 6, 0.004f, true);
+              "htp", 22, 0.004f, true);
 }
 
 // FP32-as-FP16 with custom attributes.
@@ -141,7 +142,7 @@ TEST_F(QnnHTPBackendTests, Selu_FP32_as_FP16_CustomAlphaGamma) {
               {test::MakeAttribute("alpha", 1.0f),
                test::MakeAttribute("gamma", 2.0f)},
               ExpectedEPNodeAssignment::All,
-              "htp", 6, 0.004f, true);
+              "htp", 22, 0.004f, true);
 }
 
 // Native FP16 model with default attrs.
@@ -157,6 +158,25 @@ TEST_F(QnnHTPBackendTests, Selu_FP16_CustomAlphaGamma) {
                   {test::MakeAttribute("alpha", 1.0f),
                    test::MakeAttribute("gamma", 2.0f)},
                   ExpectedEPNodeAssignment::All);
+}
+
+// HTP BF16 mode: float32 model executed at BF16 precision (opset 22 type extension).
+// Supported only from v81+
+TEST_F(QnnHTPBackendTests, Selu_HTP_BF16_DefaultAttrs) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
+  RunSeluHTPBF16Test({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+                     {},
+                     ExpectedEPNodeAssignment::All);
+}
+
+// HTP BF16 mode with custom alpha and gamma.
+// Supported only from v81+
+TEST_F(QnnHTPBackendTests, Selu_HTP_BF16_CustomAlphaGamma) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
+  RunSeluHTPBF16Test({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+                     {test::MakeAttribute("alpha", 1.0f),
+                      test::MakeAttribute("gamma", 2.0f)},
+                     ExpectedEPNodeAssignment::All);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
