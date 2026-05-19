@@ -2,6 +2,7 @@
 // Licensed under the MIT License
 
 #include "core/providers/qnn/qnn_execution_provider.h"
+#include "core/providers/qnn/soc_utils.h"
 
 #include <algorithm>
 #include <cctype>
@@ -753,6 +754,22 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     }
   }
 
+  // PATCH A: auto-detect soc_model from ACPI PPTT when the user did not pass
+  // one explicitly. Without this, every Windows-on-Snapdragon user runs with
+  // soc_model=QNN_SOC_MODEL_UNKNOWN, which prevents the HTP backend from
+  // selecting SoC-specific code paths (e.g. the X-Elite-tuned FP16 fast path).
+  if (soc_model == QNN_SOC_MODEL_UNKNOWN) {
+    uint32_t detected = qnn::soc::DetectQnnSocModel();
+    if (detected != QNN_SOC_MODEL_UNKNOWN) {
+      soc_model = detected;
+      ORT_CXX_LOG(logger_,
+                  ORT_LOGGING_LEVEL_INFO,
+                  ("Auto-detected QNN soc_model = " + std::to_string(soc_model) +
+                   " from ACPI PPTT (no explicit soc_model in session options).")
+                      .c_str());
+    }
+  }
+
   // Op packages
   std::string op_packages_str;
   std::vector<onnxruntime::qnn::OpPackage> op_packages;
@@ -901,9 +918,16 @@ QnnEp::QnnEp(QnnEpFactory& factory,
           "BF16 mode is enabled but soc_model is not specified. Both parameters must be set together for BF16 support.";
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
       throw std::runtime_error(message);
-    } else if (soc_model < 88) {
+    } else if (soc_model < QNN_SOC_MODEL_SM8550) {
+      // The original predicate `soc_model < 88` is a forward reference to the
+      // next unreleased SoC after QNN_SOC_MODEL_SM8850 = 87. It therefore
+      // rejects every shipping device today, including SC8380XP (60) and
+      // SM8850 (87). Reposition the gate to "Hexagon V73+", which is the
+      // family from which HTP MatMul gained BF16, by comparing against
+      // QNN_SOC_MODEL_SM8550 (43, the first named V73 SoC).
       std::string message = "BF16 mode is enabled but SoC model is " + std::to_string(soc_model) +
-                            " (expected 88 and above).";
+                            " (BF16 on HTP requires Hexagon V73+, i.e. soc_model >= " +
+                            std::to_string(QNN_SOC_MODEL_SM8550) + ").";
       ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_ERROR, message.c_str());
       throw std::runtime_error(message);
     }
