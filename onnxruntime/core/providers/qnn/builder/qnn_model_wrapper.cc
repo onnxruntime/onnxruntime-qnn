@@ -243,14 +243,10 @@ Ort::Status QnnModelWrapper::ValidateQnnNode(const std::string& node_name,
 }
 
 Ort::Status QnnModelWrapper::ValidateQnnNode(QnnOpConfigWrapper& op_config, std::string& error_msg) const {
-  bool ok;
-  if (backend_validator_handle_ != nullptr) {
-    ORT_CXX_LOG(logger_, ORT_LOGGING_LEVEL_VERBOSE, "Op validation using validator backend (e.g. HTP).");
-
-    ok = op_config.QnnGraphOpValidation(qnn_validator_interface_, backend_validator_handle_, error_msg);
-  } else {
-    ok = op_config.QnnGraphOpValidation(qnn_interface_, backend_handle_, error_msg);
-  }
+  // Always validate via the active backend. In serializer mode (Ir/Saver), the host HTP shim
+  // would default to arch v68 with no device configured and falsely reject ops a real device
+  // accepts at finalize; the serializer's own permissive validator is the right oracle there.
+  bool ok = op_config.QnnGraphOpValidation(qnn_interface_, backend_handle_, error_msg);
   RETURN_IF_NOT(ok, error_msg.c_str());
   return Ort::Status();
 }

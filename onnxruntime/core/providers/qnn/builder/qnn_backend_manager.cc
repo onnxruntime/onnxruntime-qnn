@@ -364,13 +364,23 @@ QnnSerializerConfig* QnnBackendManager::GetQnnSerializerConfig() {
 // local files: Saver dumps to C++ sources and Ir to .dlc archives.
 // This information can be used to debug issues by replaying QNN API calls with another backend.
 Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
-  // Load the intended backend (e.g., HTP, CPU) to get its type and validator interface.
-  // The library handle is stored in validator_backend_lib_handle_ and kept alive for the
-  // lifetime of this object so that backendValidateOpConfig remains callable.
+  // Load the intended backend only to read its backendId; unload on scope exit. Do not retain
+  // it for validation — the serializer artifact is target-agnostic by design (see
+  // ValidateQnnNode in qnn_model_wrapper.cc).
+  void* backend_lib_handle = nullptr;
+  auto unload_backend_lib = gsl::finally([&] {
+    if (backend_lib_handle != nullptr) {
+      auto result = UnloadLib(backend_lib_handle);
+      if (!result.IsOK()) {
+        ORT_CXX_API_THROW("Failed to unload backend library.", ORT_EP_FAIL);
+      }
+    }
+  });
+
   QnnInterface_t* backend_interface_provider{nullptr};
   RETURN_IF_ERROR((GetQnnInterfaceProvider<QnnInterfaceGetProvidersFn_t, QnnInterface_t>(backend_path_.c_str(),
                                                                                          "QnnInterface_getProviders",
-                                                                                         &validator_backend_lib_handle_,
+                                                                                         &backend_lib_handle,
                                                                                          {QNN_API_VERSION_MAJOR,
                                                                                           QNN_API_VERSION_MINOR,
                                                                                           QNN_API_VERSION_PATCH},
@@ -380,9 +390,6 @@ Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
   backend_id_ = backend_interface_provider->backendId;
   backend_api_version_ = backend_interface_provider->apiVersion.backendApiVersion;
   SetQnnBackendType(backend_id_);
-
-  // Store the validator interface (e.g., HTP) for use in backendValidateOpConfig calls.
-  qnn_validator_interface_ = backend_interface_provider->QNN_INTERFACE_VER_NAME;
 
   // Load the serializer backend and set it as the activate backend.
   QnnInterface_t* serializer_interface_provider{nullptr};
@@ -1882,18 +1889,7 @@ Ort::Status QnnBackendManager::SetupBackend(
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "InitializeBackend succeed.");
   }
 
-  if (status.IsOK() && qnn_serializer_config_) {
-    status = InitializeQnnValidatorLog();
-    if (status.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "InitializeQnnValidatorLog succeed.");
-    }
-    if (status.IsOK()) {
-      status = InitializeValidatorBackend();
-    }
-    if (status.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "InitializeValidatorBackend succeed.");
-    }
-  }
+  // No validator-backend init: serializer-mode validation routes through qnn_interface_.
 
   if (status.IsOK()) {
     status = CreateDevice();
