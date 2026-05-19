@@ -993,16 +993,16 @@ TEST_F(QnnHTPBackendTests, TestNHWCResizeShapeInference_qdq_sizes_opset18) {
   RunNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.quant.onnx", TestBackend::Htp);
 }
 
-// Test that QNN Ir generates the expected DLC file for a model meant to run on the QNN HTP backend,
-// using the HTP backend's validator.
-TEST_F(QnnHTPBackendTests, QnnIr_HtpValidator_OutputFiles) {
+// Regression test: serializer-mode validation must route through the active backend (QnnIr),
+// not the host HTP shim. Otherwise the host shim defaults to arch v68 and falsely rejects ops
+// whose kernels require v73+, producing N partitions / N DLCs instead of one. The test must
+// pass regardless of host HTP arch — no SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO.
+TEST_F(QnnHTPBackendTests, QnnIr_SerializerValidator_OutputFiles) {
   BackendSupport ir_backend_support = IsIRBackendSupported();
   if (ir_backend_support == BackendSupport::UNSUPPORTED) {
     GTEST_SKIP() << "QNN IR backend is not available! Skipping test.";
   }
   ASSERT_NE(ir_backend_support, BackendSupport::SUPPORT_ERROR) << "Failed to check if QNN IR backend is available.";
-
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
@@ -1012,12 +1012,12 @@ TEST_F(QnnHTPBackendTests, QnnIr_HtpValidator_OutputFiles) {
   ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
 
   InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
-                      TestBackend::Htp,      // backend (also used as the validator)
+                      TestBackend::Htp,      // intended runtime backend
                       registered_ep_device,  // registered_ep_device
-                      TestBackend::Ir);      // serializer backend
+                      TestBackend::Ir);      // serializer backend (also the validator)
 
-  // File names are taken from graph node names. Just make sure that we got one .dlc
-  // in the expected directory.
+  // A single consolidated DLC means the whole graph stayed in one QNN partition,
+  // i.e. validation did not fragment it.
   ASSERT_TRUE(std::filesystem::exists(qnn_dlc_dir));
 
   int file_count = 0;
