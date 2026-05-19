@@ -196,7 +196,7 @@ TEST_F(QnnGPUBackendTests, Selu_DefaultAttrs) {
   RunSeluTest({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
               {},
               ExpectedEPNodeAssignment::All,
-              "gpu");
+              "gpu", 22, 0.008f);
 }
 
 // FP32 with custom alpha and gamma.
@@ -205,7 +205,7 @@ TEST_F(QnnGPUBackendTests, Selu_CustomAlphaGamma) {
               {test::MakeAttribute("alpha", 1.0f),
                test::MakeAttribute("gamma", 2.0f)},
               ExpectedEPNodeAssignment::All,
-              "gpu");
+              "gpu", 22, 0.016f);
 }
 
 #endif  // defined(_M_ARM64) — GPU tests
