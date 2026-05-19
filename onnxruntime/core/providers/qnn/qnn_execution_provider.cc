@@ -616,7 +616,7 @@ QnnEp::QnnEp(QnnEpFactory& factory,
   }
 
   // HTP graph finalization optimization mode
-  htp_graph_finalization_opt_mode_ = qnn::HtpGraphFinalizationOptimizationMode::kDefault;
+  htp_graph_finalization_opt_mode_ = qnn::HtpGraphFinalizationOptimizationMode::kMode3;
   std::string htp_graph_finalization_opt_mode_str;
   GetSessionConfigEntryOrDefault(ort_api,
                                  session_options_,

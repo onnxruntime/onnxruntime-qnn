@@ -158,10 +158,12 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 
 |`"htp_graph_finalization_optimization_mode"`|Description|
 |---|---|
-|'0'|Default optimization mode.|
+|'0'|HTP's internal default (currently equivalent to '2').|
 |'1'|Faster preparation time, less optimal graph.|
 |'2'|Longer preparation time, more optimal graph.|
 |'3'|Longest preparation time, most optimal graph.|
+
+If `htp_graph_finalization_optimization_mode` is not specified, QNN EP uses `'3'`.
 
 |`"soc_model"`|Description|
 |---|---|
@@ -796,7 +798,7 @@ session = ort.InferenceSession("model.onnx", sess_options=sess_options)
 
 ### Important Considerations
 #### Feature Disabled if Number of Subgraphs is Less Than 5
-While graph composition is responsible for the majority of the preparation time, asynchronously finalizing the subgraphs cuts the total time down by a considerable amount, depending on the graph. For smaller models or models with only a few subgraphs, the overhead of setting up for parallel graph preparation will negate any possible performance gains and may actually result in worse performance. 
+While graph composition is responsible for the majority of the preparation time, asynchronously finalizing the subgraphs cuts the total time down by a considerable amount, depending on the graph. For smaller models or models with only a few subgraphs, the overhead of setting up for parallel graph preparation will negate any possible performance gains and may actually result in worse performance.
 
 #### Feature Disabled if `num_graph_prepare_threads` is 1
 This defeats the purpose of the feature, and enabling the feature will only add additional overhead from thread pool creation.
