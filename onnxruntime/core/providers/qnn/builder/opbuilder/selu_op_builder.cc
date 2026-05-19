@@ -1,4 +1,4 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
+// Copyright (c) Qualcomm. All rights reserved.
 // Licensed under the MIT License.
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -37,8 +37,8 @@ Ort::Status SeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
 
   OrtNodeAttrHelper node_helper(node_unit);
   // Use ONNX opset 22 precise defaults (opset 1 uses the same values rounded to fewer digits).
-  const float alpha = node_helper.Get("alpha", 1.6732631921768188f);
-  const float gamma = node_helper.Get("gamma", 1.0507009029388428f);
+  const float alpha = node_helper.Get("alpha", 1.67326319217681884765625f);
+  const float gamma = node_helper.Get("gamma", 1.05070102214813232421875f);
 
   TensorInfo input_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[0], input_info));
