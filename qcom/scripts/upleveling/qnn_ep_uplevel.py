@@ -310,9 +310,7 @@ class ArtifactUpleveler(ABC):
         """Download <format>.zip from artifactory into target_dir; return its path."""
         api_key = os.environ.get("JFROG_API_KEY", "")
         if not api_key:
-            raise RuntimeError(
-                f"JFROG_API_KEY environment variable is required when --sign_artifact true"
-            )
+            raise RuntimeError("JFROG_API_KEY environment variable is required when --sign_artifact true")
 
         url_template = "https://re-artifactory.qualcomm.com/artifactory/aisw-zip-project/onnxruntime-qnn/"
 
