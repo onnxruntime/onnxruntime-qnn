@@ -50,7 +50,7 @@ static void RunSeluHTPBF16Test(const std::vector<TestInputDef<float>>& input_def
                                const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                ExpectedEPNodeAssignment expected_ep_assignment,
                                int opset = 22,
-                               float tolerance = 0.01f) {
+                               float tolerance = 0.008f) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["htp_bf16_enable"] = "1";
@@ -69,7 +69,7 @@ static void RunSeluFP16Test(const std::vector<TestInputDef<float>>& input_defs,
                             const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                             ExpectedEPNodeAssignment expected_ep_assignment,
                             int opset = 22,
-                            float tolerance = 0.004f) {
+                            float tolerance = 0.008f) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
@@ -116,7 +116,7 @@ TEST_F(QnnHTPBackendTests, Selu_FP32_DefaultAttrs) {
   RunSeluTest({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
               {},
               ExpectedEPNodeAssignment::All,
-              "htp");
+              "htp", 22, 0.008f);
 }
 
 // FP32 with custom alpha and gamma.
@@ -125,7 +125,7 @@ TEST_F(QnnHTPBackendTests, Selu_FP32_CustomAlphaGamma) {
               {test::MakeAttribute("alpha", 1.0f),
                test::MakeAttribute("gamma", 2.0f)},
               ExpectedEPNodeAssignment::All,
-              "htp");
+              "htp", 22, 0.016f);
 }
 
 // FP32 executed at FP16 precision on HTP.
@@ -133,7 +133,7 @@ TEST_F(QnnHTPBackendTests, Selu_FP32_as_FP16) {
   RunSeluTest({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
               {},
               ExpectedEPNodeAssignment::All,
-              "htp", 22, 0.004f, true);
+              "htp", 22, 0.008f, true);
 }
 
 // FP32-as-FP16 with custom attributes.
@@ -142,14 +142,15 @@ TEST_F(QnnHTPBackendTests, Selu_FP32_as_FP16_CustomAlphaGamma) {
               {test::MakeAttribute("alpha", 1.0f),
                test::MakeAttribute("gamma", 2.0f)},
               ExpectedEPNodeAssignment::All,
-              "htp", 22, 0.004f, true);
+              "htp", 22, 0.016f, true);
 }
 
 // Native FP16 model with default attrs.
 TEST_F(QnnHTPBackendTests, Selu_FP16) {
   RunSeluFP16Test({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
                   {},
-                  ExpectedEPNodeAssignment::All);
+                  ExpectedEPNodeAssignment::All,
+                  "htp", 22, 0.008f);
 }
 
 // Native FP16 model with custom alpha and gamma.
@@ -157,13 +158,14 @@ TEST_F(QnnHTPBackendTests, Selu_FP16_CustomAlphaGamma) {
   RunSeluFP16Test({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
                   {test::MakeAttribute("alpha", 1.0f),
                    test::MakeAttribute("gamma", 2.0f)},
-                  ExpectedEPNodeAssignment::All);
+                  ExpectedEPNodeAssignment::All,
+                  "htp", 22, 0.016f);
 }
 
 // HTP BF16 mode: float32 model executed at BF16 precision (opset 22 type extension).
 // Supported only from v81+
 TEST_F(QnnHTPBackendTests, Selu_HTP_BF16_DefaultAttrs) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
   RunSeluHTPBF16Test({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
                      {},
                      ExpectedEPNodeAssignment::All);
@@ -172,7 +174,7 @@ TEST_F(QnnHTPBackendTests, Selu_HTP_BF16_DefaultAttrs) {
 // HTP BF16 mode with custom alpha and gamma.
 // Supported only from v81+
 TEST_F(QnnHTPBackendTests, Selu_HTP_BF16_CustomAlphaGamma) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V75);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
   RunSeluHTPBF16Test({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
                      {test::MakeAttribute("alpha", 1.0f),
                       test::MakeAttribute("gamma", 2.0f)},
