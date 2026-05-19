@@ -86,6 +86,8 @@ void CheckShapeEquality(const ONNX_NAMESPACE::TensorShapeProto* shape1,
                         const ONNX_NAMESPACE::TensorShapeProto* shape2);
 
 // Create OrtValue on CPU using public Ort API.
+// NOTE: The returned Ort::Value references value.data() without copying it.
+// The caller must keep the input span alive for the lifetime of the returned value.
 template <typename T>
 Ort::Value CreateInputOrtValueOnCPU(gsl::span<const int64_t> dims, gsl::span<const T> value) {
   auto mem_info = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);

@@ -54,7 +54,7 @@ GetTestQDQModelFn<InputAQType> BuildTestCaseQdq(const std::vector<TestInputDef<f
                                                 bool use_contrib_qdq = false) {
   return [input_defs, attrs, use_contrib_qdq](ModelTestBuilder& builder,
                                               std::vector<QuantParams<InputAQType>>& output_qparams) {
-    ORT_UNUSED_PARAMETER(use_contrib_qdq);  // Build using standard ONNX Q/DQ nodes.
+    QNN_TEST_UNUSED_PARAMETER(use_contrib_qdq);  // Build using standard ONNX Q/DQ nodes.
 
     builder.graph_->set_name("qdq_einsum_graph");
 

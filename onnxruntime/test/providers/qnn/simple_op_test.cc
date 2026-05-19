@@ -220,7 +220,7 @@ static void RunQDQOpTest(const std::string& op_type,
 
   TestQDQModelAccuracy(BuildOpTestCase<float, InputType2>(op_type + "_node", op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
                        BuildQDQOpTestCase<InputQType, InputType2>(op_type + "_node", op_type, input_defs_1, input_defs_2, input_defs_3, attrs,
-                                                                  op_domain, use_contrib_qdq, nullptr, combine_quant_inputs_qparams),
+                                                                  op_domain, use_contrib_qdq, combine_quant_inputs_qparams),
                        provider_options,
                        opset_version,
                        expected_ep_assignment,

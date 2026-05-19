@@ -713,6 +713,9 @@ class ModelTestBuilder {
            ten_proto.has_raw_data();  // XXX: Figure out how to do in proto3
   }
 
+  // MIRRORED FROM core/framework/tensorprotoutils.h (ConvertRawDataInTensorProto) — keep in sync.
+  // NOTE: If ORT mainline adds new tensor element types, this duplicate must be updated to match.
+  // Big-endian platforms are not supported by this test framework.
   void ConvertRawDataInTensorProto(ONNX_NAMESPACE::TensorProto& tensor) {
     size_t element_size = 1;
     void* bytes = NULL;

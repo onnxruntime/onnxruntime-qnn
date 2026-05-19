@@ -20,7 +20,7 @@ static GetTestQDQModelFn<QType> BuildQDQArgMxxTestCase(const std::string& op_typ
                                                        const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs) {
   return [op_type, input_def, attrs](ModelTestBuilder& builder,
                                      std::vector<QuantParams<QType>>& output_qparams) {
-    ORT_UNUSED_PARAMETER(output_qparams);
+    QNN_TEST_UNUSED_PARAMETER(output_qparams);
     MakeTestInput(builder, "X", input_def);
     QuantParams<QType> input_qparams = GetTestInputQuantParams<QType>(input_def);
     std::string x_dq_name = AddQDQNodePair<QType>(builder, "qdq1", "X", input_qparams.scale, input_qparams.zero_point);

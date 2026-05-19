@@ -161,7 +161,7 @@ void _BuildLSTMTestCase(ModelTestBuilder& builder,
 
   builder.AddNode("lstm", "LSTM", input_names, output_names, "", attrs);
 
-  ORT_UNUSED_PARAMETER(output_qparams);
+  QNN_TEST_UNUSED_PARAMETER(output_qparams);
   if constexpr (kIsU8) {
     size_t i = 0;
     if (has_Y) {

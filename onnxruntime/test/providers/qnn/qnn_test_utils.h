@@ -37,13 +37,7 @@ constexpr const char* kOnnxDomain = "";
 constexpr const char* kQnnExecutionProvider = "QNNExecutionProvider";
 constexpr const char* kCpuExecutionProvider = "CPUExecutionProvider";
 
-#ifndef ORT_UNUSED_PARAMETER
-#define ORT_UNUSED_PARAMETER(x) (void)(x)
-#endif
-
-#ifndef ORT_HANDLE_EXCEPTION
-#define ORT_HANDLE_EXCEPTION(func) func()
-#endif
+#define QNN_TEST_UNUSED_PARAMETER(x) (void)(x)
 
 inline gsl::span<const std::byte> AsByteSpan(const void* data, size_t size) {
   return gsl::span<const std::byte>(reinterpret_cast<const std::byte*>(data), size);
@@ -1295,14 +1289,12 @@ inline void TestFp16ModelAccuracy(const GetTestModelFn& f32_model_fn,
  *
  * \param builder Model builder object used to build the model's inputs, outputs, and nodes.
  * \param input_def Input definition that describes what kind of input to create.
- * \param allocator Optional allocator to use to allocate the input ORT value.
  * \return A pointer to the new input.
  */
 template <typename T>
 inline void MakeTestInput(ModelTestBuilder& builder,
                           std::string name,
-                          const TestInputDef<T>& input_def,
-                          void* allocator = nullptr) {
+                          const TestInputDef<T>& input_def) {
   const auto& shape = input_def.GetShape();
   const bool is_initializer = input_def.IsInitializer();
 
@@ -1312,7 +1304,7 @@ inline void MakeTestInput(ModelTestBuilder& builder,
     if (is_initializer) {
       builder.MakeInitializer<T>(name, shape, raw_data);
     } else {
-      builder.MakeInput<T>(name, shape, raw_data, allocator);
+      builder.MakeInput<T>(name, shape, raw_data);
     }
   } else {  // Random data
     const auto& rand_info = input_def.GetRandomDataInfo();
@@ -1320,7 +1312,7 @@ inline void MakeTestInput(ModelTestBuilder& builder,
     if (is_initializer) {
       builder.MakeInitializer<T>(name, shape, rand_info.min, rand_info.max);
     } else {
-      builder.MakeInput<T>(name, shape, rand_info.min, rand_info.max, allocator);
+      builder.MakeInput<T>(name, shape, rand_info.min, rand_info.max);
     }
   }
 
@@ -1330,8 +1322,7 @@ inline void MakeTestInput(ModelTestBuilder& builder,
 template <>
 inline void MakeTestInput(ModelTestBuilder& builder,
                           std::string name,
-                          const TestInputDef<bool>& input_def,
-                          void* allocator) {
+                          const TestInputDef<bool>& input_def) {
   const auto& shape = input_def.GetShape();
   const bool is_initializer = input_def.IsInitializer();
 
@@ -1341,13 +1332,13 @@ inline void MakeTestInput(ModelTestBuilder& builder,
     if (is_initializer) {
       builder.MakeInitializerBool(name, shape, raw_data);
     } else {
-      builder.MakeInput<bool>(name, shape, raw_data, allocator);
+      builder.MakeInput<bool>(name, shape, raw_data);
     }
   } else {  // Random data
     if (is_initializer) {
       builder.MakeRandInitializerBool(name, shape);
     } else {
-      builder.MakeInputBool(name, shape, allocator);
+      builder.MakeInputBool(name, shape);
     }
   }
 
@@ -1372,7 +1363,6 @@ std::string MakeTestQDQBiasInput(ModelTestBuilder& builder, const std::string& n
  * \param input_defs_2 List of input definitions of type InputType2.
  * \param attrs List of operator attributes.
  * \param op_domain The operator's domain. Defaults to the ONNX domain (i.e., "").
- * \param input_allocator Optional allocator to use to allocate input ORT values.
  * \returns A model building function.
  */
 template <typename InputType1, typename InputType2 = int64_t>
@@ -1381,15 +1371,14 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
                                       const std::vector<TestInputDef<InputType1>>& input_defs_1,
                                       const std::vector<TestInputDef<InputType2>>& input_defs_2,
                                       const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                      const std::string& op_domain = "",
-                                      void* input_allocator = nullptr) {
-  return [node_name, op_type, input_defs_1, input_defs_2, attrs, op_domain, input_allocator](ModelTestBuilder& builder) {
+                                      const std::string& op_domain = kOnnxDomain) {
+  return [node_name, op_type, input_defs_1, input_defs_2, attrs, op_domain](ModelTestBuilder& builder) {
     std::vector<std::string> op_input_names;
     op_input_names.reserve(input_defs_1.size() + input_defs_2.size());
 
     for (size_t i = 0; i < input_defs_1.size(); i++) {
       const std::string tmp_name = "input_defs_1_" + std::to_string(i);
-      MakeTestInput<InputType1>(builder, tmp_name, input_defs_1[i], input_allocator);
+      MakeTestInput<InputType1>(builder, tmp_name, input_defs_1[i]);
       op_input_names.push_back(tmp_name);
     }
 
@@ -1398,7 +1387,7 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
         op_input_names.push_back("");
       } else {
         const std::string tmp_name = "input_defs_2_" + std::to_string(i);
-        MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i], input_allocator);
+        MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i]);
         op_input_names.push_back(tmp_name);
       }
     }
@@ -1421,27 +1410,26 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
                                       const std::vector<TestInputDef<InputType2>>& input_defs_2,
                                       const std::vector<TestInputDef<InputType1>>& input_defs_3,
                                       const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                      const std::string& op_domain = "",
-                                      void* input_allocator = nullptr) {
-  return [node_name, op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain, input_allocator](ModelTestBuilder& builder) {
+                                      const std::string& op_domain = kOnnxDomain) {
+  return [node_name, op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain](ModelTestBuilder& builder) {
     std::vector<std::string> op_input_names;
     op_input_names.reserve(input_defs_1.size() + input_defs_2.size() + input_defs_3.size());
 
     for (size_t i = 0; i < input_defs_1.size(); i++) {
       const std::string tmp_name = "input_defs_1_" + std::to_string(i);
-      MakeTestInput<InputType1>(builder, tmp_name, input_defs_1[i], input_allocator);
+      MakeTestInput<InputType1>(builder, tmp_name, input_defs_1[i]);
       op_input_names.push_back(tmp_name);
     }
 
     for (size_t i = 0; i < input_defs_2.size(); i++) {
       const std::string tmp_name = "input_defs_2_" + std::to_string(i);
-      MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i], input_allocator);
+      MakeTestInput<InputType2>(builder, tmp_name, input_defs_2[i]);
       op_input_names.push_back(tmp_name);
     }
 
     for (size_t i = 0; i < input_defs_3.size(); i++) {
       const std::string tmp_name = "input_defs_3_" + std::to_string(i);
-      MakeTestInput<InputType1>(builder, tmp_name, input_defs_3[i], input_allocator);
+      MakeTestInput<InputType1>(builder, tmp_name, input_defs_3[i]);
       op_input_names.push_back(tmp_name);
     }
 
@@ -1465,7 +1453,6 @@ inline GetTestModelFn BuildOpTestCase(const std::string& node_name,
  * \param attrs List of operator attributes.
  * \param op_domain The operator's domain. Defaults to the ONNX domain (i.e., "").
  * \param use_contrib_qdq Whether to use Q/DQ ops from the MS domain instead of the ONNX domain.
- * \param input_allocator Optional allocator to use to allocate input ORT values.
  * \returns A model building function.
  */
 template <typename QuantType, typename OtherInputType = int64_t>
@@ -1475,11 +1462,10 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     const std::vector<TestInputDef<float>>& quant_input_defs,
     const std::vector<TestInputDef<OtherInputType>>& non_quant_input_defs,
     const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-    const std::string& op_domain = "",
-    bool use_contrib_qdq = false,
-    void* input_allocator = nullptr) {
+    const std::string& op_domain = kOnnxDomain,
+    bool use_contrib_qdq = false) {
   return [node_name, op_type, quant_input_defs, non_quant_input_defs, attrs, op_domain,
-          use_contrib_qdq, input_allocator](
+          use_contrib_qdq](
              ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
     std::vector<std::string> op_input_names;
     op_input_names.reserve(quant_input_defs.size() + non_quant_input_defs.size());
@@ -1487,7 +1473,7 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     // Create QDQ inputs
     for (size_t i = 0; i < quant_input_defs.size(); i++) {
       const std::string tmp_name = "quant_input_defs_" + std::to_string(i);
-      MakeTestInput<float>(builder, tmp_name, quant_input_defs[i], input_allocator);
+      MakeTestInput<float>(builder, tmp_name, quant_input_defs[i]);
       QuantParams<QuantType> input_qparams = GetTestInputQuantParams<QuantType>(quant_input_defs[i]);
 
       op_input_names.push_back(
@@ -1501,7 +1487,7 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
         op_input_names.push_back("");
       } else {
         const std::string tmp_name = "non_quant_input_defs_" + std::to_string(i);
-        MakeTestInput<OtherInputType>(builder, tmp_name, non_quant_input_defs[i], input_allocator);
+        MakeTestInput<OtherInputType>(builder, tmp_name, non_quant_input_defs[i]);
         op_input_names.push_back(tmp_name);
       }
     }
@@ -1525,12 +1511,11 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     const std::vector<TestInputDef<OtherInputType>>& non_quant_input_defs,
     const std::vector<TestInputDef<float>>& quant_input_defs_2,
     const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-    const std::string& op_domain = "",
+    const std::string& op_domain = kOnnxDomain,
     bool use_contrib_qdq = false,
-    void* input_allocator = nullptr,
     bool combine_quant_inputs_qparams = false) {
   return [node_name, op_type, quant_input_defs, non_quant_input_defs, quant_input_defs_2, attrs, op_domain,
-          use_contrib_qdq, input_allocator, combine_quant_inputs_qparams](
+          use_contrib_qdq, combine_quant_inputs_qparams](
              ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
     std::vector<std::string> op_input_names;
 
@@ -1545,7 +1530,7 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     // Create QDQ inputs
     for (size_t i = 0; i < quant_input_defs.size(); i++) {
       const std::string tmp_name = "quant_input_defs_" + std::to_string(i);
-      MakeTestInput<float>(builder, tmp_name, quant_input_defs[i], input_allocator);
+      MakeTestInput<float>(builder, tmp_name, quant_input_defs[i]);
       QuantParams<QuantType> input_qparams = combine_quant_inputs_qparams ? combined_input_qparams : GetTestInputQuantParams<QuantType>(quant_input_defs[i]);
 
       op_input_names.push_back(
@@ -1556,14 +1541,14 @@ inline GetTestQDQModelFn<QuantType> BuildQDQOpTestCase(
     // Create non-QDQ inputs
     for (size_t i = 0; i < non_quant_input_defs.size(); i++) {
       const std::string tmp_name = "non_quant_input_defs_" + std::to_string(i);
-      MakeTestInput<OtherInputType>(builder, tmp_name, non_quant_input_defs[i], input_allocator);
+      MakeTestInput<OtherInputType>(builder, tmp_name, non_quant_input_defs[i]);
       op_input_names.push_back(tmp_name);
     }
 
     // Create QDQ inputs
     for (size_t i = 0; i < quant_input_defs_2.size(); i++) {
       const std::string tmp_name = "quant_input_defs_2_" + std::to_string(i);
-      MakeTestInput<float>(builder, tmp_name, quant_input_defs_2[i], input_allocator);
+      MakeTestInput<float>(builder, tmp_name, quant_input_defs_2[i]);
       QuantParams<QuantType> input_qparams = combine_quant_inputs_qparams ? combined_input_qparams : GetTestInputQuantParams<QuantType>(quant_input_defs_2[i]);
 
       op_input_names.push_back(

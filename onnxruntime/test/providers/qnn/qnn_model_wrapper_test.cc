@@ -9,6 +9,9 @@
 // ORT types as opaque wrappers in provider_api.h / provider_wrappedtypes.h.
 #if !defined(ORT_MINIMAL_BUILD) && BUILD_QNN_EP_STATIC_LIB
 
+// qnn_model_wrapper.h and qnn_def.h are intentionally kept as private includes here.
+// These headers are part of the QNN EP implementation and are only accessible when
+// building QNN EP as a static library (BUILD_QNN_EP_STATIC_LIB).
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_def.h"
 #include "test/util/include/test_environment.h"

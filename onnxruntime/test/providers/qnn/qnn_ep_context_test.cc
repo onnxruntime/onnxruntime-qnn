@@ -270,7 +270,7 @@ static void CreateTestModel(test::GetTestModelFn graph_builder,
                             int onnx_opset_version,
                             OrtLoggingLevel log_severity,
                             TestModel& test_model) {
-  ORT_UNUSED_PARAMETER(log_severity);
+  QNN_TEST_UNUSED_PARAMETER(log_severity);
   const std::unordered_map<std::string, int> domain_to_version = {{"", onnx_opset_version}, {kMSDomain, 1}};
 
   test_model.builder = std::make_unique<ModelTestBuilder>();
@@ -2756,9 +2756,9 @@ static OrtStatus* ORT_API_CALL TestWriteToStream(void* stream_state, const void*
 
 // Implementation of OrtOutStreamWriteFunc that directly returns an OrtStatus indicating an error.
 static OrtStatus* ORT_API_CALL ReturnStatusFromStream(void* stream_state, const void* buffer, size_t buffer_num_bytes) {
-  ORT_UNUSED_PARAMETER(stream_state);
-  ORT_UNUSED_PARAMETER(buffer);
-  ORT_UNUSED_PARAMETER(buffer_num_bytes);
+  QNN_TEST_UNUSED_PARAMETER(stream_state);
+  QNN_TEST_UNUSED_PARAMETER(buffer);
+  QNN_TEST_UNUSED_PARAMETER(buffer_num_bytes);
   return Ort::GetApi().CreateStatus(ORT_FAIL, "Error from OrtOutStreamWriteFunc callback");
 }
 
@@ -3643,9 +3643,8 @@ static void TestModelCompatibilityApiValidate(const CompatibilityTestInfo& test_
   const OrtEpDevice* qcom_npu_device = nullptr;
   for (size_t i = 0; i < num_ep_devices; i++) {
     const char* name = Ort::GetApi().EpDevice_EpName(ep_devices[i]);
-    const char* vendor_name = Ort::GetApi().EpDevice_EpVendor(ep_devices[i]);
     const OrtHardwareDevice* ep_hw_device = Ort::GetApi().EpDevice_Device(ep_devices[i]);
-    if (name && std::string(name) == "QNNExecutionProvider" &&
+    if (name && std::string(name) == kQnnExecutionProvider &&
         Ort::GetApi().HardwareDevice_Type(ep_hw_device) == OrtHardwareDeviceType_NPU) {
       qcom_npu_device = ep_devices[i];
     }
