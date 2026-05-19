@@ -225,6 +225,138 @@ TEST_F(QnnHTPBackendTests, DISABLED_LayerNorm1D_LastAxis_DynamicScale) {
                                         ExpectedEPNodeAssignment::All);
 }
 
+TEST_F(QnnHTPBackendTests, LayerNorm_Decomposed_ScaleAndBiasMisaligned) {
+  // scale + bias both misaligned -> LN, Mul (intermediate), Add (final)
+  RunLayerNormQDQTest<uint8_t, uint8_t>(
+      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+      // Full-rank scale with non-1 dim before the normalized axis -> externalize_scale.
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.1f, 1.0f, 6)),
+      // Full-rank bias with non-1 dim before the normalized axis -> externalize_bias.
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.0f, 1.0f, 6)),
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::All);
+}
+
+// final_tensor_type / final_output_info.{qnn_data_type, quant_param, shape}).
+TEST_F(QnnHTPBackendTests, LayerNorm_Decomposed_ScaleMisaligned_NoBias) {
+  //scale misaligned, no bias -> LN, Mul (final)
+  RunLayerNormQDQTest<uint8_t, uint8_t>(
+      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.1f, 1.0f, 6)),
+      TestInputDef<float>(),  // No bias.
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, LayerNorm_Decomposed_BiasMisaligned_ScaleAligned) {
+  // scale aligned, bias misaligned -> LN(scale), Add (final)
+  RunLayerNormQDQTest<uint8_t, uint8_t>(
+      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+      // 1D scale aligned with X.shape[axis:]=[3], does not need externalization.
+      TestInputDef<float>({3}, true, GetFloatDataInRange(0.1f, 1.0f, 3)),
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.0f, 1.0f, 6)),
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::All);
+}
+
+// scale misaligned, bias shape is legal on its own -> scale-out forces bias-out, so still
+// LN, Mul (intermediate), Add (final). Verifies the policy that bias gets pulled out alongside
+// scale even when its own shape would have been consumable by LN.
+TEST_F(QnnHTPBackendTests, LayerNorm_Decomposed_ScaleMisaligned_BiasAligned) {
+  RunLayerNormQDQTest<uint8_t, uint8_t>(
+      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+      // Full-rank scale with non-1 dim before normalized axis -> externalize_scale.
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.1f, 1.0f, 6)),
+      // 1D bias aligned with X.shape[axis:]=[3]; legal inside LN, but bias-out is forced by scale-out.
+      TestInputDef<float>({3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::All);
+}
+
+// ----- Non-QDQ (FP32 lowered to FP16) tests on the HTP backend -----------------------
+// QNN HTP requires fp16 to run float models; enable_htp_fp16_precision lowers fp32
+// inputs/weights to fp16 internally. These tests exercise the LayerNorm op-builder paths
+// without QDQ Q/DQ pairs, so intermediate quant params don't enter the picture and the
+// decomposition path is validated purely on shape/dtype handling.
+
+static void RunLayerNormHtpFp16Test(const TestInputDef<float>& input_def,
+                                    const TestInputDef<float>& scale_def,
+                                    const TestInputDef<float>& bias_def,
+                                    const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                                    ExpectedEPNodeAssignment expected_ep_assignment,
+                                    float fp32_abs_err = 0.01f) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["enable_htp_fp16_precision"] = "1";
+#if defined(__linux__) && !defined(__aarch64__)
+  provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+
+  GetTestModelFn model_fn =
+      bias_def.GetShape().empty()
+          ? BuildOpTestCase<float>("layer_norm_node", "LayerNormalization",
+                                    {input_def, scale_def}, {}, attrs)
+          : BuildOpTestCase<float, int64_t>("layer_norm_node", "LayerNormalization",
+                                             {input_def, scale_def}, {}, {bias_def}, attrs);
+
+  RunQnnModelTest(model_fn,
+                  provider_options,
+                  17,  // opset
+                  expected_ep_assignment,
+                  fp32_abs_err);
+}
+
+// Standard LN: 1D scale/bias on the last axis. Single LN node; no decomposition.
+TEST_F(QnnHTPBackendTests, LayerNorm_FP32_LastAxis_StandardLN) {
+  RunLayerNormHtpFp16Test(
+      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),
+      TestInputDef<float>({3}, true, GetFloatDataInRange(0.5f, 1.5f, 3)),
+      TestInputDef<float>({3}, true, GetFloatDataInRange(-0.1f, 0.1f, 3)),
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::All);
+}
+
+// Standard LN with no bias.
+TEST_F(QnnHTPBackendTests, LayerNorm_FP32_LastAxis_NoBias) {
+  RunLayerNormHtpFp16Test(
+      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),
+      TestInputDef<float>({3}, true, GetFloatDataInRange(0.5f, 1.5f, 3)),
+      TestInputDef<float>(),  // No bias.
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::All);
+}
+
+// Decomposition path: scale + bias both misaligned. Lowers to LN, Mul (intermediate), Add (final).
+TEST_F(QnnHTPBackendTests, LayerNorm_FP32_Decomposed_ScaleAndBiasMisaligned) {
+  RunLayerNormHtpFp16Test(
+      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.5f, 1.5f, 6)),
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(-0.1f, 0.1f, 6)),
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::All);
+}
+
+// Decomposition path: scale misaligned, no bias. Lowers to LN, Mul (final).
+TEST_F(QnnHTPBackendTests, LayerNorm_FP32_Decomposed_ScaleMisaligned_NoBias) {
+  RunLayerNormHtpFp16Test(
+      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.5f, 1.5f, 6)),
+      TestInputDef<float>(),  // No bias.
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::All);
+}
+
+// Decomposition path: bias misaligned, scale aligned. Lowers to LN(scale), Add (final).
+TEST_F(QnnHTPBackendTests, LayerNorm_FP32_Decomposed_BiasMisaligned_ScaleAligned) {
+  RunLayerNormHtpFp16Test(
+      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),
+      TestInputDef<float>({3}, true, GetFloatDataInRange(0.5f, 1.5f, 3)),
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(-0.1f, 0.1f, 6)),
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::All);
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test

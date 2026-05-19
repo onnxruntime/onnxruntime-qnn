@@ -2,6 +2,7 @@
 // Licensed under the MIT License.
 
 #include <cassert>
+#include <cstring>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/opbuilder/base_op_builder.h"
@@ -31,6 +32,35 @@ class LayerNormalizationOpBuilder : public BaseOpBuilder {
                                           std::vector<std::string>&& input_names,
                                           const Ort::Logger& logger,
                                           bool do_op_validation) const override ORT_MUST_USE_RESULT;
+
+ private:
+  // True iff `shape` (right-aligned to input_rank) has any non-1 dim at an axis < ln_axis.
+  // Such dims fall outside QNN/ONNX LayerNorm's normalized axes [ln_axis, input_rank), so the
+  // tensor cannot be fed directly to LayerNorm and must be applied via an outer Mul/Add instead.
+  static bool HasNonOneDimBeforeAxis(const std::vector<uint32_t>& shape,
+                                     size_t input_rank,
+                                     size_t ln_axis) {
+    const size_t prefix = input_rank - shape.size();
+    for (size_t i = 0; i < shape.size(); ++i) {
+      const size_t aligned_axis = prefix + i;
+      if (aligned_axis < ln_axis && shape[i] != 1) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  Ort::Status BuildDecomposedLayerNorm(QnnModelWrapper& qnn_model_wrapper,
+                                       const OrtNodeUnit& node_unit,
+                                       const std::vector<std::string>& input_names,
+                                       std::vector<std::string>&& param_tensor_names,
+                                       const std::vector<uint32_t>& x_shape,
+                                       Qnn_DataType_t x_qnn_data_type,
+                                       size_t ln_axis,
+                                       bool externalize_scale,
+                                       bool externalize_bias,
+                                       bool do_op_validation,
+                                       const Ort::Logger& logger) const ORT_MUST_USE_RESULT;
 };
 
 Ort::Status LayerNormalizationOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
@@ -142,10 +172,240 @@ Ort::Status LayerNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWra
   param_tensor_names.push_back(axes_param.GetParamTensorName());
   qnn_model_wrapper.AddParamWrapper(std::move(axes_param));
 
+  // ONNX LayerNormalization requires scale/B to broadcast to X.shape[axis:]. If the user-provided
+  // scale or bias has non-1 dims at axes outside [axis, rank) (e.g. they were folded in by an
+  // outer Mul/Add that broadcasts across the batch), QNN can't consume them as LN scale/B.
+  // Decide which side(s) to externalize:
+  //   - scale misaligned -> externalize scale; bias must also be externalized whenever it exists,
+  //     because LN computes (norm*scale + bias). Pulling scale out as a trailing Mul would turn a
+  //     legal-shape bias inside LN into bias*scale_external, which both changes the math and
+  //     re-introduces the broadcast problem. So scale-out forces bias-out.
+  //   - scale legal, bias misaligned -> keep LN(scale), externalize only the Add.
+  const auto& inputs = node_unit.Inputs();
+  const bool has_bias_input = inputs.size() > 2 && inputs[2].Exists();
+  TensorInfo scale_info{};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[1], scale_info));
+  const bool scale_misaligned =
+      HasNonOneDimBeforeAxis(scale_info.shape, input_rank, static_cast<size_t>(default_axis));
+
+  bool bias_misaligned = false;
+  if (has_bias_input) {
+    TensorInfo bias_info{};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[2], bias_info));
+    bias_misaligned =
+        HasNonOneDimBeforeAxis(bias_info.shape, input_rank, static_cast<size_t>(default_axis));
+  }
+
+  const bool externalize_scale = scale_misaligned;
+  const bool externalize_bias = has_bias_input && (bias_misaligned || scale_misaligned);
+
+  if (externalize_scale || externalize_bias) {
+    TensorInfo x_info{};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], x_info));
+    return BuildDecomposedLayerNorm(qnn_model_wrapper,
+                                    node_unit,
+                                    input_names,
+                                    std::move(param_tensor_names),
+                                    input_shape,
+                                    x_info.qnn_data_type,
+                                    static_cast<size_t>(default_axis),
+                                    externalize_scale,
+                                    externalize_bias,
+                                    do_op_validation,
+                                    logger);
+  }
+
   RETURN_IF_ERROR(ProcessOutputs(qnn_model_wrapper, node_unit,
                                  std::move(input_names),
                                  std::move(param_tensor_names),
                                  logger, do_op_validation, GetQnnOpType(node_unit.OpType())));
+
+  return Ort::Status();
+}
+
+Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrapper& qnn_model_wrapper,
+                                                                  const OrtNodeUnit& node_unit,
+                                                                  const std::vector<std::string>& input_names,
+                                                                  std::vector<std::string>&& param_tensor_names,
+                                                                  const std::vector<uint32_t>& x_shape,
+                                                                  Qnn_DataType_t x_qnn_data_type,
+                                                                  size_t ln_axis,
+                                                                  bool externalize_scale,
+                                                                  bool externalize_bias,
+                                                                  bool do_op_validation,
+                                                                  const Ort::Logger& logger) const {
+  ORT_UNUSED_PARAMETER(logger);
+  assert(externalize_scale || externalize_bias);
+  // externalize_bias implies a trailing Add fed by input_names[2], so the user must have provided
+  // a bias input.
+  assert(!externalize_bias || input_names.size() > 2);
+
+  const auto& outputs = node_unit.Outputs();
+  const std::string& final_output_name = outputs[0].name;
+  const bool is_graph_output = qnn_model_wrapper.IsGraphOutput(final_output_name);
+  const Qnn_TensorType_t final_tensor_type = is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+
+  TensorInfo final_output_info{};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], final_output_info));
+
+  // The LN node's scale input: either the user's (when scale stays inside) or a constant 1.0
+  // tensor of shape X.shape[axis:] that we synthesize here.
+  std::string ln_scale_name;
+  if (!externalize_scale) {
+    ln_scale_name = input_names[1];
+  } else {
+    // Match the synthesized ones tensor to the user-provided scale's dtype + quant params so the
+    // LN op sees the type it expects in slot 1. Encoding 1.0 in the user's quant scheme is what
+    // makes this an identity scale at runtime.
+    TensorInfo user_scale_info{};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[1], user_scale_info));
+
+    std::vector<uint32_t> norm_shape(x_shape.begin() + ln_axis, x_shape.end());
+    size_t num_elems = 1;
+    for (uint32_t d : norm_shape) {
+      num_elems *= static_cast<size_t>(d);
+    }
+
+    const Qnn_DataType_t scale_dtype = user_scale_info.qnn_data_type;
+    std::vector<uint8_t> const_buf;
+
+    if (user_scale_info.quant_param.IsQuantized()) {
+      // Per-tensor or per-channel quantized: quantize 1.0 using the user scale's params and fill.
+      RETURN_IF_NOT(user_scale_info.quant_param.IsPerTensor(/*include_bw*/ true),
+                    "LayerNorm scale decomposition: per-channel quantized scale is not supported.");
+      const float quant_scale = user_scale_info.quant_param.Get().scaleOffsetEncoding.scale;
+      const int32_t quant_offset = user_scale_info.quant_param.Get().scaleOffsetEncoding.offset;
+      int quant_one = 0;
+      RETURN_IF_ERROR(utils::Quantize(1.0, quant_scale, quant_offset, scale_dtype, quant_one));
+      switch (scale_dtype) {
+        case QNN_DATATYPE_SFIXED_POINT_8: {
+          const_buf.resize(num_elems * sizeof(int8_t));
+          std::fill(reinterpret_cast<int8_t*>(const_buf.data()),
+                    reinterpret_cast<int8_t*>(const_buf.data()) + num_elems,
+                    static_cast<int8_t>(quant_one));
+          break;
+        }
+        case QNN_DATATYPE_UFIXED_POINT_8: {
+          const_buf.resize(num_elems * sizeof(uint8_t));
+          std::fill(const_buf.begin(), const_buf.end(), static_cast<uint8_t>(quant_one));
+          break;
+        }
+        case QNN_DATATYPE_SFIXED_POINT_16: {
+          const_buf.resize(num_elems * sizeof(int16_t));
+          std::fill(reinterpret_cast<int16_t*>(const_buf.data()),
+                    reinterpret_cast<int16_t*>(const_buf.data()) + num_elems,
+                    static_cast<int16_t>(quant_one));
+          break;
+        }
+        case QNN_DATATYPE_UFIXED_POINT_16: {
+          const_buf.resize(num_elems * sizeof(uint16_t));
+          std::fill(reinterpret_cast<uint16_t*>(const_buf.data()),
+                    reinterpret_cast<uint16_t*>(const_buf.data()) + num_elems,
+                    static_cast<uint16_t>(quant_one));
+          break;
+        }
+        default:
+          return MAKE_EP_FAIL("LayerNorm scale decomposition: unsupported quantized scale dtype.");
+      }
+    } else {
+      switch (scale_dtype) {
+        case QNN_DATATYPE_FLOAT_32: {
+          const_buf.resize(num_elems * sizeof(float));
+          float* p = reinterpret_cast<float*>(const_buf.data());
+          std::fill(p, p + num_elems, 1.0f);
+          break;
+        }
+        case QNN_DATATYPE_FLOAT_16: {
+          const_buf.resize(num_elems * sizeof(Ort::Float16_t));
+          Ort::Float16_t* p = reinterpret_cast<Ort::Float16_t*>(const_buf.data());
+          std::fill(p, p + num_elems, static_cast<Ort::Float16_t>(1.0f));
+          break;
+        }
+        default:
+          return MAKE_EP_FAIL("LayerNorm scale decomposition: unsupported float scale dtype.");
+      }
+    }
+
+    ln_scale_name = utils::UniqueNameGenerator().New(node_unit, "_ln_scale_one");
+    QnnTensorWrapper scale_one_tensor(ln_scale_name,
+                                      QNN_TENSOR_TYPE_STATIC,
+                                      scale_dtype,
+                                      user_scale_info.quant_param.Copy(),
+                                      std::move(norm_shape),
+                                      std::move(const_buf));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(scale_one_tensor)),
+                  "Failed to add LN identity scale tensor.");
+  }
+
+  // The Add (if present) is always last and writes to final_output_name. If only Mul is present,
+  // Mul writes to final_output_name. Earlier intermediates (LN, optional Mul-before-Add) are NATIVE
+  // tensors of x_shape and x dtype.
+  // Intermediate tensors need valid quant encoding when x_qnn_data_type is a quantized type;
+  // an empty QnnQuantParamsWrapper would fail QNN validation and at runtime would dequantize as
+  // (val - 0) * 0 = 0. Reuse the final output's quant params (Copy() so the move at the end of
+  // the function still works for the Add output). Range may be coarser than ideal for the LN
+  // output when scale/bias shift it, but it's well-formed.
+  const std::string ln_out_name = utils::UniqueNameGenerator().New(node_unit, "_ln_decomposed_out");
+  QnnTensorWrapper ln_out_tensor(ln_out_name,
+                                  QNN_TENSOR_TYPE_NATIVE,
+                                  x_qnn_data_type,
+                                  final_output_info.quant_param.Copy(),
+                                  std::vector<uint32_t>(x_shape));
+  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(ln_out_tensor)),
+                "Failed to add decomposed LN intermediate output tensor.");
+
+  std::vector<std::string> ln_inputs = {input_names[0], ln_scale_name};
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_ln_decomposed"),
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                QNN_OP_LAYER_NORM,
+                                                std::move(ln_inputs),
+                                                {ln_out_name},
+                                                std::move(param_tensor_names),
+                                                do_op_validation),
+                "Failed to add decomposed LayerNorm node.");
+
+  std::string current = ln_out_name;
+
+  if (externalize_scale) {
+    const std::string mul_out_name =
+        externalize_bias ? utils::UniqueNameGenerator().New(node_unit, "_ln_decomposed_mul_out")
+                         : final_output_name;
+    QnnTensorWrapper mul_out_tensor(
+        mul_out_name,
+        externalize_bias ? QNN_TENSOR_TYPE_NATIVE : final_tensor_type,
+        externalize_bias ? x_qnn_data_type : final_output_info.qnn_data_type,
+        externalize_bias ? final_output_info.quant_param.Copy() : std::move(final_output_info.quant_param),
+        externalize_bias ? std::vector<uint32_t>(x_shape) : std::move(final_output_info.shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(mul_out_tensor)),
+                  "Failed to add decomposed Mul output tensor.");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_ln_decomposed_mul"),
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  QNN_OP_ELEMENT_WISE_MULTIPLY,
+                                                  {current, input_names[1]},
+                                                  {mul_out_name},
+                                                  {},
+                                                  do_op_validation),
+                  "Failed to add decomposed Mul node.");
+    current = mul_out_name;
+  }
+
+  if (externalize_bias) {
+    QnnTensorWrapper add_out_tensor(final_output_name,
+                                    final_tensor_type,
+                                    final_output_info.qnn_data_type,
+                                    std::move(final_output_info.quant_param),
+                                    std::move(final_output_info.shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(add_out_tensor)),
+                  "Failed to add decomposed Add output tensor.");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, "_ln_decomposed_add"),
+                                                  QNN_OP_PACKAGE_NAME_QTI_AISW,
+                                                  QNN_OP_ELEMENT_WISE_ADD,
+                                                  {current, input_names[2]},
+                                                  {final_output_name},
+                                                  {},
+                                                  do_op_validation),
+                  "Failed to add decomposed Add node.");
+  }
 
   return Ort::Status();
 }
