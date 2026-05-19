@@ -11,15 +11,19 @@ pip install onnxruntime-qnn==2.2.0
 
 ## Bug Fixes
 
-- QNN EP: Fixed `GlobalMaxPool` and `GlobalAveragePool` claiming support for rank-3 inputs but failing during QNN graph compile. The 3D→4D reshape path used by windowed pool ops is now unified across the global pool ops. ([#201](https://github.com/onnxruntime/onnxruntime-qnn/pull/201))
-- QNN EP: Restored backward-compatible Genie builds against QAIRT SDKs older than 2.45.0, where `GenieDlc.h` introduced a breaking change. Conditional compilation now keys off the Genie API version. ([#225](https://github.com/onnxruntime/onnxruntime-qnn/pull/225))
-- QNN EP: Fixed GCC 13 build failures (notably on Ubuntu 24.04). Corrected an invalid `memory_order_acq_rel` on `std::atomic::store()` to `memory_order_release`, and suppressed a false-positive `-Wmaybe-uninitialized` warning in `TestInputDef` / `parsed_value` via diagnostic pragmas plus value-initialization. ([#228](https://github.com/onnxruntime/onnxruntime-qnn/pull/228))
-- QNN EP: Fixed incorrect HNRD (Hexagon NPU Runtime Driver) compatibility checks being executed on x86 platforms where the hardware context is not applicable.. ([#319](https://github.com/onnxruntime/onnxruntime-qnn/pull/319))
+- QNN EP: Fixed `GlobalMaxPool`/`GlobalAveragePool` falsely claiming rank-3 support; unified the 3D→4D reshape path with windowed pool ops. ([#201](https://github.com/onnxruntime/onnxruntime-qnn/pull/201))
+- QNN EP: Restored Genie builds against QAIRT SDKs older than 2.45.0 by keying conditional compilation off the Genie API version (`GenieDlc.h` breaking change). ([#225](https://github.com/onnxruntime/onnxruntime-qnn/pull/225))
+- QNN EP: Fixed GCC 13 build failures: corrected `memory_order_acq_rel` on `std::atomic::store()` to `memory_order_release`, and suppressed a false-positive `-Wmaybe-uninitialized` in `TestInputDef`. ([#228](https://github.com/onnxruntime/onnxruntime-qnn/pull/228))
+- QNN EP: Fixed HNRD compatibility checks incorrectly running on x86 platforms where they don't apply. ([#319](https://github.com/onnxruntime/onnxruntime-qnn/pull/319))
 
 ## Improvements
 
-- QNN EP: Relaxed the QDQ BatchNormalization node-group selector to accept BN nodes with 2 dequantized inputs (`x`, `scale`) instead of requiring 3. Matches the common quantized-model pattern where `bias`, `mean`, and `variance` remain as float initializers, prevents fallback to CPU due to "dynamic scale" errors, and reduces graph fragmentation. New HTP accuracy tests cover U16+S8 and U8+S8 configurations with float-parameter BN. ([#209](https://github.com/onnxruntime/onnxruntime-qnn/pull/209))
-- QNN EP: NPU device selection now supports HTP cores with non-zero device IDs, enabling use of HTP devices beyond the default core. ([#215](https://github.com/onnxruntime/onnxruntime-qnn/pull/215))
+- QNN EP: Relaxed QDQ BatchNormalization selector to accept BN nodes with 2 dequantized inputs (instead of requiring 3), matching the common pattern where `bias`/`mean`/`variance` stay as float initializers. Reduces CPU fallback and graph fragmentation. ([#209](https://github.com/onnxruntime/onnxruntime-qnn/pull/209))
+- QNN EP: NPU device selection now supports HTP cores with non-zero device IDs. ([#215](https://github.com/onnxruntime/onnxruntime-qnn/pull/215))
+
+## Known Issues
+
+- **WoS AMD64 Python 3.11 — inference broken** — On Windows on Snapdragon, `ep.get_library_path()` returns the `amd64` folder path instead of `arm64ec`, causing inference to fail in the AMD64 Python 3.11 environment. As a workaround, manually construct the path to the `arm64ec` library. This issue affects Python 3.11 only.
 
 ### Platform Support
 
