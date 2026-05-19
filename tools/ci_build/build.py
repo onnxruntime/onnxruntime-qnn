@@ -1110,7 +1110,9 @@ def main():
                 args.version_suffix,
                 use_ninja=(args.cmake_generator == "Ninja"),
                 target_arch=(
-                    "arm64ec"
+                    "arm64x"
+                    if getattr(args, "arm64ec", False) and getattr(args, "buildasx", False)
+                    else "arm64ec"
                     if getattr(args, "arm64ec", False)
                     else "arm64"
                     if getattr(args, "arm64", False)

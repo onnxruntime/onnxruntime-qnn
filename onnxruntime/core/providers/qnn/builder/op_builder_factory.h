@@ -98,6 +98,7 @@ void CreateRoiAlignOpBuilder(const std::string& op_type, OpBuilderRegistrations&
 void CreateRotaryEmbeddingOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateScatterElementsOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateScatterNDOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
+void CreateSeluOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateSimpleOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateSliceOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
 void CreateSoftmaxOpBuilder(const std::string& op_type, OpBuilderRegistrations& op_registrations);
