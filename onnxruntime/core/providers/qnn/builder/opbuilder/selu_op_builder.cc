@@ -95,6 +95,10 @@ Ort::Status SeluOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
     gamma_data.resize(sizeof(Ort::Float16_t));
     Ort::Float16_t gamma_fp16(gamma);
     memcpy(gamma_data.data(), &gamma_fp16.val, sizeof(Ort::Float16_t));
+  } else if (input_info.qnn_data_type == QNN_DATATYPE_BFLOAT_16) {
+    gamma_data.resize(sizeof(Ort::BFloat16_t));
+    Ort::BFloat16_t gamma_bf16(gamma);
+    memcpy(gamma_data.data(), &gamma_bf16.val, sizeof(Ort::BFloat16_t));
   } else {
     gamma_data.resize(sizeof(float));
     memcpy(gamma_data.data(), &gamma, sizeof(float));
