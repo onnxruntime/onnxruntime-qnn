@@ -336,6 +336,11 @@ jobs:
         with:
           name: windows-arm64-py3.11-zip
 
+      - name: Download Windows ARM64 (ARM64x) Zip from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64x-py3.11-zip
+
       - name: Download Linux aarch64 manylinux_2_34 TGZ from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -358,10 +363,10 @@ jobs:
 
       - name: Verify Zip artifacts
         run: |
-          # 1 windows zip + 3 PDB archives = 4 zips
+          # 1 Windows ARM64 Zip + 3 PDB archives + 1 Windows ARM64 (ARM64x) Zip = 5 zips
           count=$(find "${{ github.workspace }}/build" -name "*.zip" | wc -l)
           echo "Found $count Zip archive(s)"
-          [ "$count" -eq 4 ] || { echo "ERROR: Expected 4 Zip archive, found $count"; exit 1; }
+          [ "$count" -eq 5 ] || { echo "ERROR: Expected 5 Zip archive, found $count"; exit 1; }
 
       - name: Verify TGZ artifact
         run: |
@@ -369,10 +374,16 @@ jobs:
           echo "Found $count TGZ archive(s)"
           [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 TGZ archive, found $count"; exit 1; }
 
-      - name: Prepare Windows Zip libs for signing
+      - name: Prepare Windows ARM64 Zip lib for signing
         run: |
           ./qcom/scripts/signing/prepare_zip_for_signing.sh \
             "${{ github.workspace }}/build/windows-arm64/Release/dist" \
+            "${{ github.workspace }}/build/dist/output"
+
+      - name: Prepare Windows ARM64 (ARM64x) Zip lib for signing
+        run: |
+          ./qcom/scripts/signing/prepare_zip_for_signing.sh \
+            "${{ github.workspace }}/build/windows-arm64x/Release/Release/dist" \
             "${{ github.workspace }}/build/dist/output"
 
       - name: Upload unsigned Windows Zip libs to Artifactory
@@ -409,6 +420,11 @@ jobs:
           # Upload Windows ARM64 archive and PDB archive
           ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
             "${{ github.workspace }}/build/windows-arm64/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Windows ARM64 (ARM64x) archive
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/windows-arm64x/Release/Release/dist" \
             "$NETRC_FILE"
 
           # Upload Linux aarch64 manylinux_2_34 zip
