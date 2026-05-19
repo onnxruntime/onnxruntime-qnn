@@ -147,6 +147,29 @@ TEST_F(QnnCPUBackendTests, UnaryOp_Softplus_Rank5) {
                  ExpectedEPNodeAssignment::All);
 }
 
+// Verifies QNN_OP_HARD_SWISH computes x * clip((x+3)/6, 0, 1), not HardSigmoid.
+TEST_F(QnnCPUBackendTests, UnaryOp_HardSwish) {
+  RunOpTestOnCPU("HardSwish",
+                 {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+                 {},
+                 14,
+                 ExpectedEPNodeAssignment::All);
+}
+
+// Test float HardSwish on the QNN HTP backend.
+TEST_F(QnnHTPBackendTests, UnaryOp_HardSwish_FP32) {
+  QNN_SKIP_TEST_ON_ARM64("Fails on ARM64/AARCH64");
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  RunQnnModelTest(BuildOpTestCase<float>("HardSwish_node", "HardSwish",
+                                         {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+                                         {}, {}),
+                  provider_options,
+                  14,
+                  ExpectedEPNodeAssignment::All,
+                  0.004f);
+}
+
 TEST_F(QnnCPUBackendTests, Concat_EmptyInput) {
   RunOpTestOnCPU("Concat",
                  {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
