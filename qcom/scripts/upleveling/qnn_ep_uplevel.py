@@ -50,28 +50,16 @@ ARTIFACTORY_PREFIXES = {
 ARTIFACT_SUFFIXES = {"wheel": ".whl", "nuget": ".nupkg", "zip": ".zip", "tgz": ".tgz"}
 
 
-def _str_to_bool(value: str) -> bool:
-    """Parse a True/False CLI argument."""
-    if isinstance(value, bool):
-        return value
-    normalized = str(value).strip().lower()
-    if normalized in ("true", "1", "yes"):
-        return True
-    if normalized in ("false", "0", "no"):
-        return False
-    raise argparse.ArgumentTypeError(f"Boolean value expected (true/false), got: {value!r}")
-
-
 def _ensure_dir(path: str) -> None:
-    """Create a fresh directory; if it already exists, remove and recreate it.
+    """Create directory if it does not already exist."""
+    os.makedirs(path, exist_ok=True)
 
-    Gives each run a clean output tree so state from prior jobs doesn't bleed in.
-    """
+
+def _clean_dir(path: str) -> None:
+    """Remove and recreate a directory to start each run with a clean output tree."""
     if os.path.exists(path):
-        logging.warning(f"Directory already exists, removing and recreating: {path}")
         shutil.rmtree(path)
     os.makedirs(path)
-    logging.info(f"Created directory: {path}")
 
 
 class ConfigManager:
@@ -266,9 +254,7 @@ class ArtifactUpleveler(ABC):
                 f"'{self.args.version_from}' to '{self.args.version_to}'"
             )
             upload_dir = os.path.join(os.path.abspath(os.path.curdir), f"updated_{self.artifact_format}s")
-            if os.path.exists(upload_dir):
-                shutil.rmtree(upload_dir)
-            os.mkdir(upload_dir)
+            _clean_dir(upload_dir)
             self.update_artifacts(artifact_list, source_dir, upload_dir)
 
         logging.info(f"Uploading {self.artifact_format}s to {self.url_to_display}")
@@ -277,7 +263,7 @@ class ArtifactUpleveler(ABC):
         # If a version bump created ./updated_<format>s/, remove it now that the
         # upload has succeeded. On failure we'd never reach this line, leaving the
         # directory available for inspection.
-        if self.needs_version_update and os.path.exists(upload_dir):
+        if self.needs_version_update:
             shutil.rmtree(upload_dir, ignore_errors=True)
             logging.info(f"Cleaned up {upload_dir}")
 
@@ -318,17 +304,17 @@ class ArtifactUpleveler(ABC):
             os.path.join(unsigned_dir, fmt),
             os.path.join(output_dir, "signed_libs"),
         ):
-            _ensure_dir(path)
+            _clean_dir(path)
 
     def _download_signed_libs(self, target_dir: str) -> str:
         """Download <format>.zip from artifactory into target_dir; return its path."""
         api_key = os.environ.get("JFROG_API_KEY", "")
         if not api_key:
             raise RuntimeError(
-                f"JFROG_API_KEY environment variable is required when --sign_{self.artifact_format} true"
+                f"JFROG_API_KEY environment variable is required when --sign_artifact true"
             )
 
-        url_template = "https://re-artifactory.qualcomm.com/artifactory/aisw-zip-test-project/onnxruntime-qnn/"
+        url_template = "https://re-artifactory.qualcomm.com/artifactory/aisw-zip-project/onnxruntime-qnn/"
 
         zip_filename = f"{self.artifact_format}.zip"
         url = f"{url_template.rstrip('/')}/{self._signed_libs_version}/signed_libs/{zip_filename}"
@@ -412,7 +398,7 @@ class ArtifactUpleveler(ABC):
 class WheelUpleveler(ArtifactUpleveler):
     """Handles PyPI wheel artifact upleveling and (optional) signing.
 
-    Dispatches on --sign_wheel:
+    Dispatches on --sign_artifact:
       false (default)     — standard flow: download wheels from index_server_from
                             into a tempdir, optionally re-version, upload to
                             index_server_to via twine.
@@ -429,9 +415,9 @@ class WheelUpleveler(ArtifactUpleveler):
       PYPI_API_KEY                                 — PyPI upload token (when index_server_to=pypi)
       TEST_PYPI_API_KEY                            — TestPyPI upload token (when index_server_to=testpypi)
       JFROG_API_KEY                                — Read-only token for the signed-libs bundle
-                                                     (only when --sign_wheel true)
+                                                     (only when --sign_artifact true)
       SIGNED_LIBS_ARTIFACTORY_URL                  — Base URL for the signed-libs bundle
-                                                     (only when --sign_wheel true)
+                                                     (only when --sign_artifact true)
     """
 
     @property
@@ -440,7 +426,7 @@ class WheelUpleveler(ArtifactUpleveler):
 
     @property
     def _sign_flag(self) -> bool:
-        return self.args.sign_wheel
+        return self.args.sign_artifact
 
     def _repackage_artifacts(self, artifact_dir: str, signed_libs_dir: str, output_dir: str) -> None:
         """
@@ -506,15 +492,11 @@ class WheelUpleveler(ArtifactUpleveler):
                     )
                     dll_replacement_failed = arm64_missing
 
-                # Re-zip extracted tree back into output_dir/<whl_name>
+                # Re-pack wheel using wheel pack so RECORD is regenerated with updated DLL hashes
                 out_whl = os.path.join(output_dir, whl_name)
                 if os.path.exists(out_whl):
                     os.remove(out_whl)
-                with zipfile.ZipFile(out_whl, "w", zipfile.ZIP_DEFLATED) as zf:
-                    for r, _d, fs in os.walk(extract_dir):
-                        for f in fs:
-                            fp = os.path.join(r, f)
-                            zf.write(fp, os.path.relpath(fp, extract_dir))
+                subprocess.run(["wheel", "pack", extract_dir, "-d", output_dir], check=True)
                 if dll_replacement_failed:
                     repackage_failed.append(whl_name)
                     logging.warning(f"    Repackaged {whl_name} but signed DLL(s) were missing")
@@ -657,7 +639,7 @@ class WheelUpleveler(ArtifactUpleveler):
 class NugetUpleveler(ArtifactUpleveler):
     """Handles NuGet package upleveling and (optional) signing.
 
-    Dispatches on --sign_nuget:
+    Dispatches on --sign_artifact:
       false (default)     — standard flow: download nupkgs from index_server_from
                             into a tempdir, optionally re-version, upload to
                             index_server_to via `nuget push`.
@@ -678,9 +660,9 @@ class NugetUpleveler(ArtifactUpleveler):
       NUGET_API_KEY                                — nuget.org API key (when index_server_to=nuget)
       TEST_NUGET_API_KEY                           — int.nugettest.org API key (when index_server_to=testnuget)
       JFROG_API_KEY                                — Read-only token for the signed-libs bundle
-                                                     (only when --sign_nuget true)
+                                                     (only when --sign_artifact true)
       SIGNED_LIBS_ARTIFACTORY_URL                  — Base URL for the signed-libs bundle
-                                                     (only when --sign_nuget true)
+                                                     (only when --sign_artifact true)
     """
 
     def __init__(self, args: argparse.Namespace):
@@ -693,7 +675,7 @@ class NugetUpleveler(ArtifactUpleveler):
 
     @property
     def _sign_flag(self) -> bool:
-        return self.args.sign_nuget
+        return self.args.sign_artifact
 
     @property
     def _signed_libs_version(self) -> str:
@@ -938,7 +920,7 @@ class NugetUpleveler(ArtifactUpleveler):
 class ZipUpleveler(ArtifactUpleveler):
     """Handles ZIP archive upleveling and (optional) signing.
 
-    Dispatches on --sign_zip:
+    Dispatches on --sign_artifact:
       false (default)     — standard flow: download zips from index_server_from
                             into a tempdir, optionally re-version (filename only,
                             contents unchanged), upload to index_server_to via curl
@@ -954,9 +936,9 @@ class ZipUpleveler(ArtifactUpleveler):
     Credentials (never in argv):
       ARTIFACTORY_USERNAME / ARTIFACTORY_PASSWORD  — Artifactory basic auth (download + upload)
       JFROG_API_KEY                                — Read-only token for the signed-libs bundle
-                                                     (only when --sign_zip true)
+                                                     (only when --sign_artifact true)
       SIGNED_LIBS_ARTIFACTORY_URL                  — Base URL for the signed-libs bundle
-                                                     (only when --sign_zip true)
+                                                     (only when --sign_artifact true)
     """
 
     @property
@@ -965,7 +947,7 @@ class ZipUpleveler(ArtifactUpleveler):
 
     @property
     def _sign_flag(self) -> bool:
-        return self.args.sign_zip
+        return self.args.sign_artifact
 
     def _repackage_artifacts(self, artifact_dir: str, signed_libs_dir: str, output_dir: str) -> None:
         """
@@ -1610,22 +1592,9 @@ def parse_arguments() -> argparse.Namespace:
         help="Print commands without executing (Maven format only).",
     )
     parser.add_argument(
-        "--sign_wheel",
-        type=_str_to_bool,
-        default=False,
-        help="Sign wheel artifacts (true/false). Default: false. Only applies to --artifact_format wheel.",
-    )
-    parser.add_argument(
-        "--sign_nuget",
-        type=_str_to_bool,
-        default=False,
-        help="Sign NuGet artifacts (true/false). Default: false. Only applies to --artifact_format nuget.",
-    )
-    parser.add_argument(
-        "--sign_zip",
-        type=_str_to_bool,
-        default=False,
-        help="Sign zip artifacts (true/false). Default: false. Only applies to --artifact_format zip.",
+        "--sign_artifact",
+        action="store_true",
+        help="Sign artifacts. Applies to wheel, nuget, and zip formats.",
     )
 
     args = parser.parse_args()

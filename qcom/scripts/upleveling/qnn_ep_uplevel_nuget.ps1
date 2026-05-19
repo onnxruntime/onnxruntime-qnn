@@ -28,7 +28,7 @@ param (
 
     [Parameter(Mandatory = $false,
                HelpMessage = "Sign the Windows NuGet packages by replacing native and managed DLLs with signed copies from the signed-libs Artifactory bundle.")]
-    [bool]$SignNuget = $false
+    [bool]$SignArtifact = $false
 )
 
 function Set-NuGetCredentials {
@@ -109,7 +109,7 @@ python $RepoRoot\qcom\scripts\upleveling\qnn_ep_uplevel.py `
     --version_to $VersionTo `
     --index_server_from $IndexServerFrom `
     --index_server_to $IndexServerTo `
-    --sign_nuget $($SignNuget.ToString().ToLower())
+    $(if ($SignArtifact) { "--sign_artifact" })
 
 # Clean up the environment variables
 Remove-Item -Path "env:$source_cred_var" -ErrorAction SilentlyContinue
