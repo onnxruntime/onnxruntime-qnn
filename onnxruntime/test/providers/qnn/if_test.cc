@@ -152,15 +152,15 @@ GetTestModelFn BuildIfMixedTestCase(bool then_constant,
     std::vector<float> else_const_data(static_cast<size_t>(num_elements), -3.0f);
 
     GraphProto then_g = then_constant
-        ? MakeConstantBranchSubgraph("then_branch", "then_out", shape,
-                                     TensorProto::FLOAT, then_const_data)
-        : MakeMulBranchSubgraph("then_branch", "x", "then_out", shape,
-                                TensorProto::FLOAT, 2.0f, "then_const");
+                            ? MakeConstantBranchSubgraph("then_branch", "then_out", shape,
+                                                         TensorProto::FLOAT, then_const_data)
+                            : MakeMulBranchSubgraph("then_branch", "x", "then_out", shape,
+                                                    TensorProto::FLOAT, 2.0f, "then_const");
     GraphProto else_g = else_constant
-        ? MakeConstantBranchSubgraph("else_branch", "else_out", shape,
-                                     TensorProto::FLOAT, else_const_data)
-        : MakeMulBranchSubgraph("else_branch", "x", "else_out", shape,
-                                TensorProto::FLOAT, -1.0f, "else_const");
+                            ? MakeConstantBranchSubgraph("else_branch", "else_out", shape,
+                                                         TensorProto::FLOAT, else_const_data)
+                            : MakeMulBranchSubgraph("else_branch", "x", "else_out", shape,
+                                                    TensorProto::FLOAT, -1.0f, "else_const");
 
     builder.AddNode(
         "if_node",

@@ -105,9 +105,9 @@ Ort::Status GetBranchSingleOutput(const OrtApi& ort_api,
 // Translate all nodes of a branch into the QnnModelWrapper.
 // Pushes the branch graph scope (so branch initializers resolve as STATIC) and pops on exit.
 Ort::Status TranslateBranch(QnnModelWrapper& qmw,
-                             const Ort::Logger& logger,
-                             const OrtGraph* branch,
-                             bool do_op_validation) {
+                            const Ort::Logger& logger,
+                            const OrtGraph* branch,
+                            bool do_op_validation) {
   const OrtApi& ort_api = qmw.GetOrtApi();
 
   size_t num_nodes = 0;
@@ -179,25 +179,25 @@ class IfOpBuilder : public BaseOpBuilder {
   // Registers explicit input (cond) AND implicit inputs (outer-scope tensors consumed
   // by branch subgraphs) as QNN tensors.
   Ort::Status ProcessInputs(QnnModelWrapper& qmw,
-                             const OrtNodeUnit& node_unit,
-                             const Ort::Logger& logger,
-                             std::vector<std::string>& input_names,
-                             bool do_op_validation) const override;
+                            const OrtNodeUnit& node_unit,
+                            const Ort::Logger& logger,
+                            std::vector<std::string>& input_names,
+                            bool do_op_validation) const override;
 
   // Validates branch structure, translates both branches, and emits the final
   // QNN_OP_ELEMENT_WISE_SELECT node.
   Ort::Status ProcessAttributesAndOutputs(QnnModelWrapper& qmw,
-                                           const OrtNodeUnit& node_unit,
-                                           std::vector<std::string>&& input_names,
-                                           const Ort::Logger& logger,
-                                           bool do_op_validation) const override;
+                                          const OrtNodeUnit& node_unit,
+                                          std::vector<std::string>&& input_names,
+                                          const Ort::Logger& logger,
+                                          bool do_op_validation) const override;
 };
 
 Ort::Status IfOpBuilder::ProcessInputs(QnnModelWrapper& qmw,
-                                        const OrtNodeUnit& node_unit,
-                                        const Ort::Logger& logger,
-                                        std::vector<std::string>& input_names,
-                                        bool do_op_validation) const {
+                                       const OrtNodeUnit& node_unit,
+                                       const Ort::Logger& logger,
+                                       std::vector<std::string>& input_names,
+                                       bool do_op_validation) const {
   // Register the explicit condition input through the standard pipeline.
   RETURN_IF_ERROR(BaseOpBuilder::ProcessInputs(qmw, node_unit, logger, input_names, do_op_validation));
 
@@ -213,8 +213,8 @@ Ort::Status IfOpBuilder::ProcessInputs(QnnModelWrapper& qmw,
 
   std::vector<const OrtValueInfo*> implicit_inputs(num_implicit);
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetImplicitInputs(&if_node,
-                                                             implicit_inputs.data(),
-                                                             num_implicit));
+                                                            implicit_inputs.data(),
+                                                            num_implicit));
 
   for (const OrtValueInfo* vi : implicit_inputs) {
     OrtNodeUnitIODef io_def;
@@ -232,10 +232,10 @@ Ort::Status IfOpBuilder::ProcessInputs(QnnModelWrapper& qmw,
 }
 
 Ort::Status IfOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qmw,
-                                                      const OrtNodeUnit& node_unit,
-                                                      std::vector<std::string>&& input_names,
-                                                      const Ort::Logger& logger,
-                                                      bool do_op_validation) const {
+                                                     const OrtNodeUnit& node_unit,
+                                                     std::vector<std::string>&& input_names,
+                                                     const Ort::Logger& logger,
+                                                     bool do_op_validation) const {
   const OrtApi& ort_api = qmw.GetOrtApi();
   const OrtNode& if_node = node_unit.GetNode();
 
@@ -277,7 +277,7 @@ Ort::Status IfOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qmw,
 
   // Emit ElementWiseSelect(cond, then_out, else_out) -> if_out.
   const std::string cond_name = input_names.empty() ? node_unit.Inputs()[0].name
-                                                     : input_names[0];
+                                                    : input_names[0];
   RETURN_IF_NOT(qmw.CreateQnnNode(node_unit.Name() + "_select",
                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
                                   QNN_OP_ELEMENT_WISE_SELECT,
