@@ -2641,20 +2641,16 @@ TEST_F(QnnHTPBackendTests, LoadFromArrayWithQnnEpContextGenPathValidation) {
   try {
     Ort::Session session1(*ort_env, model_data_span.data(), model_data_span.size(), so);
   } catch (const std::exception& e) {
-    ORT_HANDLE_EXCEPTION([&e]() {
-      std::string e_message1(std::string(e.what()));
-      ASSERT_TRUE(e_message1.find("Please specify a valid ep.context_file_path") != std::string::npos);
-    });
+    std::string e_message1(std::string(e.what()));
+    ASSERT_TRUE(e_message1.find("Please specify a valid ep.context_file_path") != std::string::npos);
   }
 
   try {
     so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, "");
     Ort::Session session2(*ort_env, model_data_span.data(), model_data_span.size(), so);
   } catch (const std::exception& ex) {
-    ORT_HANDLE_EXCEPTION([&ex]() {
-      std::string e_message2(std::string(ex.what()));
-      ASSERT_TRUE(e_message2.find("Please specify a valid ep.context_file_path") != std::string::npos);
-    });
+    std::string e_message2(std::string(ex.what()));
+    ASSERT_TRUE(e_message2.find("Please specify a valid ep.context_file_path") != std::string::npos);
   }
 }
 
@@ -3021,13 +3017,9 @@ static OrtStatus* ORT_API_CALL TestHandleInitializerDataFunc(void* state,
 
     *c_new_external_info = new_external_info.release();
   } catch (const Ort::Exception& ex) {
-    ORT_HANDLE_EXCEPTION(([&ex, &final_status]() {
-      final_status = Ort::Status{ex};
-    }));
+    final_status = Ort::Status{ex};
   } catch (const std::exception& ex) {
-    ORT_HANDLE_EXCEPTION(([&ex, &final_status]() {
-      final_status = Ort::Status(ex.what(), ORT_FAIL);
-    }));
+    final_status = Ort::Status(ex.what(), ORT_FAIL);
   }
 
   return final_status.release();
@@ -3125,13 +3117,9 @@ static OrtStatus* ORT_API_CALL ReuseExternalInitializers(void* state,
     // If not originally external, save it within the generated compiled model
     *new_external_info = nullptr;
   } catch (const Ort::Exception& ex) {
-    ORT_HANDLE_EXCEPTION(([&ex, &final_status]() {
-      final_status = Ort::Status{ex};
-    }));
+    final_status = Ort::Status{ex};
   } catch (const std::exception& ex) {
-    ORT_HANDLE_EXCEPTION(([&ex, &final_status]() {
-      final_status = Ort::Status(ex.what(), ORT_FAIL);
-    }));
+    final_status = Ort::Status(ex.what(), ORT_FAIL);
   }
 
   return final_status.release();
@@ -3212,7 +3200,7 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_CtxFileWritten) {
   SetPrepareOnlyOptions(so, ctx_path);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   {
     Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
@@ -3253,17 +3241,14 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_DisabledWhenContextCacheNotSet) {
   SetPrepareOnlyOptions(so, ctx_path, /*explicit_context_enable=*/false);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   // since ep.context_enable was not set. Session falls back to normal (non-prepare_only) mode.
-  ORT_TRY {
+  try {
     Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
     SUCCEED();
-  }
-  ORT_CATCH(const std::exception& e) {
-    ORT_HANDLE_EXCEPTION([&e]() {
-      FAIL() << "Session creation should not throw: " << e.what();
-    });
+  } catch (const std::exception& e) {
+    FAIL() << "Session creation should not throw: " << e.what();
   }
 }
 
@@ -3297,7 +3282,7 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_RunReturnsError) {
   SetPrepareOnlyOptions(so, ctx_path);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
   ASSERT_TRUE(std::filesystem::exists(ctx_path));
@@ -3317,14 +3302,11 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_RunReturnsError) {
   const char* input_names[] = {input_name_ptr.get()};
   const char* output_names[] = {output_name_ptr.get()};
 
-  ORT_TRY {
+  try {
     session.Run(Ort::RunOptions{}, input_names, ort_inputs.data(), 1, output_names, 1);
     FAIL() << "Expected Session.Run() to fail in prepare_only mode";
-  }
-  ORT_CATCH(const std::exception& e) {
-    ORT_HANDLE_EXCEPTION([&e]() {
-      ASSERT_THAT(e.what(), testing::HasSubstr("prepare_only mode"));
-    });
+  } catch (const std::exception& e) {
+    ASSERT_THAT(e.what(), testing::HasSubstr("prepare_only mode"));
   }
 
   CleanUpCtxFile(ctx_path);
@@ -3448,10 +3430,8 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_SelfValidate_CbTradRtHnrd
     // Compare to ModelCompatibility_SelfValidate_CbHnrdRtTrad, this testcase could get here if driver is as new as
     // compiled SDK.
   } catch (const Ort::Exception& e) {
-    ORT_HANDLE_EXCEPTION([&e]() {
-      std::string message(e.what());
-      ASSERT_TRUE(message.find("Compiled model is not supported by execution provider") != std::string::npos);
-    });
+    std::string message(e.what());
+    ASSERT_TRUE(message.find("Compiled model is not supported by execution provider") != std::string::npos);
   }
 
   std::filesystem::remove(output_model_file);
@@ -3496,10 +3476,8 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_SelfValidate_CbHnrdRtTrad
     }
     FAIL() << "Expect compiled model not supported by execution provider.";  // Should not get here.
   } catch (const Ort::Exception& e) {
-    ORT_HANDLE_EXCEPTION([&e]() {
-      std::string message(e.what());
-      ASSERT_TRUE(message.find("Compiled model is not supported by execution provider") != std::string::npos);
-    });
+    std::string message(e.what());
+    ASSERT_TRUE(message.find("Compiled model is not supported by execution provider") != std::string::npos);
   }
 
   std::filesystem::remove(output_model_file);
