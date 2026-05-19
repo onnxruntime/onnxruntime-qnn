@@ -14,7 +14,7 @@ pip install onnxruntime-qnn==2.2.0
 - QNN EP: Fixed `GlobalMaxPool`/`GlobalAveragePool` falsely claiming rank-3 support; unified the 3D→4D reshape path with windowed pool ops. ([#201](https://github.com/onnxruntime/onnxruntime-qnn/pull/201))
 - QNN EP: Restored Genie builds against QAIRT SDKs older than 2.45.0 by keying conditional compilation off the Genie API version (`GenieDlc.h` breaking change). ([#225](https://github.com/onnxruntime/onnxruntime-qnn/pull/225))
 - QNN EP: Fixed GCC 13 build failures: corrected `memory_order_acq_rel` on `std::atomic::store()` to `memory_order_release`, and suppressed a false-positive `-Wmaybe-uninitialized` in `TestInputDef`. ([#228](https://github.com/onnxruntime/onnxruntime-qnn/pull/228))
-- QNN EP: Fixed HNRD compatibility checks incorrectly running on x86 platforms where they don't apply. ([#319](https://github.com/onnxruntime/onnxruntime-qnn/pull/319))
+- QNN EP: Fixed HNRD Model Compatibility checks incorrectly running on x86 platforms where they don't apply. ([#319](https://github.com/onnxruntime/onnxruntime-qnn/pull/319))
 
 ## Improvements
 
