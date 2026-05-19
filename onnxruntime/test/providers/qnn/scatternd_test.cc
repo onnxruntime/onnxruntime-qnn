@@ -152,6 +152,79 @@ TEST_F(QnnHTPBackendTests, ScatterNDEndToEndNegativeIndexInGraph) {
                   ExpectedEPNodeAssignment::All);
 }
 
+// TSM-style rectangular slice-assignment: PyTorch
+// `out[..., t_lo:t_hi, c_lo:c_hi] = src` lowers (via aten::copy_ ->
+// index_put_) to a ScatterND whose `indices` is the Cartesian product of
+// contiguous ranges — i.e. a slice-assignment, not a real scatter.
+//
+// On rank-5 FP16, the HTP host compiler (QAIRT 2.43.x and 2.45.40) selects
+// the disabled `q::ScatterNd.tcm` kernel and aborts graph_prepare with
+// exit code 15.  ScatterNDOpBuilder detects the rectangular-indices
+// pattern and lowers to Slice + Concat instead, which uses the always-
+// supported elementwise data-movement kernels.
+//
+// The test below WAS the bug repro: without the decomposition it fails
+// during HTP graph_prepare; with it, it compiles and runs to numerical
+// equivalence with CPU EP.
+TEST_F(QnnHTPBackendTests, ScatterNDRectangleSliceAssignmentRank5Fp16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  // (B, T, C, H, W) — TSM video tensor. Touch t in [1..7], c in [0..7].
+  constexpr int64_t kB = 1;
+  constexpr int64_t kT = 8;
+  constexpr int64_t kC = 64;
+  constexpr int64_t kH = 4;
+  constexpr int64_t kW = 4;
+  constexpr int64_t kTSel = 7;   // t in [1, 8)
+  constexpr int64_t kCSel = 8;   // c in [0, 8)
+
+  auto build_model = [=](ModelTestBuilder& builder) {
+    std::vector<float> data(kB * kT * kC * kH * kW);
+    for (size_t i = 0; i < data.size(); ++i) {
+      data[i] = static_cast<float>(i % 17) * 0.01f;
+    }
+    builder.MakeInitializer<float>("data", {kB, kT, kC, kH, kW}, data);
+
+    // Cartesian product: B={0}, T={1..7}, C={0..7}; tuple width K = 3.
+    std::vector<int64_t> indices;
+    indices.reserve(kB * kTSel * kCSel * 3);
+    for (int64_t b = 0; b < kB; ++b) {
+      for (int64_t t = 1; t < 1 + kTSel; ++t) {
+        for (int64_t c = 0; c < kCSel; ++c) {
+          indices.push_back(b);
+          indices.push_back(t);
+          indices.push_back(c);
+        }
+      }
+    }
+    builder.MakeInitializer<int64_t>("indices", {kB, kTSel, kCSel, 3}, indices);
+
+    std::vector<float> updates(kB * kTSel * kCSel * kH * kW);
+    for (size_t i = 0; i < updates.size(); ++i) {
+      updates[i] = 1.0f + static_cast<float>(i % 13) * 0.01f;
+    }
+    builder.MakeInitializer<float>("updates", {kB, kTSel, kCSel, kH, kW}, updates);
+
+    builder.AddNode("scatter", "ScatterND", {"data", "indices", "updates"},
+                    {"scatter_out"}, kOnnxDomain);
+    // Trailing op so scatter_out is non-graph-output — exercises the
+    // NATIVE path of the final concat too.
+    std::vector<float> bias(kB * kT * kC * kH * kW, 0.0f);
+    builder.MakeInitializer<float>("bias", {kB, kT, kC, kH, kW}, bias);
+    builder.AddNode("post_add", "Add", {"scatter_out", "bias"}, {"Y"}, kOnnxDomain);
+    builder.MakeOutput("Y");
+  };
+
+  ProviderOptions provider_options = MakeHtpProviderOptions();
+  // FP16 internal precision is what triggers the disabled-kernel path;
+  // FP32 ScatterND uses a different HTP kernel that has always worked.
+  provider_options["enable_htp_fp16_precision"] = "1";
+
+  RunQnnModelTest(build_model, provider_options, 17,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);  // FP16 rounding noise.
+}
+
 // Verifies the rename avoids collisions when a shared initializer is rewritten.
 TEST_F(QnnHTPBackendTests, ScatterNDSharedNegativeIndicesInitializer) {
   constexpr int64_t kRows = 1;
