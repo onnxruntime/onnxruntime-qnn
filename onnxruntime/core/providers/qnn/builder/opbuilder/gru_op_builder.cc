@@ -132,6 +132,8 @@ Ort::Status GRUOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   }
 
   OrtNodeAttrHelper node_helper(node_unit);
+  RETURN_IF(node_helper.Get("layout", static_cast<int64_t>(0)) != 0,
+            "QNN EP doesn't support layout=1 for GRU (ORT CPU EP cannot provide a reference for accuracy validation).");
   RETURN_IF(node_helper.HasAttr("clip"), "QNN EP doesn't support clip for GRU.");
   const std::vector<std::string> activations = node_helper.Get("activations", std::vector<std::string>{});
   RETURN_IF((activations.size() >= 2 && (activations[0] != "sigmoid" || activations[1] != "tanh")) ||
@@ -208,6 +210,9 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(AddQnnScalar<uint32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
                                          static_cast<uint32_t>(linear_before_reset),
                                          QNN_OP_GRU_PARAM_LINEAR_BEFORE_RESET, param_names));
+  // TODO: Once the QNN CPU backend accuracy issue with time_major=true is resolved, remove the CPU
+  // workaround below and the associated Transpose nodes (X pre-transpose, per-step Y-to-h transpose,
+  // and post-concat transpose), then let CPU use time_major=true uniformly with layout=0.
   // time_major: on CPU, always use false to work around its batch dimension bug with time_major=true.
   // On other backends (HTP), follow the ONNX layout attribute: layout=0 -> true, layout=1 -> false.
   const bool is_cpu_backend = qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::CPU;
@@ -330,7 +335,7 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   // so that per-step slicing produces [batch, 1, input] directly without per-step Reshapes.
   std::string x_source = input_names[0];                               // [seq, batch, input] for HTP, [batch, seq, input] for CPU
   std::vector<uint32_t> x_source_shape = input_tensor_infos[0].shape;  // [seq, batch, input]
-  if (!time_major) {
+  if (is_cpu_backend) {
     std::string x_transposed = utils::UniqueNameGenerator().New(input_names[0], "_transposed_" + direction);
     RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(
         node_unit.Index(), input_names[0], x_transposed,
@@ -410,7 +415,7 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
     // Derive next step's initial_h.
     // QNN CPU's Y_h (out[1]) is unreliable, so on CPU we derive h from Y (out[0]) via Transpose.
     // On HTP (time_major=true), Y_h (out[1]) is already [1, batch, hidden] and can be used directly.
-    if (time_major) {
+    if (!is_cpu_backend) {
       // HTP: use Y_h directly as next step's initial_h
       prev_h_name = yh_name;
     } else {
@@ -454,7 +459,7 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
 
   // For CPU (time_major=false), Transpose [batch, seq, hidden] -> [seq, batch, hidden].
   std::string y_all;
-  if (!time_major) {
+  if (is_cpu_backend) {
     y_all = utils::UniqueNameGenerator().New(node_unit, "_Y_all_" + direction);
     RETURN_IF_ERROR(qnn_model_wrapper.AddTransposeNode(
         node_unit.Index(), y_concat, y_all,
