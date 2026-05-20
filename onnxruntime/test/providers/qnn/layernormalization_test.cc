@@ -239,7 +239,7 @@ TEST_F(QnnHTPBackendTests, LayerNorm_Decomposed_ScaleAndBiasMisaligned) {
 
 // final_tensor_type / final_output_info.{qnn_data_type, quant_param, shape}).
 TEST_F(QnnHTPBackendTests, LayerNorm_Decomposed_ScaleMisaligned_NoBias) {
-  //scale misaligned, no bias -> LN, Mul (final)
+  // scale misaligned, no bias -> LN, Mul (final)
   RunLayerNormQDQTest<uint8_t, uint8_t>(
       TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
       TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.1f, 1.0f, 6)),
@@ -273,18 +273,12 @@ TEST_F(QnnHTPBackendTests, LayerNorm_Decomposed_ScaleMisaligned_BiasAligned) {
       ExpectedEPNodeAssignment::All);
 }
 
-// ----- Non-QDQ (FP32 lowered to FP16) tests on the HTP backend -----------------------
-// QNN HTP requires fp16 to run float models; enable_htp_fp16_precision lowers fp32
-// inputs/weights to fp16 internally. These tests exercise the LayerNorm op-builder paths
-// without QDQ Q/DQ pairs, so intermediate quant params don't enter the picture and the
-// decomposition path is validated purely on shape/dtype handling.
-
-static void RunLayerNormHtpFp16Test(const TestInputDef<float>& input_def,
-                                    const TestInputDef<float>& scale_def,
-                                    const TestInputDef<float>& bias_def,
-                                    const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                    ExpectedEPNodeAssignment expected_ep_assignment,
-                                    float fp32_abs_err = 0.01f) {
+static void RunLayerNormTest(const TestInputDef<float>& input_def,
+                             const TestInputDef<float>& scale_def,
+                             const TestInputDef<float>& bias_def,
+                             const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                             ExpectedEPNodeAssignment expected_ep_assignment,
+                             float fp32_abs_err = 0.01f) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -296,9 +290,9 @@ static void RunLayerNormHtpFp16Test(const TestInputDef<float>& input_def,
   GetTestModelFn model_fn =
       bias_def.GetShape().empty()
           ? BuildOpTestCase<float>("layer_norm_node", "LayerNormalization",
-                                    {input_def, scale_def}, {}, attrs)
+                                   {input_def, scale_def}, {}, attrs)
           : BuildOpTestCase<float, int64_t>("layer_norm_node", "LayerNormalization",
-                                             {input_def, scale_def}, {}, {bias_def}, attrs);
+                                            {input_def, scale_def}, {}, {bias_def}, attrs);
 
   RunQnnModelTest(model_fn,
                   provider_options,
@@ -307,9 +301,8 @@ static void RunLayerNormHtpFp16Test(const TestInputDef<float>& input_def,
                   fp32_abs_err);
 }
 
-// Standard LN: 1D scale/bias on the last axis. Single LN node; no decomposition.
-TEST_F(QnnHTPBackendTests, LayerNorm_FP32_LastAxis_StandardLN) {
-  RunLayerNormHtpFp16Test(
+TEST_F(QnnHTPBackendTests, LayerNorm_fp_standard_test) {
+  RunLayerNormTest(
       TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),
       TestInputDef<float>({3}, true, GetFloatDataInRange(0.5f, 1.5f, 3)),
       TestInputDef<float>({3}, true, GetFloatDataInRange(-0.1f, 0.1f, 3)),
@@ -318,8 +311,8 @@ TEST_F(QnnHTPBackendTests, LayerNorm_FP32_LastAxis_StandardLN) {
 }
 
 // Standard LN with no bias.
-TEST_F(QnnHTPBackendTests, LayerNorm_FP32_LastAxis_NoBias) {
-  RunLayerNormHtpFp16Test(
+TEST_F(QnnHTPBackendTests, LayerNorm_fp_no_bais) {
+  RunLayerNormTest(
       TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),
       TestInputDef<float>({3}, true, GetFloatDataInRange(0.5f, 1.5f, 3)),
       TestInputDef<float>(),  // No bias.
@@ -328,8 +321,8 @@ TEST_F(QnnHTPBackendTests, LayerNorm_FP32_LastAxis_NoBias) {
 }
 
 // Decomposition path: scale + bias both misaligned. Lowers to LN, Mul (intermediate), Add (final).
-TEST_F(QnnHTPBackendTests, LayerNorm_FP32_Decomposed_ScaleAndBiasMisaligned) {
-  RunLayerNormHtpFp16Test(
+TEST_F(QnnHTPBackendTests, LayerNorm_fp_scale_and_bias_misaligned) {
+  RunLayerNormTest(
       TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),
       TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.5f, 1.5f, 6)),
       TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(-0.1f, 0.1f, 6)),
@@ -338,8 +331,8 @@ TEST_F(QnnHTPBackendTests, LayerNorm_FP32_Decomposed_ScaleAndBiasMisaligned) {
 }
 
 // Decomposition path: scale misaligned, no bias. Lowers to LN, Mul (final).
-TEST_F(QnnHTPBackendTests, LayerNorm_FP32_Decomposed_ScaleMisaligned_NoBias) {
-  RunLayerNormHtpFp16Test(
+TEST_F(QnnHTPBackendTests, LayerNorm_fp_scale_misaligned_no_bias) {
+  RunLayerNormTest(
       TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),
       TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.5f, 1.5f, 6)),
       TestInputDef<float>(),  // No bias.
@@ -348,8 +341,8 @@ TEST_F(QnnHTPBackendTests, LayerNorm_FP32_Decomposed_ScaleMisaligned_NoBias) {
 }
 
 // Decomposition path: bias misaligned, scale aligned. Lowers to LN(scale), Add (final).
-TEST_F(QnnHTPBackendTests, LayerNorm_FP32_Decomposed_BiasMisaligned_ScaleAligned) {
-  RunLayerNormHtpFp16Test(
+TEST_F(QnnHTPBackendTests, LayerNorm_fp_bias_misaligned) {
+  RunLayerNormTest(
       TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-1.0f, 1.0f, 6)),
       TestInputDef<float>({3}, true, GetFloatDataInRange(0.5f, 1.5f, 3)),
       TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(-0.1f, 0.1f, 6)),
