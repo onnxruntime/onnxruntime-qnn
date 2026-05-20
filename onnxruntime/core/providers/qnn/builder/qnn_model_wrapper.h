@@ -49,8 +49,6 @@ class QnnModelWrapper {
                   const Ort::Logger& logger,
                   const QNN_INTERFACE_VER_TYPE& qnn_interface,
                   const Qnn_BackendHandle_t& backend_handle,
-                  const QNN_INTERFACE_VER_TYPE& qnn_validator_interface,
-                  const Qnn_BackendHandle_t& backend_validator_handle,
                   const GraphInputOutputInfo& graph_inputs,
                   const GraphInputOutputInfo& graph_outputs,
                   QnnBackendType qnn_backend_type,
@@ -60,18 +58,12 @@ class QnnModelWrapper {
         logger_(logger),
         qnn_interface_(qnn_interface),
         backend_handle_(backend_handle),
-        qnn_validator_interface_(qnn_validator_interface),
-        backend_validator_handle_(backend_validator_handle),
         graph_inputs_(graph_inputs),
         graph_outputs_(graph_outputs),
         qnn_backend_type_(qnn_backend_type),
         model_settings_(model_settings),
         api_ptrs_(ApiPtrs{api_ptrs.ort_api, api_ptrs.ep_api, api_ptrs.model_editor_api}),
         tensor_name_overrides_(tensor_name_overrides) {
-    // Invariant: validator interface and handle must both be set or both be null.
-    // They are populated together by QnnBackendManager::LoadQnnSerializerBackend() (QnnIr flow).
-    assert((backend_validator_handle == nullptr) ==
-           (qnn_validator_interface.backendValidateOpConfig == nullptr));
   }
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(QnnModelWrapper);
 
@@ -432,9 +424,6 @@ class QnnModelWrapper {
   }
 
  private:
-  Ort::Status ValidateQnnNode(QnnOpConfigWrapper& op_config_wrapper,
-                              std::string& error_msg) const;
-
   bool CreateQnnInputOutputTensors(const std::string& qnn_node_name,
                                    const std::vector<std::string>& names,
                                    std::vector<Qnn_Tensor_t>& tensor_wrappers,
@@ -490,8 +479,6 @@ class QnnModelWrapper {
   const Ort::Logger& logger_;
   const QNN_INTERFACE_VER_TYPE& qnn_interface_;
   const Qnn_BackendHandle_t& backend_handle_;
-  const QNN_INTERFACE_VER_TYPE& qnn_validator_interface_;
-  const Qnn_BackendHandle_t& backend_validator_handle_;
   Qnn_GraphHandle_t graph_ = nullptr;
   std::string graph_name_ = "";
   // QNN context that holds the QNN graph referenced by `graph_`
@@ -601,6 +588,21 @@ class BF16ConversionGuard {
   std::vector<std::string> input_names_;   // Store by value, not reference
   std::vector<std::string> output_names_;  // Store by value, not reference
 };
+
+// Adds ElementWiseNeuron operation=HARD_SWISH param to the model wrapper
+// alpha/beta are not accepted by HTP and hence are not explicitly set here
+inline void AddHardSwishNeuronParams(QnnModelWrapper& qnn_model_wrapper,
+                                     size_t node_index,
+                                     const std::string& node_name,
+                                     std::vector<std::string>& param_tensor_names) {
+  Qnn_Scalar_t neuron_operation = QNN_SCALAR_INIT;
+  neuron_operation.dataType = QNN_DATATYPE_UINT_32;
+  neuron_operation.uint32Value = QNN_OP_ELEMENT_WISE_NEURON_OPERATION_HARD_SWISH;
+  QnnParamWrapper operation_param(node_index, node_name,
+                                  QNN_OP_ELEMENT_WISE_NEURON_PARAM_OPERATION, neuron_operation);
+  param_tensor_names.push_back(operation_param.GetParamTensorName());
+  qnn_model_wrapper.AddParamWrapper(std::move(operation_param));
+}
 
 }  // namespace qnn
 }  // namespace onnxruntime
