@@ -335,6 +335,7 @@ Ort::Status QnnBackendManager::LoadBackend() {
                                                                                          &backend_interface_provider)));
   qnn_interface_ = backend_interface_provider->QNN_INTERFACE_VER_NAME;
   backend_id_ = backend_interface_provider->backendId;
+  backend_api_version_ = backend_interface_provider->apiVersion.backendApiVersion;
   SetQnnBackendType(backend_id_);
 
   Qnn_Version_t backend_interface_version = GetQnnInterfaceApiVersion(backend_interface_provider);
@@ -386,6 +387,7 @@ Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
 
   // Set the "intended" backend type so that QNN builders still make the expected QNN API calls.
   backend_id_ = backend_interface_provider->backendId;
+  backend_api_version_ = backend_interface_provider->apiVersion.backendApiVersion;
   SetQnnBackendType(backend_id_);
 
   // Load the serializer backend and set it as the activate backend.
@@ -1826,6 +1828,12 @@ Ort::Status QnnBackendManager::SetupBackend(
   }
   if (status.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "CreateDevice succeed.");
+
+    if (Ort::Status _status = GetPlatformInfo(); !_status.IsOK()) {
+      ORT_CXX_LOG_PTR(logger_ptr_,
+                      ORT_LOGGING_LEVEL_WARNING,
+                      ("Unable to get platform info: " + _status.GetErrorMessage()).c_str());
+    }
   }
 
   if (status.IsOK()) {
