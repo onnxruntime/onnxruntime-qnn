@@ -37,6 +37,7 @@ from ep_build.tasks.build import (
     BuildEpLinuxTask,
     BuildEpWindowsTask,
     GenerateCoverageTask,
+    GenerateDiffCoverageTask,
     QdcTestsTask,
 )
 from ep_build.tasks.docker import MANYLINUX_2_34_AARCH64_TAG, DockerBuildTask
@@ -676,6 +677,20 @@ class TaskLibrary:
     @task
     def create_venv(self, plan: Plan) -> str:
         return plan.add_step(CreateOrtVenvTask(self.__python_executable, self.__venv_path))
+
+    if is_host_linux() and is_host_x86_64():
+
+        @public_task("Build with coverage and generate diff coverage report against main (Linux x86_64)")
+        @depends(["coverage_linux_x86_64"])
+        def diff_coverage_linux_x86_64(self, plan: Plan) -> str:
+            build_dir = REPO_ROOT / "build" / "linux-x86_64"
+            return plan.add_step(
+                GenerateDiffCoverageTask(
+                    "Generating diff coverage report (Linux x86_64)",
+                    self.__venv_path,
+                    build_dir,
+                )
+            )
 
     @task
     def docker_build_manylinux_2_34_aarch64(self, plan: Plan) -> str:

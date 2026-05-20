@@ -197,6 +197,36 @@ QnnQuantParamsWrapper::QnnQuantParamsWrapper(gsl::span<const float> scales,
   }
 }
 
+// Construct a BlockEncoding BQ quantization param.
+QnnQuantParamsWrapper::QnnQuantParamsWrapper(gsl::span<const float> scales,
+                                             gsl::span<const float> offsets,
+                                             const uint32_t bitwidth,
+                                             gsl::span<const uint32_t> block_sizes) {
+  assert(scales.size() > 0);
+  assert(scales.size() == offsets.size());
+  assert(bitwidth > 0);
+  assert(block_sizes.size() > 0);
+
+  params_.encodingDefinition = QNN_DEFINITION_DEFINED;
+  params_.quantizationEncoding = QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK;
+  params_.bwFloatBlockEncoding.bitwidth = bitwidth;
+
+  block_encoding_tensor_rank_ = static_cast<uint32_t>(block_sizes.size());
+  block_encoding_axis_data_ = std::make_unique<uint32_t[]>(block_encoding_tensor_rank_);
+  std::memcpy(block_encoding_axis_data_.get(),
+              block_sizes.data(),
+              static_cast<size_t>(block_encoding_tensor_rank_) * sizeof(uint32_t));
+  params_.bwFloatBlockEncoding.blockSize = block_encoding_axis_data_.get();
+
+  num_blocks_ = static_cast<uint32_t>(scales.size());
+  bw_float_block_encoding_scale_offsets_data_ = std::make_unique<Qnn_FloatScaleOffset_t[]>(num_blocks_);
+  for (size_t idx = 0; idx < num_blocks_; ++idx) {
+    bw_float_block_encoding_scale_offsets_data_[idx].offset = offsets[idx];
+    bw_float_block_encoding_scale_offsets_data_[idx].scale = scales[idx];
+  }
+  params_.bwFloatBlockEncoding.floatScaleOffset = bw_float_block_encoding_scale_offsets_data_.get();
+}
+
 // Get a copy of scales. Works for both per-tensor and per-channel.
 Ort::Status QnnQuantParamsWrapper::GetScales(/*out*/ std::vector<float>& scales) const {
   RETURN_IF_NOT(params_.encodingDefinition == QNN_DEFINITION_DEFINED, "Unquantized qparams does not have scales");
@@ -383,6 +413,28 @@ Ort::Status QnnQuantParamsWrapper::Init(const Qnn_QuantizeParams_t& params, cons
         block_encoding_scale_offsets_data_[i].offset = params.blockEncoding.scaleOffset[i].offset;
       }
       params_.blockEncoding.scaleOffset = block_encoding_scale_offsets_data_.get();
+
+      break;
+    }
+    case QNN_QUANTIZATION_ENCODING_BW_FLOAT_BLOCK: {
+      assert(num_scaleoffsets && "Can't create Block encoding object with zero ScaleOffsets");
+      params_.encodingDefinition = params.encodingDefinition;
+      params_.quantizationEncoding = params.quantizationEncoding;
+      params_.bwFloatBlockEncoding.bitwidth = params.bwFloatBlockEncoding.bitwidth;
+
+      block_encoding_tensor_rank_ = static_cast<uint32_t>(tensor_rank);
+      block_encoding_axis_data_ = std::make_unique<uint32_t[]>(block_encoding_tensor_rank_);
+      std::memcpy(block_encoding_axis_data_.get(),
+                  params.bwFloatBlockEncoding.blockSize,
+                  static_cast<size_t>(block_encoding_tensor_rank_) * sizeof(uint32_t));
+      params_.bwFloatBlockEncoding.blockSize = block_encoding_axis_data_.get();
+
+      bw_float_block_encoding_scale_offsets_data_ = std::make_unique<Qnn_FloatScaleOffset_t[]>(num_scaleoffsets);
+      for (size_t i = 0; i < num_scaleoffsets; ++i) {
+        bw_float_block_encoding_scale_offsets_data_[i].scale = params.bwFloatBlockEncoding.floatScaleOffset[i].scale;
+        bw_float_block_encoding_scale_offsets_data_[i].offset = params.bwFloatBlockEncoding.floatScaleOffset[i].offset;
+      }
+      params_.bwFloatBlockEncoding.floatScaleOffset = bw_float_block_encoding_scale_offsets_data_.get();
 
       break;
     }

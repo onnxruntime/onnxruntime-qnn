@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <cmath>
 #include <vector>
 #include <string>
 #include <type_traits>
@@ -58,6 +59,73 @@ GetQDQTestCaseFn BuildQDQReshapeTestCase(const std::vector<int64_t>& input_shape
 
 std::vector<std::string> GetNodeOpTypesInTopologicalOrder(const Graph& graph, bool include_domain = false);
 
+// Below utility functions are copied from ORT Core with few simpliciations.
+// Refer to onnxruntime/core/mlas/lib/q4_dq.cpp for original implementations.
+
+template <int qbits, bool signed_quant>
+struct BitsTraits {
+  static_assert(qbits <= 8, "Only BitsTraits are for small number of bits!");
+
+  static constexpr int kBits = qbits;
+  static constexpr int kMax = signed_quant ? (1 << (qbits - 1)) - 1 : (1 << qbits) - 1;
+  static constexpr int kMid = signed_quant ? 0 : (1 << (qbits - 1));
+  static constexpr int kMin = signed_quant ? -(1 << (qbits - 1)) : 0;
+  static constexpr float kMaxFp = static_cast<float>(kMax);
+  static constexpr float kMinFp = static_cast<float>(kMin);
+  static constexpr float fullRange = kMaxFp - kMinFp;
+  static constexpr float halfRange = static_cast<float>(kMid - kMin);
+
+  // number of qbit elements to pack into whole bytes
+  static constexpr int kPackSize = (qbits == 8) ? 1 : ((qbits == 4) ? 2 : ((qbits == 2) ? 4 : 0));
+  static_assert(kPackSize != 0, "Packing to whole bytes not supported for this qbits!");
+};
+
+/**
+ * @brief Rectify min/max from a set of weights, and convert to scale and zero point
+ *        for quantization.
+ * @tparam ScaleT        type of scale, usually floating point of various bits
+ * @tparam qbits         number of int bits used for zero point value
+ * @tparam signed_quant  output quantized type is signed
+ * @param[in]   min
+ * @param[in]   max
+ * @param[out]  scale
+ * @param[out]  zp
+ */
+template <typename ScaleT, int qbits, bool signed_quant>
+void range2scalezp(float min, float max, ScaleT& scale, uint8_t& zp) {
+  min = std::min(min, 0.0f);
+  max = std::max(max, 0.0f);
+
+  float scale_f = (max - min) / BitsTraits<qbits, signed_quant>::fullRange;
+
+  float zero_point_fp = min;
+  if (scale_f != 0.0f) {
+    zero_point_fp = BitsTraits<qbits, signed_quant>::kMinFp - min / scale_f;
+  }
+
+  if (zero_point_fp < BitsTraits<qbits, signed_quant>::kMinFp) {
+    zp = static_cast<uint8_t>(BitsTraits<qbits, signed_quant>::kMin);
+  } else if (zero_point_fp > BitsTraits<qbits, signed_quant>::kMaxFp) {
+    zp = static_cast<uint8_t>(BitsTraits<qbits, signed_quant>::kMax);
+  } else {
+    zp = (uint8_t)std::roundf(zero_point_fp);
+  }
+  scale = ScaleT(scale_f);
+}
+
+/**
+ * @brief Rectify min/max from a set of symmetric weights, and convert
+ *        to scale for quantization.
+ */
+template <typename ScaleT, int qbits, bool signed_quant>
+void range2scale(float min, float max, ScaleT& scale) {
+  max = std::fabs(max) > std::fabs(min) ? max : min;
+
+  // Original implementation allows negative scale to better fit larger half FP space. However, since HTP backend does
+  // not support negative scale, simplify to common formulation.
+  scale = ScaleT(std::fabs(max) * 2 / BitsTraits<qbits, signed_quant>::fullRange);
+};
+
 /**
  * @brief Blockwise quantization for test purposes. This is a simplified version of MlasQuantizeBlockwise
  *        that doesn't require internal MLAS APIs.
@@ -75,24 +143,25 @@ std::vector<std::string> GetNodeOpTypesInTopologicalOrder(const Graph& graph, bo
  * @param leading_dimension Leading dimension of source matrix
  */
 template <typename T, int qbits>
-inline void QuantizeBlockwise(
-    uint8_t* dst,
-    T* scales,
-    uint8_t* zero_points,
-    const T* src,
-    int block_size,
-    bool columnwise,
-    int rows,
-    int columns,
-    int leading_dimension) {
-  static_assert(qbits == 4, "Only 4-bit quantization is supported");
+inline void QuantizeBlockwise(uint8_t* dst,
+                              T* scales,
+                              uint8_t* zero_points,
+                              const T* src,
+                              int block_size,
+                              bool columnwise,
+                              int rows,
+                              int columns,
+                              int leading_dimension) {
+  static_assert(qbits == 2 || qbits == 4 || qbits == 8, "Only 2-bit, 4-bit, or 8-bit quantization is supported");
   static_assert(std::is_same<T, float>::value, "Only float type is supported");
 
   if (!columnwise) {
     throw std::runtime_error("Only column-wise quantization is supported in test utilities");
   }
 
+  constexpr int kPackSize = BitsTraits<qbits, false>::kPackSize;
   const int k_blocks = (rows + block_size - 1) / block_size;
+  const int blob_size = (block_size + kPackSize - 1) / kPackSize;
   const bool symmetric = (zero_points == nullptr);
 
   // Process each column
@@ -117,27 +186,12 @@ inline void QuantizeBlockwise(
 
       // Calculate scale and zero point
       const int scale_idx = n * k_blocks + k_blk;
-      uint8_t zp = 8;  // Default zero point for symmetric
+      uint8_t zp = BitsTraits<qbits, false>::kMid;  // Default zero point for symmetric
 
       if (symmetric) {
-        // Symmetric quantization: map to [-8, 7]
-        // Negative scale follows MLAS convention: q in [-8,7] maps to [abs_max, -(7/8)*abs_max]
-        const float abs_max = std::max(std::abs(min_val), std::abs(max_val));
-        scales[scale_idx] = static_cast<T>(-abs_max / 8.0f);
+        range2scale<T, qbits, false>(min_val, max_val, scales[scale_idx]);
       } else {
-        // Asymmetric quantization: map to [0, 15]
-        min_val = std::min(min_val, 0.0f);
-        max_val = std::max(max_val, 0.0f);
-
-        const float scale = (max_val - min_val) / 15.0f;
-        scales[scale_idx] = static_cast<T>(scale);
-
-        if (scale != 0.0f) {
-          const float zp_fp = -min_val / scale;
-          zp = static_cast<uint8_t>(std::clamp(std::round(zp_fp), 0.0f, 15.0f));
-        } else {
-          zp = 0;
-        }
+        range2scalezp<T, qbits, false>(min_val, max_val, scales[scale_idx], zp);
       }
 
       // Quantize and pack the block
@@ -145,52 +199,58 @@ inline void QuantizeBlockwise(
       const float reciprocal_scale = (scale != 0.0f) ? (1.0f / scale) : 0.0f;
 
       // Calculate destination offset (column major, packed)
-      const int blob_size = (block_size + 1) / 2;  // 2 values per byte for 4-bit
       uint8_t* dst_block = dst + n * k_blocks * blob_size + k_blk * blob_size;
 
       // Quantize values in pairs and pack
-      for (int i = 0; i < block_len; i += 2) {
-        const int src_idx0 = (row_start + i) * leading_dimension;
-        const float val0 = static_cast<float>(src_col[src_idx0]);
+      for (int i = 0; i < block_len; i += kPackSize) {
+        uint8_t q_vals[kPackSize];
+        std::fill_n(q_vals, kPackSize, 0);
 
-        int8_t q0;
-        if (symmetric) {
-          const float q_fp = std::round(val0 * reciprocal_scale);
-          q0 = static_cast<int8_t>(std::clamp(q_fp, -8.0f, 7.0f));
-          q0 = q0 + 8;  // Convert to [0, 15] for packing
+        for (int pack_idx = 0; pack_idx < kPackSize && i + pack_idx < block_len; ++pack_idx) {
+          const int src_idx = (row_start + i + pack_idx) * leading_dimension;
+          const float val = static_cast<float>(src_col[src_idx]);
+          q_vals[pack_idx] = (uint8_t)std::clamp(std::roundf(val * reciprocal_scale + zp),
+                                                 0.0f,
+                                                 BitsTraits<qbits, false>::kMaxFp);
+        }
+
+        // Pack {kPackSize} {qbits}-bit values into one byte
+        if constexpr (qbits == 8) {
+          dst_block[i] = q_vals[0];
+        } else if constexpr (qbits == 4) {
+          dst_block[i / 2] = (q_vals[0] & 0xf) | (q_vals[1] << 4);
+        } else if constexpr (qbits == 2) {
+          dst_block[i / 4] = (q_vals[0] & 0x3) | (q_vals[1] << 2) | (q_vals[2] << 4) | (q_vals[3] << 6);
         } else {
-          const float q_fp = std::round(val0 * reciprocal_scale + zp);
-          q0 = static_cast<int8_t>(std::clamp(q_fp, 0.0f, 15.0f));
+          throw std::runtime_error("Unsupported qbits");
         }
-
-        int8_t q1 = symmetric ? 8 : zp;  // Default for padding
-        if (i + 1 < block_len) {
-          const int src_idx1 = (row_start + i + 1) * leading_dimension;
-          const float val1 = static_cast<float>(src_col[src_idx1]);
-
-          if (symmetric) {
-            const float q_fp = std::round(val1 * reciprocal_scale);
-            q1 = static_cast<int8_t>(std::clamp(q_fp, -8.0f, 7.0f));
-            q1 = q1 + 8;  // Convert to [0, 15] for packing
-          } else {
-            const float q_fp = std::round(val1 * reciprocal_scale + zp);
-            q1 = static_cast<int8_t>(std::clamp(q_fp, 0.0f, 15.0f));
-          }
-        }
-
-        // Pack two 4-bit values into one byte (low nibble, high nibble)
-        dst_block[i / 2] = (static_cast<uint8_t>(q0) & 0x0F) | ((static_cast<uint8_t>(q1) & 0x0F) << 4);
       }
 
       // Store zero point if asymmetric
       if (!symmetric) {
-        const int zp_blob_size = (k_blocks + 1) / 2;
+        const int zp_blob_size = (k_blocks + kPackSize - 1) / kPackSize;
         uint8_t* zp_block = zero_points + n * zp_blob_size;
 
-        if (k_blk % 2 == 0) {
-          zp_block[k_blk / 2] = (zp & 0x0F);
+        if constexpr (qbits == 8) {
+          zp_block[k_blk] = zp;
+        } else if constexpr (qbits == 4) {
+          if (k_blk % 2 == 0) {
+            zp_block[k_blk / 2] = (zp & 0xf);
+          } else {
+            zp_block[k_blk / 2] |= (zp << 4);
+          }
+        } else if constexpr (qbits == 2) {
+          if (k_blk % 4 == 0) {
+            zp_block[k_blk / 4] = (zp & 0x3);
+          } else if (k_blk % 4 == 1) {
+            zp_block[k_blk / 4] |= (zp << 2);
+          } else if (k_blk % 4 == 2) {
+            zp_block[k_blk / 4] |= (zp << 4);
+          } else {
+            zp_block[k_blk / 4] |= (zp << 6);
+          }
         } else {
-          zp_block[k_blk / 2] |= ((zp & 0x0F) << 4);
+          throw std::runtime_error("Unsupported qbits");
         }
       }
     }
@@ -213,23 +273,24 @@ inline void QuantizeBlockwise(
  * @param columns       Number of columns
  */
 template <typename T, int qbits>
-inline void DequantizeBlockwise(
-    T* dst,
-    const uint8_t* src,
-    const T* scales,
-    const uint8_t* zero_points,
-    int block_size,
-    bool columnwise,
-    int rows,
-    int columns) {
-  static_assert(qbits == 4, "Only 4-bit quantization is supported");
+inline void DequantizeBlockwise(T* dst,
+                                const uint8_t* src,
+                                const T* scales,
+                                const uint8_t* zero_points,
+                                int block_size,
+                                bool columnwise,
+                                int rows,
+                                int columns) {
+  static_assert(qbits == 2 || qbits == 4 || qbits == 8, "Only 2-bit, 4-bit, or 8-bit quantization is supported");
   static_assert(std::is_same<T, float>::value, "Only float type is supported");
 
   if (!columnwise) {
     throw std::runtime_error("Only column-wise dequantization is supported in test utilities");
   }
 
+  constexpr int kPackSize = BitsTraits<qbits, false>::kPackSize;
   const int k_blocks = (rows + block_size - 1) / block_size;
+  const int blob_size = (block_size + kPackSize - 1) / kPackSize;
   const bool symmetric = (zero_points == nullptr);
 
   // Process each column
@@ -246,42 +307,65 @@ inline void DequantizeBlockwise(
       const int scale_idx = n * k_blocks + k_blk;
       const float scale = static_cast<float>(scales[scale_idx]);
 
-      uint8_t zp = 8;  // Default zero point for symmetric
+      uint8_t zp = BitsTraits<qbits, false>::kMid;  // Default zero point for symmetric
       if (!symmetric) {
-        const int zp_blob_size = (k_blocks + 1) / 2;
+        const int zp_blob_size = (k_blocks + kPackSize - 1) / kPackSize;
         const uint8_t* zp_block = zero_points + n * zp_blob_size;
 
-        if (k_blk % 2 == 0) {
-          zp = zp_block[k_blk / 2] & 0x0F;
+        if constexpr (qbits == 8) {
+          zp = zp_block[k_blk];
+        } else if constexpr (qbits == 4) {
+          if (k_blk % 2 == 0) {
+            zp = zp_block[k_blk / 2] & 0xf;
+          } else {
+            zp = (zp_block[k_blk / 2] >> 4) & 0xf;
+          }
+        } else if constexpr (qbits == 2) {
+          if (k_blk % 4 == 0) {
+            zp = zp_block[k_blk / 4] & 0x3;
+          } else if (k_blk % 4 == 1) {
+            zp = (zp_block[k_blk / 4] >> 2) & 0x3;
+          } else if (k_blk % 4 == 2) {
+            zp = (zp_block[k_blk / 4] >> 4) & 0x3;
+          } else {
+            zp = (zp_block[k_blk / 4] >> 6) & 0x3;
+          }
         } else {
-          zp = (zp_block[k_blk / 2] >> 4) & 0x0F;
+          throw std::runtime_error("Unsupported qbits");
         }
       }
 
       // Calculate source offset (column major, packed)
-      const int blob_size = (block_size + 1) / 2;  // 2 values per byte for 4-bit
       const uint8_t* src_block = src + n * k_blocks * blob_size + k_blk * blob_size;
 
       // Dequantize values
       for (int i = 0; i < block_len; i++) {
-        const uint8_t packed = src_block[i / 2];
+        const uint8_t packed = src_block[i / kPackSize];
         uint8_t q_val;
 
-        if (i % 2 == 0) {
-          q_val = packed & 0x0F;  // Low nibble
+        if constexpr (qbits == 8) {
+          q_val = packed;
+        } else if constexpr (qbits == 4) {
+          if (i % 2 == 0) {
+            q_val = packed & 0xf;
+          } else {
+            q_val = (packed >> 4) & 0xf;
+          }
+        } else if constexpr (qbits == 2) {
+          if (i % 4 == 0) {
+            q_val = packed & 0x3;
+          } else if (i % 4 == 1) {
+            q_val = (packed >> 2) & 0x3;
+          } else if (i % 4 == 2) {
+            q_val = (packed >> 4) & 0x3;
+          } else {
+            q_val = (packed >> 6) & 0x3;
+          }
         } else {
-          q_val = (packed >> 4) & 0x0F;  // High nibble
+          throw std::runtime_error("Unsupported qbits");
         }
 
-        float dequant_val;
-        if (symmetric) {
-          // Convert from [0, 15] back to [-8, 7]
-          const int8_t signed_val = static_cast<int8_t>(q_val) - 8;
-          dequant_val = signed_val * scale;
-        } else {
-          dequant_val = (static_cast<float>(q_val) - zp) * scale;
-        }
-
+        float dequant_val = (q_val - zp) * scale;
         dst_col[row_start + i] = static_cast<T>(dequant_val);
       }
     }

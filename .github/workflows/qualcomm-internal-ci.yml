@@ -6,6 +6,7 @@ name: Qualcomm Internal PR Workflow
 permissions:
   contents: read
   checks: write
+  pull-requests: write
 
 on:
   push:
@@ -31,3 +32,8 @@ jobs:
     secrets: inherit
     with:
       do_all: true
+
+  coverage:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/qualcomm-internal-coverage.yml
+    secrets: inherit
