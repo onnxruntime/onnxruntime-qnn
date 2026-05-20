@@ -179,9 +179,6 @@ Ort::Status LayerNormalizationOpBuilder::ProcessAttributesAndOutputs(QnnModelWra
   // outer Mul/Add that broadcasts across the batch), QNN can't consume them as LN scale/B.
   // Decide which side(s) to externalize:
   //   - scale misaligned -> externalize scale; bias must also be externalized whenever it exists,
-  //     because LN computes (norm*scale + bias). Pulling scale out as a trailing Mul would turn a
-  //     legal-shape bias inside LN into bias*scale_external, which both changes the math and
-  //     re-introduces the broadcast problem. So scale-out forces bias-out.
   //   - scale legal, bias misaligned -> keep LN(scale), externalize only the Add.
   const auto& inputs = node_unit.Inputs();
   const bool has_bias_input = inputs.size() > 2 && inputs[2].Exists();
@@ -237,10 +234,6 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
                                                                   bool do_op_validation,
                                                                   const Ort::Logger& logger) const {
   ORT_UNUSED_PARAMETER(logger);
-  assert(externalize_scale || externalize_bias);
-  // externalize_bias implies a trailing Add fed by input_names[2], so the user must have provided
-  // a bias input.
-  assert(!externalize_bias || input_names.size() > 2);
 
   const auto& outputs = node_unit.Outputs();
   const std::string& final_output_name = outputs[0].name;
@@ -250,7 +243,10 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
   TensorInfo final_output_info{};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(outputs[0], final_output_info));
 
-  // Quant params for the LN intermediate (and the Mul-before-Add intermediate, when present).
+  QnnQuantParamsWrapper ln_intermediate_qp = final_output_info.quant_param.Copy();
+  QnnQuantParamsWrapper mul_intermediate_qp = final_output_info.quant_param.Copy();
+
+  // Quant params (when exists) for the LN intermediate (and the Mul-before-Add intermediate, when present).
   // The LN op produces normalized values bounded by sqrt(N-1) (where N is the number of elements
   // along the normalized axes), times the user scale if scale stays inside LN. Reusing
   // final_output_info.quant_param here clips whenever the LN-stage range is wider than the final
@@ -259,15 +255,15 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
   // Derive symmetric ranges per-stage instead, sized to the theoretical bound:
   //   ln_out_range    = sqrt(N-1) * (externalize_scale ? 1 : max|user_scale|)
   //   mul_out_range   = sqrt(N-1) * max|user_scale|       (only relevant when both are externalized)
-  size_t norm_count = 1;
-  for (size_t i = ln_axis; i < x_shape.size(); ++i) {
-    norm_count *= static_cast<size_t>(x_shape[i]);
-  }
-  const float ln_max_abs_normalized =
-      std::sqrt(std::max(static_cast<float>(norm_count) - 1.0f, 1.0f));
+  if (final_output_info.quant_param.IsPerTensor(/*include_bw*/ true)) {
+    size_t norm_count = 1;
+    for (size_t i = ln_axis; i < x_shape.size(); ++i) {
+      norm_count *= static_cast<size_t>(x_shape[i]);
+    }
+    const float ln_max_abs_normalized =
+        std::sqrt(std::max(static_cast<float>(norm_count) - 1.0f, 1.0f));
 
-  float user_scale_max_abs = 1.0f;
-  {
+    float user_scale_max_abs = 1.0f;
     TensorInfo scale_info_for_range{};
     RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[1], scale_info_for_range));
     if (scale_info_for_range.quant_param.IsPerTensor(/*include_bw*/ true)) {
@@ -280,31 +276,25 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
       const double s_max = utils::Dequantize(s_offset, s_scale, s_qmax);
       user_scale_max_abs = static_cast<float>(std::max(std::abs(s_min), std::abs(s_max)));
     }
-  }
 
-  auto compute_intermediate_qp = [&](float range_abs, QnnQuantParamsWrapper& out_qp) -> Ort::Status {
-    const float k = std::max(range_abs, 1e-4f);
-    float interm_scale = 0.0f;
-    int32_t interm_offset = 0;
-    RETURN_IF_ERROR(utils::GetQuantParams(-k, k, x_qnn_data_type, interm_scale, interm_offset,
-                                          /*symmetric*/ false));
-    out_qp = QnnQuantParamsWrapper(interm_scale, interm_offset);
-    return Ort::Status();
-  };
+    auto compute_intermediate_qp = [&](float range_abs, QnnQuantParamsWrapper& out_qp) -> Ort::Status {
+      const float k = std::max(range_abs, 1e-4f);
+      float interm_scale = 0.0f;
+      int32_t interm_offset = 0;
+      RETURN_IF_ERROR(utils::GetQuantParams(-k, k, x_qnn_data_type, interm_scale, interm_offset,
+                                            /*symmetric*/ false));
+      out_qp = QnnQuantParamsWrapper(interm_scale, interm_offset);
+      return Ort::Status();
+    };
 
-  QnnQuantParamsWrapper ln_intermediate_qp = final_output_info.quant_param.Copy();
-  QnnQuantParamsWrapper mul_intermediate_qp = final_output_info.quant_param.Copy();
-  if (final_output_info.quant_param.IsPerTensor(/*include_bw*/ true)) {
     const float ln_out_range_abs = externalize_scale
                                        ? ln_max_abs_normalized
                                        : ln_max_abs_normalized * user_scale_max_abs;
     const float mul_out_range_abs = ln_max_abs_normalized * user_scale_max_abs;
     RETURN_IF_ERROR(compute_intermediate_qp(ln_out_range_abs, ln_intermediate_qp));
     RETURN_IF_ERROR(compute_intermediate_qp(mul_out_range_abs, mul_intermediate_qp));
-  }
+  }  // End of re-quantize LN quantparam
 
-  // The LN node's scale input: either the user's (when scale stays inside) or a constant 1.0
-  // tensor of shape X.shape[axis:] that we synthesize here.
   std::string ln_scale_name;
   if (!externalize_scale) {
     ln_scale_name = input_names[1];
@@ -312,8 +302,8 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
     // Match the synthesized ones tensor to the user-provided scale's dtype + quant params so the
     // LN op sees the type it expects in slot 1. Encoding 1.0 in the user's quant scheme is what
     // makes this an identity scale at runtime.
-    TensorInfo user_scale_info{};
-    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[1], user_scale_info));
+    TensorInfo scale_info{};
+    RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Inputs()[1], scale_info));
 
     std::vector<uint32_t> norm_shape(x_shape.begin() + ln_axis, x_shape.end());
     size_t num_elems = 1;
@@ -321,15 +311,15 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
       num_elems *= static_cast<size_t>(d);
     }
 
-    const Qnn_DataType_t scale_dtype = user_scale_info.qnn_data_type;
+    const Qnn_DataType_t scale_dtype = scale_info.qnn_data_type;
     std::vector<uint8_t> const_buf;
 
-    if (user_scale_info.quant_param.IsQuantized()) {
+    if (scale_info.quant_param.IsQuantized()) {
       // Per-tensor or per-channel quantized: quantize 1.0 using the user scale's params and fill.
-      RETURN_IF_NOT(user_scale_info.quant_param.IsPerTensor(/*include_bw*/ true),
+      RETURN_IF_NOT(scale_info.quant_param.IsPerTensor(/*include_bw*/ true),
                     "LayerNorm scale decomposition: per-channel quantized scale is not supported.");
-      const float quant_scale = user_scale_info.quant_param.Get().scaleOffsetEncoding.scale;
-      const int32_t quant_offset = user_scale_info.quant_param.Get().scaleOffsetEncoding.offset;
+      const float quant_scale = scale_info.quant_param.Get().scaleOffsetEncoding.scale;
+      const int32_t quant_offset = scale_info.quant_param.Get().scaleOffsetEncoding.offset;
       int quant_one = 0;
       RETURN_IF_ERROR(utils::Quantize(1.0, quant_scale, quant_offset, scale_dtype, quant_one));
       switch (scale_dtype) {
@@ -385,7 +375,7 @@ Ort::Status LayerNormalizationOpBuilder::BuildDecomposedLayerNorm(QnnModelWrappe
     QnnTensorWrapper scale_one_tensor(ln_scale_name,
                                       QNN_TENSOR_TYPE_STATIC,
                                       scale_dtype,
-                                      user_scale_info.quant_param.Copy(),
+                                      scale_info.quant_param.Copy(),
                                       std::move(norm_shape),
                                       std::move(const_buf));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(scale_one_tensor)),
