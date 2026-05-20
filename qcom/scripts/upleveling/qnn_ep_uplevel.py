@@ -314,7 +314,9 @@ class ArtifactUpleveler(ABC):
         if not api_key:
             raise RuntimeError("JFROG_API_KEY environment variable is required when --sign_artifact true")
 
-        version_url = self.config_manager.get_repository_url(_SIGNED_LIBS_INDEX, self.args.product_name, self._signed_libs_version)
+        version_url = self.config_manager.get_repository_url(
+            _SIGNED_LIBS_INDEX, self.args.product_name, self._signed_libs_version
+        )
         zip_filename = f"{self.artifact_format}.zip"
         url = f"{version_url}/signed_libs/{zip_filename}"
         target_path = os.path.join(target_dir, zip_filename)
