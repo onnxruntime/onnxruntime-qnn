@@ -355,22 +355,31 @@ QnnSerializerConfig* QnnBackendManager::GetQnnSerializerConfig() {
 
 // Loads the intended backend (e.g., HTP, CPU, etc) to get its type, and then
 // sets QnnSaver or QnnIr as the active backend. QNN op builders will still see the intended backend
-// (e.g., HTP) as the backend type to ensure they emit the expected QNN API calls. When using QnnIr,
-// the intended backend's interface is also retained so that calls to QnnBackend_validateOpConfig
-// are routed to it, rather than the serializer backend.
-// TODO: Route QnnBackend_validateOpConfig to the intended backend for QnnSaver as well.
+// (e.g., HTP) as the backend type to ensure they emit the expected QNN API calls. Note, however, that
+// calls to QnnBackend_validateOpConfig will be to the saver backend, not the "intended" one.
 //
-// QnnSaver and QnnIr are "debugging" backends that serialize all QNN API calls (and weights) into
+// QnnSaver and QnnIr are "debugging" backends that serializes all QNN API calls (and weights) into
 // local files: Saver dumps to C++ sources and Ir to .dlc archives.
 // This information can be used to debug issues by replaying QNN API calls with another backend.
 Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
-  // Load the intended backend (e.g., HTP, CPU) to get its type and validator interface.
-  // The library handle is stored in validator_backend_lib_handle_ and kept alive for the
-  // lifetime of this object so that backendValidateOpConfig remains callable.
+  void* backend_lib_handle = nullptr;
+
+  // Helper that unloads the intended backend library handle when the `unload_backend_lib` variable
+  // goes out of scope. Similar to `defer` in other languages.
+  auto unload_backend_lib = gsl::finally([&] {
+    if (backend_lib_handle != nullptr) {
+      auto result = UnloadLib(backend_lib_handle);
+      if (!result.IsOK()) {
+        ORT_CXX_API_THROW("Failed to unload backend library.", ORT_EP_FAIL);
+      }
+    }
+  });
+
+  // Load the intended backend (e.g., HTP, CPU) to ensure it is valid and to get its type.
   QnnInterface_t* backend_interface_provider{nullptr};
   RETURN_IF_ERROR((GetQnnInterfaceProvider<QnnInterfaceGetProvidersFn_t, QnnInterface_t>(backend_path_.c_str(),
                                                                                          "QnnInterface_getProviders",
-                                                                                         &validator_backend_lib_handle_,
+                                                                                         &backend_lib_handle,
                                                                                          {QNN_API_VERSION_MAJOR,
                                                                                           QNN_API_VERSION_MINOR,
                                                                                           QNN_API_VERSION_PATCH},
@@ -380,9 +389,6 @@ Ort::Status QnnBackendManager::LoadQnnSerializerBackend() {
   backend_id_ = backend_interface_provider->backendId;
   backend_api_version_ = backend_interface_provider->apiVersion.backendApiVersion;
   SetQnnBackendType(backend_id_);
-
-  // Store the validator interface (e.g., HTP) for use in backendValidateOpConfig calls.
-  qnn_validator_interface_ = backend_interface_provider->QNN_INTERFACE_VER_NAME;
 
   // Load the serializer backend and set it as the activate backend.
   QnnInterface_t* serializer_interface_provider{nullptr};
@@ -501,18 +507,16 @@ void QnnLogging(const char* format,
   ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(), ORT_LOGGING_LEVEL_VERBOSE, stream.str().c_str());
 }
 
-Ort::Status QnnBackendManager::InitializeQnnLogCommon(const QNN_INTERFACE_VER_TYPE& interface,
-                                                      Qnn_LogHandle_t& log_handle,
-                                                      const std::string& backend_label) {
+Ort::Status QnnBackendManager::InitializeQnnLog() {
+  // Set Qnn log level align with Ort log level
   auto ort_log_level = logger_ptr_->GetLoggingSeverityLevel();
   QnnLog_Level_t qnn_log_level = MapOrtSeverityToQNNLogLevel(ort_log_level);
-  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE,
-                  ("Set Qnn log level for " + backend_label + ": " + std::to_string(qnn_log_level)).c_str());
+  ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, ("Set Qnn log level: " + std::to_string(qnn_log_level)).c_str());
 
-  // NOTE: Even if logCreate() fails and QNN does not return a valid log_handle, QNN may still
+  // NOTE: Even if logCreate() fails and QNN does not return a valid log_handle_, QNN may still
   // call the QnnLogging() callback. So, we have to make sure that QnnLogging() can handle calls
   // in which ORT logging is not available.
-  Qnn_ErrorHandle_t result = interface.logCreate(QnnLogging, qnn_log_level, &log_handle);
+  Qnn_ErrorHandle_t result = qnn_interface_.logCreate(QnnLogging, qnn_log_level, &log_handle_);
 
   if (result != QNN_SUCCESS) {
     switch (result) {
@@ -529,25 +533,16 @@ Ort::Status QnnBackendManager::InitializeQnnLogCommon(const QNN_INTERFACE_VER_TY
         ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Initialization of logging failed in the QNN backend.");
         break;
       default:
-        ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING,
+        ORT_CXX_LOG_PTR(logger_ptr_,
+                        ORT_LOGGING_LEVEL_WARNING,
                         "Unknown error occurred while initializing logging in the QNN backend.");
         break;
     }
   }
 
   RETURN_IF(QNN_BACKEND_NO_ERROR != result,
-            ("Failed to initialize logging in the " + backend_label + ". Error: " +
-             QnnErrorHandleToString(result))
-                .c_str());
+            ("Failed to initialize logging in the QNN backend. Error: " + QnnErrorHandleToString(result)).c_str());
   return Ort::Status();
-}
-
-Ort::Status QnnBackendManager::InitializeQnnLog() {
-  return InitializeQnnLogCommon(qnn_interface_, log_handle_, "backend");
-}
-
-Ort::Status QnnBackendManager::InitializeQnnValidatorLog() {
-  return InitializeQnnLogCommon(qnn_validator_interface_, validator_log_handle_, "validator");
 }
 
 QnnLog_Level_t QnnBackendManager::MapOrtSeverityToQNNLogLevel(OrtLoggingLevel ort_log_level) {
@@ -574,25 +569,6 @@ QnnLog_Level_t QnnBackendManager::MapOrtSeverityToQNNLogLevel(OrtLoggingLevel or
   }
 }
 
-Ort::Status QnnBackendManager::SetQnnLogLevelCommon(const QNN_INTERFACE_VER_TYPE& interface,
-                                                    Qnn_LogHandle_t log_handle,
-                                                    QnnLog_Level_t qnn_log_level,
-                                                    const std::string& label) {
-  Qnn_ErrorHandle_t result = interface.logSetLogLevel(log_handle, qnn_log_level);
-  if (QNN_SUCCESS != result) {
-    if (result == QNN_LOG_ERROR_INVALID_ARGUMENT) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR,
-                      ("Invalid log level argument for QnnLog_setLogLevel (" + label + ").").c_str());
-    } else if (result == QNN_LOG_ERROR_INVALID_HANDLE) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR,
-                      ("Invalid log handle for QnnLog_setLogLevel (" + label + ").").c_str());
-    }
-  }
-  RETURN_IF(QNN_BACKEND_NO_ERROR != result,
-            ("Failed to set log level in Qnn backend (" + label + "). Error: " + QnnErrorHandleToString(result)).c_str());
-  return Ort::Status();
-}
-
 Ort::Status QnnBackendManager::ResetQnnLogLevel(std::optional<OrtLoggingLevel> ort_log_level) {
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
   if (!backend_setup_completed_) {
@@ -606,81 +582,46 @@ Ort::Status QnnBackendManager::ResetQnnLogLevel(std::optional<OrtLoggingLevel> o
 
   ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, ("Updating Qnn log level to: " + std::to_string(qnn_log_level)).c_str());
 
-  RETURN_IF_ERROR(SetQnnLogLevelCommon(qnn_interface_, log_handle_, qnn_log_level, "main"));
-
-  // Also update the validator backend log level if it is active (serializer flow: QnnIr).
-  if (validator_log_handle_ != nullptr) {
-    RETURN_IF_ERROR(SetQnnLogLevelCommon(qnn_validator_interface_, validator_log_handle_, qnn_log_level, "validator"));
+  // Use the QnnLog_setLogLevel API to set the new log level
+  Qnn_ErrorHandle_t result = qnn_interface_.logSetLogLevel(log_handle_, qnn_log_level);
+  if (QNN_SUCCESS != result) {
+    if (result == QNN_LOG_ERROR_INVALID_ARGUMENT) {
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Invalid log level argument provided to QnnLog_setLogLevel.");
+    } else if (result == QNN_LOG_ERROR_INVALID_HANDLE) {
+      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, "Invalid log handle provided to QnnLog_setLogLevel.");
+    }
   }
-
-  return Ort::Status();
-}
-
-Ort::Status QnnBackendManager::InitializeBackendCommon(const QNN_INTERFACE_VER_TYPE& interface,
-                                                       Qnn_LogHandle_t log_handle,
-                                                       Qnn_BackendHandle_t& backend_handle,
-                                                       bool& initialized_flag,
-                                                       const std::string& backend_label) {
-  Qnn_ErrorHandle_t result = interface.backendCreate(log_handle,
-                                                     (const QnnBackend_Config_t**)backend_config_,
-                                                     &backend_handle);
   RETURN_IF(QNN_BACKEND_NO_ERROR != result,
-            ("Failed to initialize backend (" + backend_label + "). Error: " +
-             QnnErrorHandleToString(result))
-                .c_str());
-
-  initialized_flag = true;
+            ("Failed to set log level in Qnn backend. Error: " + QnnErrorHandleToString(result)).c_str());
   return Ort::Status();
 }
 
 Ort::Status QnnBackendManager::InitializeBackend() {
-  if (backend_initialized_) {
+  if (true == backend_initialized_) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Backend initialized already.");
     return Ort::Status();
   }
 
-  return InitializeBackendCommon(qnn_interface_, log_handle_, backend_handle_, backend_initialized_, "backend");
-}
+  Qnn_ErrorHandle_t result = qnn_interface_.backendCreate(log_handle_, (const QnnBackend_Config_t**)backend_config_, &backend_handle_);
+  RETURN_IF(QNN_BACKEND_NO_ERROR != result,
+            ("Failed to initialize backend. Error: " + QnnErrorHandleToString(result)).c_str());
 
-Ort::Status QnnBackendManager::InitializeValidatorBackend() {
-  if (validator_backend_initialized_) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Validator Backend initialized already.");
-    return Ort::Status();
-  }
-
-  return InitializeBackendCommon(qnn_validator_interface_, validator_log_handle_,
-                                 validator_backend_handle_, validator_backend_initialized_, "validator");
-}
-
-Ort::Status QnnBackendManager::ShutdownBackendCommon(const QNN_INTERFACE_VER_TYPE& interface,
-                                                     Qnn_BackendHandle_t& backend_handle,
-                                                     bool& initialized_flag,
-                                                     const std::string& backend_label) {
-  if (interface.backendFree != nullptr) {
-    RETURN_IF(QNN_BACKEND_NO_ERROR != interface.backendFree(backend_handle),
-              ("Failed to shutdown " + backend_label + "!").c_str());
-  }
-
-  initialized_flag = false;
-
+  backend_initialized_ = true;
   return Ort::Status();
 }
 
 Ort::Status QnnBackendManager::ShutdownBackend() {
-  if (!backend_initialized_) {
+  if (false == backend_initialized_) {
     return Ort::Status();
   }
 
-  return ShutdownBackendCommon(qnn_interface_, backend_handle_, backend_initialized_, "backend");
-}
-
-Ort::Status QnnBackendManager::ShutdownValidatorBackend() {
-  if (!validator_backend_initialized_) {
-    return Ort::Status();
+  if (nullptr != qnn_interface_.backendFree) {
+    RETURN_IF(QNN_BACKEND_NO_ERROR != qnn_interface_.backendFree(backend_handle_), "Failed to shutdown backend!");
   }
 
-  return ShutdownBackendCommon(qnn_validator_interface_, validator_backend_handle_,
-                               validator_backend_initialized_, "validator");
+  backend_initialized_ = false;
+
+  return Ort::Status();
 }
 
 bool QnnBackendManager::IsDevicePropertySupported() {
@@ -1872,7 +1813,7 @@ Ort::Status QnnBackendManager::SetupBackend(
     status = InitializeQnnLog();
   }
   if (status.IsOK()) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "InitializeQnnLog succeed.");
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "SetLogger succeed.");
   }
 
   if (status.IsOK()) {
@@ -1880,19 +1821,6 @@ Ort::Status QnnBackendManager::SetupBackend(
   }
   if (status.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "InitializeBackend succeed.");
-  }
-
-  if (status.IsOK() && qnn_serializer_config_) {
-    status = InitializeQnnValidatorLog();
-    if (status.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "InitializeQnnValidatorLog succeed.");
-    }
-    if (status.IsOK()) {
-      status = InitializeValidatorBackend();
-    }
-    if (status.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "InitializeValidatorBackend succeed.");
-    }
   }
 
   if (status.IsOK()) {
@@ -2078,96 +2006,64 @@ Ort::Status QnnBackendManager::DestroyHTPPowerConfigID(uint32_t htp_power_config
   return Ort::Status();
 }
 
-Ort::Status QnnBackendManager::TerminateQnnLogCommon(const QNN_INTERFACE_VER_TYPE& interface,
-                                                     Qnn_LogHandle_t& log_handle,
-                                                     const std::string& backend_label) {
-  if (interface.logFree == nullptr || log_handle == nullptr) {
-    return Ort::Status();
-  }
-
-  auto ret_val = interface.logFree(log_handle);
-
-  // Reset to nullptr BEFORE checking the result so that other threads waiting on
-  // logger_recursive_mutex_ can observe the handle is gone, even if logFree failed.
-  log_handle = nullptr;
-
-  RETURN_IF(QNN_SUCCESS != ret_val,
-            ("Unable to terminate logging in the " + backend_label + ".").c_str());
-  return Ort::Status();
-}
-
 Ort::Status QnnBackendManager::TerminateQnnLog() {
   std::lock_guard<std::recursive_mutex> lock(logger_recursive_mutex_);
 
-  // Attempt to free both log handles even if the first one fails (best-effort).
-  Ort::Status s1 = TerminateQnnLogCommon(qnn_interface_, log_handle_, "backend");
-  Ort::Status s2 = TerminateQnnLogCommon(qnn_validator_interface_, validator_log_handle_, "validator");
-  if (!s1.IsOK()) return s1;
-  if (!s2.IsOK()) return s2;
+  if (nullptr != qnn_interface_.logFree && nullptr != log_handle_) {
+    auto ret_val = qnn_interface_.logFree(log_handle_);
+
+    // Reset QNN log handle to nullptr so other threads that are waiting on logger_recursive_mutex_ know it was freed.
+    log_handle_ = nullptr;
+    RETURN_IF(QNN_SUCCESS != ret_val, "Unable to terminate logging in the backend.");
+  }
+
   return Ort::Status();
 }
 
 void QnnBackendManager::ReleaseResources() {
-  if (backend_setup_completed_) {
-    // These operations require a fully-initialized backend and must only be called
-    // when setup completed successfully.
-    auto result = ReleaseContext();
-    if (!result.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseContext: " + result.GetErrorMessage()).c_str());
-    }
-
-    result = ReleaseProfilehandle();
-    if (!result.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_,
-                      ORT_LOGGING_LEVEL_ERROR,
-                      ("Failed to ReleaseProfilehandle: " + result.GetErrorMessage()).c_str());
-    }
-
-    result = ReleaseDevice();
-    if (!result.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseDevice: " + result.GetErrorMessage()).c_str());
-    }
-
-    result = ShutdownBackend();
-    if (!result.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ShutdownBackend: " + result.GetErrorMessage()).c_str());
-    }
-
-    result = ShutdownValidatorBackend();
-    if (!result.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ShutdownValidatorBackend: " + result.GetErrorMessage()).c_str());
-    }
-
-    result = TerminateQnnLog();
-    if (!result.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to TerminateQnnLog: " + result.GetErrorMessage()).c_str());
-    }
-
-    backend_setup_completed_ = false;
+  if (!backend_setup_completed_) {
+    // Avoid releasing non-setup or already released backend.
+    return;
   }
 
-  // Unload library handles unconditionally: they may be set even when setup did not complete
-  // (e.g., LoadQnnSerializerBackend succeeds but a later step fails), and ReleaseResources()
-  // is called again from the destructor, so clear the handles to prevent double-unload.
+  auto result = ReleaseContext();
+  if (!result.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseContext: " + result.GetErrorMessage()).c_str());
+  }
+
+  result = ReleaseProfilehandle();
+  if (!result.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_ERROR,
+                    ("Failed to ReleaseProfilehandle: " + result.GetErrorMessage()).c_str());
+  }
+
+  result = ReleaseDevice();
+  if (!result.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseDevice: " + result.GetErrorMessage()).c_str());
+  }
+
+  result = ShutdownBackend();
+  if (!result.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ShutdownBackend: " + result.GetErrorMessage()).c_str());
+  }
+
+  result = TerminateQnnLog();
+  if (!result.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to TerminateQnnLog: " + result.GetErrorMessage()).c_str());
+  }
+
   if (backend_lib_handle_) {
-    auto result = UnloadLib(backend_lib_handle_);
+    result = UnloadLib(backend_lib_handle_);
     if (!result.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_,
                       ORT_LOGGING_LEVEL_ERROR,
                       ("Failed to unload backend library: " + result.GetErrorMessage()).c_str());
     }
-    backend_lib_handle_ = nullptr;
   }
 
-  if (validator_backend_lib_handle_) {
-    auto result = UnloadLib(validator_backend_lib_handle_);
-    if (!result.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_,
-                      ORT_LOGGING_LEVEL_ERROR,
-                      ("Failed to unload validator backend library: " + result.GetErrorMessage()).c_str());
-    }
-    validator_backend_lib_handle_ = nullptr;
-  }
+  backend_setup_completed_ = false;
+  return;
 }
 
 Ort::Status QnnBackendManager::ExtractBackendProfilingInfo(qnn::profile::ProfilingInfo& profiling_info) {

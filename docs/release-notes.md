@@ -1,3 +1,53 @@
+# ONNX Runtime QNN Execution Provider v2.2.0
+This release delivers operator coverage improvements, multi-NPU device selection, and build fixes.
+
+**ONNX Runtime Compatibility:** >= 1.24.1 (compiled with v1.24.4)<br>
+**QAIRT SDK Compatibility:** 2.46.0
+
+```
+pip install onnxruntime==1.24.4
+pip install onnxruntime-qnn==2.2.0
+```
+
+## Bug Fixes
+
+- QNN EP: Fixed `GlobalMaxPool`/`GlobalAveragePool` falsely claiming rank-3 support; unified the 3D→4D reshape path with windowed pool ops. ([#201](https://github.com/onnxruntime/onnxruntime-qnn/pull/201))
+- QNN EP: Restored Genie builds against QAIRT SDKs older than 2.45.0 by keying conditional compilation off the Genie API version (`GenieDlc.h` breaking change). ([#225](https://github.com/onnxruntime/onnxruntime-qnn/pull/225))
+- QNN EP: Fixed GCC 13 build failures: corrected `memory_order_acq_rel` on `std::atomic::store()` to `memory_order_release`, and suppressed a false-positive `-Wmaybe-uninitialized` in `TestInputDef`. ([#228](https://github.com/onnxruntime/onnxruntime-qnn/pull/228))
+- QNN EP: Fixed HNRD Model Compatibility checks incorrectly running on x86 platforms where they don't apply. ([#319](https://github.com/onnxruntime/onnxruntime-qnn/pull/319))
+
+## Improvements
+
+- QNN EP: Relaxed QDQ BatchNormalization selector to accept BN nodes with 2 dequantized inputs (instead of requiring 3), matching the common pattern where `bias`/`mean`/`variance` stay as float initializers. Reduces CPU fallback and graph fragmentation. ([#209](https://github.com/onnxruntime/onnxruntime-qnn/pull/209))
+- QNN EP: NPU device selection now supports HTP cores with non-zero device IDs. ([#215](https://github.com/onnxruntime/onnxruntime-qnn/pull/215))
+
+## Known Issues
+
+- **WoS AMD64 — Python 3.11 installer issue causes inference failure** — On Windows on Snapdragon, `ep.get_library_path()` returns the `amd64` folder path instead of `arm64ec`, causing inference to fail in the AMD64 Python 3.11 environment, due to a known issue with the installer. As a workaround, manually construct the path to the `arm64ec` library. This issue affects Python 3.11 only.
+
+### Platform Support
+
+| Package | Windows ARM64 | Windows x64 | Linux ARM64 |
+|---|---|---|---|
+| Python Wheel | Inference | AOT compilation + Inference | Inference |
+| NuGet | Inference | — | — |
+| ZIP | Inference | — | — |
+| tgz | — | — | Inference |
+
+**Full Changelog:** [rel-2.1.0...rel/ort-qnn-ep/2.2.0](https://github.com/onnxruntime/onnxruntime-qnn/compare/rel-2.1.0...rel/ort-qnn-ep/2.2.0)
+
+## Contributors
+
+This release includes contributions from:
+
+[Arnav Deshpande](https://github.com/qti-arnadesh), [Ashwath Shankarnarayan](https://github.com/qti-ashwshan), [Badri Narayanan](https://github.com/qti-mbadnara), [Calvin Nguyen](https://github.com/quic-calvnguy), [Cheng-Hsin Weng](https://github.com/qti-chenweng), [Chun-Chih Teng](https://github.com/qti-chuteng), [Hua-Yu Chou](https://github.com/huaychou), [Hung-Jui Wang](https://github.com/qti-hungjuiw), [Jeff Kilpatrick](https:/github.com/qti-jkilpatrick), [Kuan-Yu Lin](https://github.com/kuanyul-qti), [Kyle Romero](https://github.com/qti-kromero), [Matthew Sinclair](https://github.com/qti-mattsinc), [Mike Hsu](https://github.com/quic-muchhsu), [Min Fong Hong](https://github.com/minfhong-qti), [Shubham Patel](https://github.com/qti-shubham), [Tirupathi Reddy T](https://github.com/tirupath-qti), [Yathindra Kota](https://github.com/quic-ykota), [Yuduo Wu](https://github.com/qti-yuduo), [Yu-Hung Chuang](https://github.com/yuhuchua-qti)
+
+---
+
+---
+
+
+
 # ONNX Runtime QNN Execution Provider v2.1.1
 This is a patch release of the QNN Execution Provider, containing bug fixes and packaging updates.
 

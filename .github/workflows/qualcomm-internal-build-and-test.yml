@@ -64,7 +64,8 @@ jobs:
       run_tests: false
 
   test-linux-aarch64-oe-gcc11_2:
-    if: ${{ inputs.do_all }}
+    # Downstream tests need the Artifactory upload from build-linux-aarch64-oe-gcc11_2; skip on fork PRs.
+    if: ${{ inputs.do_all && github.event.pull_request.head.repo.fork != true }}
     needs: [build-linux-aarch64-oe-gcc11_2]
     uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
     secrets: inherit
@@ -144,7 +145,9 @@ jobs:
         with:
           submodules: recursive
 
+      # Artifactory steps are no-ops on fork PRs (secrets unavailable). The build still validates the change.
       - name: Setup JFrog CLI
+        if: ${{ env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: jfrog/setup-jfrog-cli@v5
         with:
           disable-auto-build-publish: true
@@ -158,13 +161,15 @@ jobs:
           python3 qcom/build_and_test.py archive_ort_android_aarch64
 
       - name: Upload Test Archive to Artifactory
+        if: ${{ env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
           name: "android-aarch64-pyNone-tests"
           src_pattern: onnxruntime-tests-android-aarch64.zip
 
   test-android-aarch64:
-    if: ${{ inputs.do_all }}
+    # Downstream tests need the Artifactory upload from build-android-aarch64; skip on fork PRs.
+    if: ${{ inputs.do_all && github.event.pull_request.head.repo.fork != true }}
     needs: [build-android-aarch64]
     uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
     secrets: inherit
