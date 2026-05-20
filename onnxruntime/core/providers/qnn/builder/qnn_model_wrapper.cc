@@ -838,8 +838,13 @@ Ort::Status QnnModelWrapper::GetTensorInfo(const OrtNodeUnitIODef& tensor, Tenso
                                         tensor.type,
                                         tensor_info.qnn_data_type));
 
-  // Fill in shape.
-  RETURN_IF_NOT(GetOnnxShape(tensor.shape, tensor_info.shape), "Cannot get shape");
+  // Fill in shape. Check the per-build shape override map first (set by ops like NonZero that use
+  // QNN max-shape semantics when ORT's inference produced dynamic dims).
+  const auto* shape_override = GetTensorShapeOverride(name);
+  const auto& eff_shape = shape_override
+                              ? std::optional<std::vector<int64_t>>(*shape_override)
+                              : tensor.shape;
+  RETURN_IF_NOT(GetOnnxShape(eff_shape, tensor_info.shape), "Cannot get shape");
 
   // Fill in initializer info.
   tensor_info.is_initializer = IsConstantInput(name);

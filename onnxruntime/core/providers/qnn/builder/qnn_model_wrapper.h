@@ -247,6 +247,19 @@ class QnnModelWrapper {
 
   Ort::Status GetTensorInfo(const OrtNodeUnitIODef& tensor, TensorInfo& tensor_info) const;
 
+  // Register a static shape override for a tensor whose ORT shape is dynamic (e.g., NonZero output).
+  // Used to propagate QNN-specific max-shape semantics through the graph so downstream op builders
+  // see static shapes even when ORT's shape inference produced dynamic dimensions.
+  void SetTensorShapeOverride(const std::string& tensor_name, std::vector<int64_t> shape) {
+    tensor_shape_overrides_[tensor_name] = std::move(shape);
+  }
+
+  // Returns a pointer to the override shape if one was registered, or nullptr if none.
+  const std::vector<int64_t>* GetTensorShapeOverride(const std::string& tensor_name) const {
+    auto it = tensor_shape_overrides_.find(tensor_name);
+    return (it != tensor_shape_overrides_.end()) ? &it->second : nullptr;
+  }
+
   Ort::Status AddCastNode(const std::string& cast_node_name,
                           const std::string& input_name,
                           const std::string& output_name,
@@ -515,6 +528,11 @@ class QnnModelWrapper {
   const ApiPtrs api_ptrs_;
 
   std::unordered_map<std::string, std::string>* tensor_name_overrides_ = nullptr;
+
+  // Per-build shape overrides: maps tensor name → static shape. Op builders (e.g., NonZero) register
+  // overrides here when QNN uses max-shape semantics that differ from ORT's dynamic inference result.
+  // GetTensorInfo() consults this map before using ORT's shape, enabling downstream ops to see static shapes.
+  std::unordered_map<std::string, std::vector<int64_t>> tensor_shape_overrides_;
 
   // Tensor names produced by compile-time Q/DQ folds; chained across hops.
   std::unordered_set<std::string> folded_constant_tensors_;

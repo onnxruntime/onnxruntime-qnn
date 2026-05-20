@@ -45,15 +45,15 @@ Ort::Status NonZeroOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_NOT(qnn_model_wrapper.GetQnnBackendType() == QnnBackendType::HTP,
                 "NonZero is only supported on HTP backend.");
 
-  // NonZero output must have a static shape (no dynamic dims).
-  // The ONNX model should set the output shape to [rank, num_elements] where num_elements
-  // is the total number of elements in the input.
-  const auto& output = node_unit.Outputs()[0];
-  std::vector<uint32_t> output_shape;
-  RETURN_IF_NOT(QnnModelWrapper::GetOnnxShape(output.shape, output_shape),
-                "NonZero output shape must be static. Set shape to [rank, num_elements].");
+  // Input shape must be static so we can compute the maximum possible output size.
+  // The output shape will be overridden to [rank, num_elements] regardless of what
+  // ORT's shape inference produced (which is typically dynamic for NonZero).
+  const auto& input = node_unit.Inputs()[0];
+  std::vector<uint32_t> input_shape_check;
+  RETURN_IF_NOT(QnnModelWrapper::GetOnnxShape(input.shape, input_shape_check),
+                "NonZero requires static input shape to compute max output size.");
 
-  const std::string& output_name = output.name;
+  const std::string& output_name = node_unit.Outputs()[0].name;
   if (qnn_model_wrapper.IsGraphOutput(output_name)) {
     ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING,
                 "NonZero output is a graph output. QNN HTP pads unused elements with -1.");
@@ -137,6 +137,11 @@ Ort::Status NonZeroOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_m
   const auto& outputs = node_unit.Outputs();
   const std::string& output_name = outputs[0].name;
   bool is_graph_output = qnn_model_wrapper.IsGraphOutput(output_name);
+
+  // Register max-shape override so downstream ops see a static shape even when ORT's
+  // shape inference produced dynamic dims for this NonZero output.
+  qnn_model_wrapper.SetTensorShapeOverride(
+      output_name, {static_cast<int64_t>(input_rank), static_cast<int64_t>(num_elements)});
 
   Qnn_DataType_t output_data_type = QNN_DATATYPE_INT_32;
 

@@ -11,6 +11,7 @@
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
+#include "core/providers/qnn/builder/qnn_shape_inference.h"
 #include "core/providers/qnn/builder/qnn_node_group/cast_lone_q_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/channel_shuffle_fusion.h"
 #include "core/providers/qnn/builder/qnn_node_group/dq_conv_integer_fusion.h"
@@ -54,14 +55,25 @@ class QnnNodeUnitWrapper : public IQnnNodeGroup {
                                           node_unit_->Name() + "` will not be assigned to QNN EP.")
                                              .c_str());
 
-    return op_builder->IsOpSupported(qmw, *node_unit_, logger);
+    Ort::Status status = op_builder->IsOpSupported(qmw, *node_unit_, logger);
+    if (status.IsOK()) {
+      // After successful validation, propagate any shape overrides this node produces so that
+      // downstream nodes see static shapes during their own IsOpSupported calls.
+      TryPropagateShapeOverrides(qmw, *node_unit_);
+    }
+    return status;
   }
 
   Ort::Status AddToModelBuilder(QnnModelWrapper& qmw, const Ort::Logger& logger) const override {
     const std::string& op_type = node_unit_->OpType();
     const auto* op_builder = qnn::GetOpBuilder(op_type);
     RETURN_IF_NOT(op_builder != nullptr, ("[QNN EP]: Missing OpBuilder for OpType " + op_type).c_str());
-    return op_builder->AddToModelBuilder(qmw, *node_unit_, logger, /*do_op_validation*/ false);
+    Ort::Status status = op_builder->AddToModelBuilder(qmw, *node_unit_, logger, /*do_op_validation*/ false);
+    if (status.IsOK()) {
+      // Propagate shape overrides into the compile-time qmw so subsequent nodes can get static shapes.
+      TryPropagateShapeOverrides(qmw, *node_unit_);
+    }
+    return status;
   }
 
   gsl::span<const OrtNodeUnit* const> GetNodeUnits() const override {

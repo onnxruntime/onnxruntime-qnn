@@ -34,6 +34,20 @@ static GetTestModelFn BuildNonZeroTestCase(const std::vector<int64_t>& input_sha
   };
 }
 
+// Variant of BuildNonZeroTestCase that leaves the output shape as dynamic ({-1, -1}),
+// matching what standard ONNX models produce from ORT's shape inference.
+template <typename DataType>
+static GetTestModelFn BuildNonZeroTestCaseDynamicOutput(const std::vector<int64_t>& input_shape,
+                                                        const std::vector<DataType>& input_data) {
+  TestInputDef<DataType> input_def(input_shape, false, input_data);
+  return [input_def](ModelTestBuilder& builder) {
+    MakeTestInput<DataType>(builder, "X", input_def);
+    builder.AddNode("nonzero_node", "NonZero", {"X"}, {"Y"}, kOnnxDomain);
+    // Dynamic output shape: -1 = unknown at model-build time. QNN EP must infer max shape internally.
+    builder.MakeOutput<int64_t>("Y", std::vector<int64_t>{-1, -1});
+  };
+}
+
 static ProviderOptions HtpProviderOptions() {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
@@ -259,17 +273,75 @@ TEST_F(QnnHTPBackendTests, NonZero_Gather_1D_Int32) {
   }
 }
 
-// Negative test: NonZero with dynamic output shape should not be assigned to QNN EP.
-TEST_F(QnnHTPBackendTests, NonZero_DynamicOutputShape_Negative) {
-  auto build_model = [](ModelTestBuilder& builder) {
-    TestInputDef<float> input_def({2, 3}, false, {1.0f, 0.0f, 3.0f, 0.0f, 5.0f, 0.0f});
-    MakeTestInput<float>(builder, "X", input_def);
-    builder.AddNode("nonzero_node", "NonZero", {"X"}, {"Y"}, kOnnxDomain);
-    // Dynamic output shape: [rank, -1]
-    builder.MakeOutput<int64_t>("Y", std::vector<int64_t>{2, -1});
+// Dynamic output shape test: output declared as {-1, -1} (standard ONNX model output from ORT shape inference).
+// QNN EP must compute the max-shape internally from the input shape and accept the node.
+TEST_F(QnnHTPBackendTests, NonZero_DynamicOutputShape) {
+  RunNonZeroTest(BuildNonZeroTestCaseDynamicOutput<float>(
+                     {2, 3}, {1.0f, 0.0f, 3.0f, 0.0f, 5.0f, 0.0f}),
+                 11, ExpectedEPNodeAssignment::All);
+}
+
+// NonZero → Gather chain with dynamic NonZero output shape.
+// NonZero output is declared as {-1, -1} (as ORT's shape inference would produce).
+// Shape propagation must compute Gather's output shape from the overridden NonZero max-shape.
+// Input is all-nonzero to avoid CPU/QNN mismatch from -1 padding entries.
+TEST_F(QnnHTPBackendTests, NonZero_Gather_Chain_DynamicShape) {
+  std::vector<float> mask_data = {1.0f, 2.0f, 3.0f, 4.0f, 5.0f};  // all non-zero
+  std::vector<int32_t> data = {10, 20, 30, 40, 50};
+  int64_t n = 5;
+
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+
+  auto build_model = [mask_data, data, n](ModelTestBuilder& builder) {
+    TestInputDef<float> mask_def({n}, false, mask_data);
+    MakeTestInput<float>(builder, "mask", mask_def);
+
+    // NonZero with dynamic output shape (no static dims declared — standard ONNX model).
+    builder.AddNode("nonzero_node", "NonZero", {"mask"}, {"nonzero_out"}, kOnnxDomain);
+    builder.MakeOutput<int64_t>("nonzero_out", std::vector<int64_t>{-1, -1});
+
+    // Reshape [1, n] -> [n] to get 1D indices
+    builder.Make1DInitializer<int64_t>("reshape_shape", {n});
+    builder.AddNode("reshape_node", "Reshape", {"nonzero_out", "reshape_shape"}, {"indices_i64"}, kOnnxDomain);
+
+    // Cast int64 -> int32 (HTP requires int32 indices)
+    builder.AddNode("cast_node", "Cast", {"indices_i64"}, {"indices_i32"}, kOnnxDomain,
+                    {test::MakeAttribute("to", int64_t(ONNX_NAMESPACE::TensorProto_DataType_INT32))});
+
+    // Gather data[indices]
+    builder.MakeInitializer<int32_t>("data", {n}, data);
+    builder.AddNode("gather_node", "Gather", {"data", "indices_i32"}, {"output"}, kOnnxDomain,
+                    {test::MakeAttribute("axis", int64_t(0))});
+    builder.MakeOutput<int32_t>("output", std::vector<int64_t>{-1});
   };
 
-  RunNonZeroTest(build_model, 11, ExpectedEPNodeAssignment::None);
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+  ModelTestBuilder helper;
+  build_model(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+
+  std::vector<Ort::Value> expected;
+  InferenceModelCPU(model_data, "NonZero_Gather_Chain_CPU", helper.feeds_, expected);
+
+  std::vector<Ort::Value> actual;
+  InferenceModel(model_data, "NonZero_Gather_Chain_QNN", HtpProviderOptions(),
+                 ExpectedEPNodeAssignment::All, helper.feeds_, actual);
+
+  // output index 1 is the Gather result (index 0 is the NonZero graph output)
+  auto exp_shape = expected[1].GetTensorTypeAndShapeInfo().GetShape();
+  auto act_shape = actual[1].GetTensorTypeAndShapeInfo().GetShape();
+  ASSERT_EQ(exp_shape, act_shape);
+  auto cnt = expected[1].GetTensorTypeAndShapeInfo().GetElementCount();
+  const int32_t* ep = expected[1].GetTensorData<int32_t>();
+  const int32_t* ap = actual[1].GetTensorData<int32_t>();
+  for (size_t i = 0; i < cnt; ++i) EXPECT_EQ(ep[i], ap[i]) << " at index " << i;
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
