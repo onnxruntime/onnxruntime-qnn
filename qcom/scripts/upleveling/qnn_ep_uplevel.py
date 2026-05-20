@@ -49,10 +49,12 @@ ARTIFACTORY_PREFIXES = {
 
 ARTIFACT_SUFFIXES = {"wheel": ".whl", "nuget": ".nupkg", "zip": ".zip", "tgz": ".tgz"}
 
+# Signed libs are always fetched from the production ("project") zip repo, regardless
+# of --index_server_from, because test/staging repos do not host the signed-lib bundles.
+_SIGNED_LIBS_INDEX = f"{ARTIFACTORY_PREFIXES['zip']}-project"
 
-def _ensure_dir(path: str) -> None:
-    """Create directory if it does not already exist."""
-    os.makedirs(path, exist_ok=True)
+_QNN_PROVIDER_DLL = "onnxruntime_providers_qnn.dll"
+_QNN_MANAGED_DLL = "Qualcomm.ML.OnnxRuntime.QNN.dll"
 
 
 def _clean_dir(path: str) -> None:
@@ -312,10 +314,9 @@ class ArtifactUpleveler(ABC):
         if not api_key:
             raise RuntimeError("JFROG_API_KEY environment variable is required when --sign_artifact true")
 
-        url_template = "https://re-artifactory.qualcomm.com/artifactory/aisw-zip-project/onnxruntime-qnn/"
-
+        base_url = self.config_manager.config.get(_SIGNED_LIBS_INDEX, "repository").rstrip("/")
         zip_filename = f"{self.artifact_format}.zip"
-        url = f"{url_template.rstrip('/')}/{self._signed_libs_version}/signed_libs/{zip_filename}"
+        url = f"{base_url}/{self.args.product_name}/{self._signed_libs_version}/signed_libs/{zip_filename}"
         target_path = os.path.join(target_dir, zip_filename)
 
         logging.info(f"Downloading signed libs ({zip_filename}) for version {self.args.version_from}")
@@ -414,8 +415,6 @@ class WheelUpleveler(ArtifactUpleveler):
       TEST_PYPI_API_KEY                            — TestPyPI upload token (when index_server_to=testpypi)
       JFROG_API_KEY                                — Read-only token for the signed-libs bundle
                                                      (only when --sign_artifact true)
-      SIGNED_LIBS_ARTIFACTORY_URL                  — Base URL for the signed-libs bundle
-                                                     (only when --sign_artifact true)
     """
 
     @property
@@ -465,27 +464,24 @@ class WheelUpleveler(ArtifactUpleveler):
 
                 if whl_name.endswith("win_amd64.whl"):
                     amd64_missing = self._replace_signed_dll(
-                        src=os.path.join(signed_libs_dir, whl_no_ext, "amd64", "onnxruntime_providers_qnn.dll"),
+                        src=os.path.join(signed_libs_dir, whl_no_ext, "amd64", _QNN_PROVIDER_DLL),
                         dst=os.path.join(
-                            extract_dir, "onnxruntime_qnn", "libs", "amd64", "onnxruntime_providers_qnn.dll"
+                            extract_dir, "onnxruntime_qnn", "libs", "amd64", _QNN_PROVIDER_DLL
                         ),
                         label="amd64",
                     )
                     arm64ec_missing = self._replace_signed_dll(
-                        src=os.path.join(signed_libs_dir, whl_no_ext, "arm64ec", "onnxruntime_providers_qnn.dll"),
+                        src=os.path.join(signed_libs_dir, whl_no_ext, "arm64ec", _QNN_PROVIDER_DLL),
                         dst=os.path.join(
-                            extract_dir, "onnxruntime_qnn", "libs", "arm64ec", "onnxruntime_providers_qnn.dll"
+                            extract_dir, "onnxruntime_qnn", "libs", "arm64ec", _QNN_PROVIDER_DLL
                         ),
                         label="arm64ec",
                     )
-                    if amd64_missing and arm64ec_missing:
-                        dll_replacement_failed = True
-                    else:
-                        dll_replacement_failed = False
+                    dll_replacement_failed = amd64_missing or arm64ec_missing
                 else:
                     arm64_missing = self._replace_signed_dll(
-                        src=os.path.join(signed_libs_dir, whl_no_ext, "onnxruntime_providers_qnn.dll"),
-                        dst=os.path.join(extract_dir, "onnxruntime_qnn", "onnxruntime_providers_qnn.dll"),
+                        src=os.path.join(signed_libs_dir, whl_no_ext, _QNN_PROVIDER_DLL),
+                        dst=os.path.join(extract_dir, "onnxruntime_qnn", _QNN_PROVIDER_DLL),
                         label="arm64",
                     )
                     dll_replacement_failed = arm64_missing
@@ -658,8 +654,6 @@ class NugetUpleveler(ArtifactUpleveler):
       NUGET_API_KEY                                — nuget.org API key (when index_server_to=nuget)
       TEST_NUGET_API_KEY                           — int.nugettest.org API key (when index_server_to=testnuget)
       JFROG_API_KEY                                — Read-only token for the signed-libs bundle
-                                                     (only when --sign_artifact true)
-      SIGNED_LIBS_ARTIFACTORY_URL                  — Base URL for the signed-libs bundle
                                                      (only when --sign_artifact true)
     """
 
@@ -861,13 +855,13 @@ class NugetUpleveler(ArtifactUpleveler):
                     zf.extractall(extract_dir)
 
                 native_missing = self._replace_signed_dll(
-                    src=os.path.join(signed_libs_dir, nupkg_no_ext, "onnxruntime_providers_qnn.dll"),
-                    dst=os.path.join(extract_dir, "runtimes", "win-arm64", "native", "onnxruntime_providers_qnn.dll"),
+                    src=os.path.join(signed_libs_dir, nupkg_no_ext, _QNN_PROVIDER_DLL),
+                    dst=os.path.join(extract_dir, "runtimes", "win-arm64", "native", _QNN_PROVIDER_DLL),
                     label="native",
                 )
                 managed_missing = self._replace_signed_dll(
-                    src=os.path.join(signed_libs_dir, nupkg_no_ext, "Qualcomm.ML.OnnxRuntime.QNN.dll"),
-                    dst=os.path.join(extract_dir, "lib", "netstandard2.0", "Qualcomm.ML.OnnxRuntime.QNN.dll"),
+                    src=os.path.join(signed_libs_dir, nupkg_no_ext, _QNN_MANAGED_DLL),
+                    dst=os.path.join(extract_dir, "lib", "netstandard2.0", _QNN_MANAGED_DLL),
                     label="managed",
                 )
                 # PS1: counted as failure only when BOTH signed DLLs are missing.
@@ -935,8 +929,6 @@ class ZipUpleveler(ArtifactUpleveler):
       ARTIFACTORY_USERNAME / ARTIFACTORY_PASSWORD  — Artifactory basic auth (download + upload)
       JFROG_API_KEY                                — Read-only token for the signed-libs bundle
                                                      (only when --sign_artifact true)
-      SIGNED_LIBS_ARTIFACTORY_URL                  — Base URL for the signed-libs bundle
-                                                     (only when --sign_artifact true)
     """
 
     @property
@@ -991,8 +983,8 @@ class ZipUpleveler(ArtifactUpleveler):
                     zf.extractall(extract_dir)
 
                 arm64_missing = self._replace_signed_dll(
-                    src=os.path.join(signed_libs_dir, zip_no_ext, "onnxruntime_providers_qnn.dll"),
-                    dst=os.path.join(extract_dir, "onnxruntime_providers_qnn.dll"),
+                    src=os.path.join(signed_libs_dir, zip_no_ext, _QNN_PROVIDER_DLL),
+                    dst=os.path.join(extract_dir, _QNN_PROVIDER_DLL),
                     label="arm64",
                 )
                 dll_replacement_failed = arm64_missing
