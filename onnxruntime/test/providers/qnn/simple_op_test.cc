@@ -1112,6 +1112,38 @@ TEST_F(QnnHTPBackendTests, BinaryOp_And4D) {
                   ExpectedEPNodeAssignment::All);
 }
 
+TEST_F(QnnCPUBackendTests, Xor4D) {
+  RunOpTestOnCPU<bool>("Xor",
+                       {TestInputDef<bool>({1, 4}, false, {false, false, true, true}),
+                        TestInputDef<bool>({1, 4}, false, {false, true, false, true})},
+                       {},
+                       17,
+                       ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, Xor4D) {
+  RunOpTest<bool>("Xor",
+                  {TestInputDef<bool>({1, 4}, false, {false, false, true, true}),
+                   TestInputDef<bool>({1, 4}, false, {false, true, false, true})},
+                  {},
+                  17,
+                  ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, XorBroadcast) {
+  std::vector<bool> a_data(2 * 1 * 4);
+  std::vector<bool> b_data(2 * 3 * 4);
+  for (size_t i = 0; i < a_data.size(); ++i) a_data[i] = (i % 2) == 0;
+  for (size_t i = 0; i < b_data.size(); ++i) b_data[i] = (i % 3) == 0;
+
+  RunOpTest<bool>("Xor",
+                  {TestInputDef<bool>({2, 1, 4}, false, a_data),
+                   TestInputDef<bool>({2, 3, 4}, false, b_data)},
+                  {},
+                  17,
+                  ExpectedEPNodeAssignment::All);
+}
+
 // Test Reciprocal on HTP
 TEST_F(QnnHTPBackendTests, Reciprocal_Basic_FLOAT) {
   RunOpTest<float>("Reciprocal",
