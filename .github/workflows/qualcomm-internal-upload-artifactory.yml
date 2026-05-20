@@ -209,7 +209,7 @@ jobs:
             --index_server_from ${{ inputs.index_server_from }} \
             --index_server_to ${{ inputs.index_server_to }} \
             --netrc_file "$NETRC_FILE" \
-            --sign_artifact ${{ inputs.sign_artifact }}
+            ${{ inputs.sign_artifact && '--sign_artifact' || '' }}
 
           # Clean up the temporary .netrc file
           rm -f "$NETRC_FILE"
