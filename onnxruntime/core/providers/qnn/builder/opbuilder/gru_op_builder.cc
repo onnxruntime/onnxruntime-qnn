@@ -189,9 +189,10 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   }
 
   OrtNodeAttrHelper node_helper(node_unit);
-  const uint32_t hidden_size = node_helper.Get("hidden_size", 0);
-  const int32_t hidden_size_sign = SafeInt<int32_t>(hidden_size);
-  RETURN_IF_NOT(hidden_size > 0, "hidden size is not set for GRU");
+  const int64_t hidden_size_i64 = node_helper.Get("hidden_size", static_cast<int64_t>(0));
+  RETURN_IF_NOT(hidden_size_i64 > 0, "hidden_size is not set for GRU");
+  const uint32_t hidden_size = SafeInt<uint32_t>(hidden_size_i64);
+  const int32_t hidden_size_sign = SafeInt<int32_t>(hidden_size_i64);
   const int64_t linear_before_reset = node_helper.Get("linear_before_reset", static_cast<int64_t>(0));
   const int64_t layout = node_helper.Get("layout", static_cast<int64_t>(0));
 
@@ -220,9 +221,11 @@ Ort::Status GRUOpBuilder::AddUnidirectionGRU(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(), time_major,
                                      QNN_OP_GRU_PARAM_TIME_MAJOR, param_names));
 
-  // Null tensor for optional inputs
-  const std::string null_tensor_name = "null_tensor";
-  QnnTensorWrapper null_tensor_wrapper(null_tensor_name, QNN_TENSOR_TYPE_NULL, QNN_DATATYPE_FLOAT_32,
+  // Null tensor for optional inputs — use a node-scoped unique name to avoid colliding with
+  // other ops' null tensors (e.g. LSTM uses the same pattern), and match LSTM's dtype of
+  // QNN_DATATYPE_UNDEFINED so the two null tensors are interchangeable if they ever share a graph.
+  const std::string null_tensor_name = utils::UniqueNameGenerator().New(node_unit, "_null_tensor_" + direction);
+  QnnTensorWrapper null_tensor_wrapper(null_tensor_name, QNN_TENSOR_TYPE_NULL, QNN_DATATYPE_UNDEFINED,
                                        QnnQuantParamsWrapper(), std::vector<uint32_t>{0});
   qnn_model_wrapper.AddTensorWrapper(std::move(null_tensor_wrapper));
 

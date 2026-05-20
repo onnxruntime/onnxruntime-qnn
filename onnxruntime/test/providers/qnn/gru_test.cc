@@ -341,7 +341,7 @@ TEST_F(QnnCPUBackendTests, GRU_fp32_layout1_forward) {
       std::exception);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64)
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 // Runs a GRU model on the QNN HTP backend with QDQ quantization.
 template <typename QuantType>
@@ -902,7 +902,7 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_linear_before_reset) {
                       0.03f);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64)
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 }  // namespace test
 }  // namespace onnxruntime
