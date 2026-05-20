@@ -51,25 +51,4 @@
         </OpDef>
     </OpDefList>
 
-    <SupplementalOpDefList Backend="HTP">
-        <SupportedOps>
-            <OpName>MyAdd</OpName>
-        </SupportedOps>
-
-        <!--MyAdd-->
-        <SupplementalOpDef>
-            <Name>MyAdd</Name>
-
-            <Input>
-                <Name>in[0]</Name>
-                <Datatype>QNN_DATATYPE_UFIXED_POINT_8</Datatype>
-            </Input>
-
-            <Output>
-                <Name>out[0]</Name>
-                <Datatype>QNN_DATATYPE_UFIXED_POINT_8</Datatype>
-            </Output>
-        </SupplementalOpDef>
-    </SupplementalOpDefList>
-
 </OpDefCollection>

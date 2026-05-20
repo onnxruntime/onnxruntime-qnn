@@ -3,9 +3,14 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#if defined(_WIN32)
+#include <windows.h>
+#else
 #include <limits.h>
+#endif
 
 #include <filesystem>
+#include <iostream>
 #include <random>
 #include <string>
 #include <variant>
@@ -23,7 +28,9 @@ static std::string onnx_domain = "udo_domain";
 namespace onnxruntime {
 namespace test {
 
-#if defined(__linux__) && defined(__x86_64__)
+// The CPU UDO op-package is supported on both Linux x86_64 and Windows x86 hosts.
+// HTP UDO compilation requires the Hexagon SDK toolchain, which is wired up only on Linux x86_64
+// (see docs/execution_providers/QNN_UDO.md for details).
 /*
 The following is a custom op that registered in udo_domain for demo purpose.
 The logic of MyAdd op is (y = x + c) where x is input and c is attribute.
@@ -161,10 +168,21 @@ std::string getLibPath(std::string backend) {
   Assume udo package lib is put with same directory with onnxruntime_provider_test.
   We set the path of udo package to absolute path so we can execute onnxruntime_provider_test from any path.
   */
+#if defined(_WIN32)
+  char path[MAX_PATH];
+  DWORD result = GetModuleFileNameA(NULL, path, MAX_PATH);
+  if (result == 0) {
+    std::cerr << "Failed to get executable path." << std::endl;
+    return "";
+  }
+  std::filesystem::path exePath(path);
+  return (exePath.parent_path() / ("MyAddOpPackage_" + backend + ".dll")).string();
+#else
   char path[PATH_MAX];
   ssize_t count = readlink("/proc/self/exe", path, PATH_MAX);
   std::filesystem::path exePath(std::string(path, count));
   return exePath.parent_path() / ("libMyAddOpPackage_" + backend + ".so");
+#endif
 }
 
 TEST_F(QnnCPUBackendTests, UDO_Op_MyAdd) {
@@ -181,6 +199,8 @@ TEST_F(QnnCPUBackendTests, UDO_Op_MyAdd) {
                  ExpectedEPNodeAssignment::All);
 }
 
+// HTP UDO compilation requires the Hexagon SDK toolchain (currently Linux x86_64 only).
+#if defined(__linux__) && defined(__x86_64__)
 TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd) {
   auto input = TestInputDef<float>({1, 32}, false, -1.0f, 1.0f);
   std::filesystem::path path = getLibPath("htp");
@@ -194,7 +214,6 @@ TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd) {
                  11,
                  ExpectedEPNodeAssignment::All);
 }
-
 #endif  // defined(__linux__) && defined(__x86_64__)
 
 }  // namespace test
