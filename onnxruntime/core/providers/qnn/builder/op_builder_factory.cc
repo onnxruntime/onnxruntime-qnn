@@ -20,6 +20,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateConvOpBuilder("Conv", *this);
   CreateConvOpBuilder("ConvTranspose", *this);
   CreateCumSumOpBuilder("CumSum", *this);
+  CreateDropoutOpBuilder("Dropout", *this);
   CreateEinsumOpBuilder("Einsum", *this);
   CreateExpandOpBuilder("Expand", *this);
   CreateFusedMatMulOpBuilder("FusedMatMul", *this);
