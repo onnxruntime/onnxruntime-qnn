@@ -105,11 +105,11 @@ TEST_F(QnnCPUBackendTests, Selu_CustomAlphaGamma) {
               ExpectedEPNodeAssignment::All);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+//
+// HTP tests across x86_64 and ARM64 Windows, x86_64 and ARM64 Linux
+//
 
-//
-// HTP tests
-//
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 // FP32 with default attrs.
 TEST_F(QnnHTPBackendTests, Selu_FP32_DefaultAttrs) {
@@ -161,9 +161,15 @@ TEST_F(QnnHTPBackendTests, Selu_FP16_CustomAlphaGamma) {
                   ExpectedEPNodeAssignment::All,
                   22, 0.016f);
 }
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
-// HTP BF16 mode: float32 model executed at BF16 precision (opset 22 type extension).
+//
+// HTP tests only for ARM64 Architecture
 // Only supported on v81+ Architecture
+//
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+
 TEST_F(QnnHTPBackendTests, Selu_HTP_BF16_DefaultAttrs) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
   RunSeluHTPBF16Test({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
@@ -172,8 +178,6 @@ TEST_F(QnnHTPBackendTests, Selu_HTP_BF16_DefaultAttrs) {
                      22, 0.008f);
 }
 
-// HTP BF16 mode with custom alpha and gamma.
-// Only supported on v81+ Architecture
 TEST_F(QnnHTPBackendTests, Selu_HTP_BF16_CustomAlphaGamma) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
   RunSeluHTPBF16Test({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
@@ -183,7 +187,7 @@ TEST_F(QnnHTPBackendTests, Selu_HTP_BF16_CustomAlphaGamma) {
                      22, 0.016f);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // #if defined(__aarch64__) || defined(_M_ARM64)
 
 #if defined(_M_ARM64)
 
