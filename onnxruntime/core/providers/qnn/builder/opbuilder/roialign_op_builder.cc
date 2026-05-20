@@ -111,7 +111,8 @@ Ort::Status RoiAlignOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
                                      aligned, QNN_OP_ROI_ALIGN_PARAM_ALIGNED, param_tensor_names));
 
   // Pass sampling_ratio directly as num_samples_y/x.
-  // QNN treats 0 as adaptive (same as ONNX sampling_ratio=0 semantics).
+  // Note that although the default value of sampling_ratio for QNN is -1,
+  // QNN also treats 0 as adaptive (same as ONNX sampling_ratio=0 semantics).
   int32_t sampling_ratio = static_cast<int32_t>(node_helper.Get("sampling_ratio", 0));
   RETURN_IF_ERROR(AddQnnScalar<int32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
                                         sampling_ratio, QNN_OP_ROI_ALIGN_PARAM_NUM_SAMPLES_Y,

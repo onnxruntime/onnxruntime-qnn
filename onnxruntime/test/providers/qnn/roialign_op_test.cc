@@ -227,7 +227,7 @@ TEST_F(QnnHTPBackendTests, TestRoialign_Unsupported_mode_max) {
                     "htp");
 }
 
-// sampling_ratio=0 is the ONNX adaptive default; maps to QNN num_samples=-1
+// sampling_ratio=0 is the ONNX adaptive default
 TEST_F(QnnHTPBackendTests, TestRoialign_sampling_ratio_0) {
   RunRoiAlignOpTest(TestInputDef<float>({1, 1, 2, 2}, false, {1.0f, 2.0f, 3.0f, 4.0f}),
                     TestInputDef<float>({1, 4}, true, {0.0f, 0.0f, 1.0f, 1.0f}),
