@@ -45,25 +45,6 @@ static void RunSeluTest(const std::vector<TestInputDef<float>>& input_defs,
                   fp32_abs_err);
 }
 
-// Runs a Selu model with HTP BF16 mode enabled (float32 model, BF16 execution).
-static void RunSeluHTPBF16Test(const std::vector<TestInputDef<float>>& input_defs,
-                               const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                               ExpectedEPNodeAssignment expected_ep_assignment,
-                               int opset = 22,
-                               float tolerance = 0.008f) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["htp_bf16_enable"] = "1";
-  provider_options["soc_model"] = "88";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildOpTestCase<float>("Selu_node", "Selu", input_defs, {}, attrs),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment,
-                  tolerance);
-}
-
 // Runs a native FP16 Selu model on the QNN HTP backend.
 static void RunSeluFP16Test(const std::vector<TestInputDef<float>>& input_defs,
                             const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
@@ -105,11 +86,11 @@ TEST_F(QnnCPUBackendTests, Selu_CustomAlphaGamma) {
               ExpectedEPNodeAssignment::All);
 }
 
-#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+//
+// HTP tests across x86_64 and ARM64 Windows, x86_64 and ARM64 Linux
+//
 
-//
-// HTP tests
-//
+#if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 // FP32 with default attrs.
 TEST_F(QnnHTPBackendTests, Selu_FP32_DefaultAttrs) {
@@ -161,19 +142,43 @@ TEST_F(QnnHTPBackendTests, Selu_FP16_CustomAlphaGamma) {
                   ExpectedEPNodeAssignment::All,
                   22, 0.016f);
 }
+#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
-// HTP BF16 mode: float32 model executed at BF16 precision (opset 22 type extension).
-// Similar to bf16_test.cc, disabled
-TEST_F(QnnHTPBackendTests, DISABLED_Selu_HTP_BF16_DefaultAttrs) {
+//
+// HTP tests only for ARM64 Architecture
+// Only supported on v81+ Architecture
+//
+
+#if defined(__aarch64__) || defined(_M_ARM64)
+
+static void RunSeluHTPBF16Test(const std::vector<TestInputDef<float>>& input_defs,
+                               const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                               ExpectedEPNodeAssignment expected_ep_assignment,
+                               int opset = 22,
+                               float tolerance = 0.008f) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["htp_bf16_enable"] = "1";
+  provider_options["soc_model"] = "88";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildOpTestCase<float>("Selu_node", "Selu", input_defs, {}, attrs),
+                  provider_options,
+                  opset,
+                  expected_ep_assignment,
+                  tolerance);
+}
+
+TEST_F(QnnHTPBackendTests, Selu_HTP_BF16_DefaultAttrs) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
   RunSeluHTPBF16Test({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
                      {},
                      ExpectedEPNodeAssignment::All,
                      22, 0.008f);
 }
 
-// HTP BF16 mode with custom alpha and gamma.
-// Similar to bf16_test.cc, disabled
-TEST_F(QnnHTPBackendTests, DISABLED_Selu_HTP_BF16_CustomAlphaGamma) {
+TEST_F(QnnHTPBackendTests, Selu_HTP_BF16_CustomAlphaGamma) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
   RunSeluHTPBF16Test({TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
                      {test::MakeAttribute("alpha", 1.0f),
                       test::MakeAttribute("gamma", 2.0f)},
@@ -181,7 +186,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_Selu_HTP_BF16_CustomAlphaGamma) {
                      22, 0.016f);
 }
 
-#endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
+#endif  // #if defined(__aarch64__) || defined(_M_ARM64)
 
 #if defined(_M_ARM64)
 
