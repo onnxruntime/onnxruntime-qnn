@@ -465,16 +465,12 @@ class WheelUpleveler(ArtifactUpleveler):
                 if whl_name.endswith("win_amd64.whl"):
                     amd64_missing = self._replace_signed_dll(
                         src=os.path.join(signed_libs_dir, whl_no_ext, "amd64", _QNN_PROVIDER_DLL),
-                        dst=os.path.join(
-                            extract_dir, "onnxruntime_qnn", "libs", "amd64", _QNN_PROVIDER_DLL
-                        ),
+                        dst=os.path.join(extract_dir, "onnxruntime_qnn", "libs", "amd64", _QNN_PROVIDER_DLL),
                         label="amd64",
                     )
                     arm64ec_missing = self._replace_signed_dll(
                         src=os.path.join(signed_libs_dir, whl_no_ext, "arm64ec", _QNN_PROVIDER_DLL),
-                        dst=os.path.join(
-                            extract_dir, "onnxruntime_qnn", "libs", "arm64ec", _QNN_PROVIDER_DLL
-                        ),
+                        dst=os.path.join(extract_dir, "onnxruntime_qnn", "libs", "arm64ec", _QNN_PROVIDER_DLL),
                         label="arm64ec",
                     )
                     dll_replacement_failed = amd64_missing or arm64ec_missing
