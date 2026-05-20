@@ -45,25 +45,6 @@ static void RunSeluTest(const std::vector<TestInputDef<float>>& input_defs,
                   fp32_abs_err);
 }
 
-// Runs a Selu model with HTP BF16 mode enabled (float32 model, BF16 execution).
-static void RunSeluHTPBF16Test(const std::vector<TestInputDef<float>>& input_defs,
-                               const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                               ExpectedEPNodeAssignment expected_ep_assignment,
-                               int opset = 22,
-                               float tolerance = 0.008f) {
-  ProviderOptions provider_options;
-  provider_options["backend_type"] = "htp";
-  provider_options["htp_bf16_enable"] = "1";
-  provider_options["soc_model"] = "88";
-  provider_options["offload_graph_io_quantization"] = "0";
-
-  RunQnnModelTest(BuildOpTestCase<float>("Selu_node", "Selu", input_defs, {}, attrs),
-                  provider_options,
-                  opset,
-                  expected_ep_assignment,
-                  tolerance);
-}
-
 // Runs a native FP16 Selu model on the QNN HTP backend.
 static void RunSeluFP16Test(const std::vector<TestInputDef<float>>& input_defs,
                             const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
@@ -169,6 +150,24 @@ TEST_F(QnnHTPBackendTests, Selu_FP16_CustomAlphaGamma) {
 //
 
 #if defined(__aarch64__) || defined(_M_ARM64)
+
+static void RunSeluHTPBF16Test(const std::vector<TestInputDef<float>>& input_defs,
+                               const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                               ExpectedEPNodeAssignment expected_ep_assignment,
+                               int opset = 22,
+                               float tolerance = 0.008f) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["htp_bf16_enable"] = "1";
+  provider_options["soc_model"] = "88";
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  RunQnnModelTest(BuildOpTestCase<float>("Selu_node", "Selu", input_defs, {}, attrs),
+                  provider_options,
+                  opset,
+                  expected_ep_assignment,
+                  tolerance);
+}
 
 TEST_F(QnnHTPBackendTests, Selu_HTP_BF16_DefaultAttrs) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
