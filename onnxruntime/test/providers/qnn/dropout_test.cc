@@ -74,11 +74,11 @@ static void RunDropoutTest(const TestInputDef<float>& data_def,
 }
 
 static void RunDropoutFP16Test(const TestInputDef<float>& data_def,
-                                const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                ExpectedEPNodeAssignment expected_ep_assignment,
-                                bool with_mask = false,
-                                int opset = 13,
-                                float tolerance = 1e-5f) {
+                               const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                               ExpectedEPNodeAssignment expected_ep_assignment,
+                               bool with_mask = false,
+                               int opset = 13,
+                               float tolerance = 1e-5f) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
@@ -167,11 +167,11 @@ TEST_F(QnnHTPBackendTests, Dropout_FP16_WithMask) {
 // ---------------------------------------------------------------------------
 
 static void RunDropoutHTPBF16Test(const TestInputDef<float>& data_def,
-                                   const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
-                                   ExpectedEPNodeAssignment expected_ep_assignment,
-                                   bool with_mask = false,
-                                   int opset = 13,
-                                   float tolerance = 1e-5f) {
+                                  const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                                  ExpectedEPNodeAssignment expected_ep_assignment,
+                                  bool with_mask = false,
+                                  int opset = 13,
+                                  float tolerance = 1e-5f) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["htp_bf16_enable"] = "1";
