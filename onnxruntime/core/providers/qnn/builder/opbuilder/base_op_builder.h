@@ -262,6 +262,7 @@ class BaseOpBuilder : public IOpBuilder {
   static const std::pair<size_t, size_t> GetInputOutputCountQnnRequired(std::string onnx_op_type) {
     static const std::unordered_map<std::string, std::pair<size_t, size_t>> input_output_count_qnn_required = {
         {"BatchNormalization", {3, 1}},
+        {"Dropout", {1, 1}},
         {"GlobalAveragePool", {0, 1}},
         {"LayerNormalization", {0, 1}},
         {"MaxPool", {0, 1}}};
