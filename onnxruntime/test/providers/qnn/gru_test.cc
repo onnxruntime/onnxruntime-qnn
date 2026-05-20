@@ -314,6 +314,33 @@ TEST_F(QnnCPUBackendTests, GRU_fp32_Y_h_only_forward) {
                       ExpectedEPNodeAssignment::All);
 }
 
+// layout=1: ORT CPU EP does not support batchwise layout, so session initialization throws.
+// Verify the expected failure so the test actively guards against silent regressions.
+TEST_F(QnnCPUBackendTests, GRU_fp32_layout1_forward) {
+  std::string direction = "forward";
+  uint32_t num_direction = 1;
+  uint32_t batch_size = 6;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  // layout=1: X [batch, seq, input], initial_h [batch, num_directions, hidden]
+  auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({batch_size, num_direction, hidden_size}, false, -1.0f, 1.0f);
+  EXPECT_THROW(
+      RunCpuFP32GRUOpTest(TestInputDef<float>({batch_size, seq_len, input_size}, false, -1.0f, 1.0f),              // X
+                          TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                          TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                          std::ref(B_def),                                                                         // B
+                          std::ref(H_def),                                                                         // initial_h
+                          true,                                                                                    // has_Y
+                          true,                                                                                    // has_Y_h
+                          direction,                                                                               // direction
+                          hidden_size,                                                                             // hidden_size
+                          1,                                                                                       // layout
+                          ExpectedEPNodeAssignment::None),
+      std::exception);
+}
+
 #if defined(__aarch64__) || defined(_M_ARM64)
 
 // Runs a GRU model on the QNN HTP backend with QDQ quantization.
@@ -578,6 +605,33 @@ TEST_F(QnnHTPBackendTests, GRU_QDQ_Y_h_only_bidirectional) {
                               ExpectedEPNodeAssignment::All);
 }
 
+// layout=1: ORT CPU EP does not support batchwise layout, so session initialization throws.
+// Verify the expected failure so the test actively guards against silent regressions.
+TEST_F(QnnHTPBackendTests, GRU_QDQ_layout1_forward) {
+  std::string direction = "forward";
+  uint32_t num_direction = 1;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  // layout=1: X [batch, seq, input], initial_h [batch, num_directions, hidden]
+  auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({batch_size, num_direction, hidden_size}, false, -1.0f, 1.0f);
+  EXPECT_THROW(
+      RunHtpQDQGRUOpTest<uint8_t>(TestInputDef<float>({batch_size, seq_len, input_size}, false, -1.0f, 1.0f),              // X
+                                  TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                                  TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                                  std::ref(B_def),                                                                         // B
+                                  std::ref(H_def),                                                                         // initial_h
+                                  true,                                                                                    // has_Y
+                                  true,                                                                                    // has_Y_h
+                                  direction,                                                                               // direction
+                                  hidden_size,                                                                             // hidden_size
+                                  1,                                                                                       // layout
+                                  ExpectedEPNodeAssignment::None),
+      std::exception);
+}
+
 TEST_F(QnnHTPBackendTests, GRU_QDQ_linear_before_reset) {
   std::string direction = "forward";
   uint32_t num_direction = 1;
@@ -795,6 +849,33 @@ TEST_F(QnnHTPBackendTests, GRU_Fp16_Y_h_only_bidirectional) {
                       ExpectedEPNodeAssignment::All,
                       0,
                       0.02f);
+}
+
+// layout=1: ORT CPU EP does not support batchwise layout, so session initialization throws.
+// Verify the expected failure so the test actively guards against silent regressions.
+TEST_F(QnnHTPBackendTests, GRU_Fp16_layout1_forward) {
+  std::string direction = "forward";
+  uint32_t num_direction = 1;
+  uint32_t batch_size = 3;
+  uint32_t hidden_size = 4;
+  uint32_t input_size = 5;
+  uint32_t seq_len = 6;
+  // layout=1: X [batch, seq, input], initial_h [batch, num_directions, hidden]
+  auto B_def = TestInputDef<float>({num_direction, 6 * hidden_size}, false, -1.0f, 1.0f);
+  auto H_def = TestInputDef<float>({batch_size, num_direction, hidden_size}, false, -1.0f, 1.0f);
+  EXPECT_THROW(
+      RunHtpFp16GRUOpTest(TestInputDef<float>({batch_size, seq_len, input_size}, false, -1.0f, 1.0f),              // X
+                          TestInputDef<float>({num_direction, 3 * hidden_size, input_size}, false, -1.0f, 1.0f),   // W
+                          TestInputDef<float>({num_direction, 3 * hidden_size, hidden_size}, false, -1.0f, 1.0f),  // R
+                          std::ref(B_def),                                                                         // B
+                          std::ref(H_def),                                                                         // initial_h
+                          true,                                                                                    // has_Y
+                          true,                                                                                    // has_Y_h
+                          direction,                                                                               // direction
+                          hidden_size,                                                                             // hidden_size
+                          1,                                                                                       // layout
+                          ExpectedEPNodeAssignment::None),
+      std::exception);
 }
 
 TEST_F(QnnHTPBackendTests, GRU_Fp16_linear_before_reset) {
