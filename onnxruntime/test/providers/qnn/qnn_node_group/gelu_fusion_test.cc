@@ -747,6 +747,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_2D) {
 
 // Test GELU Pattern 1 with QDQ
 TEST_F(QnnHTPBackendTests, GeluFusionPattern1_QDQ_U8) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern1_QDQ_U8";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -778,6 +779,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern1_QDQ_U8) {
 
 // Test GELU Pattern 2 with QDQ
 TEST_F(QnnHTPBackendTests, GeluFusionPattern2_QDQ_U8) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern2_QDQ_U8";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -809,6 +811,7 @@ TEST_F(QnnHTPBackendTests, GeluFusionPattern2_QDQ_U8) {
 
 // Test GELU Pattern 3 with QDQ
 TEST_F(QnnHTPBackendTests, GeluFusionPattern3_QDQ_U8) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern3_QDQ_U8";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -918,6 +921,7 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPatternWithInternalQDQ(const TestInputD
 }
 
 TEST_F(QnnHTPBackendTests, GeluFusionPattern_QDQ_InternalQDQ_ShouldNotFuse) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern_QDQ_InternalQDQ";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -1002,6 +1006,7 @@ GetTestQDQModelFn<QuantType> BuildQDQGeluPatternWithWrongSkipConnection(const Te
 }
 
 TEST_F(QnnHTPBackendTests, GeluFusionPattern_QDQ_WrongSkipConnection_ShouldNotFuse) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "GeluFusionPattern_QDQ_WrongSkip";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
