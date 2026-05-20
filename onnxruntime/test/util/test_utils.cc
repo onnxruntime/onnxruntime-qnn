@@ -258,7 +258,7 @@ void RunAndVerifyOutputsWithEP(ModelPathOrBytes model_path_or_bytes,
   Ort::AllocatorWithDefaultOptions allocator;
   for (size_t i = 0; i < output_count; ++i) {
     auto output_name = cpu_session.GetOutputNameAllocated(i, allocator);
-    output_names.push_back(output_name.release());
+    output_names.push_back(output_name.get());
   }
 
   Ort::RunOptions cpu_run_options;
