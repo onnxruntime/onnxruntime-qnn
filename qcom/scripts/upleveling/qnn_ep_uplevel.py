@@ -314,9 +314,9 @@ class ArtifactUpleveler(ABC):
         if not api_key:
             raise RuntimeError("JFROG_API_KEY environment variable is required when --sign_artifact true")
 
-        base_url = self.config_manager.config.get(_SIGNED_LIBS_INDEX, "repository").rstrip("/")
+        version_url = self.config_manager.get_repository_url(_SIGNED_LIBS_INDEX, self.args.product_name, self._signed_libs_version)
         zip_filename = f"{self.artifact_format}.zip"
-        url = f"{base_url}/{self.args.product_name}/{self._signed_libs_version}/signed_libs/{zip_filename}"
+        url = f"{version_url}/signed_libs/{zip_filename}"
         target_path = os.path.join(target_dir, zip_filename)
 
         logging.info(f"Downloading signed libs ({zip_filename}) for version {self.args.version_from}")
@@ -337,7 +337,7 @@ class ArtifactUpleveler(ABC):
         os.remove(zip_path)
 
     def _replace_signed_dll(self, src: str, dst: str, label: str) -> bool:
-        """Copy signed DLL src→dst. Return True if src is missing (NOT replaced), else False."""
+        """Copy signed DLL src→dst. Return True if replaced successfully, False if src is missing."""
         if not os.path.exists(src):
             logging.warning(f"    {label.capitalize()} Signed DLL not found: {src}")
             return True
@@ -459,8 +459,7 @@ class WheelUpleveler(ArtifactUpleveler):
             try:
                 if os.path.exists(extract_dir):
                     shutil.rmtree(extract_dir)
-                with zipfile.ZipFile(whl_path) as zf:
-                    zf.extractall(extract_dir)
+                self._extract_signed_libs(whl_path, extract_dir)
 
                 if whl_name.endswith("win_amd64.whl"):
                     amd64_missing = self._replace_signed_dll(
@@ -532,6 +531,10 @@ class WheelUpleveler(ArtifactUpleveler):
             logging.warning(f"    - {fw}")
         logging.info("")
         logging.info("=== End of Processing Summary ===")
+
+        failures = repackage_failed + other_failed
+        if failures:
+            raise RuntimeError(f"Wheel repackaging failed for: {failures}")
 
     def update_artifacts(self, artifact_list: list[str], input_dir: str, output_dir: str) -> None:
         """Update wheel package versions."""
@@ -847,8 +850,7 @@ class NugetUpleveler(ArtifactUpleveler):
             try:
                 if os.path.exists(extract_dir):
                     shutil.rmtree(extract_dir)
-                with zipfile.ZipFile(nupkg_path) as zf:
-                    zf.extractall(extract_dir)
+                self._extract_signed_libs(nupkg_path, extract_dir)
 
                 native_missing = self._replace_signed_dll(
                     src=os.path.join(signed_libs_dir, nupkg_no_ext, _QNN_PROVIDER_DLL),
@@ -860,10 +862,8 @@ class NugetUpleveler(ArtifactUpleveler):
                     dst=os.path.join(extract_dir, "lib", "netstandard2.0", _QNN_MANAGED_DLL),
                     label="managed",
                 )
-                # PS1: counted as failure only when BOTH signed DLLs are missing.
-                dll_replacement_failed = native_missing and managed_missing
+                dll_replacement_failed = native_missing or managed_missing
 
-                # Always re-zip, even if a DLL was missing (matches PS1).
                 out_nupkg = os.path.join(output_dir, nupkg_name)
                 if os.path.exists(out_nupkg):
                     os.remove(out_nupkg)
@@ -897,6 +897,9 @@ class NugetUpleveler(ArtifactUpleveler):
             logging.warning(f"    - {fn}")
         logging.info("")
         logging.info("=== End of Processing Summary ===")
+
+        if repackage_failed:
+            raise RuntimeError(f"NuGet repackaging failed for: {repackage_failed}")
 
     def run(self) -> None:
         """Execute NuGet upleveling with source configuration."""
@@ -945,7 +948,7 @@ class ZipUpleveler(ArtifactUpleveler):
         into output_dir, flattened (only basename preserved).
 
         Missing signed DLLs are logged and counted as failures, but the zip is still
-        re-zipped (matching the PS1 reference — no exception is raised).
+        re-zipped.
         """
         zips: list[str] = []
         other_files: list[str] = []
@@ -969,14 +972,13 @@ class ZipUpleveler(ArtifactUpleveler):
 
         for zip_path in zips:
             zip_name = os.path.basename(zip_path)
-            zip_no_ext = zip_name[: -len(".zip")]
+            zip_no_ext = zip_name[: -len(self.artifact_suffix)]
             extract_dir = os.path.join(output_dir, zip_no_ext)
             logging.info(f"  Processing: {zip_name}")
             try:
                 if os.path.exists(extract_dir):
                     shutil.rmtree(extract_dir)
-                with zipfile.ZipFile(zip_path) as zf:
-                    zf.extractall(extract_dir)
+                self._extract_signed_libs(zip_path, extract_dir)
 
                 arm64_missing = self._replace_signed_dll(
                     src=os.path.join(signed_libs_dir, zip_no_ext, _QNN_PROVIDER_DLL),
@@ -985,7 +987,6 @@ class ZipUpleveler(ArtifactUpleveler):
                 )
                 dll_replacement_failed = arm64_missing
 
-                # Always re-zip, even if the DLL was missing (matches PS1).
                 out_zip = os.path.join(output_dir, zip_name)
                 if os.path.exists(out_zip):
                     os.remove(out_zip)
@@ -1038,6 +1039,10 @@ class ZipUpleveler(ArtifactUpleveler):
             logging.warning(f"    - {fn}")
         logging.info("")
         logging.info("=== End of Processing Summary ===")
+
+        failures = repackage_failed + other_failed
+        if failures:
+            raise RuntimeError(f"ZIP repackaging failed for: {failures}")
 
     def update_artifacts(self, artifact_list: list[str], input_dir: str, output_dir: str) -> None:
         """Update ZIP archive versions (simple copy with renamed version)."""
