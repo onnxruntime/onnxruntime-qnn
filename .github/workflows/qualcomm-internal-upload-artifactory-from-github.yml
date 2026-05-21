@@ -375,7 +375,7 @@ jobs:
             "onnxruntime-qnn-*-win-arm64x.zip"
             "onnxruntime-qnn-*-win-arm64-pdb.zip"
             "onnxruntime-qnn-*-win-arm64ec-pdb.zip"
-            "onnxruntime-qnn-*-win-x86_64-pdb.zip"
+            "onnxruntime-qnn-*-win-x64-pdb.zip"
             "onnxruntime-qnn-*-win-arm64x-pdb.zip"
           )
           missing=()
