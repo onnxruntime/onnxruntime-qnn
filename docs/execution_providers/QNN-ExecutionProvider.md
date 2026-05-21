@@ -12,7 +12,7 @@ ONNX Runtime QNN EP can be used on Windows devices with Qualcomm Snapdragon SOC'
 
 - [Install Pre-requisites (Build from Source Only)](#install-pre-requisites-build-from-source-only)
 - [Build (Windows)](#build-windows)
-- [Pre-built Packages (Windows Only)](#pre-built-packages-windows-only)
+- [Pre-built Packages](#pre-built-packages)
 - [Qualcomm AI Hub](#qualcomm-ai-hub)
 - [Configuration Options](#configuration-options)
 - [Supported ONNX operators](#supported-onnx-operators)
@@ -38,23 +38,34 @@ download the Qualcomm AI Runtime SDK (QAIRT SDK) from [https://qpm.qualcomm.com/
 ONNX Runtime QNN EP has been built and tested with the following SDK version combinations on Windows:
 | QNN EP Version | QAIRT SDK Version | ONNX Runtime Version |
 |----------------|-------------------|----------------------|
-| v2.3.0         | v2.45.40           | v1.24.4              |
+| v2.2.0         | v2.46.0           | v1.24.4              |
 
-> **Note**: ONNX Runtime QNN EP is built and tested by using the arm64 ONNX Runtime SDK (ex: onnxruntime-win-arm64-1.24.0.zip).
+> **Note**: ONNX Runtime QNN EP is built and tested by using the arm64 ONNX Runtime SDK (ex: onnxruntime-win-arm64-1.24.4.zip).
 
 ## Build (Windows)
 For build instructions, please see the [BUILD page](./build.md).
 
-## Pre-built Packages (Windows Only)
+## Pre-built Packages
 - [NuGet package](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN)
   - **Note**: The NuGet package only supports Windows ARM64 platform
 - [Python package](https://pypi.org/project/onnxruntime-qnn/)
   - Requirements:
     - Windows ARM64 (for inferencing on local device with Qualcomm NPU)
     - Windows X64 (for quantizing models. see [Generating a quantized model](./QNN-ExecutionProvider.md#generating-a-quantized-model-x64-only))
+    - Linux ARM64 (for inferencing on local Qualcomm-powered Linux devices)
     - Python 3.11.x
     - Numpy 1.25.2 or >= 1.26.4
   - Install: `pip install onnxruntime-qnn`
+- Linux ARM64 archive (`.tgz`)
+  - **Note**: Ships the QNN EP shared library and headers for use outside of Python on Linux ARM64.
+- Maven package (Android)
+  - **Note**: The Maven package supports Android ARM64
+  - Group ID / Artifact ID: `com.qualcomm.qti:onnxruntime-android-qnn`
+  - This release is validated against the following dependency versions:
+    | Dependency | Maven Coordinate | Version |
+    |---|---|---|
+    | ONNX Runtime Android | `com.microsoft.onnxruntime:onnxruntime-android` | `1.24.3` |
+    | QNN Runtime | `com.qualcomm.qti:qnn-runtime` | `2.45.0` |
 
 ## Qualcomm AI Hub
 Qualcomm AI Hub can be used to optimize and run models on Qualcomm hosted devices.

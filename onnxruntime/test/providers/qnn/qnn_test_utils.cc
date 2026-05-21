@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 #include "onnxruntime_c_api.h"
-#include "test/unittest_util/graph_transform_test_builder.h"
+#include "test/unittest_util/model_test_builder.h"
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include "test/providers/qnn/qnn_test_utils.h"
@@ -18,7 +18,6 @@
 #include "core/framework/error_code_helper.h"
 #include "core/graph/ep_api_types.h"
 #include "core/graph/constants.h"
-#include "core/graph/graph.h"
 #include "core/session/abi_devices.h"
 #include "core/session/abi_ep_types.h"
 #include "core/session/onnxruntime_cxx_api.h"
@@ -138,6 +137,10 @@ TestInputDef<Ort::Float16_t> ConvertToFP16InputDef(const TestInputDef<float>& in
   }
 }
 
+// Mirrors SafeIntExceptionHandler in core/providers/qnn/common/qnn_safeint.h.
+// Defined here because that header cannot be included in test builds:
+// ORT's core/common/safeint.h declares SafeIntExceptionHandler as a class
+// template, which conflicts with qnn_safeint.h's concrete class definition.
 class SafeIntExceptionHandler : public std::exception {
  public:
   [[noreturn]] static void SafeIntOnOverflow() {
@@ -275,7 +278,8 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
 void RunQnnModelTest(const GetTestModelFn& build_test_case, ProviderOptions provider_options,
                      int opset_version, ExpectedEPNodeAssignment expected_ep_assignment,
                      float fp32_abs_err, OrtLoggingLevel log_severity, bool verify_outputs,
-                     std::function<void(const Graph&)>* ep_graph_checker) {
+                     std::function<void(const Ort::Session&)>* ep_graph_checker) {
+  CONDITIONAL_SKIP_TEST_ON_LINUX_ARM64(provider_options, QNN_HTP_DEVICE_ARCH_V68, "FP16");
   std::filesystem::path output_dir;
   if (QNNTestEnvironment::GetInstance().dump_onnx() ||
       QNNTestEnvironment::GetInstance().dump_json() ||
@@ -411,7 +415,7 @@ void InferenceModel(const std::string& model_data,
                     OrtLoggingLevel log_severity,
                     const std::unordered_map<std::string, std::string>& session_option_pairs,
                     std::optional<GraphOptimizationLevel> graph_optimization_level,
-                    std::function<void(const Graph&)>* graph_checker [[maybe_unused]]) {
+                    std::function<void(const Ort::Session&)>* graph_checker) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   const std::string& registration_name = "QNNExecutionProvider";
   Ort::SessionOptions session_options;
@@ -440,11 +444,9 @@ void InferenceModel(const std::string& model_data,
   Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
   ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(session, provider_type, expected_ep_assignment));
 
-  // TODO: Implement graph_checker once public API for ep partition is ready
-  // const auto& graph = ort_session.GetGraph();
-  // if (graph_checker) {
-  //   (*graph_checker)(graph);
-  // }
+  if (graph_checker) {
+    (*graph_checker)(session);
+  }
 
   RunWithEP(session, ort_run_options, feeds, output_vals);
 }
@@ -601,6 +603,11 @@ void QnnCPUBackendTests::SetUp() {
   }
 }
 
+void GenieBackendTests::SetUp() {
+  // Base fixture — derived fixtures (e.g. GenieSessionTest) are responsible
+  // for platform and availability checks.
+}
+
 static BackendSupport GetIRSupport() {
   // QnnIr should be able to serialize any model supported by the QNN reference spec.
   // Use a model that works on QnnCpu to verify QnnIr availability.
@@ -628,8 +635,8 @@ void QnnIRBackendTests::SetUp() {
   }
 }
 
-#if defined(_WIN32)
-// TODO: Remove or set to SUPPORTED once HTP emulation is supported on win arm64.
+#if defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
+// TODO: Remove or set to SUPPORTED once HTP emulation is supported on win arm64 and Linux ARM64.
 BackendSupport QnnHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORT_UNKNOWN;
 
 // TODO: Remove or set to SUPPORTED once CPU backend works on win arm64 (pipeline VM).
@@ -637,7 +644,7 @@ BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORT
 #else
 BackendSupport QnnHTPBackendTests::cached_htp_support_ = BackendSupport::SUPPORTED;
 BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORTED;
-#endif  // defined(_WIN32)
+#endif  // defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
 
 BackendSupport QnnHTPBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnIRBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;

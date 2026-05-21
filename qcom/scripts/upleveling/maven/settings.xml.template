@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries. -->
+<!-- SPDX-License-Identifier: MIT -->
+<settings xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0 http://maven.apache.org/xsd/settings-1.2.0.xsd"
+          xmlns="http://maven.apache.org/SETTINGS/1.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <servers>
+    <server>
+      <id>releases</id>
+      <username>{{username}}</username>
+      <password>{{password}}</password>
+    </server>
+    <server>
+      <id>snapshots</id>
+      <username>{{username}}</username>
+      <password>{{password}}</password>
+    </server>
+  </servers>
+  <profiles>
+    <profile>
+      <id>internal</id>
+      <properties>
+        <altSnapshotDeploymentRepository>snapshots::default::{{repository_url}}</altSnapshotDeploymentRepository>
+        <altReleaseDeploymentRepository>releases::default::{{repository_url}}</altReleaseDeploymentRepository>
+      </properties>
+    </profile>
+  </profiles>
+  <activeProfiles>
+    <activeProfile>internal</activeProfile>
+  </activeProfiles>
+</settings>

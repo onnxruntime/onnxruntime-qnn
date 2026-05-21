@@ -21,7 +21,6 @@
 #include "test/util/include/inference_session_wrapper.h"
 
 namespace onnxruntime {
-class Graph;
 struct SessionOptions;
 
 namespace test {
@@ -43,8 +42,8 @@ struct EPVerificationParams {
   // Set this only if this is necessary
   float fp32_abs_err = 1e-5f;
 
-  // optional graph verification function
-  const std::function<void(const Graph&)>* graph_verifier{nullptr};
+  // optional graph verification function (uses public ORT Session API)
+  const std::function<void(const Ort::Session&)>* graph_verifier{nullptr};
 };
 
 // Verify equality of two output tensors.

@@ -62,7 +62,7 @@ class DockerRunTask(RunExecutablesTask):
             if working_dir is not None:
                 cmd.extend(["--workdir", str(working_dir)])
             if volumes is not None:
-                cmd.extend(_argify("--volume", ":", {k.absolute(): v for k, v in volumes.items()}))
+                cmd.extend(_argify("--volume", ":", {k.resolve(): v for k, v in volumes.items()}))
             if env is not None:
                 cmd.extend(_argify("--env", "=", env))
             if remove:

@@ -118,10 +118,13 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
   RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(input_def, input_tensor));
   RETURN_IF_ERROR(qnn_model_wrapper.MakeTensorWrapper(output_def, output_tensor));
 
+  std::vector<std::string> param_tensor_names;
+  AddHardSwishNeuronParams(qnn_model_wrapper, hardsigmoid_node_unit.Index(), node_name, param_tensor_names);
+
   if (validate) {
     RETURN_IF_ERROR(qnn_model_wrapper.ValidateQnnNode(node_name,
                                                       QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                      QNN_OP_HARD_SWISH,
+                                                      QNN_OP_ELEMENT_WISE_NEURON,
                                                       {input_tensor.GetQnnTensor()},
                                                       {output_tensor.GetQnnTensor()},
                                                       {}));
@@ -130,10 +133,10 @@ static Ort::Status CreateOrValidateOnQnn(QnnModelWrapper& qnn_model_wrapper,
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(output_tensor)), "Failed to add output");
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(node_name,
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                  QNN_OP_HARD_SWISH,
+                                                  QNN_OP_ELEMENT_WISE_NEURON,
                                                   {input_def.name},
                                                   {output_def.name},
-                                                  {},
+                                                  std::move(param_tensor_names),
                                                   validate),
                   "Failed to add fused HardSwish node.");
   }

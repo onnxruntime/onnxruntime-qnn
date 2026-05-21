@@ -120,9 +120,9 @@ index ad6f6eb790..7ba7e3c0b1 100644
      if(MSVC)
 @@ -956,7 +982,7 @@ if (onnxruntime_ENABLE_CUDA_EP_INTERNAL_TESTS)
    onnxruntime_add_include_to_target(onnxruntime_providers_cuda_ut GTest::gtest GTest::gmock)
-   add_dependencies(onnxruntime_providers_cuda_ut onnxruntime_test_utils onnxruntime_common)
+   add_dependencies(onnxruntime_providers_cuda_ut onnxruntime_test_utils)
    target_include_directories(onnxruntime_providers_cuda_ut PRIVATE ${ONNXRUNTIME_ROOT}/core/mickey)
--  target_link_libraries(onnxruntime_providers_cuda_ut PRIVATE GTest::gtest GTest::gmock ${ONNXRUNTIME_MLAS_LIBS} onnxruntime_test_utils onnxruntime_common)
+-  target_link_libraries(onnxruntime_providers_cuda_ut PRIVATE GTest::gtest GTest::gmock ${ONNXRUNTIME_MLAS_LIBS} onnxruntime_test_utils)
 +  target_link_libraries(onnxruntime_providers_cuda_ut PRIVATE GTest::gtest GTest::gmock ${ONNXRUNTIME_MLAS_LIBS} onnxruntime_test_utils onnxruntime_test_utils_internal_values)
    if (MSVC)
      # Cutlass code has an issue with the following:
@@ -200,10 +200,10 @@ diff --git a/onnxruntime/test/onnx/TestCase.cc b/onnxruntime/test/onnx/TestCase.
 index fbb9fb2797..ba733a3751 100644
 --- a/onnxruntime/test/onnx/TestCase.cc
 +++ b/onnxruntime/test/onnx/TestCase.cc
-@@ -1462,6 +1462,26 @@ std::unique_ptr<std::set<BrokenTest>> GetBrokenTests(const std::string& provider
-     broken_tests->insert({"attention_4d_with_past_and_present_qk_matmul_bias_3d_mask_causal_expanded", "unknown version"});
-     broken_tests->insert({"attention_4d_with_past_and_present_qk_matmul_bias_4d_mask_causal_expanded", "unknown version"});
-     broken_tests->insert({"convinteger_with_padding", "unknown version"});
+@@ -1468,6 +1468,26 @@ std::unique_ptr<std::set<BrokenTest>> GetBrokenTests(const std::string& provider
+     broken_tests->insert({"dft_rfft", "unknown version"});
+     broken_tests->insert({"dft_rfft_opset19", "unknown version"});
+     broken_tests->insert({"bitcast_bool_to_uint8", "ORT BitCast kernel does not register bool type"});
 +    // TODO: [AISW-167042] [ORT ABI] Model test failures on ABI path
 +    broken_tests->insert({"affine_grid_2d_align_corners_expanded", "ORT Tensor data size does not match QNN tensor data size"});
 +    broken_tests->insert({"affine_grid_3d_align_corners_expanded", "ORT Tensor data size does not match QNN tensor data size"});

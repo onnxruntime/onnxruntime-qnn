@@ -189,10 +189,41 @@ ProviderOptions GetProviderOptions() {
   return provider_options;
 }
 
+// Build a test case with rank-5 input: Reshape -> Gemm -> Reshape
+// Mirrors the proj/MatMul pattern: [3,3,14,14,384] -> [1764,384] -> Gemm -> output
+// ReshapeGemmFusion must NOT fire because QNN HTP FC rejects rank-5 input.
+GetTestModelFn BuildReshapeGemmReshapeRank5InputTestCase() {
+  return [](ModelTestBuilder& builder) -> void {
+    builder.graph_->set_name("reshape_gemm_reshape_rank5_graph");
+
+    // Rank-5 input mimicking ViT-Matte attention output: [3, 3, 14, 14, 384]
+    auto input_def = TestInputDef<float>({3, 3, 14, 14, 384}, false, -1.0f, 1.0f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // Reshape: [3,3,14,14,384] -> [1764,384] (flatten first 4 dims)
+    builder.Make1DInitializer<int64_t>("reshape1_shape", {1764, 384});
+    builder.AddNode("reshape1", "Reshape", {"input", "reshape1_shape"}, {"reshape1_out"}, kOnnxDomain);
+
+    // Gemm weight: [384, 384], bias: [384]
+    builder.MakeInitializer<float>("weight", {384, 384}, -0.5f, 0.5f);
+    builder.MakeInitializer<float>("bias", {384}, -0.1f, 0.1f);
+
+    // Gemm: [1764, 384] x [384, 384] -> [1764, 384]
+    builder.AddNode("gemm", "Gemm", {"reshape1_out", "weight", "bias"}, {"gemm_out"}, kOnnxDomain);
+
+    // Reshape output back to [3,3,14,14,384]
+    builder.Make1DInitializer<int64_t>("reshape2_shape", {3, 3, 14, 14, 384});
+    builder.AddNode("reshape2", "Reshape", {"gemm_out", "reshape2_shape"}, {"output"}, kOnnxDomain);
+
+    builder.MakeOutput("output");
+  };
+}
+
 }  // namespace
 
 // Test 2-node fusion: Reshape -> Gemm (3D input)
 TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_3D) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmFusion_3D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -214,6 +245,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_3D) {
 
 // Test 3-node fusion: Reshape -> Gemm -> Reshape (3D input)
 TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_3D) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmReshapeFusion_3D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -236,6 +268,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_3D) {
 
 // Test 3-node fusion: Reshape -> Gemm -> Reshape (4D input)
 TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_4D) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmReshapeFusion_4D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -258,6 +291,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_4D) {
 
 // Test 4-node fusion: Reshape -> Gemm -> Reshape -> Reshape
 TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeReshapeFusion_3D) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmReshapeReshapeFusion_3D";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -281,6 +315,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeReshapeFusion_3D) {
 // Test 3-node fusion with ViT-like pattern: keep first dim, flatten last dims
 // [197, 1, 12, 64] -> [197, 768] -> Gemm -> [197, 768] -> [197, 1, 768]
 TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_ViTPattern) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmReshapeFusion_ViTPattern";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -303,6 +338,7 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_ViTPattern) {
 
 // Test with transformer-like shape (smaller for unit test)
 TEST_F(QnnHTPBackendTests, ReshapeGemmReshapeFusion_Transformer) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmReshapeFusion_Transformer";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
@@ -492,6 +528,33 @@ TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_DynamicWeight) {
                   /*opset_version=*/13,
                   /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-2f);
+}
+
+// Test: Fusion should NOT happen when the input Reshape's input has rank 5.
+// QNN HTP FullyConnected only supports input rank <= 4.
+// Mirrors the proj/MatMul regression introduced by PR #232.
+// All ops (Reshape, Gemm, Reshape) must still run on QNN EP via standalone builders.
+TEST_F(QnnHTPBackendTests, ReshapeGemmFusion_Negative_Rank5Input) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+  const std::filesystem::path json_qnn_graph_dir = "ReshapeGemmFusion_Negative_Rank5Input";
+  std::filesystem::remove_all(json_qnn_graph_dir);
+  ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));
+  auto cleanup = gsl::finally([&json_qnn_graph_dir]() { std::filesystem::remove_all(json_qnn_graph_dir); });
+
+  ProviderOptions provider_options = GetProviderOptions();
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = json_qnn_graph_dir.string();
+
+  // All nodes must run on QNN EP (Gemm handled standalone, not as fused FC)
+  RunQnnModelTest(BuildReshapeGemmReshapeRank5InputTestCase(),
+                  provider_options,
+                  /*opset_version=*/13,
+                  /*expected_ep_assignment=*/ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+
+  // Verify the fusion did NOT fire: one FullyConnected node and two Reshape nodes in the QNN graph
+  AssertOpInQnnGraph(json_qnn_graph_dir, "FullyConnected", 1);
+  AssertOpInQnnGraph(json_qnn_graph_dir, "Reshape", 2);
 }
 
 // ============================================================================

@@ -1,0 +1,49 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+#
+# Composite action: set up Java + Maven from the cached packages, then
+# import the Artifactory CA certificate into the JDK truststore.
+#
+# Outputs JAVA_HOME, ANDROID_SDK_ROOT, and adds the Java + Maven bin dirs to
+# PATH via GITHUB_ENV / GITHUB_PATH so subsequent steps pick them up.
+
+name: "Set up Java + Maven and import CA"
+description: "Install Java + Maven from packages.yml and import the Artifactory CA into the JDK cacerts."
+
+inputs:
+  venv-path:
+    description: "Path to the uplevel virtualenv (caller must have run create_uplevel_venv.sh first)"
+    default: "uplevel_venv"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Java + Maven and import CA
+      shell: bash
+      run: |
+        if [[ ! -d "${{ inputs.venv-path }}" ]]; then
+          echo "ERROR: ${{ inputs.venv-path }} not found; run create_uplevel_venv.sh before this action" >&2
+          exit 1
+        fi
+        source "${{ inputs.venv-path }}/bin/activate"
+        source ./qcom/scripts/linux/tools.sh
+
+        JAVA_BIN_DIR=$(get_java17_bindir)
+        MAVEN_BIN_DIR=$(get_maven_bindir)
+        echo "$JAVA_BIN_DIR" >> $GITHUB_PATH
+        echo "$MAVEN_BIN_DIR" >> $GITHUB_PATH
+        echo "ANDROID_SDK_ROOT=$(get_android_sdk_root)" >> $GITHUB_ENV
+        JAVA_HOME=$(get_java17_contentdir)
+        echo "JAVA_HOME=$JAVA_HOME" >> $GITHUB_ENV
+
+        CACERTS="$JAVA_HOME/lib/security/cacerts"
+        if "$JAVA_BIN_DIR/keytool" -list -alias qualcomm-root-ca -keystore "$CACERTS" -storepass changeit 2>/dev/null; then
+          echo "Certificate with alias qualcomm-root-ca already exists, skipping import"
+        else
+          echo "Importing CA certificate"
+          "$JAVA_BIN_DIR/keytool" -import -noprompt -trustcacerts -alias qualcomm-root-ca \
+            -file ./qcom/scripts/upleveling/certs/artifactory-ca.pem \
+            -keystore "$CACERTS" -storepass changeit
+        fi
+
+        "$JAVA_BIN_DIR/keytool" -list -alias qualcomm-root-ca -keystore "$CACERTS" -storepass changeit
