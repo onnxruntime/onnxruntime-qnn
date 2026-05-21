@@ -356,11 +356,6 @@ def add_python_binding_args(parser: argparse.ArgumentParser) -> None:
     """Adds arguments for Python bindings."""
     parser.add_argument("--build_wheel", action="store_true", help="Build Python wheel package.")
     parser.add_argument(
-        "--build_wheel_only",
-        action="store_true",
-        help="Build Python wheel only (skip cmake configure and build).",
-    )
-    parser.add_argument(
         "--wheel_name_suffix",
         help="Suffix for wheel name (used for nightly builds).",
     )

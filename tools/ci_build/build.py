@@ -1077,19 +1077,6 @@ def main():
                 use_ninja=(args.cmake_generator == "Ninja"),
             )
 
-        if args.build_wheel_only:
-            nightly_build = bool(os.getenv("NIGHTLY_BUILD") == "1")
-            build_python_wheel(
-                source_dir,
-                build_dir,
-                configs,
-                args.qnn_home,
-                args.wheel_name_suffix,
-                args.version_suffix,
-                nightly_build=nightly_build,
-                use_ninja=(args.cmake_generator == "Ninja"),
-            )
-
         if args.build_nuget:
             platform_arch = platform.machine()
             if platform_arch == "ARM64" or args.arm64 or args.arm64ec:
