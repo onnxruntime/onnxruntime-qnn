@@ -122,6 +122,21 @@ def test_accepts_providers_qnn_in_any_subdir(per_arch_rules, rel):
     assert per_arch_rules.accept_repo_relative(Path(rel))
 
 
+# Non-shared-library variants must NOT be re-bundled — PDBs ship via upload_pdb_archive,
+# .lib/.exp/.a are link-only artifacts that bloat the per-arch archive.
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "subdir/onnxruntime_providers_qnn.lib",
+        "subdir/onnxruntime_providers_qnn.exp",
+        "subdir/onnxruntime_providers_qnn.pdb",
+        "_deps/abseil_cpp-build/libonnxruntime_providers_qnn.a",
+    ],
+)
+def test_rejects_providers_qnn_non_shared_library(per_arch_rules, rel):
+    assert not per_arch_rules.accept_repo_relative(Path(rel))
+
+
 # --- end-to-end archive smoke ---
 
 

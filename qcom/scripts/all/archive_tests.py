@@ -28,7 +28,7 @@ _TOP_LEVEL_EXACT_NAMES = {
 _TOP_LEVEL_PYTHON_TEST_RE = re.compile(r"^onnxruntime_test_python.*\.py$")
 _QCOM_SCRIPTS_RE = re.compile(r"^qcom/scripts/")
 _QUANTIZATION_RE = re.compile(r"^quantization/")
-_PROVIDERS_QNN_RE = re.compile(r".*onnxruntime_providers_qnn.*")
+_PROVIDERS_QNN_RE = re.compile(r".*onnxruntime_providers_qnn[^/]*\.(so|so\.[0-9.]+|dll)$")
 
 # Drop __pycache__ and .pytest_cache unconditionally.
 _ALWAYS_REJECT_RE = re.compile(r".*/(__pycache__|\.pytest_cache)/")

@@ -30,7 +30,9 @@ jobs:
       - name: Build testdata archive
         run: python3 qcom/build_and_test.py archive_testdata
 
+      # Artifactory steps are no-ops on fork PRs (secrets unavailable). The build still validates the script.
       - name: Setup JFrog CLI
+        if: ${{ env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: jfrog/setup-jfrog-cli@v5
         with:
           disable-auto-build-publish: true
@@ -40,12 +42,14 @@ jobs:
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
       - name: Upload testdata zip
+        if: ${{ env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
           name: testdata-zip
           src_pattern: "onnxruntime-testdata.zip"
 
       - name: Upload testdata tar.bz2
+        if: ${{ env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
           name: testdata-tarbz2

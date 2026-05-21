@@ -8,6 +8,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from archive_testdata import _HANDLES
 from extract_testdata import MAPPING, extract
 
 
@@ -19,6 +20,15 @@ def _make_archive(path: Path, files: dict[str, str]) -> None:
 
 def test_mapping_contains_all_four_handles():
     assert set(MAPPING.keys()) == {"testdata", "pytorch-converted", "pytorch-operator", "node"}
+
+
+def test_handles_match_extract_mapping():
+    """Contract: archive_testdata._HANDLES and extract_testdata.MAPPING must declare the same handle set.
+
+    qdc_runner.py also imports MAPPING; a key drift between producer (archive_testdata) and
+    consumers (extract_testdata, qdc_runner) silently breaks testdata layout on at least one platform.
+    """
+    assert set(_HANDLES.keys()) == set(MAPPING.keys())
 
 
 def test_extract_places_files_at_expected_paths(tmp_path):

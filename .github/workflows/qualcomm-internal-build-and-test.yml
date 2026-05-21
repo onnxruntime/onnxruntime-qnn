@@ -194,3 +194,4 @@ jobs:
     with:
       target_os: android
       target_arch: aarch64
+      testdata_archive_artifact_name: testdata-zip

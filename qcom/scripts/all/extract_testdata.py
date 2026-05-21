@@ -36,10 +36,14 @@ MAPPING: dict[str, str] = {
 def _detect_config_dir(repo_root: Path, plat: str) -> str:
     """Return 'Release/Release' for multi-config Windows builds, 'Release' otherwise.
 
+    Documented fallback. Prefer passing config explicitly via the --config flag —
+    this probe relies on the per-arch test archive having already been extracted
+    so build/<plat>/Release/Release/ exists, which couples this script to caller
+    ordering. Future callers that parallelise the two extractions or reuse build/
+    across single-config and multi-config flavours should not depend on this.
+
     Visual Studio generators create build/<plat>/Release/Release/ for cross-compiled
-    Windows targets (e.g. ARM64 built from an X64 host).  Detect by probing whether
-    that second-level directory already exists — which it will after the per-arch
-    test archive has been extracted (the caller must ensure that ordering).
+    Windows targets (e.g. ARM64 built from an X64 host).
     """
     if (repo_root / "build" / plat / "Release" / "Release").is_dir():
         return "Release/Release"
@@ -62,13 +66,18 @@ def _extract_to_staging(archive: Path, staging: Path) -> None:
         raise ValueError(f"Unsupported archive format: {archive}")
 
 
-def extract(archive: Path, target_platform: str, repo_root: Path = REPO_ROOT) -> None:
+def extract(archive: Path, target_platform: str, repo_root: Path = REPO_ROOT, config: str | None = None) -> None:
     """Extract testdata archive and re-map its 4 handles to expected on-disk paths.
 
-    The per-arch test archive must already be extracted into repo_root before calling
-    this function so that _detect_config_dir() can probe for the multi-config layout.
+    `config` selects the build config dir under build/<plat>/. Pass it explicitly
+    ("Release" or "Release/Release") to make the layout self-describing. When omitted,
+    falls back to probing build/<plat>/Release/Release/ — which only exists if the
+    per-arch test archive was already extracted into repo_root.
     """
-    config_dir = _detect_config_dir(repo_root, target_platform)
+    if config is None:
+        config_dir = _detect_config_dir(repo_root, target_platform)
+    else:
+        config_dir = config
     with tempfile.TemporaryDirectory(prefix="extract-testdata-") as tmp:
         staging = Path(tmp)
         _extract_to_staging(archive, staging)
@@ -102,8 +111,22 @@ def main() -> int:
         default=REPO_ROOT,
         help="Repository root; defaults to REPO_ROOT inferred from script location.",
     )
+    parser.add_argument(
+        "--config",
+        default=None,
+        help=(
+            'Build config dir under build/<plat>/. Pass "Release" for single-config '
+            'or "Release/Release" for multi-config Visual Studio builds. '
+            "When omitted, probes the filesystem (requires the per-arch archive to be extracted first)."
+        ),
+    )
     args = parser.parse_args()
-    extract(archive=args.archive, target_platform=args.target_platform, repo_root=args.repo_root)
+    extract(
+        archive=args.archive,
+        target_platform=args.target_platform,
+        repo_root=args.repo_root,
+        config=args.config,
+    )
     return 0
 
 
