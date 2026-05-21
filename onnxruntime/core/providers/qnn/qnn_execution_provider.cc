@@ -2174,7 +2174,9 @@ void ORT_API_CALL QnnEp::ReleaseNodeComputeInfosImpl(OrtEp* this_ptr,
                                                      size_t num_node_compute_infos) noexcept {
   ORT_UNUSED_PARAMETER(this_ptr);
   for (size_t idx = 0; idx < num_node_compute_infos; ++idx) {
-    delete node_compute_infos[idx];
+    // All derived types share QnnNodeComputeInfoBase, which provides the virtual destructor
+    // required to safely delete through the OrtNodeComputeInfo C-API base.
+    delete static_cast<QnnNodeComputeInfoBase*>(node_compute_infos[idx]);
   }
 }
 
