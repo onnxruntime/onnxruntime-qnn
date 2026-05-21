@@ -4,8 +4,6 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <string>
-#include "core/graph/graph.h"
-#include "core/graph/node_attr_utils.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
 
@@ -80,7 +78,7 @@ GetTestQDQModelFn<QuantType> BuildQDQCumSumTestCase(const TestInputDef<float>& i
                                                     bool use_contrib_qdq = false) {
   return [input_def, axis_def, attrs, use_contrib_qdq](ModelTestBuilder& builder,
                                                        std::vector<QuantParams<QuantType>>& output_qparams) {
-    ORT_UNUSED_PARAMETER(use_contrib_qdq);  // Build using standard ONNX Q/DQ nodes.
+    QNN_TEST_UNUSED_PARAMETER(use_contrib_qdq);  // Build using standard ONNX Q/DQ nodes.
 
     builder.graph_->set_name("qdq_cumsum_graph");
 
