@@ -29,6 +29,10 @@ _TOP_LEVEL_PYTHON_TEST_RE = re.compile(r"^onnxruntime_test_python.*\.py$")
 _QCOM_SCRIPTS_RE = re.compile(r"^qcom/scripts/")
 _QUANTIZATION_RE = re.compile(r"^quantization/")
 _PROVIDERS_QNN_RE = re.compile(r".*onnxruntime_providers_qnn[^/]*\.(so|so\.[0-9.]+|dll)$")
+# AAR-build APKs consumed by qcom/scripts/linux/appium/tests/test_aar.py. These live under
+# java/androidtest/android/app/build/outputs/apk/{debug,androidTest/debug}/ and are only
+# produced when the Android build runs with -BuildAar/build_aar=true.
+_AAR_APK_RE = re.compile(r"^java/androidtest/.*\.apk$")
 
 # Drop __pycache__ and .pytest_cache unconditionally.
 _ALWAYS_REJECT_RE = re.compile(r".*/(__pycache__|\.pytest_cache)/")
@@ -73,6 +77,8 @@ class PerArchAcceptRules:
         if _QUANTIZATION_RE.match(s):
             return True
         if _PROVIDERS_QNN_RE.match(s):
+            return True
+        if _AAR_APK_RE.match(s):
             return True
         return False
 

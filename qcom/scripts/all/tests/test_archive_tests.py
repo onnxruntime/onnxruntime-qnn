@@ -137,6 +137,19 @@ def test_rejects_providers_qnn_non_shared_library(per_arch_rules, rel):
     assert not per_arch_rules.accept_repo_relative(Path(rel))
 
 
+# AAR-build test APKs must be included so test_aar.py runs the instrumentation suite
+# instead of silently skipping with "AAR APKs not in test archive".
+@pytest.mark.parametrize(
+    "rel",
+    [
+        "java/androidtest/android/app/build/outputs/apk/debug/app-debug.apk",
+        "java/androidtest/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk",
+    ],
+)
+def test_accepts_aar_test_apks(per_arch_rules, rel):
+    assert per_arch_rules.accept_repo_relative(Path(rel))
+
+
 # --- end-to-end archive smoke ---
 
 
