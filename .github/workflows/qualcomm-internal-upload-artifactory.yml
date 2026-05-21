@@ -5,7 +5,7 @@ name: Publish ONNX Runtime Execution Provider wheel, nuget, archive and maven
 
 permissions:
   checks: write
-  contents: read
+  contents: write
   id-token: write
 
 on:
@@ -56,6 +56,18 @@ on:
            artifactory-maven-virtual, maven-central]
         type: string
         default: "test-users"
+      create_github_release:
+        description: "If true, create (or update) a GitHub release and attach the ZIP/TGZ artifacts to it."
+        type: boolean
+        default: false
+      github_release_tag:
+        description: "The existing git tag to associate with the GitHub release (e.g. v1.2.3). Required when create_github_release is true."
+        type: string
+        default: ""
+      github_release_name:
+        description: "Title for the GitHub release. Defaults to the tag name when left blank."
+        type: string
+        default: ""
 
   workflow_dispatch:
     inputs: *common_inputs
@@ -193,10 +205,26 @@ jobs:
             --version_to ${{ inputs.version_to }} \
             --index_server_from ${{ inputs.index_server_from }} \
             --index_server_to ${{ inputs.index_server_to }} \
-            --netrc_file "$NETRC_FILE"
+            --netrc_file "$NETRC_FILE" \
+            --output_dir "${{ github.workspace }}/dist/zip"
 
           # Clean up the temporary .netrc file
           rm -f "$NETRC_FILE"
+
+      - name: Create or update GitHub Release (ZIP)
+        if: ${{ inputs.create_github_release && inputs.github_release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.github_release_tag }}"
+          NAME="${{ inputs.github_release_name }}"
+          if [ -z "$NAME" ]; then NAME="$TAG"; fi
+
+          # Create the release if it does not yet exist; ignore the error if it already does.
+          gh release create "$TAG" --title "$NAME" --notes "" || true
+
+          # Upload every ZIP artifact, overwriting any previously uploaded asset with the same name.
+          gh release upload "$TAG" "${{ github.workspace }}"/dist/zip/*.zip --clobber
 
   publish-tgz-workflow:
     if: ${{ inputs.artifact_format == 'tgz' || inputs.artifact_format == 'all' }}
@@ -238,10 +266,26 @@ jobs:
             --version_to ${{ inputs.version_to }} \
             --index_server_from ${{ inputs.index_server_from }} \
             --index_server_to ${{ inputs.index_server_to }} \
-            --netrc_file "$NETRC_FILE"
+            --netrc_file "$NETRC_FILE" \
+            --output_dir "${{ github.workspace }}/dist/tgz"
 
           # Clean up the temporary .netrc file
           rm -f "$NETRC_FILE"
+
+      - name: Create or update GitHub Release (TGZ)
+        if: ${{ inputs.create_github_release && inputs.github_release_tag != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ inputs.github_release_tag }}"
+          NAME="${{ inputs.github_release_name }}"
+          if [ -z "$NAME" ]; then NAME="$TAG"; fi
+
+          # Create the release if it does not yet exist; ignore the error if it already does.
+          gh release create "$TAG" --title "$NAME" --notes "" || true
+
+          # Upload every TGZ artifact, overwriting any previously uploaded asset with the same name.
+          gh release upload "$TAG" "${{ github.workspace }}"/dist/tgz/*.tgz --clobber
 
   publish-maven-workflow:
     if: ${{ inputs.artifact_format == 'maven' || inputs.artifact_format == 'all' }}

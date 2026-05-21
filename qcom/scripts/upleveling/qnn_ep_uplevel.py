@@ -249,6 +249,15 @@ class ArtifactUpleveler(ABC):
             logging.info(f"Uploading {self.artifact_format}s to {self.url_to_display}")
             self.upload_artifacts(upload_dir)
 
+            # Copy final artifacts to output_dir so subsequent workflow steps can access them
+            if self.args.output_dir:
+                os.makedirs(self.args.output_dir, exist_ok=True)
+                for f in os.listdir(upload_dir):
+                    src = os.path.join(upload_dir, f)
+                    if os.path.isfile(src) and f.endswith(self.artifact_suffix):
+                        shutil.copy2(src, os.path.join(self.args.output_dir, f))
+                        logging.info(f"Copied {f} to {self.args.output_dir}")
+
         logging.info(f"Up-leveling for {self.artifact_format} completed successfully!")
 
 
@@ -1041,6 +1050,13 @@ def parse_arguments() -> argparse.Namespace:
         type=str,
         default="",
         help="Path to .netrc file for curl authentication (optional, only used for zip and tgz uploads).",
+    )
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="",
+        help="Directory to copy the final artifacts to after upload (optional). "
+        "Useful for subsequent workflow steps such as GitHub Releases.",
     )
     parser.add_argument(
         "--dry-run",
