@@ -361,12 +361,17 @@ jobs:
         with:
           name: windows-x86_64-py3.11-pdb-zip
 
+      - name: Download Windows ARM64 (ARM64x) Windows PDB Archive from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64x-py3.11-pdb-zip
+
       - name: Verify Zip artifacts
         run: |
-          # 1 Windows ARM64 Zip + 3 PDB archives + 1 Windows ARM64 (ARM64x) Zip = 5 zips
+          # 1 Windows ARM64 Zip + 4 PDB archives + 1 Windows ARM64 (ARM64x) Zip = 6 zips
           count=$(find "${{ github.workspace }}/build" -name "*.zip" | wc -l)
           echo "Found $count Zip archive(s)"
-          [ "$count" -eq 5 ] || { echo "ERROR: Expected 5 Zip archive, found $count"; exit 1; }
+          [ "$count" -eq 6 ] || { echo "ERROR: Expected 6 Zip archive, found $count"; exit 1; }
 
       - name: Verify TGZ artifact
         run: |

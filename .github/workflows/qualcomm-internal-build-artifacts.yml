@@ -172,3 +172,5 @@ jobs:
       upload_archive: true
       build_nuget: true
       upload_nuget: true
+      build_pdb_archive: true
+      upload_pdb_archive: true
