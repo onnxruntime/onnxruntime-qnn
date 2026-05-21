@@ -168,5 +168,7 @@ jobs:
       build_runner_arch: ARM64
       run_tests: false
       upload_wheel: false
+      build_archive: true
+      upload_archive: true
       build_nuget: true
       upload_nuget: true

@@ -8,47 +8,31 @@
 #include <random>
 #include "gtest/gtest.h"
 
-#include "core/common/span_utils.h"
-#include "core/common/type_utils.h"
-#include "core/graph/graph.h"
-#include "core/framework/framework_common.h"
-#include "core/framework/int4.h"
-#include "core/optimizer/graph_transformer_level.h"
-#include "core/graph/onnx_protobuf.h"
-#include "core/framework/tensorprotoutils.h"
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_cxx_api.h"
 #include "test/unittest_util/framework_test_utils.h"
 #include "test/util/include/test_random_seed.h"
-#include "test/util/include/inference_session_wrapper.h"
-
-#define TEST_RETURN_IF(condition)                                               \
-  do {                                                                          \
-    if (condition) {                                                            \
-      return ::onnxruntime::common::Status(::onnxruntime::common::ONNXRUNTIME,  \
-                                           ::onnxruntime::common::FAIL,         \
-                                           #condition " is evaluated to true"); \
-    }                                                                           \
-  } while (false)
-
-#define TEST_RETURN_IF_NOT(condition)                                            \
-  do {                                                                           \
-    if (!(condition)) {                                                          \
-      return ::onnxruntime::common::Status(::onnxruntime::common::ONNXRUNTIME,   \
-                                           ::onnxruntime::common::FAIL,          \
-                                           #condition " is evaluated to false"); \
-    }                                                                            \
-  } while (false)
 
 namespace onnxruntime {
 namespace test {
+
+constexpr const char* kMSDomain = "com.microsoft";
+
+template <typename T>
+struct IsByteType : std::false_type {};
+
+template <>
+struct IsByteType<uint8_t> : std::true_type {};
+
+template <>
+struct IsByteType<int8_t> : std::true_type {};
 
 class RandomValueGenerator {
  public:
   using RandomEngine = std::default_random_engine;
   using RandomSeedType = RandomEngine::result_type;
 
-  explicit RandomValueGenerator(optional<RandomSeedType> seed = {})
+  explicit RandomValueGenerator(std::optional<RandomSeedType> seed = {})
       : random_seed_{seed.has_value() ? *seed : static_cast<RandomSeedType>(GetTestRandomSeed())},
         generator_{random_seed_},
         output_trace_{__FILE__, __LINE__, "ORT test random seed: " + std::to_string(random_seed_)} {
@@ -89,7 +73,7 @@ class RandomValueGenerator {
   // Random values generated are in the range [min, max).
   template <typename TInt>
   typename std::enable_if<
-      std::is_integral<TInt>::value && !utils::IsByteType<TInt>::value,
+      std::is_integral<TInt>::value && !IsByteType<TInt>::value,
       std::vector<TInt>>::type
   Uniform(gsl::span<const int64_t> dims, TInt min, TInt max) {
     std::vector<TInt> val(SizeFromDims(dims));
@@ -102,7 +86,7 @@ class RandomValueGenerator {
 
   template <typename TByte>
   typename std::enable_if<
-      utils::IsByteType<TByte>::value,
+      IsByteType<TByte>::value,
       std::vector<TByte>>::type
   Uniform(gsl::span<const int64_t> dims, TByte min, TByte max) {
     std::vector<TByte> val(SizeFromDims(dims));
@@ -203,12 +187,12 @@ class RandomValueGenerator {
       }
     }
 
-    return narrow<size_t>(size);
+    return static_cast<size_t>(size);
   }
 };
 
 template <typename T>
-struct IsTypeQuantLinearCompatible : utils::IsByteType<T> {};
+struct IsTypeQuantLinearCompatible : IsByteType<T> {};
 
 template <>
 struct IsTypeQuantLinearCompatible<int16_t> : std::true_type {};
@@ -223,7 +207,7 @@ template <>
 struct IsTypeQuantLinearCompatible<UInt4x2> : std::true_type {};
 
 template <typename T>
-struct IsTypeDequantLinearCompatible : utils::IsByteType<T> {};
+struct IsTypeDequantLinearCompatible : IsByteType<T> {};
 
 template <>
 struct IsTypeDequantLinearCompatible<int16_t> : std::true_type {};
@@ -344,7 +328,7 @@ class ModelTestBuilder {
     tensor_proto->set_data_type(ToTensorProtoElementType<bool>());
     std::unique_ptr<bool[]> data_buffer = std::make_unique<bool[]>(data.size());
     for (size_t i = 0; i < data.size(); ++i) data_buffer[i] = data[i];
-    utils::SetRawDataInTensorProto(
+    SetRawDataInTensorProto(
         *tensor_proto,
         data_buffer.get(),
         data.size());
@@ -632,10 +616,28 @@ class ModelTestBuilder {
                                                            const std::string& output_name,
                                                            bool use_ms_domain = false);
 
+  /**
+   * Wrapper function for set_raw_data.
+   * First calls the set_raw_data and then calls ConvertRawDataInTensorProto
+   * under big endian system.
+   * @param tensor_proto given initializer tensor
+   * @param raw_data     source raw_data pointer
+   * @param raw_data_len  length of raw_data
+   * @returns                 None
+   */
+  template <typename T1, typename T2>
+  void SetRawDataInTensorProto(ONNX_NAMESPACE::TensorProto& tensor_proto, T1* raw_data, T2 raw_data_len) {
+    using namespace ONNX_NAMESPACE;
+    tensor_proto.set_raw_data(raw_data, raw_data_len);
+#if defined(__BIG_ENDIAN__) || (defined(__BYTE_ORDER__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__)
+    ConvertRawDataInTensorProto(tensor_proto);
+#endif
+  }
+
   ONNX_NAMESPACE::ModelProto model_;
   ONNX_NAMESPACE::GraphProto* graph_ = model_.mutable_graph();
   std::unordered_map<std::string, Ort::Value> feeds_;
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
 
  private:
   /** Gets the TensorProto_DataType corresponding to the template type `T`. */
@@ -677,29 +679,131 @@ class ModelTestBuilder {
       return ONNX_NAMESPACE::TensorProto_DataType_UNDEFINED;
     }
   }
+
+  template <class U, class T>
+  [[nodiscard]] inline gsl::span<U> ReinterpretAsSpan(gsl::span<T> src) {
+    // adapted from gsl-lite span::as_span():
+    // https://github.com/gsl-lite/gsl-lite/blob/4720a2980a30da085b4ddb4a0ea2a71af7351a48/include/gsl/gsl-lite.hpp#L4102-L4108
+    Expects(src.size_bytes() % sizeof(U) == 0);
+    return gsl::span<U>(reinterpret_cast<U*>(src.data()), src.size_bytes() / sizeof(U));
+  }
+
+  void SwapByteOrderInplace(size_t element_size_in_bytes, gsl::span<std::byte> bytes) {
+    if (element_size_in_bytes > 1) {
+      for (size_t offset = 0, lim = bytes.size_bytes(); offset < lim; offset += element_size_in_bytes) {
+        std::reverse(bytes.begin() + offset, bytes.begin() + offset + element_size_in_bytes);
+      }
+    }
+  }
+
+  inline bool HasRawData(const ONNX_NAMESPACE::TensorProto& ten_proto) {
+    // Can not be UNDEFINED and can not be STRING but test for STRING is usually performed separately
+    // to return an error
+    return ten_proto.data_type() != ONNX_NAMESPACE::TensorProto::UNDEFINED &&
+           ten_proto.has_raw_data();  // XXX: Figure out how to do in proto3
+  }
+
+  // MIRRORED FROM core/framework/tensorprotoutils.h (ConvertRawDataInTensorProto) — keep in sync.
+  // NOTE: If ORT mainline adds new tensor element types, this duplicate must be updated to match.
+  // Big-endian platforms are not supported by this test framework.
+  void ConvertRawDataInTensorProto(ONNX_NAMESPACE::TensorProto& tensor) {
+    size_t element_size = 1;
+    void* bytes = NULL;
+    size_t num_elements = 0;
+
+    // For some data_type, element size differs for raw data vs
+    // data set using the add_<data_type>data() API
+    if (HasRawData(tensor)) {
+      static std::unordered_map<size_t, size_t> tensorproto_data_size{
+          {ONNX_NAMESPACE::TensorProto_DataType_FLOAT, sizeof(float)},
+          {ONNX_NAMESPACE::TensorProto_DataType_UINT8, sizeof(uint8_t)},
+          {ONNX_NAMESPACE::TensorProto_DataType_INT8, sizeof(int8_t)},
+          {ONNX_NAMESPACE::TensorProto_DataType_UINT16, sizeof(uint16_t)},
+          {ONNX_NAMESPACE::TensorProto_DataType_INT16, sizeof(int16_t)},
+          {ONNX_NAMESPACE::TensorProto_DataType_FLOAT16, sizeof(uint16_t)},
+          {ONNX_NAMESPACE::TensorProto_DataType_BFLOAT16, sizeof(uint16_t)},
+          {ONNX_NAMESPACE::TensorProto_DataType_INT32, sizeof(int32_t)},
+          {ONNX_NAMESPACE::TensorProto_DataType_UINT32, sizeof(uint32_t)},
+          {ONNX_NAMESPACE::TensorProto_DataType_UINT64, sizeof(uint64_t)},
+          {ONNX_NAMESPACE::TensorProto_DataType_INT64, sizeof(int64_t)},
+          {ONNX_NAMESPACE::TensorProto_DataType_DOUBLE, sizeof(double)},
+          {ONNX_NAMESPACE::TensorProto_DataType_BOOL, sizeof(uint8_t)},
+          {ONNX_NAMESPACE::TensorProto_DataType_FLOAT8E4M3FN, sizeof(uint8_t)},
+          {ONNX_NAMESPACE::TensorProto_DataType_FLOAT8E4M3FNUZ, sizeof(uint8_t)},
+          {ONNX_NAMESPACE::TensorProto_DataType_FLOAT8E5M2, sizeof(uint8_t)},
+          {ONNX_NAMESPACE::TensorProto_DataType_FLOAT8E5M2FNUZ, sizeof(uint8_t)},
+          {ONNX_NAMESPACE::TensorProto_DataType_UINT4, sizeof(uint8_t)},
+          {ONNX_NAMESPACE::TensorProto_DataType_INT4, sizeof(uint8_t)},
+          {ONNX_NAMESPACE::TensorProto_DataType_UINT2, sizeof(uint8_t)},
+          {ONNX_NAMESPACE::TensorProto_DataType_INT2, sizeof(uint8_t)},
+      };
+      auto pos = tensorproto_data_size.find(tensor.data_type());
+      if (pos == tensorproto_data_size.end()) {
+        return;
+      }
+      element_size = pos->second;
+      if (element_size == 1) {
+        return;
+      }
+      num_elements = tensor.raw_data().size() / element_size;
+      bytes = tensor.mutable_raw_data()->data();
+    } else {  // HasRawData(tensor)
+
+      switch (tensor.data_type()) {
+        case ONNX_NAMESPACE::TensorProto_DataType_FLOAT:
+          bytes = tensor.mutable_float_data()->mutable_data();
+          num_elements = tensor.float_data_size();
+          element_size = sizeof(float);
+          break;
+
+        case ONNX_NAMESPACE::TensorProto_DataType_BOOL:
+        case ONNX_NAMESPACE::TensorProto_DataType_UINT4:
+        case ONNX_NAMESPACE::TensorProto_DataType_INT4:
+        case ONNX_NAMESPACE::TensorProto_DataType_UINT2:
+        case ONNX_NAMESPACE::TensorProto_DataType_INT2:
+        case ONNX_NAMESPACE::TensorProto_DataType_UINT8:
+        case ONNX_NAMESPACE::TensorProto_DataType_INT8:
+        case ONNX_NAMESPACE::TensorProto_DataType_UINT16:
+        case ONNX_NAMESPACE::TensorProto_DataType_INT16:
+        case ONNX_NAMESPACE::TensorProto_DataType_FLOAT16:
+        case ONNX_NAMESPACE::TensorProto_DataType_BFLOAT16:
+        case ONNX_NAMESPACE::TensorProto_DataType_FLOAT8E4M3FN:
+        case ONNX_NAMESPACE::TensorProto_DataType_FLOAT8E4M3FNUZ:
+        case ONNX_NAMESPACE::TensorProto_DataType_FLOAT8E5M2:
+        case ONNX_NAMESPACE::TensorProto_DataType_FLOAT8E5M2FNUZ:
+        case ONNX_NAMESPACE::TensorProto_DataType_INT32:
+          bytes = tensor.mutable_int32_data()->mutable_data();
+          num_elements = tensor.int32_data_size();
+          // We are setting this to int32_t size because we need to swap all 4 bytes
+          // to represent 16 bits within 32 bits correctly on a LE/BE system.
+          element_size = sizeof(int32_t);
+          break;
+
+        // uint32_t is stored in uint64_t
+        case ONNX_NAMESPACE::TensorProto_DataType_UINT32:
+        case ONNX_NAMESPACE::TensorProto_DataType_UINT64:
+          bytes = tensor.mutable_uint64_data()->mutable_data();
+          num_elements = tensor.uint64_data_size();
+          element_size = sizeof(uint64_t);
+          break;
+
+        case ONNX_NAMESPACE::TensorProto_DataType_INT64:
+          bytes = tensor.mutable_int64_data()->mutable_data();
+          num_elements = tensor.int64_data_size();
+          element_size = sizeof(int64_t);
+          break;
+
+        case ONNX_NAMESPACE::TensorProto_DataType_DOUBLE:
+          bytes = tensor.mutable_double_data()->mutable_data();
+          num_elements = tensor.double_data_size();
+          element_size = sizeof(double);
+          break;
+      }
+    }
+
+    gsl::span<std::byte> span = gsl::make_span(reinterpret_cast<std::byte*>(bytes), num_elements * element_size);
+    SwapByteOrderInplace(element_size, span);
+  }
 };
-
-void TransformerTester(const std::function<void(ModelTestBuilder& helper)>& build_test_case,
-                       const std::function<void(InferenceSessionWrapper& session)>& check_transformed_graph,
-                       TransformerLevel baseline_level,
-                       TransformerLevel target_level,
-                       int opset_version = 12,
-                       double per_sample_tolerance = 0.0,
-                       double relative_per_sample_tolerance = 0.0,
-                       std::unique_ptr<GraphTransformer> transformer = nullptr,
-                       const std::function<void(SessionOptions&)>& add_session_options = {},
-                       const InlinedHashSet<std::string>& disabled_optimizers = {},
-                       std::unique_ptr<IExecutionProvider> ep = nullptr);
-
-void TransformerTester(const std::function<void(ModelTestBuilder& helper)>& build_test_case,
-                       const std::function<void(InferenceSessionWrapper& session)>& check_transformed_graph,
-                       TransformerLevel baseline_level,
-                       TransformerLevel target_level,
-                       const std::vector<int>& opset_versions,
-                       double per_sample_tolerance = 0.0,
-                       double relative_per_sample_tolerance = 0.0,
-                       std::unique_ptr<GraphTransformer> transformer = nullptr,  // must be null in this case.
-                       const std::function<void(SessionOptions&)>& add_session_options = {},
-                       const InlinedHashSet<std::string>& disabled_optimizers = {});
 }  // namespace test
 }  // namespace onnxruntime
