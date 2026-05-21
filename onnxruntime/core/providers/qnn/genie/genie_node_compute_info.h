@@ -7,12 +7,13 @@
 
 #include "core/providers/qnn/genie/genie_node.h"
 #include "core/providers/qnn/ort_api.h"
+#include "core/providers/qnn/qnn_node_compute_info_base.h"
 
 namespace onnxruntime {
 
 class QnnEp;
 
-struct GenieNodeComputeInfo : OrtNodeComputeInfo {
+struct GenieNodeComputeInfo : QnnNodeComputeInfoBase {
   GenieNodeComputeInfo(QnnEp& ep, std::shared_ptr<GenieNodeBuilder> builder);
 
   static OrtStatus* ORT_API_CALL CreateStateImpl(OrtNodeComputeInfo* this_ptr,

@@ -3655,6 +3655,7 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility) {
     CompatibilityTestInfo expected_info;
     expected_info.htp_arch = htp_arch;
     ASSERT_TRUE(val != nullptr && expected_info.ToString() == val);
+    free(val);
 
     Ort::GetApi().ReleaseModelMetadata(model_metadata);
   }

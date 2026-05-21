@@ -8,7 +8,7 @@
 #include <string>
 #include <type_traits>
 
-#include "graph_transform_test_builder.h"
+#include "model_test_builder.h"
 
 #include "core/framework/int4.h"
 #include "core/common/span_utils.h"
