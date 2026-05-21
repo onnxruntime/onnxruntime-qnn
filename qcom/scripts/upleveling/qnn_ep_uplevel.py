@@ -342,10 +342,10 @@ class ArtifactUpleveler(ABC):
         """Copy signed DLL src→dst. Return True if replaced successfully, False if src is missing."""
         if not os.path.exists(src):
             logging.warning(f"    {label.capitalize()} Signed DLL not found: {src}")
-            return True
+            return False
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copy(src, dst)
-        return False
+        return True
 
     def _repackage_artifacts(self, artifact_dir: str, signed_libs_dir: str, output_dir: str) -> None:
         """Format-specific repackaging — replace embedded DLLs with signed versions.
@@ -464,19 +464,19 @@ class WheelUpleveler(ArtifactUpleveler):
                 self._extract_signed_libs(whl_path, extract_dir)
 
                 if whl_name.endswith("win_amd64.whl"):
-                    amd64_missing = self._replace_signed_dll(
+                    amd64_missing = not self._replace_signed_dll(
                         src=os.path.join(signed_libs_dir, whl_no_ext, "amd64", _QNN_PROVIDER_DLL),
                         dst=os.path.join(extract_dir, "onnxruntime_qnn", "libs", "amd64", _QNN_PROVIDER_DLL),
                         label="amd64",
                     )
-                    arm64ec_missing = self._replace_signed_dll(
+                    arm64ec_missing = not self._replace_signed_dll(
                         src=os.path.join(signed_libs_dir, whl_no_ext, "arm64ec", _QNN_PROVIDER_DLL),
                         dst=os.path.join(extract_dir, "onnxruntime_qnn", "libs", "arm64ec", _QNN_PROVIDER_DLL),
                         label="arm64ec",
                     )
                     dll_replacement_failed = amd64_missing or arm64ec_missing
                 else:
-                    arm64_missing = self._replace_signed_dll(
+                    arm64_missing = not self._replace_signed_dll(
                         src=os.path.join(signed_libs_dir, whl_no_ext, _QNN_PROVIDER_DLL),
                         dst=os.path.join(extract_dir, "onnxruntime_qnn", _QNN_PROVIDER_DLL),
                         label="arm64",
@@ -854,12 +854,12 @@ class NugetUpleveler(ArtifactUpleveler):
                     shutil.rmtree(extract_dir)
                 self._extract_signed_libs(nupkg_path, extract_dir)
 
-                native_missing = self._replace_signed_dll(
+                native_missing = not self._replace_signed_dll(
                     src=os.path.join(signed_libs_dir, nupkg_no_ext, _QNN_PROVIDER_DLL),
                     dst=os.path.join(extract_dir, "runtimes", "win-arm64", "native", _QNN_PROVIDER_DLL),
                     label="native",
                 )
-                managed_missing = self._replace_signed_dll(
+                managed_missing = not self._replace_signed_dll(
                     src=os.path.join(signed_libs_dir, nupkg_no_ext, _QNN_MANAGED_DLL),
                     dst=os.path.join(extract_dir, "lib", "netstandard2.0", _QNN_MANAGED_DLL),
                     label="managed",
@@ -982,7 +982,7 @@ class ZipUpleveler(ArtifactUpleveler):
                     shutil.rmtree(extract_dir)
                 self._extract_signed_libs(zip_path, extract_dir)
 
-                arm64_missing = self._replace_signed_dll(
+                arm64_missing = not self._replace_signed_dll(
                     src=os.path.join(signed_libs_dir, zip_no_ext, _QNN_PROVIDER_DLL),
                     dst=os.path.join(extract_dir, _QNN_PROVIDER_DLL),
                     label="arm64",
