@@ -202,29 +202,6 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
 
   const auto provider_prefix = GetProviderOptionPrefix(factory->ep_name_);
 
-  // Setting allocator info is delayed from GetSupportedDevices to here as QNN-EP relies on provider options to
-  // determine whether to use shared memory but they are not available until now. This workaround works since
-  // PluginExecutionProvider collects the allocator infos after creating the EP (refer to
-  // ep_plugin_provider_interfaces.cc for the detail flow).
-  std::string enable_htp_shared_memory_allocator_str;
-  GetSessionConfigEntryOrDefault(factory->ort_api,
-                                 *session_options,
-                                 provider_prefix + "enable_htp_shared_memory_allocator",
-                                 "0",
-                                 enable_htp_shared_memory_allocator_str);
-  std::string enable_dx12_shared_memory_allocator_str;
-  GetSessionConfigEntryOrDefault(factory->ort_api,
-                                 *session_options,
-                                 provider_prefix + "enable_dx12_shared_memory_allocator",
-                                 "0",
-                                 enable_dx12_shared_memory_allocator_str);
-
-  if (enable_htp_shared_memory_allocator_str == "1" || enable_dx12_shared_memory_allocator_str == "1") {
-    for (OrtEpDevice* ep_device : factory->ep_devices_) {
-      RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->host_accessible_memory_info_.get()));
-    }
-  }
-
   const auto backend_type_key = provider_prefix + "backend_type";
   const auto backend_path_key = provider_prefix + "backend_path";
   int has_backend_type = 0;
@@ -311,6 +288,12 @@ OrtStatus* ORT_API_CALL QnnEpFactory::CreateEpImpl(OrtEpFactory* this_ptr,
     return factory->ort_api.CreateStatus(ORT_FAIL, e.what());
   } catch (...) {
     return factory->ort_api.CreateStatus(ORT_FAIL, "Unknown exception occurred while creating QNN EP.");
+  }
+
+  if (qnn_ep->qnn_allocator_type_ != qnn::QnnAllocatorType::NONE) {
+    for (OrtEpDevice* ep_device : factory->ep_devices_) {
+      RETURN_IF_NOT_NULL(factory->ep_api.EpDevice_AddAllocatorInfo(ep_device, factory->host_accessible_memory_info_.get()));
+    }
   }
 
   factory->qnn_ep_ = qnn_ep.get();

@@ -14,8 +14,12 @@ namespace onnxruntime::qnn {
 
 QnnContextMemHandleManager::QnnContextMemHandleManager(const QNN_INTERFACE_VER_TYPE& qnn_interface,
                                                        Qnn_ContextHandle_t context,
-                                                       QnnBackendType qnn_backend_type)
-    : qnn_interface_{qnn_interface}, context_{context}, qnn_backend_type_{qnn_backend_type} {
+                                                       QnnBackendType qnn_backend_type,
+                                                       QnnAllocatorType qnn_allocator_type)
+    : qnn_interface_{qnn_interface},
+      context_{context},
+      qnn_backend_type_{qnn_backend_type},
+      qnn_allocator_type_{qnn_allocator_type} {
 }
 
 QnnContextMemHandleManager::~QnnContextMemHandleManager() {
@@ -60,7 +64,7 @@ Ort::Status QnnContextMemHandleManager::GetOrRegister(void* shared_memory_addres
     mem_descriptor.memShape.numDim = qnn_tensor_rank;
     mem_descriptor.memShape.shapeConfig = nullptr;
     mem_descriptor.dataType = qnn_tensor_data_type;
-    if (IsNpuBackend(qnn_backend_type_)) {
+    if (IsHtpSharedMemoryAllocator(qnn_allocator_type_)) {
       mem_descriptor.memType = QNN_MEM_TYPE_CUSTOM;
 
       HtpSharedMemoryAllocator::SharedMemoryInfo shared_memory_info{};
@@ -83,7 +87,7 @@ Ort::Status QnnContextMemHandleManager::GetOrRegister(void* shared_memory_addres
       ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_VERBOSE, oss1.str().c_str());
     }
 #ifdef _WIN32
-    else if (IsGpuBackend(qnn_backend_type_)) {
+    else if (IsDx12SharedMemoryAllocator(qnn_allocator_type_)) {
       // DX12 path: QNN_MEM_TYPE_DX12 with Qnn_MemDx12BufInfo_t
       Dx12SharedMemoryAllocator::Dx12AllocationInfo dx12_info{};
       RETURN_IF_ERROR(Dx12SharedMemoryAllocator::GetAllocationDx12Info(shared_memory_address, dx12_info));
@@ -112,12 +116,14 @@ Ort::Status QnnContextMemHandleManager::GetOrRegister(void* shared_memory_addres
     Qnn_MemHandle_t raw_mem_handle{};
     const auto register_result = qnn_interface_.memRegister(context_, &mem_descriptor, 1, &raw_mem_handle);
 #ifdef _WIN32
-    if (IsGpuBackend(qnn_backend_type_) && register_result == QNN_MEM_ERROR_MAPPING) {
+    if (IsGpuBackend(qnn_backend_type_)
+        && IsDx12SharedMemoryAllocator(qnn_allocator_type_)
+        && register_result == QNN_MEM_ERROR_MAPPING) {
       ORT_CXX_LOG(logger,
                   ORT_LOGGING_LEVEL_ERROR,
-                  "QnnMem_register failed with QNN_MEM_ERROR_MAPPING when using the GPU shared memory allocator on Windows."
-                  " This is likely due to outdated graphics drivers on the device. Please try installing new drivers from"
-                  " https://softwarecenter.qualcomm.com/catalog/item/Windows_Graphics_Driver.");
+                  "QnnMem_register failed with QNN_MEM_ERROR_MAPPING when using the DX12 shared memory allocator with the GPU"
+                  " backend on Windows. This is likely due to outdated graphics drivers on the device. Please try installing"
+                  " new drivers from https://softwarecenter.qualcomm.com/catalog/item/Windows_Graphics_Driver.");
     }
 #endif
     RETURN_IF_NOT(register_result == QNN_SUCCESS,

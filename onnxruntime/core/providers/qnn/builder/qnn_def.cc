@@ -647,5 +647,26 @@ bool IsQpuBackend(QnnBackendType backend_type) {
   return IsNpuBackend(backend_type) || IsGpuBackend(backend_type);
 }
 
+bool IsHtpSharedMemoryAllocator(QnnAllocatorType allocator_type) {
+  return allocator_type == QnnAllocatorType::HTP_SHARED;
+}
+
+bool IsDx12SharedMemoryAllocator(QnnAllocatorType allocator_type) {
+  return allocator_type == QnnAllocatorType::DX12_SHARED;
+}
+
+std::string_view QnnAllocatorTypeToString(QnnAllocatorType allocator_type) {
+  switch (allocator_type) {
+    case QnnAllocatorType::NONE:
+      return "None";
+    case QnnAllocatorType::HTP_SHARED:
+      return "HtpShared";
+    case QnnAllocatorType::DX12_SHARED:
+      return "Dx12Shared";
+    default:
+      return "(Unknown)";
+  }
+}
+
 }  // namespace qnn
 }  // namespace onnxruntime

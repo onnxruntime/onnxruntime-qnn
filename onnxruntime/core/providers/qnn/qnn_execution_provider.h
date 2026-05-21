@@ -55,6 +55,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                                      OrtDeviceEpIncompatibilityDetails* details) noexcept;
 
   friend struct GenieNodeComputeInfo;
+  friend struct QnnEpFactory;
 
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEp* this_ptr) noexcept;
@@ -123,8 +124,9 @@ class QnnEp : public OrtEp, public ApiPtrs {
   void ParseHtpGraphFinalizationOptimizationMode(const std::string& htp_graph_finalization_opt_mode_string,
                                                  const Ort::Logger& logger);
 
-  bool IsHtpSharedMemoryAllocatorAvailable() const { return model_settings_.htp_shared_memory; }
-  bool IsDx12SharedMemoryAllocatorAvailable() const { return enable_dx12_shared_memory_allocator_; }
+#if defined(_WIN32)
+  bool IsDx12SharedAllocatorSupported() const;
+#endif
 
   void InitQnnHtpGraphConfigs(
       qnn::QnnConfigsBuilder<QnnGraph_Config_t, QnnHtpGraph_CustomConfig_t>& configs_builder) const;
@@ -216,7 +218,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   // This is potentially shared with HtpSharedMemoryAllocator which may be returned by CreatePreferredAllocators().
   std::shared_ptr<qnn::RpcMemLibrary> rpcmem_library_ = nullptr;
 
-  bool enable_dx12_shared_memory_allocator_ = false;
+  qnn::QnnAllocatorType qnn_allocator_type_ = qnn::QnnAllocatorType::NONE;
 
   // Model compatibility.
   std::shared_ptr<qnn::QnnCacheCompatibilityManager> qnn_cache_compatibility_manager_ = nullptr;
