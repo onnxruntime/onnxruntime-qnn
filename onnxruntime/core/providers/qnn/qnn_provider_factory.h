@@ -64,6 +64,9 @@ class QnnEpFactory : public OrtEpFactory, public ApiPtrs {
   using HardwareDeviceUniquePtr = std::unique_ptr<OrtHardwareDevice, FuncDeleter<OrtHardwareDevice>>;
   // This is an actual NPU hardware but unable to be detected by ORT Core (e.g., Makena).
   HardwareDeviceUniquePtr undetected_npu_hw_device_;
+
+  // Must keep track of which allocator was created in factory, in case ReleaseAllocator is called after ReleaseEp.
+  qnn::QnnAllocatorType qnn_allocator_type_ = qnn::QnnAllocatorType::NONE;
 };
 
 }  // namespace onnxruntime
