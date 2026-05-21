@@ -47,18 +47,9 @@ Ort::Status RoiAlignOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 
   OrtNodeAttrHelper node_helper(node_unit);
 
-  // Sanity checks on RoiAlign onnx attrs
-  // HTP supports only align=False which corresponds to coordinate_transformation_mode="output_half_pixel"
-  std::string coordinate_transformation_mode = node_helper.Get("coordinate_transformation_mode", "half_pixel");  // ONNX default "half_pixel"
-  RETURN_IF_NOT(coordinate_transformation_mode == "output_half_pixel", "HTP only supports coordinate_transformation_mode=output_half_pixel.");
-
   // HTP supports only average pooling
   std::string mode = node_helper.Get("mode", "avg");  // ONNX default "avg"
   RETURN_IF_NOT(mode == "avg", "HTP only supports avg pooling mode.");
-
-  // HTP doesn't support sampling_ratio = 0(adaptive mode)
-  int sampling_ratio = node_helper.Get("sampling_ratio", 0);
-  RETURN_IF_NOT(sampling_ratio != 0, "HTP doesn't support sampling ratio = 0.");
 
   // Sanity check on output_width output_height
   // Output tensor size [N, C, H, W]
@@ -112,6 +103,23 @@ Ort::Status RoiAlignOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_
       std::move(img_size_ratio));
   param_tensor_names.push_back(roi_align_param_img_size_ratio.GetParamTensorName());
   qnn_model_wrapper.AddParamWrapper(std::move(roi_align_param_img_size_ratio));
+
+  // "half_pixel" -> aligned=true, "output_half_pixel" -> aligned=false
+  // ONNX opset 16 defines exactly these two values; both are supported.
+  const bool aligned = (node_helper.Get("coordinate_transformation_mode", "half_pixel") == "half_pixel");
+  RETURN_IF_ERROR(AddQnnScalar<bool>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                     aligned, QNN_OP_ROI_ALIGN_PARAM_ALIGNED, param_tensor_names));
+
+  // Pass sampling_ratio directly as num_samples_y/x.
+  // Note that although the default value of sampling_ratio for QNN is -1,
+  // QNN also treats 0 as adaptive (same as ONNX sampling_ratio=0 semantics).
+  int32_t sampling_ratio = static_cast<int32_t>(node_helper.Get("sampling_ratio", 0));
+  RETURN_IF_ERROR(AddQnnScalar<int32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                        sampling_ratio, QNN_OP_ROI_ALIGN_PARAM_NUM_SAMPLES_Y,
+                                        param_tensor_names));
+  RETURN_IF_ERROR(AddQnnScalar<int32_t>(qnn_model_wrapper, node_unit.Index(), node_unit.Name(),
+                                        sampling_ratio, QNN_OP_ROI_ALIGN_PARAM_NUM_SAMPLES_X,
+                                        param_tensor_names));
 
   return ProcessOutputs(qnn_model_wrapper,
                         node_unit,

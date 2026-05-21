@@ -51,26 +51,26 @@ jobs:
       target_py_vsn: "3.10"
 
   build-linux-aarch64-oe-gcc11_2:
-      if: ${{ inputs.do_all }}
-      uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
-      secrets: inherit
-      with:
-        nightly_build: ${{ inputs.nightly_build }}
-        target_os: linux
-        target_arch: aarch64_oe_gcc11_2
-        target_py_vsn: None
-        upload_test_archive: true
-        upload_wheel: false
-        run_tests: false
+    if: ${{ inputs.do_all }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      target_os: linux
+      target_arch: aarch64_oe_gcc11_2
+      target_py_vsn: None
+      upload_test_archive: true
+      upload_wheel: false
+      run_tests: false
 
   test-linux-aarch64-oe-gcc11_2:
-   if: ${{ inputs.do_all }}
-   needs: [build-linux-aarch64-oe-gcc11_2]
-   uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
-   secrets: inherit
-   with:
-     target_os: linux
-     target_arch: aarch64_oe_gcc11_2
+    if: ${{ inputs.do_all }}
+    needs: [build-linux-aarch64-oe-gcc11_2]
+    uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
+    secrets: inherit
+    with:
+      target_os: linux
+      target_arch: aarch64_oe_gcc11_2
 
   build-and-test-linux-arm64:
     if: ${{ inputs.do_all }}
