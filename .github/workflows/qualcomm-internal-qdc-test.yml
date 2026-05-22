@@ -38,6 +38,8 @@ env:
 jobs:
   test:
     name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-pynone"
+    # QDC tests pull artifacts from Artifactory; skip on fork PRs where secrets are unavailable.
+    if: ${{ github.event.pull_request.head.repo.fork != true }}
     runs-on: ["self-hosted", "Linux", "QDC"]
     defaults:
       run:

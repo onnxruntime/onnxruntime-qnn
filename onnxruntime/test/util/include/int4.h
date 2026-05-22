@@ -7,7 +7,6 @@
 
 #include <cassert>
 #include <type_traits>
-#include "core/common/common.h"
 #include <gsl/gsl>
 
 namespace onnxruntime {

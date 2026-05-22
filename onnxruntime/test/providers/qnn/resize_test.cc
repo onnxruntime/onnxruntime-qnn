@@ -10,9 +10,6 @@
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
 
-#include "core/optimizer/graph_transformer_level.h"
-#include "core/graph/onnx_protobuf.h"
-
 #include "gtest/gtest.h"
 
 namespace onnxruntime {
