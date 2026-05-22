@@ -832,7 +832,9 @@ class NugetUpleveler(ArtifactUpleveler):
         nupkgs = sorted(
             os.path.join(artifact_dir, f)
             for f in os.listdir(artifact_dir)
-            if os.path.isfile(os.path.join(artifact_dir, f)) and f.endswith(self.artifact_suffix) and not f.endswith(".snupkg")
+            if os.path.isfile(os.path.join(artifact_dir, f))
+            and f.endswith(self.artifact_suffix)
+            and not f.endswith(".snupkg")
         )
 
         if not nupkgs:
