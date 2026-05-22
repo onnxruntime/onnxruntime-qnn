@@ -3,10 +3,12 @@
 
 #if !defined(ORT_MINIMAL_BUILD)
 
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <unordered_map>
 
+#include "test/providers/qnn/qnn_node_group/qnn_graph_checker.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
 
@@ -547,13 +549,104 @@ TEST_F(QnnHTPBackendTests, Resize_DownSample_Linear_HalfPixel) {
 }
 
 // Test 2x QDQ Resize mode: "linear", coordinate_transformation_mode: "pytorch_half_pixel"
-// Maps to QNN's Resize operator.
+// Maps to QNN's ResizeBilinear operator (output spatial dims > 1, equivalent to half_pixel).
 TEST_F(QnnHTPBackendTests, ResizeU8_2xLinearPytorchHalfPixel) {
   std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 48);
   RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4, 4}, false, input_data),
                               {1, 3, 8, 8}, "linear", "pytorch_half_pixel", "",
                               ExpectedEPNodeAssignment::All,
                               19);
+}
+
+// Runs a QDQ Resize (linear, opset 19) on HTP and asserts the lowered QNN graph
+// contains exactly `expected_count` instances of `expected_qnn_op` and zero of
+// `forbidden_qnn_op`. Used to lock both exits of the
+// IsPyTorchHalfPixelEquivalentToHalfPixel predicate.
+//
+// Note on the IsSkipped() guard: TestQDQModelAccuracy invokes GTEST_SKIP on HTP
+// arch <= 68 (e.g., QCS6490) where the bilinear path is not exercised; in that
+// case no QNN graph JSON is written and AssertOpInQnnGraph would fail spuriously.
+static void RunQDQResizeAndAssertQnnOp(const std::vector<int64_t>& input_shape,
+                                       const std::vector<int64_t>& output_shape,
+                                       const std::string& transformation_mode,
+                                       const std::string& expected_qnn_op,
+                                       const std::string& forbidden_qnn_op,
+                                       const std::string& dump_dir_name) {
+  namespace fs = std::filesystem;
+  const fs::path graph_dir = fs::temp_directory_path() / dump_dir_name;
+  fs::remove_all(graph_dir);
+  fs::create_directories(graph_dir);
+  auto cleanup = gsl::finally([&graph_dir]() { fs::remove_all(graph_dir); });
+
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["dump_json_qnn_graph"] = "1";
+  provider_options["json_qnn_graph_dir"] = graph_dir.string();
+#if defined(_WIN32) && (defined(__aarch64__) || defined(_M_ARM64))
+  provider_options["num_graph_prepare_threads"] = "1";
+#endif
+
+  int64_t num_elements = 1;
+  for (int64_t d : input_shape) num_elements *= d;
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, static_cast<size_t>(num_elements));
+  TestQDQModelAccuracy<uint8_t>(
+      GetResizeModelBuilder(TestInputDef<float>(input_shape, false, input_data),
+                            output_shape, "linear", transformation_mode, ""),
+      GetQDQResizeModelBuilder<uint8_t>(TestInputDef<float>(input_shape, false, input_data),
+                                        output_shape, "linear", transformation_mode, ""),
+      provider_options, /*opset_version=*/19, ExpectedEPNodeAssignment::All);
+
+  if (::testing::Test::IsSkipped()) return;
+
+  AssertOpInQnnGraph(graph_dir, expected_qnn_op, 1);
+  AssertOpInQnnGraph(graph_dir, forbidden_qnn_op, 0);
+}
+
+// Asserts rank-4 linear + pytorch_half_pixel Resize lowers to QNN's ResizeBilinear
+// when both output spatial dims > 1. The other path tripped HTP op validation
+// with "Wrong number of Parameters 6 / 0xc26 / failure code 3110".
+TEST_F(QnnHTPBackendTests, ResizeU8_2xLinearPytorchHalfPixel_EmitsResizeBilinear) {
+  RunQDQResizeAndAssertQnnOp(/*input_shape=*/{1, 3, 4, 4}, /*output_shape=*/{1, 3, 8, 8},
+                             "pytorch_half_pixel", /*expected=*/"ResizeBilinear",
+                             /*forbidden=*/"Resize", "resize_phpx_multi_pixel_qnn_graph");
+}
+
+// Locks formula equivalence between ONNX pytorch_half_pixel and QNN
+// ResizeBilinear half_pixel_centers=true at non-integer scale (input 5x5 ->
+// output 7x7, scale = 1.4). Integer scales (e.g. 2x) coincidentally mask
+// half-pixel formula divergence; non-integer scales surface them.
+TEST_F(QnnHTPBackendTests, ResizeU8_NonIntScaleLinearPytorchHalfPixel_EmitsResizeBilinear) {
+  RunQDQResizeAndAssertQnnOp(/*input_shape=*/{1, 3, 5, 5}, /*output_shape=*/{1, 3, 7, 7},
+                             "pytorch_half_pixel", /*expected=*/"ResizeBilinear",
+                             /*forbidden=*/"Resize", "resize_phpx_non_int_scale_qnn_graph");
+}
+
+// Guards the else-branch of IsPyTorchHalfPixelEquivalentToHalfPixel: when an
+// output spatial dim == 1, pytorch_half_pixel pins the source coord to 0 and is
+// no longer equivalent to half_pixel, so rank-4 linear Resize must fall back to
+// QNN's generic Resize op (which natively supports pytorch_half_pixel).
+TEST_F(QnnHTPBackendTests, ResizeU8_DownsampleToHeight1_LinearPytorchHalfPixel) {
+  std::vector<float> input_data = GetFloatDataInRange(-10.0f, 10.0f, 24);
+  RunQDQResizeOpTest<uint8_t>(TestInputDef<float>({1, 3, 4, 2}, false, input_data),
+                              {1, 3, 1, 2}, "linear", "pytorch_half_pixel", "",
+                              ExpectedEPNodeAssignment::All, 19);
+}
+
+// Pairs with ResizeU8_2xLinearPytorchHalfPixel_EmitsResizeBilinear to lock both
+// exits of IsPyTorchHalfPixelEquivalentToHalfPixel: H==1 must use generic Resize.
+TEST_F(QnnHTPBackendTests, ResizeU8_DownsampleToHeight1_LinearPytorchHalfPixel_EmitsResize) {
+  RunQDQResizeAndAssertQnnOp(/*input_shape=*/{1, 3, 4, 2}, /*output_shape=*/{1, 3, 1, 2},
+                             "pytorch_half_pixel", /*expected=*/"Resize",
+                             /*forbidden=*/"ResizeBilinear", "resize_phpx_h1_qnn_graph");
+}
+
+// Symmetric W==1 fallback: catches future bugs where someone swaps h_axis/w_axis
+// or accidentally checks only one spatial dim in the predicate.
+TEST_F(QnnHTPBackendTests, ResizeU8_DownsampleToWidth1_LinearPytorchHalfPixel_EmitsResize) {
+  RunQDQResizeAndAssertQnnOp(/*input_shape=*/{1, 3, 2, 4}, /*output_shape=*/{1, 3, 2, 1},
+                             "pytorch_half_pixel", /*expected=*/"Resize",
+                             /*forbidden=*/"ResizeBilinear", "resize_phpx_w1_qnn_graph");
 }
 
 // Test 2x QDQ Resize mode: "linear", coordinate_transformation_mode: "half_pixel"
