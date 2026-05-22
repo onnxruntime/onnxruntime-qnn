@@ -10,6 +10,7 @@
 """
 Artifact upleveling script with class-based architecture.
 Supports Python wheels, NuGet packages, ZIP archives, TGZ archives, and Maven AAR artifacts.
+Supports repackaging the Windows Wheel, Zip and NuGet artifacts with the signed libs.
 """
 
 import argparse
@@ -47,6 +48,20 @@ ARTIFACTORY_PREFIXES = {
 }
 
 ARTIFACT_SUFFIXES = {"wheel": ".whl", "nuget": ".nupkg", "zip": ".zip", "tgz": ".tgz"}
+
+# Signed libs are always fetched from the production ("project") zip repo, regardless
+# of --index_server_from, because test/staging repos do not host the signed-lib bundles.
+_SIGNED_LIBS_INDEX = f"{ARTIFACTORY_PREFIXES['zip']}-project"
+
+_QNN_PROVIDER_DLL = "onnxruntime_providers_qnn.dll"
+_QNN_MANAGED_DLL = "Qualcomm.ML.OnnxRuntime.QNN.dll"
+
+
+def _clean_dir(path: str) -> None:
+    """Remove and recreate a directory to start each run with a clean output tree."""
+    if os.path.exists(path):
+        shutil.rmtree(path)
+    os.makedirs(path)
 
 
 class ConfigManager:
@@ -151,6 +166,10 @@ class ArtifactUpleveler(ABC):
         return ARTIFACT_SUFFIXES[self.artifact_format]
 
     @property
+    def _signed_libs_version(self) -> str:
+        return self.args.version_from
+
+    @property
     def needs_version_update(self) -> bool:
         """Check if version update is needed."""
         return self.args.version_from != self.args.version_to
@@ -224,40 +243,300 @@ class ArtifactUpleveler(ABC):
     def upload_artifacts(self, distribution_dir: str) -> None:
         """Upload artifacts to repository. Must be implemented by subclasses."""
 
+    def _finalize_and_upload(self, artifact_list: list[str], source_dir: str) -> None:
+        """Run version update (if needed) then upload.
+
+        Shared between the standard run() and any subclass run() override that does
+        its own pre-upload work (e.g. wheel signing).
+        """
+        upload_dir = source_dir
+        if self.needs_version_update:
+            logging.info(
+                f"Updating {self.artifact_format}(s) version from "
+                f"'{self.args.version_from}' to '{self.args.version_to}'"
+            )
+            upload_dir = os.path.join(os.path.abspath(os.path.curdir), f"updated_{self.artifact_format}s")
+            _clean_dir(upload_dir)
+            self.update_artifacts(artifact_list, source_dir, upload_dir)
+
+        logging.info(f"Uploading {self.artifact_format}s to {self.url_to_display}")
+        self.upload_artifacts(upload_dir)
+
+        # If a version bump created ./updated_<format>s/, remove it now that the
+        # upload has succeeded. On failure we'd never reach this line, leaving the
+        # directory available for inspection.
+        if self.needs_version_update:
+            shutil.rmtree(upload_dir, ignore_errors=True)
+            logging.info(f"Cleaned up {upload_dir}")
+
     def run(self) -> None:
-        """Execute the complete upleveling workflow."""
+        """Execute the complete upleveling workflow.
+
+        Dispatches to the format-specific signing flow when ``self._sign_flag`` is True;
+        otherwise runs the standard tempdir-based download/upload flow.
+        """
+        if self._sign_flag:
+            self._run_signing_flow()
+            return
+
         with tempfile.TemporaryDirectory(prefix="run_upleveling_") as tmp_dir:
-            # Download artifacts
             artifact_list = self.download_artifacts(self.url_from_display, tmp_dir)
-
-            # Determine upload directory
-            upload_dir = tmp_dir
-            if self.needs_version_update:
-                logging.info(
-                    f"Updating {self.artifact_format}(s) version from "
-                    f"'{self.args.version_from}' to '{self.args.version_to}'"
-                )
-                upload_dir = os.path.join(os.path.abspath(os.path.curdir), f"updated_{self.artifact_format}s")
-                if os.path.exists(upload_dir):
-                    shutil.rmtree(upload_dir)
-                os.mkdir(upload_dir)
-
-                # Update artifacts with new version
-                self.update_artifacts(artifact_list, tmp_dir, upload_dir)
-
-            # Upload artifacts
-            logging.info(f"Uploading {self.artifact_format}s to {self.url_to_display}")
-            self.upload_artifacts(upload_dir)
+            self._finalize_and_upload(artifact_list, tmp_dir)
 
         logging.info(f"Up-leveling for {self.artifact_format} completed successfully!")
 
+    # ------------------------------------------------------------------ signing flow
+
+    @property
+    def _sign_flag(self) -> bool:
+        """Whether to take the signing flow for this format. Subclasses override."""
+        return False
+
+    def _setup_signing_dirs(self) -> None:
+        """Create output/{signed,unsigned}_artifacts/<format>/ + output/signed_libs/."""
+        output_dir = os.path.join(os.path.abspath(os.path.curdir), "output")
+        signed_dir = os.path.join(output_dir, "signed_artifacts")
+        unsigned_dir = os.path.join(output_dir, "unsigned_artifacts")
+        fmt = self.artifact_format
+        for path in (
+            output_dir,
+            signed_dir,
+            unsigned_dir,
+            os.path.join(signed_dir, fmt),
+            os.path.join(unsigned_dir, fmt),
+            os.path.join(output_dir, "signed_libs"),
+        ):
+            _clean_dir(path)
+
+    def _download_signed_libs(self, target_dir: str) -> str:
+        """Download <format>.zip from artifactory into target_dir; return its path."""
+        api_key = os.environ.get("JFROG_API_KEY", "")
+        if not api_key:
+            raise RuntimeError("JFROG_API_KEY environment variable is required when --sign_artifact true")
+
+        version_url = self.config_manager.get_repository_url(
+            _SIGNED_LIBS_INDEX, self.args.product_name, self._signed_libs_version
+        )
+        zip_filename = f"{self.artifact_format}.zip"
+        url = f"{version_url}/signed_libs/{zip_filename}"
+        target_path = os.path.join(target_dir, zip_filename)
+
+        logging.info(f"Downloading signed libs ({zip_filename}) for version {self.args.version_from}")
+        response = requests.get(url, auth=("", api_key), verify=ARTIFACTORY_CERTS_FILE, timeout=60)
+        if response.status_code != 200:
+            raise RuntimeError(f"Failed to download signed libs: HTTP {response.status_code}")
+
+        with open(target_path, "wb") as f:
+            f.write(response.content)
+        logging.info(f"Downloaded signed libs to {target_path}")
+        return target_path
+
+    def _extract_signed_libs(self, zip_path: str, target_dir: str) -> None:
+        """Extract <format>.zip into target_dir; remove the zip after extraction."""
+        logging.info(f"Extracting {zip_path} into {target_dir}")
+        with zipfile.ZipFile(zip_path) as zf:
+            zf.extractall(target_dir)
+        os.remove(zip_path)
+
+    def _replace_signed_dll(self, src: str, dst: str, label: str) -> bool:
+        """Copy signed DLL src→dst. Return True if replaced successfully, False if src is missing."""
+        if not os.path.exists(src):
+            logging.warning(f"    {label.capitalize()} Signed DLL not found: {src}")
+            return False
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy(src, dst)
+        return True
+
+    def _repackage_artifacts(self, artifact_dir: str, signed_libs_dir: str, output_dir: str) -> None:
+        """Format-specific repackaging — replace embedded DLLs with signed versions.
+
+        Subclasses that support signing must override this.
+        """
+        raise NotImplementedError(f"Signing is not implemented for artifact_format '{self.artifact_format}'")
+
+    def _run_signing_flow(self) -> None:
+        """Shared sign-mode pipeline: download → fetch signed libs → repackage → upload.
+
+        On success: removes output/ as a final cleanup step.
+        On failure: preserves output/ for inspection and re-raises.
+        """
+        self._setup_signing_dirs()
+        cwd = os.path.abspath(os.path.curdir)
+        output_dir = os.path.join(cwd, "output")
+        fmt = self.artifact_format
+        unsigned_artifact_dir = os.path.join(output_dir, "unsigned_artifacts", fmt)
+        signed_artifact_dir = os.path.join(output_dir, "signed_artifacts", fmt)
+        signed_libs_dir = os.path.join(output_dir, "signed_libs")
+
+        try:
+            # Download source artifacts into unsigned_artifacts/<fmt>/
+            self.download_artifacts(self.url_from_display, unsigned_artifact_dir)
+
+            # Pull signed-DLL bundle and extract it
+            zip_path = self._download_signed_libs(signed_libs_dir)
+            self._extract_signed_libs(zip_path, signed_libs_dir)
+
+            # Format-specific repackaging into signed_artifacts/<fmt>/
+            self._repackage_artifacts(unsigned_artifact_dir, signed_libs_dir, signed_artifact_dir)
+
+            # Re-enumerate (some artifacts may have been skipped on failure), then finalize.
+            artifact_list = sorted(
+                f
+                for f in os.listdir(signed_artifact_dir)
+                if os.path.isfile(os.path.join(signed_artifact_dir, f)) and f.endswith(self.artifact_suffix)
+            )
+            self._finalize_and_upload(artifact_list, signed_artifact_dir)
+        except Exception:
+            logging.error(f"{fmt.title()} upleveling failed; preserving {output_dir} for inspection")
+            raise
+
+        # Success path: tear down output/.
+        shutil.rmtree(output_dir, ignore_errors=True)
+        logging.info(f"Cleaned up {output_dir}")
+        logging.info(f"Up-leveling for {fmt} completed successfully!")
+
 
 class WheelUpleveler(ArtifactUpleveler):
-    """Handles PyPI wheel package upleveling."""
+    """Handles PyPI wheel artifact upleveling and (optional) signing.
+
+    Dispatches on --sign_artifact:
+      false (default)     — standard flow: download wheels from index_server_from
+                            into a tempdir, optionally re-version, upload to
+                            index_server_to via twine.
+      true                — sign flow: download wheels into
+                            output/unsigned_artifacts/wheel/, fetch signed-libs
+                            wheel.zip from Artifactory, repackage Windows wheels
+                            (win_amd64 / win_arm64) by replacing
+                            onnxruntime_providers_qnn.dll with the signed copy,
+                            then re-version and upload as in the standard flow.
+                            Non-Windows wheels are copied through unchanged.
+
+    Credentials (never in argv):
+      ARTIFACTORY_USERNAME / ARTIFACTORY_PASSWORD  — Artifactory basic auth (download + upload)
+      PYPI_API_KEY                                 — PyPI upload token (when index_server_to=pypi)
+      TEST_PYPI_API_KEY                            — TestPyPI upload token (when index_server_to=testpypi)
+      JFROG_API_KEY                                — Read-only token for the signed-libs bundle
+                                                     (only when --sign_artifact true)
+    """
 
     @property
     def artifact_format(self) -> str:
         return "wheel"
+
+    @property
+    def _sign_flag(self) -> bool:
+        return self.args.sign_artifact
+
+    def _repackage_artifacts(self, artifact_dir: str, signed_libs_dir: str, output_dir: str) -> None:
+        """
+        For each *win_amd64.whl / *win_arm64.whl found recursively under wheel_dir:
+        extract, swap in the signed onnxruntime_providers_qnn.dll(s) from signed_libs_dir,
+        re-zip into output_dir/<original_name>.whl. Other .whl files are copied as-is.
+        """
+        win_pattern = re.compile(r"win_(amd64|arm64)\.whl$")
+        win_wheels: list[str] = []
+        other_wheels: list[str] = []
+        for root, _dirs, files in os.walk(artifact_dir):
+            for fn in files:
+                if not fn.endswith(self.artifact_suffix):
+                    continue
+                full = os.path.join(root, fn)
+                (win_wheels if win_pattern.search(fn) else other_wheels).append(full)
+
+        if not win_wheels and not other_wheels:
+            logging.warning("No wheels found to repackage")
+            return
+
+        logging.info(f"Found {len(win_wheels)} Windows wheel(s) to repackage")
+        logging.info(f"Found {len(other_wheels)} other wheel(s) to copy as-is")
+
+        repackage_success = 0
+        repackage_failed: list[str] = []
+
+        for whl_path in win_wheels:
+            whl_name = os.path.basename(whl_path)
+            whl_no_ext = whl_name[: -len(self.artifact_suffix)]
+            extract_dir = os.path.join(output_dir, whl_no_ext)
+            logging.info(f"  Processing: {whl_name}")
+            try:
+                if os.path.exists(extract_dir):
+                    shutil.rmtree(extract_dir)
+                self._extract_signed_libs(whl_path, extract_dir)
+
+                if whl_name.endswith("win_amd64.whl"):
+                    amd64_missing = not self._replace_signed_dll(
+                        src=os.path.join(signed_libs_dir, whl_no_ext, "amd64", _QNN_PROVIDER_DLL),
+                        dst=os.path.join(extract_dir, "onnxruntime_qnn", "libs", "amd64", _QNN_PROVIDER_DLL),
+                        label="amd64",
+                    )
+                    arm64ec_missing = not self._replace_signed_dll(
+                        src=os.path.join(signed_libs_dir, whl_no_ext, "arm64ec", _QNN_PROVIDER_DLL),
+                        dst=os.path.join(extract_dir, "onnxruntime_qnn", "libs", "arm64ec", _QNN_PROVIDER_DLL),
+                        label="arm64ec",
+                    )
+                    dll_replacement_failed = amd64_missing or arm64ec_missing
+                else:
+                    arm64_missing = not self._replace_signed_dll(
+                        src=os.path.join(signed_libs_dir, whl_no_ext, _QNN_PROVIDER_DLL),
+                        dst=os.path.join(extract_dir, "onnxruntime_qnn", _QNN_PROVIDER_DLL),
+                        label="arm64",
+                    )
+                    dll_replacement_failed = arm64_missing
+
+                # Re-pack wheel using wheel pack so RECORD is regenerated with updated DLL hashes
+                out_whl = os.path.join(output_dir, whl_name)
+                if os.path.exists(out_whl):
+                    os.remove(out_whl)
+                subprocess.run(["wheel", "pack", extract_dir, "-d", output_dir], check=True)
+                if dll_replacement_failed:
+                    repackage_failed.append(whl_name)
+                    logging.warning(f"    Repackaged {whl_name} but signed DLL(s) were missing")
+                else:
+                    repackage_success += 1
+                    logging.info("    Successfully prepared signed wheel")
+            except Exception as error:
+                logging.error(f"    Failed to repackage {whl_name}: {error}")
+                repackage_failed.append(whl_name)
+            finally:
+                # Always remove the working extract directory, even if repackage errored
+                # mid-flow, so signed_artifacts/wheel/ contains only finished .whl files.
+                if os.path.exists(extract_dir):
+                    shutil.rmtree(extract_dir, ignore_errors=True)
+
+        other_success = 0
+        other_failed: list[str] = []
+        for whl_path in other_wheels:
+            whl_name = os.path.basename(whl_path)
+            try:
+                shutil.copy(whl_path, os.path.join(output_dir, whl_name))
+                other_success += 1
+                logging.info(f"  Copied as-is: {whl_name}")
+            except Exception as error:
+                logging.error(f"    Failed to copy {whl_name}: {error}")
+                other_failed.append(whl_name)
+
+        logging.info("")
+        logging.info("=== Processing Summary ===")
+        logging.info("")
+        logging.info("Repackaged and Reconstructed Wheels")
+        logging.info(f"  Total: {len(win_wheels)}")
+        logging.info(f"  Successful: {repackage_success}")
+        logging.info(f"  Failed: {len(repackage_failed)}")
+        for fw in repackage_failed:
+            logging.warning(f"    - {fw}")
+        logging.info("")
+        logging.info("Copied Other Wheels")
+        logging.info(f"  Total: {len(other_wheels)}")
+        logging.info(f"  Successful: {other_success}")
+        logging.info(f"  Failed: {len(other_failed)}")
+        for fw in other_failed:
+            logging.warning(f"    - {fw}")
+        logging.info("")
+        logging.info("=== End of Processing Summary ===")
+
+        failures = repackage_failed + other_failed
+        if failures:
+            raise RuntimeError(f"Wheel repackaging failed for: {failures}")
 
     def update_artifacts(self, artifact_list: list[str], input_dir: str, output_dir: str) -> None:
         """Update wheel package versions."""
@@ -353,7 +632,31 @@ class WheelUpleveler(ArtifactUpleveler):
 
 
 class NugetUpleveler(ArtifactUpleveler):
-    """Handles NuGet package upleveling."""
+    """Handles NuGet package upleveling and (optional) signing.
+
+    Dispatches on --sign_artifact:
+      false (default)     — standard flow: download nupkgs from index_server_from
+                            into a tempdir, optionally re-version, upload to
+                            index_server_to via `nuget push`.
+      true                — sign flow: download nupkgs into
+                            output/unsigned_artifacts/nuget/, fetch signed-libs
+                            nuget.zip from Artifactory, repackage by replacing the
+                            native win-arm64 onnxruntime_providers_qnn.dll AND the
+                            managed Qualcomm.ML.OnnxRuntime.QNN.dll with their
+                            signed copies, then re-version and upload as in the
+                            standard flow.
+
+    NuGet versions use SemVer hyphenation (e.g., 2.4.0-rc125), but the signed-libs
+    folder is published under the run-on form (e.g., 2.4.0rc125). Hyphens are
+    stripped from --version_from when looking up the signed-libs zip.
+
+    Credentials (never in argv):
+      ARTIFACTORY_USERNAME / ARTIFACTORY_PASSWORD  — Artifactory basic auth (download + upload)
+      NUGET_API_KEY                                — nuget.org API key (when index_server_to=nuget)
+      TEST_NUGET_API_KEY                           — int.nugettest.org API key (when index_server_to=testnuget)
+      JFROG_API_KEY                                — Read-only token for the signed-libs bundle
+                                                     (only when --sign_artifact true)
+    """
 
     def __init__(self, args: argparse.Namespace):
         super().__init__(args)
@@ -362,6 +665,14 @@ class NugetUpleveler(ArtifactUpleveler):
     @property
     def artifact_format(self) -> str:
         return "nuget"
+
+    @property
+    def _sign_flag(self) -> bool:
+        return self.args.sign_artifact
+
+    @property
+    def _signed_libs_version(self) -> str:
+        return self.args.version_from.replace("-", "")
 
     def _add_nuget_source(self, username: str, password: str, source_url: str, server: str, version: str) -> str:
         """Add a single NuGet source using PackageSourceCredentials environment variables."""
@@ -509,6 +820,91 @@ class NugetUpleveler(ArtifactUpleveler):
             cmd = ["nuget", "push", nuget_file, "-Source", source_name]
             subprocess.run(cmd, check=True)
 
+    def _repackage_artifacts(self, artifact_dir: str, signed_libs_dir: str, output_dir: str) -> None:
+        """
+        For each *.nupkg (top-level, excluding *.snupkg) under artifact_dir:
+        extract, replace the native arm64 DLL and the managed wrapper DLL with their
+        signed equivalents from signed_libs_dir, re-zip into output_dir/<original_name>.
+
+        Missing signed DLLs are logged and counted as failures, but the .nupkg is still
+        re-zipped.
+        """
+        nupkgs = sorted(
+            os.path.join(artifact_dir, f)
+            for f in os.listdir(artifact_dir)
+            if os.path.isfile(os.path.join(artifact_dir, f))
+            and f.endswith(self.artifact_suffix)
+            and not f.endswith(".snupkg")
+        )
+
+        if not nupkgs:
+            logging.warning("No .nupkg files found to repackage")
+            return
+
+        logging.info(f"Found {len(nupkgs)} nupkg file(s) to repackage")
+
+        repackage_success = 0
+        repackage_failed: list[str] = []
+
+        for nupkg_path in nupkgs:
+            nupkg_name = os.path.basename(nupkg_path)
+            nupkg_no_ext = nupkg_name[: -len(self.artifact_suffix)]
+            extract_dir = os.path.join(output_dir, nupkg_no_ext)
+            logging.info(f"  Processing: {nupkg_name}")
+            try:
+                if os.path.exists(extract_dir):
+                    shutil.rmtree(extract_dir)
+                self._extract_signed_libs(nupkg_path, extract_dir)
+
+                native_missing = not self._replace_signed_dll(
+                    src=os.path.join(signed_libs_dir, nupkg_no_ext, _QNN_PROVIDER_DLL),
+                    dst=os.path.join(extract_dir, "runtimes", "win-arm64", "native", _QNN_PROVIDER_DLL),
+                    label="native",
+                )
+                managed_missing = not self._replace_signed_dll(
+                    src=os.path.join(signed_libs_dir, nupkg_no_ext, _QNN_MANAGED_DLL),
+                    dst=os.path.join(extract_dir, "lib", "netstandard2.0", _QNN_MANAGED_DLL),
+                    label="managed",
+                )
+                dll_replacement_failed = native_missing or managed_missing
+
+                out_nupkg = os.path.join(output_dir, nupkg_name)
+                if os.path.exists(out_nupkg):
+                    os.remove(out_nupkg)
+                with zipfile.ZipFile(out_nupkg, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for r, _d, fs in os.walk(extract_dir):
+                        for f in fs:
+                            fp = os.path.join(r, f)
+                            zf.write(fp, os.path.relpath(fp, extract_dir))
+
+                if dll_replacement_failed:
+                    repackage_failed.append(nupkg_name)
+                    logging.warning(f"    Repackaged {nupkg_name} but signed DLL(s) were missing")
+                else:
+                    repackage_success += 1
+                    logging.info("    Successfully prepared signed nupkg")
+            except Exception as error:
+                logging.error(f"    Failed to repackage {nupkg_name}: {error}")
+                repackage_failed.append(nupkg_name)
+            finally:
+                if os.path.exists(extract_dir):
+                    shutil.rmtree(extract_dir, ignore_errors=True)
+
+        logging.info("")
+        logging.info("=== Processing Summary ===")
+        logging.info("")
+        logging.info("Repackaged and Reconstructed NuGet Packages")
+        logging.info(f"  Total: {len(nupkgs)}")
+        logging.info(f"  Successful: {repackage_success}")
+        logging.info(f"  Failed: {len(repackage_failed)}")
+        for fn in repackage_failed:
+            logging.warning(f"    - {fn}")
+        logging.info("")
+        logging.info("=== End of Processing Summary ===")
+
+        if repackage_failed:
+            raise RuntimeError(f"NuGet repackaging failed for: {repackage_failed}")
+
     def run(self) -> None:
         """Execute NuGet upleveling with source configuration."""
         source_name_list = self._add_nuget_sources()
@@ -517,11 +913,140 @@ class NugetUpleveler(ArtifactUpleveler):
 
 
 class ZipUpleveler(ArtifactUpleveler):
-    """Handles ZIP archive upleveling."""
+    """Handles ZIP archive upleveling and (optional) signing.
+
+    Dispatches on --sign_artifact:
+      false (default)     — standard flow: download zips from index_server_from
+                            into a tempdir, optionally re-version (filename only,
+                            contents unchanged), upload to index_server_to via curl
+                            with a temporary .netrc.
+      true                — sign flow: download zips into
+                            output/unsigned_artifacts/zip/, fetch signed-libs zip.zip
+                            from Artifactory, repackage by replacing the embedded
+                            onnxruntime_providers_qnn.dll with the signed copy.
+                            Other release files (-pdb.zip, .tgz, .tar) are copied
+                            through unchanged. Re-version and upload as in the
+                            standard flow.
+
+    Credentials (never in argv):
+      ARTIFACTORY_USERNAME / ARTIFACTORY_PASSWORD  — Artifactory basic auth (download + upload)
+      JFROG_API_KEY                                — Read-only token for the signed-libs bundle
+                                                     (only when --sign_artifact true)
+    """
 
     @property
     def artifact_format(self) -> str:
         return "zip"
+
+    @property
+    def _sign_flag(self) -> bool:
+        return self.args.sign_artifact
+
+    def _repackage_artifacts(self, artifact_dir: str, signed_libs_dir: str, output_dir: str) -> None:
+        """
+        Recursively find *.zip files (excluding *-pdb.zip) under artifact_dir.
+        For each one: extract, swap in the signed onnxruntime_providers_qnn.dll from
+        signed_libs_dir, re-zip into output_dir/<original_name>.zip.
+
+        All other files are copied as-is
+        into output_dir, flattened (only basename preserved).
+
+        Missing signed DLLs are logged and counted as failures, but the zip is still
+        re-zipped.
+        """
+        zips: list[str] = []
+        other_files: list[str] = []
+        for root, _dirs, files in os.walk(artifact_dir):
+            for fn in files:
+                full = os.path.join(root, fn)
+                if fn.endswith(".zip") and not fn.endswith("-pdb.zip"):
+                    zips.append(full)
+                else:
+                    other_files.append(full)
+
+        if not zips and not other_files:
+            logging.warning("No files found to repackage")
+            return
+
+        logging.info(f"Found {len(zips)} zip file(s) to repackage")
+        logging.info(f"Found {len(other_files)} other file(s) to copy as-is")
+
+        repackage_success = 0
+        repackage_failed: list[str] = []
+
+        for zip_path in zips:
+            zip_name = os.path.basename(zip_path)
+            zip_no_ext = zip_name[: -len(self.artifact_suffix)]
+            extract_dir = os.path.join(output_dir, zip_no_ext)
+            logging.info(f"  Processing: {zip_name}")
+            try:
+                if os.path.exists(extract_dir):
+                    shutil.rmtree(extract_dir)
+                self._extract_signed_libs(zip_path, extract_dir)
+
+                arm64_missing = not self._replace_signed_dll(
+                    src=os.path.join(signed_libs_dir, zip_no_ext, _QNN_PROVIDER_DLL),
+                    dst=os.path.join(extract_dir, _QNN_PROVIDER_DLL),
+                    label="arm64",
+                )
+                dll_replacement_failed = arm64_missing
+
+                out_zip = os.path.join(output_dir, zip_name)
+                if os.path.exists(out_zip):
+                    os.remove(out_zip)
+                with zipfile.ZipFile(out_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+                    for r, _d, fs in os.walk(extract_dir):
+                        for f in fs:
+                            fp = os.path.join(r, f)
+                            zf.write(fp, os.path.relpath(fp, extract_dir))
+
+                if dll_replacement_failed:
+                    repackage_failed.append(zip_name)
+                    logging.warning(f"    Repackaged {zip_name} but signed DLL was missing")
+                else:
+                    repackage_success += 1
+                    logging.info("    Successfully prepared signed zip")
+            except Exception as error:
+                logging.error(f"    Failed to repackage {zip_name}: {error}")
+                repackage_failed.append(zip_name)
+            finally:
+                if os.path.exists(extract_dir):
+                    shutil.rmtree(extract_dir, ignore_errors=True)
+
+        other_success = 0
+        other_failed: list[str] = []
+        for src_path in other_files:
+            file_name = os.path.basename(src_path)
+            try:
+                shutil.copy(src_path, os.path.join(output_dir, file_name))
+                other_success += 1
+                logging.info(f"  Copied as-is: {file_name}")
+            except Exception as error:
+                logging.error(f"    Failed to copy {file_name}: {error}")
+                other_failed.append(file_name)
+
+        logging.info("")
+        logging.info("=== Processing Summary ===")
+        logging.info("")
+        logging.info("Repackaged and Reconstructed Zips")
+        logging.info(f"  Total: {len(zips)}")
+        logging.info(f"  Successful: {repackage_success}")
+        logging.info(f"  Failed: {len(repackage_failed)}")
+        for fz in repackage_failed:
+            logging.warning(f"    - {fz}")
+        logging.info("")
+        logging.info("Copied Other Archives")
+        logging.info(f"  Total: {len(other_files)}")
+        logging.info(f"  Successful: {other_success}")
+        logging.info(f"  Failed: {len(other_failed)}")
+        for fn in other_failed:
+            logging.warning(f"    - {fn}")
+        logging.info("")
+        logging.info("=== End of Processing Summary ===")
+
+        failures = repackage_failed + other_failed
+        if failures:
+            raise RuntimeError(f"ZIP repackaging failed for: {failures}")
 
     def update_artifacts(self, artifact_list: list[str], input_dir: str, output_dir: str) -> None:
         """Update ZIP archive versions (simple copy with renamed version)."""
@@ -583,15 +1108,23 @@ class ZipUpleveler(ArtifactUpleveler):
                 upload_url = os.path.join(self.url_to_display, zip_file)
                 cmd = [
                     "curl",
+                    "-s",
                     "-T",
                     zip_path,
                     "--cacert",
                     ARTIFACTORY_CERTS_FILE,
                     "--netrc-file",
                     netrc_path,
+                    "-w",
+                    "\n%{http_code}",
                     upload_url,
                 ]
-                subprocess.run(cmd, check=True)
+                result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+                http_code = result.stdout.strip().splitlines()[-1]
+                if http_code.startswith("2"):
+                    logging.info(f"Uploaded {zip_file} successfully (HTTP {http_code})")
+                else:
+                    raise RuntimeError(f"Upload failed for {zip_file}: HTTP {http_code}")
         finally:
             # Clean up the temporary .netrc file only if we created it
             if cleanup_netrc and os.path.exists(netrc_path):
@@ -605,6 +1138,12 @@ class TgzUpleveler(ZipUpleveler):
     @property
     def artifact_format(self) -> str:
         return "tgz"
+
+    @property
+    def _sign_flag(self) -> bool:
+        # Tgz signing is not supported; explicitly opt out so inheriting ZipUpleveler's
+        # --sign_zip flag does not inadvertently engage the zip signing flow.
+        return False
 
 
 class MavenUpleveler(ArtifactUpleveler):
@@ -1046,6 +1585,11 @@ def parse_arguments() -> argparse.Namespace:
         "--dry-run",
         action="store_true",
         help="Print commands without executing (Maven format only).",
+    )
+    parser.add_argument(
+        "--sign_artifact",
+        action="store_true",
+        help="Sign artifacts. Applies to wheel, nuget, and zip formats.",
     )
 
     args = parser.parse_args()

@@ -218,6 +218,15 @@ if ($BuildArchive) {
     $BuildArchiveArgs += "--build_archive_asset"
 }
 
+$BuildWheelArgs = @()
+if ($BuildWheel) {
+    $BuildWheelArgs += "--build_wheel"
+    if ($env:ORT_NIGHTLY_BUILD -eq "1") {
+        $BuildWheelArgs += "--wheel_name_suffix=qcom_internal"
+        $env:NIGHTLY_BUILD = "1"
+    }
+}
+
 switch ($Mode) {
     "build" {
         if ($BuildIsDirty) {
@@ -300,37 +309,12 @@ else {
                 $BuildOutputDir = (Join-Path $BuildDir $Config)
                 Use-PyVenv -PyVenv $BuildVEnv {
                     Assert-Success -ErrorMessage "Failed to build" {
-                        & $BuildBatPath --build $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg $BuildNugetArgs $BuildArchiveArgs
+                        & $BuildBatPath --build $ArchArgs $CommonArgs $QnnArgs $PlatformArgs $VersionSuffixArg $BuildNugetArgs $BuildArchiveArgs $BuildWheelArgs
                     }
                 }
 
                 if ($CMakeGenerator -in @("Visual Studio 17 2022", "Visual Studio 18 2026")) {
                     $BuildOutputDir = (Join-Path $BuildOutputDir $Config)
-                }
-
-                if ($BuildWheel) {
-                    $PyNightlyArg = ""
-                    $WheelNameSuffix = ""
-                    if ($env:ORT_NIGHTLY_BUILD -eq "1") {
-                        $PyNightlyArg = "--nightly_build"
-                        $WheelNameSuffix = "--wheel_name_suffix=qcom_internal"
-                    }
-                    $PyVersionSuffixArg = ""
-                    if ($env:ORT_VERSION_SUFFIX) {
-                        $PyVersionSuffixArg = "--version_suffix=$env:ORT_VERSION_SUFFIX"
-                    }
-                    Use-PyVenv -PyVenv $BuildVEnv {
-                        Use-WorkingDir -Path $BuildOutputDir {
-                            Assert-Success -ErrorMessage "Failed to build wheel" {
-                                python.exe (Join-Path $RepoRoot "setup.py") `
-                                    bdist_wheel `
-                                    $WheelNameSuffix `
-                                    --qnn_version=$QairtSdkVersion `
-                                    $PyNightlyArg `
-                                    $PyVersionSuffixArg
-                            }
-                        }
-                    }
                 }
 
                 if ($BuildNuget) {
