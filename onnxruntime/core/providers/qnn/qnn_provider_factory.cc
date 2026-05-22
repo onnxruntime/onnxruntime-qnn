@@ -6,6 +6,7 @@
 #include <cassert>
 #include <iostream>
 #include <optional>
+#include <utility>
 
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_ep_device_ep_metadata_keys.h"
@@ -322,9 +323,12 @@ void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* this_ptr, Ort
     delete static_cast<qnn::Dx12SharedMemoryAllocator*>(allocator);
 #endif
   } else {
-    factory->ort_api.Logger_LogMessage(OrtLoggingManager::GetDefaultLoggerPtr(),
-                                       OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
-                                       "Cannot release allocator of unknown type!", ORT_FILE, __LINE__, __FUNCTION__);
+    std::ignore = factory->ort_api.Logger_LogMessage(OrtLoggingManager::GetDefaultLoggerPtr(),
+                                                     OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
+                                                     "Cannot release allocator of unknown type!",
+                                                     ORT_FILE,
+                                                     __LINE__,
+                                                     __FUNCTION__);
   }
 }
 
