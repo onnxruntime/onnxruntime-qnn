@@ -225,7 +225,6 @@ if(MSVC)
   target_compile_options(onnxruntime_test_utils PRIVATE "$<$<COMPILE_LANGUAGE:CUDA>:SHELL:--compiler-options /wd6326>"
                 "$<$<NOT:$<COMPILE_LANGUAGE:CUDA>>:/wd6326>")
 else()
-  target_include_directories(onnxruntime_test_utils PRIVATE ${CMAKE_CURRENT_BINARY_DIR} ${ONNXRUNTIME_ROOT})
   if (HAS_CHARACTER_CONVERSION)
     target_compile_options(onnxruntime_test_utils PRIVATE "$<$<COMPILE_LANGUAGE:CXX>:-Wno-error=character-conversion>")
   endif()
@@ -236,8 +235,6 @@ onnxruntime_add_include_to_target(onnxruntime_test_utils GTest::gtest GTest::gmo
 add_dependencies(onnxruntime_test_utils ${onnxruntime_EXTERNAL_DEPENDENCIES})
 target_include_directories(onnxruntime_test_utils PUBLIC "${TEST_SRC_DIR}/util/include"
                            PRIVATE
-                           ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT}
-                           ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}
                            ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session
                            )
 set_target_properties(onnxruntime_test_utils PROPERTIES FOLDER "ONNXRuntimeTest")
@@ -258,8 +255,6 @@ onnxruntime_add_static_library(onnxruntime_unittest_utils ${onnxruntime_unittest
 add_dependencies(onnxruntime_unittest_utils ort_core_target)
 
 target_include_directories(onnxruntime_unittest_utils PRIVATE
-                           ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT}
-                           ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}
                            ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session
                            "${TEST_SRC_DIR}/util/include"
                            )
@@ -349,8 +344,6 @@ block()
     # the rest of the test binary.
     target_compile_definitions(onnxruntime_provider_test PRIVATE ORT_UNIT_TEST_BUILD)
   endif()
-
-  target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT})
 
   # For onnxruntime_cxx_api.h
   target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session)
@@ -446,23 +439,6 @@ endif()
 
     set_target_properties(ep_weight_sharing_ctx_gen PROPERTIES FOLDER "ONNXRuntimeTest")
   endif()
-
-  # the debug node IO functionality uses static variables, so it is best tested
-  # in its own process
-  if(onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS)
-    AddTest(
-      TARGET onnxruntime_test_debug_node_inputs_outputs
-      SOURCES
-        "${TEST_SRC_DIR}/debug_node_inputs_outputs/debug_node_inputs_outputs_utils_test.cc"
-        "${TEST_SRC_DIR}/providers/provider_test_utils.h"
-        ${onnxruntime_unittest_main_src}
-      LIBS ${onnxruntime_test_providers_libs} ${onnxruntime_test_common_libs}
-      DEPENDS ${all_dependencies}
-    )
-
-    target_compile_definitions(onnxruntime_test_debug_node_inputs_outputs
-      PRIVATE DEBUG_NODE_INPUTS_OUTPUTS)
-  endif(onnxruntime_DEBUG_NODE_INPUTS_OUTPUTS)
 
   #some ETW tools
   if(WIN32 AND onnxruntime_ENABLE_INSTRUMENT)
