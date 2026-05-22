@@ -323,7 +323,6 @@ void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* this_ptr, Ort
     factory->ort_api.Logger_LogMessage(OrtLoggingManager::GetDefaultLoggerPtr(),
                                        OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,
                                        "Cannot release allocator of unknown type!", ORT_FILE, __LINE__, __FUNCTION__);
-
   }
 }
 

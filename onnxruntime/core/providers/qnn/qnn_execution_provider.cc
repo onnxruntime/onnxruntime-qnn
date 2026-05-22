@@ -1038,7 +1038,8 @@ QnnEp::QnnEp(QnnEpFactory& factory,
       ORT_CXX_LOGF(logger_,
                    ORT_LOGGING_LEVEL_INFO,
                    "Context cache is enabled in this session (via %s); the HTP shared memory allocator will be disabled"
-                   " as no allocations are expected to be made.", kOrtSessionOptionEpContextEnable);
+                   " as no allocations are expected to be made.",
+                   kOrtSessionOptionEpContextEnable);
     }
     model_settings_.htp_shared_memory = true;
   }
@@ -1073,7 +1074,6 @@ QnnEp::QnnEp(QnnEpFactory& factory,
                  "QNN allocator set to type: %s.",
                  qnn::QnnAllocatorTypeToString(qnn_allocator_type_).data());
   }
-
 
 #if defined(_WIN32)
   if (qnn::QnnTelemetry::SupportsETW()) {

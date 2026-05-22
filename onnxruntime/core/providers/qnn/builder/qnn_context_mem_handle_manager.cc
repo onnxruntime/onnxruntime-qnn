@@ -116,9 +116,9 @@ Ort::Status QnnContextMemHandleManager::GetOrRegister(void* shared_memory_addres
     Qnn_MemHandle_t raw_mem_handle{};
     const auto register_result = qnn_interface_.memRegister(context_, &mem_descriptor, 1, &raw_mem_handle);
 #ifdef _WIN32
-    if (IsGpuBackend(qnn_backend_type_)
-        && IsDx12SharedMemoryAllocator(qnn_allocator_type_)
-        && register_result == QNN_MEM_ERROR_MAPPING) {
+    if (IsGpuBackend(qnn_backend_type_) &&
+        IsDx12SharedMemoryAllocator(qnn_allocator_type_) &&
+        register_result == QNN_MEM_ERROR_MAPPING) {
       ORT_CXX_LOG(logger,
                   ORT_LOGGING_LEVEL_ERROR,
                   "QnnMem_register failed with QNN_MEM_ERROR_MAPPING when using the DX12 shared memory allocator with the GPU"
