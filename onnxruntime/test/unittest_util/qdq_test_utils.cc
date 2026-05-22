@@ -4,9 +4,6 @@
 #include "qdq_test_utils.h"
 #include <type_traits>
 #include <utility>
-#include "core/common/common.h"
-#include "core/common/inlined_containers_fwd.h"
-#include "core/common/span_utils.h"
 
 namespace onnxruntime {
 namespace test {
@@ -32,26 +29,6 @@ GetQDQTestCaseFn BuildQDQReshapeTestCase(const std::vector<int64_t>& input_shape
         "q", "reshape_output",
         .003f, 1, "q_out");
   };
-}
-
-std::vector<std::string> GetNodeOpTypesInTopologicalOrder(const Graph& graph, bool include_domain) {
-  std::vector<std::string> op_types{};
-  GraphViewer graph_viewer{graph};
-  const auto& ordering = graph_viewer.GetNodesInTopologicalOrder();
-  for (const auto node_idx : ordering) {
-    const auto* node = graph.GetNode(node_idx);
-    std::string full_op_type;
-
-    if (include_domain) {
-      const std::string& domain = node->Domain();
-      full_op_type = domain.empty() ? node->OpType() : domain + "." + node->OpType();
-    } else {
-      full_op_type = node->OpType();
-    }
-
-    op_types.push_back(std::move(full_op_type));
-  }
-  return op_types;
 }
 
 }  // namespace test

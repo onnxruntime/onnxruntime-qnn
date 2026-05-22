@@ -7,9 +7,7 @@
 #include <string>
 
 #include "test/providers/qnn/qnn_test_utils.h"
-#include "core/graph/node_attr_utils.h"
 
-#include "core/graph/onnx_protobuf.h"
 #include "gtest/gtest.h"
 
 namespace onnxruntime {
@@ -40,7 +38,7 @@ static void RunModTest(const std::vector<TestInputDef<DataType>>& input_defs,
 
 // Test that Mod with dynamic divisor.
 TEST_F(QnnCPUBackendTests, Mod_dynamic_Divisor) {
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> dividend_shape{1, 4, 5};
   auto dividend = rand_gen_.Uniform<int32_t>(dividend_shape, -100.0f, 100.0f);
 
@@ -61,7 +59,7 @@ TEST_F(QnnCPUBackendTests, Mod_dynamic_Divisor) {
 
 // Test that Mod with static divisor.
 TEST_F(QnnCPUBackendTests, Mod_static_Divisor) {
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> dividend_shape{1, 4, 5};
   auto dividend = rand_gen_.Uniform<int32_t>(dividend_shape, -100.0f, 100.0f);
 
@@ -87,7 +85,7 @@ TEST_F(QnnCPUBackendTests, Mod_static_Divisor) {
 
 // Test that Mod with dynamic divisor.
 TEST_F(QnnHTPBackendTests, Mod_dynamic_Divisor) {
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> dividend_shape{1, 4, 5};
   auto dividend = rand_gen_.Uniform<int64_t>(dividend_shape, -100.0f, 100.0f);
 
@@ -111,7 +109,7 @@ TEST_F(QnnHTPBackendTests, Mod_dynamic_Divisor) {
 
 // Test that Mod with static divisor.
 TEST_F(QnnHTPBackendTests, Mod_static_Divisor) {
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> dividend_shape{1, 4, 5};
   auto dividend = rand_gen_.Uniform<int64_t>(dividend_shape, -100.0f, 100.0f);
 

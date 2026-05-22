@@ -355,6 +355,9 @@ block()
   # For onnxruntime_cxx_api.h
   target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session)
 
+  # For cpu_provider_factory.h (Note: cpu_provider_factory.h is a public header released in ORT prebuilt)
+  target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/providers/cpu)
+
   add_custom_command(
     TARGET onnxruntime_provider_test POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
@@ -423,7 +426,7 @@ endif()
       ${ep_weight_sharing_ctx_gen_src_patterns}
       )
     onnxruntime_add_executable(ep_weight_sharing_ctx_gen ${ep_weight_sharing_ctx_gen_src})
-    target_include_directories(ep_weight_sharing_ctx_gen PRIVATE ${ONNXRUNTIME_ROOT} ${CMAKE_CURRENT_BINARY_DIR} ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT} ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT})
+    target_include_directories(ep_weight_sharing_ctx_gen PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session)
     if (WIN32)
       target_compile_options(ep_weight_sharing_ctx_gen PRIVATE ${disabled_warnings})
       if (NOT DEFINED SYS_PATH_LIB)

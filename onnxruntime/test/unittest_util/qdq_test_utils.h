@@ -10,13 +10,7 @@
 
 #include "model_test_builder.h"
 
-#include "core/framework/int4.h"
-#include "core/common/span_utils.h"
-#include "core/optimizer/qdq_transformer/selectors_actions/qdq_selector_action_transformer.h"
-#include "core/session/inference_session.h"
-
 #include "test/util/include/asserts.h"
-#include "test/util/include/inference_session_wrapper.h"
 
 namespace onnxruntime {
 namespace test {
@@ -56,8 +50,6 @@ AddQDQNodePair(ModelTestBuilder& builder, std::string qdq_name, std::string inp_
 
 GetQDQTestCaseFn BuildQDQReshapeTestCase(const std::vector<int64_t>& input_shape,
                                          const std::vector<int64_t>& reshape_shape);
-
-std::vector<std::string> GetNodeOpTypesInTopologicalOrder(const Graph& graph, bool include_domain = false);
 
 // Below utility functions are copied from ORT Core with few simpliciations.
 // Refer to onnxruntime/core/mlas/lib/q4_dq.cpp for original implementations.

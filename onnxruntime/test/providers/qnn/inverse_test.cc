@@ -7,9 +7,7 @@
 #include <string>
 
 #include "test/providers/qnn/qnn_test_utils.h"
-#include "core/graph/node_attr_utils.h"
 
-#include "core/graph/onnx_protobuf.h"
 #include "gtest/gtest.h"
 
 namespace onnxruntime {
@@ -42,7 +40,7 @@ static void RunInverseTest(const std::vector<TestInputDef<DataType>>& input_defs
 //
 
 TEST_F(QnnCPUBackendTests, Inverse_2d_test) {
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
 
@@ -52,7 +50,7 @@ TEST_F(QnnCPUBackendTests, Inverse_2d_test) {
 }
 
 TEST_F(QnnCPUBackendTests, Inverse_3d_test) {
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{5, 2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
 
@@ -62,7 +60,7 @@ TEST_F(QnnCPUBackendTests, Inverse_3d_test) {
 }
 
 TEST_F(QnnCPUBackendTests, Inverse_4d_test) {
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{1, 5, 2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
 
@@ -129,7 +127,7 @@ static void RunQDQInverseOpTest(const TestInputDef<float>& input_defs,
 }
 
 TEST_F(QnnHTPBackendTests, Inverse_2d) {
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
 
@@ -141,7 +139,7 @@ TEST_F(QnnHTPBackendTests, Inverse_2d) {
 }
 
 TEST_F(QnnHTPBackendTests, Inverse_3d) {
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{10, 2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
 
@@ -153,7 +151,7 @@ TEST_F(QnnHTPBackendTests, Inverse_3d) {
 }
 
 TEST_F(QnnHTPBackendTests, Inverse_4d) {
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{1, 10, 2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -100.0f, 100.0f);
 
@@ -165,7 +163,7 @@ TEST_F(QnnHTPBackendTests, Inverse_4d) {
 }
 
 TEST_F(QnnHTPBackendTests, Inverse_qdq_2d) {
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -10.0f, 10.0f);
 
@@ -184,7 +182,7 @@ TEST_F(QnnHTPBackendTests, Inverse_qdq_3d) {
 #else
   QDQTolerance tolerance = QDQTolerance();  // Default 0.4%
 #endif
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{10, 2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -10.0f, 10.0f);
 
@@ -204,7 +202,7 @@ TEST_F(QnnHTPBackendTests, Inverse_qdq_4d) {
 #else
   QDQTolerance tolerance = QDQTolerance();  // Default 0.4%
 #endif
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> input_shape{1, 10, 2, 2};
   auto input_vector = rand_gen_.Uniform<float>(input_shape, -10.0f, 10.0f);
 
