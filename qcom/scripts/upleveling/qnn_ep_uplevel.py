@@ -438,7 +438,7 @@ class WheelUpleveler(ArtifactUpleveler):
         other_wheels: list[str] = []
         for root, _dirs, files in os.walk(artifact_dir):
             for fn in files:
-                if not fn.endswith(".whl"):
+                if not fn.endswith(self.artifact_suffix):
                     continue
                 full = os.path.join(root, fn)
                 (win_wheels if win_pattern.search(fn) else other_wheels).append(full)
