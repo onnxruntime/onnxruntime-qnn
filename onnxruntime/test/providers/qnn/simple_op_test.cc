@@ -8,9 +8,8 @@
 #include <string>
 #include <filesystem>
 #include <variant>
-#include "core/graph/graph.h"
-#include "core/graph/node_attr_utils.h"
-#include "core/session/onnxruntime_session_options_config_keys.h"
+
+#include "onnxruntime_session_options_config_keys.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
@@ -147,6 +146,29 @@ TEST_F(QnnCPUBackendTests, UnaryOp_Softplus_Rank5) {
                  ExpectedEPNodeAssignment::All);
 }
 
+// Verifies QNN_OP_HARD_SWISH computes x * clip((x+3)/6, 0, 1), not HardSigmoid.
+TEST_F(QnnCPUBackendTests, UnaryOp_HardSwish) {
+  RunOpTestOnCPU("HardSwish",
+                 {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+                 {},
+                 14,
+                 ExpectedEPNodeAssignment::All);
+}
+
+// Test float HardSwish on the QNN HTP backend.
+TEST_F(QnnHTPBackendTests, UnaryOp_HardSwish_FP32) {
+  QNN_SKIP_TEST_ON_ARM64("Fails on ARM64/AARCH64");
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  RunQnnModelTest(BuildOpTestCase<float>("HardSwish_node", "HardSwish",
+                                         {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+                                         {}, {}),
+                  provider_options,
+                  14,
+                  ExpectedEPNodeAssignment::All,
+                  0.004f);
+}
+
 TEST_F(QnnCPUBackendTests, Concat_EmptyInput) {
   RunOpTestOnCPU("Concat",
                  {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
@@ -200,7 +222,7 @@ static void RunQDQOpTest(const std::string& op_type,
 
   TestQDQModelAccuracy(BuildOpTestCase<float, InputType2>(op_type + "_node", op_type, input_defs_1, input_defs_2, input_defs_3, attrs, op_domain),
                        BuildQDQOpTestCase<InputQType, InputType2>(op_type + "_node", op_type, input_defs_1, input_defs_2, input_defs_3, attrs,
-                                                                  op_domain, use_contrib_qdq, nullptr, combine_quant_inputs_qparams),
+                                                                  op_domain, use_contrib_qdq, combine_quant_inputs_qparams),
                        provider_options,
                        opset_version,
                        expected_ep_assignment,
@@ -1084,6 +1106,38 @@ TEST_F(QnnHTPBackendTests, BinaryOp_And4D) {
   RunOpTest<bool>("And",
                   {TestInputDef<bool>({1, 4}, false, {false, false, true, true}),
                    TestInputDef<bool>({1, 4}, false, {false, true, false, true})},
+                  {},
+                  17,
+                  ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnCPUBackendTests, Xor4D) {
+  RunOpTestOnCPU<bool>("Xor",
+                       {TestInputDef<bool>({1, 4}, false, {false, false, true, true}),
+                        TestInputDef<bool>({1, 4}, false, {false, true, false, true})},
+                       {},
+                       17,
+                       ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, Xor4D) {
+  RunOpTest<bool>("Xor",
+                  {TestInputDef<bool>({1, 4}, false, {false, false, true, true}),
+                   TestInputDef<bool>({1, 4}, false, {false, true, false, true})},
+                  {},
+                  17,
+                  ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, XorBroadcast) {
+  std::vector<bool> a_data(2 * 1 * 4);
+  std::vector<bool> b_data(2 * 3 * 4);
+  for (size_t i = 0; i < a_data.size(); ++i) a_data[i] = (i % 2) == 0;
+  for (size_t i = 0; i < b_data.size(); ++i) b_data[i] = (i % 3) == 0;
+
+  RunOpTest<bool>("Xor",
+                  {TestInputDef<bool>({2, 1, 4}, false, a_data),
+                   TestInputDef<bool>({2, 3, 4}, false, b_data)},
                   {},
                   17,
                   ExpectedEPNodeAssignment::All);

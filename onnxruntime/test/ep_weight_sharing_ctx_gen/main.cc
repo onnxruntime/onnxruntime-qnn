@@ -5,11 +5,18 @@
 #include "command_args_parser.h"
 
 // onnxruntime dependencies
-#include "core/session/onnxruntime_cxx_api.h"
-#include "core/session/onnxruntime_session_options_config_keys.h"
+#include "onnxruntime_cxx_api.h"
+#include "onnxruntime_session_options_config_keys.h"
 
 // onnx dependencies
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wshorten-64-to-32"
+#endif
 #include "onnx/onnx_pb.h"
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 #include <algorithm>
 #include <fstream>
 
@@ -94,14 +101,11 @@ static PluginEpLibraryRegistrationHandle RegisterPluginEpLibrary(Ort::Env& env,
       return;
     }
 
-    ORT_TRY {
+    try {
       env.UnregisterExecutionProviderLibrary(registration_name.c_str());
-    }
-    ORT_CATCH(const Ort::Exception& e) {
-      ORT_HANDLE_EXCEPTION([&]() {
-        std::cerr << "Failed to unregister EP library with name '" << registration_name << "': "
-                  << e.what() << std::endl;
-      });
+    } catch (const Ort::Exception& e) {
+      std::cerr << "Failed to unregister EP library with name '" << registration_name << "': "
+                << e.what() << std::endl;
     }
   };
 
@@ -164,7 +168,7 @@ int real_main(int argc, char* argv[]) {
                                       : ORT_LOGGING_LEVEL_ERROR;
   Ort::Env env(logging_level, "ep_weight_sharing");
 
-  ORT_TRY {
+  try {
     PluginEpLibraryRegistrationHandle plugin_ep_library_registration_handle{};
     Ort::SessionOptions so;
     so.SetLogId("ep_weight_sharing_ctx_gen_session_logger");
@@ -211,7 +215,7 @@ int real_main(int argc, char* argv[]) {
                     << qnnctxgen::ToUTF8String(test_config.machine_config.plugin_ep_config->ep_library_path) << std::endl;
           return 1;
         }
-      } else if (provider_name_ == onnxruntime::kQnnExecutionProvider) {
+      } else if (provider_name_ == "QNNExecutionProvider") {
 #ifdef USE_QNN
         so.AppendExecutionProvider("QNN", provider_options);
 #else
@@ -259,8 +263,7 @@ int real_main(int argc, char* argv[]) {
 
       UpdateEpContextModel(ep_ctx_files, max_size);
     }
-  }
-  ORT_CATCH(const Ort::Exception& e) {
+  } catch (const Ort::Exception& e) {
     std::cerr << "Failed to generate context cache file: " << e.what();
     return -1;
   }
@@ -275,14 +278,11 @@ int wmain(int argc, wchar_t* argv[]) {
 int main(int argc, char* argv[]) {
 #endif
   int retval = -1;
-  ORT_TRY {
+  try {
     retval = real_main(argc, argv);
-  }
-  ORT_CATCH(const std::exception& ex) {
-    ORT_HANDLE_EXCEPTION([&]() {
-      fprintf(stderr, "%s\n", ex.what());
-      retval = -1;
-    });
+  } catch (const std::exception& ex) {
+    fprintf(stderr, "%s\n", ex.what());
+    retval = -1;
   }
 
   ::google::protobuf::ShutdownProtobufLibrary();

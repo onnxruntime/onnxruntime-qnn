@@ -241,8 +241,6 @@ Ort::Status QnnModel::ComposeGraph(const QnnModelContext& context) {
   QnnModelWrapper qnn_model_wrapper = QnnModelWrapper(ort_graph, api_ptrs_, logger,
                                                       qnn_backend_manager_->GetQnnInterface(),
                                                       qnn_backend_manager_->GetQnnBackendHandle(),
-                                                      qnn_backend_manager_->GetQnnValidatorInterface(),
-                                                      qnn_backend_manager_->GetQnnValidatorBackendHandle(),
                                                       graph_inputs_,
                                                       graph_outputs_,
                                                       qnn_backend_manager_->GetQnnBackendType(),
