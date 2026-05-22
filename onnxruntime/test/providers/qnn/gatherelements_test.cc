@@ -7,11 +7,8 @@
 #include <string>
 #include <unordered_map>
 
-#include "core/graph/node_attr_utils.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
-
-#include "core/graph/onnx_protobuf.h"
 
 #include "gtest/gtest.h"
 
@@ -26,7 +23,7 @@ static GetTestQDQModelFn<QuantType> BuildQDQGatherElemsTestCase(const TestInputD
                                                                 bool use_contrib_qdq = false) {
   return [input_def, indices_def, attrs, use_contrib_qdq](ModelTestBuilder& builder,
                                                           std::vector<QuantParams<QuantType>>& output_qparams) {
-    ORT_UNUSED_PARAMETER(use_contrib_qdq);  // Build using standard ONNX Q/DQ nodes.
+    QNN_TEST_UNUSED_PARAMETER(use_contrib_qdq);  // Build using standard ONNX Q/DQ nodes.
 
     builder.graph_->set_name("qdq_gather_elements_graph");
 

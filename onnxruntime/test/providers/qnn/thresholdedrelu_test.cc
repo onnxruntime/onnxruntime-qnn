@@ -7,9 +7,7 @@
 #include <string>
 
 #include "test/providers/qnn/qnn_test_utils.h"
-#include "core/graph/node_attr_utils.h"
 
-#include "core/graph/onnx_protobuf.h"
 #include "gtest/gtest.h"
 
 namespace onnxruntime {
@@ -41,7 +39,7 @@ static void RunThresholdedReluTest(const std::vector<TestInputDef<DataType>>& in
 //
 TEST_F(QnnCPUBackendTests, ThresholdedRelu) {
   // Test that ThresholdedRelu with fp32 input.
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> dividend_shape{1, 4, 5};
   auto input = rand_gen_.Uniform<float>(dividend_shape, -100.0f, 100.0f);
 
@@ -178,7 +176,7 @@ TEST_F(QnnHTPBackendTests, ThresholdedRelu_AlphaX) {
 
 // Test ThresholdedRelu.
 TEST_F(QnnHTPBackendTests, ThresholdedRelu_fp32) {
-  RandomValueGenerator rand_gen_{optional<RandomValueGenerator::RandomSeedType>{2345}};
+  RandomValueGenerator rand_gen_{std::optional<RandomValueGenerator::RandomSeedType>{2345}};
   const std::vector<int64_t> dividend_shape{1, 4, 5};
   auto input = rand_gen_.Uniform<float>(dividend_shape, -10.0f, 10.0f);
 
