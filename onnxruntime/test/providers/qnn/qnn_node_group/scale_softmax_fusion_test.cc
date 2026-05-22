@@ -26,7 +26,7 @@ GetTestModelFn BuildTestCaseScalar(
     if (use_constant) {
       onnx::TensorProto scale_value_proto;
       scale_value_proto.set_data_type(ONNX_NAMESPACE::TensorProto_DataType_FLOAT);
-      utils::SetRawDataInTensorProto(scale_value_proto, reinterpret_cast<const char*>(&scale_value), sizeof(float));
+      builder.SetRawDataInTensorProto(scale_value_proto, reinterpret_cast<const char*>(&scale_value), sizeof(float));
       ONNX_NAMESPACE::AttributeProto scale_attr;
       scale_attr.set_name("value");
       scale_attr.set_type(ONNX_NAMESPACE::AttributeProto_AttributeType_TENSOR);

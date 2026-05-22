@@ -2,7 +2,7 @@
 // Licensed under the MIT License.
 
 #include "onnxruntime_c_api.h"
-#include "test/unittest_util/graph_transform_test_builder.h"
+#include "test/unittest_util/model_test_builder.h"
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include "test/providers/qnn/qnn_test_utils.h"
