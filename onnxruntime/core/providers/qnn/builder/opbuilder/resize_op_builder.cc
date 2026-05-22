@@ -93,6 +93,26 @@ const OnnxAttrInfo<int64_t> ResizeOpBuilder::onnx_antialias_attr = {"antialias",
 const OnnxAttrInfo<int64_t> ResizeOpBuilder::onnx_exclude_outside_attr = {"exclude_outside", 0};
 const OnnxAttrInfo<float> ResizeOpBuilder::onnx_cubic_coeff_a_attr = {"cubic_coeff_a", -0.75f};
 
+// Returns true when ONNX 'pytorch_half_pixel' is bit-identical to 'half_pixel'
+// for this rank-4 Resize. Per ONNX spec, pytorch_half_pixel only diverges from
+// half_pixel on output axes whose length == 1 (it pins the source coord to 0
+// instead of evaluating (x + 0.5) / scale - 0.5). When both spatial output dims
+// are > 1, the two modes are mathematically equivalent and the node can be
+// lowered to QNN ResizeBilinear with half_pixel_centers=true.
+//
+// Caller contract: input_rank == 4 must already be verified by the gate, which
+// (per ONNX Resize: output_rank == input_rank) implies output rank == 4.
+// IsOpSupported has already validated that output shape is present.
+static bool IsPyTorchHalfPixelEquivalentToHalfPixel(const OrtNodeUnit& node_unit) {
+  const auto& output_shape_opt = node_unit.Outputs()[0].shape;
+  assert(output_shape_opt.has_value() && output_shape_opt->size() == 4);
+  const auto& output_shape = *output_shape_opt;
+  const bool is_nhwc = node_unit.Domain() == kMSInternalNHWCDomain;
+  const size_t h_axis = is_nhwc ? 1 : 2;
+  const size_t w_axis = is_nhwc ? 2 : 3;
+  return output_shape[h_axis] > 1 && output_shape[w_axis] > 1;
+}
+
 // Returns the QNN parameter integer value that corresponds to the given ONNX attribute mode string value.
 static Ort::Status GetQnnModeValFromOnnxString(const std::unordered_map<std::string, uint32_t>& supported_qnn_modes,
                                                const std::string& onnx_attr_value,
@@ -158,12 +178,18 @@ Ort::Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   // (Resize = QNN Resize op, RBL = QNN ResizeBilinear op, X = Unsupported).
   //
   //                                                   input rank:
-  // coordinate_transformation_mode: |   < 3      3        4        5        > 5
-  // ---------------------------------------------------------------------------------
-  //                      half_pixel |    X     Resize    RBL     Resize       X
-  //              pytorch_half_pixel |    X     Resize    Resize  Resize       X
-  //                   align_corners |    X     Resize    RBL     Resize       X
-  //                      asymmetric |    X     Resize    RBL     Resize       X
+  // coordinate_transformation_mode:    |   < 3      3        4        5        > 5
+  // ------------------------------------------------------------------------------------
+  //                         half_pixel |    X     Resize    RBL     Resize       X
+  //  pytorch_half_pixel (H>1 ∧ W>1)    |    X     Resize    RBL     Resize       X
+  //  pytorch_half_pixel (H==1 ∨ W==1)  |    X     Resize    Resize  Resize       X
+  //                      align_corners |    X     Resize    RBL     Resize       X
+  //                         asymmetric |    X     Resize    RBL     Resize       X
+  //
+  // The H>1 ∧ W>1 row routes pytorch_half_pixel to RBL because it is then
+  // bit-identical to half_pixel (see IsPyTorchHalfPixelEquivalentToHalfPixel).
+  // The fallback row preserves the length-1 "pin to 0" semantics by using QNN
+  // Resize, which natively supports the pytorch_half_pixel transformation_mode.
 
   // Resize w/ "nearest" mode.
   // Translation matrix of ONNX Resize w/ "nearest" mode on HTP backend.
@@ -354,11 +380,16 @@ Ort::Status ResizeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     param_tensor_names.push_back(qnn_half_pixel_param.GetParamTensorName());
     qnn_model_wrapper.AddParamWrapper(std::move(qnn_half_pixel_param));
   } else if (is_npu_backend && input_rank == 4 && interp_mode == "linear" &&
-             transformation_mode != "pytorch_half_pixel") {
-    // Translate Resize with
-    // {input_rank: 4, mode: "linear", coordinate_transformation_mode: XXX} to
-    // QNN's ResizeBilinear operator on the HTP backend. QNN ResizeBilinear seems to be faster than QNN Resize on
-    // Windows/HTP QNN SDK 2.19.2.
+             (transformation_mode != "pytorch_half_pixel" ||
+              IsPyTorchHalfPixelEquivalentToHalfPixel(node_unit))) {
+    // Lower rank-4 linear Resize to QNN's ResizeBilinear (2-parameter form) on the
+    // HTP backend. ResizeBilinear is also faster than the generic Resize op on HTP.
+    // For pytorch_half_pixel, this redirect is correctness-required: HTP's validator
+    // rejects the generic Resize op for pytorch_half_pixel + linear + multi-pixel
+    // output spatial dims (QNN_OP_PACKAGE_ERROR_VALIDATION_FAILURE 0xc26).
+    // The IsPyTorchHalfPixelEquivalentToHalfPixel guard ensures we only redirect when
+    // the modes are bit-identical; the H==1 ∨ W==1 case stays on the generic Resize
+    // path to preserve pytorch_half_pixel's length-1 "pin to 0" semantics.
     qnn_op_type = "ResizeBilinear";
 
     // 'align_corners'
@@ -375,7 +406,8 @@ Ort::Status ResizeOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     // 'half_pixel_centers'
     Qnn_Scalar_t qnn_half_pixel = QNN_SCALAR_INIT;
     qnn_half_pixel.dataType = QNN_DATATYPE_BOOL_8;
-    qnn_half_pixel.bool8Value = static_cast<uint8_t>(transformation_mode == "half_pixel");
+    qnn_half_pixel.bool8Value = static_cast<uint8_t>(transformation_mode == "half_pixel" ||
+                                                     transformation_mode == "pytorch_half_pixel");
 
     QnnParamWrapper qnn_half_pixel_param(node_unit.Index(), node_unit.Name(),
                                          QNN_OP_RESIZE_BILINEAR_PARAM_HALF_PIXEL_CENTERS, qnn_half_pixel);
