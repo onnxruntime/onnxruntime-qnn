@@ -317,8 +317,10 @@ void ORT_API_CALL QnnEpFactory::ReleaseAllocatorImpl(OrtEpFactory* this_ptr, Ort
 
   if (qnn::IsHtpSharedMemoryAllocator(factory->qnn_allocator_type_)) {
     delete static_cast<qnn::HtpSharedMemoryAllocator*>(allocator);
+#ifdef _WIN32
   } else if (qnn::IsDx12SharedMemoryAllocator(factory->qnn_allocator_type_)) {
     delete static_cast<qnn::Dx12SharedMemoryAllocator*>(allocator);
+#endif
   } else {
     factory->ort_api.Logger_LogMessage(OrtLoggingManager::GetDefaultLoggerPtr(),
                                        OrtLoggingLevel::ORT_LOGGING_LEVEL_WARNING,

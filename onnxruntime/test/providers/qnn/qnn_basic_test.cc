@@ -2893,7 +2893,7 @@ TEST_F(QnnHTPBackendTests, ExtendedUdmaModeTest) {
 }
 #endif  // defined(_WIN32)
 
-#if defined(_WIN32) && !BUILD_QNN_EP_STATIC_LIB
+#if defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB
 // Tests that the QNN GPU shared memory allocator (DX12) can be created and used to allocate/free memory.
 // Requires the QNN GPU backend (QnnGpu.dll) and a D3D12-capable device.
 TEST_F(QnnGPUBackendTests, get_allocator_qnn_gpu_shared) {
@@ -3137,7 +3137,7 @@ TEST_F(QnnGPUBackendTests, DISABLED_io_binding_qnn_gpu_shared_offset) {
   binding.ClearBoundOutputs();
 }
 
-#endif  // defined(_WIN32) && !BUILD_QNN_EP_STATIC_LIB
+#endif  // defined(_WIN32) && defined(_M_ARM64) && !BUILD_QNN_EP_STATIC_LIB
 
 #endif  // !defined(ORT_MINIMAL_BUILD)
 
