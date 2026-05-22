@@ -455,7 +455,7 @@ class WheelUpleveler(ArtifactUpleveler):
 
         for whl_path in win_wheels:
             whl_name = os.path.basename(whl_path)
-            whl_no_ext = whl_name[: -len(".whl")]
+            whl_no_ext = whl_name[: -len(self.artifact_suffix)]
             extract_dir = os.path.join(output_dir, whl_no_ext)
             logging.info(f"  Processing: {whl_name}")
             try:
