@@ -9,10 +9,8 @@
 // ORT types as opaque wrappers in provider_api.h / provider_wrappedtypes.h.
 #if !defined(ORT_MINIMAL_BUILD) && BUILD_QNN_EP_STATIC_LIB
 
-#include "core/graph/model.h"
 #include "core/providers/qnn/builder/qnn_model_wrapper.h"
 #include "core/providers/qnn/builder/qnn_def.h"
-#include "test/util/include/default_providers.h"
 #include "test/util/include/test_environment.h"
 
 using namespace onnxruntime;

@@ -3,6 +3,15 @@
 #pragma once
 
 #include <functional>
+#include <optional>
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wshorten-64-to-32"
+#endif
+#include <onnx/onnx_pb.h>
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 #include <type_traits>
 #include <vector>
 #include <random>
@@ -10,6 +19,7 @@
 
 #include "onnxruntime_c_api.h"
 #include "onnxruntime_cxx_api.h"
+#include "test/util/include/int4.h"
 #include "test/unittest_util/framework_test_utils.h"
 #include "test/util/include/test_random_seed.h"
 
@@ -234,7 +244,7 @@ class ModelTestBuilder {
   const ONNX_NAMESPACE::ValueInfoProto* MakeInput(const std::string& name,
                                                   const std::vector<int64_t>& shape,
                                                   const std::vector<T>& data,
-                                                  AllocatorPtr /* allocator */ = nullptr) {
+                                                  void* /* allocator */ = nullptr) {
     ONNX_NAMESPACE::ValueInfoProto* inp = graph_->add_input();
     inp->set_name(name);
     ONNX_NAMESPACE::TypeProto* type_proto = inp->mutable_type();
@@ -259,12 +269,12 @@ class ModelTestBuilder {
   template <typename T>
   const ONNX_NAMESPACE::ValueInfoProto* MakeInput(const std::string& name,
                                                   const std::vector<int64_t>& shape, T min, T max,
-                                                  AllocatorPtr allocator = nullptr) {
+                                                  void* allocator = nullptr) {
     return MakeInput<T>(name, shape, rand_gen_.Uniform<T>(shape, min, max), allocator);
   }
 
   const ONNX_NAMESPACE::ValueInfoProto* MakeInputBool(const std::string& name,
-                                                      const std::vector<int64_t>& shape, AllocatorPtr allocator = nullptr) {
+                                                      const std::vector<int64_t>& shape, void* allocator = nullptr) {
     std::vector<uint8_t> data_uint8 = rand_gen_.Uniform<uint8_t>(shape, 0, 1);
     std::vector<bool> data;
     for (uint8_t x : data_uint8) {
