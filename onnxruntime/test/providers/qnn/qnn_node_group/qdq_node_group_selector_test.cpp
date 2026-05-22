@@ -7,8 +7,8 @@
 
 #include "test/providers/qnn/qnn_test_utils.h"
 
-#include "core/graph/onnx_protobuf.h"
 #include "gtest/gtest.h"
+#include "onnxruntime_session_options_config_keys.h"
 
 namespace onnxruntime {
 namespace test {

@@ -10,8 +10,6 @@
 #include "test/unittest_util/qdq_test_utils.h"
 #include "test/unittest_util/tester_types.h"
 
-#include "core/graph/onnx_protobuf.h"
-
 #include "gtest/gtest.h"
 
 namespace onnxruntime {
@@ -164,7 +162,7 @@ void _BuildLSTMTestCase(ModelTestBuilder& builder,
 
   builder.AddNode("lstm", "LSTM", input_names, output_names, "", attrs);
 
-  ORT_UNUSED_PARAMETER(output_qparams);
+  QNN_TEST_UNUSED_PARAMETER(output_qparams);
   if constexpr (kIsU8) {
     size_t i = 0;
     if (has_Y) {
