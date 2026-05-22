@@ -355,7 +355,7 @@ block()
   # For onnxruntime_cxx_api.h
   target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session)
 
-  # For cpu_provider_factory.h
+  # For cpu_provider_factory.h (Note: cpu_provider_factory.h is a public header released in ORT prebuilt)
   target_include_directories(onnxruntime_provider_test PRIVATE ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/providers/cpu)
 
   add_custom_command(
