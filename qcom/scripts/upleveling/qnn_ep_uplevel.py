@@ -832,7 +832,7 @@ class NugetUpleveler(ArtifactUpleveler):
         nupkgs = sorted(
             os.path.join(artifact_dir, f)
             for f in os.listdir(artifact_dir)
-            if os.path.isfile(os.path.join(artifact_dir, f)) and f.endswith(".nupkg") and not f.endswith(".snupkg")
+            if os.path.isfile(os.path.join(artifact_dir, f)) and f.endswith(self.artifact_suffix) and not f.endswith(".snupkg")
         )
 
         if not nupkgs:
@@ -846,7 +846,7 @@ class NugetUpleveler(ArtifactUpleveler):
 
         for nupkg_path in nupkgs:
             nupkg_name = os.path.basename(nupkg_path)
-            nupkg_no_ext = nupkg_name[: -len(".nupkg")]
+            nupkg_no_ext = nupkg_name[: -len(self.artifact_suffix)]
             extract_dir = os.path.join(output_dir, nupkg_no_ext)
             logging.info(f"  Processing: {nupkg_name}")
             try:
