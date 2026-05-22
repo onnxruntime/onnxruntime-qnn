@@ -3,6 +3,8 @@
 
 #include "core/providers/qnn/builder/qnn_profile_serializer.h"
 
+#include <filesystem>
+
 #include "core/providers/qnn/qnn_telemetry.h"
 
 namespace onnxruntime {

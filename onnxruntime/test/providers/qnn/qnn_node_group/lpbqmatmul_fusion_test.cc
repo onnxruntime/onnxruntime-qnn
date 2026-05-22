@@ -118,6 +118,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_LPBQMatMulFusion) {
 #else
 TEST_F(QnnHTPBackendTests, LPBQMatMulFusion) {
 #endif
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   const std::filesystem::path json_qnn_graph_dir = "LPBQMatMulFusion";
   std::filesystem::remove_all(json_qnn_graph_dir);
   ASSERT_TRUE(std::filesystem::create_directory(json_qnn_graph_dir));

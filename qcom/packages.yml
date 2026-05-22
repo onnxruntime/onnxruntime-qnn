@@ -104,6 +104,12 @@ java_windows_x86_64:
   sha256: 6cce98ce38b86737c63912fd1df9ecfee1fe209ab08c0e1e16500f054e67de48
   content_root: jdk-{version}
   bindir: bin
+maven_linux_x86_64:
+  version: 3.9.8
+  url: https://archive.apache.org/dist/maven/maven-3/{version}/binaries/apache-maven-{version}-bin.tar.gz
+  sha256: 067672629075b740e3d0a928e21021dd615a53287af36d4ccca44e87e081d102
+  content_root: apache-maven-{version}
+  bindir: bin
 model_zoo:
   version: 2026-04-03
   url: http://ort-ep-win-01.na.qualcomm.com:8000/model-zoo/model-zoo-{version}.zip
@@ -136,7 +142,7 @@ onnx_models:
   sha256: 5c877a633970248e181018ccdabb280cec22e1b113f3068b6585d3f55cac3fb2
   content_root: onnx-models-{version}
 ort_prebuilt_windows_x64: &ort_prebuilt_common
-  version: 1.24.4
+  version: 1.26.0
   url: https://github.com/microsoft/onnxruntime/releases/download/v{version}/onnxruntime-win-x64-{version}.zip
   content_root: onnxruntime-win-x64-{version}
 ort_prebuilt_windows_arm64:
@@ -188,7 +194,7 @@ python_314_windows_arm64:
   version: 3.14.3
   md5: 1183951d055ef6c0ae1fb686b3342a6f
 qairt:
-  version: 2.45.40.260406
+  version: 2.46.0.260424
   url: https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/{version}/v{version}.zip
   content_root: qairt/{version}
   bindir: bin

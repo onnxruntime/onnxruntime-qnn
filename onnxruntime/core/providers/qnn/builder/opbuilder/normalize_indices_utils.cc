@@ -24,7 +24,8 @@ namespace utils {
 template <typename SrcType>
 bool NormalizeIndicesBytes(gsl::span<const uint8_t> onnx_bytes,
                            const std::function<int64_t(size_t)>& axis_dim_for_element,
-                           std::vector<uint8_t>& qnn_bytes) {
+                           std::vector<uint8_t>& qnn_bytes,
+                           bool& has_negative_indices) {
   const size_t num_elems = onnx_bytes.size() / sizeof(SrcType);
   const auto onnx_indices = gsl::span<const SrcType>{
       reinterpret_cast<const SrcType*>(onnx_bytes.data()), num_elems};
@@ -38,10 +39,10 @@ bool NormalizeIndicesBytes(gsl::span<const uint8_t> onnx_bytes,
     // int64 prevents wraparound on int32 idx + axis_dim >= 2^31.
     int64_t idx = static_cast<int64_t>(onnx_indices[i]);
     if (idx < 0) {
+      has_negative_indices = true;
       idx += axis_dim;
     }
-    // ORT core validates shapes/dtypes; value-range is the actual safeguard
-    // because ONNX allows out-of-range ints to ship in user models.
+    // ORT does not reject out-of-range initializer values; guard here.
     if (idx < 0 || idx >= axis_dim ||
         idx > static_cast<int64_t>(std::numeric_limits<int32_t>::max())) {
       return false;
@@ -52,14 +53,12 @@ bool NormalizeIndicesBytes(gsl::span<const uint8_t> onnx_bytes,
   return true;
 }
 
+template bool NormalizeIndicesBytes<int32_t>(
+    gsl::span<const uint8_t>, const std::function<int64_t(size_t)>&,
+    std::vector<uint8_t>&, bool&);
 template bool NormalizeIndicesBytes<int64_t>(
     gsl::span<const uint8_t>, const std::function<int64_t(size_t)>&,
-    std::vector<uint8_t>&);
-
-namespace {
-
-constexpr const char* kOutOfRangeMsg =
-    "QNN does not support negative or out-of-range index values for ScatterND-style ops";
+    std::vector<uint8_t>&, bool&);
 
 Ort::Status AddNormalizedIndicesTensor(QnnModelWrapper& qnn_model_wrapper,
                                        TensorInfo indices_info,
@@ -104,48 +103,6 @@ Ort::Status AddNormalizedIndicesTensor(QnnModelWrapper& qnn_model_wrapper,
   }
   input_names.push_back(indices_casted_name);
   return Ort::Status();
-}
-
-}  // namespace
-
-Ort::Status NormalizeIndicesForScatterND(QnnModelWrapper& qnn_model_wrapper,
-                                         const OrtNodeUnitIODef& indices_input,
-                                         const std::vector<uint32_t>& data_shape,
-                                         const Ort::Logger& logger,
-                                         std::vector<std::string>& input_names,
-                                         bool do_op_validation) {
-  std::string indices_tensor_name = indices_input.name;
-
-  TensorInfo indices_info = {};
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(indices_input, indices_info));
-
-  // ORT core validates ONNX schema (rank>=1, last-dim <= rank(data), int64 dtype).
-  const uint32_t index_tuple_size = indices_info.shape.back();
-
-  const auto axis_dim_for_element = [index_tuple_size, &data_shape](size_t element_index) -> int64_t {
-    const size_t col = element_index % static_cast<size_t>(index_tuple_size);
-    return static_cast<int64_t>(data_shape[col]);
-  };
-
-  std::vector<uint8_t> qnn_indices_bytes;
-
-  if (indices_info.is_initializer) {
-    std::vector<uint8_t> onnx_indices_bytes;
-    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(indices_info.initializer_tensor,
-                                                            onnx_indices_bytes));
-
-    RETURN_IF_NOT(NormalizeIndicesBytes<int64_t>(onnx_indices_bytes, axis_dim_for_element,
-                                                 qnn_indices_bytes),
-                  kOutOfRangeMsg);
-    indices_info.qnn_data_type = QNN_DATATYPE_INT_32;
-
-    // Rename so a sibling op reusing the same ONNX initializer under a different
-    // axis bound cannot alias our rewritten copy.
-    indices_tensor_name = UniqueNameGenerator().New(indices_tensor_name, "_qnn_idx");
-  }
-
-  return AddNormalizedIndicesTensor(qnn_model_wrapper, std::move(indices_info), indices_tensor_name,
-                                    std::move(qnn_indices_bytes), logger, input_names, do_op_validation);
 }
 
 }  // namespace utils

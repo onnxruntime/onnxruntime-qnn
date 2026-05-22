@@ -21,6 +21,7 @@
 #include "core/providers/qnn/builder/onnx_ctx_model_helper.h"
 #include "core/providers/qnn/qnn_telemetry.h"
 #include "core/providers/qnn/rpcmem_library.h"
+#include "core/providers/qnn/qnn_node_compute_info_base.h"
 #include "core/providers/qnn/genie/genie_api_loader.h"
 #include "core/providers/qnn/genie/genie_node.h"
 #include "core/providers/qnn/genie/genie_node_compute_info.h"
@@ -128,7 +129,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
     return GetProviderOptionPrefix(name_) + key;
   }
 
-  struct QnnNodeComputeInfo : OrtNodeComputeInfo {
+  struct QnnNodeComputeInfo : QnnNodeComputeInfoBase {
     explicit QnnNodeComputeInfo(QnnEp& ep);
 
     static OrtStatus* ORT_API_CALL CreateStateImpl(OrtNodeComputeInfo* this_ptr,
@@ -176,6 +177,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
   bool disable_cpu_ep_fallback_ = false;  // True if CPU EP fallback has been disabled for this session.
   bool qnn_context_embed_mode_ = true;
   bool stop_share_ep_contexts_ = false;
+  bool prepare_only_ = false;
   bool enable_spill_fill_buffer_ = false;
   bool enable_file_mapped_weights_ = true;
 #if defined(_WIN32)

@@ -17,7 +17,53 @@ namespace onnxruntime {
 namespace qnn {
 
 namespace {
+
 constexpr std::array<std::string_view, 3> kSupportedReductions = {"none", "add", "mul"};
+
+// Bounds each tuple column by the matching `data_shape[c]`.
+Ort::Status ProcessScatterNDIndices(QnnModelWrapper& qnn_model_wrapper,
+                                    const OrtNodeUnitIODef& indices_input,
+                                    const std::vector<uint32_t>& data_shape,
+                                    const Ort::Logger& logger,
+                                    std::vector<std::string>& input_names,
+                                    bool do_op_validation) {
+  std::string indices_tensor_name = indices_input.name;
+
+  TensorInfo indices_info = {};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(indices_input, indices_info));
+
+  // ONNX ScatterND rank>=1 is not enforced by shape inference; rely on a well-formed graph.
+  const uint32_t index_tuple_size = indices_info.shape.back();
+
+  const auto axis_dim_for_element = [index_tuple_size, &data_shape](size_t element_index) -> int64_t {
+    const size_t col = element_index % static_cast<size_t>(index_tuple_size);
+    return static_cast<int64_t>(data_shape[col]);
+  };
+
+  std::vector<uint8_t> qnn_indices_bytes;
+  bool has_negative_indices = false;
+
+  if (indices_info.is_initializer) {
+    std::vector<uint8_t> onnx_indices_bytes;
+    RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(indices_info.initializer_tensor,
+                                                            onnx_indices_bytes));
+
+    // ONNX ScatterND `indices` is hard-typed tensor(int64) (unlike ScatterElements).
+    RETURN_IF_NOT(utils::NormalizeIndicesBytes<int64_t>(onnx_indices_bytes, axis_dim_for_element,
+                                                        qnn_indices_bytes, has_negative_indices),
+                  "QNN does not support out-of-range index values for ScatterND.");
+    indices_info.qnn_data_type = QNN_DATATYPE_INT_32;
+
+    // Rename so a sibling op reusing the same ONNX initializer under a different
+    // axis bound cannot alias our rewritten copy.
+    indices_tensor_name = utils::UniqueNameGenerator().New(indices_tensor_name, "_qnn_idx");
+  }
+
+  return utils::AddNormalizedIndicesTensor(qnn_model_wrapper, std::move(indices_info),
+                                           indices_tensor_name, std::move(qnn_indices_bytes),
+                                           logger, input_names, do_op_validation);
+}
+
 }  // namespace
 
 class ScatterNDOpBuilder : public BaseOpBuilder {
@@ -52,9 +98,8 @@ Ort::Status ScatterNDOpBuilder::ProcessInputs(QnnModelWrapper& qnn_model_wrapper
   // QNN rejects negative/INT_64 indices; rewrite statics to keep the node on QNN.
   TensorInfo data_info = {};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], data_info));
-  RETURN_IF_ERROR(utils::NormalizeIndicesForScatterND(
-      qnn_model_wrapper, inputs[1], data_info.shape,
-      logger, input_names, do_op_validation));
+  RETURN_IF_ERROR(ProcessScatterNDIndices(qnn_model_wrapper, inputs[1], data_info.shape,
+                                          logger, input_names, do_op_validation));
 
   RETURN_IF_ERROR(ProcessInput(qnn_model_wrapper, inputs[2], logger, input_names));
   return Ort::Status();

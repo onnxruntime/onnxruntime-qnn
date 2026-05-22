@@ -147,6 +147,29 @@ TEST_F(QnnCPUBackendTests, UnaryOp_Softplus_Rank5) {
                  ExpectedEPNodeAssignment::All);
 }
 
+// Verifies QNN_OP_HARD_SWISH computes x * clip((x+3)/6, 0, 1), not HardSigmoid.
+TEST_F(QnnCPUBackendTests, UnaryOp_HardSwish) {
+  RunOpTestOnCPU("HardSwish",
+                 {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+                 {},
+                 14,
+                 ExpectedEPNodeAssignment::All);
+}
+
+// Test float HardSwish on the QNN HTP backend.
+TEST_F(QnnHTPBackendTests, UnaryOp_HardSwish_FP32) {
+  QNN_SKIP_TEST_ON_ARM64("Fails on ARM64/AARCH64");
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = "htp";
+  RunQnnModelTest(BuildOpTestCase<float>("HardSwish_node", "HardSwish",
+                                         {TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(-10.0f, 10.0f, 6))},
+                                         {}, {}),
+                  provider_options,
+                  14,
+                  ExpectedEPNodeAssignment::All,
+                  0.004f);
+}
+
 TEST_F(QnnCPUBackendTests, Concat_EmptyInput) {
   RunOpTestOnCPU("Concat",
                  {TestInputDef<float>({1, 3, 4, 4}, false, -10.0f, 10.0f),
@@ -217,15 +240,13 @@ static void RunOpTest(const std::string& op_type,
                       const std::string& op_domain = kOnnxDomain,
                       float fp32_abs_err = 1e-5f,
                       bool enable_htp_fp16_precision = false,
-                      std::optional<std::string> soc_model = std::nullopt) {
+                      [[maybe_unused]] std::optional<std::string> soc_model = std::nullopt) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 
   if (enable_htp_fp16_precision) {
 #if defined(_WIN32)
-    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-      GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-    }
+    SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
     provider_options["soc_model"] = soc_model.has_value() ? *soc_model : std::to_string(QNN_SOC_MODEL_SM8850);
@@ -258,9 +279,7 @@ static void RunOpTest(const std::string& op_type,
 
   if (enable_htp_fp16_precision) {
 #if defined(_WIN32)
-    if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-      GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-    }
+    SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
     provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
@@ -920,9 +939,7 @@ TEST_F(QnnHTPBackendTests, BinaryOp_Add4D_FP64) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
 #if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
@@ -1093,6 +1110,47 @@ TEST_F(QnnHTPBackendTests, BinaryOp_And4D) {
                   {},
                   17,
                   ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnCPUBackendTests, Xor4D) {
+  RunOpTestOnCPU<bool>("Xor",
+                       {TestInputDef<bool>({1, 4}, false, {false, false, true, true}),
+                        TestInputDef<bool>({1, 4}, false, {false, true, false, true})},
+                       {},
+                       17,
+                       ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, Xor4D) {
+  RunOpTest<bool>("Xor",
+                  {TestInputDef<bool>({1, 4}, false, {false, false, true, true}),
+                   TestInputDef<bool>({1, 4}, false, {false, true, false, true})},
+                  {},
+                  17,
+                  ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, XorBroadcast) {
+  std::vector<bool> a_data(2 * 1 * 4);
+  std::vector<bool> b_data(2 * 3 * 4);
+  for (size_t i = 0; i < a_data.size(); ++i) a_data[i] = (i % 2) == 0;
+  for (size_t i = 0; i < b_data.size(); ++i) b_data[i] = (i % 3) == 0;
+
+  RunOpTest<bool>("Xor",
+                  {TestInputDef<bool>({2, 1, 4}, false, a_data),
+                   TestInputDef<bool>({2, 3, 4}, false, b_data)},
+                  {},
+                  17,
+                  ExpectedEPNodeAssignment::All);
+}
+
+// Test Reciprocal on HTP
+TEST_F(QnnHTPBackendTests, Reciprocal_Basic_FLOAT) {
+  RunOpTest<float>("Reciprocal",
+                   {TestInputDef<float>({2, 2}, false, {1.0f, 2.0f, 0.5f, 4.0f})},
+                   {},  // No attributes
+                   13,
+                   ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnHTPBackendTests, Reciprocal_QU8) {
@@ -1885,9 +1943,7 @@ TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP32_as_FP16) {
 
   provider_options["backend_type"] = "htp";
 #if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
 #if defined(__linux__) && !defined(__aarch64__)
   provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
@@ -1912,9 +1968,7 @@ TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP32_as_FP16) {
 // Test FP16 fusion of HardSigmoid into HardSwish on the HTP backend.
 TEST_F(QnnHTPBackendTests, HardSigmoidFusedIntoHardSwish_FP16) {
 #if defined(_WIN32)
-  if (QnnHTPBackendTests::ShouldSkipIfHtpArchIsLessThanOrEqualTo(QNN_HTP_DEVICE_ARCH_V68)) {
-    GTEST_SKIP() << "Test requires HTP FP16 support (arch > V68).";
-  }
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
 #endif
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
