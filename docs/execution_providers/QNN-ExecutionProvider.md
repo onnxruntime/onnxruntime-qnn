@@ -198,7 +198,7 @@ Alternatively to setting profiling_level at compile time, profiling can be enabl
 |`"enable_dx12_shared_memory_allocator"`|Description|
 |---|---|
 |'0'|Default. Disabled.|
-|'1'|Enable the QNN DX12 shared memory allocator. Requires a D3D12 capable system, and only available on Windows.
+|'1'|Enable the QNN DX12 shared memory allocator. Requires a D3D12 capable system, and only available on Windows.|
 
 |`"op_packages"`|Description|
 |---|---|

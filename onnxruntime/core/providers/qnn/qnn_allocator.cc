@@ -384,6 +384,8 @@ void* ORT_API_CALL Dx12SharedMemoryAllocator::AllocImpl(struct OrtAllocator* thi
                                                                                          requested_size,
                                                                                          *allocator);
     if (!registered) {
+      d3d12_resource->Unmap(0, nullptr);
+      d3d12_resource->Release();
       ORT_CXX_API_THROW("Dx12SharedMemoryAllocator: Attempted to register allocation but it is already tracked.", ORT_EP_FAIL);
     }
   }

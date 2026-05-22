@@ -391,8 +391,7 @@ static Ort::Status BindQnnTensorMemoryToOrtValueMemory(const OrtApi& ort_api,
   ort_api.MemoryInfoGetDeviceType(ort_value_memory_info, &ort_value_memory_info_device_type);
   OrtDeviceMemoryType ort_value_memory_info_device_memory_type = ort_api.MemoryInfoGetDeviceMemType(ort_value_memory_info);
   const bool uses_shared_memory =
-      (ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_CPU ||
-       ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_GPU) &&
+      ort_value_memory_info_device_type == OrtMemoryInfoDeviceType_CPU &&
       ort_value_memory_info_device_memory_type == OrtDeviceMemoryType_HOST_ACCESSIBLE;
 
   if (!uses_shared_memory) {

@@ -1033,9 +1033,14 @@ QnnEp::QnnEp(QnnEpFactory& factory,
     // generation stage, there is no need to load it as no allocations will be made.
     if (!context_cache_enabled_) {
       rpcmem_library_ = std::make_shared<qnn::RpcMemLibrary>();
+      qnn_allocator_type_ = qnn::QnnAllocatorType::HTP_SHARED;
+    } else {
+      ORT_CXX_LOGF(logger_,
+                   ORT_LOGGING_LEVEL_INFO,
+                   "Context cache is enabled in this session (via %s); the HTP shared memory allocator will be disabled"
+                   " as no allocations are expected to be made.", kOrtSessionOptionEpContextEnable);
     }
     model_settings_.htp_shared_memory = true;
-    qnn_allocator_type_ = qnn::QnnAllocatorType::HTP_SHARED;
   }
 
   static const std::string QNN_DX12_SHARED_MEMORY_ALLOCATOR_ENABLED = "enable_dx12_shared_memory_allocator";
@@ -2382,7 +2387,7 @@ OrtStatus* ORT_API_CALL QnnEp::CreateAllocatorImpl(_In_ OrtEp* this_ptr,
   else if (qnn::IsDx12SharedMemoryAllocator(ep->qnn_allocator_type_)) {
     ORT_CXX_LOG(ep->logger_, ORT_LOGGING_LEVEL_INFO, "Creating Dx12SharedMemoryAllocator.");
 
-    auto dx12_allocator = std::make_unique<qnn::Dx12SharedMemoryAllocator>(memory_info, ep->logger_);
+    auto dx12_allocator = std::make_unique<qnn::Dx12SharedMemoryAllocator>(memory_info);
     *allocator = dx12_allocator.release();
   }
 #endif  // _WIN32
