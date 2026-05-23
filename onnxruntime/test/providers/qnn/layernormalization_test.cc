@@ -137,7 +137,8 @@ static void RunLayerNormQDQTest(const TestInputDef<float>& input_def,
                                 const TestInputDef<float>& bias_def,
                                 const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                                 ExpectedEPNodeAssignment expected_ep_assignment,
-                                bool use_contrib_qdq_ops = false) {
+                                bool use_contrib_qdq_ops = false,
+                                QDQTolerance tolerance = QDQTolerance()) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = "htp";
   provider_options["offload_graph_io_quantization"] = "0";
@@ -147,7 +148,8 @@ static void RunLayerNormQDQTest(const TestInputDef<float>& input_def,
                                                                          use_contrib_qdq_ops),
                        provider_options,
                        17,  // opset
-                       expected_ep_assignment);
+                       expected_ep_assignment,
+                       tolerance);
 }
 
 // Test that QNN HTP only supports axis = -1 (i.e., last dimension).
@@ -271,6 +273,37 @@ TEST_F(QnnHTPBackendTests, LayerNorm_Decomposed_ScaleMisaligned_BiasAligned) {
       TestInputDef<float>({3}, true, GetFloatDataInRange(0.0f, 1.0f, 3)),
       {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
       ExpectedEPNodeAssignment::All);
+}
+
+// 16-bit activations + 8-bit weights through the decomposition path. Exercises the 16-bit
+// const_buf dispatch in the synthesized identity scale and the 16-bit branches of bias
+// requantization (which the 8/8 decomposition tests above don't cover).
+TEST_F(QnnHTPBackendTests, LayerNorm_Decomposed_ScaleAndBiasMisaligned_A16W8) {
+  RunLayerNormQDQTest<uint16_t, uint8_t>(
+      TestInputDef<float>({1, 2, 3}, false, GetFloatDataInRange(0.0f, 10.0f, 6)),
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.1f, 1.0f, 6)),
+      TestInputDef<float>({1, 2, 3}, true, GetFloatDataInRange(0.0f, 1.0f, 6)),
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::All,
+      true);  // Use 'com.microsoft' Q/DQ ops (uint16).
+}
+
+// Higher-rank case with mid-axis misalignment: X=[2,4,8,16], scale=[1,4,1,16], axis=-1.
+// The decomposed path emits LN -> Mul -> Add — three quantization stages instead of CPU
+// EP's single monolithic LN — and at uint8 (256 levels) on this 16-element normalized
+// axis, each stage's rounding adds up to ~1.5x default tolerance per element. The CPU
+// QDQ baseline itself drifts >10% at the most-affected elements, so the qdq_diff
+// criterion isn't a meaningful precision target here; what we exercise instead is the
+// build/validate path under A16W8 (which gives uint16 input/output headroom for the
+// trailing Q stages).
+TEST_F(QnnHTPBackendTests, LayerNorm_Decomposed_HighRank_MidAxisMisaligned) {
+  RunLayerNormQDQTest<uint16_t, uint8_t>(
+      TestInputDef<float>({2, 4, 8, 16}, false, GetFloatDataInRange(0.0f, 10.0f, 1024)),
+      TestInputDef<float>({1, 4, 1, 16}, true, GetFloatDataInRange(0.1f, 1.0f, 64)),
+      TestInputDef<float>({1, 4, 1, 16}, true, GetFloatDataInRange(0.0f, 1.0f, 64)),
+      {test::MakeAttribute("axis", static_cast<int64_t>(-1))},
+      ExpectedEPNodeAssignment::All,
+      true);  // Use 'com.microsoft' Q/DQ ops (uint16).
 }
 
 static void RunLayerNormTest(const TestInputDef<float>& input_def,
