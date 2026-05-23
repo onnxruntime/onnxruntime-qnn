@@ -53,21 +53,10 @@ on:
         description: |
           To which server to store the artifact. Choose one of
           ["pypi, testpypi, nuget, testnuget, test-users, test-project, project, public,
-           artifactory-maven-virtual, maven-central]
+           artifactory-maven-virtual, maven-central,
+           github (zip/tgz only — creates a GitHub Release tagged v<version_to>)]
         type: string
         default: "test-users"
-      create_github_release:
-        description: "If true, create (or update) a GitHub release and attach the ZIP/TGZ artifacts to it."
-        type: boolean
-        default: false
-      github_release_tag:
-        description: "The existing git tag to associate with the GitHub release (e.g. v1.2.3). Required when create_github_release is true."
-        type: string
-        default: ""
-      github_release_name:
-        description: "Title for the GitHub release. Defaults to the tag name when left blank."
-        type: string
-        default: ""
       sign_artifact:
         description: |
           Sign the Windows artifacts by replacing the embedded
@@ -197,6 +186,7 @@ jobs:
           ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
+          GH_TOKEN: ${{ secrets.github.token }}
         run: |
           source uplevel_venv/bin/activate
 
@@ -221,26 +211,10 @@ jobs:
             --index_server_from ${{ inputs.index_server_from }} \
             --index_server_to ${{ inputs.index_server_to }} \
             --netrc_file "$NETRC_FILE" \
-            --output_dir "${{ github.workspace }}/dist/zip"
             ${{ inputs.sign_artifact && '--sign_artifact' || '' }}
 
           # Clean up the temporary .netrc file
           rm -f "$NETRC_FILE"
-
-      - name: Create or update GitHub Release (ZIP)
-        if: ${{ inputs.create_github_release && inputs.github_release_tag != '' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="${{ inputs.github_release_tag }}"
-          NAME="${{ inputs.github_release_name }}"
-          if [ -z "$NAME" ]; then NAME="$TAG"; fi
-
-          # Create the release if it does not yet exist; ignore the error if it already does.
-          gh release create "$TAG" --title "$NAME" --notes "" || true
-
-          # Upload every ZIP artifact, overwriting any previously uploaded asset with the same name.
-          gh release upload "$TAG" "${{ github.workspace }}"/dist/zip/*.zip --clobber
 
   publish-tgz-workflow:
     if: ${{ inputs.artifact_format == 'tgz' || inputs.artifact_format == 'all' }}
@@ -259,6 +233,7 @@ jobs:
         env:
           ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          GH_TOKEN: ${{ secrets.github.token }}
         run: |
           source uplevel_venv/bin/activate
 
@@ -282,26 +257,10 @@ jobs:
             --version_to ${{ inputs.version_to }} \
             --index_server_from ${{ inputs.index_server_from }} \
             --index_server_to ${{ inputs.index_server_to }} \
-            --netrc_file "$NETRC_FILE" \
-            --output_dir "${{ github.workspace }}/dist/tgz"
+            --netrc_file "$NETRC_FILE"
 
           # Clean up the temporary .netrc file
           rm -f "$NETRC_FILE"
-
-      - name: Create or update GitHub Release (TGZ)
-        if: ${{ inputs.create_github_release && inputs.github_release_tag != '' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          TAG="${{ inputs.github_release_tag }}"
-          NAME="${{ inputs.github_release_name }}"
-          if [ -z "$NAME" ]; then NAME="$TAG"; fi
-
-          # Create the release if it does not yet exist; ignore the error if it already does.
-          gh release create "$TAG" --title "$NAME" --notes "" || true
-
-          # Upload every TGZ artifact, overwriting any previously uploaded asset with the same name.
-          gh release upload "$TAG" "${{ github.workspace }}"/dist/tgz/*.tgz --clobber
 
   publish-maven-workflow:
     if: ${{ inputs.artifact_format == 'maven' || inputs.artifact_format == 'all' }}

@@ -145,11 +145,19 @@ class ArtifactUpleveler(ABC):
         self.url_from = self.config_manager.get_repository_url(
             args.index_server_from, args.product_name, args.version_from
         )
-        self.url_to = self.config_manager.get_repository_url(args.index_server_to, args.product_name, args.version_to)
+
+        # GitHub Releases has no Artifactory URL; url_to is unused in that path.
+        if args.index_server_to == "github":
+            self.url_to = ""
+            self.url_to_display = "GitHub Releases"
+        else:
+            self.url_to = self.config_manager.get_repository_url(
+                args.index_server_to, args.product_name, args.version_to
+            )
+            self.url_to_display = self._filter_url(self.url_to)
 
         # Filter URLs for display
         self.url_from_display = self._filter_url(self.url_from)
-        self.url_to_display = self._filter_url(self.url_to)
 
     def _get_credentials(self, repository_index: str) -> tuple[str, str]:
         """Helper method to get credentials from environment variables."""
@@ -261,15 +269,6 @@ class ArtifactUpleveler(ABC):
 
         logging.info(f"Uploading {self.artifact_format}s to {self.url_to_display}")
         self.upload_artifacts(upload_dir)
-
-        # Copy final artifacts to output_dir before cleanup so subsequent workflow steps can access them
-        if self.args.output_dir:
-            os.makedirs(self.args.output_dir, exist_ok=True)
-            for f in os.listdir(upload_dir):
-                src = os.path.join(upload_dir, f)
-                if os.path.isfile(src) and f.endswith(self.artifact_suffix):
-                    shutil.copy2(src, os.path.join(self.args.output_dir, f))
-                    logging.info(f"Copied {f} to {self.args.output_dir}")
 
         # If a version bump created ./updated_<format>s/, remove it now that the
         # upload has succeeded. On failure we'd never reach this line, leaving the
@@ -1078,8 +1077,40 @@ class ZipUpleveler(ArtifactUpleveler):
 
             logging.info(f"Version update completed for {zip_file}, updated to {updated_zip_path}")
 
+    def _upload_to_github(self, distribution_dir: str) -> None:
+        """Create a git tag + GitHub Release tagged v{version_to} and attach the artifacts."""
+        tag = f"v{self.args.version_to}"
+        files = [
+            os.path.join(distribution_dir, f)
+            for f in os.listdir(distribution_dir)
+            if os.path.isfile(os.path.join(distribution_dir, f)) and f.endswith(self.artifact_suffix)
+        ]
+        if not files:
+            raise RuntimeError(f"No {self.artifact_format} files found in {distribution_dir}")
+
+        # Create and push the git tag if it does not exist yet (safe to skip on re-runs).
+        tag_exists = subprocess.run(
+            ["git", "rev-parse", "--verify", f"refs/tags/{tag}"], capture_output=True
+        ).returncode == 0
+        if not tag_exists:
+            subprocess.run(["git", "tag", "-a", tag, "-m", f"Release {tag}"], check=True)
+            subprocess.run(["git", "push", "origin", tag], check=True)
+            logging.info(f"Created and pushed git tag {tag}")
+        else:
+            logging.info(f"Git tag {tag} already exists, reusing it")
+        # Create the GitHub Release if it does not exist yet (tag is already pinned above).
+        subprocess.run(["gh", "release", "create", tag, "--title", tag, "--notes", "", "--draft"], check=False)
+
+        # Attach assets; --clobber replaces any existing asset with the same name (safe for re-runs).
+        subprocess.run(["gh", "release", "upload", tag, "--clobber"] + files, check=True)
+        logging.info(f"Uploaded {len(files)} {self.artifact_format} file(s) to GitHub Release {tag}")
+
     def upload_artifacts(self, distribution_dir: str) -> None:
-        """Upload ZIP archives using curl with netrc authentication."""
+        """Upload ZIP archives using curl with netrc authentication, or to GitHub Releases."""
+        if self.args.index_server_to == "github":
+            self._upload_to_github(distribution_dir)
+            return
+
         zip_files = [
             f
             for f in os.listdir(distribution_dir)
@@ -1580,22 +1611,16 @@ def parse_arguments() -> argparse.Namespace:
         "--index_server_to",
         type=str,
         required=True,
-        help="Target server.Choose one of ["
+        help="Target server. Choose one of ["
         "pypi, testpypi, nuget, testnuget, "
-        "test-users, test-project, project, public]",
+        "test-users, test-project, project, public, "
+        "github (zip/tgz only — creates a GitHub Release tagged v<version_to>)]",
     )
     parser.add_argument(
         "--netrc_file",
         type=str,
         default="",
         help="Path to .netrc file for curl authentication (optional, only used for zip and tgz uploads).",
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        default="",
-        help="Directory to copy the final artifacts to after upload (optional). "
-        "Useful for subsequent workflow steps such as GitHub Releases.",
     )
     parser.add_argument(
         "--dry-run",
