@@ -40,7 +40,7 @@ from ep_build.tasks.build import (
     GenerateDiffCoverageTask,
     QdcTestsTask,
 )
-from ep_build.tasks.docker import MANYLINUX_2_34_AARCH64_TAG, DockerBuildTask
+from ep_build.tasks.docker import MANYLINUX_2_34_AARCH64_TAG, UBUNTU_22_04_X86_64_TAG, DockerBuildTask
 from ep_build.tasks.python import (
     CreateOrtVenvTask,
     CreateQdcVenvTask,
@@ -272,6 +272,36 @@ class TaskLibrary:
             )
         )
 
+    @implementation_detail
+    @depends(["create_venv"])
+    def _build_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+        """In-container build steps for x86_64-ubuntu_22_04. Not to be used outside of Docker."""
+        extra_args = []
+
+        env = os.environ.copy()
+        if self.__docker_ccache_root is not None:
+            ccache_dir = self.__docker_ccache_root / "linux-x86_64-ubuntu_22_04"
+            env["CCACHE_DIR"] = str(ccache_dir)
+        else:
+            extra_args.append("--no-use-cache")
+
+        return plan.add_step(
+            BuildEpLinuxTask(
+                None,
+                self.__venv_path,
+                "linux",
+                "x86_64",
+                self.__config,
+                self.__target_py_version,
+                self.__ort_prebuilt_root,
+                self.__qairt_sdk_root,
+                "build",
+                extra_args=extra_args if extra_args else None,
+                env=env,
+                build_archive=self.__build_archive,
+            )
+        )
+
     if is_host_linux() or is_host_mac():
 
         @task
@@ -474,6 +504,24 @@ class TaskLibrary:
                 self.__qairt_sdk_root,
                 self.__docker_ccache_root,
                 self.__build_archive,
+            ),
+        )
+
+    @task
+    @depends(["docker_build_ubuntu_22_04_x86_64"])
+    def build_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+        return plan.add_step(
+            BuildEpDockerTask(
+                "Building ONNX Runtime for Linux x86_64 on Ubuntu 22.04",
+                "x86_64_ubuntu_22_04",
+                self.__config,
+                self.__target_py_version,
+                self.__qairt_sdk_root,
+                self.__docker_ccache_root,
+                self.__build_archive,
+                inner_task="_build_ort_linux_x86_64_ubuntu_22_04",
+                docker_tag=UBUNTU_22_04_X86_64_TAG,
+                platform="linux/amd64",
             ),
         )
 
@@ -705,6 +753,23 @@ class TaskLibrary:
                     "ORT_NIGHTLY_BUILD": os.environ.get("ORT_NIGHTLY_BUILD", "0"),
                     "ORT_VERSION_SUFFIX": os.environ.get("ORT_VERSION_SUFFIX", ""),
                 },
+            )
+        )
+
+    @task
+    def docker_build_ubuntu_22_04_x86_64(self, plan: Plan) -> str:
+        return plan.add_step(
+            DockerBuildTask(
+                "Building Ubuntu 22.04 x86_64 Docker image",
+                REPO_ROOT / "qcom" / "scripts" / "linux" / "ubuntu_22_04" / "Dockerfile",
+                UBUNTU_22_04_X86_64_TAG,
+                build_args={
+                    "BUILD_UID": str(os.getuid()),
+                    "BUILD_GID": str(os.getgid()),
+                    "ORT_NIGHTLY_BUILD": os.environ.get("ORT_NIGHTLY_BUILD", "0"),
+                    "ORT_VERSION_SUFFIX": os.environ.get("ORT_VERSION_SUFFIX", ""),
+                },
+                platform="linux/amd64",
             )
         )
 
