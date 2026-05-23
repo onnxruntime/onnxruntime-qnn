@@ -382,6 +382,23 @@ class TaskLibrary:
                 )
             )
 
+    @task
+    @depends(["build_ort_linux_x86_64_ubuntu_22_04"])
+    def archive_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+        return plan.add_step(
+            BuildEpLinuxTask(
+                "Archiving ONNX Runtime for Linux x86_64 Ubuntu 22.04",
+                self.__venv_path,
+                "linux",
+                "x86_64",
+                self.__config,
+                self.__target_py_version,
+                self.__ort_prebuilt_root,
+                self.__qairt_sdk_root,
+                "archive",
+            )
+        )
+
     if is_host_windows():
 
         @task
@@ -796,6 +813,16 @@ class TaskLibrary:
         )
 
     @task
+    def extract_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+        return plan.add_step(
+            ExtractArchiveTask(
+                "Extracting ONNX Runtime for Linux x86_64 Ubuntu 22.04",
+                REPO_ROOT / "build" / "onnxruntime-tests-linux-x86_64_ubuntu_22_04.tar.bz2",
+                REPO_ROOT,
+            )
+        )
+
+    @task
     def extract_ort_windows_arm64(self, plan: Plan) -> str:
         return plan.add_step(
             ExtractArchiveTask(
@@ -902,6 +929,25 @@ class TaskLibrary:
             return plan.add_step(
                 BuildEpLinuxTask(
                     "Testing ONNX Runtime for Linux",
+                    self.__venv_path,
+                    "linux",
+                    "x86_64",
+                    self.__config,
+                    self.__target_py_version,
+                    self.__ort_prebuilt_root,
+                    self.__qairt_sdk_root,
+                    "test",
+                )
+            )
+
+    if is_host_linux() and is_host_x86_64():
+
+        @task
+        @depends(["build_ort_linux_x86_64_ubuntu_22_04"])
+        def test_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+            return plan.add_step(
+                BuildEpLinuxTask(
+                    "Testing ONNX Runtime for Linux x86_64 Ubuntu 22.04",
                     self.__venv_path,
                     "linux",
                     "x86_64",
