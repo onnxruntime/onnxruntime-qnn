@@ -1090,7 +1090,10 @@ class ZipUpleveler(ArtifactUpleveler):
 
         # Create and push the git tag if it does not exist yet (safe to skip on re-runs).
         tag_exists = (
-            subprocess.run(["git", "rev-parse", "--verify", f"refs/tags/{tag}"], check=False, capture_output=True).returncode == 0
+            subprocess.run(
+                ["git", "rev-parse", "--verify", f"refs/tags/{tag}"], check=False, capture_output=True
+            ).returncode
+            == 0
         )
         if not tag_exists:
             subprocess.run(["git", "tag", "-a", tag, "-m", f"Release {tag}"], check=True)
