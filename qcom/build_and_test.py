@@ -507,24 +507,6 @@ class TaskLibrary:
             ),
         )
 
-    @task
-    @depends(["docker_build_ubuntu_22_04_x86_64"])
-    def build_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
-        return plan.add_step(
-            BuildEpDockerTask(
-                "Building ONNX Runtime for Linux x86_64 on Ubuntu 22.04",
-                "x86_64_ubuntu_22_04",
-                self.__config,
-                self.__target_py_version,
-                self.__qairt_sdk_root,
-                self.__docker_ccache_root,
-                self.__build_archive,
-                inner_task="_build_ort_linux_x86_64_ubuntu_22_04",
-                docker_tag=UBUNTU_22_04_X86_64_TAG,
-                platform="linux/amd64",
-            ),
-        )
-
     if (is_host_linux() and is_host_x86_64()) or is_host_mac():
 
         @task
@@ -576,6 +558,24 @@ class TaskLibrary:
                     build_archive=self.__build_archive,
                 )
             )
+
+    @task
+    @depends(["docker_build_ubuntu_22_04_x86_64"])
+    def build_ort_linux_x86_64_ubuntu_22_04(self, plan: Plan) -> str:
+        return plan.add_step(
+            BuildEpDockerTask(
+                "Building ONNX Runtime for Linux x86_64 on Ubuntu 22.04",
+                "x86_64_ubuntu_22_04",
+                self.__config,
+                self.__target_py_version,
+                self.__qairt_sdk_root,
+                self.__docker_ccache_root,
+                self.__build_archive,
+                inner_task="_build_ort_linux_x86_64_ubuntu_22_04",
+                docker_tag=UBUNTU_22_04_X86_64_TAG,
+                platform="linux/amd64",
+            ),
+        )
 
     if is_host_linux() and is_host_x86_64():
 
