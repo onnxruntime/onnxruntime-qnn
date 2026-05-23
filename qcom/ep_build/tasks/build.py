@@ -20,7 +20,7 @@ from ..task import (
 )
 from ..typing import BuildConfigT, TargetArchLinuxT, TargetArchWindowsT, TargetPyVersionT
 from ..util import BASH_EXECUTABLE, REPO_ROOT, git_head_sha
-from .docker import DOCKER_REPO_ROOT, MANYLINUX_2_34_AARCH64_TAG, UBUNTU_22_04_X86_64_TAG, DockerBuildAndTestTask
+from .docker import DOCKER_REPO_ROOT, MANYLINUX_2_34_AARCH64_TAG, DockerBuildAndTestTask
 from .windows import RunPowershellScriptsTask
 
 
