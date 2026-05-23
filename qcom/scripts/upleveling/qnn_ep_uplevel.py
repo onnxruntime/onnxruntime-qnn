@@ -1089,9 +1089,9 @@ class ZipUpleveler(ArtifactUpleveler):
             raise RuntimeError(f"No {self.artifact_format} files found in {distribution_dir}")
 
         # Create and push the git tag if it does not exist yet (safe to skip on re-runs).
-        tag_exists = subprocess.run(
-            ["git", "rev-parse", "--verify", f"refs/tags/{tag}"], capture_output=True
-        ).returncode == 0
+        tag_exists = (
+            subprocess.run(["git", "rev-parse", "--verify", f"refs/tags/{tag}"], check=False, capture_output=True).returncode == 0
+        )
         if not tag_exists:
             subprocess.run(["git", "tag", "-a", tag, "-m", f"Release {tag}"], check=True)
             subprocess.run(["git", "push", "origin", tag], check=True)
@@ -1102,7 +1102,7 @@ class ZipUpleveler(ArtifactUpleveler):
         subprocess.run(["gh", "release", "create", tag, "--title", tag, "--notes", "", "--draft"], check=False)
 
         # Attach assets; --clobber replaces any existing asset with the same name (safe for re-runs).
-        subprocess.run(["gh", "release", "upload", tag, "--clobber"] + files, check=True)
+        subprocess.run(["gh", "release", "upload", tag, "--clobber", *files], check=True)
         logging.info(f"Uploaded {len(files)} {self.artifact_format} file(s) to GitHub Release {tag}")
 
     def upload_artifacts(self, distribution_dir: str) -> None:
