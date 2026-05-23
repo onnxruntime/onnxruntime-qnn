@@ -262,6 +262,15 @@ class ArtifactUpleveler(ABC):
         logging.info(f"Uploading {self.artifact_format}s to {self.url_to_display}")
         self.upload_artifacts(upload_dir)
 
+        # Copy final artifacts to output_dir before cleanup so subsequent workflow steps can access them
+        if self.args.output_dir:
+            os.makedirs(self.args.output_dir, exist_ok=True)
+            for f in os.listdir(upload_dir):
+                src = os.path.join(upload_dir, f)
+                if os.path.isfile(src) and f.endswith(self.artifact_suffix):
+                    shutil.copy2(src, os.path.join(self.args.output_dir, f))
+                    logging.info(f"Copied {f} to {self.args.output_dir}")
+
         # If a version bump created ./updated_<format>s/, remove it now that the
         # upload has succeeded. On failure we'd never reach this line, leaving the
         # directory available for inspection.
@@ -282,15 +291,6 @@ class ArtifactUpleveler(ABC):
         with tempfile.TemporaryDirectory(prefix="run_upleveling_") as tmp_dir:
             artifact_list = self.download_artifacts(self.url_from_display, tmp_dir)
             self._finalize_and_upload(artifact_list, tmp_dir)
-
-            # Copy final artifacts to output_dir so subsequent workflow steps can access them
-            if self.args.output_dir:
-                os.makedirs(self.args.output_dir, exist_ok=True)
-                for f in os.listdir(upload_dir):
-                    src = os.path.join(upload_dir, f)
-                    if os.path.isfile(src) and f.endswith(self.artifact_suffix):
-                        shutil.copy2(src, os.path.join(self.args.output_dir, f))
-                        logging.info(f"Copied {f} to {self.args.output_dir}")
 
         logging.info(f"Up-leveling for {self.artifact_format} completed successfully!")
 
