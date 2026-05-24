@@ -36,84 +36,84 @@ static void RunLpPoolOpTest(const std::vector<TestInputDef<float>>& input_defs,
 
 TEST_F(QnnCPUBackendTests, LpPool_Basic) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32))},
-                 {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
-                  test::MakeAttribute("p", static_cast<int64_t>(2))},
-                 ExpectedEPNodeAssignment::All);
+                  {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
+                   test::MakeAttribute("p", static_cast<int64_t>(2))},
+                  ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnCPUBackendTests, LpPool_WithStrides) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 6, 6}, false, GetFloatDataInRange(-10.0f, 10.0f, 72))},
-                 {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
-                  test::MakeAttribute("strides", std::vector<int64_t>{2, 2})},
-                 ExpectedEPNodeAssignment::All);
+                  {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
+                   test::MakeAttribute("strides", std::vector<int64_t>{2, 2})},
+                  ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnCPUBackendTests, LpPool_WithPads) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32))},
-                 {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
-                  test::MakeAttribute("pads", std::vector<int64_t>{1, 1, 1, 1})},
-                 ExpectedEPNodeAssignment::All);
+                  {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
+                   test::MakeAttribute("pads", std::vector<int64_t>{1, 1, 1, 1})},
+                  ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnCPUBackendTests, LpPool_Rank3) {
   RunLpPoolOpTest({TestInputDef<float>({1, 4, 8}, false, GetFloatDataInRange(-10.0f, 10.0f, 32))},
-                 {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2}),
-                  test::MakeAttribute("strides", std::vector<int64_t>{2})},
-                 ExpectedEPNodeAssignment::All);
+                  {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2}),
+                   test::MakeAttribute("strides", std::vector<int64_t>{2})},
+                  ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnCPUBackendTests, LpPool_AutoPad_SameUpper) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32))},
-                 {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
-                  test::MakeAttribute("strides", std::vector<int64_t>{2, 2}),
-                  test::MakeAttribute("auto_pad", "SAME_UPPER")},
-                 ExpectedEPNodeAssignment::All);
+                  {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
+                   test::MakeAttribute("strides", std::vector<int64_t>{2, 2}),
+                   test::MakeAttribute("auto_pad", "SAME_UPPER")},
+                  ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnCPUBackendTests, LpPool_AutoPad_SameLower) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32))},
-                 {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
-                  test::MakeAttribute("strides", std::vector<int64_t>{2, 2}),
-                  test::MakeAttribute("auto_pad", "SAME_LOWER")},
-                 ExpectedEPNodeAssignment::All);
+                  {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
+                   test::MakeAttribute("strides", std::vector<int64_t>{2, 2}),
+                   test::MakeAttribute("auto_pad", "SAME_LOWER")},
+                  ExpectedEPNodeAssignment::All);
 }
 
 TEST_F(QnnCPUBackendTests, LpPool_AutoPad_Valid) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 6, 6}, false, GetFloatDataInRange(-10.0f, 10.0f, 72))},
-                 {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
-                  test::MakeAttribute("auto_pad", "VALID")},
-                 ExpectedEPNodeAssignment::All);
+                  {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
+                   test::MakeAttribute("auto_pad", "VALID")},
+                  ExpectedEPNodeAssignment::All);
 }
 
 // Rejection: p=1 is not supported by QNN L2Pool2d.
 TEST_F(QnnCPUBackendTests, LpPool_Reject_P1) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32))},
-                 {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
-                  test::MakeAttribute("p", static_cast<int64_t>(1))},
-                 ExpectedEPNodeAssignment::None);
+                  {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
+                   test::MakeAttribute("p", static_cast<int64_t>(1))},
+                  ExpectedEPNodeAssignment::None);
 }
 
 // Rejection: ceil_mode=1 is not supported by QNN L2Pool2d.
 TEST_F(QnnCPUBackendTests, LpPool_Reject_CeilMode) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32))},
-                 {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
-                  test::MakeAttribute("ceil_mode", static_cast<int64_t>(1))},
-                 ExpectedEPNodeAssignment::None);
+                  {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
+                   test::MakeAttribute("ceil_mode", static_cast<int64_t>(1))},
+                  ExpectedEPNodeAssignment::None);
 }
 
 // Rejection: dilations > 1 are not supported by QNN L2Pool2d.
 TEST_F(QnnCPUBackendTests, LpPool_Reject_Dilation) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 6, 6}, false, GetFloatDataInRange(-10.0f, 10.0f, 72))},
-                 {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
-                  test::MakeAttribute("dilations", std::vector<int64_t>{2, 2})},
-                 ExpectedEPNodeAssignment::None);
+                  {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
+                   test::MakeAttribute("dilations", std::vector<int64_t>{2, 2})},
+                  ExpectedEPNodeAssignment::None);
 }
 
 // Rejection: rank-5 inputs are not supported.
 TEST_F(QnnCPUBackendTests, LpPool_Reject_Rank5) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 4, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 128))},
-                 {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2, 2})},
-                 ExpectedEPNodeAssignment::None);
+                  {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2, 2})},
+                  ExpectedEPNodeAssignment::None);
 }
 
 #if defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -124,35 +124,35 @@ TEST_F(QnnCPUBackendTests, LpPool_Reject_Rank5) {
 
 TEST_F(QnnHTPBackendTests, LpPool_HTP_Float32_Basic) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 6, 6}, false, GetFloatDataInRange(-10.0f, 10.0f, 72))},
-                 {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
-                  test::MakeAttribute("strides", std::vector<int64_t>{2, 2})},
-                 ExpectedEPNodeAssignment::All,
-                 "htp");
+                  {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
+                   test::MakeAttribute("strides", std::vector<int64_t>{2, 2})},
+                  ExpectedEPNodeAssignment::All,
+                  "htp");
 }
 
 TEST_F(QnnHTPBackendTests, LpPool_HTP_Float32_WithPads) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32))},
-                 {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
-                  test::MakeAttribute("pads", std::vector<int64_t>{1, 1, 1, 1})},
-                 ExpectedEPNodeAssignment::All,
-                 "htp");
+                  {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
+                   test::MakeAttribute("pads", std::vector<int64_t>{1, 1, 1, 1})},
+                  ExpectedEPNodeAssignment::All,
+                  "htp");
 }
 
 TEST_F(QnnHTPBackendTests, LpPool_HTP_Float32_AutoPad_SameUpper) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32))},
-                 {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
-                  test::MakeAttribute("strides", std::vector<int64_t>{2, 2}),
-                  test::MakeAttribute("auto_pad", "SAME_UPPER")},
-                 ExpectedEPNodeAssignment::All,
-                 "htp");
+                  {test::MakeAttribute("kernel_shape", std::vector<int64_t>{3, 3}),
+                   test::MakeAttribute("strides", std::vector<int64_t>{2, 2}),
+                   test::MakeAttribute("auto_pad", "SAME_UPPER")},
+                  ExpectedEPNodeAssignment::All,
+                  "htp");
 }
 
 TEST_F(QnnHTPBackendTests, LpPool_HTP_Float32_Rank3) {
   RunLpPoolOpTest({TestInputDef<float>({1, 4, 8}, false, GetFloatDataInRange(-10.0f, 10.0f, 32))},
-                 {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2}),
-                  test::MakeAttribute("strides", std::vector<int64_t>{2})},
-                 ExpectedEPNodeAssignment::All,
-                 "htp");
+                  {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2}),
+                   test::MakeAttribute("strides", std::vector<int64_t>{2})},
+                  ExpectedEPNodeAssignment::All,
+                  "htp");
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -228,18 +228,18 @@ TEST_F(QnnHTPBackendTests, LpPool_HTP_BF16_AsymmetricKernel) {
 
 TEST_F(QnnGPUBackendTests, LpPool_GPU_Basic) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 6, 6}, false, GetFloatDataInRange(-10.0f, 10.0f, 72))},
-                 {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
-                  test::MakeAttribute("strides", std::vector<int64_t>{2, 2})},
-                 ExpectedEPNodeAssignment::All,
-                 "gpu");
+                  {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
+                   test::MakeAttribute("strides", std::vector<int64_t>{2, 2})},
+                  ExpectedEPNodeAssignment::All,
+                  "gpu");
 }
 
 TEST_F(QnnGPUBackendTests, LpPool_GPU_WithPads) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32))},
-                 {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
-                  test::MakeAttribute("pads", std::vector<int64_t>{1, 1, 1, 1})},
-                 ExpectedEPNodeAssignment::All,
-                 "gpu");
+                  {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
+                   test::MakeAttribute("pads", std::vector<int64_t>{1, 1, 1, 1})},
+                  ExpectedEPNodeAssignment::All,
+                  "gpu");
 }
 
 #endif  // defined(_M_ARM64) — GPU tests
