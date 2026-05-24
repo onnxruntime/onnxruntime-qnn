@@ -178,6 +178,7 @@ class BaseOpBuilder : public IOpBuilder {
         {"Log", QNN_OP_ELEMENT_WISE_LOG},
         {"LogSoftmax", QNN_OP_LOG_SOFTMAX},
         {"LpNormalization", QNN_OP_L2_NORM},
+        {"LpPool", QNN_OP_L2_POOL_2D},
         {"MatMul", QNN_OP_MAT_MUL},
         {"Max", QNN_OP_ELEMENT_WISE_MAXIMUM},
         {"MaxPool", QNN_OP_POOL_MAX_2D},
