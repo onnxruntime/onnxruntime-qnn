@@ -11,9 +11,10 @@ is a private ORT Core header dependency. Public ORT headers (onnxruntime_c_api.h
 are always included by filename only, never via a core/ path, so this rule has no
 false positives for legitimate includes.
 
-CMake (.cmake): Every path in target_include_directories(onnxruntime_providers_qnn ...)
-must be in APPROVED_CMAKE_INCLUDES. Any path not on that list triggers an error,
-forcing deliberate review before a new include directory is accepted.
+CMake (.cmake): Every path in target_include_directories(onnxruntime_providers_qnn ...),
+target_include_directories(onnxruntime_provider_test ...) must be in APPROVED_CMAKE_INCLUDES.
+Any path not on that list triggers an error, forcing deliberate review before a new include
+directory is accepted.
 """
 
 from __future__ import annotations
@@ -65,23 +66,29 @@ def check_cc_file(path: str) -> list[dict]:
 # CMake check
 # ---------------------------------------------------------------------------
 
-# Exact set of include directories approved for onnxruntime_providers_qnn.
-# Any deviation (addition or removal) requires updating this list after careful review.
-APPROVED_CMAKE_INCLUDES: frozenset[str] = frozenset(
-    {
-        "${CMAKE_CURRENT_BINARY_DIR}",
-        "${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session",
-        "${onnxruntime_QNN_HOME}/include/QNN",
-        "${onnxruntime_QNN_HOME}/include",
-    }
-)
+# Approved include directories per cmake target.
+# Any deviation (addition or removal) requires updating this mapping after careful review.
+APPROVED_CMAKE_INCLUDES: dict[str, frozenset[str]] = {
+    "onnxruntime_providers_qnn": frozenset(
+        {
+            "${CMAKE_CURRENT_BINARY_DIR}",
+            "${onnxruntime_QNN_HOME}/include/QNN",
+            "${onnxruntime_QNN_HOME}/include",
+            "${ONNXRUNTIME_APPLICATION_INCLUDES}",
+        }
+    ),
+    "onnxruntime_provider_test": frozenset(
+        {
+            "${ONNXRUNTIME_APPLICATION_INCLUDES}",
+        }
+    ),
+}
 
-_CMAKE_TARGET = "onnxruntime_providers_qnn"
 _CMAKE_KEYWORDS = frozenset({"PRIVATE", "PUBLIC", "INTERFACE", "BEFORE", "SYSTEM"})
 
-# Matches the start of a target_include_directories call for our target.
+# Matches the start of a target_include_directories call for any watched target.
 _TID_RE = re.compile(
-    r"target_include_directories\s*\(\s*" + re.escape(_CMAKE_TARGET) + r"\b",
+    r"target_include_directories\s*\(\s*(" + "|".join(re.escape(t) for t in APPROVED_CMAKE_INCLUDES) + r")\b",
     re.IGNORECASE,
 )
 
@@ -97,6 +104,8 @@ def check_cmake_file(path: str) -> list[dict]:
             content = f.read()
 
         for call_m in _TID_RE.finditer(content):
+            cmake_target = call_m.group(1)
+            approved = APPROVED_CMAKE_INCLUDES[cmake_target]
             call_line = content[: call_m.start()].count("\n") + 1
 
             # Find the matching closing paren using a depth counter.
@@ -111,9 +120,9 @@ def check_cmake_file(path: str) -> list[dict]:
             args_text = content[open_pos + 1 : i - 1]
 
             for token in _strip_cmake_comments(args_text).split():
-                if token == _CMAKE_TARGET or token in _CMAKE_KEYWORDS:
+                if token == cmake_target or token in _CMAKE_KEYWORDS:
                     continue
-                if token not in APPROVED_CMAKE_INCLUDES:
+                if token not in approved:
                     # Find line number of this specific token within the call.
                     tok_pos = content.find(token, open_pos)
                     tok_line = content[:tok_pos].count("\n") + 1 if tok_pos >= 0 else call_line
@@ -129,7 +138,7 @@ def check_cmake_file(path: str) -> list[dict]:
                             "replacement": None,
                             "description": (
                                 f"Unapproved include directory {token!r} added to "
-                                f"{_CMAKE_TARGET}. Update APPROVED_CMAKE_INCLUDES in "
+                                f"{cmake_target}. Update APPROVED_CMAKE_INCLUDES in "
                                 "qcom/linters/check_private_ort_headers.py only after "
                                 "careful review."
                             ),
