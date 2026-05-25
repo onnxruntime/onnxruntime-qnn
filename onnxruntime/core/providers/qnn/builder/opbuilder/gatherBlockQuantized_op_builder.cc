@@ -127,8 +127,8 @@ Ort::Status GatherBlockQuantizedOpBuilder::IsOpSupported(
         scales_tensor.type,
         scale_datatype,
         true));
-    RETURN_IF(scale_datatype != QNN_DATATYPE_FLOAT_32,
-              "GatherBlockQuantized: scales must be FLOAT32");
+    RETURN_IF(scale_datatype != QNN_DATATYPE_FLOAT_32 && scale_datatype != QNN_DATATYPE_FLOAT_16,
+              "GatherBlockQuantized: scales must be FLOAT32 or FLOAT16");
   }
   return Ort::Status();
 }
@@ -196,8 +196,33 @@ Ort::Status GatherBlockQuantizedOpBuilder::ProcessInputs(
     const OrtValueInfo* scale_tensor_proto = qnn_model_wrapper.GetConstantTensor(scales_tensor.name);
     RETURN_IF_ERROR(qnn_model_wrapper.UnpackInitializerData(scale_tensor_proto, uint8_scale, false));
 
-    float* float_scale_ptr = reinterpret_cast<float*>(uint8_scale.data());
-    const std::vector<float> float_scale(float_scale_ptr, float_scale_ptr + num_blocks);
+    const OrtTypeInfo* type_info = nullptr;
+    const auto& ort_api = qnn_model_wrapper.GetOrtApi();
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(scale_tensor_proto, &type_info));
+    const OrtTensorTypeAndShapeInfo* tensor_type_and_shape_info = nullptr;
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.CastTypeInfoToTensorInfo(type_info, &tensor_type_and_shape_info));
+    ONNXTensorElementDataType onnx_data_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+    ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetTensorElementType(tensor_type_and_shape_info, &onnx_data_type));
+
+    RETURN_IF(onnx_data_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT &&
+                  onnx_data_type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16,
+              "Unsupported scales datatype");
+
+    const size_t elem_byte_size = qnn::utils::GetElementSizeByType(onnx_data_type);
+    RETURN_IF_NOT(uint8_scale.size() == (static_cast<size_t>(num_blocks) * elem_byte_size),
+                  "Scale Initializer Invalid Size");
+
+    std::vector<float> float_scale;
+    if (onnx_data_type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT) {
+      float* float_scale_ptr = reinterpret_cast<float*>(uint8_scale.data());
+      float_scale = std::vector<float>(float_scale_ptr, float_scale_ptr + num_blocks);
+    } else {
+      Ort::Float16_t* fp16_scale_ptr = reinterpret_cast<Ort::Float16_t*>(uint8_scale.data());
+      float_scale.reserve(num_blocks);
+      for (int64_t i = 0; i < num_blocks; i++) {
+        float_scale.emplace_back(static_cast<float>(fp16_scale_ptr[i]));
+      }
+    }
 
     // Quantization Offsets : QNN Support only symmetric quantization with default value of 0
     std::vector<int32_t> int32_offset(num_blocks, 0);
