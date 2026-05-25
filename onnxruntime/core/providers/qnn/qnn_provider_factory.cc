@@ -364,17 +364,23 @@ OrtStatus* ORT_API_CALL QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl
     }
   }
   RETURN_IF(backend_type.empty(),
-    "Currently QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl only supports OrtHardwareDeviceType_NPU, but "
-    "no OrtHardwareDeviceType_NPU is found in the `devices` argument.");
+            "Currently QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl only supports OrtHardwareDeviceType_NPU, but "
+            "no OrtHardwareDeviceType_NPU is found in the `devices` argument.");
 
   using SessionOptionsUniquePtr = std::unique_ptr<OrtSessionOptions, std::function<void(OrtSessionOptions*)>>;
   OrtSessionOptions* temp_session_options = nullptr;
-  RETURN_IF_NOT_NULL(factory->ort_api.CreateSessionOptions(&temp_session_options));
+  if (OrtStatus* _status = factory->ort_api.CreateSessionOptions(&temp_session_options)) {
+    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
+    return _status;
+  }
   SessionOptionsUniquePtr session_options(temp_session_options, factory->ort_api.ReleaseSessionOptions);
 
-  RETURN_IF_NOT_NULL(factory->ort_api.AddSessionConfigEntry(session_options.get(),
-                                                            (provider_prefix + "backend_type").c_str(),
-                                                            backend_type.c_str()));
+  if (OrtStatus* _status = factory->ort_api.AddSessionConfigEntry(session_options.get(),
+                                                                  (provider_prefix + "backend_type").c_str(),
+                                                                  backend_type.c_str())) {
+    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
+    return _status;
+  }
 
   if (!OrtLoggingManager::HasDefaultLogger()) {
     *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
