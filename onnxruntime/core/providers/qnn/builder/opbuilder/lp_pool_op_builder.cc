@@ -1,6 +1,8 @@
 // Copyright (c) Qualcomm. All rights reserved.
 // Licensed under the MIT License.
 
+#include <cmath>
+#include <cstring>
 #include <memory>
 #include <string>
 #include <vector>
@@ -164,6 +166,19 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   // to QNN format [h_begin, h_end, w_begin, w_end].
   ReArrangePads(pad_amount);
 
+  // QNN L2Pool2d computes RMS (normalized): sqrt(sum(x^2) / N).
+  // ONNX LpPool (p=2) computes L2 norm: sqrt(sum(x^2)).
+  // Correction: multiply QNN output by sqrt(filter_H * filter_W) to match ONNX semantics.
+  const float scale_val = std::sqrt(static_cast<float>(filter_size[0] * filter_size[1]));
+
+  TensorInfo output_info{};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
+
+  // pool_out_shape is always rank-4 at this point (rank-3 inputs were reshaped above).
+  const std::vector<uint32_t> pool_out_shape =
+      requires_rank3_reshape ? intermediate_output_shape_4d
+                             : std::vector<uint32_t>(output_info.shape);
+
   std::vector<std::string> param_tensor_names;
 
   {
@@ -196,35 +211,78 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                   "Failed to add param pad_amount.");
   }
 
-  if (!requires_rank3_reshape) {
-    return ProcessOutputs(qnn_model_wrapper, node_unit,
-                          std::move(input_names), std::move(param_tensor_names),
-                          logger, do_op_validation, QNN_OP_L2_POOL_2D);
+  // L2Pool2d always writes to an intermediate tensor; the scale correction node follows.
+  const std::string pool_out_name =
+      utils::UniqueNameGenerator().New(node_unit.Outputs()[0].name, "_l2pool");
+  {
+    QnnTensorWrapper pool_out_tensor(pool_out_name, QNN_TENSOR_TYPE_NATIVE,
+                                     input_info.qnn_data_type,
+                                     output_info.quant_param.Copy(),
+                                     std::vector<uint32_t>(pool_out_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(pool_out_tensor)),
+                  "Failed to add L2Pool2d intermediate output tensor.");
   }
-
-  // Rank-3 path: L2Pool2d node on the 4D reshaped input, then Reshape back to rank-3.
-  const std::string& final_output_name = node_unit.Outputs()[0].name;
-  const std::string intermediate_output_name =
-      utils::UniqueNameGenerator().New(final_output_name, "_reshape_after");
-
-  TensorInfo output_info{};
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
-
-  QnnTensorWrapper intermediate_output_tensor(intermediate_output_name,
-                                              QNN_TENSOR_TYPE_NATIVE,
-                                              input_info.qnn_data_type,
-                                              output_info.quant_param.Copy(),
-                                              std::move(intermediate_output_shape_4d));
-  RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(intermediate_output_tensor)),
-                "Failed to add intermediate tensor for LpPool rank-3 path.");
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_L2_POOL_2D),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_L2_POOL_2D,
                                                 {input_names[0]},
-                                                {intermediate_output_name},
+                                                {pool_out_name},
                                                 std::move(param_tensor_names),
                                                 do_op_validation),
-                "Failed to create L2Pool2d node for rank-3 input.");
+                "Failed to create L2Pool2d node.");
+
+  // Build a static scale tensor matching the pool output data type.
+  const std::string scale_name =
+      utils::UniqueNameGenerator().New(node_unit.Name(), "_l2pool_scale");
+  {
+    std::vector<uint8_t> scale_data;
+    const Qnn_DataType_t dtype = input_info.qnn_data_type;
+    if (dtype == QNN_DATATYPE_FLOAT_16) {
+      scale_data.resize(sizeof(uint16_t));
+      Ort::Float16_t scale_fp16(scale_val);
+      memcpy(scale_data.data(), &scale_fp16.val, sizeof(uint16_t));
+    } else if (dtype == QNN_DATATYPE_BFLOAT_16) {
+      scale_data.resize(sizeof(uint16_t));
+      Ort::BFloat16_t scale_bf16(scale_val);
+      memcpy(scale_data.data(), &scale_bf16.val, sizeof(uint16_t));
+    } else {
+      scale_data.resize(sizeof(float));
+      memcpy(scale_data.data(), &scale_val, sizeof(float));
+    }
+    QnnTensorWrapper scale_tensor(scale_name, QNN_TENSOR_TYPE_STATIC, dtype,
+                                  QnnQuantParamsWrapper(), {1}, std::move(scale_data));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(scale_tensor)),
+                  "Failed to add scale tensor.");
+  }
+
+  if (!requires_rank3_reshape) {
+    // Rank-4 path: ProcessOutputs creates the final output tensor and the multiply node.
+    return ProcessOutputs(qnn_model_wrapper, node_unit,
+                          {pool_out_name, scale_name}, {},
+                          logger, do_op_validation, QNN_OP_ELEMENT_WISE_MULTIPLY);
+  }
+
+  // Rank-3 path: scale correction (still rank-4), then Reshape back to rank-3.
+  const std::string& final_output_name = node_unit.Outputs()[0].name;
+  const std::string scaled_out_name =
+      utils::UniqueNameGenerator().New(pool_out_name, "_scaled");
+  {
+    QnnTensorWrapper scaled_out_tensor(scaled_out_name, QNN_TENSOR_TYPE_NATIVE,
+                                       input_info.qnn_data_type,
+                                       output_info.quant_param.Copy(),
+                                       std::vector<uint32_t>(pool_out_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(scaled_out_tensor)),
+                  "Failed to add scaled intermediate tensor for LpPool rank-3 path.");
+  }
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                    utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_MULTIPLY),
+                    QNN_OP_PACKAGE_NAME_QTI_AISW,
+                    QNN_OP_ELEMENT_WISE_MULTIPLY,
+                    {pool_out_name, scale_name},
+                    {scaled_out_name},
+                    {},
+                    do_op_validation),
+                "Failed to create scale correction node for LpPool rank-3 path.");
 
   const bool final_output_is_graph_output = qnn_model_wrapper.IsGraphOutput(final_output_name);
   const Qnn_TensorType_t final_output_tensor_type =
@@ -239,7 +297,7 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_RESHAPE),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_RESHAPE,
-                                                {intermediate_output_name},
+                                                {scaled_out_name},
                                                 {final_output_name},
                                                 {},
                                                 do_op_validation),
