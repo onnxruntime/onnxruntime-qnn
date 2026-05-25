@@ -301,7 +301,6 @@ TEST_F(QnnGPUBackendTests, LpPool_GPU_WithPads) {
                   "gpu");
 }
 
-
 #endif  // defined(_M_ARM64) — GPU tests
 
 }  // namespace test
