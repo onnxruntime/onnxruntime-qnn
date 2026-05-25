@@ -1088,19 +1088,38 @@ class ZipUpleveler(ArtifactUpleveler):
         if not files:
             raise RuntimeError(f"No {self.artifact_format} files found in {distribution_dir}")
 
-        # Create and push the git tag if it does not exist yet (safe to skip on re-runs).
+        # Create and push the git tag if it does not exist yet. Handles two cases:
+        #   1. Re-runs: tag exists locally already → skip.
+        #   2. Parallel jobs (zip + tgz): both create the local tag, only one push wins;
+        #      the loser fetches the remote tag and reuses it.
         tag_exists = (
             subprocess.run(
                 ["git", "rev-parse", "--verify", f"refs/tags/{tag}"], check=False, capture_output=True
             ).returncode
             == 0
         )
-        if not tag_exists:
-            subprocess.run(["git", "tag", "-a", tag, "-m", f"Release {tag}"], check=True)
-            subprocess.run(["git", "push", "origin", tag], check=True)
-            logging.info(f"Created and pushed git tag {tag}")
-        else:
+        if tag_exists:
             logging.info(f"Git tag {tag} already exists, reusing it")
+        else:
+            subprocess.run(["git", "tag", "-a", tag, "-m", f"Release {tag}"], check=True)
+            push_result = subprocess.run(["git", "push", "origin", tag], check=False, capture_output=True)
+            if push_result.returncode == 0:
+                logging.info(f"Created and pushed git tag {tag}")
+            else:
+                # Push lost a race with a concurrent job — pull the remote tag and reuse it.
+                subprocess.run(["git", "fetch", "origin", "tag", tag], check=False, capture_output=True)
+                remote_tag_exists = (
+                    subprocess.run(
+                        ["git", "rev-parse", "--verify", f"refs/tags/{tag}"], check=False, capture_output=True
+                    ).returncode
+                    == 0
+                )
+                if not remote_tag_exists:
+                    raise RuntimeError(
+                        f"Failed to push git tag {tag} and the tag does not exist on the remote. "
+                        f"git push stderr: {push_result.stderr.decode(errors='replace')}"
+                    )
+                logging.info(f"Git tag {tag} was pushed concurrently by another job; reusing it")
         # Create the GitHub Release if it does not exist yet (tag is already pinned above).
         subprocess.run(["gh", "release", "create", tag, "--title", tag, "--notes", "", "--draft"], check=False)
 
