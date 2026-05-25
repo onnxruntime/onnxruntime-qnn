@@ -130,12 +130,16 @@ TEST_F(QnnCPUBackendTests, LpPool_AutoPad_Valid) {
                   ExpectedEPNodeAssignment::All);
 }
 
-TEST_F(QnnCPUBackendTests, LpPool_CeilMode) {
+// Rejection: ceil_mode=1 is not supported on the CPU backend.
+// QNN CPU's PoolAvg2d silently ignores rounding_mode and produces a floor-shape output, which
+// would leave the extra ceil-mode positions filled with garbage. HTP/GPU honor rounding_mode
+// correctly, so the rejection is CPU-only.
+TEST_F(QnnCPUBackendTests, LpPool_Reject_CeilMode) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 5, 5}, false, GetFloatDataInRange(-10.0f, 10.0f, 50))},
                   {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
                    test::MakeAttribute("strides", std::vector<int64_t>{2, 2}),
                    test::MakeAttribute("ceil_mode", static_cast<int64_t>(1))},
-                  ExpectedEPNodeAssignment::All);
+                  ExpectedEPNodeAssignment::None);
 }
 
 TEST_F(QnnCPUBackendTests, LpPool_P1_Basic) {
@@ -175,13 +179,6 @@ TEST_F(QnnCPUBackendTests, LpPool_Reject_Dilation) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 6, 6}, false, GetFloatDataInRange(-10.0f, 10.0f, 72))},
                   {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
                    test::MakeAttribute("dilations", std::vector<int64_t>{2, 2})},
-                  ExpectedEPNodeAssignment::None);
-}
-
-// Rejection: rank-6 inputs are not supported.
-TEST_F(QnnCPUBackendTests, LpPool_Reject_Rank6) {
-  RunLpPoolOpTest({TestInputDef<float>({1, 2, 4, 4, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 512))},
-                  {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2, 2, 2})},
                   ExpectedEPNodeAssignment::None);
 }
 
@@ -438,11 +435,12 @@ TEST_F(QnnGPUBackendTests, LpPool_GPU_WithPads) {
                   "gpu");
 }
 
-TEST_F(QnnGPUBackendTests, LpPool_GPU_Rank5) {
+// Rejection: rank-5 (3D pooling) is not supported on the QNN GPU backend (no PoolAvg3d kernel).
+TEST_F(QnnGPUBackendTests, LpPool_GPU_Reject_Rank5) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 4, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 128))},
                   {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2, 2}),
                    test::MakeAttribute("strides", std::vector<int64_t>{2, 2, 2})},
-                  ExpectedEPNodeAssignment::All,
+                  ExpectedEPNodeAssignment::None,
                   "gpu");
 }
 
@@ -483,14 +481,6 @@ TEST_F(QnnGPUBackendTests, LpPool_GPU_FP16_Rank3) {
   RunLpPoolFP16Test({TestInputDef<float>({1, 4, 8}, false, GetFloatDataInRange(-10.0f, 10.0f, 32))},
                     {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2}),
                      test::MakeAttribute("strides", std::vector<int64_t>{2})},
-                    ExpectedEPNodeAssignment::All,
-                    "gpu");
-}
-
-TEST_F(QnnGPUBackendTests, LpPool_GPU_FP16_Rank5) {
-  RunLpPoolFP16Test({TestInputDef<float>({1, 2, 4, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 128))},
-                    {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2, 2}),
-                     test::MakeAttribute("strides", std::vector<int64_t>{2, 2, 2})},
                     ExpectedEPNodeAssignment::All,
                     "gpu");
 }

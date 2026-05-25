@@ -1,6 +1,7 @@
 // Copyright (c) Qualcomm. All rights reserved.
 // Licensed under the MIT License.
 
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <memory>
@@ -56,10 +57,25 @@ Ort::Status LpPoolOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   const size_t rank = input_shape.size();
   RETURN_IF_NOT(rank >= 3 && rank <= 5, "QNN LpPool only supports input rank 3, 4, or 5.");
 
+  // Rank-5 (3D spatial) requires QNN_OP_POOL_AVG_3D, which is not supported on the QNN GPU backend.
+  // CPU and HTP have PoolAvg3d kernels; rank-5 LpPool falls back to the ORT CPU EP on GPU.
+  RETURN_IF(rank == 5 && IsGpuBackend(qnn_model_wrapper.GetQnnBackendType()),
+            "QNN LpPool: rank-5 (3D pooling) is not supported on the QNN GPU backend.");
+
   OrtNodeAttrHelper node_helper(node_unit);
 
   const auto p = node_helper.Get("p", static_cast<int64_t>(2));
   RETURN_IF(p != 1 && p != 2, "QNN LpPool only supports p=1 or p=2.");
+
+  const auto ceil_mode = node_helper.Get("ceil_mode", static_cast<int64_t>(0));
+  if (ceil_mode != 0) {
+    // QNN's CPU backend silently ignores PoolAvg2d's rounding_mode and produces a floor-shape
+    // output, leaving the extra ceil-mode positions filled with garbage / NaN. HTP and GPU honor
+    // rounding_mode correctly, so the rejection is CPU-specific.
+    RETURN_IF(IsCpuBackend(qnn_model_wrapper.GetQnnBackendType()),
+              "QNN LpPool does not support ceil_mode=1 on the CPU backend "
+              "(QNN CPU PoolAvg2d ignores rounding_mode).");
+  }
 
   const auto dilations = node_helper.Get("dilations", std::vector<uint32_t>(rank - 2, 1));
   RETURN_IF_NOT(dilations == std::vector<uint32_t>(rank - 2, 1),
@@ -123,12 +139,14 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   const int64_t p_value = node_helper.Get("p", static_cast<int64_t>(2));
   const bool requires_rank3_reshape = (onnx_input_shape.size() == 3);
 
-  // Working shapes: rank-3 inputs are reshaped to rank-4 (N, C, 1, L); other ranks are unchanged.
+  // Working shapes: rank-3 inputs are reshaped to rank-4 NHWC (N, 1, L, C); other ranks are unchanged.
+  // The layout transformer hands us NHWC tensors (kMSInternalNHWCDomain), so for NHWC rank-3
+  // [N, L, C] the spatial L lands at W (index 2) with H=1 (index 1) and C stays at index 3.
   std::vector<uint32_t> qnn_input_shape = onnx_input_shape;
   std::vector<uint32_t> qnn_output_shape = onnx_output_shape;
   if (requires_rank3_reshape) {
-    qnn_input_shape = {onnx_input_shape[0], onnx_input_shape[1], 1, onnx_input_shape[2]};
-    qnn_output_shape = {onnx_output_shape[0], onnx_output_shape[1], 1, onnx_output_shape[2]};
+    qnn_input_shape = {onnx_input_shape[0], 1, onnx_input_shape[1], onnx_input_shape[2]};
+    qnn_output_shape = {onnx_output_shape[0], 1, onnx_output_shape[1], onnx_output_shape[2]};
 
     const std::string reshaped_input_name = utils::UniqueNameGenerator().New(input_names[0], "_reshape");
     QnnTensorWrapper reshaped_input_tensor(reshaped_input_name,
@@ -212,6 +230,74 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   ReArrangePads(pad_amount);
 
   // ------------------------------------------------------------------------------------------------
+  // 3a. HTP-only workaround: when AvgPool is asked to handle non-zero pad_amount with
+  //     count_pad_for_edges=1, the HTP backend silently returns 0 across every output position
+  //     on certain SoCs. CPU and GPU honor the param correctly. To sidestep the HTP bug without
+  //     changing the math, we pre-pad the input with an explicit constant-zero Pad node and run
+  //     AvgPool with pad_amount = 0. The output is identical because Mul(x,x)/Abs(x) of a
+  //     zero is zero, and an unpadded AvgPool with K real elements per window has denominator K.
+  // ------------------------------------------------------------------------------------------------
+  const bool is_htp_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
+  const bool any_pad = std::any_of(pad_amount.begin(), pad_amount.end(),
+                                   [](uint32_t v) { return v != 0; });
+  if (is_htp_backend && any_pad) {
+    // Padded shape: each spatial axis grows by pad_begin + pad_end.
+    std::vector<uint32_t> padded_shape = qnn_input_shape;
+    for (size_t a = 0; a < spatial_rank; ++a) {
+      padded_shape[a + 1] += pad_amount[2 * a] + pad_amount[2 * a + 1];
+    }
+
+    // QNN_OP_PAD pad_amount param is shape [input_rank, 2], one row per tensor axis (N, spatial..., C).
+    // Only the spatial axes get non-zero values.
+    std::vector<uint32_t> pad_full(rank * 2, 0);
+    for (size_t a = 0; a < spatial_rank; ++a) {
+      pad_full[(a + 1) * 2 + 0] = pad_amount[2 * a];
+      pad_full[(a + 1) * 2 + 1] = pad_amount[2 * a + 1];
+    }
+
+    const std::string padded_name = utils::UniqueNameGenerator().New(input_names[0], "_padded");
+    QnnTensorWrapper padded_tensor(padded_name, QNN_TENSOR_TYPE_NATIVE,
+                                   input_info.qnn_data_type, input_info.quant_param.Copy(),
+                                   std::vector<uint32_t>(padded_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(padded_tensor)),
+                  "Failed to add padded input tensor for LpPool HTP workaround.");
+
+    std::vector<std::string> pad_param_names;
+    {
+      Qnn_Scalar_t scheme_scalar = QNN_SCALAR_INIT;
+      scheme_scalar.dataType = QNN_DATATYPE_UINT_32;
+      scheme_scalar.uint32Value = QNN_OP_PAD_SCHEME_CONSTANT;
+      QnnParamWrapper scheme_param(node_unit.Index(), node_unit.Name(),
+                                   QNN_OP_PAD_PARAM_SCHEME, scheme_scalar);
+      pad_param_names.push_back(scheme_param.GetParamTensorName());
+      RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(scheme_param)),
+                    "Failed to add Pad scheme param.");
+    }
+    {
+      QnnParamWrapper pa_param(node_unit.Index(), node_unit.Name(),
+                               QNN_OP_PAD_PARAM_PAD_AMOUNT,
+                               {static_cast<uint32_t>(rank), 2},
+                               std::move(pad_full));
+      pad_param_names.push_back(pa_param.GetParamTensorName());
+      RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(pa_param)),
+                    "Failed to add Pad pad_amount param.");
+    }
+
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                      utils::UniqueNameGenerator().New(node_unit, QNN_OP_PAD),
+                      QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_PAD,
+                      {input_names[0]}, {padded_name},
+                      std::move(pad_param_names), do_op_validation),
+                  "Failed to create Pad node for LpPool HTP workaround.");
+
+    // Rewire the chain: Op A (Multiply/Abs) and AvgPool now operate on the padded tensor with
+    // zero pad_amount sent to AvgPool itself.
+    input_names[0] = padded_name;
+    qnn_input_shape = std::move(padded_shape);
+    std::fill(pad_amount.begin(), pad_amount.end(), 0u);
+  }
+
+  // ------------------------------------------------------------------------------------------------
   // 3. Compute scale constant K (product of kernel dims). For p=2 we apply sqrt(K) at the end;
   //    for p=1 we apply K.
   // ------------------------------------------------------------------------------------------------
@@ -293,6 +379,7 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(pad_amount_param)),
                   "Failed to add param pad_amount.");
   }
+  // ceil_mode = 1 is rejected on CPU backend in IsOpSupported; HTP/GPU honor rounding_mode.
   const int64_t ceil_mode = node_helper.Get("ceil_mode", static_cast<int64_t>(0));
   if (ceil_mode != 0) {
     Qnn_Scalar_t scalar = QNN_SCALAR_INIT;
