@@ -298,9 +298,11 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
   if (!requires_rank3_reshape) {
     // Rank-4 path: ProcessOutputs creates the final output tensor and the multiply node.
+    // do_op_validation covers L2Pool2d above; skip it for the correction multiply so that
+    // HTP's node validator doesn't reject the intermediate NATIVE pool_out tensor as an input.
     return ProcessOutputs(qnn_model_wrapper, node_unit,
                           {pool_out_name, scale_name}, {},
-                          logger, do_op_validation, QNN_OP_ELEMENT_WISE_MULTIPLY);
+                          logger, false, QNN_OP_ELEMENT_WISE_MULTIPLY);
   }
 
   // Rank-3 path: scale correction (still rank-4), then Reshape back to rank-3.
@@ -322,7 +324,7 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                     {pool_out_name, scale_name},
                     {scaled_out_name},
                     {},
-                    do_op_validation),
+                    false),
                 "Failed to create scale correction node for LpPool rank-3 path.");
 
   const bool final_output_is_graph_output = qnn_model_wrapper.IsGraphOutput(final_output_name);
@@ -341,7 +343,7 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                 {scaled_out_name},
                                                 {final_output_name},
                                                 {},
-                                                do_op_validation),
+                                                false),
                 "Failed to create reshape-after node for LpPool rank-3 path.");
 
   return Ort::Status();
