@@ -13,21 +13,53 @@
 namespace onnxruntime {
 namespace test {
 
-// Runs an LpPool model on the QNN CPU/GPU backend. Checks graph node assignment and that inference
-// outputs for QNN and CPU match.
+// Runs an LpPool model on the given QNN backend.
+// HTP cannot finalize a raw FP32 L2Pool2d graph
+// so HTP callers should pass enable_htp_fp16_precision=true to execute the
+// FP32 model at FP16 precision.
 static void RunLpPoolOpTest(const std::vector<TestInputDef<float>>& input_defs,
                             const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                             ExpectedEPNodeAssignment expected_ep_assignment,
                             const std::string& backend_name = "cpu",
-                            int opset = 22) {
+                            int opset = 22,
+                            float fp32_abs_err = 1e-5f,
+                            bool enable_htp_fp16_precision = false) {
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
+  if (enable_htp_fp16_precision) {
+    provider_options["enable_htp_fp16_precision"] = "1";
+  }
 
   RunQnnModelTest(BuildOpTestCase<float>("LpPool_node", "LpPool", input_defs, {}, attrs),
                   provider_options,
                   opset,
-                  expected_ep_assignment);
+                  expected_ep_assignment,
+                  fp32_abs_err);
+}
+
+// Runs a native FP16 LpPool model on the given QNN backend (HTP or GPU).
+static void RunLpPoolFP16Test(const std::vector<TestInputDef<float>>& input_defs,
+                              const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
+                              ExpectedEPNodeAssignment expected_ep_assignment,
+                              const std::string& backend_name = "htp",
+                              int opset = 22,
+                              float tolerance = 0.008f) {
+  ProviderOptions provider_options;
+  provider_options["backend_type"] = backend_name;
+  provider_options["offload_graph_io_quantization"] = "0";
+
+  std::vector<TestInputDef<Ort::Float16_t>> input_fp16_defs;
+  input_fp16_defs.reserve(input_defs.size());
+  for (const auto& def : input_defs) {
+    input_fp16_defs.push_back(ConvertToFP16InputDef(def));
+  }
+
+  RunQnnModelTest(BuildOpTestCase<Ort::Float16_t>("LpPool_node", "LpPool", input_fp16_defs, {}, attrs),
+                  provider_options,
+                  opset,
+                  expected_ep_assignment,
+                  tolerance);
 }
 
 //
@@ -127,7 +159,7 @@ TEST_F(QnnHTPBackendTests, LpPool_HTP_Float32_Basic) {
                   {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
                    test::MakeAttribute("strides", std::vector<int64_t>{2, 2})},
                   ExpectedEPNodeAssignment::All,
-                  "htp");
+                  "htp", 22, 0.008f, true);
 }
 
 TEST_F(QnnHTPBackendTests, LpPool_HTP_Float32_WithPads) {
@@ -135,7 +167,7 @@ TEST_F(QnnHTPBackendTests, LpPool_HTP_Float32_WithPads) {
                   {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
                    test::MakeAttribute("pads", std::vector<int64_t>{1, 1, 1, 1})},
                   ExpectedEPNodeAssignment::All,
-                  "htp");
+                  "htp", 22, 0.008f, true);
 }
 
 TEST_F(QnnHTPBackendTests, LpPool_HTP_Float32_AutoPad_SameUpper) {
@@ -144,7 +176,7 @@ TEST_F(QnnHTPBackendTests, LpPool_HTP_Float32_AutoPad_SameUpper) {
                    test::MakeAttribute("strides", std::vector<int64_t>{2, 2}),
                    test::MakeAttribute("auto_pad", "SAME_UPPER")},
                   ExpectedEPNodeAssignment::All,
-                  "htp");
+                  "htp", 22, 0.008f, true);
 }
 
 TEST_F(QnnHTPBackendTests, LpPool_HTP_Float32_Rank3) {
@@ -152,7 +184,29 @@ TEST_F(QnnHTPBackendTests, LpPool_HTP_Float32_Rank3) {
                   {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2}),
                    test::MakeAttribute("strides", std::vector<int64_t>{2})},
                   ExpectedEPNodeAssignment::All,
-                  "htp");
+                  "htp", 22, 0.008f, true);
+}
+
+// Native FP16 tests.
+TEST_F(QnnHTPBackendTests, LpPool_HTP_FP16_Basic) {
+  RunLpPoolFP16Test({TestInputDef<float>({1, 2, 6, 6}, false, GetFloatDataInRange(-10.0f, 10.0f, 72))},
+                    {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
+                     test::MakeAttribute("strides", std::vector<int64_t>{2, 2})},
+                    ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, LpPool_HTP_FP16_WithPads) {
+  RunLpPoolFP16Test({TestInputDef<float>({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32))},
+                    {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
+                     test::MakeAttribute("pads", std::vector<int64_t>{1, 1, 1, 1})},
+                    ExpectedEPNodeAssignment::All);
+}
+
+TEST_F(QnnHTPBackendTests, LpPool_HTP_FP16_Rank3) {
+  RunLpPoolFP16Test({TestInputDef<float>({1, 4, 8}, false, GetFloatDataInRange(-10.0f, 10.0f, 32))},
+                    {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2}),
+                     test::MakeAttribute("strides", std::vector<int64_t>{2})},
+                    ExpectedEPNodeAssignment::All);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
@@ -240,6 +294,31 @@ TEST_F(QnnGPUBackendTests, LpPool_GPU_WithPads) {
                    test::MakeAttribute("pads", std::vector<int64_t>{1, 1, 1, 1})},
                   ExpectedEPNodeAssignment::All,
                   "gpu");
+}
+
+// Native FP16 tests on GPU.
+TEST_F(QnnGPUBackendTests, LpPool_GPU_FP16_Basic) {
+  RunLpPoolFP16Test({TestInputDef<float>({1, 2, 6, 6}, false, GetFloatDataInRange(-10.0f, 10.0f, 72))},
+                    {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
+                     test::MakeAttribute("strides", std::vector<int64_t>{2, 2})},
+                    ExpectedEPNodeAssignment::All,
+                    "gpu");
+}
+
+TEST_F(QnnGPUBackendTests, LpPool_GPU_FP16_WithPads) {
+  RunLpPoolFP16Test({TestInputDef<float>({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32))},
+                    {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
+                     test::MakeAttribute("pads", std::vector<int64_t>{1, 1, 1, 1})},
+                    ExpectedEPNodeAssignment::All,
+                    "gpu");
+}
+
+TEST_F(QnnGPUBackendTests, LpPool_GPU_FP16_Rank3) {
+  RunLpPoolFP16Test({TestInputDef<float>({1, 4, 8}, false, GetFloatDataInRange(-10.0f, 10.0f, 32))},
+                    {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2}),
+                     test::MakeAttribute("strides", std::vector<int64_t>{2})},
+                    ExpectedEPNodeAssignment::All,
+                    "gpu");
 }
 
 #endif  // defined(_M_ARM64) — GPU tests
