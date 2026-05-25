@@ -166,10 +166,19 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   // to QNN format [h_begin, h_end, w_begin, w_end].
   ReArrangePads(pad_amount);
 
-  // QNN L2Pool2d computes RMS (normalized): sqrt(sum(x^2) / N).
-  // ONNX LpPool (p=2) computes L2 norm: sqrt(sum(x^2)).
-  // Correction: multiply QNN output by sqrt(filter_H * filter_W) to match ONNX semantics.
-  const float scale_val = std::sqrt(static_cast<float>(filter_size[0] * filter_size[1]));
+  // Save spatial values needed for per-position scale tensor before filter_size/stride/pad_amount
+  // are moved into QnnParamWrappers. After ReArrangePads: pad_amount = [h_begin, h_end, w_begin, w_end].
+  const int64_t in_h = static_cast<int64_t>(qnn_input_shape[1]);
+  const int64_t in_w = static_cast<int64_t>(qnn_input_shape[2]);
+  const int64_t kh = static_cast<int64_t>(filter_size[0]);
+  const int64_t kw = static_cast<int64_t>(filter_size[1]);
+  const int64_t sh = static_cast<int64_t>(stride[0]);
+  const int64_t sw = static_cast<int64_t>(stride[1]);
+  const int64_t pad_h_top = pad_amount.size() >= 1 ? static_cast<int64_t>(pad_amount[0]) : 0;
+  const int64_t pad_h_bottom = pad_amount.size() >= 2 ? static_cast<int64_t>(pad_amount[1]) : 0;
+  const int64_t pad_w_left = pad_amount.size() >= 3 ? static_cast<int64_t>(pad_amount[2]) : 0;
+  const int64_t pad_w_right = pad_amount.size() >= 4 ? static_cast<int64_t>(pad_amount[3]) : 0;
+  const bool no_padding = (pad_h_top == 0 && pad_h_bottom == 0 && pad_w_left == 0 && pad_w_right == 0);
 
   TensorInfo output_info{};
   RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
@@ -178,6 +187,33 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   const std::vector<uint32_t> pool_out_shape =
       requires_rank3_reshape ? intermediate_output_shape_4d
                              : std::vector<uint32_t>(output_info.shape);
+
+  // QNN L2Pool2d normalizes by count_real[h,w] (actual non-padding elements per window position).
+  // ONNX LpPool (p=2) does not normalize. Build a per-position scale tensor [1, out_H, out_W, 1]
+  // where scale[oh,ow] = sqrt(count_real[oh,ow]) to correct every output position independently.
+  const uint32_t out_h = pool_out_shape[1];
+  const uint32_t out_w = pool_out_shape[2];
+  std::vector<float> scale_vals(static_cast<size_t>(out_h) * out_w);
+  if (no_padding) {
+    // Common case: every window is fully covered, so count_real = kH × kW everywhere.
+    std::fill(scale_vals.begin(), scale_vals.end(), std::sqrt(static_cast<float>(kh * kw)));
+  } else {
+    // H and W axes are independent: precompute 1D counts, then combine.
+    std::vector<int64_t> h_counts(out_h), w_counts(out_w);
+    for (uint32_t oh = 0; oh < out_h; ++oh) {
+      const int64_t h_start = static_cast<int64_t>(oh) * sh - pad_h_top;
+      h_counts[oh] = std::min(h_start + kh, in_h) - std::max(h_start, int64_t{0});
+    }
+    for (uint32_t ow = 0; ow < out_w; ++ow) {
+      const int64_t w_start = static_cast<int64_t>(ow) * sw - pad_w_left;
+      w_counts[ow] = std::min(w_start + kw, in_w) - std::max(w_start, int64_t{0});
+    }
+    for (uint32_t oh = 0; oh < out_h; ++oh) {
+      for (uint32_t ow = 0; ow < out_w; ++ow) {
+        scale_vals[oh * out_w + ow] = std::sqrt(static_cast<float>(h_counts[oh] * w_counts[ow]));
+      }
+    }
+  }
 
   std::vector<std::string> param_tensor_names;
 
@@ -231,26 +267,31 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                 do_op_validation),
                 "Failed to create L2Pool2d node.");
 
-  // Build a static scale tensor matching the pool output data type.
+  // Build per-position static scale tensor [1, out_H, out_W, 1] for the normalization correction.
   const std::string scale_name =
       utils::UniqueNameGenerator().New(node_unit.Name(), "_l2pool_scale");
   {
     std::vector<uint8_t> scale_data;
     const Qnn_DataType_t dtype = input_info.qnn_data_type;
+    const size_t n_elements = scale_vals.size();
     if (dtype == QNN_DATATYPE_FLOAT_16) {
-      scale_data.resize(sizeof(uint16_t));
-      Ort::Float16_t scale_fp16(scale_val);
-      memcpy(scale_data.data(), &scale_fp16.val, sizeof(uint16_t));
+      scale_data.resize(n_elements * sizeof(uint16_t));
+      for (size_t i = 0; i < n_elements; ++i) {
+        Ort::Float16_t v(scale_vals[i]);
+        memcpy(scale_data.data() + i * sizeof(uint16_t), &v.val, sizeof(uint16_t));
+      }
     } else if (dtype == QNN_DATATYPE_BFLOAT_16) {
-      scale_data.resize(sizeof(uint16_t));
-      Ort::BFloat16_t scale_bf16(scale_val);
-      memcpy(scale_data.data(), &scale_bf16.val, sizeof(uint16_t));
+      scale_data.resize(n_elements * sizeof(uint16_t));
+      for (size_t i = 0; i < n_elements; ++i) {
+        Ort::BFloat16_t v(scale_vals[i]);
+        memcpy(scale_data.data() + i * sizeof(uint16_t), &v.val, sizeof(uint16_t));
+      }
     } else {
-      scale_data.resize(sizeof(float));
-      memcpy(scale_data.data(), &scale_val, sizeof(float));
+      scale_data.resize(n_elements * sizeof(float));
+      memcpy(scale_data.data(), scale_vals.data(), scale_data.size());
     }
     QnnTensorWrapper scale_tensor(scale_name, QNN_TENSOR_TYPE_STATIC, dtype,
-                                  QnnQuantParamsWrapper(), {1}, std::move(scale_data));
+                                  QnnQuantParamsWrapper(), {1, out_h, out_w, 1}, std::move(scale_data));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(scale_tensor)),
                   "Failed to add scale tensor.");
   }
