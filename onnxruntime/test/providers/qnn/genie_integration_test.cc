@@ -225,7 +225,7 @@ TEST_F(GenieSessionTest, Compute_InvokesExpectedApiSequence) {
 }
 
 // ---------------------------------------------------------------------------
-// Test: two concurrent sessions backed by the same EP registration both
+// Test: two sequential sessions backed by the same EP registration both
 // succeed end-to-end. The second session reuses scoped1's already-registered
 // OrtEpDevice directly (via AppendExecutionProvider_V2) rather than calling
 // RegisterQnnEpLibrary again, which would fail because the ORT environment

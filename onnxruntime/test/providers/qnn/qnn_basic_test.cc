@@ -981,9 +981,9 @@ TEST_F(QnnHTPBackendTests, QnnIr_OutputFiles) {
   std::filesystem::remove_all(qnn_dlc_dir);
   ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
 
-  InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
-                      TestBackend::Htp,  // backend
-                      TestBackend::Ir);  // serializer backend
+  auto scoped = InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
+                                    TestBackend::Htp,  // backend
+                                    TestBackend::Ir);  // serializer backend
 
   // File names are taken from graph node names. Just make sure that we got one .dlc
   // in the expected directory.
@@ -2033,9 +2033,9 @@ TEST_F(QnnIRBackendTests, QnnIr_OutputFiles) {
   std::filesystem::remove_all(qnn_dlc_dir);
   ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
 
-  InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
-                      TestBackend::Ir,   // backend
-                      TestBackend::Ir);  // serializer backend
+  auto scoped = InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
+                                    TestBackend::Ir,   // backend
+                                    TestBackend::Ir);  // serializer backend
 
   // File names are taken from graph node names. Just make sure that we got one .dlc
   // in the expected directory.
@@ -2058,9 +2058,9 @@ TEST(QnnSaverBackendTests, DISABLED_QnnSaver_OutputFiles) {
   std::filesystem::remove_all(qnn_saver_output_dir);
   ASSERT_FALSE(std::filesystem::exists(qnn_saver_output_dir));
 
-  InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
-                      TestBackend::Saver,   // backend
-                      TestBackend::Saver);  // serializer_backend
+  auto scoped = InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
+                                    TestBackend::Saver,   // backend
+                                    TestBackend::Saver);  // serializer_backend
 
   // Check that QNN Saver output files exist.
   EXPECT_TRUE(std::filesystem::exists(qnn_saver_output_dir / "saver_output.c"));

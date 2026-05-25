@@ -2236,7 +2236,7 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
   std::string ctx_model_file2(ctx_model_paths[1].begin(), ctx_model_paths[1].end());
 #endif
   ScopedOrtSession scoped1(std::move(registered_ep_device), Ort::Session(*ort_env, ctx_model_file1.c_str(), so1));
-  Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);
+  Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);  // session2 borrows the EP device from scoped1; must be declared after scoped1.
 
   std::vector<std::string> input_names;
   std::vector<std::string> output_names;
@@ -2352,7 +2352,7 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
   std::string ctx_model_file2(ctx_model_paths[1].begin(), ctx_model_paths[1].end());
 #endif
   ScopedOrtSession scoped1(std::move(registered_ep_device), Ort::Session(*ort_env, ctx_model_file1.c_str(), so1));
-  Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);
+  Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);  // session2 borrows the EP device from scoped1; must be declared after scoped1.
 
   std::vector<std::string> input_names;
   std::vector<std::string> output_names;
@@ -2473,7 +2473,7 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
   provider_options["enable_vtcm_backup_buffer_sharing"] = "1";
   so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
   ScopedOrtSession scoped1(std::move(registered_ep_device), Ort::Session(*ort_env, ctx_model_file1.c_str(), so1));
-  Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);
+  Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);  // session2 borrows the EP device from scoped1; must be declared after scoped1.
 
   std::vector<std::string> input_names;
   std::vector<std::string> output_names;
