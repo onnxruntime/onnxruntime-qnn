@@ -205,9 +205,9 @@ void QnnContextBinaryMultiPartitionTestBody(bool single_ep_node = true) {
     so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
 
     RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
-    Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
 
     // Make sure the Qnn context cache binary file is generated
     EXPECT_TRUE(std::filesystem::exists(context_model_file.c_str()));
@@ -236,18 +236,16 @@ void QnnContextBinaryMultiPartitionTestBody(bool single_ep_node = true) {
     ASSERT_EQ(non_ep_context_node_count, expected_node_count);
   }
 
-  {
-    Ort::SessionOptions so2;
-    // context file path is required if it's non-embed mode and the model is loaded from memory
-    so2.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
+  Ort::SessionOptions so2;
+  // context file path is required if it's non-embed mode and the model is loaded from memory
+  so2.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
 
-    RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so2, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so2, kQnnExecutionProvider, provider_options);
 
-    std::string ctx_model_data;
-    ctx_model_proto.SerializeToString(&ctx_model_data);
-    Ort::Session session2(*ort_env, ctx_model_data.data(), ctx_model_data.size(), so2);
-  }
+  std::string ctx_model_data;
+  ctx_model_proto.SerializeToString(&ctx_model_data);
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, ctx_model_data.data(), ctx_model_data.size(), so2));
 
   // clean up
   CleanUpCtxFile(context_model_file);
@@ -366,7 +364,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_DisableEpCompile_ThenCompileExplicitly) {
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   so.AddConfigEntry(kOrtSessionOptionsDisableModelCompile, "1");  // Disable model compilation!
 
@@ -378,7 +376,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_DisableEpCompile_ThenCompileExplicitly) {
     OrtErrorCode error_code = excpt.GetOrtErrorCode();
     std::string_view error_msg = excpt.what();
     ASSERT_EQ(error_code, ORT_MODEL_REQUIRES_COMPILATION);
-    ASSERT_THAT(error_msg, testing::HasSubstr(onnxruntime::kQnnExecutionProvider));
+    ASSERT_THAT(error_msg, testing::HasSubstr(kQnnExecutionProvider));
   }
 
   // Session creation failed because the model was not pre-compiled.
@@ -432,7 +430,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelFromPath) {
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   // Create model compilation options from the session options.
   Ort::ModelCompilationOptions compile_options(*ort_env, so);
@@ -479,7 +477,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputModelAsBuffer_Embe
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   // Create model compilation options from the session options.
   Ort::ModelCompilationOptions compile_options(*ort_env, so);
@@ -526,7 +524,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer) {
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   // Create model compilation options from the session options. Output model is stored in a buffer.
   Ort::ModelCompilationOptions compile_options(*ort_env, so);
@@ -578,7 +576,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_InputAndOutputModelsInB
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions session_options;
-  RegisterQnnEpLibrary(registered_ep_device, session_options, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, provider_options);
 
   Ort::AllocatorWithDefaultOptions allocator;
 
@@ -689,7 +687,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_FromSessionOptions_OutputModelBuffer_Outpu
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   // Create model compilation options from the session options. Output model is stored in a buffer.
   Ort::ModelCompilationOptions compile_options(*ort_env, so);
@@ -767,7 +765,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_SetFlags_ErrorIfOutputFileAlreadyExists) {
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions session_options;
-  RegisterQnnEpLibrary(registered_ep_device, session_options, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, provider_options);
 
   // Compile with QNN EP. Should succeed the first time.
   {
@@ -815,7 +813,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_ErrorIfCompilingACompiledModel) {
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions session_options;
-  RegisterQnnEpLibrary(registered_ep_device, session_options, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, provider_options);
 
   // Compile with QNN EP. Should succeed the first time.
   {
@@ -890,9 +888,9 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_OriginalCompileApproach_IgnoreCompil
     so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, output_model_file.c_str());
 
     RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
 
-    Ort::Session session(*ort_env, input_model_file, so);
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
     ASSERT_TRUE(std::filesystem::exists(output_model_file));  // check compiled model was generated.
   }
 
@@ -906,7 +904,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_OriginalCompileApproach_IgnoreCompil
     so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, new_output_model_file);
 
     RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
 
     // Currently it would failed at ConvertEpContextNodes in ep_plugin_provider_interfaces.cc.
     try {
@@ -1068,7 +1066,7 @@ void EpCtxCpuNodeWithExternalIniFileTestBody(bool expect_external_ini_file, bool
   so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   const std::string ep_context_model_file = "./qnn_ctx_part_external_ini_ctx.onnx";
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ep_context_model_file.c_str());
@@ -1171,7 +1169,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGenerationFolderPathNotExpected) {
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ep_context_onnx_file.c_str());
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   try {
     Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
@@ -1223,7 +1221,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGenerationFolderPathNotExpected2) {
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ep_context_onnx_file.c_str());
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   try {
     Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
@@ -1279,22 +1277,20 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGenerationNoOverWrite) {
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, ep_context_onnx_file.c_str());
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
-  {
-    Ort::Session session1(*ort_env, model_data_span.data(), model_data_span.size(), so);
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
 
-    auto modify_time_1 = std::filesystem::last_write_time(ep_context_binary_file);
+  auto modify_time_1 = std::filesystem::last_write_time(ep_context_binary_file);
 
-    try {
-      Ort::Session session2(*ort_env, model_data_span.data(), model_data_span.size(), so);
-      FAIL();  // Should not get here!
-    } catch (const Ort::Exception& excpt) {
-      ASSERT_EQ(excpt.GetOrtErrorCode(), ORT_FAIL);
-      ASSERT_THAT(excpt.what(), testing::HasSubstr("exists already."));
-      auto modify_time_2 = std::filesystem::last_write_time(ep_context_binary_file);
-      ASSERT_EQ(modify_time_1, modify_time_2);
-    }
+  try {
+    Ort::Session session2(*ort_env, model_data_span.data(), model_data_span.size(), so);
+    FAIL();  // Should not get here!
+  } catch (const Ort::Exception& excpt) {
+    ASSERT_EQ(excpt.GetOrtErrorCode(), ORT_FAIL);
+    ASSERT_THAT(excpt.what(), testing::HasSubstr("exists already."));
+    auto modify_time_2 = std::filesystem::last_write_time(ep_context_binary_file);
+    ASSERT_EQ(modify_time_1, modify_time_2);
   }
 
   ASSERT_EQ(std::remove(ep_context_onnx_file.c_str()), 0);
@@ -1411,14 +1407,12 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryGeneration2InputTypes) {
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
-  {
-    Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
 
-    // Make sure the Qnn context cache binary file is generated
-    EXPECT_TRUE(std::filesystem::exists(context_model_file.c_str()));
-  }
+  // Make sure the Qnn context cache binary file is generated
+  EXPECT_TRUE(std::filesystem::exists(context_model_file.c_str()));
 
   // clean up
   CleanUpCtxFile(context_model_file);
@@ -1467,14 +1461,12 @@ TEST_F(QnnHTPBackendTests, QnnContextGeneration2InputsOrderIssue) {
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
-  {
-    Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
 
-    // Make sure the Qnn context cache binary file is generated
-    EXPECT_TRUE(std::filesystem::exists(context_model_file.c_str()));
-  }
+  // Make sure the Qnn context cache binary file is generated
+  EXPECT_TRUE(std::filesystem::exists(context_model_file.c_str()));
 
   // Load generated context model using ONNX protobuf API.
   ONNX_NAMESPACE::ModelProto model_proto;
@@ -1537,14 +1529,12 @@ TEST_F(QnnHTPBackendTests, DISABLED_QnnContextGenerationNodeNamePrefix) {
   so.AddConfigEntry(kOrtSessionOptionEpContextNodeNamePrefix, node_name_prefix.c_str());
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
-  {
-    Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
 
-    // Make sure the Qnn context cache binary file is generated
-    EXPECT_TRUE(std::filesystem::exists(context_model_file.c_str()));
-  }
+  // Make sure the Qnn context cache binary file is generated
+  EXPECT_TRUE(std::filesystem::exists(context_model_file.c_str()));
 
   // Load generated context model using ONNX protobuf API.
   ONNX_NAMESPACE::ModelProto model_proto;
@@ -1692,15 +1682,13 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
 
   Ort::SessionOptions so;  // No need to set the context file path in so since it's load from file
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
-  {
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 #ifdef _WIN32
-    std::wstring ctx_model_file(context_binary_file.begin(), context_binary_file.end());
+  std::wstring ctx_model_file(context_binary_file.begin(), context_binary_file.end());
 #else
-    std::string ctx_model_file(context_binary_file.begin(), context_binary_file.end());
+  std::string ctx_model_file(context_binary_file.begin(), context_binary_file.end());
 #endif
-    Ort::Session session(*ort_env.get(), ctx_model_file.c_str(), so);
-  }
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env.get(), ctx_model_file.c_str(), so));
 
   // Clean up
   ASSERT_EQ(std::remove(context_binary_file.c_str()), 0);
@@ -1765,7 +1753,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_InvalidGraph) {
   so.SetLogId("logger0");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   // Verify session creation fails with INVALID_GRAPH when the external context binary is missing.
   try {
@@ -1826,7 +1814,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryRelativePathTest) {
   so.SetLogId("qnn_ctx_model_logger");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   // Verify session creation fails with INVALID_GRAPH.
   try {
@@ -1855,7 +1843,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryAbsolutePathTest) {
   so.SetLogId("qnn_ctx_model_logger");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   // Verify session creation fails with INVALID_GRAPH.
   try {
@@ -1880,7 +1868,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryFileNotExistTest) {
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, "./qnn_context_not_exist.onnx");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   // Verify session creation fails with INVALID_GRAPH.
   try {
@@ -1905,7 +1893,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryFileEmptyStringTest) {
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, "./test_ctx.onnx");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   // Verify session creation fails with INVALID_GRAPH.
   try {
@@ -2043,7 +2031,7 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCache_SingleNodeNameNotMatchGraphName
   so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, context_model_file.c_str());
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   // Session creation should succeed even if EPContext node name does not match graph name in the bin file.
   EXPECT_NO_THROW((Ort::Session(*ort_env, model_data.data(), model_data.size(), so)));
@@ -2062,11 +2050,9 @@ TEST_F(QnnHTPBackendTests, QnnMultiContextEmbeded) {
 
   Ort::SessionOptions so;
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
-  {
-    Ort::Session session(*ort_env, ORT_TSTR("testdata/qnn_ctx/qnn_multi_ctx_embed.onnx"), so);
-  }
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, ORT_TSTR("testdata/qnn_ctx/qnn_multi_ctx_embed.onnx"), so));
 }
 
 // Model has 2 EPContext nodes, both with main_context=1 and external context binary
@@ -2078,11 +2064,9 @@ TEST_F(QnnHTPBackendTests, QnnMultiContextExternal) {
 
   Ort::SessionOptions so;
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
-  {
-    Ort::Session session(*ort_env, ORT_TSTR("testdata/qnn_ctx/qnn_multi_ctx_external.onnx"), so);
-  }
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, ORT_TSTR("testdata/qnn_ctx/qnn_multi_ctx_external.onnx"), so));
 }
 
 static void CreateQdqModel(const std::string& model_file_name) {
@@ -2128,25 +2112,23 @@ static void DumpModelWithSharedCtx(ProviderOptions provider_options,
 #endif  // !__aarch64__
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   // Create 2 sessions to generate context binary models, the 1st session will share the QnnBackendManager
   // to the 2nd session, so graphs from these 2 models are all included in the 2nd context binary
-  {
 #if defined(_WIN32)
-    const std::wstring onnx_model_path1_w(onnx_model_path1.begin(), onnx_model_path1.end());
-    const std::wstring onnx_model_path2_w(onnx_model_path2.begin(), onnx_model_path2.end());
-    Ort::Session session1(*ort_env, onnx_model_path1_w.c_str(), so);
+  const std::wstring onnx_model_path1_w(onnx_model_path1.begin(), onnx_model_path1.end());
+  const std::wstring onnx_model_path2_w(onnx_model_path2.begin(), onnx_model_path2.end());
+  ScopedOrtSession scoped1(std::move(registered_ep_device), Ort::Session(*ort_env, onnx_model_path1_w.c_str(), so));
 
-    so.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
-    Ort::Session session2(*ort_env, onnx_model_path2_w.c_str(), so);
+  so.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
+  Ort::Session session2(*ort_env, onnx_model_path2_w.c_str(), so);
 #else
-    Ort::Session session1(*ort_env, onnx_model_path1.c_str(), so);
+  ScopedOrtSession scoped1(std::move(registered_ep_device), Ort::Session(*ort_env, onnx_model_path1.c_str(), so));
 
-    so.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
-    Ort::Session session2(*ort_env, onnx_model_path2.c_str(), so);
+  so.AddConfigEntry(kOrtSessionOptionStopShareEpContexts, "1");
+  Ort::Session session2(*ort_env, onnx_model_path2.c_str(), so);
 #endif
-  }
 }
 
 static void GetModelInputNames(const std::string& model_path,
@@ -2238,7 +2220,7 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
   so1.AddConfigEntry(kOrtSessionOptionShareEpContexts, "1");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so1, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so1, kQnnExecutionProvider, provider_options);
 
   Ort::SessionOptions so2;
   so2.SetLogId("so2");
@@ -2246,42 +2228,40 @@ TEST_F(QnnHTPBackendTests, QnnContextShareAcrossSessions) {
   so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
 
   EXPECT_TRUE(2 == ctx_model_paths.size());
-  {
 #ifdef _WIN32
-    std::wstring ctx_model_file1(ctx_model_paths[0].begin(), ctx_model_paths[0].end());
-    std::wstring ctx_model_file2(ctx_model_paths[1].begin(), ctx_model_paths[1].end());
+  std::wstring ctx_model_file1(ctx_model_paths[0].begin(), ctx_model_paths[0].end());
+  std::wstring ctx_model_file2(ctx_model_paths[1].begin(), ctx_model_paths[1].end());
 #else
-    std::string ctx_model_file1(ctx_model_paths[0].begin(), ctx_model_paths[0].end());
-    std::string ctx_model_file2(ctx_model_paths[1].begin(), ctx_model_paths[1].end());
+  std::string ctx_model_file1(ctx_model_paths[0].begin(), ctx_model_paths[0].end());
+  std::string ctx_model_file2(ctx_model_paths[1].begin(), ctx_model_paths[1].end());
 #endif
-    Ort::Session session1(*ort_env, ctx_model_file1.c_str(), so1);
-    Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);
+  ScopedOrtSession scoped1(std::move(registered_ep_device), Ort::Session(*ort_env, ctx_model_file1.c_str(), so1));
+  Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);  // session2 borrows the EP device from scoped1; must be declared after scoped1.
 
-    std::vector<std::string> input_names;
-    std::vector<std::string> output_names;
-    GetModelInputNames(ctx_model_paths[1], input_names, output_names);
+  std::vector<std::string> input_names;
+  std::vector<std::string> output_names;
+  GetModelInputNames(ctx_model_paths[1], input_names, output_names);
 
-    // Run sessions
-    // prepare input
-    std::vector<int64_t> input_dim{2, 3};
-    std::vector<float> input_value(2 * 3, 0.0f);
-    Ort::MemoryInfo info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
-    std::vector<Ort::Value> ort_inputs;
-    std::vector<const char*> input_names_c;
-    for (size_t i = 0; i < input_names.size(); ++i) {
-      auto input_tensor = Ort::Value::CreateTensor(info, input_value.data(), input_value.size(),
-                                                   input_dim.data(), input_dim.size());
-      ort_inputs.push_back(std::move(input_tensor));
-      input_names_c.push_back(input_names[i].c_str());
-    }
-    std::vector<const char*> output_names_c;
-    for (size_t i = 0; i < output_names.size(); ++i) {
-      output_names_c.push_back(output_names[i].c_str());
-    }
-
-    auto ort_outputs1 = session1.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
-                                     output_names_c.data(), 1);
+  // Run sessions
+  // prepare input
+  std::vector<int64_t> input_dim{2, 3};
+  std::vector<float> input_value(2 * 3, 0.0f);
+  Ort::MemoryInfo info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+  std::vector<Ort::Value> ort_inputs;
+  std::vector<const char*> input_names_c;
+  for (size_t i = 0; i < input_names.size(); ++i) {
+    auto input_tensor = Ort::Value::CreateTensor(info, input_value.data(), input_value.size(),
+                                                 input_dim.data(), input_dim.size());
+    ort_inputs.push_back(std::move(input_tensor));
+    input_names_c.push_back(input_names[i].c_str());
   }
+  std::vector<const char*> output_names_c;
+  for (size_t i = 0; i < output_names.size(); ++i) {
+    output_names_c.push_back(output_names[i].c_str());
+  }
+
+  auto ort_outputs1 = scoped1.session().Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
+                                            output_names_c.data(), 1);
 #endif
 
   for (auto model_path : onnx_model_paths) {
@@ -2357,49 +2337,47 @@ TEST_F(QnnHTPBackendTests, DISABLED_VTCMBackupBufferSharing) {
   so1.SetLogId("so1");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so1, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so1, kQnnExecutionProvider, provider_options);
 
   Ort::SessionOptions so2;
   so2.SetLogId("so2");
   so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
 
   EXPECT_TRUE(2 == ctx_model_paths.size());
-  {
 #ifdef _WIN32
-    std::wstring ctx_model_file1(ctx_model_paths[0].begin(), ctx_model_paths[0].end());
-    std::wstring ctx_model_file2(ctx_model_paths[1].begin(), ctx_model_paths[1].end());
+  std::wstring ctx_model_file1(ctx_model_paths[0].begin(), ctx_model_paths[0].end());
+  std::wstring ctx_model_file2(ctx_model_paths[1].begin(), ctx_model_paths[1].end());
 #else
-    std::string ctx_model_file1(ctx_model_paths[0].begin(), ctx_model_paths[0].end());
-    std::string ctx_model_file2(ctx_model_paths[1].begin(), ctx_model_paths[1].end());
+  std::string ctx_model_file1(ctx_model_paths[0].begin(), ctx_model_paths[0].end());
+  std::string ctx_model_file2(ctx_model_paths[1].begin(), ctx_model_paths[1].end());
 #endif
-    Ort::Session session1(*ort_env, ctx_model_file1.c_str(), so1);
-    Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);
+  ScopedOrtSession scoped1(std::move(registered_ep_device), Ort::Session(*ort_env, ctx_model_file1.c_str(), so1));
+  Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);  // session2 borrows the EP device from scoped1; must be declared after scoped1.
 
-    std::vector<std::string> input_names;
-    std::vector<std::string> output_names;
-    GetModelInputNames(ctx_model_paths[1], input_names, output_names);
+  std::vector<std::string> input_names;
+  std::vector<std::string> output_names;
+  GetModelInputNames(ctx_model_paths[1], input_names, output_names);
 
-    // Run sessions
-    // prepare input
-    std::vector<int64_t> input_dim{2, 3};
-    std::vector<float> input_value(2 * 3, 0.0f);
-    Ort::MemoryInfo info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
-    std::vector<Ort::Value> ort_inputs;
-    std::vector<const char*> input_names_c;
-    for (size_t i = 0; i < input_names.size(); ++i) {
-      auto input_tensor = Ort::Value::CreateTensor(info, input_value.data(), input_value.size(),
-                                                   input_dim.data(), input_dim.size());
-      ort_inputs.push_back(std::move(input_tensor));
-      input_names_c.push_back(input_names[i].c_str());
-    }
-    std::vector<const char*> output_names_c;
-    for (size_t i = 0; i < output_names.size(); ++i) {
-      output_names_c.push_back(output_names[i].c_str());
-    }
-
-    auto ort_outputs1 = session1.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
-                                     output_names_c.data(), 1);
+  // Run sessions
+  // prepare input
+  std::vector<int64_t> input_dim{2, 3};
+  std::vector<float> input_value(2 * 3, 0.0f);
+  Ort::MemoryInfo info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+  std::vector<Ort::Value> ort_inputs;
+  std::vector<const char*> input_names_c;
+  for (size_t i = 0; i < input_names.size(); ++i) {
+    auto input_tensor = Ort::Value::CreateTensor(info, input_value.data(), input_value.size(),
+                                                 input_dim.data(), input_dim.size());
+    ort_inputs.push_back(std::move(input_tensor));
+    input_names_c.push_back(input_names[i].c_str());
   }
+  std::vector<const char*> output_names_c;
+  for (size_t i = 0; i < output_names.size(); ++i) {
+    output_names_c.push_back(output_names[i].c_str());
+  }
+
+  auto ort_outputs1 = scoped1.session().Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
+                                            output_names_c.data(), 1);
 #endif
 
   for (auto model_path : onnx_model_paths) {
@@ -2490,41 +2468,39 @@ TEST_F(QnnHTPBackendTests, FileMapping_Off) {
 #endif
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so1, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so1, kQnnExecutionProvider, provider_options);
 
   provider_options["enable_vtcm_backup_buffer_sharing"] = "1";
   so2.AppendExecutionProvider_V2(*ort_env, {Ort::ConstEpDevice(registered_ep_device.get())}, provider_options);
-  {
-    Ort::Session session1(*ort_env, ctx_model_file1.c_str(), so1);
-    Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);
+  ScopedOrtSession scoped1(std::move(registered_ep_device), Ort::Session(*ort_env, ctx_model_file1.c_str(), so1));
+  Ort::Session session2(*ort_env, ctx_model_file2.c_str(), so2);  // session2 borrows the EP device from scoped1; must be declared after scoped1.
 
-    std::vector<std::string> input_names;
-    std::vector<std::string> output_names;
-    GetModelInputNames(ctx_model_paths[1], input_names, output_names);
+  std::vector<std::string> input_names;
+  std::vector<std::string> output_names;
+  GetModelInputNames(ctx_model_paths[1], input_names, output_names);
 
-    // Run sessions
-    // prepare input
-    std::vector<int64_t> input_dim{2, 3};
-    std::vector<float> input_value(2 * 3, 0.0f);
-    Ort::MemoryInfo info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
-    std::vector<Ort::Value> ort_inputs;
-    std::vector<const char*> input_names_c;
-    for (size_t i = 0; i < input_names.size(); ++i) {
-      auto input_tensor = Ort::Value::CreateTensor(info, input_value.data(), input_value.size(),
-                                                   input_dim.data(), input_dim.size());
-      ort_inputs.push_back(std::move(input_tensor));
-      input_names_c.push_back(input_names[i].c_str());
-    }
-    std::vector<const char*> output_names_c;
-    for (size_t i = 0; i < output_names.size(); ++i) {
-      output_names_c.push_back(output_names[i].c_str());
-    }
-
-    auto ort_outputs1 = session1.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
-                                     output_names_c.data(), 1);
-    auto ort_outputs2 = session2.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
-                                     output_names_c.data(), 1);
+  // Run sessions
+  // prepare input
+  std::vector<int64_t> input_dim{2, 3};
+  std::vector<float> input_value(2 * 3, 0.0f);
+  Ort::MemoryInfo info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+  std::vector<Ort::Value> ort_inputs;
+  std::vector<const char*> input_names_c;
+  for (size_t i = 0; i < input_names.size(); ++i) {
+    auto input_tensor = Ort::Value::CreateTensor(info, input_value.data(), input_value.size(),
+                                                 input_dim.data(), input_dim.size());
+    ort_inputs.push_back(std::move(input_tensor));
+    input_names_c.push_back(input_names[i].c_str());
   }
+  std::vector<const char*> output_names_c;
+  for (size_t i = 0; i < output_names.size(); ++i) {
+    output_names_c.push_back(output_names[i].c_str());
+  }
+
+  auto ort_outputs1 = scoped1.session().Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
+                                            output_names_c.data(), 1);
+  auto ort_outputs2 = session2.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
+                                   output_names_c.data(), 1);
 #endif  // defined(__aarch64__) || defined(_M_ARM64)
 
   for (auto model_path : onnx_model_paths) {
@@ -2641,7 +2617,7 @@ TEST_F(QnnHTPBackendTests, LoadFromArrayWithQnnEpContextGenPathValidation) {
   so.AddConfigEntry(kOrtSessionOptionEpContextEnable, "1");
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   ORT_TRY {
     Ort::Session session1(*ort_env, model_data_span.data(), model_data_span.size(), so);
@@ -2682,80 +2658,78 @@ TEST_F(QnnHTPBackendTests, QnnEpDynamicOptions) {
   so.SetLogSeverityLevel(ORT_LOGGING_LEVEL_VERBOSE);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
-  {
-    Ort::Session session(*ort_env, ORT_TSTR("testdata/qnn_ctx/qnn_multi_ctx_embed.onnx"), so);
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, ORT_TSTR("testdata/qnn_ctx/qnn_multi_ctx_embed.onnx"), so));
 
-    std::vector<std::string> input_names;
-    std::vector<std::string> output_names;
-    GetModelInputNames("testdata/qnn_ctx/qnn_multi_ctx_embed.onnx", input_names, output_names);
+  std::vector<std::string> input_names;
+  std::vector<std::string> output_names;
+  GetModelInputNames("testdata/qnn_ctx/qnn_multi_ctx_embed.onnx", input_names, output_names);
 
-    // Run sessions
-    // prepare input
-    std::vector<int64_t> input_dim{3, 4};
-    std::vector<float> input_value(3 * 4, 0.0f);
-    Ort::MemoryInfo info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
-    std::vector<Ort::Value> ort_inputs;
-    std::vector<const char*> input_names_c;
-    for (size_t i = 0; i < input_names.size(); ++i) {
-      auto input_tensor = Ort::Value::CreateTensor(info, input_value.data(), input_value.size(),
-                                                   input_dim.data(), input_dim.size());
-      ort_inputs.push_back(std::move(input_tensor));
-      input_names_c.push_back(input_names[i].c_str());
-    }
-    std::vector<const char*> output_names_c;
-    for (size_t i = 0; i < output_names.size(); ++i) {
-      output_names_c.push_back(output_names[i].c_str());
-    }
-
-    auto ort_output = session.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
-                                  output_names_c.data(), 1);
-
-    const char* const workload_type[] = {"ep.dynamic.workload_type"};
-    const char* const efficient_type[] = {"Efficient"};
-    const char* const default_type[] = {"Default"};
-
-    // Test Efficient & Default options
-    session.SetEpDynamicOptions(workload_type, efficient_type, 1);
-    ort_output = session.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
-                             output_names_c.data(), 1);
-
-    session.SetEpDynamicOptions(workload_type, default_type, 1);
-    ort_output = session.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
-                             output_names_c.data(), 1);
-
-    // Test invalid EP dynamic option and invalid workload type
-    const char* const dne[] = {"DNE"};
-    try {
-      session.SetEpDynamicOptions(workload_type, dne, 1);
-      FAIL() << "Expected exception to be thrown for workload type DNE but was set successfully";
-    } catch (const std::exception& e) {
-      EXPECT_STREQ("Invalid EP Workload Type.", e.what());
-    }
-
-    try {
-      session.SetEpDynamicOptions(dne, efficient_type, 1);
-      FAIL() << "Expected exception to be thrown for dynamic option DNE but was set successfully";
-    } catch (const std::exception& e) {
-      EXPECT_STREQ("Unsupported EP Dynamic Option", e.what());
-    }
-
-    const char* const htp_perf_mode_type[] = {"ep.dynamic.qnn_htp_performance_mode"};
-    const char* const eps_type[] = {"extreme_power_saver"};
-    const char* const shp_type[] = {"sustained_high_performance"};
-    session.SetEpDynamicOptions(htp_perf_mode_type, shp_type, 1);
-    ort_output = session.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
-                             output_names_c.data(), 1);
-
-    session.SetEpDynamicOptions(htp_perf_mode_type, eps_type, 1);
-    ort_output = session.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
-                             output_names_c.data(), 1);
-
-    session.SetEpDynamicOptions(htp_perf_mode_type, shp_type, 1);
-    ort_output = session.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
-                             output_names_c.data(), 1);
+  // Run sessions
+  // prepare input
+  std::vector<int64_t> input_dim{3, 4};
+  std::vector<float> input_value(3 * 4, 0.0f);
+  Ort::MemoryInfo info("Cpu", OrtDeviceAllocator, 0, OrtMemTypeDefault);
+  std::vector<Ort::Value> ort_inputs;
+  std::vector<const char*> input_names_c;
+  for (size_t i = 0; i < input_names.size(); ++i) {
+    auto input_tensor = Ort::Value::CreateTensor(info, input_value.data(), input_value.size(),
+                                                 input_dim.data(), input_dim.size());
+    ort_inputs.push_back(std::move(input_tensor));
+    input_names_c.push_back(input_names[i].c_str());
   }
+  std::vector<const char*> output_names_c;
+  for (size_t i = 0; i < output_names.size(); ++i) {
+    output_names_c.push_back(output_names[i].c_str());
+  }
+
+  auto ort_output = scoped.session().Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
+                                         output_names_c.data(), 1);
+
+  const char* const workload_type[] = {"ep.dynamic.workload_type"};
+  const char* const efficient_type[] = {"Efficient"};
+  const char* const default_type[] = {"Default"};
+
+  // Test Efficient & Default options
+  scoped.session().SetEpDynamicOptions(workload_type, efficient_type, 1);
+  ort_output = scoped.session().Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
+                                    output_names_c.data(), 1);
+
+  scoped.session().SetEpDynamicOptions(workload_type, default_type, 1);
+  ort_output = scoped.session().Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
+                                    output_names_c.data(), 1);
+
+  // Test invalid EP dynamic option and invalid workload type
+  const char* const dne[] = {"DNE"};
+  try {
+    scoped.session().SetEpDynamicOptions(workload_type, dne, 1);
+    FAIL() << "Expected exception to be thrown for workload type DNE but was set successfully";
+  } catch (const std::exception& e) {
+    EXPECT_STREQ("Invalid EP Workload Type.", e.what());
+  }
+
+  try {
+    scoped.session().SetEpDynamicOptions(dne, efficient_type, 1);
+    FAIL() << "Expected exception to be thrown for dynamic option DNE but was set successfully";
+  } catch (const std::exception& e) {
+    EXPECT_STREQ("Unsupported EP Dynamic Option", e.what());
+  }
+
+  const char* const htp_perf_mode_type[] = {"ep.dynamic.qnn_htp_performance_mode"};
+  const char* const eps_type[] = {"extreme_power_saver"};
+  const char* const shp_type[] = {"sustained_high_performance"};
+  scoped.session().SetEpDynamicOptions(htp_perf_mode_type, shp_type, 1);
+  ort_output = scoped.session().Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
+                                    output_names_c.data(), 1);
+
+  scoped.session().SetEpDynamicOptions(htp_perf_mode_type, eps_type, 1);
+  ort_output = scoped.session().Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
+                                    output_names_c.data(), 1);
+
+  scoped.session().SetEpDynamicOptions(htp_perf_mode_type, shp_type, 1);
+  ort_output = scoped.session().Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
+                                    output_names_c.data(), 1);
 }
 
 // Implementation of OrtOutStreamWriteFunc that writes the compiled model to a file.
@@ -2798,7 +2772,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_InputFile_WriteOutputModelBytes) {
 #endif
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   const ORTCHAR_T* output_model_file = ORT_TSTR("compileapi_inputfile_writeoutputmodelbytes_ctx.onnx");
   std::filesystem::remove(output_model_file);
@@ -2846,7 +2820,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_OutputStream_ReturnStatus) {
 #endif
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   // Create model compilation options from the session options.
   Ort::ModelCompilationOptions compile_options(*ort_env, so);
@@ -2881,9 +2855,9 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_InRange) {
     so.AddConfigEntry(kOrtSessionOptionsFailOnSuboptimalCompiledModel, "1");
 
     RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
 
-    Ort::Session session(*ort_env, input_model_file, so);
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
     ASSERT_TRUE(std::filesystem::exists(output_model_file.c_str()));
   }
 
@@ -2912,13 +2886,11 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_InRange) {
   ProviderOptions qnn_options = {{"backend_type", "htp"}};
   Ort::SessionOptions so;
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
 
-  {
-    Ort::Session session_ctx(*ort_env, output_model_file.native().c_str(), so);
-    auto outputs = session_ctx.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
-                                   output_names_c.data(), 1);
-  }
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, output_model_file.native().c_str(), so));
+  auto outputs = scoped.session().Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
+                                      output_names_c.data(), 1);
 
   std::filesystem::remove(output_model_file);
 }
@@ -2944,9 +2916,9 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_OutOfRange
     so.AddConfigEntry(kOrtSessionOptionsFailOnSuboptimalCompiledModel, "1");
 
     RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
 
-    Ort::Session session(*ort_env, input_model_file, so);
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
     ASSERT_TRUE(std::filesystem::exists(output_model_file.c_str()));
   }
 
@@ -2975,13 +2947,11 @@ TEST_F(QnnHTPBackendTests, QnnContextBinary_SetNumGraphPrepareThreads_OutOfRange
   ProviderOptions qnn_options = {{"backend_type", "htp"}};
   Ort::SessionOptions so;
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
 
-  {
-    Ort::Session session_ctx(*ort_env, output_model_file.native().c_str(), so);
-    auto outputs = session_ctx.Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
-                                   output_names_c.data(), 1);
-  }
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, output_model_file.native().c_str(), so));
+  auto outputs = scoped.session().Run(Ort::RunOptions{}, input_names_c.data(), ort_inputs.data(), ort_inputs.size(),
+                                      output_names_c.data(), 1);
   std::filesystem::remove(output_model_file);
 }
 #endif  // _WIN32 && (defined(__aarch64__) || defined(_M_ARM64))
@@ -3072,7 +3042,7 @@ TEST_F(QnnHTPBackendTests, CompileApi_InputFile_OutputFile_InitializerHandler) {
 #endif
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   // Open a file to store external initializers. ORT will call our handler function for every initializer.
   ASSERT_FALSE(std::filesystem::exists(initializer_file));
@@ -3223,12 +3193,10 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_CtxFileWritten) {
   SetPrepareOnlyOptions(so, ctx_path);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
-  {
-    Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
-    EXPECT_TRUE(std::filesystem::exists(ctx_path));
-  }
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
+  EXPECT_TRUE(std::filesystem::exists(ctx_path));
 
   CleanUpCtxFile(ctx_path);
 }
@@ -3264,7 +3232,7 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_DisabledWhenContextCacheNotSet) {
   SetPrepareOnlyOptions(so, ctx_path, /*explicit_context_enable=*/false);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
   // since ep.context_enable was not set. Session falls back to normal (non-prepare_only) mode.
   ORT_TRY {
@@ -3308,9 +3276,10 @@ TEST_F(QnnHTPBackendTests, PrepareOnly_RunReturnsError) {
   SetPrepareOnlyOptions(so, ctx_path);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, provider_options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, provider_options);
 
-  Ort::Session session(*ort_env, model_data_span.data(), model_data_span.size(), so);
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, model_data_span.data(), model_data_span.size(), so));
+  auto& session = scoped.session();
   ASSERT_TRUE(std::filesystem::exists(ctx_path));
 
   // Get actual input/output names from the session — BuildGraphWithQAndNonQ uses
@@ -3404,19 +3373,17 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_SelfValidate_CbTradRtTrad) {
     so.AddConfigEntry(kOrtSessionOptionsFailOnSuboptimalCompiledModel, "1");
 
     RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
 
-    Ort::Session session(*ort_env, input_model_file, so);
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
     ASSERT_TRUE(std::filesystem::exists(output_model_file));
   }
 
-  {
-    Ort::SessionOptions so;
-    RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
+  Ort::SessionOptions so;
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
 
-    Ort::Session session(*ort_env, output_model_file.wstring().c_str(), so);
-  }
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, output_model_file.wstring().c_str(), so));
 
   std::filesystem::remove(output_model_file);
 }
@@ -3439,9 +3406,9 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_SelfValidate_CbTradRtHnrd
     so.AddConfigEntry(kOrtSessionOptionsFailOnSuboptimalCompiledModel, "1");
 
     RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
 
-    Ort::Session session(*ort_env, input_model_file, so);
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
     ASSERT_TRUE(std::filesystem::exists(output_model_file));
   }
 
@@ -3452,9 +3419,9 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_SelfValidate_CbTradRtHnrd
     {
       Ort::SessionOptions so;
       RegisteredEpDeviceUniquePtr registered_ep_device;
-      RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
+      RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
 
-      Ort::Session session(*ort_env, output_model_file.wstring().c_str(), so);
+      ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, output_model_file.wstring().c_str(), so));
     }
     // Compare to ModelCompatibility_SelfValidate_CbHnrdRtTrad, this testcase could get here if driver is as new as
     // compiled SDK.
@@ -3490,9 +3457,9 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_SelfValidate_CbHnrdRtTrad
     so.AddConfigEntry(kOrtSessionOptionsFailOnSuboptimalCompiledModel, "1");
 
     RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
 
-    Ort::Session session(*ort_env, input_model_file, so);
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
     ASSERT_TRUE(std::filesystem::exists(output_model_file));
   }
 
@@ -3502,9 +3469,9 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_SelfValidate_CbHnrdRtTrad
     {
       Ort::SessionOptions so;
       RegisteredEpDeviceUniquePtr registered_ep_device;
-      RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
+      RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
 
-      Ort::Session session(*ort_env, output_model_file.wstring().c_str(), so);
+      ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, output_model_file.wstring().c_str(), so));
     }
     FAIL() << "Expect compiled model not supported by execution provider.";  // Should not get here.
   }
@@ -3539,19 +3506,17 @@ TEST_F(QnnHTPBackendTests, DISABLED_ModelCompatibility_SelfValidate_CbHnrdRtHnrd
     so.AddConfigEntry(kOrtSessionOptionsFailOnSuboptimalCompiledModel, "1");
 
     RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
 
-    Ort::Session session(*ort_env, input_model_file, so);
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
     ASSERT_TRUE(std::filesystem::exists(output_model_file));
   }
 
-  {
-    Ort::SessionOptions so;
-    RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
+  Ort::SessionOptions so;
+  RegisteredEpDeviceUniquePtr registered_ep_device;
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
 
-    Ort::Session session(*ort_env, output_model_file.wstring().c_str(), so);
-  }
+  ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, output_model_file.wstring().c_str(), so));
 
   std::filesystem::remove(output_model_file);
 }
@@ -3629,25 +3594,26 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_GetCompatibility) {
     so.AddConfigEntry(kOrtSessionOptionEpContextFilePath, std::filesystem::path(output_model_file).string().c_str());
 
     RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
 
-    Ort::Session session(*ort_env, input_model_file, so);
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, input_model_file, so));
     ASSERT_TRUE(std::filesystem::exists(output_model_file));
   }
 
   {
     Ort::SessionOptions so;
     RegisteredEpDeviceUniquePtr registered_ep_device;
-    RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, qnn_options);
+    RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, qnn_options);
 
-    Ort::Session session(*ort_env, output_model_file, so);
+    ScopedOrtSession scoped(std::move(registered_ep_device), Ort::Session(*ort_env, output_model_file, so));
+    auto& session = scoped.session();
 
     // Extract generated compatibility info from model metadata.
     OrtModelMetadata* model_metadata = nullptr;
     ASSERT_EQ(nullptr, Ort::GetApi().SessionGetModelMetadata(session, &model_metadata));
 
     MallocAllocator allocator;
-    std::string key = std::string(kOrtModelMetadata_EpCompatibilityInfoPrefix) + onnxruntime::kQnnExecutionProvider;
+    std::string key = std::string(kOrtModelMetadata_EpCompatibilityInfoPrefix) + kQnnExecutionProvider;
     char* val = nullptr;
     ASSERT_EQ(nullptr,
               Ort::GetApi().ModelMetadataLookupCustomMetadataMap(model_metadata, &allocator, key.c_str(), &val));
@@ -3670,7 +3636,7 @@ static void TestModelCompatibilityApiValidate(const CompatibilityTestInfo& test_
   Ort::SessionOptions so;
   RegisterQnnEpLibrary(registered_ep_device,
                        so,
-                       onnxruntime::kQnnExecutionProvider,
+                       kQnnExecutionProvider,
                        {{"backend_type", "htp"}, {"num_graph_prepare_threads", "1"}});
 
   OrtEpFactory* ep_factory = registered_ep_device->GetMutableFactory();
@@ -3695,7 +3661,7 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate) {
 TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_NoEp) {
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, {{"backend_type", "htp"}});
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, {{"backend_type", "htp"}});
 
   const OrtEpDevice* ep_device = registered_ep_device.get();
   OrtCompiledModelCompatibility out_status;

@@ -443,6 +443,11 @@ def add_other_feature_args(parser: argparse.ArgumentParser) -> None:
         default="",
         help="Version suffix for Python Wheel, NuGet and Zip archive.",
     )
+    parser.add_argument(
+        "--nightly_build",
+        action="store_true",
+        help="Mark this as a nightly build, appending a date-based suffix to the wheel version.",
+    )
 
 
 def is_cross_compiling(args: argparse.Namespace) -> bool:
