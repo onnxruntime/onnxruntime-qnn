@@ -75,7 +75,7 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                          const OrtNodeUnit& node_unit,
                                                          std::vector<std::string>&& input_names,
                                                          const Ort::Logger& logger,
-                                                         bool do_op_validation) const {
+                                                         bool /*do_op_validation*/) const {
   OrtNodeAttrHelper node_helper(node_unit);
   const auto& inputs = node_unit.Inputs();
 
@@ -109,7 +109,7 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                   "Failed to add reshape prior tensor.");
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_RESHAPE),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_RESHAPE,
-                                                  {input_names[0]}, {reshaped_input_name}, {}, do_op_validation),
+                                                  {input_names[0]}, {reshaped_input_name}, {}, false),
                   "Failed to create reshape prior node for LpPool.");
     input_names[0] = reshaped_input_name;
   }
@@ -264,7 +264,7 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                                                 {input_names[0]},
                                                 {pool_out_name},
                                                 std::move(param_tensor_names),
-                                                do_op_validation),
+                                                false),
                 "Failed to create L2Pool2d node.");
 
   // Build per-position static scale tensor [1, out_H, out_W, 1] for the normalization correction.
@@ -298,8 +298,6 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
 
   if (!requires_rank3_reshape) {
     // Rank-4 path: ProcessOutputs creates the final output tensor and the multiply node.
-    // do_op_validation covers L2Pool2d above; skip it for the correction multiply so that
-    // HTP's node validator doesn't reject the intermediate NATIVE pool_out tensor as an input.
     return ProcessOutputs(qnn_model_wrapper, node_unit,
                           {pool_out_name, scale_name}, {},
                           logger, false, QNN_OP_ELEMENT_WISE_MULTIPLY);
