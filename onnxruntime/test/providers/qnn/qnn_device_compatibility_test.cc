@@ -110,6 +110,7 @@ TEST_F(QnnDeviceCompatibilityTests, NPUDeviceWithQualcommVendorIsCompatible) {
 
   ASSERT_NE(registered_ep_device, nullptr);
 
+  // Create a mock NPU device with Qualcomm vendor ID
   ASSERT_ORTSTATUS_OK(CreateMockHardwareDevice(OrtHardwareDeviceType_NPU, qualcomm_vendor_id));
 
   // Check compatibility using the ORT C API
@@ -141,6 +142,7 @@ TEST_F(QnnDeviceCompatibilityTests, GPUDeviceWithQualcommVendorIsCompatible) {
 
   ASSERT_NE(registered_ep_device, nullptr);
 
+  // Create a mock GPU device with Qualcomm vendor ID
   ASSERT_ORTSTATUS_OK(CreateMockHardwareDevice(OrtHardwareDeviceType_GPU, qualcomm_vendor_id));
 
   // Check compatibility using the ORT C API
@@ -379,6 +381,7 @@ TEST_F(QnnDeviceCompatibilityTests, GPUDeviceIncompatibilityDetailsWithDriverInc
 
   ASSERT_NE(registered_ep_device, nullptr);
 
+  // Create a mock GPU device with Qualcomm vendor ID
   ASSERT_ORTSTATUS_OK(CreateMockHardwareDevice(OrtHardwareDeviceType_GPU, qualcomm_vendor_id));
 
   OrtDeviceEpIncompatibilityDetails* details = nullptr;
@@ -429,6 +432,7 @@ TEST_F(QnnDeviceCompatibilityTests, NPUDeviceIncompatibilityDetailsWithDeviceInc
 
   ASSERT_NE(registered_ep_device, nullptr);
 
+  // Create a mock NPU device with Qualcomm vendor ID
   ASSERT_ORTSTATUS_OK(CreateMockHardwareDevice(OrtHardwareDeviceType_NPU, qualcomm_vendor_id));
 
   OrtDeviceEpIncompatibilityDetails* details = nullptr;

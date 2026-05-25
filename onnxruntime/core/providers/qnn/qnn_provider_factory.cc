@@ -358,20 +358,14 @@ OrtStatus* ORT_API_CALL QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl
   std::string backend_type;
   for (size_t i = 0; i < num_devices; ++i) {
     auto device_type = factory->ort_api.HardwareDevice_Type(devices[i]);
-    auto it = kSupportedBackendTypes.find(device_type);
-    if (it != kSupportedBackendTypes.end()) {
-      if (device_type == OrtHardwareDeviceType_NPU) {
-        backend_type = it->second;
-        break;
-      } else if (backend_type.empty() && device_type != OrtHardwareDeviceType_CPU) {
-        backend_type = it->second;
-      }
+    if (device_type == OrtHardwareDeviceType_NPU) {
+      backend_type = "htp";
+      break;
     }
   }
-
-  if (backend_type.empty()) {
-    backend_type = "htp";  // Default to HTP if no suitable device found.
-  }
+  RETURN_IF(backend_type.empty(),
+    "Currently QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl only supports OrtHardwareDeviceType_NPU, but "
+    "no OrtHardwareDeviceType_NPU is found in the `devices` argument.");
 
   using SessionOptionsUniquePtr = std::unique_ptr<OrtSessionOptions, std::function<void(OrtSessionOptions*)>>;
   OrtSessionOptions* temp_session_options = nullptr;
