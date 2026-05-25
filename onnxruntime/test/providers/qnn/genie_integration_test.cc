@@ -159,10 +159,8 @@ TEST_F(GenieSessionTest, MockGenie_CallTrackingFunctions_Resolvable) {
   reset();
 
   EXPECT_EQ(get_count("DlcConfig_create"), 0);
-  {
-    ScopedOrtSession scoped = MakeGenieSession(*env_);
-    EXPECT_EQ(get_count("DlcConfig_create"), 1);
-  }
+  ScopedOrtSession scoped = MakeGenieSession(*env_);
+  EXPECT_EQ(get_count("DlcConfig_create"), 1);
   reset();
   EXPECT_EQ(get_count("DlcConfig_create"), 0);
 }
@@ -227,10 +225,11 @@ TEST_F(GenieSessionTest, Compute_InvokesExpectedApiSequence) {
 }
 
 // ---------------------------------------------------------------------------
-// Test: two sequential sessions backed by independent EP registrations both
-// succeed end-to-end. Each ScopedOrtSession owns its own
-// RegisteredEpDeviceUniquePtr, so the first session's destructor unregisters
-// the EP library before the second session re-registers it.
+// Test: two concurrent sessions backed by the same EP registration both
+// succeed end-to-end. The second session reuses scoped1's already-registered
+// OrtEpDevice directly (via AppendExecutionProvider_V2) rather than calling
+// RegisterQnnEpLibrary again, which would fail because the ORT environment
+// rejects duplicate registrations for the same name.
 // ---------------------------------------------------------------------------
 TEST_F(GenieSessionTest, TwoSequentialSessions_BothSucceed) {
   void* h = LoadMockLib();
@@ -239,17 +238,35 @@ TEST_F(GenieSessionTest, TwoSequentialSessions_BothSucceed) {
   ASSERT_NE(reset, nullptr);
   ASSERT_NE(get_count, nullptr);
 
-  // First session — registers the EP library, creates the backend, then unregisters on scope exit.
-  {
-    ScopedOrtSession scoped1 = MakeGenieSession(*env_);
-    reset();
-  }  // scoped1 destroyed: session first, then EP unregistered.
+  // First session — registers the EP library and creates the backend.
+  ScopedOrtSession scoped1 = MakeGenieSession(*env_);
+  reset();
 
-  // Second session — registers freshly; verifies a clean re-registration cycle.
+  // Second session — reuse scoped1's registration; do NOT call RegisterQnnEpLibrary.
+  const std::unordered_map<std::string, int> domain_to_version = {{"", 13}, {kMSDomain, 1}};
+  ModelTestBuilder helper;
+  CreateDlcContextGraph()(helper);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{
+        helper.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  helper.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  std::string model_data;
+  helper.model_.SerializeToString(&model_data);
+  const auto model_data_span = AsByteSpan(model_data.data(), model_data.size());
+
+  Ort::SessionOptions so2;
+  ProviderOptions provider_options;
+  provider_options["backend_path"] = kMockGeniePath;
+  so2.AppendExecutionProvider_V2(*GetOrtEnv(), {Ort::ConstEpDevice(scoped1.ep_device())}, provider_options);
   {
-    ScopedOrtSession scoped2 = MakeGenieSession(*env_);
+    Ort::Session session2(*env_, model_data_span.data(), model_data_span.size(), so2);
+    // session2's CreateStateImpl ran exactly once.
     EXPECT_EQ(get_count("DlcConfig_create"), 1);
-  }  // scoped2 destroyed: session first, then EP unregistered.
+  }  // session2 destroyed before scoped1
+  // scoped1 destroyed here: session1 first, then EP unregistered
 }
 
 }  // namespace test
