@@ -301,7 +301,7 @@ else
       package_args+=(--version_suffix "${ORT_VERSION_SUFFIX}")
     fi
     if [[ "${ORT_NIGHTLY_BUILD:-}" == "1" ]]; then
-      package_args+=(--wheel_name_suffix "qcom_internal")
+      package_args+=(--wheel_name_suffix "qcom_internal" --nightly_build)
     fi
 
     if [ -n "${enable_coverage}" ]; then
