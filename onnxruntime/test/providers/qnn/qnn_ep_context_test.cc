@@ -1074,11 +1074,10 @@ void EpCtxCpuNodeWithExternalIniFileTestBody(bool expect_external_ini_file, bool
   if (load_model_from_buffer) {
     std::vector<char> buffer;
     {
-      std::ifstream file(model_with_ext, std::ios::binary | std::ios::ate);
+      buffer.resize(std::filesystem::file_size(model_with_ext));
+      std::ifstream file(model_with_ext, std::ios::binary);
       if (!file)
         throw std::runtime_error("Error reading model");
-      buffer.resize(static_cast<size_t>(file.tellg()));
-      file.seekg(0, std::ios::beg);
       if (!file.read(buffer.data(), buffer.size()))
         throw std::runtime_error("Error reading model");
     }
@@ -1660,11 +1659,10 @@ TEST_F(QnnHTPBackendTests, QnnContextBinaryCacheNonEmbedModeTest) {
   // load the model from file
   std::vector<char> buffer;
   {
-    std::ifstream file(context_binary_file, std::ios::binary | std::ios::ate);
+    buffer.resize(std::filesystem::file_size(context_binary_file));
+    std::ifstream file(context_binary_file, std::ios::binary);
     if (!file)
       throw std::runtime_error("Error reading model");
-    buffer.resize(static_cast<size_t>(file.tellg()));
-    file.seekg(0, std::ios::beg);
     if (!file.read(buffer.data(), buffer.size()))
       throw std::runtime_error("Error reading model");
   }
