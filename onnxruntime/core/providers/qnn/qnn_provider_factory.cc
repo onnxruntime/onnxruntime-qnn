@@ -384,7 +384,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl
 
   if (!OrtLoggingManager::HasDefaultLogger()) {
     *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
-    return factory->ort_api.CreateStatus(ORT_FAIL, "Default logger is not available for model compatibility check.");
+    return factory->ort_api.CreateStatus(ORT_EP_FAIL, "Default logger is not available for model compatibility check.");
   }
   const OrtLogger* logger = OrtLoggingManager::GetDefaultLoggerPtr();
 
@@ -393,10 +393,10 @@ OrtStatus* ORT_API_CALL QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl
     temp_qnn_ep = std::make_unique<QnnEp>(*factory, factory->ep_name_, *session_options.get(), logger);
   } catch (const std::exception& e) {
     *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
-    return factory->ort_api.CreateStatus(ORT_FAIL, e.what());
+    return factory->ort_api.CreateStatus(ORT_EP_FAIL, e.what());
   } catch (...) {
     *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
-    return factory->ort_api.CreateStatus(ORT_FAIL, "Unknown exception occurred while creating temporary QNN EP for compatibility check.");
+    return factory->ort_api.CreateStatus(ORT_EP_FAIL, "Unknown exception occurred while creating temporary QNN EP for compatibility check.");
   }
 
   return temp_qnn_ep->ValidateCompiledModelCompatibilityInfo(devices,
