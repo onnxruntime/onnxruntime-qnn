@@ -5,6 +5,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "core/providers/qnn/builder/op_builder_factory.h"
@@ -16,6 +17,12 @@
 namespace onnxruntime {
 namespace qnn {
 
+// LpPool is implemented as a primitive decomposition rather than a single QNN op.
+//   p = 2:  x -> Multiply(x, x) -> AvgPool -> SquareRoot -> Multiply(scale=sqrt(K))
+//   p = 1:  x -> Abs(x)         -> AvgPool ->            Multiply(scale=K)
+// where K = product(kernel_shape) and AvgPool uses count_pad_for_edges = true so the
+// denominator is always K regardless of how many padded elements fall in the window.
+// Rank-3 inputs are bracketed by Reshape (NCL <-> NC1L) and use the 2D pool path.
 class LpPoolOpBuilder : public BaseOpBuilder {
  public:
   LpPoolOpBuilder() : BaseOpBuilder("LpPoolOpBuilder") {}
@@ -41,27 +48,26 @@ Ort::Status LpPoolOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   const auto& inputs = node_unit.Inputs();
   RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, inputs[0].type, ""));
 
+  RETURN_IF(node_unit.Outputs().size() != 1, "QNN LpPool only supports 1 output.");
+
   std::vector<uint32_t> input_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, input_shape), "Cannot get shape");
 
   const size_t rank = input_shape.size();
-  RETURN_IF_NOT(rank == 3 || rank == 4, "QNN LpPool only supports rank 3 or 4!");
-
-  RETURN_IF(node_unit.Outputs().size() > 1, "QNN LpPool only supports 1 output!");
+  RETURN_IF_NOT(rank >= 3 && rank <= 5, "QNN LpPool only supports input rank 3, 4, or 5.");
 
   OrtNodeAttrHelper node_helper(node_unit);
 
   const auto p = node_helper.Get("p", static_cast<int64_t>(2));
-  RETURN_IF(p != 2, "QNN LpPool only supports p=2 (L2 norm)!");
-
-  const auto ceil_mode = node_helper.Get("ceil_mode", static_cast<int64_t>(0));
-  RETURN_IF(ceil_mode != 0, "QNN LpPool does not support ceil_mode=1!");
+  RETURN_IF(p != 1 && p != 2, "QNN LpPool only supports p=1 or p=2.");
 
   const auto dilations = node_helper.Get("dilations", std::vector<uint32_t>(rank - 2, 1));
-  RETURN_IF_NOT(dilations == std::vector<uint32_t>(rank - 2, 1), "QNN LpPool does not support dilations > 1!");
+  RETURN_IF_NOT(dilations == std::vector<uint32_t>(rank - 2, 1),
+                "QNN LpPool does not support dilations > 1.");
 
   const auto auto_pad = node_helper.Get("auto_pad", std::string("NOTSET"));
-  RETURN_IF(auto_pad != "NOTSET" && auto_pad != "SAME_UPPER" && auto_pad != "SAME_LOWER" && auto_pad != "VALID",
+  RETURN_IF(auto_pad != "NOTSET" && auto_pad != "SAME_UPPER" &&
+                auto_pad != "SAME_LOWER" && auto_pad != "VALID",
             ("QNN LpPool does not support 'auto_pad' value: " + auto_pad).c_str());
 
   if (node_unit.Domain() == kMSInternalNHWCDomain) {
@@ -71,33 +77,58 @@ Ort::Status LpPoolOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   return Ort::Status();
 }
 
+namespace {
+
+// Encodes a single floating-point scale value into a tensor blob of the requested QNN dtype.
+Ort::Status EncodeScalarScaleData(Qnn_DataType_t dtype, float value, std::vector<uint8_t>& out) {
+  if (dtype == QNN_DATATYPE_FLOAT_16) {
+    out.resize(sizeof(uint16_t));
+    Ort::Float16_t v(value);
+    std::memcpy(out.data(), &v.val, sizeof(uint16_t));
+  } else if (dtype == QNN_DATATYPE_BFLOAT_16) {
+    out.resize(sizeof(uint16_t));
+    Ort::BFloat16_t v(value);
+    std::memcpy(out.data(), &v.val, sizeof(uint16_t));
+  } else if (dtype == QNN_DATATYPE_FLOAT_32) {
+    out.resize(sizeof(float));
+    std::memcpy(out.data(), &value, sizeof(float));
+  } else {
+    return Ort::Status("QNN LpPool: unsupported input dtype for scale tensor.", ORT_INVALID_ARGUMENT);
+  }
+  return Ort::Status();
+}
+
+}  // namespace
+
 Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                          const OrtNodeUnit& node_unit,
                                                          std::vector<std::string>&& input_names,
                                                          const Ort::Logger& logger,
-                                                         bool /*do_op_validation*/) const {
+                                                         bool do_op_validation) const {
   OrtNodeAttrHelper node_helper(node_unit);
   const auto& inputs = node_unit.Inputs();
 
   std::vector<uint32_t> onnx_input_shape;
-  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, onnx_input_shape), "Cannot get shape");
-
-  TensorInfo input_info = {};
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input_info));
-
-  const bool requires_rank3_reshape = (onnx_input_shape.size() == 3);
-  std::vector<uint32_t> qnn_input_shape = onnx_input_shape;
+  RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(inputs[0].shape, onnx_input_shape), "Cannot get input shape");
 
   std::vector<uint32_t> onnx_output_shape;
   RETURN_IF_NOT(qnn_model_wrapper.GetOnnxShape(node_unit.Outputs()[0].shape, onnx_output_shape),
-                "Cannot get shape");
-  std::vector<uint32_t> qnn_output_shape = onnx_output_shape;
-  std::vector<uint32_t> intermediate_output_shape_4d;
+                "Cannot get output shape");
 
+  TensorInfo input_info{};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[0], input_info));
+  TensorInfo output_info{};
+  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
+
+  const int64_t p_value = node_helper.Get("p", static_cast<int64_t>(2));
+  const bool requires_rank3_reshape = (onnx_input_shape.size() == 3);
+
+  // Working shapes: rank-3 inputs are reshaped to rank-4 (N, C, 1, L); other ranks are unchanged.
+  std::vector<uint32_t> qnn_input_shape = onnx_input_shape;
+  std::vector<uint32_t> qnn_output_shape = onnx_output_shape;
   if (requires_rank3_reshape) {
-    qnn_input_shape = {onnx_input_shape[0], 1, onnx_input_shape[1], onnx_input_shape[2]};
-    qnn_output_shape = {onnx_output_shape[0], 1, onnx_output_shape[1], onnx_output_shape[2]};
-    intermediate_output_shape_4d = qnn_output_shape;
+    qnn_input_shape = {onnx_input_shape[0], onnx_input_shape[1], 1, onnx_input_shape[2]};
+    qnn_output_shape = {onnx_output_shape[0], onnx_output_shape[1], 1, onnx_output_shape[2]};
 
     const std::string reshaped_input_name = utils::UniqueNameGenerator().New(input_names[0], "_reshape");
     QnnTensorWrapper reshaped_input_tensor(reshaped_input_name,
@@ -109,239 +140,282 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
                   "Failed to add reshape prior tensor.");
     RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_RESHAPE),
                                                   QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_RESHAPE,
-                                                  {input_names[0]}, {reshaped_input_name}, {}, false),
+                                                  {input_names[0]}, {reshaped_input_name}, {}, do_op_validation),
                   "Failed to create reshape prior node for LpPool.");
     input_names[0] = reshaped_input_name;
   }
 
-  const size_t rank = qnn_input_shape.size();
+  const size_t rank = qnn_input_shape.size();        // 4 or 5
+  const size_t spatial_rank = rank - 2;               // 2 or 3
+  const bool is_3d_pool = (spatial_rank == 3);
 
-  // kernel_shape is required by ONNX LpPool spec.
+  // ------------------------------------------------------------------------------------------------
+  // 1. Read attributes (expanding 1D values to 2D form for the rank-3 path).
+  // ------------------------------------------------------------------------------------------------
   std::vector<uint32_t> filter_size;
   {
-    auto raw = node_helper.Get("kernel_shape", std::vector<uint32_t>(rank - 2, 1));
+    auto raw = node_helper.Get("kernel_shape", std::vector<uint32_t>(spatial_rank, 1));
     filter_size = (raw.size() == 1) ? std::vector<uint32_t>{1, raw[0]} : raw;
   }
+  RETURN_IF_NOT(filter_size.size() == spatial_rank,
+                "QNN LpPool: kernel_shape rank mismatch with input spatial rank.");
 
   std::vector<uint32_t> stride;
   {
-    auto raw = node_helper.Get("strides", std::vector<uint32_t>(rank - 2, 1));
+    auto raw = node_helper.Get("strides", std::vector<uint32_t>(spatial_rank, 1));
     stride = (raw.size() == 1) ? std::vector<uint32_t>{1, raw[0]} : raw;
   }
 
-  // Dilations are validated as all-1 in IsOpSupported; needed only for auto_pad pad calculation.
   std::vector<uint32_t> dilations;
   {
-    auto raw = node_helper.Get("dilations", std::vector<uint32_t>(rank - 2, 1));
+    auto raw = node_helper.Get("dilations", std::vector<uint32_t>(spatial_rank, 1));
     dilations = (raw.size() == 1) ? std::vector<uint32_t>{1, raw[0]} : raw;
   }
 
-  // pads in ONNX format: [h_begin, w_begin, h_end, w_end]
   std::vector<uint32_t> pad_amount;
   {
-    auto raw = node_helper.Get("pads", std::vector<uint32_t>((rank - 2) * 2, 0));
+    auto raw = node_helper.Get("pads", std::vector<uint32_t>(spatial_rank * 2, 0));
     pad_amount = (raw.size() == 2) ? std::vector<uint32_t>{0, raw[0], 0, raw[1]} : raw;
   }
+  RETURN_IF_NOT(pad_amount.size() == spatial_rank * 2,
+                "QNN LpPool: pads rank mismatch with input spatial rank.");
 
-  // Derive explicit pads from auto_pad when set.
   const auto auto_pad = node_helper.Get("auto_pad", std::string("NOTSET"));
   if (auto_pad != "NOTSET") {
-    for (size_t axis = 0; axis < rank - 2; ++axis) {
-      // VALID leaves pad_amount as zero; only SAME_UPPER / SAME_LOWER require computation.
-      if (auto_pad == "SAME_LOWER" || auto_pad == "SAME_UPPER") {
-        uint32_t total_pads = (qnn_output_shape[axis + 1] - 1) * stride[axis] +
-                              (filter_size[axis] - 1) * dilations[axis] + 1 - qnn_input_shape[axis + 1];
+    for (size_t axis = 0; axis < spatial_rank; ++axis) {
+      if (auto_pad == "SAME_UPPER" || auto_pad == "SAME_LOWER") {
+        const uint32_t total_pads = (qnn_output_shape[axis + 1] - 1) * stride[axis] +
+                                    (filter_size[axis] - 1) * dilations[axis] + 1 -
+                                    qnn_input_shape[axis + 1];
         if (auto_pad == "SAME_LOWER") {
-          pad_amount[axis + rank - 2] = total_pads / 2;
-          pad_amount[axis] = total_pads - pad_amount[axis + rank - 2];
+          pad_amount[axis + spatial_rank] = total_pads / 2;
+          pad_amount[axis] = total_pads - pad_amount[axis + spatial_rank];
         } else {
           pad_amount[axis] = total_pads / 2;
-          pad_amount[axis + rank - 2] = total_pads - pad_amount[axis];
+          pad_amount[axis + spatial_rank] = total_pads - pad_amount[axis];
         }
       }
     }
   }
 
-  // Convert from ONNX format [h_begin, w_begin, h_end, w_end]
-  // to QNN format [h_begin, h_end, w_begin, w_end].
-  ReArrangePads(pad_amount);
-
-  // Save spatial values needed for per-position scale tensor before filter_size/stride/pad_amount
-  // are moved into QnnParamWrappers. After ReArrangePads: pad_amount = [h_begin, h_end, w_begin, w_end].
-  const int64_t in_h = static_cast<int64_t>(qnn_input_shape[1]);
-  const int64_t in_w = static_cast<int64_t>(qnn_input_shape[2]);
-  const int64_t kh = static_cast<int64_t>(filter_size[0]);
-  const int64_t kw = static_cast<int64_t>(filter_size[1]);
-  const int64_t sh = static_cast<int64_t>(stride[0]);
-  const int64_t sw = static_cast<int64_t>(stride[1]);
-  const int64_t pad_h_top = pad_amount.size() >= 1 ? static_cast<int64_t>(pad_amount[0]) : 0;
-  const int64_t pad_h_bottom = pad_amount.size() >= 2 ? static_cast<int64_t>(pad_amount[1]) : 0;
-  const int64_t pad_w_left = pad_amount.size() >= 3 ? static_cast<int64_t>(pad_amount[2]) : 0;
-  const int64_t pad_w_right = pad_amount.size() >= 4 ? static_cast<int64_t>(pad_amount[3]) : 0;
-  const bool no_padding = (pad_h_top == 0 && pad_h_bottom == 0 && pad_w_left == 0 && pad_w_right == 0);
-
-  TensorInfo output_info{};
-  RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(node_unit.Outputs()[0], output_info));
-
-  // pool_out_shape is always rank-4 at this point (rank-3 inputs were reshaped above).
-  const std::vector<uint32_t> pool_out_shape =
-      requires_rank3_reshape ? intermediate_output_shape_4d
-                             : std::vector<uint32_t>(output_info.shape);
-
-  // QNN L2Pool2d normalizes by count_real[h,w] (actual non-padding elements per window position).
-  // ONNX LpPool (p=2) does not normalize. Build a per-position scale tensor [1, out_H, out_W, 1]
-  // where scale[oh,ow] = sqrt(count_real[oh,ow]) to correct every output position independently.
-  const uint32_t out_h = pool_out_shape[1];
-  const uint32_t out_w = pool_out_shape[2];
-  std::vector<float> scale_vals(static_cast<size_t>(out_h) * out_w);
-  if (no_padding) {
-    // Common case: every window is fully covered, so count_real = kH × kW everywhere.
-    std::fill(scale_vals.begin(), scale_vals.end(), std::sqrt(static_cast<float>(kh * kw)));
-  } else {
-    // H and W axes are independent: precompute 1D counts, then combine.
-    std::vector<int64_t> h_counts(out_h), w_counts(out_w);
-    for (uint32_t oh = 0; oh < out_h; ++oh) {
-      const int64_t h_start = static_cast<int64_t>(oh) * sh - pad_h_top;
-      h_counts[oh] = std::min(h_start + kh, in_h) - std::max(h_start, int64_t{0});
-    }
-    for (uint32_t ow = 0; ow < out_w; ++ow) {
-      const int64_t w_start = static_cast<int64_t>(ow) * sw - pad_w_left;
-      w_counts[ow] = std::min(w_start + kw, in_w) - std::max(w_start, int64_t{0});
-    }
-    for (uint32_t oh = 0; oh < out_h; ++oh) {
-      for (uint32_t ow = 0; ow < out_w; ++ow) {
-        scale_vals[oh * out_w + ow] = std::sqrt(static_cast<float>(h_counts[oh] * w_counts[ow]));
-      }
-    }
+  // ------------------------------------------------------------------------------------------------
+  // 2. Validate kernel does not exceed padded input on any spatial axis.
+  // ------------------------------------------------------------------------------------------------
+  for (size_t axis = 0; axis < spatial_rank; ++axis) {
+    const uint32_t in_dim = qnn_input_shape[axis + 1];
+    const uint32_t pad_total = pad_amount[axis] + pad_amount[axis + spatial_rank];
+    RETURN_IF(filter_size[axis] > in_dim + pad_total,
+              "QNN LpPool: kernel exceeds padded input on a spatial axis.");
   }
 
-  std::vector<std::string> param_tensor_names;
+  // Convert ONNX pad layout [begins..., ends...] to QNN pair layout [begin0, end0, begin1, end1, ...].
+  ReArrangePads(pad_amount);
 
+  // ------------------------------------------------------------------------------------------------
+  // 3. Compute scale constant K (product of kernel dims). For p=2 we apply sqrt(K) at the end;
+  //    for p=1 we apply K.
+  // ------------------------------------------------------------------------------------------------
+  uint64_t k_product = 1;
+  for (uint32_t k : filter_size) k_product *= k;
+  const float scale_value = (p_value == 2) ? std::sqrt(static_cast<float>(k_product))
+                                           : static_cast<float>(k_product);
+
+  // ------------------------------------------------------------------------------------------------
+  // 4. Op A: Multiply(x, x) for p=2, or Abs(x) for p=1.
+  // ------------------------------------------------------------------------------------------------
+  const std::string preprocess_out_name =
+      utils::UniqueNameGenerator().New(node_unit.Name(), p_value == 2 ? "_squared" : "_abs");
   {
-    QnnParamWrapper filter_size_param(node_unit.Index(), node_unit.Name(),
-                                      QNN_OP_L2_POOL_2D_PARAM_FILTER_SIZE,
+    QnnTensorWrapper preprocess_tensor(preprocess_out_name,
+                                       QNN_TENSOR_TYPE_NATIVE,
+                                       input_info.qnn_data_type,
+                                       input_info.quant_param.Copy(),
+                                       std::vector<uint32_t>(qnn_input_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(preprocess_tensor)),
+                  "Failed to add preprocess tensor.");
+  }
+
+  if (p_value == 2) {
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                      utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_MULTIPLY),
+                      QNN_OP_PACKAGE_NAME_QTI_AISW,
+                      QNN_OP_ELEMENT_WISE_MULTIPLY,
+                      {input_names[0], input_names[0]},
+                      {preprocess_out_name},
+                      {},
+                      do_op_validation),
+                  "Failed to create square (Multiply) node.");
+  } else {
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                      utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_ABS),
+                      QNN_OP_PACKAGE_NAME_QTI_AISW,
+                      QNN_OP_ELEMENT_WISE_ABS,
+                      {input_names[0]},
+                      {preprocess_out_name},
+                      {},
+                      do_op_validation),
+                  "Failed to create Abs node.");
+  }
+
+  // ------------------------------------------------------------------------------------------------
+  // 5. Op B: PoolAvg2d / PoolAvg3d with count_pad_for_edges = true.
+  // ------------------------------------------------------------------------------------------------
+  const char* pool_op = is_3d_pool ? QNN_OP_POOL_AVG_3D : QNN_OP_POOL_AVG_2D;
+  const char* p_filter = is_3d_pool ? QNN_OP_POOL_AVG_3D_PARAM_FILTER_SIZE : QNN_OP_POOL_AVG_2D_PARAM_FILTER_SIZE;
+  const char* p_stride = is_3d_pool ? QNN_OP_POOL_AVG_3D_PARAM_STRIDE : QNN_OP_POOL_AVG_2D_PARAM_STRIDE;
+  const char* p_pad = is_3d_pool ? QNN_OP_POOL_AVG_3D_PARAM_PAD_AMOUNT : QNN_OP_POOL_AVG_2D_PARAM_PAD_AMOUNT;
+  const char* p_round = is_3d_pool ? QNN_OP_POOL_AVG_3D_PARAM_ROUNDING_MODE : QNN_OP_POOL_AVG_2D_PARAM_ROUNDING_MODE;
+  const char* p_count = is_3d_pool ? QNN_OP_POOL_AVG_3D_PARAM_COUNT_PAD_FOR_EDGES
+                                   : QNN_OP_POOL_AVG_2D_PARAM_COUNT_PAD_FOR_EDGES;
+
+  std::vector<std::string> pool_param_names;
+  {
+    QnnParamWrapper filter_size_param(node_unit.Index(), node_unit.Name(), p_filter,
                                       {static_cast<uint32_t>(filter_size.size())},
-                                      std::move(filter_size));
-    param_tensor_names.push_back(filter_size_param.GetParamTensorName());
+                                      std::vector<uint32_t>(filter_size));
+    pool_param_names.push_back(filter_size_param.GetParamTensorName());
     RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(filter_size_param)),
                   "Failed to add param filter_size.");
   }
-
   {
-    QnnParamWrapper stride_param(node_unit.Index(), node_unit.Name(),
-                                 QNN_OP_L2_POOL_2D_PARAM_STRIDE,
+    QnnParamWrapper stride_param(node_unit.Index(), node_unit.Name(), p_stride,
                                  {static_cast<uint32_t>(stride.size())},
-                                 std::move(stride));
-    param_tensor_names.push_back(stride_param.GetParamTensorName());
+                                 std::vector<uint32_t>(stride));
+    pool_param_names.push_back(stride_param.GetParamTensorName());
     RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(stride_param)),
                   "Failed to add param stride.");
   }
-
   {
-    QnnParamWrapper pad_amount_param(node_unit.Index(), node_unit.Name(),
-                                     QNN_OP_L2_POOL_2D_PARAM_PAD_AMOUNT,
+    QnnParamWrapper pad_amount_param(node_unit.Index(), node_unit.Name(), p_pad,
                                      {static_cast<uint32_t>(pad_amount.size() / 2), 2},
-                                     std::move(pad_amount));
-    param_tensor_names.push_back(pad_amount_param.GetParamTensorName());
+                                     std::vector<uint32_t>(pad_amount));
+    pool_param_names.push_back(pad_amount_param.GetParamTensorName());
     RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(pad_amount_param)),
                   "Failed to add param pad_amount.");
   }
-
-  // L2Pool2d always writes to an intermediate tensor; the scale correction node follows.
-  const std::string pool_out_name =
-      utils::UniqueNameGenerator().New(node_unit.Outputs()[0].name, "_l2pool");
+  const int64_t ceil_mode = node_helper.Get("ceil_mode", static_cast<int64_t>(0));
+  if (ceil_mode != 0) {
+    Qnn_Scalar_t scalar = QNN_SCALAR_INIT;
+    scalar.dataType = QNN_DATATYPE_UINT_32;
+    scalar.int32Value = static_cast<int32_t>(ceil_mode);
+    QnnParamWrapper rounding_mode_param(node_unit.Index(), node_unit.Name(), p_round, scalar);
+    pool_param_names.push_back(rounding_mode_param.GetParamTensorName());
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(rounding_mode_param)),
+                  "Failed to add param rounding_mode.");
+  }
   {
-    QnnTensorWrapper pool_out_tensor(pool_out_name, QNN_TENSOR_TYPE_NATIVE,
+    Qnn_Scalar_t scalar = QNN_SCALAR_INIT;
+    scalar.dataType = QNN_DATATYPE_BOOL_8;
+    scalar.bool8Value = static_cast<uint8_t>(1);
+    QnnParamWrapper count_pad_param(node_unit.Index(), node_unit.Name(), p_count, scalar);
+    pool_param_names.push_back(count_pad_param.GetParamTensorName());
+    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(count_pad_param)),
+                  "Failed to add param count_pad_for_edges.");
+  }
+
+  const std::string pool_out_name = utils::UniqueNameGenerator().New(node_unit.Name(), "_pool");
+  {
+    QnnTensorWrapper pool_out_tensor(pool_out_name,
+                                     QNN_TENSOR_TYPE_NATIVE,
                                      input_info.qnn_data_type,
                                      output_info.quant_param.Copy(),
-                                     std::vector<uint32_t>(pool_out_shape));
+                                     std::vector<uint32_t>(qnn_output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(pool_out_tensor)),
-                  "Failed to add L2Pool2d intermediate output tensor.");
+                  "Failed to add pool output tensor.");
   }
-  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_L2_POOL_2D),
-                                                QNN_OP_PACKAGE_NAME_QTI_AISW,
-                                                QNN_OP_L2_POOL_2D,
-                                                {input_names[0]},
-                                                {pool_out_name},
-                                                std::move(param_tensor_names),
-                                                false),
-                "Failed to create L2Pool2d node.");
+  RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, pool_op),
+                                                QNN_OP_PACKAGE_NAME_QTI_AISW, pool_op,
+                                                {preprocess_out_name}, {pool_out_name},
+                                                std::move(pool_param_names), do_op_validation),
+                "Failed to create AvgPool node for LpPool.");
 
-  // Build per-position static scale tensor [1, out_H, out_W, 1] for the normalization correction.
-  const std::string scale_name =
-      utils::UniqueNameGenerator().New(node_unit.Name(), "_l2pool_scale");
+  // ------------------------------------------------------------------------------------------------
+  // 6. (p=2 only) Op C: ElementWiseSquareRoot.
+  // ------------------------------------------------------------------------------------------------
+  std::string sqrt_or_pool_out_name = pool_out_name;
+  if (p_value == 2) {
+    const std::string sqrt_out_name = utils::UniqueNameGenerator().New(node_unit.Name(), "_sqrt");
+    QnnTensorWrapper sqrt_out_tensor(sqrt_out_name,
+                                     QNN_TENSOR_TYPE_NATIVE,
+                                     input_info.qnn_data_type,
+                                     output_info.quant_param.Copy(),
+                                     std::vector<uint32_t>(qnn_output_shape));
+    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(sqrt_out_tensor)),
+                  "Failed to add sqrt output tensor.");
+    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
+                      utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_SQUARE_ROOT),
+                      QNN_OP_PACKAGE_NAME_QTI_AISW,
+                      QNN_OP_ELEMENT_WISE_SQUARE_ROOT,
+                      {pool_out_name}, {sqrt_out_name}, {}, do_op_validation),
+                  "Failed to create SquareRoot node.");
+    sqrt_or_pool_out_name = sqrt_out_name;
+  }
+
+  // ------------------------------------------------------------------------------------------------
+  // 7. Build static scalar tensor and emit final Multiply.
+  // ------------------------------------------------------------------------------------------------
+  const std::string scale_name = utils::UniqueNameGenerator().New(node_unit.Name(), "_scale");
   {
     std::vector<uint8_t> scale_data;
-    const Qnn_DataType_t dtype = input_info.qnn_data_type;
-    const size_t n_elements = scale_vals.size();
-    if (dtype == QNN_DATATYPE_FLOAT_16) {
-      scale_data.resize(n_elements * sizeof(uint16_t));
-      for (size_t i = 0; i < n_elements; ++i) {
-        Ort::Float16_t v(scale_vals[i]);
-        memcpy(scale_data.data() + i * sizeof(uint16_t), &v.val, sizeof(uint16_t));
-      }
-    } else if (dtype == QNN_DATATYPE_BFLOAT_16) {
-      scale_data.resize(n_elements * sizeof(uint16_t));
-      for (size_t i = 0; i < n_elements; ++i) {
-        Ort::BFloat16_t v(scale_vals[i]);
-        memcpy(scale_data.data() + i * sizeof(uint16_t), &v.val, sizeof(uint16_t));
-      }
-    } else {
-      scale_data.resize(n_elements * sizeof(float));
-      memcpy(scale_data.data(), scale_vals.data(), scale_data.size());
-    }
-    QnnTensorWrapper scale_tensor(scale_name, QNN_TENSOR_TYPE_STATIC, dtype,
-                                  QnnQuantParamsWrapper(), {1, out_h, out_w, 1}, std::move(scale_data));
+    RETURN_IF_ERROR(EncodeScalarScaleData(input_info.qnn_data_type, scale_value, scale_data));
+    // Use an explicit broadcast-compatible rank to avoid any rank-mismatch checks on HTP.
+    std::vector<uint32_t> scalar_shape(rank, 1);
+    QnnTensorWrapper scale_tensor(scale_name,
+                                  QNN_TENSOR_TYPE_STATIC,
+                                  input_info.qnn_data_type,
+                                  QnnQuantParamsWrapper(),
+                                  std::move(scalar_shape),
+                                  std::move(scale_data));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(scale_tensor)),
                   "Failed to add scale tensor.");
   }
 
   if (!requires_rank3_reshape) {
-    // Rank-4 path: ProcessOutputs creates the final output tensor and the multiply node.
+    // Final Multiply produces the ONNX output tensor directly (handled by ProcessOutputs).
     return ProcessOutputs(qnn_model_wrapper, node_unit,
-                          {pool_out_name, scale_name}, {},
-                          logger, false, QNN_OP_ELEMENT_WISE_MULTIPLY);
+                          {sqrt_or_pool_out_name, scale_name}, {},
+                          logger, do_op_validation, QNN_OP_ELEMENT_WISE_MULTIPLY);
   }
 
-  // Rank-3 path: scale correction (still rank-4), then Reshape back to rank-3.
-  const std::string& final_output_name = node_unit.Outputs()[0].name;
-  const std::string scaled_out_name =
-      utils::UniqueNameGenerator().New(pool_out_name, "_scaled");
+  // Rank-3 path: scaled output is intermediate, then Reshape back to rank-3 produces the ONNX output.
+  const std::string scaled_out_name = utils::UniqueNameGenerator().New(node_unit.Name(), "_scaled");
   {
-    QnnTensorWrapper scaled_out_tensor(scaled_out_name, QNN_TENSOR_TYPE_NATIVE,
+    QnnTensorWrapper scaled_out_tensor(scaled_out_name,
+                                       QNN_TENSOR_TYPE_NATIVE,
                                        input_info.qnn_data_type,
                                        output_info.quant_param.Copy(),
-                                       std::vector<uint32_t>(pool_out_shape));
+                                       std::vector<uint32_t>(qnn_output_shape));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(scaled_out_tensor)),
-                  "Failed to add scaled intermediate tensor for LpPool rank-3 path.");
+                  "Failed to add scaled intermediate tensor.");
   }
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
                     utils::UniqueNameGenerator().New(node_unit, QNN_OP_ELEMENT_WISE_MULTIPLY),
                     QNN_OP_PACKAGE_NAME_QTI_AISW,
                     QNN_OP_ELEMENT_WISE_MULTIPLY,
-                    {pool_out_name, scale_name},
+                    {sqrt_or_pool_out_name, scale_name},
                     {scaled_out_name},
                     {},
-                    false),
-                "Failed to create scale correction node for LpPool rank-3 path.");
+                    do_op_validation),
+                "Failed to create final scale (Multiply) node.");
 
-  const bool final_output_is_graph_output = qnn_model_wrapper.IsGraphOutput(final_output_name);
+  const std::string& final_output_name = node_unit.Outputs()[0].name;
+  const bool final_is_graph_output = qnn_model_wrapper.IsGraphOutput(final_output_name);
   const Qnn_TensorType_t final_output_tensor_type =
-      final_output_is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
+      final_is_graph_output ? QNN_TENSOR_TYPE_APP_READ : QNN_TENSOR_TYPE_NATIVE;
   QnnTensorWrapper final_output_tensor(final_output_name,
                                        final_output_tensor_type,
                                        output_info.qnn_data_type,
                                        output_info.quant_param.Copy(),
                                        std::vector<uint32_t>(output_info.shape));
   RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(final_output_tensor)),
-                "Failed to add final output tensor for LpPool rank-3 path.");
+                "Failed to add final output tensor.");
   RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(utils::UniqueNameGenerator().New(node_unit, QNN_OP_RESHAPE),
                                                 QNN_OP_PACKAGE_NAME_QTI_AISW,
                                                 QNN_OP_RESHAPE,
                                                 {scaled_out_name},
                                                 {final_output_name},
                                                 {},
-                                                false),
+                                                do_op_validation),
                 "Failed to create reshape-after node for LpPool rank-3 path.");
 
   return Ort::Status();
