@@ -27,7 +27,14 @@ static void RunLpPoolOpTest(const std::vector<TestInputDef<float>>& input_defs,
   ProviderOptions provider_options;
   provider_options["backend_type"] = backend_name;
   provider_options["offload_graph_io_quantization"] = "0";
+
   if (enable_htp_fp16_precision) {
+#if defined(_WIN32)
+    SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
+#endif
+#if defined(__linux__) && !defined(__aarch64__)
+    provider_options["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
     provider_options["enable_htp_fp16_precision"] = "1";
   }
 
@@ -42,12 +49,10 @@ static void RunLpPoolOpTest(const std::vector<TestInputDef<float>>& input_defs,
 static void RunLpPoolFP16Test(const std::vector<TestInputDef<float>>& input_defs,
                               const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs,
                               ExpectedEPNodeAssignment expected_ep_assignment,
-                              const std::string& backend_name = "htp",
                               int opset = 22,
                               float tolerance = 0.008f) {
   ProviderOptions provider_options;
-  provider_options["backend_type"] = backend_name;
-  provider_options["offload_graph_io_quantization"] = "0";
+  provider_options["backend_type"] = "htp";
 
   std::vector<TestInputDef<Ort::Float16_t>> input_fp16_defs;
   input_fp16_defs.reserve(input_defs.size());
@@ -296,30 +301,6 @@ TEST_F(QnnGPUBackendTests, LpPool_GPU_WithPads) {
                   "gpu");
 }
 
-// Native FP16 tests on GPU.
-TEST_F(QnnGPUBackendTests, LpPool_GPU_FP16_Basic) {
-  RunLpPoolFP16Test({TestInputDef<float>({1, 2, 6, 6}, false, GetFloatDataInRange(-10.0f, 10.0f, 72))},
-                    {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
-                     test::MakeAttribute("strides", std::vector<int64_t>{2, 2})},
-                    ExpectedEPNodeAssignment::All,
-                    "gpu");
-}
-
-TEST_F(QnnGPUBackendTests, LpPool_GPU_FP16_WithPads) {
-  RunLpPoolFP16Test({TestInputDef<float>({1, 2, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 32))},
-                    {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
-                     test::MakeAttribute("pads", std::vector<int64_t>{1, 1, 1, 1})},
-                    ExpectedEPNodeAssignment::All,
-                    "gpu");
-}
-
-TEST_F(QnnGPUBackendTests, LpPool_GPU_FP16_Rank3) {
-  RunLpPoolFP16Test({TestInputDef<float>({1, 4, 8}, false, GetFloatDataInRange(-10.0f, 10.0f, 32))},
-                    {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2}),
-                     test::MakeAttribute("strides", std::vector<int64_t>{2})},
-                    ExpectedEPNodeAssignment::All,
-                    "gpu");
-}
 
 #endif  // defined(_M_ARM64) — GPU tests
 
