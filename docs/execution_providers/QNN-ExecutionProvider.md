@@ -38,7 +38,7 @@ download the Qualcomm AI Runtime SDK (QAIRT SDK) from [https://qpm.qualcomm.com/
 ONNX Runtime QNN EP has been built and tested with the following SDK version combinations on Windows:
 | QNN EP Version | QAIRT SDK Version | ONNX Runtime Version |
 |----------------|-------------------|----------------------|
-| v2.2.0         | v2.46.0           | v1.24.4              |
+| v2.3.0         | v2.47.0           | v1.24.4              |
 
 > **Note**: ONNX Runtime QNN EP is built and tested by using the arm64 ONNX Runtime SDK (ex: onnxruntime-win-arm64-1.24.4.zip).
 
@@ -47,7 +47,8 @@ For build instructions, please see the [BUILD page](./build.md).
 
 ## Pre-built Packages
 - [NuGet package](https://www.nuget.org/packages/Qualcomm.ML.OnnxRuntime.QNN)
-  - **Note**: The NuGet package only supports Windows ARM64 platform
+  - **Note**: The NuGet package only supports Windows ARM64 platform (versions <= 2.2.0)
+  - **Note**: From version 2.3.0+, the NuGet package supports only Windows ARM64 (ARM64X)
 - [Python package](https://pypi.org/project/onnxruntime-qnn/)
   - Requirements:
     - Windows ARM64 (for inferencing on local device with Qualcomm NPU)
@@ -56,8 +57,8 @@ For build instructions, please see the [BUILD page](./build.md).
     - Python 3.11.x
     - Numpy 1.25.2 or >= 1.26.4
   - Install: `pip install onnxruntime-qnn`
-- Linux ARM64 archive (`.tgz`)
-  - **Note**: Ships the QNN EP shared library and headers for use outside of Python on Linux ARM64.
+- Linux ARM64 and x86_64 archives (`.tgz`)
+  - **Note**: Ships the QNN EP shared library and headers for use outside of Python on Linux ARM64 and Linux x86_64.
 - Maven package (Android)
   - **Note**: The Maven package supports Android ARM64
   - Group ID / Artifact ID: `com.qualcomm.qti:onnxruntime-android-qnn`
@@ -248,6 +249,9 @@ Run options can be set dynamically at runtime using the ORT Run API. These optio
 ```python
 import onnxruntime as ort
 import onnxruntime_qnn as qnn_ep
+
+# ORT QNN EP Version
+print(qnn_ep.__version__)
 
 # Register QNN EP library
 ep_lib_path = qnn_ep.get_library_path()
