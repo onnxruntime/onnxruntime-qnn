@@ -145,8 +145,8 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     input_names[0] = reshaped_input_name;
   }
 
-  const size_t rank = qnn_input_shape.size();        // 4 or 5
-  const size_t spatial_rank = rank - 2;               // 2 or 3
+  const size_t rank = qnn_input_shape.size();  // 4 or 5
+  const size_t spatial_rank = rank - 2;        // 2 or 3
   const bool is_3d_pool = (spatial_rank == 3);
 
   // ------------------------------------------------------------------------------------------------
