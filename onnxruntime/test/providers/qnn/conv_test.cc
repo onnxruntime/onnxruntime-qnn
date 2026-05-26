@@ -3005,53 +3005,38 @@ ProviderOptions GetBQConvProviderOptions() {
 }  // namespace
 
 // 1x1 Conv, INT4 weight, block_size=8, uint16 activation, no bias.
-// Validates that the BW_FLOAT_BLOCK kernel is reached (BQ path in conv_op_builder).
-// in0: u16, weight: int4 (scale=[4,2], block_size=8), out: u16
+// in0: u16, weight: int4 (scale=[4,2,1,1], block_size=8), out: u16
+// Checks: all nodes assigned to QNN EP; output matches CPU EP within 1e-2.
 TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_NoBias) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
-  const std::filesystem::path json_dir = "ConvBQ_NoBias_dump";
-  std::filesystem::create_directories(json_dir);  // keep on failure for inspection
-
-  ProviderOptions opts = GetBQConvProviderOptions();
-  opts["dump_json_qnn_graph"] = "1";
-  opts["json_qnn_graph_dir"] = json_dir.string();
-
   RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
                                       /*weight=*/{4, 16, 1, 1},
                                       /*block_size=*/8,
                                       /*bias=*/false),
-                  opts,
+                  GetBQConvProviderOptions(),
                   /*opset=*/21,
-                  ExpectedEPNodeAssignment::Some,
-                  /*fp32_abs_err=*/1e-2f,
-                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                  /*verify_outputs=*/false);
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
 }
 
-// 1x1 Conv with bias. Exercises the bias pass-through in the BQ bias path.
-// in0: u16, weight: int4 (scale=[4,2], block_size=8), bias: f32, out: u16
+// 1x1 Conv with bias. Exercises the INT32→FP16 bias dequantization path.
+// in0: u16, weight: int4 (scale=[4,2,1,1], block_size=8), bias: int32 DQ, out: u16
+// Checks: all nodes assigned to QNN EP; output matches CPU EP within 1e-2.
 TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_WithBias) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
-  const std::filesystem::path json_dir = "ConvBQ_WithBias_dump";
-  std::filesystem::create_directories(json_dir);
-  ProviderOptions opts = GetBQConvProviderOptions();
-  opts["dump_json_qnn_graph"] = "1";
-  opts["json_qnn_graph_dir"] = json_dir.string();
   RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
                                       /*weight=*/{4, 16, 1, 1},
                                       /*block_size=*/8,
                                       /*bias=*/true),
-                  opts,
+                  GetBQConvProviderOptions(),
                   /*opset=*/21,
-                  ExpectedEPNodeAssignment::Some,
-                  1e-2f,
-                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                  /*verify_outputs=*/false);
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
 }
 
 // 1x1 Conv with larger IC and more blocks per channel.
-// weight: int4 (IC=32, block_size=8, 4 blocks per OC), scale=[8,4]
-// in0: u16, out: u16
+// weight: int4 (IC=32, block_size=8, 4 blocks/OC), scale=[8,4,1,1]
+// Checks: all nodes assigned to QNN EP; output matches CPU EP within 1e-2.
 TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_MultiBlock) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
   RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
@@ -3059,10 +3044,8 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_MultiBlock) {
                                       /*block_size=*/8),
                   GetBQConvProviderOptions(),
                   /*opset=*/21,
-                  ExpectedEPNodeAssignment::Some,
-                  1e-2f,
-                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
-                  /*verify_outputs=*/false);
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
 }
 
 // Regression: existing per-channel INT4 Conv (no block_size) continues to work.

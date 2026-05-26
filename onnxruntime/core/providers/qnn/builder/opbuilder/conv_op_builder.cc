@@ -74,30 +74,7 @@ class ConvOpBuilder : public BaseOpBuilder {
 Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                          const OrtNodeUnit& node_unit,
                                          const Ort::Logger& logger) const {
-  if (node_unit.Domain() == kMSInternalNHWCDomain) {
-    // For NHWC domain: detect BQ Conv and return success immediately.
-    // The weight remains NCHW [OC,IC,H,W] even in NHWC domain (QNN EP transposes it).
-    // Calling AddToModelBuilder(true) here would pollute the shared qnn_model_wrapper and
-    // cause the normal bias-requantization path to fail with block-quant params.
-    if (IsNpuBackend(qnn_model_wrapper.GetQnnBackendType())) {
-      const auto& inputs = node_unit.Inputs();
-      if (inputs.size() >= 2 && inputs[1].quant_param.has_value() &&
-          inputs[1].quant_param->scale != nullptr) {
-        const auto wscale = utils::GetInitializerShape(inputs[1].quant_param->scale,
-                                                       qnn_model_wrapper.GetOrtApi());
-        std::vector<uint32_t> wshape;
-        if (wscale.size() > 1 && qnn_model_wrapper.GetOnnxShape(inputs[1].shape, wshape) &&
-            wshape.size() >= 2) {
-          const bool rank2 = (wscale.size() == 2);
-          // Weight is NCHW [OC,IC,H,W]: IC at index 1.
-          const bool rankN = (wscale.size() == wshape.size() &&
-                              wscale[1] < static_cast<int64_t>(wshape[1]));
-          if (rank2 || rankN) {
-            return Ort::Status();  // BQ Conv in NHWC: skip full validation
-          }
-        }
-      }
-    }
+  if (node_unit.Domain() == kMSInternalNHWCDomain) {  // Use QNN validation API if layout is NHWC.
     return AddToModelBuilder(qnn_model_wrapper, node_unit, logger, true);
   }
 
@@ -148,8 +125,8 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
                                                                  qnn_model_wrapper.GetOrtApi());
       std::vector<uint32_t> weight_shape;
       if (!qnn_model_wrapper.GetOnnxShape(inputs[1].shape, weight_shape) ||
-          weight_shape.size() < 4) {
-        // Cannot get weight shape or wrong rank — skip BQ detection.
+          weight_shape.size() != 4) {
+        // BQ only supported for Conv2D (rank-4 weight); skip for Conv1D (rank-3) and Conv3D (rank-5).
       } else {
         const bool is_rank2_scale = (weight_scale_shape.size() == 2);
         const bool is_rankN_scale = (weight_scale_shape.size() == weight_shape.size() &&
@@ -252,7 +229,8 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
                                                 qnn_model_wrapper.GetOrtApi());
     std::vector<uint32_t> bq_weight_shape;
     if (qnn_model_wrapper.GetOnnxShape(inputs[1].shape, bq_weight_shape) &&
-        bq_scale_shape.size() > 1) {
+        bq_scale_shape.size() > 1 &&
+        bq_weight_shape.size() == 4) {  // BQ only for Conv2D (rank-4 weight); not Conv3D (rank-5)
       // Weight is NCHW [OC,IC,H,W]: IC is always at index 1.
       const bool rank2 = (bq_scale_shape.size() == 2);
       const bool rankN = (bq_scale_shape.size() == bq_weight_shape.size() &&
@@ -364,11 +342,10 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
         ONNXTensorElementDataType zp_onnx_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
         RETURN_IF_ERROR(qnn_model_wrapper.UnpackZeroPoints(inputs[1].quant_param->zero_point,
                                                            zp_values, zp_onnx_type));
-        for (int64_t oc = 0; oc < OC; ++oc) {
-          for (int64_t b = 0; b < nb; ++b) {
-            const size_t idx = static_cast<size_t>(oc * nb + b);
-            offsets_qnn[idx] = (idx < zp_values.size()) ? static_cast<float>(-zp_values[idx]) : 0.0f;
-          }
+        RETURN_IF_NOT(static_cast<int64_t>(zp_values.size()) == OC * nb,
+                      "QNN EP: BQ Conv zero_point size must match OC * num_blocks");
+        for (size_t idx = 0; idx < static_cast<size_t>(OC * nb); ++idx) {
+          offsets_qnn[idx] = static_cast<float>(-zp_values[idx]);
         }
       }
 
@@ -534,8 +511,8 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
   //
   const bool has_bias_input = num_inputs == 3;
   if (has_bias_input) {
-    // For BQ Conv: QNN BW_FLOAT_BLOCK Conv2d requires FP32 bias (even though activation is FP16).
-    // The bias in the QDQ NodeUnit is an INT32 quantized initializer — dequantize it to FP32.
+    // For BQ Conv: QNN BW_FLOAT_BLOCK Conv2d requires FP16 bias matching the computation precision.
+    // The bias in the QDQ NodeUnit is an INT32 quantized initializer — dequantize it to FP16.
     if (is_bq_weight) {
       TensorInfo bias_info = {};
       RETURN_IF_ERROR(qnn_model_wrapper.GetTensorInfo(inputs[2], bias_info));
