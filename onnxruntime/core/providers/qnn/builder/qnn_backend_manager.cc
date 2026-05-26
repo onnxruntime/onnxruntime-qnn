@@ -2723,113 +2723,99 @@ bool QnnBackendManager::IsDx12SharedMemoryAllocatorSupported() {
     return dx12_shared_memory_allocator_supported_.value();
   }
 
-  bool supported = true;
-
-  Microsoft::WRL::ComPtr<ID3D12Device> d3d12_device;
-  Microsoft::WRL::ComPtr<ID3D12Resource> d3d12_resource;
-  Qnn_ContextHandle_t context = nullptr;
-  Qnn_MemDescriptor_t mem_descriptor = QNN_MEM_DESCRIPTOR_INIT;
-  Qnn_MemHandle_t raw_mem_handle = nullptr;
-
   // note: This function may be called before SetupBackend
   if (!LoadBackend().IsOK()) {
-    supported = false;
+    return false;
   }
 
-  if (supported && !InitializeBackend().IsOK()) {
-    supported = false;
+  if (!InitializeBackend().IsOK()) {
+    return false;
   }
 
-  if (supported && !CreateDevice().IsOK()) {
-    supported = false;
+  if (!CreateDevice().IsOK()) {
+    return false;
   }
 
+  Microsoft::WRL::ComPtr<ID3D12Device> d3d12_device;
   HRESULT hr = D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_12_0, IID_PPV_ARGS(&d3d12_device));
   if (FAILED(hr) || d3d12_device == nullptr) {
-    supported = false;
+    return false;
   }
 
-  if (supported) {
-    D3D12_RESOURCE_DESC buffer_desc = {};
-    buffer_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-    buffer_desc.Width = sizeof(float);
-    buffer_desc.Height = 1;
-    buffer_desc.DepthOrArraySize = 1;
-    buffer_desc.MipLevels = 1;
-    buffer_desc.Format = DXGI_FORMAT_UNKNOWN;
-    buffer_desc.SampleDesc.Count = 1;
-    buffer_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
-    buffer_desc.Flags = D3D12_RESOURCE_FLAG_NONE;
+  D3D12_RESOURCE_DESC buffer_desc = {};
+  buffer_desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+  buffer_desc.Width = sizeof(float);
+  buffer_desc.Height = 1;
+  buffer_desc.DepthOrArraySize = 1;
+  buffer_desc.MipLevels = 1;
+  buffer_desc.Format = DXGI_FORMAT_UNKNOWN;
+  buffer_desc.SampleDesc.Count = 1;
+  buffer_desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+  buffer_desc.Flags = D3D12_RESOURCE_FLAG_NONE;
 
-    D3D12_HEAP_PROPERTIES heap_props = {};
-    heap_props.Type = D3D12_HEAP_TYPE_UPLOAD;
-    heap_props.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
-    heap_props.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
-    heap_props.CreationNodeMask = 1;
-    heap_props.VisibleNodeMask = 1;
+  D3D12_HEAP_PROPERTIES heap_props = {};
+  heap_props.Type = D3D12_HEAP_TYPE_UPLOAD;
+  heap_props.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+  heap_props.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+  heap_props.CreationNodeMask = 1;
+  heap_props.VisibleNodeMask = 1;
 
-    hr = d3d12_device->CreateCommittedResource(
-        &heap_props,
-        D3D12_HEAP_FLAG_NONE,
-        &buffer_desc,
-        D3D12_RESOURCE_STATE_COMMON,
-        nullptr,
-        IID_PPV_ARGS(&d3d12_resource));
-    if (FAILED(hr) || d3d12_resource == nullptr) {
-      supported = false;
-    }
+  Microsoft::WRL::ComPtr<ID3D12Resource> d3d12_resource;
+  hr = d3d12_device->CreateCommittedResource(
+      &heap_props,
+      D3D12_HEAP_FLAG_NONE,
+      &buffer_desc,
+      D3D12_RESOURCE_STATE_COMMON,
+      nullptr,
+      IID_PPV_ARGS(&d3d12_resource));
+  if (FAILED(hr) || d3d12_resource == nullptr) {
+    return false;
   }
 
-  if (supported) {
-    auto dims = std::array{1u};
+  auto dims = std::array{1u};
 
-    mem_descriptor.memShape.dimSize = dims.data();
-    mem_descriptor.memShape.numDim = static_cast<uint32_t>(dims.size());
-    mem_descriptor.memShape.shapeConfig = nullptr;
-    mem_descriptor.dataType = QNN_DATATYPE_FLOAT_32;
+  Qnn_MemDescriptor_t mem_descriptor = QNN_MEM_DESCRIPTOR_INIT;
+  mem_descriptor.memShape.dimSize = dims.data();
+  mem_descriptor.memShape.numDim = static_cast<uint32_t>(dims.size());
+  mem_descriptor.memShape.shapeConfig = nullptr;
+  mem_descriptor.dataType = QNN_DATATYPE_FLOAT_32;
 
-    mem_descriptor.memType = QNN_MEM_TYPE_DX12;
-    mem_descriptor.dx12BufInfo.resourceHandle =
-        static_cast<Qnn_Dx12ResourceHandle_t>(d3d12_resource.Get());
+  mem_descriptor.memType = QNN_MEM_TYPE_DX12;
+  mem_descriptor.dx12BufInfo.resourceHandle =
+      static_cast<Qnn_Dx12ResourceHandle_t>(d3d12_resource.Get());
 
-    Qnn_ErrorHandle_t result = qnn_interface_.contextCreate(backend_handle_,
-                                                            device_handle_,
-                                                            nullptr,
-                                                            &context);
-    if (result != QNN_SUCCESS) {
-      supported = false;
-    }
+  Qnn_ContextHandle_t context = nullptr;
+  Qnn_ErrorHandle_t result = qnn_interface_.contextCreate(backend_handle_,
+                                                          device_handle_,
+                                                          nullptr,
+                                                          &context);
+  if (result != QNN_SUCCESS) {
+    return false;
   }
 
-  if (supported) {
-    const auto register_result = qnn_interface_.memRegister(context, &mem_descriptor, 1, &raw_mem_handle);
+  Qnn_MemHandle_t raw_mem_handle = nullptr;
+  const auto register_result = qnn_interface_.memRegister(context, &mem_descriptor, 1, &raw_mem_handle);
 
-    if (IsGpuBackend(qnn_backend_type_) &&
-        IsDx12SharedMemoryAllocator(qnn_allocator_type_) &&
-        register_result == QNN_MEM_ERROR_MAPPING) {
-      ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
-                  ORT_LOGGING_LEVEL_ERROR,
-                  "QnnMem_register failed with QNN_MEM_ERROR_MAPPING when using the DX12 shared memory allocator with the GPU"
-                  " backend on Windows. This is likely due to outdated graphics drivers on the device. Please try installing"
-                  " new drivers from https://softwarecenter.qualcomm.com/catalog/item/Windows_Graphics_Driver.");
-    }
-
-    if (register_result != QNN_SUCCESS) {
-      supported = false;
-    }
+  if (IsGpuBackend(qnn_backend_type_) &&
+      IsDx12SharedMemoryAllocator(qnn_allocator_type_) &&
+      register_result == QNN_MEM_ERROR_MAPPING) {
+    ORT_CXX_LOG(OrtLoggingManager::GetDefaultLogger(),
+                ORT_LOGGING_LEVEL_ERROR,
+                "QnnMem_register failed with QNN_MEM_ERROR_MAPPING when using the DX12 shared memory allocator with the GPU"
+                " backend on Windows. This is likely due to outdated graphics drivers on the device. Please try installing"
+                " new drivers from https://softwarecenter.qualcomm.com/catalog/item/Windows_Graphics_Driver.");
   }
 
-  // clean up
-  if (raw_mem_handle != nullptr) {
+  if (register_result != QNN_SUCCESS) {
+    return false;
+  } else {
     qnn_interface_.memDeRegister(&raw_mem_handle, 1);
   }
 
-  if (context != nullptr) {
-    qnn_interface_.contextFree(context, nullptr);
-  }
+  qnn_interface_.contextFree(context, nullptr);
 
-  dx12_shared_memory_allocator_supported_ = supported;
-  return supported;
+  dx12_shared_memory_allocator_supported_ = true;
+  return true;
 #endif
 }
 
