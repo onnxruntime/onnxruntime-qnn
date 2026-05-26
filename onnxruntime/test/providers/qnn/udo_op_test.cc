@@ -21,9 +21,9 @@
 #include "gtest/gtest.h"
 namespace onnxruntime {
 namespace test {
-// qnn-op-package-generator requires Python 3.10, while our CI only supports 3.11 and later,
+// qnn-op-package-generator requires Python 3.10, while our CI only supports 3.11 and later on Windows,
 // so we do not add the UDO unit test on Windows.
-#if defined(__linux__) && defined(__x86_64__)
+#if defined(__linux__) && defined(__x86_64__) && defined(BUILD_QNN_UDO_TEST)
 constexpr std::string_view kUdoDomain = "udo_domain";
 /*
 The following is a custom op that registered in udo_domain for demo purpose.
@@ -195,7 +195,7 @@ TEST_F(QnnHTPBackendTests, UDO_Op_MyAdd) {
                  ExpectedEPNodeAssignment::All);
 }
 
-#endif  // defined(__linux__) && defined(__x86_64__)
+#endif  // defined(__linux__) && defined(__x86_64__) && defined(BUILD_QNN_UDO_TEST)
 
 }  // namespace test
 }  // namespace onnxruntime

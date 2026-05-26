@@ -10,8 +10,12 @@
 find_package(Python REQUIRED COMPONENTS Interpreter)
 set(_LLVM_VERSION "21.1.8")
 set(_HEXAGON_SDK_VERSION "6.5.0.0")
-# qnn-op-package-generator requires Python 3.10, while our CI only supports 3.11 and later,
-# so we do not add the UDO unit test on Windows.
+# qnn-op-package-generator requires Python 3.10. Skip the UDO unit test build when the
+# discovered interpreter is any other version (e.g. Windows CI uses 3.11+).
+if(NOT (Python_VERSION_MAJOR EQUAL 3 AND Python_VERSION_MINOR EQUAL 10))
+    message(STATUS "Skipping QNN UDO unit test build: requires Python 3.10, found ${Python_VERSION}")
+    return()
+endif()
 if(UNIX)
     if (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND onnxruntime_target_platform STREQUAL "x86_64")
         find_program(MAKE_EXECUTABLE make)
@@ -100,5 +104,9 @@ if(UNIX)
           DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/libMyAddOpPackage_htp.so
         )
         list(APPEND onnxruntime_test_providers_dependencies QnnUDO_MyAdd_HTP)
+
+        # Signal to the rest of the unit-test CMake (and the test source files)
+        # that the UDO library will actually be built and is available at runtime.
+        set(onnxruntime_BUILD_QNN_UDO_TEST ON)
     endif()
 endif()

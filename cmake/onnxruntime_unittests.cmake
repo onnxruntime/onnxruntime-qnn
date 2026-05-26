@@ -344,6 +344,9 @@ block()
     # uniform across all TUs in a binary. Suppress the define so the genie TUs match
     # the rest of the test binary.
     target_compile_definitions(onnxruntime_provider_test PRIVATE ORT_UNIT_TEST_BUILD)
+    if(onnxruntime_BUILD_QNN_UDO_TEST)
+      target_compile_definitions(onnxruntime_provider_test PRIVATE BUILD_QNN_UDO_TEST)
+    endif()
   endif()
 
   # Dependency on ORT Core public header files
