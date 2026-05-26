@@ -167,11 +167,13 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
           auto bq_it = kHtpConvBQBitsAndBlockSizeMultipliers.find(bitwidth);
           RETURN_IF(bq_it == kHtpConvBQBitsAndBlockSizeMultipliers.end(),
                     ("QNN HTP Conv BQ: unsupported weight bitwidth=" +
-                     std::to_string(bitwidth)).c_str());
+                     std::to_string(bitwidth))
+                        .c_str());
           RETURN_IF(block_size % bq_it->second != 0,
                     ("QNN HTP Conv BQ: block_size=" + std::to_string(block_size) +
                      " must be a multiple of " + std::to_string(bq_it->second) +
-                     " for " + std::to_string(bitwidth) + "-bit weight").c_str());
+                     " for " + std::to_string(bitwidth) + "-bit weight")
+                        .c_str());
 
           // Return success; full QNN validation is done in the NHWC IsOpSupported path.
           return Ort::Status();
@@ -393,7 +395,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
                                      inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4 ||
                                      inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8);
       const Qnn_DataType_t weight_qnn_dtype = is_signed_weight ? QNN_DATATYPE_SFIXED_POINT_8
-                                                                : QNN_DATATYPE_UFIXED_POINT_8;
+                                                               : QNN_DATATYPE_UFIXED_POINT_8;
       QnnTensorWrapper bq_weight_wrapper(input1_name, tensor_type,
                                          weight_qnn_dtype,
                                          std::move(bq_quant_params),
