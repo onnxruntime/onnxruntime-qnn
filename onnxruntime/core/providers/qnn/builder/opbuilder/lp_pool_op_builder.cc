@@ -19,14 +19,17 @@ namespace onnxruntime {
 namespace qnn {
 
 // LpPool is implemented as a primitive decomposition rather than a single QNN op.
-//   p = 2:  x -> Multiply(x, x) -> AvgPool -> SquareRoot -> Multiply(scale=sqrt(K))
-//   p = 1:  x -> Abs(x)         -> AvgPool ->            Multiply(scale=K)
-// where K = product(kernel_shape) and AvgPool uses count_pad_for_edges = true so the
-// denominator is always K regardless of how many padded elements fall in the window.
-// Rank-3 inputs are bracketed by Reshape (NCL <-> NC1L) and use the 2D pool path.
+//   p = 2:  x -> Multiply(x, x) -> AvgPool -> SquareRoot -> Multiply(scale = sqrt(count_real))
+//   p = 1:  x -> Abs(x)         -> AvgPool ->            Multiply(scale = count_real)
 //
-// LpPool is registered as layout-sensitive in QnnEp::ShouldConvertDataLayoutForOpImpl, so the
-// op builder receives NHWC tensors after the layout transformer runs.
+// AvgPool runs with count_pad_for_edges = false (the QNN default), so its denominator is
+// count_real (the number of non-padding elements) per output position. The per-position static
+// scale tensor compensates so the final result equals sqrt(Σx²) / Σ|x| matching ONNX LpPool
+// semantics, including for ceil-mode boundary windows where count_real may be 0.
+//
+// Rank-3 inputs are bracketed by Reshape (NCL <-> NC1L) and use the 2D pool path. LpPool is
+// registered as layout-sensitive in QnnEp::ShouldConvertDataLayoutForOpImpl, so the op builder
+// receives NHWC tensors after the layout transformer runs.
 class LpPoolOpBuilder : public BaseOpBuilder {
  public:
   LpPoolOpBuilder() : BaseOpBuilder("LpPoolOpBuilder") {}
@@ -101,29 +104,6 @@ Ort::Status LpPoolOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 
   return Ort::Status();
 }
-
-namespace {
-
-// Encodes a single floating-point scale value into a tensor blob of the requested QNN dtype.
-Ort::Status EncodeScalarScaleData(Qnn_DataType_t dtype, float value, std::vector<uint8_t>& out) {
-  if (dtype == QNN_DATATYPE_FLOAT_16) {
-    out.resize(sizeof(uint16_t));
-    Ort::Float16_t v(value);
-    std::memcpy(out.data(), &v.val, sizeof(uint16_t));
-  } else if (dtype == QNN_DATATYPE_BFLOAT_16) {
-    out.resize(sizeof(uint16_t));
-    Ort::BFloat16_t v(value);
-    std::memcpy(out.data(), &v.val, sizeof(uint16_t));
-  } else if (dtype == QNN_DATATYPE_FLOAT_32) {
-    out.resize(sizeof(float));
-    std::memcpy(out.data(), &value, sizeof(float));
-  } else {
-    return Ort::Status("QNN LpPool: unsupported input dtype for scale tensor.", ORT_INVALID_ARGUMENT);
-  }
-  return Ort::Status();
-}
-
-}  // namespace
 
 Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_model_wrapper,
                                                          const OrtNodeUnit& node_unit,
@@ -239,81 +219,30 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   ReArrangePads(pad_amount);
 
   // ------------------------------------------------------------------------------------------------
-  // 3a. HTP-only workaround: when AvgPool is asked to handle non-zero pad_amount with
-  //     count_pad_for_edges=1, the HTP backend silently returns 0 across every output position
-  //     on certain SoCs. CPU and GPU honor the param correctly. To sidestep the HTP bug without
-  //     changing the math, we pre-pad the input with an explicit constant-zero Pad node and run
-  //     AvgPool with pad_amount = 0. The output is identical because Mul(x,x)/Abs(x) of a
-  //     zero is zero, and an unpadded AvgPool with K real elements per window has denominator K.
+  // 3. Compute per-output-position count_real (number of non-padding input elements that fall in
+  //    each pooling window). AvgPool runs with count_pad_for_edges=0 (default), so its denominator
+  //    is count_real per window. The static scale tensor below multiplies by sqrt(count_real)
+  //    (p=2) or count_real (p=1) to recover ONNX LpPool semantics: sqrt(Σx²) / Σ|x| over the
+  //    real (non-padding) elements in each window.
+  //
+  //    pad_amount layout after ReArrangePads is [begin0, end0, begin1, end1, ...]; the begin
+  //    for spatial axis a is at index 2*a.
   // ------------------------------------------------------------------------------------------------
-  const bool is_htp_backend = IsNpuBackend(qnn_model_wrapper.GetQnnBackendType());
-  const bool any_pad = std::any_of(pad_amount.begin(), pad_amount.end(),
-                                   [](uint32_t v) { return v != 0; });
-  if (is_htp_backend && any_pad) {
-    // Padded shape: each spatial axis grows by pad_begin + pad_end.
-    std::vector<uint32_t> padded_shape = qnn_input_shape;
-    for (size_t a = 0; a < spatial_rank; ++a) {
-      padded_shape[a + 1] += pad_amount[2 * a] + pad_amount[2 * a + 1];
+  std::vector<std::vector<int64_t>> per_axis_counts(spatial_rank);
+  for (size_t a = 0; a < spatial_rank; ++a) {
+    const int64_t in_dim = static_cast<int64_t>(qnn_input_shape[a + 1]);
+    const int64_t out_dim = static_cast<int64_t>(qnn_output_shape[a + 1]);
+    const int64_t k = static_cast<int64_t>(filter_size[a]);
+    const int64_t s = static_cast<int64_t>(stride[a]);
+    const int64_t pb = static_cast<int64_t>(pad_amount[2 * a]);
+    per_axis_counts[a].resize(out_dim);
+    for (int64_t o = 0; o < out_dim; ++o) {
+      const int64_t start = o * s - pb;
+      const int64_t end = std::min(start + k, in_dim);
+      const int64_t start_clamped = std::max(start, int64_t{0});
+      per_axis_counts[a][o] = std::max(end - start_clamped, int64_t{0});
     }
-
-    // QNN_OP_PAD pad_amount param is shape [input_rank, 2], one row per tensor axis (N, spatial..., C).
-    // Only the spatial axes get non-zero values.
-    std::vector<uint32_t> pad_full(rank * 2, 0);
-    for (size_t a = 0; a < spatial_rank; ++a) {
-      pad_full[(a + 1) * 2 + 0] = pad_amount[2 * a];
-      pad_full[(a + 1) * 2 + 1] = pad_amount[2 * a + 1];
-    }
-
-    const std::string padded_name = utils::UniqueNameGenerator().New(input_names[0], "_padded");
-    QnnTensorWrapper padded_tensor(padded_name, QNN_TENSOR_TYPE_NATIVE,
-                                   input_info.qnn_data_type, input_info.quant_param.Copy(),
-                                   std::vector<uint32_t>(padded_shape));
-    RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(padded_tensor)),
-                  "Failed to add padded input tensor for LpPool HTP workaround.");
-
-    std::vector<std::string> pad_param_names;
-    {
-      Qnn_Scalar_t scheme_scalar = QNN_SCALAR_INIT;
-      scheme_scalar.dataType = QNN_DATATYPE_UINT_32;
-      scheme_scalar.uint32Value = QNN_OP_PAD_SCHEME_CONSTANT;
-      QnnParamWrapper scheme_param(node_unit.Index(), node_unit.Name(),
-                                   QNN_OP_PAD_PARAM_SCHEME, scheme_scalar);
-      pad_param_names.push_back(scheme_param.GetParamTensorName());
-      RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(scheme_param)),
-                    "Failed to add Pad scheme param.");
-    }
-    {
-      QnnParamWrapper pa_param(node_unit.Index(), node_unit.Name(),
-                               QNN_OP_PAD_PARAM_PAD_AMOUNT,
-                               {static_cast<uint32_t>(rank), 2},
-                               std::move(pad_full));
-      pad_param_names.push_back(pa_param.GetParamTensorName());
-      RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(pa_param)),
-                    "Failed to add Pad pad_amount param.");
-    }
-
-    RETURN_IF_NOT(qnn_model_wrapper.CreateQnnNode(
-                      utils::UniqueNameGenerator().New(node_unit, QNN_OP_PAD),
-                      QNN_OP_PACKAGE_NAME_QTI_AISW, QNN_OP_PAD,
-                      {input_names[0]}, {padded_name},
-                      std::move(pad_param_names), do_op_validation),
-                  "Failed to create Pad node for LpPool HTP workaround.");
-
-    // Rewire the chain: Op A (Multiply/Abs) and AvgPool now operate on the padded tensor with
-    // zero pad_amount sent to AvgPool itself.
-    input_names[0] = padded_name;
-    qnn_input_shape = std::move(padded_shape);
-    std::fill(pad_amount.begin(), pad_amount.end(), 0u);
   }
-
-  // ------------------------------------------------------------------------------------------------
-  // 3. Compute scale constant K (product of kernel dims). For p=2 we apply sqrt(K) at the end;
-  //    for p=1 we apply K.
-  // ------------------------------------------------------------------------------------------------
-  uint64_t k_product = 1;
-  for (uint32_t k : filter_size) k_product *= k;
-  const float scale_value = (p_value == 2) ? std::sqrt(static_cast<float>(k_product))
-                                           : static_cast<float>(k_product);
 
   // ------------------------------------------------------------------------------------------------
   // 4. Op A: Multiply(x, x) for p=2, or Abs(x) for p=1.
@@ -353,15 +282,15 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   }
 
   // ------------------------------------------------------------------------------------------------
-  // 5. Op B: PoolAvg2d / PoolAvg3d with count_pad_for_edges = true.
+  // 5. Op B: PoolAvg2d / PoolAvg3d. count_pad_for_edges is left at the QNN default (false), so the
+  //    AvgPool denominator is count_real per output position; the per-position scale tensor below
+  //    compensates back to ONNX LpPool semantics.
   // ------------------------------------------------------------------------------------------------
   const char* pool_op = is_3d_pool ? QNN_OP_POOL_AVG_3D : QNN_OP_POOL_AVG_2D;
   const char* p_filter = is_3d_pool ? QNN_OP_POOL_AVG_3D_PARAM_FILTER_SIZE : QNN_OP_POOL_AVG_2D_PARAM_FILTER_SIZE;
   const char* p_stride = is_3d_pool ? QNN_OP_POOL_AVG_3D_PARAM_STRIDE : QNN_OP_POOL_AVG_2D_PARAM_STRIDE;
   const char* p_pad = is_3d_pool ? QNN_OP_POOL_AVG_3D_PARAM_PAD_AMOUNT : QNN_OP_POOL_AVG_2D_PARAM_PAD_AMOUNT;
   const char* p_round = is_3d_pool ? QNN_OP_POOL_AVG_3D_PARAM_ROUNDING_MODE : QNN_OP_POOL_AVG_2D_PARAM_ROUNDING_MODE;
-  const char* p_count = is_3d_pool ? QNN_OP_POOL_AVG_3D_PARAM_COUNT_PAD_FOR_EDGES
-                                   : QNN_OP_POOL_AVG_2D_PARAM_COUNT_PAD_FOR_EDGES;
 
   std::vector<std::string> pool_param_names;
   {
@@ -399,15 +328,8 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(rounding_mode_param)),
                   "Failed to add param rounding_mode.");
   }
-  {
-    Qnn_Scalar_t scalar = QNN_SCALAR_INIT;
-    scalar.dataType = QNN_DATATYPE_BOOL_8;
-    scalar.bool8Value = static_cast<uint8_t>(1);
-    QnnParamWrapper count_pad_param(node_unit.Index(), node_unit.Name(), p_count, scalar);
-    pool_param_names.push_back(count_pad_param.GetParamTensorName());
-    RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(count_pad_param)),
-                  "Failed to add param count_pad_for_edges.");
-  }
+  // count_pad_for_edges intentionally left at the QNN default (false). The denominator becomes
+  // count_real per window; the per-position scale tensor below compensates.
 
   const std::string pool_out_name = utils::UniqueNameGenerator().New(node_unit.Name(), "_pool");
   {
@@ -448,22 +370,71 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   }
 
   // ------------------------------------------------------------------------------------------------
-  // 7. Build static scalar tensor and emit final Multiply.
+  // 7. Build per-position static scale tensor and emit final Multiply.
+  //    Shape broadcasts over batch and channel: rank-4 NHWC -> [1, outH, outW, 1];
+  //    rank-5 NDHWC -> [1, outD, outH, outW, 1].
+  //    Values: sqrt(count_real[oh, ow, ...]) for p=2; count_real[oh, ow, ...] for p=1.
+  //    Together with AvgPool's count_real-based denominator this recovers the ONNX LpPool result.
   // ------------------------------------------------------------------------------------------------
   const std::string scale_name = utils::UniqueNameGenerator().New(node_unit.Name(), "_scale");
   {
+    // Output spatial extents (NHWC indices [1 .. rank-2]).
+    std::vector<uint32_t> spatial_extents(spatial_rank);
+    size_t total_positions = 1;
+    for (size_t a = 0; a < spatial_rank; ++a) {
+      spatial_extents[a] = qnn_output_shape[a + 1];
+      total_positions *= spatial_extents[a];
+    }
+
+    // Walk the spatial grid in row-major order, compute count_real, encode the scale value.
+    std::vector<float> scale_values;
+    scale_values.reserve(total_positions);
+    std::vector<size_t> idx(spatial_rank, 0);
+    for (size_t i = 0; i < total_positions; ++i) {
+      int64_t count_real = 1;
+      for (size_t a = 0; a < spatial_rank; ++a) count_real *= per_axis_counts[a][idx[a]];
+      const float c = static_cast<float>(count_real);
+      scale_values.push_back(p_value == 2 ? std::sqrt(c) : c);
+      for (size_t a = spatial_rank; a-- > 0;) {
+        if (++idx[a] < spatial_extents[a]) break;
+        idx[a] = 0;
+      }
+    }
+
+    // Encode per input dtype (matches the chain dtype so no Cast is inserted).
+    const Qnn_DataType_t dtype = input_info.qnn_data_type;
     std::vector<uint8_t> scale_data;
-    RETURN_IF_ERROR(EncodeScalarScaleData(input_info.qnn_data_type, scale_value, scale_data));
-    // Use an explicit broadcast-compatible rank to avoid any rank-mismatch checks on HTP.
-    std::vector<uint32_t> scalar_shape(rank, 1);
+    if (dtype == QNN_DATATYPE_FLOAT_16) {
+      scale_data.resize(total_positions * sizeof(uint16_t));
+      for (size_t i = 0; i < total_positions; ++i) {
+        Ort::Float16_t v(scale_values[i]);
+        std::memcpy(scale_data.data() + i * sizeof(uint16_t), &v.val, sizeof(uint16_t));
+      }
+    } else if (dtype == QNN_DATATYPE_BFLOAT_16) {
+      scale_data.resize(total_positions * sizeof(uint16_t));
+      for (size_t i = 0; i < total_positions; ++i) {
+        Ort::BFloat16_t v(scale_values[i]);
+        std::memcpy(scale_data.data() + i * sizeof(uint16_t), &v.val, sizeof(uint16_t));
+      }
+    } else if (dtype == QNN_DATATYPE_FLOAT_32) {
+      scale_data.resize(total_positions * sizeof(float));
+      std::memcpy(scale_data.data(), scale_values.data(), scale_data.size());
+    } else {
+      return Ort::Status("QNN LpPool: unsupported input dtype for scale tensor.", ORT_INVALID_ARGUMENT);
+    }
+
+    // Broadcast-compatible shape: 1 on batch and channel axes, spatial extents in between.
+    std::vector<uint32_t> scale_shape(rank, 1);
+    for (size_t a = 0; a < spatial_rank; ++a) scale_shape[a + 1] = spatial_extents[a];
+
     QnnTensorWrapper scale_tensor(scale_name,
                                   QNN_TENSOR_TYPE_STATIC,
-                                  input_info.qnn_data_type,
+                                  dtype,
                                   QnnQuantParamsWrapper(),
-                                  std::move(scalar_shape),
+                                  std::move(scale_shape),
                                   std::move(scale_data));
     RETURN_IF_NOT(qnn_model_wrapper.AddTensorWrapper(std::move(scale_tensor)),
-                  "Failed to add scale tensor.");
+                  "Failed to add per-position scale tensor.");
   }
 
   if (!requires_rank3_reshape) {
