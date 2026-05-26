@@ -43,6 +43,7 @@ jobs:
       build_android_aarch64_aar: true
       build_linux_aarch64_oe_gcc11_2: true
       build_linux_x86_64: true
+      linux_x86_64_target_py_vsns: "['3.10','3.12']"
       linux_aarch64_manylinux_2_34_target_py_vsns: "['3.11','3.12','3.13','3.14']"
       windows_target_archs: "['arm64', 'arm64ec', 'x86_64']"
       windows_target_py_vsns: "['3.11','3.12','3.13','3.14']"
@@ -66,10 +67,15 @@ jobs:
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
       # We only publish this for AI Hub to use and they only want x86_64 Linux
-      - name: Download Wheel from Artifactory
+      - name: Download x86_64 Linux 3.10 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-x86_64-py3.10-wheels
+
+      - name: Download x86_64 Linux 3.12 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64-py3.12-wheels
 
       - name: Consolidate Wheels
         run: |
@@ -97,7 +103,7 @@ jobs:
       - name: Publish
         if: ${{ !inputs.skip_publish_wheel }}
         run: |
-          source venv/bin/activate && twine upload --config-file=build/pypirc -r local ${{ github.workspace }}/build/dist/*
+          source venv/bin/activate && twine upload --skip-existing --config-file=build/pypirc -r local ${{ github.workspace }}/build/dist/*
 
   publish-qa-artifacts:
     name: "Publish QA artifacts to Artifactory"
@@ -124,6 +130,11 @@ jobs:
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-x86_64-py3.10-wheels
+
+      - name: Download x86_64 Linux 3.12 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64-py3.12-wheels
 
       - name: Download aarch64 manylinux_2_34 Linux 3.11 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
@@ -334,11 +345,11 @@ jobs:
 
       - name: Verify wheel artifacts
         run: |
-          # After merge: 1 linux x86_64 + 4 linux aarch64 manylinux_2_34 + 4 arm64 + 4 merged AMD = 13 wheels
+          # After merge: 2 linux x86_64 (py3.10, py3.12) + 4 linux aarch64 manylinux_2_34 + 4 arm64 + 4 merged AMD = 14 wheels
           # (arm64ec and x86_64 originals are deleted by the merge step above)
           count=$(find "${{ github.workspace }}/build" -name "*.whl" | wc -l)
           echo "Found $count wheel(s)"
-          [ "$count" -eq 13 ] || { echo "ERROR: Expected 13 wheels, found $count"; exit 1; }
+          [ "$count" -eq 14 ] || { echo "ERROR: Expected 14 wheels, found $count"; exit 1; }
 
       - name: Verify NuGet artifact
         run: |
