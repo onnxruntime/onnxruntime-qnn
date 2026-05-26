@@ -5,7 +5,7 @@ name: Publish ONNX Runtime Execution Provider wheel, nuget, archive and maven
 
 permissions:
   checks: write
-  contents: write
+  contents: read
   id-token: write
 
 on:
@@ -173,6 +173,10 @@ jobs:
     name: "Publish artifacts to Artifactory or GitHub"
     runs-on: [Linux, self-hosted]
     needs: check-admin-permission
+    permissions:
+      checks: write
+      contents: write   # required to push the release tag and create the GitHub Release
+      id-token: write
 
     steps:
       - uses: actions/checkout@v6
@@ -186,7 +190,7 @@ jobs:
           ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
-          GH_TOKEN: ${{ secrets.github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           source uplevel_venv/bin/activate
 
@@ -221,6 +225,10 @@ jobs:
     name: "Publish TGZ artifacts to Artifactory"
     runs-on: [Linux, self-hosted]
     needs: check-admin-permission
+    permissions:
+      checks: write
+      contents: write   # required to push the release tag and create the GitHub Release
+      id-token: write
 
     steps:
       - uses: actions/checkout@v6
@@ -233,7 +241,7 @@ jobs:
         env:
           ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
-          GH_TOKEN: ${{ secrets.github.token }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           source uplevel_venv/bin/activate
 

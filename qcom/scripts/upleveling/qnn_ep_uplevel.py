@@ -1120,8 +1120,23 @@ class ZipUpleveler(ArtifactUpleveler):
                         f"git push stderr: {push_result.stderr.decode(errors='replace')}"
                     )
                 logging.info(f"Git tag {tag} was pushed concurrently by another job; reusing it")
-        # Create the GitHub Release if it does not exist yet (tag is already pinned above).
-        subprocess.run(["gh", "release", "create", tag, "--title", tag, "--notes", "", "--draft"], check=False)
+        # Create the draft GitHub Release if it does not exist yet (tag is already pinned above).
+        # `gh release create` exits non-zero both for "already exists" (expected on re-runs and
+        # cross-format runs) and for real failures (auth, repo not found, …). Inspect stderr to
+        # tell them apart so genuine errors don't surface as a confusing upload failure later.
+        create_result = subprocess.run(
+            ["gh", "release", "create", tag, "--title", tag, "--notes", "", "--draft"],
+            check=False,
+            capture_output=True,
+        )
+        if create_result.returncode == 0:
+            logging.info(f"Created draft GitHub Release {tag}")
+        else:
+            stderr = create_result.stderr.decode(errors="replace")
+            if "already exists" in stderr.lower():
+                logging.info(f"GitHub Release {tag} already exists, reusing it")
+            else:
+                raise RuntimeError(f"Failed to create GitHub Release {tag}: {stderr.strip()}")
 
         # Attach assets; --clobber replaces any existing asset with the same name (safe for re-runs).
         subprocess.run(["gh", "release", "upload", tag, "--clobber", *files], check=True)
