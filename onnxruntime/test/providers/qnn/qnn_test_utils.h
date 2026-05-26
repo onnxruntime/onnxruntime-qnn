@@ -590,6 +590,35 @@ void RegisterQnnEpLibrary(RegisteredEpDeviceUniquePtr& registered_ep_device,
                           const std::unordered_map<std::string, std::string>& ep_options,
                           bool simulated = false);
 
+// RAII holder that ensures Ort::Session is destroyed before RegisteredEpDeviceUniquePtr.
+// Construct after registering the EP and creating the session:
+//
+//   RegisteredEpDeviceUniquePtr ep;
+//   RegisterQnnEpLibrary(ep, so, name, options);
+//   ScopedOrtSession scoped(std::move(ep), Ort::Session(env, model_path, so));
+//
+// ORDER MATTERS — non-static members are destroyed in reverse declaration order,
+// so ep_device_ is declared first (destroyed last) and session_ second (destroyed first).
+class ScopedOrtSession {
+ public:
+  ScopedOrtSession(RegisteredEpDeviceUniquePtr ep, Ort::Session session)
+      : ep_device_(std::move(ep)), session_(std::move(session)) {}
+
+  ScopedOrtSession(const ScopedOrtSession&) = delete;
+  ScopedOrtSession& operator=(const ScopedOrtSession&) = delete;
+  ScopedOrtSession(ScopedOrtSession&&) = delete;
+  ScopedOrtSession& operator=(ScopedOrtSession&&) = delete;
+
+  Ort::Session& session() { return session_; }
+  const Ort::Session& session() const { return session_; }
+  const OrtEpDevice* ep_device() const { return ep_device_.get(); }
+
+ private:
+  // ORDER MATTERS — destroyed in reverse decl order: session_ first, then ep_device_.
+  RegisteredEpDeviceUniquePtr ep_device_;
+  Ort::Session session_;
+};
+
 /**
  * Inferences a given serialized model. Returns output values via an out-param.
  *
