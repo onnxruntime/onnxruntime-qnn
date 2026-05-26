@@ -34,6 +34,10 @@ on:
         description: "If true, build for x86_64 Linux"
         type: boolean
         default: true
+      linux_x86_64_target_py_vsns:
+        description: "JSON list of Python versions to build for x86_64 Linux"
+        type: string
+        default: "['3.10','3.12']"
       linux_aarch64_manylinux_2_34_target_py_vsns:
         description: "JSON list of Python versions to build for aarch64 manylinux_2_34"
         type: string
@@ -125,8 +129,11 @@ jobs:
       upload_wheel: false
 
   build-linux-x86_64:
-    if: ${{ inputs.build_linux_x86_64 }}
+    if: ${{ inputs.build_linux_x86_64 && toJSON(fromJSON(inputs.linux_x86_64_target_py_vsns)) != '[]' }}
     needs: [archive-testdata]
+    strategy:
+      matrix:
+        target_py_vsn: ${{ fromJSON(inputs.linux_x86_64_target_py_vsns) }}
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
@@ -135,12 +142,10 @@ jobs:
       target_os: linux
       target_arch: x86_64
       testdata_archive_artifact_name: testdata-tarbz2
-      # Specifying a python version here doesn't actually do anything at this point since we don't know what the Linux
-      # wheel distribution story is yet. For now, this is just so that all of the job and artifact names reflect the
-      # version of cpython that's installed on our Linux build machines.
-      target_py_vsn: "3.10"
+      target_py_vsn: ${{ matrix.target_py_vsn }}
       run_tests: false
-      upload_test_archive: true
+      # Test archive is python-version independent; upload only with the first matrix entry
+      upload_test_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.linux_x86_64_target_py_vsns)[0] }}
       upload_wheel: true
 
   build-windows:

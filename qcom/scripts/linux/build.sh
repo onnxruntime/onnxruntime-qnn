@@ -138,7 +138,22 @@ if [ -n "${target_py_version}" ]; then
   build_venv="${build_dir}/venv-${target_py_version}"
   if [ ! -d "${build_venv}" ]; then
     log_debug "Creating venv for build in ${build_venv}"
-    "python${target_py_version}" -m venv "${build_venv}"
+    if command -v "python${target_py_version}" >/dev/null 2>&1; then
+      "python${target_py_version}" -m venv "${build_venv}"
+    elif command -v uv >/dev/null 2>&1; then
+      log_info "python${target_py_version} not found; using uv to provision interpreter."
+      uv venv --seed --python "${target_py_version}" "${build_venv}"
+    else
+      log_info "Neither python${target_py_version} nor uv found; bootstrapping uv into ${build_dir}/_uv_bootstrap."
+      uv_bootstrap_dir="${build_dir}/_uv_bootstrap"
+      python3 -m pip install --quiet --target="${uv_bootstrap_dir}" uv
+      # Prefer the console-script binary; fall back to module form if the wheel didn't ship one.
+      if [ -x "${uv_bootstrap_dir}/bin/uv" ]; then
+        "${uv_bootstrap_dir}/bin/uv" venv --seed --python "${target_py_version}" "${build_venv}"
+      else
+        PYTHONPATH="${uv_bootstrap_dir}" python3 -m uv venv --seed --python "${target_py_version}" "${build_venv}"
+      fi
+    fi
   fi
 
   bash -c ". ${build_venv}/bin/activate && pip install uv"
