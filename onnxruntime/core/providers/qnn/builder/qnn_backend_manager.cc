@@ -2065,6 +2065,7 @@ void QnnBackendManager::ReleaseResources() {
                       ORT_LOGGING_LEVEL_ERROR,
                       ("Failed to unload backend library: " + result.GetErrorMessage()).c_str());
     }
+    backend_lib_handle_ = nullptr;
   }
 
   backend_setup_completed_ = false;
