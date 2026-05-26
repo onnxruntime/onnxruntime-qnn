@@ -339,7 +339,11 @@ else {
 
         Push-Location (Join-Path $BuildDir $Config)
         $OnnxModelsRoot = (Get-OnnxModelsRoot)
-        & .\run_tests.ps1 -Config $Config -OnnxModelsRoot $OnnxModelsRoot
+        $TestRunnerArgs = @{ Config = $Config; OnnxModelsRoot = $OnnxModelsRoot }
+        if ($OrtPrebuiltRoot -ne "") {
+            $TestRunnerArgs["SkipModelTests"] = $true
+        }
+        & .\run_tests.ps1 @TestRunnerArgs
 
         if (-not $?) {
             $failed = $true

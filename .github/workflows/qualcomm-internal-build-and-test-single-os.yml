@@ -145,17 +145,29 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Download ORT Home
-        if: ${{ inputs.use_ort_home }}
-        id: ort_home
+      - name: Download ORT Home (linux)
+        if: ${{ inputs.use_ort_home && inputs.target_os == 'linux' }}
+        id: ort_home_linux
         env:
           ORT_PKG_ARCH: "${{ inputs.target_arch == 'x86_64' && 'x64' || startsWith(inputs.target_arch, 'aarch64') && 'aarch64' || inputs.target_arch }}"
         run: |
           python3 qcom/build_and_test.py create_venv
-          pkg_name="ort_prebuilt_${{ inputs.target_os }}_${ORT_PKG_ARCH}"
+          pkg_name="ort_prebuilt_linux_${ORT_PKG_ARCH}"
           venv/bin/python3 qcom/scripts/all/package_manager.py --package "${pkg_name}" --install
           ORT_HOME=$(venv/bin/python3 qcom/scripts/all/package_manager.py --package "${pkg_name}" --print-content-dir)
           echo "path=${ORT_HOME}" >> "$GITHUB_OUTPUT"
+
+      - name: Download ORT Home (windows)
+        if: ${{ inputs.use_ort_home && inputs.target_os == 'windows' }}
+        id: ort_home_windows
+        env:
+          ORT_PKG_ARCH: "${{ inputs.target_arch == 'x86_64' && 'x64' || startsWith(inputs.target_arch, 'aarch64') && 'aarch64' || inputs.target_arch }}"
+        run: |
+          python.exe qcom/build_and_test.py create_venv
+          set pkg_name=ort_prebuilt_windows_%ORT_PKG_ARCH%
+          venv\Scripts\python qcom/scripts/all/package_manager.py --package %pkg_name% --install
+          for /f "tokens=*" %%i in ('venv\Scripts\python qcom/scripts/all/package_manager.py --package %pkg_name% --print-content-dir') do set ORT_HOME=%%i
+          echo path=%ORT_HOME%>>%GITHUB_OUTPUT%
 
       - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}${{ inputs.use_ort_home && ' (ort-home)' || '' }}
         run: >
@@ -165,7 +177,7 @@ jobs:
           ${{ inputs.build_nuget == true && '--build-nuget' || '' }}
           ${{ inputs.build_archive == true && '--build-archive' || '' }}
           ${{ inputs.build_aar == true && '--build-aar' || '' }}
-          ${{ inputs.use_ort_home && format('--ort-prebuilt {0}', steps.ort_home.outputs.path) || '' }}
+          ${{ inputs.use_ort_home && format('--ort-prebuilt {0}', steps.ort_home_linux.outputs.path || steps.ort_home_windows.outputs.path) || '' }}
           ${{inputs.upload_test_archive == true && 'archive' || 'build'}}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}
 
       - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}${{ inputs.use_ort_home && ' (ort-home)' || '' }}
@@ -174,7 +186,7 @@ jobs:
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
           --target-py-version ${{inputs.target_py_vsn}}
-          ${{ inputs.use_ort_home && format('--ort-prebuilt {0}', steps.ort_home.outputs.path) || '' }}
+          ${{ inputs.use_ort_home && format('--ort-prebuilt {0}', steps.ort_home_linux.outputs.path || steps.ort_home_windows.outputs.path) || '' }}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}} --only
 
       - name: Publish Test Report

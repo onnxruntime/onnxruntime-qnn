@@ -153,6 +153,16 @@ jobs:
       testdata_archive_artifact_name: testdata-zip
       target_py_vsn: ${{ inputs.target_py_vsn }}
 
+  build-ort-home-windows-x86_64:
+    if: ${{ inputs.do_all }}
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      target_arch: x86_64
+      target_py_vsn: ${{ inputs.target_py_vsn }}
+      use_ort_home: true
+
   lint:
     if: ${{ inputs.do_all }}
     runs-on: ["self-hosted", "X64", "Linux", "Build"]

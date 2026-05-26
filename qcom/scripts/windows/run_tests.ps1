@@ -6,7 +6,9 @@ param(
     [ValidateSet("Debug", "Release", "RelWithDebInfo")]
     [string]$Config = "Release",
     [Parameter(HelpMessage = "Path to onnx/models models")]
-    $OnnxModelsRoot = $null
+    $OnnxModelsRoot = $null,
+    [Parameter(HelpMessage = "If set, skip ONNX model tests (e.g. when using ORT home).")]
+    [switch]$SkipModelTests
 )
 
 $RootDir = (Resolve-Path -Path "$(Split-Path -Parent $MyInvocation.MyCommand.Definition)").Path
@@ -170,6 +172,10 @@ $TestModelsViaEpPlugin = {
 
 Write-Host "--=-=-=- Running ONNX model tests -=--=-=-"
 
+if ($SkipModelTests) {
+    Write-Host "Skipping ONNX model tests (ORT home mode)."
+} else {
+
 Push-Location $OnnxModelsRoot
 if (-not $?) {
     throw "Could not cd to $OnnxModelsRoot"
@@ -189,6 +195,8 @@ foreach ($RunModelTests in ($TestModelsViaEpPlugin)) {
     } else {
         Write-Host "Not running onnx/models qdq tests with context cache enabled on CPU backend."
     }
+}
+
 }
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
