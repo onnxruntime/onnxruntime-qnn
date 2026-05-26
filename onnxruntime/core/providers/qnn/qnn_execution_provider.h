@@ -51,7 +51,7 @@ class QnnEp : public OrtEp, public ApiPtrs {
                                                      OrtDeviceEpIncompatibilityDetails* details) noexcept;
 
   friend struct GenieNodeComputeInfo;
-  friend struct QnnEpFactory;
+  friend class QnnEpFactory;
 
  private:
   static const char* ORT_API_CALL GetNameImpl(const OrtEp* this_ptr) noexcept;
