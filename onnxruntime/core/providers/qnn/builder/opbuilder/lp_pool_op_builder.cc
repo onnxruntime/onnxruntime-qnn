@@ -82,8 +82,10 @@ Ort::Status LpPoolOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   // pool_op_builder.cc::PoolOpBuilder::IsOpSupported, lines 146-148).
   // BF16 (htp_bf16_enable=1) does have a working PoolAvg3d kernel on V81+ HTP, so we allow
   // rank-5 in that mode. QDQ rank-5 support is deferred to the QDQ follow-up PR.
-  RETURN_IF(rank == 5 && IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
-                !qnn_model_wrapper.IsBF16ConversionEnabled(),
+  const bool htp_bf16_mode =
+      IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+      qnn_model_wrapper.GetModelSettings().htp_bf16_enable;
+  RETURN_IF(rank == 5 && IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) && !htp_bf16_mode,
             "QNN LpPool: rank-5 (3D pooling) is not supported on HTP for FP32/FP16. "
             "Use BF16 (htp_bf16_enable=1) or fall back to the ORT CPU EP.");
 
