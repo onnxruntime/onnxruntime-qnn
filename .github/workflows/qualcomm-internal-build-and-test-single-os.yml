@@ -135,7 +135,7 @@ env:
 
 jobs:
   build:
-    name: "build-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
+    name: "${{ inputs.use_ort_home && 'build-ort-home' || 'build' }}-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
     runs-on: ["self-hosted", "${{ inputs.build_runner_os != '' && inputs.build_runner_os || inputs.target_os }}", "${{ inputs.build_runner_arch }}", "Build"]
     defaults:
       run:
@@ -157,7 +157,7 @@ jobs:
           ORT_HOME=$(venv/bin/python3 qcom/scripts/all/package_manager.py --package "${pkg_name}" --print-content-dir)
           echo "path=${ORT_HOME}" >> "$GITHUB_OUTPUT"
 
-      - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
+      - name: Build ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}${{ inputs.use_ort_home && ' (ort-home)' || '' }}
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
@@ -168,12 +168,13 @@ jobs:
           ${{ inputs.use_ort_home && format('--ort-prebuilt {0}', steps.ort_home.outputs.path) || '' }}
           ${{inputs.upload_test_archive == true && 'archive' || 'build'}}_ort_${{inputs.target_os}}_${{ inputs.target_arch }}
 
-      - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
+      - name: Test ${{inputs.target_os}} ${{ inputs.target_arch }} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}${{ inputs.use_ort_home && ' (ort-home)' || '' }}
         if: ${{ inputs.run_tests && inputs.build_test_same_runner }}
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
           --target-py-version ${{inputs.target_py_vsn}}
+          ${{ inputs.use_ort_home && format('--ort-prebuilt {0}', steps.ort_home.outputs.path) || '' }}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}} --only
 
       - name: Publish Test Report

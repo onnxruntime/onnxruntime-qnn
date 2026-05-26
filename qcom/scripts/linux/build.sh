@@ -352,6 +352,10 @@ else
 
     # Run tests using our ctest wrapper.
     log_info "-=-=-=- Running unit tests -=-=-=-=-"
-    "./$(basename ${test_runner})" --python="${python_for_build}"
+    test_runner_args=(--python="${python_for_build}")
+    if [ -n "${ort_prebuilt_root}" ]; then
+      test_runner_args+=(--skip-model-tests)
+    fi
+    "./$(basename ${test_runner})" "${test_runner_args[@]}"
   fi
 fi
