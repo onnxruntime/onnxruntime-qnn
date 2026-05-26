@@ -368,10 +368,34 @@ jobs:
 
       - name: Verify Zip artifacts
         run: |
-          # 1 Windows ARM64 Zip + 4 PDB archives + 1 Windows ARM64 (ARM64x) Zip = 6 zips
-          count=$(find "${{ github.workspace }}/build" -name "*.zip" | wc -l)
-          echo "Found $count Zip archive(s)"
-          [ "$count" -eq 6 ] || { echo "ERROR: Expected 6 Zip archive, found $count"; exit 1; }
+          # Expected .zip artifacts. Append its glob here for a new one.
+          # Versioned distributable + PDB zips use 'onnxruntime-qnn-<version>-win-<arch>{-pdb}.zip'.
+          expected=(
+            "onnxruntime-qnn-*-win-arm64.zip"
+            "onnxruntime-qnn-*-win-arm64x.zip"
+            "onnxruntime-qnn-*-win-arm64-pdb.zip"
+            "onnxruntime-qnn-*-win-arm64ec-pdb.zip"
+            "onnxruntime-qnn-*-win-x64-pdb.zip"
+            "onnxruntime-qnn-*-win-arm64x-pdb.zip"
+          )
+          missing=()
+          for pattern in "${expected[@]}"; do
+            if ! find "${{ github.workspace }}/build" -type f -name "$pattern" | grep -q .; then
+              missing+=("$pattern")
+            fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "ERROR: missing .zip artifacts:"
+            printf '  %s\n' "${missing[@]}"
+            exit 1
+          fi
+          actual_count=$(find "${{ github.workspace }}/build" -type f -name "*.zip" | wc -l)
+          if [ "$actual_count" -ne "${#expected[@]}" ]; then
+            echo "ERROR: expected ${#expected[@]} Zip archive(s), found $actual_count. Inventory:"
+            find "${{ github.workspace }}/build" -type f -name "*.zip"
+            exit 1
+          fi
+          echo "Found ${#expected[@]} expected Zip archive(s)."
 
       - name: Verify TGZ artifact
         run: |
