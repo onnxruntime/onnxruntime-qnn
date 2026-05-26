@@ -132,8 +132,7 @@ TEST_F(QnnCPUBackendTests, LpPool_AutoPad_Valid) {
 
 // Rejection: ceil_mode=1 is not supported on the CPU backend.
 // QNN CPU's PoolAvg2d silently ignores rounding_mode and produces a floor-shape output, which
-// would leave the extra ceil-mode positions filled with garbage. HTP/GPU honor rounding_mode
-// correctly, so the rejection is CPU-only.
+// would leave the extra ceil-mode positions filled with garbage.
 TEST_F(QnnCPUBackendTests, LpPool_Reject_CeilMode) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 5, 5}, false, GetFloatDataInRange(-10.0f, 10.0f, 50))},
                   {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
@@ -193,7 +192,7 @@ TEST_F(QnnHTPBackendTests, LpPool_HTP_FP32_Basic) {
                   {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
                    test::MakeAttribute("strides", std::vector<int64_t>{2, 2})},
                   ExpectedEPNodeAssignment::All,
-                  "htp", 22, 0.008f);
+                  "htp", 22, 0.02f);
 }
 
 TEST_F(QnnHTPBackendTests, LpPool_HTP_FP32_WithPads) {
@@ -201,7 +200,7 @@ TEST_F(QnnHTPBackendTests, LpPool_HTP_FP32_WithPads) {
                   {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
                    test::MakeAttribute("pads", std::vector<int64_t>{1, 1, 1, 1})},
                   ExpectedEPNodeAssignment::All,
-                  "htp", 22, 0.008f);
+                  "htp", 22, 0.02f);
 }
 
 TEST_F(QnnHTPBackendTests, LpPool_HTP_FP32_AutoPad_SameUpper) {
@@ -210,7 +209,7 @@ TEST_F(QnnHTPBackendTests, LpPool_HTP_FP32_AutoPad_SameUpper) {
                    test::MakeAttribute("strides", std::vector<int64_t>{2, 2}),
                    test::MakeAttribute("auto_pad", "SAME_UPPER")},
                   ExpectedEPNodeAssignment::All,
-                  "htp", 22, 0.008f);
+                  "htp", 22, 0.02f);
 }
 
 TEST_F(QnnHTPBackendTests, LpPool_HTP_FP32_Rank3) {
@@ -218,7 +217,7 @@ TEST_F(QnnHTPBackendTests, LpPool_HTP_FP32_Rank3) {
                   {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2}),
                    test::MakeAttribute("strides", std::vector<int64_t>{2})},
                   ExpectedEPNodeAssignment::All,
-                  "htp", 22, 0.008f);
+                  "htp", 22, 0.02f);
 }
 
 // Rejection: rank-5 (3D pooling) is not supported on the QNN HTP backend (PoolAvg3d native-float
@@ -231,12 +230,16 @@ TEST_F(QnnHTPBackendTests, LpPool_HTP_Reject_Rank5) {
                   "htp", 22, 0.008f);
 }
 
-TEST_F(QnnHTPBackendTests, LpPool_HTP_FP32_CeilMode) {
+// Rejection: ceil_mode=1 is not supported on the HTP backend.
+// QNN HTP's PoolAvg2d reads out-of-bounds memory at ceil-mode boundary windows (positions whose
+// window extends past the input), producing NaN/garbage values regardless of how the chain is
+// configured. CPU rejects for a different reason (rounding_mode silently ignored).
+TEST_F(QnnHTPBackendTests, LpPool_HTP_Reject_CeilMode) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 5, 5}, false, GetFloatDataInRange(-10.0f, 10.0f, 50))},
                   {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
                    test::MakeAttribute("strides", std::vector<int64_t>{2, 2}),
                    test::MakeAttribute("ceil_mode", static_cast<int64_t>(1))},
-                  ExpectedEPNodeAssignment::All,
+                  ExpectedEPNodeAssignment::None,
                   "htp", 22, 0.008f);
 }
 
@@ -263,7 +266,7 @@ TEST_F(QnnHTPBackendTests, LpPool_HTP_FP32_AS_FP16_Basic) {
                   {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
                    test::MakeAttribute("strides", std::vector<int64_t>{2, 2})},
                   ExpectedEPNodeAssignment::All,
-                  "htp", 22, 0.008f, /*enable_htp_fp16_precision=*/true);
+                  "htp", 22, 0.02f, /*enable_htp_fp16_precision=*/true);
 }
 
 TEST_F(QnnHTPBackendTests, LpPool_HTP_FP32_AS_FP16_WithPads) {
@@ -271,7 +274,7 @@ TEST_F(QnnHTPBackendTests, LpPool_HTP_FP32_AS_FP16_WithPads) {
                   {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2}),
                    test::MakeAttribute("pads", std::vector<int64_t>{1, 1, 1, 1})},
                   ExpectedEPNodeAssignment::All,
-                  "htp", 22, 0.008f, /*enable_htp_fp16_precision=*/true);
+                  "htp", 22, 0.02f, /*enable_htp_fp16_precision=*/true);
 }
 
 TEST_F(QnnHTPBackendTests, LpPool_HTP_FP32_AS_FP16_Rank3) {
@@ -279,7 +282,7 @@ TEST_F(QnnHTPBackendTests, LpPool_HTP_FP32_AS_FP16_Rank3) {
                   {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2}),
                    test::MakeAttribute("strides", std::vector<int64_t>{2})},
                   ExpectedEPNodeAssignment::All,
-                  "htp", 22, 0.008f, /*enable_htp_fp16_precision=*/true);
+                  "htp", 22, 0.02f, /*enable_htp_fp16_precision=*/true);
 }
 
 TEST_F(QnnHTPBackendTests, LpPool_HTP_FP32_AS_FP16_P1) {

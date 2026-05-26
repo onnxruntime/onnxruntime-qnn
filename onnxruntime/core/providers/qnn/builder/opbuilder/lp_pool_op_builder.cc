@@ -81,12 +81,14 @@ Ort::Status LpPoolOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
 
   const auto ceil_mode = node_helper.Get("ceil_mode", static_cast<int64_t>(0));
   if (ceil_mode != 0) {
-    // QNN's CPU backend silently ignores PoolAvg2d's rounding_mode and produces a floor-shape
-    // output, leaving the extra ceil-mode positions filled with garbage / NaN. HTP and GPU honor
-    // rounding_mode correctly, so the rejection is CPU-specific.
-    RETURN_IF(IsCpuBackend(qnn_model_wrapper.GetQnnBackendType()),
-              "QNN LpPool does not support ceil_mode=1 on the CPU backend "
-              "(QNN CPU PoolAvg2d ignores rounding_mode).");
+    // QNN's CPU PoolAvg2d silently ignores rounding_mode and produces a floor-shape output, leaving
+    // the extra ceil-mode positions filled with garbage / NaN.
+    // QNN's HTP PoolAvg2d reads out-of-bounds memory at ceil-mode boundary windows (positions
+    // whose window extends past the input), producing NaN or garbage values regardless of
+    // count_pad_for_edges setting. Only the QNN GPU backend honors rounding_mode correctly.
+    RETURN_IF(IsCpuBackend(qnn_model_wrapper.GetQnnBackendType()) ||
+                  IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()),
+              "QNN LpPool: ceil_mode=1 is only supported on the QNN GPU backend.");
   }
 
   const auto dilations = node_helper.Get("dilations", std::vector<uint32_t>(rank - 2, 1));
