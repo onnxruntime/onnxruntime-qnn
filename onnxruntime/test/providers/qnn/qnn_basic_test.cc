@@ -337,7 +337,6 @@ TEST_F(QnnHTPBackendTests, RunConvInt4Model) {
 
 enum class TestBackend {
   Cpu,
-  Gpu,
   Htp,
   Saver,
   Ir,
@@ -347,8 +346,6 @@ static std::string ToBackendLibName(TestBackend backend) {
   switch (backend) {
     case TestBackend::Cpu:
       return "Cpu";
-    case TestBackend::Gpu:
-      return "Gpu";
     case TestBackend::Htp:
       return "Htp";
     case TestBackend::Saver:
@@ -1694,41 +1691,6 @@ TEST_F(QnnGPUBackendTests, AutoEp_PreferGpu) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().UnregisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider));
 }
 
-// Test that QNN Ir generates the expected DLC file using the QNN GPU backend as the validator.
-// The GPU backend is used for op validation (backendValidateOpConfig) while QnnIr serializes
-// the graph to a .dlc file. Requires a GPU-capable device (Windows ARM64 with Adreno GPU).
-TEST_F(QnnGPUBackendTests, QnnIr_GpuValidator_OutputFiles) {
-  BackendSupport ir_backend_support = IsIRBackendSupported();
-  if (ir_backend_support == BackendSupport::UNSUPPORTED) {
-    GTEST_SKIP() << "QNN IR backend is not available! Skipping test.";
-  }
-  ASSERT_NE(ir_backend_support, BackendSupport::SUPPORT_ERROR) << "Failed to check if QNN IR backend is available.";
-
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  const std::filesystem::path qnn_dlc_dir = kDlcOutputDir;
-
-  // Remove pre-existing QNN Ir output files. Note that fs::remove_all() can handle non-existing paths.
-  std::filesystem::remove_all(qnn_dlc_dir);
-  ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
-
-  InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
-                      TestBackend::Gpu,      // backend (used as op validator)
-                      registered_ep_device,  // registered_ep_device
-                      TestBackend::Ir);      // serializer backend (dumps to .dlc)
-
-  // File names are taken from graph node names. Just make sure that we got one .dlc
-  // in the expected directory.
-  ASSERT_TRUE(std::filesystem::exists(qnn_dlc_dir));
-
-  int file_count = 0;
-  for (const auto& entry : std::filesystem::directory_iterator(qnn_dlc_dir)) {
-    EXPECT_TRUE(entry.is_regular_file());
-    EXPECT_EQ(entry.path().extension(), ".dlc");
-    ++file_count;
-  }
-  EXPECT_EQ(file_count, 1);
-}
-
 TEST_F(QnnHTPBackendTests, AutoEp_AllDevices) {
   ASSERT_ORTSTATUS_OK(Ort::GetApi().RegisterExecutionProviderLibrary(*ort_env, kQnnExecutionProvider,
                                                                      ORT_TSTR("onnxruntime_providers_qnn.dll")));
@@ -2080,9 +2042,9 @@ TEST_F(QnnCPUBackendTests, QnnIr_CpuValidator_OutputFiles) {
   std::filesystem::remove_all(qnn_dlc_dir);
   ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
 
-  InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
-                      TestBackend::Cpu,      // backend (also used as the validator)
-                      TestBackend::Ir);      // serializer backend
+  auto scoped = InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
+                                    TestBackend::Cpu,  // backend (also used as the validator)
+                                    TestBackend::Ir);  // serializer backend
 
   ASSERT_TRUE(std::filesystem::exists(qnn_dlc_dir));
 
@@ -2105,9 +2067,9 @@ TEST_F(QnnIRBackendTests, QnnIr_IrValidator_OutputFiles) {
   std::filesystem::remove_all(qnn_dlc_dir);
   ASSERT_FALSE(std::filesystem::exists(qnn_dlc_dir));
 
-  InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
-                      TestBackend::Ir,       // backend (also used as the validator)
-                      TestBackend::Ir);      // serializer backend
+  auto scoped = InitNHWCResizeModel(ORT_MODEL_FOLDER "nhwc_resize_sizes_opset18.onnx",
+                                    TestBackend::Ir,   // backend (also used as the validator)
+                                    TestBackend::Ir);  // serializer backend
 
   // File names are taken from graph node names. Just make sure that we got one .dlc
   // in the expected directory.

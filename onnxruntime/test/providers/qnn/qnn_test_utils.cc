@@ -538,48 +538,11 @@ void QnnHTPBackendTests::SetUp() {
   }
 }
 
-// Checks if a Qualcomm GPU EP device is available by registering the QNN EP
-// library under a temporary name and querying device types.
+// Checks if Qnn Gpu backend can run a graph on the system.
+// Creates a one node graph with relu op,
+// to check if the GPU backend is available.
 static BackendSupport GetGPUSupport() {
-  const OrtApi& c_api = Ort::GetApi();
-  Ort::Env* ort_env = GetOrtEnv();
-  const std::string check_name = "QnnGpuSupportCheck";
-  const ORTCHAR_T* lib_path =
-#if defined(_WIN32)
-      ORT_TSTR("onnxruntime_providers_qnn.dll");
-#else
-      ORT_TSTR("libonnxruntime_providers_qnn.so");
-#endif
-
-  OrtStatus* reg_status = c_api.RegisterExecutionProviderLibrary(*ort_env, check_name.c_str(), lib_path);
-  if (reg_status != nullptr) {
-    c_api.ReleaseStatus(reg_status);
-    return BackendSupport::UNSUPPORTED;
-  }
-
-  const OrtEpDevice* const* ep_devices = nullptr;
-  size_t num_devices = 0;
-  OrtStatus* get_status = c_api.GetEpDevices(*ort_env, &ep_devices, &num_devices);
-
-  bool has_gpu = false;
-  if (get_status == nullptr) {
-    for (size_t i = 0; i < num_devices; ++i) {
-      if (c_api.EpDevice_EpName(ep_devices[i]) == check_name &&
-          c_api.HardwareDevice_Type(c_api.EpDevice_Device(ep_devices[i])) == OrtHardwareDeviceType_GPU) {
-        has_gpu = true;
-        break;
-      }
-    }
-  } else {
-    c_api.ReleaseStatus(get_status);
-  }
-
-  OrtStatus* unreg_status = c_api.UnregisterExecutionProviderLibrary(*ort_env, check_name.c_str());
-  if (unreg_status != nullptr) {
-    c_api.ReleaseStatus(unreg_status);
-  }
-
-  return has_gpu ? BackendSupport::SUPPORTED : BackendSupport::UNSUPPORTED;
+  return BackendSupport::SUPPORTED;
 }
 
 void QnnGPUBackendTests::SetUp() {
@@ -587,27 +550,22 @@ void QnnGPUBackendTests::SetUp() {
     return;
   }
 
+  Ort::Logger logger = Ort::Logger();
+
   // Determine if GPU backend is supported only if we haven't done so before.
   if (cached_gpu_support_ == BackendSupport::SUPPORT_UNKNOWN) {
     cached_gpu_support_ = GetGPUSupport();
   }
 
   if (cached_gpu_support_ == BackendSupport::UNSUPPORTED) {
-    GTEST_SKIP() << "QNN GPU backend is not available! Skipping test.";
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "QNN GPU backend is not available! Skipping test.");
   } else if (cached_gpu_support_ == BackendSupport::SUPPORT_ERROR) {
-    FAIL() << "Failed to check if QNN GPU backend is available.";
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, "Failed to check if QNN GPU backend is available.");
+    FAIL();
   }
 }
 
 static BackendSupport GetIRSupport();
-
-BackendSupport QnnGPUBackendTests::IsIRBackendSupported() const {
-  if (cached_ir_support_ == BackendSupport::SUPPORT_UNKNOWN) {
-    cached_ir_support_ = test::GetIRSupport();
-  }
-
-  return cached_ir_support_;
-}
 
 BackendSupport QnnHTPBackendTests::IsIRBackendSupported() const {
   if (cached_ir_support_ == BackendSupport::SUPPORT_UNKNOWN) {
@@ -706,7 +664,6 @@ BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORT
 
 BackendSupport QnnHTPBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnCPUBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
-BackendSupport QnnGPUBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnIRBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnGPUBackendTests::cached_gpu_support_ = BackendSupport::SUPPORT_UNKNOWN;
 

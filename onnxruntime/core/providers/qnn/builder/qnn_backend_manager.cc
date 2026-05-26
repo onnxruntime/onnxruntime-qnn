@@ -355,10 +355,9 @@ QnnSerializerConfig* QnnBackendManager::GetQnnSerializerConfig() {
 
 // Loads the intended backend (e.g., HTP, CPU, etc) to get its type, and then
 // sets QnnSaver or QnnIr as the active backend. QNN op builders will still see the intended backend
-// (e.g., HTP) as the backend type to ensure they emit the expected QNN API calls. When using QnnIr,
-// the intended backend's interface is also retained so that calls to QnnBackend_validateOpConfig
+// (e.g., HTP) as the backend type to ensure they emit the expected QNN API calls.
+// The intended backend's interface is also retained so that calls to QnnBackend_validateOpConfig
 // are routed to it, rather than the serializer backend.
-// TODO: Route QnnBackend_validateOpConfig to the intended backend for QnnSaver as well.
 //
 // QnnSaver and QnnIr are "debugging" backends that serialize all QNN API calls (and weights) into
 // local files: Saver dumps to C++ sources and Ir to .dlc archives.
