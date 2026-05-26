@@ -1,5 +1,5 @@
-// Copyright (c) Microsoft Corporation. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 #if !defined(ORT_MINIMAL_BUILD)
 
@@ -220,9 +220,10 @@ TEST_F(QnnHTPBackendTests, LpPool_HTP_FP32_Rank3) {
                   "htp", 22, 0.02f);
 }
 
-// Rejection: rank-5 (3D pooling) is not supported on the QNN HTP backend (PoolAvg3d native-float
-// fails dry-run validation;
-TEST_F(QnnHTPBackendTests, LpPool_HTP_Reject_Rank5) {
+// Rejection: rank-5 (3D pooling) is not supported on the HTP backend for FP32/FP16 inputs.
+// PoolAvg3d native-float fails dry-run validation. BF16 rank-5 works on V81+ (see
+// LpPool_HTP_BF16_Rank5); QDQ rank-5 support is deferred to the QDQ follow-up PR.
+TEST_F(QnnHTPBackendTests, LpPool_HTP_FP32_Reject_Rank5) {
   RunLpPoolOpTest({TestInputDef<float>({1, 2, 4, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 128))},
                   {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2, 2}),
                    test::MakeAttribute("strides", std::vector<int64_t>{2, 2, 2})},
@@ -377,8 +378,16 @@ TEST_F(QnnHTPBackendTests, LpPool_HTP_BF16_Rank3) {
                        ExpectedEPNodeAssignment::All);
 }
 
-// Note: BF16 rank-5 removed — rejected in IsOpSupported (see LpPool_HTP_Reject_Rank5).
-// All HTP rank-5 paths fall back to ORT CPU EP regardless of dtype.
+// BF16 rank-5: works on V81+ HTP because BF16 PoolAvg3d has a kernel there. Native FP32/FP16
+// rank-5 is rejected in IsOpSupported (see LpPool_HTP_FP32_Reject_Rank5); QDQ rank-5 will be
+// added in the QDQ follow-up PR.
+TEST_F(QnnHTPBackendTests, LpPool_HTP_BF16_Rank5) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);
+  RunLpPoolHTPBF16Test({TestInputDef<float>({1, 2, 4, 4, 4}, false, GetFloatDataInRange(-10.0f, 10.0f, 128))},
+                       {test::MakeAttribute("kernel_shape", std::vector<int64_t>{2, 2, 2}),
+                        test::MakeAttribute("strides", std::vector<int64_t>{2, 2, 2})},
+                       ExpectedEPNodeAssignment::All);
+}
 
 TEST_F(QnnHTPBackendTests, LpPool_HTP_BF16_AutoPad_SameUpper) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V79);

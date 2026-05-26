@@ -1,5 +1,5 @@
-// Copyright (c) Qualcomm. All rights reserved.
-// Licensed under the MIT License.
+// Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+// SPDX-License-Identifier: MIT
 
 #include <algorithm>
 #include <cmath>
@@ -55,6 +55,15 @@ Ort::Status LpPoolOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   const auto& inputs = node_unit.Inputs();
   RETURN_IF_ERROR(DataTypeCheckForCpuBackend(qnn_model_wrapper, inputs[0].type, ""));
 
+  // QDQ pattern is not supported in this PR. Reject non-float inputs here so QDQ-wrapped LpPool
+  // nodes (which the ORT QDQ-fusion path can hand to the op builder with quantized input dtypes)
+  // fall back to the ORT CPU EP at partitioning time, instead of failing later in the
+  // scale-tensor encoder with an opaque "unsupported input dtype" message.
+  RETURN_IF(inputs[0].type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT &&
+                inputs[0].type != ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT16 &&
+                inputs[0].type != ONNX_TENSOR_ELEMENT_DATA_TYPE_BFLOAT16,
+            "QNN LpPool only supports float32, float16, and bfloat16 inputs (QDQ not implemented).");
+
   RETURN_IF(node_unit.Outputs().size() != 1, "QNN LpPool only supports 1 output.");
 
   std::vector<uint32_t> input_shape;
@@ -69,10 +78,14 @@ Ort::Status LpPoolOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
             "QNN LpPool: rank-5 (3D pooling) is not supported on the QNN GPU backend.");
 
   // Rank-5 native-float QNN_OP_POOL_AVG_3D fails NHWC dry-run validation on the HTP backend
-  // (mirrors the rank-5 PoolMax3d rejection in pool_op_builder.cc). HTP only validates 3D
-  // pooling for QDQ paths in the existing test suite.
-  RETURN_IF(rank == 5 && IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()),
-            "QNN LpPool: rank-5 (3D pooling) is not supported on the QNN HTP backend.");
+  // for FP32 / FP16 inputs (mirrors the rank-5 PoolMax3d rejection in
+  // pool_op_builder.cc::PoolOpBuilder::IsOpSupported, lines 146-148).
+  // BF16 (htp_bf16_enable=1) does have a working PoolAvg3d kernel on V81+ HTP, so we allow
+  // rank-5 in that mode. QDQ rank-5 support is deferred to the QDQ follow-up PR.
+  RETURN_IF(rank == 5 && IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()) &&
+                !qnn_model_wrapper.IsBF16ConversionEnabled(),
+            "QNN LpPool: rank-5 (3D pooling) is not supported on HTP for FP32/FP16. "
+            "Use BF16 (htp_bf16_enable=1) or fall back to the ORT CPU EP.");
 
   OrtNodeAttrHelper node_helper(node_unit);
 
@@ -159,53 +172,24 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   const bool is_3d_pool = (spatial_rank == 3);
 
   // ------------------------------------------------------------------------------------------------
-  // 1. Read attributes (expanding 1D values to 2D form for the rank-3 path).
+  // 1. Resolve common pooling attributes (kernel_shape, strides, dilations, pads, auto_pad,
+  //    ceil_mode) via the shared helper used by pool_op_builder. The helper expands 1D->2D and
+  //    converts SAME_UPPER/SAME_LOWER auto_pad to explicit pads.
   // ------------------------------------------------------------------------------------------------
-  std::vector<uint32_t> filter_size;
-  {
-    auto raw = node_helper.Get("kernel_shape", std::vector<uint32_t>(spatial_rank, 1));
-    filter_size = (raw.size() == 1) ? std::vector<uint32_t>{1, raw[0]} : raw;
-  }
+  std::vector<uint32_t> filter_size, stride, dilations, pad_amount;
+  int32_t rounding_mode = 0;
+  RETURN_IF_ERROR(ResolvePoolAttributes(node_helper,
+                                        qnn_input_shape,
+                                        qnn_output_shape,
+                                        filter_size,
+                                        stride,
+                                        dilations,
+                                        pad_amount,
+                                        rounding_mode));
   RETURN_IF_NOT(filter_size.size() == spatial_rank,
                 "QNN LpPool: kernel_shape rank mismatch with input spatial rank.");
-
-  std::vector<uint32_t> stride;
-  {
-    auto raw = node_helper.Get("strides", std::vector<uint32_t>(spatial_rank, 1));
-    stride = (raw.size() == 1) ? std::vector<uint32_t>{1, raw[0]} : raw;
-  }
-
-  std::vector<uint32_t> dilations;
-  {
-    auto raw = node_helper.Get("dilations", std::vector<uint32_t>(spatial_rank, 1));
-    dilations = (raw.size() == 1) ? std::vector<uint32_t>{1, raw[0]} : raw;
-  }
-
-  std::vector<uint32_t> pad_amount;
-  {
-    auto raw = node_helper.Get("pads", std::vector<uint32_t>(spatial_rank * 2, 0));
-    pad_amount = (raw.size() == 2) ? std::vector<uint32_t>{0, raw[0], 0, raw[1]} : raw;
-  }
   RETURN_IF_NOT(pad_amount.size() == spatial_rank * 2,
                 "QNN LpPool: pads rank mismatch with input spatial rank.");
-
-  const auto auto_pad = node_helper.Get("auto_pad", std::string("NOTSET"));
-  if (auto_pad != "NOTSET") {
-    for (size_t axis = 0; axis < spatial_rank; ++axis) {
-      if (auto_pad == "SAME_UPPER" || auto_pad == "SAME_LOWER") {
-        const uint32_t total_pads = (qnn_output_shape[axis + 1] - 1) * stride[axis] +
-                                    (filter_size[axis] - 1) * dilations[axis] + 1 -
-                                    qnn_input_shape[axis + 1];
-        if (auto_pad == "SAME_LOWER") {
-          pad_amount[axis + spatial_rank] = total_pads / 2;
-          pad_amount[axis] = total_pads - pad_amount[axis + spatial_rank];
-        } else {
-          pad_amount[axis] = total_pads / 2;
-          pad_amount[axis + spatial_rank] = total_pads - pad_amount[axis];
-        }
-      }
-    }
-  }
 
   // ------------------------------------------------------------------------------------------------
   // 2. Validate kernel does not exceed padded input on any spatial axis.
@@ -252,6 +236,11 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
   const std::string preprocess_out_name =
       utils::UniqueNameGenerator().New(node_unit.Name(), p_value == 2 ? "_squared" : "_abs");
   {
+    // TODO(QDQ follow-up): QDQ is rejected in IsOpSupported, so the input is float and
+    // quant_param.Copy() is empty here. When adding QDQ support, this intermediate tensor will
+    // need its own quant params: x*x has a different value range than x, so reusing input
+    // quant params would be incorrect for the p=2 (Multiply) path. (For p=1 / Abs, |x| has a
+    // tighter range too.)
     QnnTensorWrapper preprocess_tensor(preprocess_out_name,
                                        QNN_TENSOR_TYPE_NATIVE,
                                        input_info.qnn_data_type,
@@ -319,12 +308,13 @@ Ort::Status LpPoolOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mo
     RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(pad_amount_param)),
                   "Failed to add param pad_amount.");
   }
-  // ceil_mode = 1 is rejected on CPU backend in IsOpSupported; HTP/GPU honor rounding_mode.
-  const int64_t ceil_mode = node_helper.Get("ceil_mode", static_cast<int64_t>(0));
-  if (ceil_mode != 0) {
+  // ceil_mode = 1 is rejected on CPU and HTP backends in IsOpSupported; only the QNN GPU backend
+  // honors rounding_mode correctly. rounding_mode was populated by ResolvePoolAttributes from the
+  // ONNX ceil_mode attribute.
+  if (rounding_mode != 0) {
     Qnn_Scalar_t scalar = QNN_SCALAR_INIT;
     scalar.dataType = QNN_DATATYPE_UINT_32;
-    scalar.int32Value = static_cast<int32_t>(ceil_mode);
+    scalar.int32Value = rounding_mode;
     QnnParamWrapper rounding_mode_param(node_unit.Index(), node_unit.Name(), p_round, scalar);
     pool_param_names.push_back(rounding_mode_param.GetParamTensorName());
     RETURN_IF_NOT(qnn_model_wrapper.AddParamWrapper(std::move(rounding_mode_param)),
