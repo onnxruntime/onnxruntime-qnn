@@ -136,9 +136,9 @@ $CommonArgs = `
     "--config", $Config, `
     "--parallel"
 
-# Use static MSVC runtime for ARM64 builds to eliminate MSVCP140.dll and
+# Use static MSVC runtime for builds to eliminate MSVCP140.dll and
 # VCRUNTIME140.dll dependencies from the shipping QNN EP DLL.
-if ($Arch -in @("aarch64", "arm64", "arm64ec")) {
+if ($Arch -in @("aarch64", "arm64", "arm64ec", "x86_64")) {
     $CommonArgs += "--enable_msvc_static_runtime"
 }
 
@@ -223,7 +223,7 @@ if ($BuildWheel) {
     $BuildWheelArgs += "--build_wheel"
     if ($env:ORT_NIGHTLY_BUILD -eq "1") {
         $BuildWheelArgs += "--wheel_name_suffix=qcom_internal"
-        $env:NIGHTLY_BUILD = "1"
+        $BuildWheelArgs += "--nightly_build"
     }
 }
 

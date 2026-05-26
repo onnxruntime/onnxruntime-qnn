@@ -55,8 +55,13 @@ on:
     inputs: *common_inputs
 
 jobs:
+  archive-testdata:
+    uses: ./.github/workflows/qualcomm-internal-archive-testdata.yml
+    secrets: inherit
+
   build-android-aarch64:
     if: ${{ inputs.build_android_aarch64 || inputs.build_android_aarch64_aar }}
+    needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
@@ -65,6 +70,7 @@ jobs:
       build_runner_os: linux
       target_os: android
       target_arch: aarch64
+      testdata_archive_artifact_name: testdata-tarbz2
       target_py_vsn: None
       run_tests: false
       upload_test_archive: true
@@ -83,6 +89,7 @@ jobs:
 
   build-linux-aarch64-manylinux_2_34:
     if: ${{ toJSON(fromJSON(inputs.linux_aarch64_manylinux_2_34_target_py_vsns)) != '[]' }}
+    needs: [archive-testdata]
     strategy:
       matrix:
         target_py_vsn: ${{ fromJSON(inputs.linux_aarch64_manylinux_2_34_target_py_vsns) }}
@@ -93,6 +100,7 @@ jobs:
       version_suffix: ${{ inputs.version_suffix }}
       target_os: linux
       target_arch: aarch64_manylinux_2_34
+      testdata_archive_artifact_name: testdata-tarbz2
       target_py_vsn: ${{ matrix.target_py_vsn }}
       run_tests: false
       # Upload the test archive with the first Python version we encounter
@@ -103,12 +111,14 @@ jobs:
 
   build-linux-aarch64-oe-gcc11_2:
     if: ${{ inputs.build_linux_aarch64_oe_gcc11_2 }}
+    needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
       nightly_build: ${{ inputs.nightly_build }}
       target_os: linux
       target_arch: aarch64_oe_gcc11_2
+      testdata_archive_artifact_name: testdata-tarbz2
       target_py_vsn: None
       run_tests: false
       upload_test_archive: true
@@ -116,6 +126,7 @@ jobs:
 
   build-linux-x86_64:
     if: ${{ inputs.build_linux_x86_64 }}
+    needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
@@ -123,6 +134,7 @@ jobs:
       version_suffix: ${{ inputs.version_suffix }}
       target_os: linux
       target_arch: x86_64
+      testdata_archive_artifact_name: testdata-tarbz2
       # Specifying a python version here doesn't actually do anything at this point since we don't know what the Linux
       # wheel distribution story is yet. For now, this is just so that all of the job and artifact names reflect the
       # version of cpython that's installed on our Linux build machines.
@@ -133,6 +145,7 @@ jobs:
 
   build-windows:
     if: ${{ toJSON(fromJSON(inputs.windows_target_archs)) != '[]' && toJSON(fromJSON(inputs.windows_target_py_vsns)) != '[]' }}
+    needs: [archive-testdata]
     strategy:
       matrix:
         target_arch: ${{ fromJSON(inputs.windows_target_archs) }}
@@ -144,6 +157,7 @@ jobs:
       version_suffix: ${{ inputs.version_suffix }}
       target_os: windows
       target_arch: ${{ matrix.target_arch }}
+      testdata_archive_artifact_name: testdata-zip
       target_py_vsn: ${{ matrix.target_py_vsn }}
       build_runner_arch: "${{ matrix.target_arch == 'arm64' && 'ARM64' || 'X64' }}"
       test_runner_arch: ARM64
@@ -158,12 +172,14 @@ jobs:
       upload_pdb_archive: ${{ matrix.target_py_vsn == fromJSON(inputs.windows_target_py_vsns)[0] }}
 
   build-windows-arm64x:
+    needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
       nightly_build: ${{ inputs.nightly_build }}
       version_suffix: ${{ inputs.version_suffix }}
       target_arch: arm64x
+      testdata_archive_artifact_name: testdata-zip
       target_py_vsn: ${{ fromJSON(inputs.windows_target_py_vsns)[0] }}
       build_runner_arch: ARM64
       run_tests: false

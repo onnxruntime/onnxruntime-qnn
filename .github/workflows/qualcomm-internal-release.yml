@@ -244,6 +244,20 @@ jobs:
         with:
           name: windows-x86_64-py3.11-tests
 
+      # --------------------------
+      # Download testdata archives
+      # --------------------------
+
+      - name: Download testdata zip from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: testdata-zip
+
+      - name: Download testdata tar.bz2 from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: testdata-tarbz2
+
       # -----------------------------
       # Download other distributables
       # -----------------------------
@@ -334,16 +348,67 @@ jobs:
 
       - name: Verify tarball artifacts
         run: |
-          count=$(find "${{ github.workspace }}/build" -name "*.tar.bz2" | wc -l)
-          echo "Found $count .tar.bz2 archive(s)"
-          [ "$count" -eq 3 ] || { echo "ERROR: Expected 3 .tar.bz2 archives, found $count"; exit 1; }
+          # Expected .tar.bz2 artifacts. Append its glob here for a new one.
+          expected=(
+            "onnxruntime-tests-linux-aarch64_manylinux_2_34.tar.bz2"
+            "onnxruntime-tests-linux-aarch64_oe_gcc11_2.tar.bz2"
+            "onnxruntime-tests-linux-x86_64.tar.bz2"
+            "onnxruntime-testdata.tar.bz2"
+          )
+          missing=()
+          for pattern in "${expected[@]}"; do
+            if ! find "${{ github.workspace }}/build" -type f -name "$pattern" | grep -q .; then
+              missing+=("$pattern")
+            fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "ERROR: missing .tar.bz2 artifacts:"
+            printf '  %s\n' "${missing[@]}"
+            exit 1
+          fi
+          actual_count=$(find "${{ github.workspace }}/build" -type f -name "*.tar.bz2" | wc -l)
+          if [ "$actual_count" -ne "${#expected[@]}" ]; then
+            echo "ERROR: expected ${#expected[@]} .tar.bz2 archive(s), found $actual_count. Inventory:"
+            find "${{ github.workspace }}/build" -type f -name "*.tar.bz2"
+            exit 1
+          fi
+          echo "Found ${#expected[@]} expected .tar.bz2 archive(s)."
 
       - name: Verify Zip artifacts
         run: |
-          # 4 test archives + 1 Windows ARM64 zip + 1 Windows ARM64 (ARM64x) zip + 4 PDB archives = 10 zips
-          count=$(find "${{ github.workspace }}/build" -name "*.zip" | wc -l)
-          echo "Found $count Zip archive(s)"
-          [ "$count" -eq 10 ] || { echo "ERROR: Expected 10 Zip archives, found $count"; exit 1; }
+          # Expected .zip artifacts. Append its glob here for a new one.
+          # Versioned distributable + PDB zips use 'onnxruntime-qnn-<version>-win-<arch>{-pdb}.zip'.
+          expected=(
+            "onnxruntime-tests-android-aarch64.zip"
+            "onnxruntime-tests-windows-arm64.zip"
+            "onnxruntime-tests-windows-arm64ec.zip"
+            "onnxruntime-tests-windows-x86_64.zip"
+            "onnxruntime-testdata.zip"
+            "onnxruntime-qnn-*-win-arm64.zip"
+            "onnxruntime-qnn-*-win-arm64x.zip"
+            "onnxruntime-qnn-*-win-arm64-pdb.zip"
+            "onnxruntime-qnn-*-win-arm64ec-pdb.zip"
+            "onnxruntime-qnn-*-win-x64-pdb.zip"
+            "onnxruntime-qnn-*-win-arm64x-pdb.zip"
+          )
+          missing=()
+          for pattern in "${expected[@]}"; do
+            if ! find "${{ github.workspace }}/build" -type f -name "$pattern" | grep -q .; then
+              missing+=("$pattern")
+            fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "ERROR: missing .zip artifacts:"
+            printf '  %s\n' "${missing[@]}"
+            exit 1
+          fi
+          actual_count=$(find "${{ github.workspace }}/build" -type f -name "*.zip" | wc -l)
+          if [ "$actual_count" -ne "${#expected[@]}" ]; then
+            echo "ERROR: expected ${#expected[@]} Zip archive(s), found $actual_count. Inventory:"
+            find "${{ github.workspace }}/build" -type f -name "*.zip"
+            exit 1
+          fi
+          echo "Found ${#expected[@]} expected Zip archive(s)."
 
       - name: Verify TGZ artifact
         run: |
