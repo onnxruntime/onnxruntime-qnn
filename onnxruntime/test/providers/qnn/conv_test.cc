@@ -2884,6 +2884,209 @@ TEST_F(QnnHTPBackendTests, ConvU8U8S32_LargeInput_Dilations_Pads) {
                                      "NOTSET",                                                  // auto_pad
                                      ExpectedEPNodeAssignment::All);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Block-Quantized Conv (BQ Phase 1)
+//
+// ONNX graph pattern:
+//   input → Q(u16) → DQ → Conv ← DQ(Int4, block_size, axis=0) → Q(u16) → DQ
+//
+// The weight DQ node uses a rank-2 float scale tensor [OC, num_blocks] where
+// num_blocks = IC / block_size. QNN EP maps this to the BW_FLOAT_BLOCK kernel
+// (FP16 activation) with an INT16→FP16 Convert before Conv and FP16→INT16
+// Convert after Conv.
+// ─────────────────────────────────────────────────────────────────────────────
+
+namespace {
+
+// Builds the ONNX QDQ graph for a BQ (block-quantized weight) 2D Conv.
+//   - activation: uint16 per-tensor symmetric Q/DQ
+//   - weight: INT4 initializer + DQ with block_size attribute and rank-2
+//             float scale [OC, num_blocks] (num_blocks = IC / block_size)
+//   - output: uint16 per-tensor symmetric Q/DQ
+//
+// Scale layout [OC, num_blocks]: scale[oc * num_blocks + b] is the per-block
+// float scale for output channel oc, IC-block b.
+GetQDQTestCaseFn BuildBQConvTestCase(const std::vector<int64_t>& input_shape,
+                                     const std::vector<int64_t>& weight_shape,
+                                     int64_t block_size,
+                                     bool include_bias = false) {
+  return [input_shape, weight_shape, block_size, include_bias](ModelTestBuilder& builder) -> void {
+    const int64_t OC = weight_shape[0];
+    const int64_t IC = weight_shape[1];
+    const int64_t kH = weight_shape.size() >= 4 ? weight_shape[2] : 1;
+    const int64_t kW = weight_shape.size() >= 4 ? weight_shape[3] : 1;
+    const int64_t num_blocks = IC / block_size;  // caller ensures IC % block_size == 0
+
+    // ── Activation: float → Q(uint16) → DQ ──────────────────────────────────
+    auto input_def = TestInputDef<float>(input_shape, false, -1.0f, 1.0f);
+    MakeTestInput<float>(builder, "input", input_def);
+
+    // uint16 symmetric per-tensor: scale = 2/65534, zp = 32767 (~[-1, 1])
+    const float act_scale = 2.0f / 65534.0f;
+    const uint16_t act_zp = 32767;
+    builder.MakeScalarInitializer<float>("act_ql_scale", act_scale);
+    builder.MakeScalarInitializer<uint16_t>("act_ql_zp", act_zp);
+    builder.AddNode("act_ql", "QuantizeLinear",
+                    {"input", "act_ql_scale", "act_ql_zp"}, {"act_ql_out"});
+    builder.MakeScalarInitializer<float>("act_dql_scale", act_scale);
+    builder.MakeScalarInitializer<uint16_t>("act_dql_zp", act_zp);
+    builder.AddNode("act_dql", "DequantizeLinear",
+                    {"act_ql_out", "act_dql_scale", "act_dql_zp"}, {"act_dql_out"});
+
+    // ── Weight: INT4 initializer → DQ(block_size, axis=1) ───────────────────
+    // ONNX opset 21 block quantization: scale rank == weight rank.
+    // axis=1 (IC dimension), block_size=bs → scale shape [OC, IC/bs, 1, 1].
+    const std::vector<int64_t> scale_shape{OC, num_blocks, 1, 1};
+    builder.MakeInitializer<float>("weight_scale", scale_shape, 0.01f, 0.05f);
+
+    // INT4 weight in range [-3, 3] (symmetric, zero_point = 0).
+    const size_t num_elems = static_cast<size_t>(OC * IC * kH * kW);
+    std::vector<Int4x2> weight_data(Int4x2::CalcNumInt4Pairs(num_elems));
+    for (size_t i = 0; i < num_elems; ++i) {
+      const int8_t v = static_cast<int8_t>((i % 7) - 3);  // [-3..3]
+      weight_data[i >> 1].SetElem(i & 1, v);
+    }
+    builder.MakeInitializer<Int4x2>("weight_quant", weight_shape, weight_data);
+
+    // DQ with block_size; omit zero_point (symmetric). axis=1: IC is the blocked dimension.
+    builder.AddNode("weight_dql", "DequantizeLinear",
+                    {"weight_quant", "weight_scale"},
+                    {"weight_dql_out"}, "",
+                    {builder.MakeScalarAttribute("axis", static_cast<int64_t>(1)),
+                     builder.MakeScalarAttribute("block_size", block_size)});
+
+    // ── Conv ─────────────────────────────────────────────────────────────────
+    std::vector<std::string> conv_inputs{"act_dql_out", "weight_dql_out"};
+    if (include_bias) {
+      // Use INT32-quantized bias directly (no QL node — avoids ORT QL opset validation for INT32).
+      // OrtConvNodeGroupSelector requires bias DQL input type == INT32 (qnn_ep_utils.cc:741).
+      const float bias_scale = act_scale * 0.03f;
+      builder.MakeScalarInitializer<float>("bias_scale", bias_scale);
+      builder.MakeScalarInitializer<int32_t>("bias_zp", 0);
+      builder.Make1DInitializer<int32_t>("bias_quant", std::vector<int32_t>(static_cast<size_t>(OC), 0));
+      builder.AddNode("bias_dql", "DequantizeLinear",
+                      {"bias_quant", "bias_scale", "bias_zp"}, {"bias_dql_out"});
+      conv_inputs.push_back("bias_dql_out");
+    }
+    builder.AddNode("conv", "Conv",
+                    conv_inputs, {"conv_out"}, kOnnxDomain,
+                    {builder.MakeStringAttribute("auto_pad", "NOTSET"),
+                     builder.MakeIntsAttribute("strides", std::vector<int64_t>{1, 1}),
+                     builder.MakeIntsAttribute("pads", std::vector<int64_t>{0, 0, 0, 0})});
+
+    // ── Output: Conv → Q(uint16) → DQ → graph output ─────────────────────────
+    const float out_scale = 2.0f / 65534.0f;
+    const uint16_t out_zp = 32767;
+    builder.MakeScalarInitializer<float>("out_ql_scale", out_scale);
+    builder.MakeScalarInitializer<uint16_t>("out_ql_zp", out_zp);
+    builder.AddNode("out_ql", "QuantizeLinear",
+                    {"conv_out", "out_ql_scale", "out_ql_zp"}, {"out_ql_out"});
+    builder.MakeScalarInitializer<float>("out_dql_scale", out_scale);
+    builder.MakeScalarInitializer<uint16_t>("out_dql_zp", out_zp);
+    builder.MakeOutput("output");
+    builder.AddNode("out_dql", "DequantizeLinear",
+                    {"out_ql_out", "out_dql_scale", "out_ql_zp"}, {"output"});
+  };
+}
+
+ProviderOptions GetBQConvProviderOptions() {
+  ProviderOptions opts;
+  opts["backend_type"] = "htp";
+  opts["offload_graph_io_quantization"] = "0";
+#if defined(__linux__) && !defined(__aarch64__)
+  // On the x86_64 Linux HTP simulator, specify SM8850 to enable BW_FLOAT_BLOCK support.
+  // On real ARM64 hardware, the SoC model is auto-detected by QNN EP.
+  opts["soc_model"] = std::to_string(QNN_SOC_MODEL_SM8850);
+#endif
+  return opts;
+}
+
+}  // namespace
+
+// 1x1 Conv, INT4 weight, block_size=8, uint16 activation, no bias.
+// Validates that the BW_FLOAT_BLOCK kernel is reached (BQ path in conv_op_builder).
+// in0: u16, weight: int4 (scale=[4,2], block_size=8), out: u16
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_NoBias) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  const std::filesystem::path json_dir = "ConvBQ_NoBias_dump";
+  std::filesystem::create_directories(json_dir);  // keep on failure for inspection
+
+  ProviderOptions opts = GetBQConvProviderOptions();
+  opts["dump_json_qnn_graph"] = "1";
+  opts["json_qnn_graph_dir"] = json_dir.string();
+
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/8,
+                                      /*bias=*/false),
+                  opts,
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::Some,
+                  /*fp32_abs_err=*/1e-2f,
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_outputs=*/false);
+}
+
+// 1x1 Conv with bias. Exercises the bias pass-through in the BQ bias path.
+// in0: u16, weight: int4 (scale=[4,2], block_size=8), bias: f32, out: u16
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_WithBias) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  const std::filesystem::path json_dir = "ConvBQ_WithBias_dump";
+  std::filesystem::create_directories(json_dir);
+  ProviderOptions opts = GetBQConvProviderOptions();
+  opts["dump_json_qnn_graph"] = "1";
+  opts["json_qnn_graph_dir"] = json_dir.string();
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/8,
+                                      /*bias=*/true),
+                  opts,
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::Some,
+                  1e-2f,
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_outputs=*/false);
+}
+
+// 1x1 Conv with larger IC and more blocks per channel.
+// weight: int4 (IC=32, block_size=8, 4 blocks per OC), scale=[8,4]
+// in0: u16, out: u16
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_MultiBlock) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                      /*weight=*/{8, 32, 1, 1},
+                                      /*block_size=*/8),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::Some,
+                  1e-2f,
+                  OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                  /*verify_outputs=*/false);
+}
+
+// Regression: existing per-channel INT4 Conv (no block_size) continues to work.
+// Reuses RunHTPConvOpPerChannelTest to confirm the BQ detection does not interfere.
+TEST_F(QnnHTPBackendTests, ConvBQ_ExistingPerChannel_Unaffected) {
+  // This duplicates ConvU16S4S32_PerChannel to act as a regression guard.
+  RunHTPConvOpPerChannelTest<uint16_t, Int4x2>(
+      "Conv",
+      TestInputDef<float>({1, 2, 4, 4}, false,
+                          GetFloatDataInRange(0.0f, 1.0f, SizeOfShape({1, 2, 4, 4}))),
+      TestInputDef<float>({3, 2, 2, 2}, true,
+                          GetFloatDataInRange(-1.0f, 5.0f, SizeOfShape({3, 2, 2, 2}))),
+      TestInputDef<float>({3}, true, GetFloatDataInRange(-1.0f, 1.0f, 3)),
+      0,             // weight quant axis
+      {1, 1},        // strides
+      {0, 0, 0, 0},  // pads
+      {1, 1},        // dilations
+      1,             // group
+      "NOTSET",
+      ExpectedEPNodeAssignment::All,
+      false,  // use_qdq_contrib_ops
+      21);    // opset
+}
+
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
 
 #if defined(_M_ARM64)
