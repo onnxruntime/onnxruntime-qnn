@@ -77,6 +77,8 @@ const std::unordered_map<std::string, uint32_t> ResizeOpBuilder::supported_coord
     {"pytorch_half_pixel", QNN_OP_RESIZE_TRANSFORMATION_MODE_PYTORCH_HALF_PIXEL},
     {"align_corners", QNN_OP_RESIZE_TRANSFORMATION_MODE_ALIGN_CORNERS},
     {"asymmetric", QNN_OP_RESIZE_TRANSFORMATION_MODE_ASYMMETRIC}};
+    // QNN has no dedicated tf_half_pixel_for_nn mode; map to HALF_PIXEL as the closest equivalent.
+    {"tf_half_pixel_for_nn", QNN_OP_RESIZE_TRANSFORMATION_MODE_HALF_PIXEL}};
 
 const std::unordered_map<std::string, uint32_t> ResizeOpBuilder::supported_nearest_modes = {
     {"round_prefer_floor", QNN_OP_RESIZE_NEAREST_MODE_ROUND_PREFER_FLOOR},
@@ -185,6 +187,7 @@ Ort::Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   //  pytorch_half_pixel (H==1 ∨ W==1)  |    X     Resize    Resize  Resize       X
   //                      align_corners |    X     Resize    RBL     Resize       X
   //                         asymmetric |    X     Resize    RBL     Resize       X
+  //            tf_half_pixel_for_nn    |    X     Resize    RBL     Resize       X
   //
   // The H>1 ∧ W>1 row routes pytorch_half_pixel to RBL because it is then
   // bit-identical to half_pixel (see IsPyTorchHalfPixelEquivalentToHalfPixel).
@@ -203,7 +206,7 @@ Ort::Status ResizeOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   //              pytorch_half_pixel |  Resize(QNN < 2.20)        X             X      X
   //                   align_corners |  Resize(QNN < 2.20)  Resize(QNN 2.20)   RNN     X
   //                      asymmetric |  Resize(QNN < 2.20)        X            RNN     X
-
+  //         tf_half_pixel_for_nn    |  Resize(QNN < 2.20)        X            RNN     X
   if (interp_mode == "nearest") {
     const std::string nearest_mode = GetOnnxAttr(node_helper, onnx_nearest_mode_attr);
     RETURN_IF_NOT(IsOnnxAttrModeSupported(supported_nearest_modes, nearest_mode),
