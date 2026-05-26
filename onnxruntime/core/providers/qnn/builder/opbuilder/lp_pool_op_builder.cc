@@ -24,6 +24,9 @@ namespace qnn {
 // where K = product(kernel_shape) and AvgPool uses count_pad_for_edges = true so the
 // denominator is always K regardless of how many padded elements fall in the window.
 // Rank-3 inputs are bracketed by Reshape (NCL <-> NC1L) and use the 2D pool path.
+//
+// LpPool is registered as layout-sensitive in QnnEp::ShouldConvertDataLayoutForOpImpl, so the
+// op builder receives NHWC tensors after the layout transformer runs.
 class LpPoolOpBuilder : public BaseOpBuilder {
  public:
   LpPoolOpBuilder() : BaseOpBuilder("LpPoolOpBuilder") {}
@@ -61,6 +64,12 @@ Ort::Status LpPoolOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
   // CPU and HTP have PoolAvg3d kernels; rank-5 LpPool falls back to the ORT CPU EP on GPU.
   RETURN_IF(rank == 5 && IsGpuBackend(qnn_model_wrapper.GetQnnBackendType()),
             "QNN LpPool: rank-5 (3D pooling) is not supported on the QNN GPU backend.");
+
+  // Rank-5 native-float QNN_OP_POOL_AVG_3D fails NHWC dry-run validation on the HTP backend
+  // (mirrors the rank-5 PoolMax3d rejection in pool_op_builder.cc). HTP only validates 3D
+  // pooling for QDQ paths in the existing test suite.
+  RETURN_IF(rank == 5 && IsNpuBackend(qnn_model_wrapper.GetQnnBackendType()),
+            "QNN LpPool: rank-5 (3D pooling) is not supported on the QNN HTP backend.");
 
   OrtNodeAttrHelper node_helper(node_unit);
 
