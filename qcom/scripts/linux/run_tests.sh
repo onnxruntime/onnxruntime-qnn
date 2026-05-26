@@ -102,11 +102,16 @@ function run_model_test() {
 }
 
 python_exe=python3
+skip_model_tests=
 
 for i in "$@"; do
   case $i in
     --python=*)
       python_exe="${i#*=}"
+      shift
+      ;;
+    --skip-model-tests)
+      skip_model_tests=1
       shift
       ;;
     *)
@@ -155,6 +160,10 @@ count_errors ./ctest --verbose --timeout 10800 --stop-on-failure "${exclude_args
 
 log_info "-=-=-=- Running ONNX model tests -=-=-=-"
 
+if [ -n "${skip_model_tests}" ]; then
+    log_info "Skipping ONNX model tests (ORT home mode)."
+else
+
 cd "${onnx_models_root}"
 
 declare -a model_test_runners=("run_model_test")
@@ -168,7 +177,7 @@ for runner in "${model_test_runners[@]}"; do
         rm -rf "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node/test_strnormalizer_export_monday_casesensintive_upper"
         rm -rf "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node/test_strnormalizer_export_monday_empty_output"
     fi
-    
+
     "${runner}" cpu node "${REPO_ROOT}/cmake/external/onnx/onnx/backend/test/data/node"
 
     #TODO: [AISW-164203] - Known issues with QDQ model suite
@@ -182,5 +191,7 @@ for runner in "${model_test_runners[@]}"; do
     fi
 
 done
+
+fi
 
 exit "${errors}"
