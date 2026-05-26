@@ -125,6 +125,8 @@ Ort::Status QnnContextMemHandleManager::GetOrRegister(void* shared_memory_addres
                   " backend on Windows. This is likely due to outdated graphics drivers on the device. Please try installing"
                   " new drivers from https://softwarecenter.qualcomm.com/catalog/item/Windows_Graphics_Driver.");
     }
+#else
+    std::ignore = qnn_backend_type_;
 #endif
     RETURN_IF_NOT(register_result == QNN_SUCCESS,
                   ("qnn_interface.memRegister() failed: " +
