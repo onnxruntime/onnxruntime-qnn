@@ -44,7 +44,7 @@ class QnnContextMemHandleManager {
  private:
   const QNN_INTERFACE_VER_TYPE& qnn_interface_;
   Qnn_ContextHandle_t context_;
-  QnnBackendType qnn_backend_type_;
+  [[maybe_unused]] QnnBackendType qnn_backend_type_;
   QnnAllocatorType qnn_allocator_type_;
 
   // assume Qnn_MemHandle_t is a pointer and able to be wrapped with std::unique_ptr
