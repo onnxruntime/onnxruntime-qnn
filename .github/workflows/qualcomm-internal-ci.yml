@@ -37,3 +37,8 @@ jobs:
     if: github.event_name == 'pull_request'
     uses: ./.github/workflows/qualcomm-internal-coverage.yml
     secrets: inherit
+
+  asan:
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/qualcomm-internal-asan.yml
+    secrets: inherit

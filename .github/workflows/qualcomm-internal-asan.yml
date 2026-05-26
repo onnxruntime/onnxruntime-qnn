@@ -1,0 +1,85 @@
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
+# SPDX-License-Identifier: MIT
+
+name: Qualcomm Internal ASan
+
+permissions:
+  contents: read
+  checks: write
+  pull-requests: write
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+jobs:
+  asan-linux-x86_64:
+    name: "asan-linux-x86_64"
+    runs-on: ["self-hosted", "X64", "Linux", "Build"]
+    env:
+      ASAN_BUILD_DIR: build/linux-x86_64/Debug
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          # submodules omitted here; initialized below only when ASan is needed.
+
+      - name: Check if ASan is needed
+        id: gate
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "run=true" >> "${GITHUB_OUTPUT}"
+            exit 0
+          fi
+
+          base_ref="${{ github.base_ref }}"
+          if [ -z "${base_ref}" ]; then
+            echo "::error::github.base_ref is empty (event_name=${{ github.event_name }})"
+            exit 1
+          fi
+
+          if ! changed=$(git diff --name-only "origin/${base_ref}...HEAD"); then
+            echo "::error::git diff against origin/${base_ref}...HEAD failed"
+            exit 1
+          fi
+
+          if echo "${changed}" | grep -qE 'onnxruntime/(core|test)/providers/qnn/'; then
+            echo "run=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "run=false" >> "${GITHUB_OUTPUT}"
+          fi
+
+      - name: Initialize submodules
+        if: steps.gate.outputs.run == 'true'
+        run: git submodule update --init --recursive
+
+      - name: Run ASan build and unit tests (Linux x86_64, Debug)
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          python3 qcom/build_and_test.py \
+            --target-py-version None \
+            asan_linux_x86_64
+
+      - name: Publish Test Report
+        uses: mikepenz/action-junit-report@v6
+        # Skipped on fork PRs: the action creates a check run, which the fork-PR GITHUB_TOKEN cannot do.
+        if: ${{ always() && steps.gate.outputs.run == 'true' && github.event.pull_request.head.repo.fork != true }}
+        with:
+          check_name: asan-linux-x86_64-test-results
+          group_reports: false
+          include_passed: true
+          detailed_summary: true
+          verbose_summary: false
+          report_paths: |
+            ${{ env.ASAN_BUILD_DIR }}/*.results.xml
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v7
+        if: ${{ always() && steps.gate.outputs.run == 'true' }}
+        with:
+          name: "asan-linux-x86_64-${{ github.sha }}-test-results"
+          retention-days: 7
+          path: |
+            ${{ env.ASAN_BUILD_DIR }}/*.results.xml

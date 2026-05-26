@@ -40,10 +40,15 @@ warnings_as_errors=1
 build_java=
 build_archive=
 enable_coverage=
+enable_asan=
 for i in "$@"; do
   case $i in
     --build-archive)
       build_archive=1
+      shift
+      ;;
+    --enable-asan)
+      enable_asan=1
       shift
       ;;
     --config=*)
@@ -306,6 +311,10 @@ else
 
     if [ -n "${enable_coverage}" ]; then
       common_args+=(--cmake_extra_defines "ENABLE_COVERAGE:BOOL=ON")
+    fi
+
+    if [ -n "${enable_asan}" ]; then
+      common_args+=(--enable_address_sanitizer)
     fi
 
     "${python_for_build}" ${REPO_ROOT}/tools/ci_build/build.py \
