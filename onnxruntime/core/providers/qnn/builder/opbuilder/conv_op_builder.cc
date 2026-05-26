@@ -400,10 +400,10 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
         }
       }
 
-      QnnQuantParamsWrapper bq_quant_params(gsl::span<const float>(scales_qnn),
-                                            gsl::span<const float>(offsets_qnn),
-                                            bitwidth,
-                                            gsl::span<const uint32_t>(block_size_arr));
+      QnnQuantParamsWrapper bq_quant_params = QnnQuantParamsWrapper::BwFloatBlock(gsl::span<const float>(scales_qnn),
+                                                                                  gsl::span<const float>(offsets_qnn),
+                                                                                  bitwidth,
+                                                                                  gsl::span<const uint32_t>(block_size_arr));
 
       // Always use SFIXED_POINT_8: unsigned types are pre-converted by TransformUnsignedToSignedFixedPoint.
       QnnTensorWrapper bq_weight_wrapper(input1_name, tensor_type,
@@ -703,7 +703,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
 
               // Create new tensor wrapper with requantized data
               std::string bias_name = bias_input.name;
-              QnnQuantParamsWrapper new_quant_params(new_scales[0], new_offsets[0]);
+              QnnQuantParamsWrapper new_quant_params = QnnQuantParamsWrapper::PerTensor(new_scales[0], new_offsets[0]);
               QnnTensorWrapper bias_tensorwrapper(bias_name, QNN_TENSOR_TYPE_STATIC, bias_info.qnn_data_type,
                                                   std::move(new_quant_params), std::vector<uint32_t>(bias_info.shape),
                                                   std::move(requantized_bias_data));
@@ -795,7 +795,7 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
 
                 // Create new tensor wrapper with requantized data
                 std::string bias_name = bias_input.name;
-                QnnQuantParamsWrapper new_quant_params(new_scales, new_offsets, quant_axis, false);
+                QnnQuantParamsWrapper new_quant_params = QnnQuantParamsWrapper::PerChannel(new_scales, new_offsets, quant_axis);
                 QnnTensorWrapper bias_tensorwrapper(bias_name, QNN_TENSOR_TYPE_STATIC, bias_info.qnn_data_type,
                                                     std::move(new_quant_params), std::vector<uint32_t>(bias_info.shape),
                                                     std::move(requantized_bias_data));

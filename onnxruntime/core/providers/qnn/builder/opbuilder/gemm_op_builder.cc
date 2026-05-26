@@ -403,10 +403,10 @@ Ort::Status GemmOpBuilder::ProcessInputsForBQGemm(QnnModelWrapper& qnn_model_wra
     offsets_qnn = std::move(onnx_offsets);
   }
 
-  QnnQuantParamsWrapper bq_quant_params(gsl::span<const float>(scales_qnn),
-                                        gsl::span<const float>(offsets_qnn),
-                                        bitwidth,
-                                        gsl::span<const uint32_t>(block_size_arr));
+  QnnQuantParamsWrapper bq_quant_params = QnnQuantParamsWrapper::BwFloatBlock(gsl::span<const float>(scales_qnn),
+                                                                              gsl::span<const float>(offsets_qnn),
+                                                                              bitwidth,
+                                                                              gsl::span<const uint32_t>(block_size_arr));
 
   // 2-D weight [N, K] with BW_FLOAT_BLOCK encoding.
   std::vector<uint32_t> weight_shape_2d = {static_cast<uint32_t>(N), static_cast<uint32_t>(K)};

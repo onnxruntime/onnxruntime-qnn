@@ -785,10 +785,10 @@ Ort::Status MatMulOpBuilder::ProcessInputsForBQMatMul(QnnModelWrapper& qnn_model
     }
   }
 
-  QnnQuantParamsWrapper bq_quant_params(gsl::span<const float>(scales_qnn),
-                                        gsl::span<const float>(offsets_qnn),
-                                        bitwidth,
-                                        gsl::span<const uint32_t>(block_size_arr));
+  QnnQuantParamsWrapper bq_quant_params = QnnQuantParamsWrapper::BwFloatBlock(gsl::span<const float>(scales_qnn),
+                                                                              gsl::span<const float>(offsets_qnn),
+                                                                              bitwidth,
+                                                                              gsl::span<const uint32_t>(block_size_arr));
 
   // Always use SFIXED_POINT_8: unsigned types are pre-converted by TransformUnsignedToSignedFixedPoint.
   // Weight is reshaped to 4-D [1, 1, K, N] to satisfy the QNN HTP BQ MatMul requirement.
