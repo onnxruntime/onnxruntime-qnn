@@ -1,5 +1,6 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
+// CI gate trigger for ASan workflow validation (PR #419). Draft PR only — do not merge.
 
 #include <filesystem>
 #include <fstream>
