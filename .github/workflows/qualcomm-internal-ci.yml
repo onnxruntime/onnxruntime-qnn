@@ -33,6 +33,11 @@ jobs:
     with:
       do_all: true
 
+  build-and-test-ort-home:
+    name: Build & Test (ORT HOME)
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-ort-home.yml
+    secrets: inherit
+
   coverage:
     if: github.event_name == 'pull_request'
     uses: ./.github/workflows/qualcomm-internal-coverage.yml
