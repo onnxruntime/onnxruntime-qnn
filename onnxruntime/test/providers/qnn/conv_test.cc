@@ -2901,17 +2901,18 @@ namespace {
 
 // Builds the ONNX QDQ graph for a BQ (block-quantized weight) 2D Conv.
 //   - activation: uint16 per-tensor symmetric Q/DQ
-//   - weight: INT4 initializer + DQ with block_size attribute and rank-2
-//             float scale [OC, num_blocks] (num_blocks = IC / block_size)
+//   - weight: INT4 or INT8 initializer + DQ with block_size attribute and rank-4
+//             float scale [OC, IC/block_size, 1, 1] (axis=1, IC is the blocked dimension)
 //   - output: uint16 per-tensor symmetric Q/DQ
 //
-// Scale layout [OC, num_blocks]: scale[oc * num_blocks + b] is the per-block
-// float scale for output channel oc, IC-block b.
+// weight_bits: 4 for INT4 (default), 8 for INT8, 2 for INT2.
+// block_size constraints: must be a multiple of 8 (4-bit), 4 (8-bit), or 16 (2-bit) per HTP.
 GetQDQTestCaseFn BuildBQConvTestCase(const std::vector<int64_t>& input_shape,
                                      const std::vector<int64_t>& weight_shape,
                                      int64_t block_size,
-                                     bool include_bias = false) {
-  return [input_shape, weight_shape, block_size, include_bias](ModelTestBuilder& builder) -> void {
+                                     bool include_bias = false,
+                                     int weight_bits = 4) {
+  return [input_shape, weight_shape, block_size, include_bias, weight_bits](ModelTestBuilder& builder) -> void {
     const int64_t OC = weight_shape[0];
     const int64_t IC = weight_shape[1];
     const int64_t kH = weight_shape.size() >= 4 ? weight_shape[2] : 1;
@@ -2934,20 +2935,34 @@ GetQDQTestCaseFn BuildBQConvTestCase(const std::vector<int64_t>& input_shape,
     builder.AddNode("act_dql", "DequantizeLinear",
                     {"act_ql_out", "act_dql_scale", "act_dql_zp"}, {"act_dql_out"});
 
-    // ── Weight: INT4 initializer → DQ(block_size, axis=1) ───────────────────
-    // ONNX opset 21 block quantization: scale rank == weight rank.
-    // axis=1 (IC dimension), block_size=bs → scale shape [OC, IC/bs, 1, 1].
+    // ── Weight initializer + DQ(block_size, axis=1) ──────────────────────────
+    // Scale rank == weight rank per ONNX opset 21: [OC, IC/block_size, 1, 1].
     const std::vector<int64_t> scale_shape{OC, num_blocks, 1, 1};
     builder.MakeInitializer<float>("weight_scale", scale_shape, 0.01f, 0.05f);
 
-    // INT4 weight in range [-3, 3] (symmetric, zero_point = 0).
     const size_t num_elems = static_cast<size_t>(OC * IC * kH * kW);
-    std::vector<Int4x2> weight_data(Int4x2::CalcNumInt4Pairs(num_elems));
-    for (size_t i = 0; i < num_elems; ++i) {
-      const int8_t v = static_cast<int8_t>((i % 7) - 3);  // [-3..3]
-      weight_data[i >> 1].SetElem(i & 1, v);
+    if (weight_bits == 4) {
+      // INT4 weight in range [-3, 3] (symmetric).
+      std::vector<Int4x2> weight_data(Int4x2::CalcNumInt4Pairs(num_elems));
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i >> 1].SetElem(i & 1, static_cast<int8_t>((i % 7) - 3));
+      }
+      builder.MakeInitializer<Int4x2>("weight_quant", weight_shape, weight_data);
+    } else if (weight_bits == 2) {
+      // INT2 weight in range [-1, 1] (symmetric, 4 elements per byte).
+      std::vector<Int2x4> weight_data(Int2x4::CalcNumInt2Quads(num_elems));
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i >> 2].SetElem(i & 3, static_cast<int8_t>((i % 3) - 1));
+      }
+      builder.MakeInitializer<Int2x4>("weight_quant", weight_shape, weight_data);
+    } else {
+      // INT8 weight in range [-63, 63] (symmetric).
+      std::vector<int8_t> weight_data(num_elems);
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i] = static_cast<int8_t>((i % 127) - 63);
+      }
+      builder.MakeInitializer<int8_t>("weight_quant", weight_shape, weight_data);
     }
-    builder.MakeInitializer<Int4x2>("weight_quant", weight_shape, weight_data);
 
     // DQ with block_size; omit zero_point (symmetric). axis=1: IC is the blocked dimension.
     builder.AddNode("weight_dql", "DequantizeLinear",
@@ -3068,6 +3083,65 @@ TEST_F(QnnHTPBackendTests, ConvBQ_ExistingPerChannel_Unaffected) {
       ExpectedEPNodeAssignment::All,
       false,  // use_qdq_contrib_ops
       21);    // opset
+}
+
+// ── BQ Conv bitwidth / block_size variants ───────────────────────────────────
+// INT4, block_size=16: still a valid HTP multiple-of-8 block size.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_BlockSize16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                      /*weight=*/{4, 32, 1, 1},
+                                      /*block_size=*/16,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/4),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// INT8, block_size=4: minimum valid HTP multiple-of-4 block size for 8-bit.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int8_1x1_BlockSize4) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/4,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/8),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// INT8, block_size=8: larger block size, still a valid HTP multiple-of-4.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int8_1x1_BlockSize8) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                      /*weight=*/{4, 32, 1, 1},
+                                      /*block_size=*/8,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/8),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// INT2, block_size=16: minimum valid HTP multiple-of-16 block size for 2-bit.
+// DISABLED: ORT's CPU DequantizeLinear kernel does not yet support tensor(int2).
+// Re-enable once ORT adds INT2 DQ support (the Int2x4 test infrastructure is ready).
+TEST_F(QnnHTPBackendTests, DISABLED_ConvBQ_U16Int2_1x1_BlockSize16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                      /*weight=*/{4, 32, 1, 1},
+                                      /*block_size=*/16,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/2),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)

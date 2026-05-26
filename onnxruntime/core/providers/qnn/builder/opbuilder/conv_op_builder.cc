@@ -12,6 +12,28 @@
 namespace onnxruntime {
 namespace qnn {
 
+// HTP BQ Conv: supported bitwidths and their block_size divisor constraints.
+// block_size must be a multiple of the corresponding value (same as MatMulNBits HTP constraints).
+const std::unordered_map<uint32_t, int64_t> kHtpConvBQBitsAndBlockSizeMultipliers{
+    {2, 16}, {4, 8}, {8, 4}};
+
+// Returns BQ weight bitwidth (2/4/8) from an ONNX element data type, or 0 if unsupported.
+static uint32_t GetBQBitwidth(ONNXTensorElementDataType onnx_type) {
+  switch (onnx_type) {
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2:
+      return 2;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4:
+      return 4;
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8:
+    case ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8:
+      return 8;
+    default:
+      return 0;
+  }
+}
+
 // ONNX convolution types supported by this builder.
 // We translate node_unit.OpType() into this enum to avoid repeated string comparisons.
 enum class OnnxConvType {
@@ -138,10 +160,20 @@ Ort::Status ConvOpBuilder::IsOpSupported(QnnModelWrapper& qnn_model_wrapper,
           const int64_t ic = static_cast<int64_t>(weight_shape[1]);
           RETURN_IF(ic % num_blocks_per_oc != 0,
                     "QNN EP: Conv BQ: IC must be divisible by num_blocks_per_oc");
-          // Return success here; full QNN validation is done in the NHWC IsOpSupported path
-          // (line: if Domain==kMSInternalNHWCDomain → AddToModelBuilder(true)).
-          // Do NOT call AddToModelBuilder here — it would pollute the shared qnn_model_wrapper
-          // and cause all subsequent nodes to fail their IsOpSupported checks.
+
+          // Validate bitwidth (from weight element type) and block_size against HTP constraints.
+          const uint32_t bitwidth = GetBQBitwidth(inputs[1].type);
+          const int64_t block_size = ic / num_blocks_per_oc;
+          auto bq_it = kHtpConvBQBitsAndBlockSizeMultipliers.find(bitwidth);
+          RETURN_IF(bq_it == kHtpConvBQBitsAndBlockSizeMultipliers.end(),
+                    ("QNN HTP Conv BQ: unsupported weight bitwidth=" +
+                     std::to_string(bitwidth)).c_str());
+          RETURN_IF(block_size % bq_it->second != 0,
+                    ("QNN HTP Conv BQ: block_size=" + std::to_string(block_size) +
+                     " must be a multiple of " + std::to_string(bq_it->second) +
+                     " for " + std::to_string(bitwidth) + "-bit weight").c_str());
+
+          // Return success; full QNN validation is done in the NHWC IsOpSupported path.
           return Ort::Status();
         }  // end is_rank2_scale || is_rankN_scale
       }  // end else (weight shape obtainable)
@@ -335,7 +367,8 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
                     "QNN EP: BQ Conv scale size mismatch");
       // QNN BW_FLOAT_BLOCK expects scales in [OC, nb] order — same as ONNX, no reordering needed.
 
-      // Float offsets in [OC, nb] order: 0 for symmetric, -zp for asymmetric.
+      // Float offsets in [OC, nb] order, derived from zero_points: offset[i] = -zp[i].
+      // BW_FLOAT_BLOCK offsets are unconstrained floats; defaults to 0.0f when no zero_points.
       std::vector<float> offsets_qnn(static_cast<size_t>(OC * nb), 0.0f);
       if (inputs[1].quant_param->zero_point != nullptr) {
         std::vector<int32_t> zp_values;
@@ -351,12 +384,18 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
 
       QnnQuantParamsWrapper bq_quant_params(gsl::span<const float>(scales_qnn),
                                             gsl::span<const float>(offsets_qnn),
-                                            4u,  // bitwidth: INT4
+                                            GetBQBitwidth(inputs[1].type),
                                             gsl::span<const uint32_t>(block_size_arr));
 
-      // Use SFIXED_POINT_8: the unpacked 4-bit values are stored as int8 (1 per byte).
+      // Unpacked weight: each element occupies 1 byte regardless of bitwidth.
+      // Use signed or unsigned INT8 storage matching the weight element type.
+      const bool is_signed_weight = (inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2 ||
+                                     inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4 ||
+                                     inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8);
+      const Qnn_DataType_t weight_qnn_dtype = is_signed_weight ? QNN_DATATYPE_SFIXED_POINT_8
+                                                                : QNN_DATATYPE_UFIXED_POINT_8;
       QnnTensorWrapper bq_weight_wrapper(input1_name, tensor_type,
-                                         QNN_DATATYPE_SFIXED_POINT_8,
+                                         weight_qnn_dtype,
                                          std::move(bq_quant_params),
                                          std::move(hwcn_shape),
                                          std::move(unpacked_tensor));
@@ -1243,12 +1282,10 @@ Ort::Status ConvOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qnn_mode
   // Detect BQ or LPBQ Conv from the weight tensor's quant encoding.
   // BQ  (BW_FLOAT_BLOCK):       Conv outputs FP16 → need FP16 intermediate + Convert(FP16→INT16).
   // LPBQ (BLOCKWISE_EXPANSION): Conv outputs INT16 → standard quantized output path.
+  // input_names[1] is the weight — IsOpSupported guarantees Conv has >= 2 inputs.
   bool is_bq_conv = false;
-  if (!input_names.empty()) {
-    const std::string& weight_name = input_names.size() >= 2 ? input_names[1] : input_names[0];
-    if (qnn_model_wrapper.IsQnnTensorWrapperExist(weight_name)) {
-      is_bq_conv = qnn_model_wrapper.GetQnnTensorWrapper(weight_name).GetQnnQuantParams().IsBlockQuantized();
-    }
+  if (qnn_model_wrapper.IsQnnTensorWrapperExist(input_names[1])) {
+    is_bq_conv = qnn_model_wrapper.GetQnnTensorWrapper(input_names[1]).GetQnnQuantParams().IsBlockQuantized();
   }
 
   const auto& output_name = outputs[0].name;
