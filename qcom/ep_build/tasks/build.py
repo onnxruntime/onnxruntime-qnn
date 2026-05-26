@@ -334,8 +334,5 @@ class QdcTestsTask(RunExecutablesWithVenvTask):
 def ort_build_env_vars(old_env: Mapping[str, str] | None = None) -> dict[str, str]:
     env = os.environ.copy() if old_env is None else dict(old_env)
     if env.get("ORT_NIGHTLY_BUILD", "0") == "1":
-        env["NIGHTLY_BUILD"] = "1"
         env["Build_SourceVersion"] = git_head_sha()
-    elif env.get("ORT_NIGHTLY_BUILD", "0") == "0":
-        env["NIGHTLY_BUILD"] = "0"
     return env
