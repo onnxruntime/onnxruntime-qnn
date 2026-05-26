@@ -440,6 +440,7 @@ class TaskLibrary:
                 ],
             )
         )
+
     if is_host_linux() and is_host_x86_64():
 
         @public_task("Build with AddressSanitizer and run unit tests under ASan (Linux x86_64, Debug)")
