@@ -2751,13 +2751,13 @@ TEST_F(QnnHTPBackendTests, ExtendedUdmaModeTest) {
 // Tests that the QNN GPU shared memory allocator (DX12) can be created and used to allocate/free memory.
 // Requires the QNN GPU backend (QnnGpu.dll) and a D3D12-capable device.
 TEST_F(QnnGPUBackendTests, get_allocator_qnn_gpu_shared) {
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
   options["backend_path"] = "QnnGpu.dll";
   options["enable_dx12_shared_memory_allocator"] = "1";
 
   Ort::SessionOptions session_options;
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, session_options, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, options);
 
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "capi_symbolic_dims.onnx";
   Ort::Session session = Ort::Session{*ort_env, ort_model_path, session_options};
@@ -2781,13 +2781,13 @@ TEST_F(QnnGPUBackendTests, get_allocator_qnn_gpu_shared) {
 }
 
 TEST_F(QnnGPUBackendTests, io_binding_qnn_gpu_shared) {
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
   options["backend_path"] = "QnnGpu.dll";
   options["enable_dx12_shared_memory_allocator"] = "1";
 
   Ort::SessionOptions session_options;
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, session_options, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, options);
 
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "mul_1.onnx";
   Ort::Session session = Ort::Session{*ort_env, ort_model_path, session_options};
@@ -2881,13 +2881,13 @@ TEST_F(QnnGPUBackendTests, io_binding_qnn_gpu_shared) {
 
 // TODO: enable when DX12SharedMemoryAllocator supports tensors at nonzero offset within allocation
 TEST_F(QnnGPUBackendTests, DISABLED_io_binding_qnn_gpu_shared_offset) {
-  onnxruntime::ProviderOptions options;
+  ProviderOptions options;
   options["backend_path"] = "QnnGpu.dll";
   options["enable_dx12_shared_memory_allocator"] = "1";
 
   Ort::SessionOptions session_options;
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, session_options, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, session_options, kQnnExecutionProvider, options);
 
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "mul_1.onnx";
   Ort::Session session = Ort::Session{*ort_env, ort_model_path, session_options};
