@@ -354,7 +354,7 @@ OrtStatus* ORT_API_CALL QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl
   // EP has not been created yet. Create a temporary QNN EP for validation.
   const auto provider_prefix = GetProviderOptionPrefix(factory->ep_name_);
 
-  // Determine backend type from the provided devices (prefer NPU, then GPU).
+  // Determine backend type from the provided devices (Only supports NPU currently).
   std::string backend_type;
   for (size_t i = 0; i < num_devices; ++i) {
     auto device_type = factory->ort_api.HardwareDevice_Type(devices[i]);
@@ -363,9 +363,12 @@ OrtStatus* ORT_API_CALL QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl
       break;
     }
   }
-  RETURN_IF(backend_type.empty(),
-            "Currently QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl only supports OrtHardwareDeviceType_NPU, but "
-            "no OrtHardwareDeviceType_NPU is found in the `devices` argument.");
+  if (backend_type.empty()) {
+    *model_compatibility = OrtCompiledModelCompatibility_EP_NOT_APPLICABLE;
+    return factory->ort_api.CreateStatus(ORT_EP_FAIL,
+                                         "Currently QnnEpFactory::ValidateCompiledModelCompatibilityInfoImpl only supports OrtHardwareDeviceType_NPU, but "
+                                         "no OrtHardwareDeviceType_NPU is found in the `devices` argument.");
+  }
 
   using SessionOptionsUniquePtr = std::unique_ptr<OrtSessionOptions, std::function<void(OrtSessionOptions*)>>;
   OrtSessionOptions* temp_session_options = nullptr;

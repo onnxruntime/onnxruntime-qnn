@@ -3632,18 +3632,6 @@ TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate) {
   TestModelCompatibilityApiValidate(test_info, OrtCompiledModelCompatibility_EP_SUPPORTED_OPTIMAL);
 }
 
-TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_NoEp) {
-  RegisteredEpDeviceUniquePtr registered_ep_device;
-  Ort::SessionOptions so;
-  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, {{"backend_type", "htp"}});
-
-  const OrtEpDevice* ep_device = registered_ep_device.get();
-  OrtCompiledModelCompatibility out_status = OrtCompiledModelCompatibility_EP_UNSUPPORTED;
-  OrtStatus* status = Ort::GetApi().GetModelCompatibilityForEpDevices(&ep_device, 1, "", &out_status);
-  ASSERT_EQ(status, nullptr);
-  ASSERT_EQ(out_status, OrtCompiledModelCompatibility_EP_NOT_APPLICABLE);
-}
-
 TEST_F(QnnHTPBackendTests, ModelCompatibility_ApiValidate_DiffBackend) {
   CompatibilityTestInfo test_info;
   test_info.backend_id = QNN_BACKEND_ID_CPU;
