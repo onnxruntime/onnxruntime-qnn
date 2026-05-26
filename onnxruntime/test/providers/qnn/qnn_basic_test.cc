@@ -2763,10 +2763,16 @@ TEST_F(QnnGPUBackendTests, get_allocator_qnn_gpu_shared) {
   Ort::Session session = Ort::Session{*ort_env, ort_model_path, session_options};
 
   // Verify the shared memory allocator is accessible and functional.
-  // Note: "QnnHtpShared" allocator is the correct name even when using the GPU allocator. Eventually, the plan is to
-  // migrate to "QnnShared".
-  Ort::MemoryInfo info_qnn_shared("QnnHtpShared", OrtAllocatorType::OrtDeviceAllocator, 0, OrtMemTypeCPU);
-  Ort::Allocator qnn_gpu_shared_allocator(session, info_qnn_shared);
+  Ort::MemoryInfo info_qnn_shared(nullptr);
+  Ort::Allocator qnn_gpu_shared_allocator(nullptr);
+  try {
+    // Note: "QnnHtpShared" allocator is the correct name even when using the GPU allocator. Eventually, the plan is to
+    // migrate to "QnnShared".
+    info_qnn_shared = Ort::MemoryInfo("QnnHtpShared", OrtAllocatorType::OrtDeviceAllocator, 0, OrtMemTypeCPU);
+    qnn_gpu_shared_allocator = Ort::Allocator(session, info_qnn_shared);
+  } catch (const Ort::Exception&) {
+    GTEST_SKIP() << "DX12 allocator unavailable (outdated drivers?). Skipping test.";
+  }
 
   auto allocator_info = qnn_gpu_shared_allocator.GetInfo();
   ASSERT_EQ(allocator_info, info_qnn_shared);
@@ -2792,10 +2798,17 @@ TEST_F(QnnGPUBackendTests, io_binding_qnn_gpu_shared) {
   const ORTCHAR_T* ort_model_path = ORT_MODEL_FOLDER "mul_1.onnx";
   Ort::Session session = Ort::Session{*ort_env, ort_model_path, session_options};
 
-  // Note: "QnnHtpShared" allocator is the correct name even when using the GPU allocator. Eventually, the plan is to
-  // migrate to "QnnShared".
-  Ort::MemoryInfo info_qnn_shared("QnnHtpShared", OrtAllocatorType::OrtDeviceAllocator, 0, OrtMemTypeCPU);
-  Ort::Allocator qnn_gpu_shared_allocator(session, info_qnn_shared);
+  Ort::MemoryInfo info_qnn_shared(nullptr);
+  Ort::Allocator qnn_gpu_shared_allocator(nullptr);
+  try {
+    // Note: "QnnHtpShared" allocator is the correct name even when using the GPU allocator. Eventually, the plan is to
+    // migrate to "QnnShared".
+    info_qnn_shared = Ort::MemoryInfo("QnnHtpShared", OrtAllocatorType::OrtDeviceAllocator, 0, OrtMemTypeCPU);
+    qnn_gpu_shared_allocator = Ort::Allocator(session, info_qnn_shared);
+  } catch (const Ort::Exception&) {
+    GTEST_SKIP() << "DX12 allocator unavailable (outdated drivers?). Skipping test.";
+  }
+
   auto allocator_info = qnn_gpu_shared_allocator.GetInfo();
   ASSERT_EQ(info_qnn_shared, allocator_info);
 
