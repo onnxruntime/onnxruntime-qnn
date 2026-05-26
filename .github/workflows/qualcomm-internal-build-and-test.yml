@@ -106,17 +106,6 @@ jobs:
           git reflog expire --expire=now --all
           git gc --prune=now
 
-  build-ort-home-linux-x86_64:
-    if: ${{ inputs.do_all }}
-    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
-    secrets: inherit
-    with:
-      nightly_build: ${{ inputs.nightly_build }}
-      target_os: linux
-      target_arch: x86_64
-      target_py_vsn: "3.10"
-      use_ort_home: true
-
   build-linux-aarch64-oe-gcc11_2:
     if: ${{ inputs.do_all }}
     needs: [archive-testdata, path-filter]
@@ -244,16 +233,6 @@ jobs:
       # This is validation-only; do not publish a non-shipping wheel or test archive.
       upload_wheel: false
       upload_test_archive: false
-
-  build-ort-home-windows-x86_64:
-    if: ${{ inputs.do_all }}
-    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
-    secrets: inherit
-    with:
-      nightly_build: ${{ inputs.nightly_build }}
-      target_arch: x86_64
-      target_py_vsn: ${{ inputs.target_py_vsn }}
-      use_ort_home: true
 
   lint:
     if: ${{ inputs.do_all }}
