@@ -357,6 +357,23 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
       const int64_t IC = static_cast<int64_t>(input_info.shape[1]);
       const int64_t nb = bq_scale_shape[1];  // num_blocks_per_oc (validated: IC % nb == 0)
       const int64_t block_size = IC / nb;
+      const uint32_t bitwidth = GetBQBitwidth(inputs[1].type);
+
+      // For unsigned types (UINT2/UINT4/UINT8), shift weight data to the signed domain.
+      // QNN BW_FLOAT_BLOCK only supports SFIXED_POINT_8 (signed); unsigned data must be converted.
+      // TransformUnsignedToSignedFixedPoint XORs the MSB of each packed element:
+      //   - UINT8 (bitwidth=8, mask=0x80): 1 byte/element — directly converts [0,255] → [-128,127].
+      //   - UINT4 (bitwidth=4, mask=0x88): after TransposeFromNchwToHwcn unpack, each byte holds
+      //     a UINT4 value in its lower nibble (upper nibble=0). XOR with 0x88 flips bits 3 and 7;
+      //     QNN reads only the lower nibble for bitwidth=4, so the result is equivalent to
+      //     flipping bit 3, which shifts [0,15] → signed-nibble-interpreted [-8,7] correctly.
+      const bool is_unsigned_weight = (inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT2 ||
+                                       inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT4 ||
+                                       inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_UINT8);
+      if (is_unsigned_weight) {
+        RETURN_IF_ERROR(utils::TransformUnsignedToSignedFixedPoint(unpacked_tensor,
+                                                                   static_cast<int64_t>(bitwidth)));
+      }
 
       // QNN BW_FLOAT_BLOCK blockSize for HWCN weight: {1, 1, block_size, 1}.
       // Each block spans block_size consecutive IC elements; H and W dimensions are not blocked.
@@ -369,9 +386,11 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
                     "QNN EP: BQ Conv scale size mismatch");
       // QNN BW_FLOAT_BLOCK expects scales in [OC, nb] order — same as ONNX, no reordering needed.
 
-      // Float offsets in [OC, nb] order, derived from zero_points: offset[i] = -zp[i].
-      // BW_FLOAT_BLOCK offsets are unconstrained floats; defaults to 0.0f when no zero_points.
-      std::vector<float> offsets_qnn(static_cast<size_t>(OC * nb), 0.0f);
+      // Float offsets in [OC, nb] order.
+      // Signed:   offset = -onnx_zp
+      // Unsigned: offset = (1 << (bits-1)) - onnx_zp   (compensates for unsigned→signed shift above)
+      const float unsigned_bias = is_unsigned_weight ? static_cast<float>(1u << (bitwidth - 1)) : 0.0f;
+      std::vector<float> offsets_qnn(static_cast<size_t>(OC * nb), unsigned_bias);
       if (inputs[1].quant_param->zero_point != nullptr) {
         std::vector<int32_t> zp_values;
         ONNXTensorElementDataType zp_onnx_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
@@ -380,24 +399,18 @@ Ort::Status ConvOpBuilder::ProcessConv2D3DInputs(QnnModelWrapper& qnn_model_wrap
         RETURN_IF_NOT(static_cast<int64_t>(zp_values.size()) == OC * nb,
                       "QNN EP: BQ Conv zero_point size must match OC * num_blocks");
         for (size_t idx = 0; idx < static_cast<size_t>(OC * nb); ++idx) {
-          offsets_qnn[idx] = static_cast<float>(-zp_values[idx]);
+          offsets_qnn[idx] = unsigned_bias - static_cast<float>(zp_values[idx]);
         }
       }
 
       QnnQuantParamsWrapper bq_quant_params(gsl::span<const float>(scales_qnn),
                                             gsl::span<const float>(offsets_qnn),
-                                            GetBQBitwidth(inputs[1].type),
+                                            bitwidth,
                                             gsl::span<const uint32_t>(block_size_arr));
 
-      // Unpacked weight: each element occupies 1 byte regardless of bitwidth.
-      // Use signed or unsigned INT8 storage matching the weight element type.
-      const bool is_signed_weight = (inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT2 ||
-                                     inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT4 ||
-                                     inputs[1].type == ONNX_TENSOR_ELEMENT_DATA_TYPE_INT8);
-      const Qnn_DataType_t weight_qnn_dtype = is_signed_weight ? QNN_DATATYPE_SFIXED_POINT_8
-                                                               : QNN_DATATYPE_UFIXED_POINT_8;
+      // Always use SFIXED_POINT_8: unsigned types are pre-converted by TransformUnsignedToSignedFixedPoint.
       QnnTensorWrapper bq_weight_wrapper(input1_name, tensor_type,
-                                         weight_qnn_dtype,
+                                         QNN_DATATYPE_SFIXED_POINT_8,
                                          std::move(bq_quant_params),
                                          std::move(hwcn_shape),
                                          std::move(unpacked_tensor));

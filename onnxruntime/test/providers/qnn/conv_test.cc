@@ -2905,14 +2905,18 @@ namespace {
 //             float scale [OC, IC/block_size, 1, 1] (axis=1, IC is the blocked dimension)
 //   - output: uint16 per-tensor symmetric Q/DQ
 //
-// weight_bits: 4 for INT4 (default), 8 for INT8, 2 for INT2.
+// weight_bits: 4 for INT4/UINT4 (default), 8 for INT8/UINT8, 2 for INT2.
 // block_size constraints: must be a multiple of 8 (4-bit), 4 (8-bit), or 16 (2-bit) per HTP.
+// weight_is_unsigned: true → use UINT weight type (UINT4 or UINT8); tests the
+//   unsigned→signed conversion path in conv_op_builder.cc (TransformUnsignedToSignedFixedPoint).
 GetQDQTestCaseFn BuildBQConvTestCase(const std::vector<int64_t>& input_shape,
                                      const std::vector<int64_t>& weight_shape,
                                      int64_t block_size,
                                      bool include_bias = false,
-                                     int weight_bits = 4) {
-  return [input_shape, weight_shape, block_size, include_bias, weight_bits](ModelTestBuilder& builder) -> void {
+                                     int weight_bits = 4,
+                                     bool weight_is_unsigned = false) {
+  return [input_shape, weight_shape, block_size, include_bias, weight_bits,
+          weight_is_unsigned](ModelTestBuilder& builder) -> void {
     const int64_t OC = weight_shape[0];
     const int64_t IC = weight_shape[1];
     const int64_t kH = weight_shape.size() >= 4 ? weight_shape[2] : 1;
@@ -2941,20 +2945,41 @@ GetQDQTestCaseFn BuildBQConvTestCase(const std::vector<int64_t>& input_shape,
     builder.MakeInitializer<float>("weight_scale", scale_shape, 0.01f, 0.05f);
 
     const size_t num_elems = static_cast<size_t>(OC * IC * kH * kW);
-    if (weight_bits == 4) {
+    if (weight_bits == 4 && !weight_is_unsigned) {
       // INT4 weight in range [-3, 3] (symmetric).
       std::vector<Int4x2> weight_data(Int4x2::CalcNumInt4Pairs(num_elems));
       for (size_t i = 0; i < num_elems; ++i) {
         weight_data[i >> 1].SetElem(i & 1, static_cast<int8_t>((i % 7) - 3));
       }
       builder.MakeInitializer<Int4x2>("weight_quant", weight_shape, weight_data);
-    } else if (weight_bits == 2) {
+    } else if (weight_bits == 4 && weight_is_unsigned) {
+      // UINT4 weight in range [0, 14] (asymmetric-like; symmetric around 7 with zp omitted).
+      std::vector<UInt4x2> weight_data(UInt4x2::CalcNumInt4Pairs(num_elems));
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i >> 1].SetElem(i & 1, static_cast<uint8_t>(i % 15));
+      }
+      builder.MakeInitializer<UInt4x2>("weight_quant", weight_shape, weight_data);
+    } else if (weight_bits == 2 && !weight_is_unsigned) {
       // INT2 weight in range [-1, 1] (symmetric, 4 elements per byte).
       std::vector<Int2x4> weight_data(Int2x4::CalcNumInt2Quads(num_elems));
       for (size_t i = 0; i < num_elems; ++i) {
         weight_data[i >> 2].SetElem(i & 3, static_cast<int8_t>((i % 3) - 1));
       }
       builder.MakeInitializer<Int2x4>("weight_quant", weight_shape, weight_data);
+    } else if (weight_bits == 2 && weight_is_unsigned) {
+      // UINT2 weight in range [0, 3] (full unsigned 2-bit range, 4 elements per byte).
+      std::vector<UInt2x4> weight_data(UInt2x4::CalcNumInt2Quads(num_elems));
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i >> 2].SetElem(i & 3, static_cast<uint8_t>(i % 4));
+      }
+      builder.MakeInitializer<UInt2x4>("weight_quant", weight_shape, weight_data);
+    } else if (weight_is_unsigned) {
+      // UINT8 weight in range [0, 126] (symmetric around 63 with zp omitted).
+      std::vector<uint8_t> weight_data(num_elems);
+      for (size_t i = 0; i < num_elems; ++i) {
+        weight_data[i] = static_cast<uint8_t>(i % 127);
+      }
+      builder.MakeInitializer<uint8_t>("weight_quant", weight_shape, weight_data);
     } else {
       // INT8 weight in range [-63, 63] (symmetric).
       std::vector<int8_t> weight_data(num_elems);
@@ -3128,20 +3153,94 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16Int8_1x1_BlockSize8) {
                   /*fp32_abs_err=*/1e-2f);
 }
 
-// INT2, block_size=16: minimum valid HTP multiple-of-16 block size for 2-bit.
-// DISABLED: ORT's CPU DequantizeLinear kernel does not yet support tensor(int2).
-// Re-enable once ORT adds INT2 DQ support (the Int2x4 test infrastructure is ready).
-TEST_F(QnnHTPBackendTests, DISABLED_ConvBQ_U16Int2_1x1_BlockSize16) {
+// INT2, block_size=16: ORT rejects tensor(int2) as a DequantizeLinear input type at model
+// load time (ONNX type check), so session initialization throws. Use EXPECT_THROW to
+// actively guard against silent regressions. When ONNX spec and ORT model validation
+// accept tensor(int2), replace with a normal RunQnnModelTest (verify_outputs=false until
+// the CPU DQ kernel also supports int2).
+TEST_F(QnnHTPBackendTests, ConvBQ_U16Int2_1x1_BlockSize16) {
   SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
-  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
-                                      /*weight=*/{4, 32, 1, 1},
-                                      /*block_size=*/16,
+  EXPECT_THROW(
+      RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                          /*weight=*/{4, 32, 1, 1},
+                                          /*block_size=*/16,
+                                          /*bias=*/false,
+                                          /*weight_bits=*/2),
+                      GetBQConvProviderOptions(),
+                      /*opset=*/21,
+                      ExpectedEPNodeAssignment::All,
+                      /*fp32_abs_err=*/0.0f,
+                      OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                      /*verify_outputs=*/false),
+      std::exception);
+}
+
+// UINT2, block_size=16: same blocker as ConvBQ_U16Int2_1x1_BlockSize16.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt2_1x1_BlockSize16) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  EXPECT_THROW(
+      RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
+                                          /*weight=*/{4, 32, 1, 1},
+                                          /*block_size=*/16,
+                                          /*bias=*/false,
+                                          /*weight_bits=*/2,
+                                          /*weight_is_unsigned=*/true),
+                      GetBQConvProviderOptions(),
+                      /*opset=*/21,
+                      ExpectedEPNodeAssignment::All,
+                      /*fp32_abs_err=*/0.0f,
+                      OrtLoggingLevel::ORT_LOGGING_LEVEL_ERROR,
+                      /*verify_outputs=*/false),
+      std::exception);
+}
+
+// UINT4 weight, block_size=8: exercises TransformUnsignedToSignedFixedPoint for 4-bit.
+// in0: u16, weight: uint4 (scale=[4,2,1,1], block_size=8), out: u16
+TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt4_1x1_NoBias) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/8,
                                       /*bias=*/false,
-                                      /*weight_bits=*/2),
+                                      /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/true),
                   GetBQConvProviderOptions(),
                   /*opset=*/21,
                   ExpectedEPNodeAssignment::All,
                   /*fp32_abs_err=*/1e-2f);
+}
+
+// UINT4 weight with bias: verifies unsigned weight path works with the FP16 bias dequantization.
+TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt4_1x1_WithBias) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/8,
+                                      /*bias=*/true,
+                                      /*weight_bits=*/4,
+                                      /*weight_is_unsigned=*/true),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/1e-2f);
+}
+
+// UINT8 weight, block_size=4: exercises TransformUnsignedToSignedFixedPoint for 8-bit.
+// block_size=4 is the minimum valid HTP multiple for 8-bit block quantization.
+// Tolerance 2e-2f: UINT8 weights [0,126] produce larger FP16 intermediate values than INT4/INT8,
+// leading to slightly larger rounding differences between CPU (FP32) and QNN (FP16).
+TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt8_1x1_BlockSize4) {
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
+                                      /*weight=*/{4, 16, 1, 1},
+                                      /*block_size=*/4,
+                                      /*bias=*/false,
+                                      /*weight_bits=*/8,
+                                      /*weight_is_unsigned=*/true),
+                  GetBQConvProviderOptions(),
+                  /*opset=*/21,
+                  ExpectedEPNodeAssignment::All,
+                  /*fp32_abs_err=*/2e-2f);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
