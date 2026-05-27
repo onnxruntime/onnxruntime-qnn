@@ -1,4 +1,5 @@
-FROM quay.io/pypa/manylinux_2_34_aarch64
+ARG BASE_IMAGE=quay.io/pypa/manylinux_2_34_aarch64
+FROM ${BASE_IMAGE}
 
 ARG BUILD_USER
 ARG BUILD_UID

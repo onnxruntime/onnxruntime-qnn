@@ -40,6 +40,9 @@ class BuildEpDockerTask(CompositeTask):
         qairt_sdk_root: Path | None,
         ccache_root: Path | None,
         build_archive: bool = False,
+        inner_task: str = "_build_ort_linux_aarch64_manylinux_2_34",
+        docker_tag: str = MANYLINUX_2_34_AARCH64_TAG,
+        platform: str = "linux/aarch64",
     ) -> None:
         dist_rel_dir = Path("build") / f"linux-{target_arch}" / config / "dist"
 
@@ -52,14 +55,15 @@ class BuildEpDockerTask(CompositeTask):
                 ),
                 DockerBuildAndTestTask(
                     "Building ONNX Runtime inside a container",
-                    ["_build_ort_linux_aarch64_manylinux_2_34"],
+                    [inner_task],
                     target_py_version,
-                    MANYLINUX_2_34_AARCH64_TAG,
+                    docker_tag,
                     volumes={REPO_ROOT: DOCKER_REPO_ROOT},
                     venv_path=DOCKER_REPO_ROOT / "build" / "venv.build",
                     qairt_sdk_root=qairt_sdk_root,
                     ccache_root=ccache_root,
                     build_archive=build_archive,
+                    platform=platform,
                 ),
             ],
         )
