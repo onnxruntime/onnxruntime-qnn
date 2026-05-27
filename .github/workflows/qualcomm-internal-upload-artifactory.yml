@@ -222,7 +222,7 @@ jobs:
 
   publish-tgz-workflow:
     if: ${{ inputs.artifact_format == 'tgz' || inputs.artifact_format == 'all' }}
-    name: "Publish TGZ artifacts to Artifactory"
+    name: "Publish TGZ artifacts to Artifactory or GitHub"
     runs-on: [Linux, self-hosted]
     needs: check-admin-permission
     permissions:
