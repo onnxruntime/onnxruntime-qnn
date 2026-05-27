@@ -13,6 +13,9 @@ on:
       nightly_build:
         type: boolean
         default: true
+      windows_arm64_runner_arch:
+        type: string
+        default: X64
       target_py_vsn:
         default: "3.12"
         type: string
@@ -33,6 +36,22 @@ jobs:
       target_py_vsn: "3.10"
       use_ort_home: true
 
+  build-ort-home-linux-arm64:
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      target_os: linux
+      target_arch: aarch64_manylinux_2_34
+      target_py_vsn: ${{ inputs.target_py_vsn }}
+      upload_test_archive: true
+      upload_wheel: true
+      test_wheel: false
+      run_tests: true
+      build_test_same_runner: false
+      test_runner_arch: arm64
+      use_ort_home: true
+
   build-ort-home-windows-x86_64:
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
@@ -40,4 +59,18 @@ jobs:
       nightly_build: ${{ inputs.nightly_build }}
       target_arch: x86_64
       target_py_vsn: ${{ inputs.target_py_vsn }}
+      use_ort_home: true
+
+  build-ort-home-windows-arm64:
+    uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
+    secrets: inherit
+    with:
+      nightly_build: ${{ inputs.nightly_build }}
+      target_arch: arm64
+      build_runner_arch: ${{ inputs.windows_arm64_runner_arch }}
+      test_runner_arch: arm64
+      upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn }}
+      upload_test_archive: ${{ inputs.windows_arm64_runner_arch != 'ARM64' }}
+      build_test_same_runner: ${{ inputs.windows_arm64_runner_arch == 'ARM64' }}
+      target_py_vsn: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn || 'None' }}
       use_ort_home: true
