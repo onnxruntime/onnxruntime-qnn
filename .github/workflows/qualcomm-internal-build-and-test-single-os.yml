@@ -226,42 +226,42 @@ jobs:
         if: ${{ inputs.upload_test_archive && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests${{ inputs.use_ort_home && '-ort-home' || '' }}"
           src_pattern: "onnxruntime-tests-${{inputs.target_os}}-${{ inputs.target_arch }}.${{ env.TEST_ARCHIVE_EXT }}"
 
       - name: Upload Wheel to Artifactory
         if: ${{ inputs.upload_wheel && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels${{ inputs.use_ort_home && '-ort-home' || '' }}"
           src_pattern: "${{ inputs.target_os }}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime_qnn*.whl"
 
       - name: Upload NuGet to Artifactory
         if: ${{ inputs.upload_nuget && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-nuget"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-nuget${{ inputs.use_ort_home && '-ort-home' || '' }}"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/Qualcomm.ML.OnnxRuntime.QNN*.nupkg"
 
       - name: Upload Archive to Artifactory
         if: ${{ inputs.upload_archive && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}${{ inputs.use_ort_home && '-ort-home' || '' }}"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime-qnn*.${{ inputs.target_os == 'linux' && 'tgz' || 'zip' }}"
 
       - name: Upload AAR to Artifactory
         if: ${{ inputs.upload_aar && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
-          name: "${{inputs.target_os}}-${{ inputs.target_arch }}-aar"
+          name: "${{inputs.target_os}}-${{ inputs.target_arch }}-aar${{ inputs.use_ort_home && '-ort-home' || '' }}"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/java/build/android-qnn-ep/outputs/aar/onnxruntime-android-qnn.aar"
 
       - name: Upload POM to Artifactory
         if: ${{ inputs.upload_aar && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
-          name: "${{inputs.target_os}}-${{ inputs.target_arch }}-pom"
+          name: "${{inputs.target_os}}-${{ inputs.target_arch }}-pom${{ inputs.use_ort_home && '-ort-home' || '' }}"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/java/build/android-qnn-ep/outputs/aar/onnxruntime-android-qnn.pom"
 
       - name: Build Windows ${{ inputs.target_arch }} PDB Archive
@@ -280,7 +280,7 @@ jobs:
         if: ${{ inputs.upload_pdb_archive && inputs.target_os == 'windows' && env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-pdb-zip"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{ inputs.target_py_vsn }}-pdb-zip${{ inputs.use_ort_home && '-ort-home' || '' }}"
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime-qnn-*-win-*-pdb.zip"
 
   test:
@@ -309,7 +309,7 @@ jobs:
       - name: Download Tests from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests${{ inputs.use_ort_home && '-ort-home' || '' }}"
 
       - name: Download testdata from Artifactory
         if: ${{ inputs.testdata_archive_artifact_name != '' }}
@@ -398,7 +398,7 @@ jobs:
       - name: Download Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
-          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels"
+          name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-wheels${{ inputs.use_ort_home && '-ort-home' || '' }}"
 
       - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}} Wheel
         run: >
