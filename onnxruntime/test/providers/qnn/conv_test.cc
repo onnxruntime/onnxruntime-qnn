@@ -3048,7 +3048,7 @@ ProviderOptions GetBQConvProviderOptions() {
 // in0: u16, weight: int4 (scale=[4,2,1,1], block_size=8), out: u16
 // Checks: all nodes assigned to QNN EP; output matches CPU EP within 1e-2.
 TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_NoBias) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
                                       /*weight=*/{4, 16, 1, 1},
                                       /*block_size=*/8,
@@ -3063,7 +3063,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_NoBias) {
 // in0: u16, weight: int4 (scale=[4,2,1,1], block_size=8), bias: int32 DQ, out: u16
 // Checks: all nodes assigned to QNN EP; output matches CPU EP within 1e-2.
 TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_WithBias) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
                                       /*weight=*/{4, 16, 1, 1},
                                       /*block_size=*/8,
@@ -3078,7 +3078,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_WithBias) {
 // weight: int4 (IC=32, block_size=8, 4 blocks/OC), scale=[8,4,1,1]
 // Checks: all nodes assigned to QNN EP; output matches CPU EP within 1e-2.
 TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_MultiBlock) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
                                       /*weight=*/{8, 32, 1, 1},
                                       /*block_size=*/8),
@@ -3113,7 +3113,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_ExistingPerChannel_Unaffected) {
 // ── BQ Conv bitwidth / block_size variants ───────────────────────────────────
 // INT4, block_size=16: still a valid HTP multiple-of-8 block size.
 TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_BlockSize16) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
                                       /*weight=*/{4, 32, 1, 1},
                                       /*block_size=*/16,
@@ -3127,7 +3127,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16Int4_1x1_BlockSize16) {
 
 // INT8, block_size=4: minimum valid HTP multiple-of-4 block size for 8-bit.
 TEST_F(QnnHTPBackendTests, ConvBQ_U16Int8_1x1_BlockSize4) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
                                       /*weight=*/{4, 16, 1, 1},
                                       /*block_size=*/4,
@@ -3141,7 +3141,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16Int8_1x1_BlockSize4) {
 
 // INT8, block_size=8: larger block size, still a valid HTP multiple-of-4.
 TEST_F(QnnHTPBackendTests, ConvBQ_U16Int8_1x1_BlockSize8) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
                                       /*weight=*/{4, 32, 1, 1},
                                       /*block_size=*/8,
@@ -3159,7 +3159,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16Int8_1x1_BlockSize8) {
 // accept tensor(int2), replace with a normal RunQnnModelTest (verify_outputs=false until
 // the CPU DQ kernel also supports int2).
 TEST_F(QnnHTPBackendTests, ConvBQ_U16Int2_1x1_BlockSize16) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   EXPECT_THROW(
       RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
                                           /*weight=*/{4, 32, 1, 1},
@@ -3177,7 +3177,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16Int2_1x1_BlockSize16) {
 
 // UINT2, block_size=16: same blocker as ConvBQ_U16Int2_1x1_BlockSize16.
 TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt2_1x1_BlockSize16) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   EXPECT_THROW(
       RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 32, 4, 4},
                                           /*weight=*/{4, 32, 1, 1},
@@ -3197,7 +3197,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt2_1x1_BlockSize16) {
 // UINT4 weight, block_size=8: exercises TransformUnsignedToSignedFixedPoint for 4-bit.
 // in0: u16, weight: uint4 (scale=[4,2,1,1], block_size=8), out: u16
 TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt4_1x1_NoBias) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
                                       /*weight=*/{4, 16, 1, 1},
                                       /*block_size=*/8,
@@ -3212,7 +3212,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt4_1x1_NoBias) {
 
 // UINT4 weight with bias: verifies unsigned weight path works with the FP16 bias dequantization.
 TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt4_1x1_WithBias) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
                                       /*weight=*/{4, 16, 1, 1},
                                       /*block_size=*/8,
@@ -3230,7 +3230,7 @@ TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt4_1x1_WithBias) {
 // Tolerance 2e-2f: UINT8 weights [0,126] produce larger FP16 intermediate values than INT4/INT8,
 // leading to slightly larger rounding differences between CPU (FP32) and QNN (FP16).
 TEST_F(QnnHTPBackendTests, ConvBQ_U16UInt8_1x1_BlockSize4) {
-  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V73);
+  SKIP_HTP_TEST_ON_ARCH_LESS_THAN_OR_EQUAL_TO(QNN_HTP_DEVICE_ARCH_V68);
   RunQnnModelTest(BuildBQConvTestCase(/*input=*/{1, 16, 4, 4},
                                       /*weight=*/{4, 16, 1, 1},
                                       /*block_size=*/4,
