@@ -53,7 +53,8 @@ on:
         description: |
           To which server to store the artifact. Choose one of
           ["pypi, testpypi, nuget, testnuget, test-users, test-project, project, public,
-           artifactory-maven-virtual, maven-central]
+           artifactory-maven-virtual, maven-central,
+           github (zip/tgz only — creates a GitHub Release tagged v<version_to>)]
         type: string
         default: "test-users"
       sign_artifact:
@@ -172,6 +173,10 @@ jobs:
     name: "Publish artifacts to Artifactory or GitHub"
     runs-on: [Linux, self-hosted]
     needs: check-admin-permission
+    permissions:
+      checks: write
+      contents: write   # required to push the release tag and create the GitHub Release
+      id-token: write
 
     steps:
       - uses: actions/checkout@v6
@@ -185,6 +190,7 @@ jobs:
           ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           source uplevel_venv/bin/activate
 
@@ -216,9 +222,13 @@ jobs:
 
   publish-tgz-workflow:
     if: ${{ inputs.artifact_format == 'tgz' || inputs.artifact_format == 'all' }}
-    name: "Publish TGZ artifacts to Artifactory"
+    name: "Publish TGZ artifacts to Artifactory or GitHub"
     runs-on: [Linux, self-hosted]
     needs: check-admin-permission
+    permissions:
+      checks: write
+      contents: write   # required to push the release tag and create the GitHub Release
+      id-token: write
 
     steps:
       - uses: actions/checkout@v6
@@ -231,6 +241,7 @@ jobs:
         env:
           ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           source uplevel_venv/bin/activate
 
