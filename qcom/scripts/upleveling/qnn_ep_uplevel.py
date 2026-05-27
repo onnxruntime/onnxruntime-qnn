@@ -145,11 +145,19 @@ class ArtifactUpleveler(ABC):
         self.url_from = self.config_manager.get_repository_url(
             args.index_server_from, args.product_name, args.version_from
         )
-        self.url_to = self.config_manager.get_repository_url(args.index_server_to, args.product_name, args.version_to)
+
+        # GitHub Releases has no Artifactory URL; url_to is unused in that path.
+        if args.index_server_to == "github":
+            self.url_to = ""
+            self.url_to_display = "GitHub Releases"
+        else:
+            self.url_to = self.config_manager.get_repository_url(
+                args.index_server_to, args.product_name, args.version_to
+            )
+            self.url_to_display = self._filter_url(self.url_to)
 
         # Filter URLs for display
         self.url_from_display = self._filter_url(self.url_from)
-        self.url_to_display = self._filter_url(self.url_to)
 
     def _get_credentials(self, repository_index: str) -> tuple[str, str]:
         """Helper method to get credentials from environment variables."""
@@ -1069,8 +1077,77 @@ class ZipUpleveler(ArtifactUpleveler):
 
             logging.info(f"Version update completed for {zip_file}, updated to {updated_zip_path}")
 
+    def _upload_to_github(self, distribution_dir: str) -> None:
+        """Create a git tag + GitHub Release tagged v{version_to} and attach the artifacts."""
+        tag = f"v{self.args.version_to}"
+        files = [
+            os.path.join(distribution_dir, f)
+            for f in os.listdir(distribution_dir)
+            if os.path.isfile(os.path.join(distribution_dir, f)) and f.endswith(self.artifact_suffix)
+        ]
+        if not files:
+            raise RuntimeError(f"No {self.artifact_format} files found in {distribution_dir}")
+
+        # Create and push the git tag if it does not exist yet. Handles two cases:
+        #   1. Re-runs: tag exists locally already → skip.
+        #   2. Parallel jobs (zip + tgz): both create the local tag, only one push wins;
+        #      the loser fetches the remote tag and reuses it.
+        tag_exists = (
+            subprocess.run(
+                ["git", "rev-parse", "--verify", f"refs/tags/{tag}"], check=False, capture_output=True
+            ).returncode
+            == 0
+        )
+        if tag_exists:
+            logging.info(f"Git tag {tag} already exists, reusing it")
+        else:
+            subprocess.run(["git", "tag", "-a", tag, "-m", f"Release {tag}"], check=True)
+            push_result = subprocess.run(["git", "push", "origin", tag], check=False, capture_output=True)
+            if push_result.returncode == 0:
+                logging.info(f"Created and pushed git tag {tag}")
+            else:
+                # Push lost a race with a concurrent job — pull the remote tag and reuse it.
+                subprocess.run(["git", "fetch", "origin", "tag", tag], check=False, capture_output=True)
+                remote_tag_exists = (
+                    subprocess.run(
+                        ["git", "rev-parse", "--verify", f"refs/tags/{tag}"], check=False, capture_output=True
+                    ).returncode
+                    == 0
+                )
+                if not remote_tag_exists:
+                    raise RuntimeError(
+                        f"Failed to push git tag {tag} and the tag does not exist on the remote. "
+                        f"git push stderr: {push_result.stderr.decode(errors='replace')}"
+                    )
+                logging.info(f"Git tag {tag} was pushed concurrently by another job; reusing it")
+        # Create the draft GitHub Release if it does not exist yet (tag is already pinned above).
+        # `gh release create` exits non-zero both for "already exists" (expected on re-runs and
+        # cross-format runs) and for real failures (auth, repo not found, …). Inspect stderr to
+        # tell them apart so genuine errors don't surface as a confusing upload failure later.
+        create_result = subprocess.run(
+            ["gh", "release", "create", tag, "--title", tag, "--notes", "", "--draft"],
+            check=False,
+            capture_output=True,
+        )
+        if create_result.returncode == 0:
+            logging.info(f"Created draft GitHub Release {tag}")
+        else:
+            stderr = create_result.stderr.decode(errors="replace")
+            if "already exists" in stderr.lower():
+                logging.info(f"GitHub Release {tag} already exists, reusing it")
+            else:
+                raise RuntimeError(f"Failed to create GitHub Release {tag}: {stderr.strip()}")
+
+        # Attach assets; --clobber replaces any existing asset with the same name (safe for re-runs).
+        subprocess.run(["gh", "release", "upload", tag, "--clobber", *files], check=True)
+        logging.info(f"Uploaded {len(files)} {self.artifact_format} file(s) to GitHub Release {tag}")
+
     def upload_artifacts(self, distribution_dir: str) -> None:
-        """Upload ZIP archives using curl with netrc authentication."""
+        """Upload ZIP archives using curl with netrc authentication, or to GitHub Releases."""
+        if self.args.index_server_to == "github":
+            self._upload_to_github(distribution_dir)
+            return
+
         zip_files = [
             f
             for f in os.listdir(distribution_dir)
@@ -1571,9 +1648,10 @@ def parse_arguments() -> argparse.Namespace:
         "--index_server_to",
         type=str,
         required=True,
-        help="Target server.Choose one of ["
+        help="Target server. Choose one of ["
         "pypi, testpypi, nuget, testnuget, "
-        "test-users, test-project, project, public]",
+        "test-users, test-project, project, public, "
+        "github (zip/tgz only — creates a GitHub Release tagged v<version_to>)]",
     )
     parser.add_argument(
         "--netrc_file",
