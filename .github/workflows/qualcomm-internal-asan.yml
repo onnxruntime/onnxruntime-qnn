@@ -17,6 +17,10 @@ jobs:
     name: "asan-linux-x86_64"
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     env:
+      # Hardcoded Debug because upstream tools/ci_build/build.py only wires
+      # -fsanitize=address into the Linux Debug branch; RelWithDebInfo +
+      # --enable_address_sanitizer would silently produce a non-instrumented
+      # binary. Switching configs requires patching upstream ORT first.
       ASAN_BUILD_DIR: build/linux-x86_64/Debug
     steps:
       - uses: actions/checkout@v6

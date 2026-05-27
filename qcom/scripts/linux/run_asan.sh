@@ -18,7 +18,12 @@
 # Usage:
 #   bash run_asan.sh \
 #       --build-dir=/path/to/build/linux-x86_64 \
-#       [--config=Debug|RelWithDebInfo]
+#       [--config=Debug]
+#
+# Note: --config currently accepts Debug only. Upstream tools/ci_build/build.py
+# wires `-fsanitize=address` into the Linux build only on the Debug branch, so
+# RelWithDebInfo + --enable_address_sanitizer would silently produce a
+# non-instrumented binary. The script enforces this with a guard below.
 
 REPO_ROOT=$(git rev-parse --show-toplevel)
 
@@ -46,7 +51,9 @@ for arg in "$@"; do
 Usage: $(basename "${BASH_SOURCE[0]}") --build-dir=<path> [--config=<cfg>]
 
   --build-dir=<path>    Required. Build root (e.g. build/linux-x86_64).
-  --config=<cfg>        Optional. Build configuration subdirectory.  Default: Debug
+  --config=<cfg>        Optional. Build configuration subdirectory. Default: Debug.
+                        Currently Debug is the only supported value; see the
+                        header note for why RelWithDebInfo is not yet available.
 EOF
             exit 0
             ;;
