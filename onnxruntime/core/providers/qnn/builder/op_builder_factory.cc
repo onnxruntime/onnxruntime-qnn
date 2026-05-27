@@ -28,6 +28,7 @@ OpBuilderRegistrations::OpBuilderRegistrations() {
   CreateGatherNDOpBuilder("GatherND", *this);
   CreateGemmOpBuilder("Gemm", *this);
   CreateGroupNormalizationOpBuilder("GroupNormalization", *this);
+  CreateGRUOpBuilder("GRU", *this);
   CreateIdentityOpBuilder("Identity", *this);
   CreateIfOpBuilder("If", *this);
   CreateInstanceNormalizationOpBuilder("InstanceNormalization", *this);

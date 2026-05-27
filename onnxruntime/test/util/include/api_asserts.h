@@ -6,8 +6,7 @@
 #include "gtest/gtest.h"
 #include "gmock/gmock.h"
 
-#include "core/common/status.h"
-#include "core/session/onnxruntime_cxx_api.h"
+#include "onnxruntime_cxx_api.h"
 
 // asserts for the public API
 #define ASSERT_ORTSTATUS_OK(function)                                 \

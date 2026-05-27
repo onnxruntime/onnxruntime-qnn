@@ -2,27 +2,20 @@
 // Licensed under the MIT License.
 
 #include "onnxruntime_c_api.h"
+#include "onnxruntime_cxx_api.h"
+#include "onnxruntime_session_options_config_keys.h"
 #include "test/unittest_util/model_test_builder.h"
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include "test/providers/qnn/qnn_test_utils.h"
 #include <cassert>
+#include <limits>
+#include <stdexcept>
 #include "test/util/include/api_asserts.h"
 #include "test/util/include/asserts.h"
-#include "test/util/include/default_providers.h"
 #include "test/util/include/test/test_environment.h"
 
 #include "test/util/env_var_utils.h"
-#include "core/common/span_utils.h"
-#include "core/framework/compute_capability.h"
-#include "core/framework/error_code_helper.h"
-#include "core/graph/ep_api_types.h"
-#include "core/graph/constants.h"
-#include "core/session/abi_devices.h"
-#include "core/session/abi_ep_types.h"
-#include "core/session/onnxruntime_cxx_api.h"
-#include "core/session/onnxruntime_session_options_config_keys.h"
-#include "core/optimizer/graph_optimizer_registry.h"
 
 // Platform-specific includes for dynamic library loading
 #if defined(_WIN32)
@@ -154,12 +147,15 @@ class SafeIntExceptionHandler : public std::exception {
 
 size_t SizeHelper(std::vector<int64_t> shape, size_t start, size_t end) {
   // Must return 1 for an empty sequence
-  SafeInt<int64_t, SafeIntExceptionHandler> size = 1;  // this is used to calculate the size, which is used for memory allocations, so validate no overflow
+  int64_t size = 1;
   for (size_t i = start; i < end; i++) {
-    if (shape[i] < 0) return -1;
+    if (shape[i] < 0) return static_cast<size_t>(-1);
+    if (shape[i] != 0 && size > std::numeric_limits<int64_t>::max() / shape[i]) {
+      return static_cast<size_t>(-1);
+    }
     size *= shape[i];
   }
-  return size;
+  return static_cast<size_t>(size);
 }
 
 size_t SizeToDimension(std::vector<int64_t> shape, size_t dimension) {
@@ -441,14 +437,15 @@ void InferenceModel(const std::string& model_data,
 
   auto provider_type = "QNNExecutionProvider";
   session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
-  Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
-  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(session, provider_type, expected_ep_assignment));
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options));
+  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(scoped.session(), provider_type, expected_ep_assignment));
 
   if (graph_checker) {
-    (*graph_checker)(session);
+    (*graph_checker)(scoped.session());
   }
 
-  RunWithEP(session, ort_run_options, feeds, output_vals);
+  RunWithEP(scoped.session(), ort_run_options, feeds, output_vals);
 }
 
 std::string MakeTestQDQBiasInput(ModelTestBuilder& builder,

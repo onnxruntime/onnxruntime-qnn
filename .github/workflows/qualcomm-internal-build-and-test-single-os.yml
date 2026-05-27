@@ -85,6 +85,12 @@ on:
         description: "If true, upload the PDB archive as a CI artifact."
         default: false
         type: boolean
+      testdata_archive_artifact_name:
+        description: |
+          Artifact name to download as the testdata archive in the test step.
+          Empty disables the download.
+        type: string
+        default: ""
       build_aar:
         description: |
           If true, also build the Android AAR during the Android build.
@@ -271,6 +277,12 @@ jobs:
         uses: ./.github/actions/download-ci-artifact
         with:
           name: "${{ inputs.target_os }}-${{ inputs.target_arch }}-py${{inputs.target_py_vsn}}-tests"
+
+      - name: Download testdata from Artifactory
+        if: ${{ inputs.testdata_archive_artifact_name != '' }}
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: ${{ inputs.testdata_archive_artifact_name }}
 
       - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         run: >
