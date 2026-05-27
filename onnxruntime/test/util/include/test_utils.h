@@ -12,17 +12,19 @@
 #include <vector>
 
 #include <gsl/gsl>
-#include "core/framework/execution_provider.h"
-#include "core/framework/framework_common.h"
-#include "core/framework/ort_value.h"
-#include "core/providers/cpu/cpu_execution_provider.h"
-#include "core/session/onnxruntime_c_api.h"
-#include "core/session/onnxruntime_cxx_api.h"
-#include "test/util/include/inference_session_wrapper.h"
+#include "onnxruntime_c_api.h"
+#include "onnxruntime_cxx_api.h"
+
+#ifdef __clang__
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wshorten-64-to-32"
+#endif
+#include <onnx/onnx_pb.h>
+#ifdef __clang__
+#pragma clang diagnostic pop
+#endif
 
 namespace onnxruntime {
-struct SessionOptions;
-
 namespace test {
 
 // If set to All: verify the entire graph is taken by ep
@@ -78,58 +80,6 @@ void RunWithEP(Ort::Session& ort_session,
                const Ort::RunOptions& ort_ro,
                const std::unordered_map<std::string, Ort::Value>& feeds,
                std::vector<Ort::Value>& output_vals);
-
-// Tests model loading only.
-// This can be used to test EPs in builds where only loading (and not running) of a model is supported.
-// Calls `check_graph` on the graph of the loaded model.
-void TestModelLoad(ModelPathOrBytes model_path_or_bytes,
-                   std::unique_ptr<IExecutionProvider> execution_provider,
-                   const std::function<void(const Ort::Session&)>& check_graph);
-
-// Tests model loading only.
-// The check graph function verifies the expected EP node assignment.
-inline void TestModelLoad(ModelPathOrBytes model_path_or_bytes,
-                          std::unique_ptr<IExecutionProvider> execution_provider,
-                          ExpectedEPNodeAssignment expected_node_assignment) {
-  auto check_node_assignment =
-      [provider_type = execution_provider->Type(), expected_node_assignment](const Ort::Session& current_session) {
-        VerifyEPNodeAssignment(current_session, provider_type, expected_node_assignment);
-      };
-  TestModelLoad(model_path_or_bytes, std::move(execution_provider), check_node_assignment);
-}
-
-// Check equality of two shapes. Can successfully complete only if rank are equal and all dimensions are equal.
-// The way we define dimension equality is that:
-// 1. if both dimensions are symbolic, they are equal if their names are equal.
-// 2. if both dimensions are not symbolic, they are equal if their values are equal.
-// 3. if one dimension is symbolic and the other is not, they are not equal.
-void CheckShapeEquality(const ONNX_NAMESPACE::TensorShapeProto* shape1,
-                        const ONNX_NAMESPACE::TensorShapeProto* shape2);
-
-// Create OrtValue on CPU copying from provided inputs.
-template <typename T>
-OrtValue CreateInputOrtValueOnCPU(gsl::span<const int64_t> dims, gsl::span<const T> value,
-                                  AllocatorPtr alloc = nullptr) {
-  static CPUExecutionProviderInfo info;
-  static CPUExecutionProvider cpu_provider(info);
-  static AllocatorPtr cpu_allocator = cpu_provider.CreatePreferredAllocators()[0];
-
-  TensorShape shape(dims);
-  assert(shape.Size() == static_cast<int64_t>(value.size()));
-  auto element_type = DataTypeImpl::GetType<T>();
-  auto allocator = alloc ? alloc : cpu_allocator;
-  auto p_tensor = std::make_unique<Tensor>(element_type, shape, allocator);
-
-  if (value.size() > 0 && !alloc) {  // using CPU allocator
-    memcpy(p_tensor->MutableDataRaw(), value.data(), p_tensor->SizeInBytes());
-  }
-
-  OrtValue ort_value;
-  ort_value.Init(p_tensor.release(),
-                 DataTypeImpl::GetType<Tensor>(),
-                 DataTypeImpl::GetType<Tensor>()->GetDeleteFunc());
-  return ort_value;
-}
 
 // QNN-EP COPY START
 // Below are ONNX Attributes utilities copied from MS onnxruntime\core\graph\node_attr_utils.h directly.
