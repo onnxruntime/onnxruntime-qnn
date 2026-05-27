@@ -731,11 +731,6 @@ Ort::Status QnnBackendManager::CreateDeviceCommon(const QNN_INTERFACE_VER_TYPE& 
                                                   Qnn_DeviceHandle_t& device_handle,
                                                   bool& device_created_flag,
                                                   bool allow_hw_device_enumeration) {
-  if (true == device_created_flag) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Device initialized already.");
-    return Ort::Status();
-  }
-
   // Create device if its property supported
   if (!IsDevicePropertySupported(interface)) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Skip to create device.");
@@ -848,12 +843,20 @@ Ort::Status QnnBackendManager::CreateDeviceCommon(const QNN_INTERFACE_VER_TYPE& 
 }
 
 Ort::Status QnnBackendManager::CreateDevice() {
+  if (device_created_) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Device initialized already.");
+    return Ort::Status();
+  }
   return CreateDeviceCommon(qnn_interface_, log_handle_,
                             device_handle_, device_created_,
                             /*allow_hw_device_enumeration=*/true);
 }
 
 Ort::Status QnnBackendManager::CreateValidatorDevice() {
+  if (validator_device_created_) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_INFO, "Validator device initialized already.");
+    return Ort::Status();
+  }
   // The validator backend is a host-side shim with no real hardware to enumerate,
   // so device_id_ / platform-info handling is skipped. soc_model_ / htp_arch_
   // configs still flow through so that backendValidateOpConfig validates against
@@ -866,10 +869,6 @@ Ort::Status QnnBackendManager::CreateValidatorDevice() {
 Ort::Status QnnBackendManager::ReleaseDeviceCommon(const QNN_INTERFACE_VER_TYPE& interface,
                                                    Qnn_DeviceHandle_t& device_handle,
                                                    bool& device_created_flag) {
-  if (false == device_created_flag) {
-    return Ort::Status();
-  }
-
   if (nullptr != interface.deviceFree) {
     Qnn_ErrorHandle_t result = interface.deviceFree(device_handle);
     if (QNN_SUCCESS != result) {
@@ -883,10 +882,16 @@ Ort::Status QnnBackendManager::ReleaseDeviceCommon(const QNN_INTERFACE_VER_TYPE&
 }
 
 Ort::Status QnnBackendManager::ReleaseDevice() {
+  if (!device_created_) {
+    return Ort::Status();
+  }
   return ReleaseDeviceCommon(qnn_interface_, device_handle_, device_created_);
 }
 
 Ort::Status QnnBackendManager::ReleaseValidatorDevice() {
+  if (!validator_device_created_) {
+    return Ort::Status();
+  }
   return ReleaseDeviceCommon(qnn_validator_interface_,
                              validator_device_handle_, validator_device_created_);
 }
@@ -1912,6 +1917,19 @@ Ort::Status QnnBackendManager::SetupBackend(
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "InitializeBackend succeed.");
   }
 
+  if (status.IsOK()) {
+    status = CreateDevice();
+  }
+  if (status.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "CreateDevice succeed.");
+
+    if (Ort::Status _status = GetPlatformInfo(); !_status.IsOK()) {
+      ORT_CXX_LOG_PTR(logger_ptr_,
+                      ORT_LOGGING_LEVEL_WARNING,
+                      ("Unable to get platform info: " + _status.GetErrorMessage()).c_str());
+    }
+  }
+
   if (status.IsOK() && qnn_serializer_config_) {
     status = InitializeQnnValidatorLog();
     if (status.IsOK()) {
@@ -1928,19 +1946,6 @@ Ort::Status QnnBackendManager::SetupBackend(
     }
     if (status.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "CreateValidatorDevice succeed.");
-    }
-  }
-
-  if (status.IsOK()) {
-    status = CreateDevice();
-  }
-  if (status.IsOK()) {
-    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_VERBOSE, "CreateDevice succeed.");
-
-    if (Ort::Status _status = GetPlatformInfo(); !_status.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_,
-                      ORT_LOGGING_LEVEL_WARNING,
-                      ("Unable to get platform info: " + _status.GetErrorMessage()).c_str());
     }
   }
 
@@ -2144,54 +2149,49 @@ Ort::Status QnnBackendManager::TerminateQnnLog() {
 }
 
 void QnnBackendManager::ReleaseResources() {
-  if (backend_setup_completed_) {
-    // These operations require a fully-initialized backend and must only be called
-    // when setup completed successfully.
-    auto result = ReleaseContext();
-    if (!result.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseContext: " + result.GetErrorMessage()).c_str());
-    }
-
-    result = ReleaseProfilehandle();
-    if (!result.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_,
-                      ORT_LOGGING_LEVEL_ERROR,
-                      ("Failed to ReleaseProfilehandle: " + result.GetErrorMessage()).c_str());
-    }
-
-    result = ReleaseDevice();
-    if (!result.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseDevice: " + result.GetErrorMessage()).c_str());
-    }
-
-    result = ReleaseValidatorDevice();
-    if (!result.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseValidatorDevice: " + result.GetErrorMessage()).c_str());
-    }
-
-    result = ShutdownBackend();
-    if (!result.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ShutdownBackend: " + result.GetErrorMessage()).c_str());
-    }
-
-    result = ShutdownValidatorBackend();
-    if (!result.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ShutdownValidatorBackend: " + result.GetErrorMessage()).c_str());
-    }
-
-    result = TerminateQnnLog();
-    if (!result.IsOK()) {
-      ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to TerminateQnnLog: " + result.GetErrorMessage()).c_str());
-    }
-
-    backend_setup_completed_ = false;
+  // Each sub-function guards against releasing resources that were never created,
+  // so all calls are safe regardless of how far setup progressed.
+  auto result = ReleaseContext();
+  if (!result.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseContext: " + result.GetErrorMessage()).c_str());
   }
 
-  // Unload library handles unconditionally: they may be set even when setup did not complete
-  // (e.g., LoadQnnSerializerBackend succeeds but a later step fails), and ReleaseResources()
-  // is called again from the destructor, so clear the handles to prevent double-unload.
+  result = ReleaseProfilehandle();
+  if (!result.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_,
+                    ORT_LOGGING_LEVEL_ERROR,
+                    ("Failed to ReleaseProfilehandle: " + result.GetErrorMessage()).c_str());
+  }
+
+  result = ReleaseDevice();
+  if (!result.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseDevice: " + result.GetErrorMessage()).c_str());
+  }
+
+  result = ReleaseValidatorDevice();
+  if (!result.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ReleaseValidatorDevice: " + result.GetErrorMessage()).c_str());
+  }
+
+  result = ShutdownBackend();
+  if (!result.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ShutdownBackend: " + result.GetErrorMessage()).c_str());
+  }
+
+  result = ShutdownValidatorBackend();
+  if (!result.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to ShutdownValidatorBackend: " + result.GetErrorMessage()).c_str());
+  }
+
+  result = TerminateQnnLog();
+  if (!result.IsOK()) {
+    ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_ERROR, ("Failed to TerminateQnnLog: " + result.GetErrorMessage()).c_str());
+  }
+
+  backend_setup_completed_ = false;
+
   if (backend_lib_handle_) {
-    auto result = UnloadLib(backend_lib_handle_);
+    result = UnloadLib(backend_lib_handle_);
     if (!result.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_,
                       ORT_LOGGING_LEVEL_ERROR,
@@ -2201,7 +2201,7 @@ void QnnBackendManager::ReleaseResources() {
   }
 
   if (validator_backend_lib_handle_) {
-    auto result = UnloadLib(validator_backend_lib_handle_);
+    result = UnloadLib(validator_backend_lib_handle_);
     if (!result.IsOK()) {
       ORT_CXX_LOG_PTR(logger_ptr_,
                       ORT_LOGGING_LEVEL_ERROR,
