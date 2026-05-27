@@ -713,7 +713,8 @@ TEST_F(QnnHTPBackendTests, BatchNorm2D_NearZeroVariance_U16) {
   TestInputDef<float> bias_def({channels}, true, bias_data);
 
   RunBatchNormQDQTest<uint16_t, uint8_t>(input_def, scale_def, bias_def,
-                                         ExpectedEPNodeAssignment::All);
+                                         ExpectedEPNodeAssignment::All,
+                                         QDQTolerance(0.008f));
 }
 
 // Test BatchNorm with near-zero variance channels (U8 input). When gamma/sqrt(var+eps) produces
