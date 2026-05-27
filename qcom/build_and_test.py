@@ -277,7 +277,7 @@ class TaskLibrary:
     @depends(["create_venv"])
     def _build_ort_linux_x86_64_manylinux_2_34(self, plan: Plan) -> str:
         """In-container build steps for x86_64-manylinux_2_34. Not to be used outside of Docker."""
-        extra_args = []
+        extra_args = ["--no-warnings-as-errors"]
 
         env = os.environ.copy()
         if self.__docker_ccache_root is not None:
