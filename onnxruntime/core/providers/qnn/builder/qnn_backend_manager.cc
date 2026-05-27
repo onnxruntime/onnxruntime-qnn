@@ -804,8 +804,10 @@ Ort::Status QnnBackendManager::ReleaseDevice() {
 
 Ort::Status QnnBackendManager::InitializeProfiling() {
   profiling_level_merge_ = profiling_level_;
-  // Only use ETW level if it provides higher fidelity
-  if (profiling_level_etw_ != ProfilingLevel::INVALID &&
+  // Only honor ETW-driven profile escalation when the app has explicitly opted into profiling.
+  // If the app did not set profiling_level (default OFF), do not let ETW silently turn it on.
+  if (profiling_level_ != ProfilingLevel::OFF &&
+      profiling_level_etw_ != ProfilingLevel::INVALID &&
       profiling_level_etw_ > profiling_level_) {
     profiling_level_merge_ = profiling_level_etw_;
   }
