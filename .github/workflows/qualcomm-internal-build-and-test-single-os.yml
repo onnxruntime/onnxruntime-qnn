@@ -284,7 +284,7 @@ jobs:
           src_pattern: "${{inputs.target_os}}-${{ inputs.target_arch }}/${{ env.BUILD_CONFIG_DIR }}/dist/onnxruntime-qnn-*-win-*-pdb.zip"
 
   test:
-    name: "test-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
+    name: "${{ inputs.use_ort_home && 'test-ort-home' || 'test' }}-${{inputs.target_os}}-${{inputs.target_arch}}-py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}"
     # Cross-runner test stage requires Artifactory hand-off from build; skip on fork PRs where secrets are unavailable.
     if: ${{ inputs.run_tests && !inputs.build_test_same_runner && github.event.pull_request.head.repo.fork != true }}
     needs: [build]
@@ -317,10 +317,36 @@ jobs:
         with:
           name: ${{ inputs.testdata_archive_artifact_name }}
 
+      - name: Download ORT Home (linux)
+        if: ${{ inputs.use_ort_home && inputs.target_os == 'linux' }}
+        id: ort_home_linux
+        env:
+          ORT_PKG_ARCH: "${{ inputs.target_arch == 'x86_64' && 'x64' || startsWith(inputs.target_arch, 'aarch64') && 'aarch64' || inputs.target_arch }}"
+        run: |
+          python3 qcom/build_and_test.py create_venv
+          pkg_name="ort_prebuilt_linux_${ORT_PKG_ARCH}"
+          venv/bin/python3 qcom/scripts/all/package_manager.py --package "${pkg_name}" --install
+          ORT_HOME=$(venv/bin/python3 qcom/scripts/all/package_manager.py --package "${pkg_name}" --print-content-dir)
+          echo "path=${ORT_HOME}" >> "$GITHUB_OUTPUT"
+
+      - name: Download ORT Home (windows)
+        if: ${{ inputs.use_ort_home && inputs.target_os == 'windows' }}
+        id: ort_home_windows
+        shell: cmd
+        env:
+          ORT_PKG_ARCH: "${{ inputs.target_arch == 'x86_64' && 'x64' || startsWith(inputs.target_arch, 'aarch64') && 'aarch64' || inputs.target_arch }}"
+        run: |
+          python.exe qcom/build_and_test.py create_venv
+          set pkg_name=ort_prebuilt_windows_%ORT_PKG_ARCH%
+          venv\Scripts\python qcom/scripts/all/package_manager.py --package %pkg_name% --install
+          for /f "tokens=*" %%i in ('venv\Scripts\python qcom/scripts/all/package_manager.py --package %pkg_name% --print-content-dir') do set ORT_HOME=%%i
+          echo path=%ORT_HOME%>>%GITHUB_OUTPUT%
+
       - name: Test ${{inputs.target_os}} ${{inputs.target_arch}} py${{ inputs.target_py_vsn != 'None' && inputs.target_py_vsn || 'none'}}
         run: >
           "${{ inputs.target_os == 'windows' && 'python.exe' || 'python3' }}"
           qcom/build_and_test.py
+          ${{ inputs.use_ort_home && format('--ort-prebuilt {0}', steps.ort_home_linux.outputs.path || steps.ort_home_windows.outputs.path) || '' }}
           create_venv
           extract_ort_${{inputs.target_os}}_${{inputs.target_arch}}
           test_ort_${{inputs.target_os}}_${{inputs.target_arch}} --only
