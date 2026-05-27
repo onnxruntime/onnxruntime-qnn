@@ -5,8 +5,6 @@ name: Qualcomm Internal ASan
 
 permissions:
   contents: read
-  checks: write
-  pull-requests: write
 
 on:
   workflow_call:
@@ -16,12 +14,6 @@ jobs:
   asan-linux-x86_64:
     name: "asan-linux-x86_64"
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
-    env:
-      # Hardcoded Debug because upstream tools/ci_build/build.py only wires
-      # -fsanitize=address into the Linux Debug branch; RelWithDebInfo +
-      # --enable_address_sanitizer would silently produce a non-instrumented
-      # binary. Switching configs requires patching upstream ORT first.
-      ASAN_BUILD_DIR: build/linux-x86_64/Debug
     steps:
       - uses: actions/checkout@v6
         with:
@@ -65,25 +57,3 @@ jobs:
           python3 qcom/build_and_test.py \
             --target-py-version None \
             asan_linux_x86_64
-
-      - name: Publish Test Report
-        uses: mikepenz/action-junit-report@v6
-        # Skipped on fork PRs: the action creates a check run, which the fork-PR GITHUB_TOKEN cannot do.
-        if: ${{ always() && steps.gate.outputs.run == 'true' && github.event.pull_request.head.repo.fork != true }}
-        with:
-          check_name: asan-linux-x86_64-test-results
-          group_reports: false
-          include_passed: true
-          detailed_summary: true
-          verbose_summary: false
-          report_paths: |
-            ${{ env.ASAN_BUILD_DIR }}/*.results.xml
-
-      - name: Upload Test Results
-        uses: actions/upload-artifact@v7
-        if: ${{ always() && steps.gate.outputs.run == 'true' }}
-        with:
-          name: "asan-linux-x86_64-${{ github.sha }}-test-results"
-          retention-days: 7
-          path: |
-            ${{ env.ASAN_BUILD_DIR }}/*.results.xml
