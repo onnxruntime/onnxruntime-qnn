@@ -30,6 +30,7 @@ from ep_build.task import (
     ExtractArchiveTask,
     ListTasksTask,
     NoOpTask,
+    RunExecutablesTask,
 )
 from ep_build.tasks.build import (
     AdbTestsTask,
@@ -425,6 +426,20 @@ class TaskLibrary:
                 )
             )
 
+    @public_task("Build the global testdata archive (zip + tar.bz2)")
+    def archive_testdata(self, plan: Plan) -> str:
+        return plan.add_step(
+            RunExecutablesTask(
+                "Building the testdata archive",
+                [
+                    [
+                        str(self.__python_executable),
+                        str(REPO_ROOT / "qcom" / "scripts" / "all" / "archive_testdata.py"),
+                    ]
+                ],
+            )
+        )
+
     @public_task("Build ONNX Runtime for this host's native architecture")
     @depends(
         [
@@ -713,40 +728,112 @@ class TaskLibrary:
         @task
         def extract_ort_linux_aarch64_manylinux_2_34(self, plan: Plan) -> str:
             return plan.add_step(
-                ExtractArchiveTask(
-                    "Extracting ONNX Runtime for Linux",
-                    REPO_ROOT / "build" / "onnxruntime-tests-linux-aarch64_manylinux_2_34.tar.bz2",
-                    REPO_ROOT,
+                CompositeTask(
+                    None,
+                    [
+                        ExtractArchiveTask(
+                            "Extracting per-arch ONNX Runtime archive",
+                            REPO_ROOT / "build" / "onnxruntime-tests-linux-aarch64_manylinux_2_34.tar.bz2",
+                            REPO_ROOT,
+                        ),
+                        RunExecutablesTask(
+                            "Extracting global testdata archive",
+                            [
+                                [
+                                    str(self.__python_executable),
+                                    str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
+                                    "--target-platform",
+                                    "linux-aarch64_manylinux_2_34",
+                                    "--archive",
+                                    str(REPO_ROOT / "build" / "onnxruntime-testdata.tar.bz2"),
+                                ]
+                            ],
+                        ),
+                    ],
                 )
             )
 
     @task
     def extract_ort_linux_x86_64(self, plan: Plan) -> str:
         return plan.add_step(
-            ExtractArchiveTask(
-                "Extracting ONNX Runtime for Linux",
-                REPO_ROOT / "build" / "onnxruntime-tests-linux-x86_64.tar.bz2",
-                REPO_ROOT,
+            CompositeTask(
+                None,
+                [
+                    ExtractArchiveTask(
+                        "Extracting per-arch ONNX Runtime archive",
+                        REPO_ROOT / "build" / "onnxruntime-tests-linux-x86_64.tar.bz2",
+                        REPO_ROOT,
+                    ),
+                    RunExecutablesTask(
+                        "Extracting global testdata archive",
+                        [
+                            [
+                                str(self.__python_executable),
+                                str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
+                                "--target-platform",
+                                "linux-x86_64",
+                                "--archive",
+                                str(REPO_ROOT / "build" / "onnxruntime-testdata.tar.bz2"),
+                            ]
+                        ],
+                    ),
+                ],
             )
         )
 
     @task
     def extract_ort_windows_arm64(self, plan: Plan) -> str:
         return plan.add_step(
-            ExtractArchiveTask(
-                "Extracting ONNX Runtime for Windows on ARM64",
-                REPO_ROOT / "build" / "onnxruntime-tests-windows-arm64.zip",
-                REPO_ROOT,
+            CompositeTask(
+                None,
+                [
+                    ExtractArchiveTask(
+                        "Extracting per-arch ONNX Runtime archive",
+                        REPO_ROOT / "build" / "onnxruntime-tests-windows-arm64.zip",
+                        REPO_ROOT,
+                    ),
+                    RunExecutablesTask(
+                        "Extracting global testdata archive",
+                        [
+                            [
+                                str(self.__python_executable),
+                                str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
+                                "--target-platform",
+                                "windows-arm64",
+                                "--archive",
+                                str(REPO_ROOT / "build" / "onnxruntime-testdata.zip"),
+                            ]
+                        ],
+                    ),
+                ],
             )
         )
 
     @task
     def extract_ort_windows_x86_64(self, plan: Plan) -> str:
         return plan.add_step(
-            ExtractArchiveTask(
-                "Extracting ONNX Runtime for Windows on x86_64",
-                REPO_ROOT / "build" / "onnxruntime-tests-windows-x86_64.zip",
-                REPO_ROOT,
+            CompositeTask(
+                None,
+                [
+                    ExtractArchiveTask(
+                        "Extracting per-arch ONNX Runtime archive",
+                        REPO_ROOT / "build" / "onnxruntime-tests-windows-x86_64.zip",
+                        REPO_ROOT,
+                    ),
+                    RunExecutablesTask(
+                        "Extracting global testdata archive",
+                        [
+                            [
+                                str(self.__python_executable),
+                                str(REPO_ROOT / "qcom" / "scripts" / "all" / "extract_testdata.py"),
+                                "--target-platform",
+                                "windows-x86_64",
+                                "--archive",
+                                str(REPO_ROOT / "build" / "onnxruntime-testdata.zip"),
+                            ]
+                        ],
+                    ),
+                ],
             )
         )
 
@@ -883,7 +970,7 @@ class TaskLibrary:
     if is_host_linux() or is_host_mac():
 
         @task
-        @depends(["archive_ort_android_aarch64"])
+        @depends(["archive_ort_android_aarch64", "archive_testdata"])
         def test_ort_local_android_aarch64(self, plan: Plan) -> str:
             return plan.add_step(
                 AdbTestsTask(
@@ -894,7 +981,7 @@ class TaskLibrary:
     if is_host_linux() or is_host_mac():
 
         @task
-        @depends(["archive_ort_linux_aarch64_manylinux_2_34"])
+        @depends(["archive_ort_linux_aarch64_manylinux_2_34", "archive_testdata"])
         def test_ort_local_linux_aarch64_manylinux_2_34(self, plan: Plan) -> str:
             return plan.add_step(
                 AdbTestsTask(
@@ -908,7 +995,7 @@ class TaskLibrary:
     if (is_host_linux() and is_host_x86_64()) or is_host_mac():
 
         @task
-        @depends(["archive_ort_linux_aarch64_oe_gcc11_2"])
+        @depends(["archive_ort_linux_aarch64_oe_gcc11_2", "archive_testdata"])
         def test_ort_local_linux_aarch64_oe_gcc11_2(self, plan: Plan) -> str:
             return plan.add_step(
                 AdbTestsTask(

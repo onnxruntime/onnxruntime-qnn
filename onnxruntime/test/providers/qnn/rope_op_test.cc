@@ -6,7 +6,6 @@
 #include <string>
 #include <vector>
 
-#include "core/graph/onnx_protobuf.h"  // ONNX_NAMESPACE::AttributeProto
 #include "test/providers/qnn/qnn_test_utils.h"
 
 #include "gtest/gtest.h"

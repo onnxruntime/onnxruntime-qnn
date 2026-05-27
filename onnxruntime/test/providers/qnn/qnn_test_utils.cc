@@ -2,27 +2,20 @@
 // Licensed under the MIT License.
 
 #include "onnxruntime_c_api.h"
-#include "test/unittest_util/graph_transform_test_builder.h"
+#include "onnxruntime_cxx_api.h"
+#include "onnxruntime_session_options_config_keys.h"
+#include "test/unittest_util/model_test_builder.h"
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include "test/providers/qnn/qnn_test_utils.h"
 #include <cassert>
+#include <limits>
+#include <stdexcept>
 #include "test/util/include/api_asserts.h"
 #include "test/util/include/asserts.h"
-#include "test/util/include/default_providers.h"
 #include "test/util/include/test/test_environment.h"
 
 #include "test/util/env_var_utils.h"
-#include "core/common/span_utils.h"
-#include "core/framework/compute_capability.h"
-#include "core/framework/error_code_helper.h"
-#include "core/graph/ep_api_types.h"
-#include "core/graph/constants.h"
-#include "core/session/abi_devices.h"
-#include "core/session/abi_ep_types.h"
-#include "core/session/onnxruntime_cxx_api.h"
-#include "core/session/onnxruntime_session_options_config_keys.h"
-#include "core/optimizer/graph_optimizer_registry.h"
 
 // Platform-specific includes for dynamic library loading
 #if defined(_WIN32)
@@ -154,12 +147,15 @@ class SafeIntExceptionHandler : public std::exception {
 
 size_t SizeHelper(std::vector<int64_t> shape, size_t start, size_t end) {
   // Must return 1 for an empty sequence
-  SafeInt<int64_t, SafeIntExceptionHandler> size = 1;  // this is used to calculate the size, which is used for memory allocations, so validate no overflow
+  int64_t size = 1;
   for (size_t i = start; i < end; i++) {
-    if (shape[i] < 0) return -1;
+    if (shape[i] < 0) return static_cast<size_t>(-1);
+    if (shape[i] != 0 && size > std::numeric_limits<int64_t>::max() / shape[i]) {
+      return static_cast<size_t>(-1);
+    }
     size *= shape[i];
   }
-  return size;
+  return static_cast<size_t>(size);
 }
 
 size_t SizeToDimension(std::vector<int64_t> shape, size_t dimension) {
@@ -441,14 +437,15 @@ void InferenceModel(const std::string& model_data,
 
   auto provider_type = "QNNExecutionProvider";
   session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
-  Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
-  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(session, provider_type, expected_ep_assignment));
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options));
+  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(scoped.session(), provider_type, expected_ep_assignment));
 
   if (graph_checker) {
-    (*graph_checker)(session);
+    (*graph_checker)(scoped.session());
   }
 
-  RunWithEP(session, ort_run_options, feeds, output_vals);
+  RunWithEP(scoped.session(), ort_run_options, feeds, output_vals);
 }
 
 std::string MakeTestQDQBiasInput(ModelTestBuilder& builder,
@@ -541,48 +538,11 @@ void QnnHTPBackendTests::SetUp() {
   }
 }
 
-// Checks if a Qualcomm GPU EP device is available by registering the QNN EP
-// library under a temporary name and querying device types.
+// Checks if Qnn Gpu backend can run a graph on the system.
+// Creates a one node graph with relu op,
+// to check if the GPU backend is available.
 static BackendSupport GetGPUSupport() {
-  const OrtApi& c_api = Ort::GetApi();
-  Ort::Env* ort_env = GetOrtEnv();
-  const std::string check_name = "QnnGpuSupportCheck";
-  const ORTCHAR_T* lib_path =
-#if defined(_WIN32)
-      ORT_TSTR("onnxruntime_providers_qnn.dll");
-#else
-      ORT_TSTR("libonnxruntime_providers_qnn.so");
-#endif
-
-  OrtStatus* reg_status = c_api.RegisterExecutionProviderLibrary(*ort_env, check_name.c_str(), lib_path);
-  if (reg_status != nullptr) {
-    c_api.ReleaseStatus(reg_status);
-    return BackendSupport::UNSUPPORTED;
-  }
-
-  const OrtEpDevice* const* ep_devices = nullptr;
-  size_t num_devices = 0;
-  OrtStatus* get_status = c_api.GetEpDevices(*ort_env, &ep_devices, &num_devices);
-
-  bool has_gpu = false;
-  if (get_status == nullptr) {
-    for (size_t i = 0; i < num_devices; ++i) {
-      if (c_api.EpDevice_EpName(ep_devices[i]) == check_name &&
-          c_api.HardwareDevice_Type(c_api.EpDevice_Device(ep_devices[i])) == OrtHardwareDeviceType_GPU) {
-        has_gpu = true;
-        break;
-      }
-    }
-  } else {
-    c_api.ReleaseStatus(get_status);
-  }
-
-  OrtStatus* unreg_status = c_api.UnregisterExecutionProviderLibrary(*ort_env, check_name.c_str());
-  if (unreg_status != nullptr) {
-    c_api.ReleaseStatus(unreg_status);
-  }
-
-  return has_gpu ? BackendSupport::SUPPORTED : BackendSupport::UNSUPPORTED;
+  return BackendSupport::SUPPORTED;
 }
 
 void QnnGPUBackendTests::SetUp() {
@@ -590,37 +550,24 @@ void QnnGPUBackendTests::SetUp() {
     return;
   }
 
+  Ort::Logger logger = Ort::Logger();
+
   // Determine if GPU backend is supported only if we haven't done so before.
   if (cached_gpu_support_ == BackendSupport::SUPPORT_UNKNOWN) {
     cached_gpu_support_ = GetGPUSupport();
   }
 
   if (cached_gpu_support_ == BackendSupport::UNSUPPORTED) {
-    GTEST_SKIP() << "QNN GPU backend is not available! Skipping test.";
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_WARNING, "QNN GPU backend is not available! Skipping test.");
   } else if (cached_gpu_support_ == BackendSupport::SUPPORT_ERROR) {
-    FAIL() << "Failed to check if QNN GPU backend is available.";
+    ORT_CXX_LOG(logger, ORT_LOGGING_LEVEL_ERROR, "Failed to check if QNN GPU backend is available.");
+    FAIL();
   }
 }
 
 static BackendSupport GetIRSupport();
 
-BackendSupport QnnGPUBackendTests::IsIRBackendSupported() const {
-  if (cached_ir_support_ == BackendSupport::SUPPORT_UNKNOWN) {
-    cached_ir_support_ = test::GetIRSupport();
-  }
-
-  return cached_ir_support_;
-}
-
 BackendSupport QnnHTPBackendTests::IsIRBackendSupported() const {
-  if (cached_ir_support_ == BackendSupport::SUPPORT_UNKNOWN) {
-    cached_ir_support_ = test::GetIRSupport();
-  }
-
-  return cached_ir_support_;
-}
-
-BackendSupport QnnCPUBackendTests::IsIRBackendSupported() const {
   if (cached_ir_support_ == BackendSupport::SUPPORT_UNKNOWN) {
     cached_ir_support_ = test::GetIRSupport();
   }
@@ -659,20 +606,9 @@ void GenieBackendTests::SetUp() {
 }
 
 static BackendSupport GetIRSupport() {
-  // Probe for QnnIr.dll availability by attempting a transient library load.
-  // QnnIr is a serializer backend (no hardware device type), so it cannot be
-  // detected via the EP registration + GetEpDevices pattern used by GetGPUSupport().
-#if defined(_WIN32)
-  constexpr const char* kQnnIrLibName = "QnnIr.dll";
-#else
-  constexpr const char* kQnnIrLibName = "libQnnIr.so";
-#endif
-  void* handle = LoadDynamicLibraryImpl(kQnnIrLibName);
-  if (handle == nullptr) {
-    return BackendSupport::UNSUPPORTED;
-  }
-  UnloadDynamicLibraryImpl(handle);
-  return BackendSupport::SUPPORTED;
+  // QnnIr should be able to serialize any model supported by the QNN reference spec.
+  // Use a model that works on QnnCpu to verify QnnIr availability.
+  return GetCPUSupport();
 }
 
 void QnnIRBackendTests::SetUp() {
@@ -708,8 +644,6 @@ BackendSupport QnnCPUBackendTests::cached_cpu_support_ = BackendSupport::SUPPORT
 #endif  // defined(_WIN32) || (defined(__linux__) && defined(__aarch64__))
 
 BackendSupport QnnHTPBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
-BackendSupport QnnCPUBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
-BackendSupport QnnGPUBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnIRBackendTests::cached_ir_support_ = BackendSupport::SUPPORT_UNKNOWN;
 BackendSupport QnnGPUBackendTests::cached_gpu_support_ = BackendSupport::SUPPORT_UNKNOWN;
 

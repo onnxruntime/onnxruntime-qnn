@@ -3,7 +3,7 @@
 
 #pragma once
 #include <string>
-#include <core/session/onnxruntime_c_api.h>
+#include "onnxruntime_c_api.h"
 
 namespace onnxruntime {
 namespace qnnctxgen {

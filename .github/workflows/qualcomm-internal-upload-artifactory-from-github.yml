@@ -336,6 +336,11 @@ jobs:
         with:
           name: windows-arm64-py3.11-zip
 
+      - name: Download Windows ARM64 (ARM64x) Zip from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64x-py3.11-zip
+
       - name: Download Linux aarch64 manylinux_2_34 TGZ from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -356,12 +361,41 @@ jobs:
         with:
           name: windows-x86_64-py3.11-pdb-zip
 
+      - name: Download Windows ARM64 (ARM64x) Windows PDB Archive from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64x-py3.11-pdb-zip
+
       - name: Verify Zip artifacts
         run: |
-          # 1 windows zip + 3 PDB archives = 4 zips
-          count=$(find "${{ github.workspace }}/build" -name "*.zip" | wc -l)
-          echo "Found $count Zip archive(s)"
-          [ "$count" -eq 4 ] || { echo "ERROR: Expected 4 Zip archive, found $count"; exit 1; }
+          # Expected .zip artifacts. Append its glob here for a new one.
+          # Versioned distributable + PDB zips use 'onnxruntime-qnn-<version>-win-<arch>{-pdb}.zip'.
+          expected=(
+            "onnxruntime-qnn-*-win-arm64.zip"
+            "onnxruntime-qnn-*-win-arm64x.zip"
+            "onnxruntime-qnn-*-win-arm64-pdb.zip"
+            "onnxruntime-qnn-*-win-arm64ec-pdb.zip"
+            "onnxruntime-qnn-*-win-x64-pdb.zip"
+            "onnxruntime-qnn-*-win-arm64x-pdb.zip"
+          )
+          missing=()
+          for pattern in "${expected[@]}"; do
+            if ! find "${{ github.workspace }}/build" -type f -name "$pattern" | grep -q .; then
+              missing+=("$pattern")
+            fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "ERROR: missing .zip artifacts:"
+            printf '  %s\n' "${missing[@]}"
+            exit 1
+          fi
+          actual_count=$(find "${{ github.workspace }}/build" -type f -name "*.zip" | wc -l)
+          if [ "$actual_count" -ne "${#expected[@]}" ]; then
+            echo "ERROR: expected ${#expected[@]} Zip archive(s), found $actual_count. Inventory:"
+            find "${{ github.workspace }}/build" -type f -name "*.zip"
+            exit 1
+          fi
+          echo "Found ${#expected[@]} expected Zip archive(s)."
 
       - name: Verify TGZ artifact
         run: |
@@ -369,10 +403,16 @@ jobs:
           echo "Found $count TGZ archive(s)"
           [ "$count" -eq 1 ] || { echo "ERROR: Expected 1 TGZ archive, found $count"; exit 1; }
 
-      - name: Prepare Windows Zip libs for signing
+      - name: Prepare Windows ARM64 Zip lib for signing
         run: |
           ./qcom/scripts/signing/prepare_zip_for_signing.sh \
             "${{ github.workspace }}/build/windows-arm64/Release/dist" \
+            "${{ github.workspace }}/build/dist/output"
+
+      - name: Prepare Windows ARM64 (ARM64x) Zip lib for signing
+        run: |
+          ./qcom/scripts/signing/prepare_zip_for_signing.sh \
+            "${{ github.workspace }}/build/windows-arm64x/Release/Release/dist" \
             "${{ github.workspace }}/build/dist/output"
 
       - name: Upload unsigned Windows Zip libs to Artifactory
@@ -409,6 +449,11 @@ jobs:
           # Upload Windows ARM64 archive and PDB archive
           ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
             "${{ github.workspace }}/build/windows-arm64/Release/dist" \
+            "$NETRC_FILE"
+
+          # Upload Windows ARM64 (ARM64x) archive
+          ./qcom/scripts/upleveling/upload_zip_to_artifactory.sh \
+            "${{ github.workspace }}/build/windows-arm64x/Release/Release/dist" \
             "$NETRC_FILE"
 
           # Upload Linux aarch64 manylinux_2_34 zip

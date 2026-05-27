@@ -9,7 +9,6 @@
 
 #include "test/providers/qnn/qnn_test_utils.h"
 
-#include "core/graph/node_attr_utils.h"
 #include "gtest/gtest.h"
 
 extern std::unique_ptr<Ort::Env> ort_env;

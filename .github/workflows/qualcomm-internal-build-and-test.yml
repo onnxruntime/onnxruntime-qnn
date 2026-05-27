@@ -37,14 +37,20 @@ env:
 
 jobs:
 
+  archive-testdata:
+    uses: ./.github/workflows/qualcomm-internal-archive-testdata.yml
+    secrets: inherit
+
   build-and-test-linux-x86_64:
     if: ${{ inputs.do_all }}
+    needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
       nightly_build: ${{ inputs.nightly_build }}
       target_os: linux
       target_arch: x86_64
+      testdata_archive_artifact_name: testdata-tarbz2
       # Specifying a python version here doesn't actually do anything at this point since we don't know what the Linux
       # wheel distribution story is yet. For now, this is just so that all of the job and artifact names reflect the
       # version of cpython that's installed on our Linux build machines.
@@ -52,34 +58,40 @@ jobs:
 
   build-linux-aarch64-oe-gcc11_2:
     if: ${{ inputs.do_all }}
+    needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
       nightly_build: ${{ inputs.nightly_build }}
       target_os: linux
       target_arch: aarch64_oe_gcc11_2
+      testdata_archive_artifact_name: testdata-tarbz2
       target_py_vsn: None
       upload_test_archive: true
       upload_wheel: false
       run_tests: false
 
   test-linux-aarch64-oe-gcc11_2:
-    if: ${{ inputs.do_all }}
+    # Downstream tests need the Artifactory upload from build-linux-aarch64-oe-gcc11_2; skip on fork PRs.
+    if: ${{ inputs.do_all && github.event.pull_request.head.repo.fork != true }}
     needs: [build-linux-aarch64-oe-gcc11_2]
     uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
     secrets: inherit
     with:
       target_os: linux
       target_arch: aarch64_oe_gcc11_2
+      testdata_archive_artifact_name: testdata-tarbz2
 
   build-and-test-linux-arm64:
     if: ${{ inputs.do_all }}
+    needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
       nightly_build: ${{ inputs.nightly_build }}
       target_os: linux
       target_arch: aarch64_manylinux_2_34
+      testdata_archive_artifact_name: testdata-tarbz2
       target_py_vsn: ${{ inputs.target_py_vsn }}
       upload_test_archive: true
       upload_wheel: true
@@ -90,10 +102,12 @@ jobs:
 
   build-and-test-windows-arm64:
     if: ${{ inputs.do_all || inputs.do_windows_arm64 }}
+    needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
       target_arch: arm64
+      testdata_archive_artifact_name: testdata-zip
       build_runner_arch: ${{ inputs.windows_arm64_runner_arch }}
       test_runner_arch: arm64
       upload_wheel: ${{ inputs.windows_arm64_runner_arch == 'ARM64' && inputs.target_py_vsn }}
@@ -104,11 +118,13 @@ jobs:
 
   build-and-test-windows-arm64ec:
     if: ${{ inputs.do_all }}
+    needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
       nightly_build: ${{ inputs.nightly_build }}
       target_arch: arm64ec
+      testdata_archive_artifact_name: testdata-zip
       upload_wheel: true
       test_wheel: true
       target_py_vsn: ${{ inputs.target_py_vsn }}
@@ -117,11 +133,13 @@ jobs:
 
   build-and-test-windows-x86_64:
     if: ${{ inputs.do_all }}
+    needs: [archive-testdata]
     uses: ./.github/workflows/qualcomm-internal-build-and-test-single-os.yml
     secrets: inherit
     with:
       nightly_build: ${{ inputs.nightly_build }}
       target_arch: x86_64
+      testdata_archive_artifact_name: testdata-zip
       target_py_vsn: ${{ inputs.target_py_vsn }}
 
   lint:
@@ -138,13 +156,16 @@ jobs:
 
   build-android-aarch64:
     if: ${{ inputs.do_all }}
+    needs: [archive-testdata]
     runs-on: ["self-hosted", "X64", "Linux", "Build"]
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
 
+      # Artifactory steps are no-ops on fork PRs (secrets unavailable). The build still validates the change.
       - name: Setup JFrog CLI
+        if: ${{ env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: jfrog/setup-jfrog-cli@v5
         with:
           disable-auto-build-publish: true
@@ -158,16 +179,19 @@ jobs:
           python3 qcom/build_and_test.py archive_ort_android_aarch64
 
       - name: Upload Test Archive to Artifactory
+        if: ${{ env.BUILD_ARTIFACTORY_REPO != '' }}
         uses: ./.github/actions/upload-ci-artifact
         with:
           name: "android-aarch64-pyNone-tests"
           src_pattern: onnxruntime-tests-android-aarch64.zip
 
   test-android-aarch64:
-    if: ${{ inputs.do_all }}
+    # Downstream tests need the Artifactory upload from build-android-aarch64; skip on fork PRs.
+    if: ${{ inputs.do_all && github.event.pull_request.head.repo.fork != true }}
     needs: [build-android-aarch64]
     uses: ./.github/workflows/qualcomm-internal-qdc-test.yml
     secrets: inherit
     with:
       target_os: android
       target_arch: aarch64
+      testdata_archive_artifact_name: testdata-zip

@@ -43,6 +43,7 @@ jobs:
       build_android_aarch64_aar: true
       build_linux_aarch64_oe_gcc11_2: true
       build_linux_x86_64: true
+      linux_x86_64_target_py_vsns: "['3.10','3.12']"
       linux_aarch64_manylinux_2_34_target_py_vsns: "['3.11','3.12','3.13','3.14']"
       windows_target_archs: "['arm64', 'arm64ec', 'x86_64']"
       windows_target_py_vsns: "['3.11','3.12','3.13','3.14']"
@@ -66,10 +67,15 @@ jobs:
           JF_ACCESS_TOKEN: ${{ secrets.BUILD_ARTIFACTORY_TOKEN }}
 
       # We only publish this for AI Hub to use and they only want x86_64 Linux
-      - name: Download Wheel from Artifactory
+      - name: Download x86_64 Linux 3.10 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-x86_64-py3.10-wheels
+
+      - name: Download x86_64 Linux 3.12 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64-py3.12-wheels
 
       - name: Consolidate Wheels
         run: |
@@ -97,7 +103,7 @@ jobs:
       - name: Publish
         if: ${{ !inputs.skip_publish_wheel }}
         run: |
-          source venv/bin/activate && twine upload --config-file=build/pypirc -r local ${{ github.workspace }}/build/dist/*
+          source venv/bin/activate && twine upload --skip-existing --config-file=build/pypirc -r local ${{ github.workspace }}/build/dist/*
 
   publish-qa-artifacts:
     name: "Publish QA artifacts to Artifactory"
@@ -124,6 +130,11 @@ jobs:
         uses: ./.github/actions/download-ci-artifact
         with:
           name: linux-x86_64-py3.10-wheels
+
+      - name: Download x86_64 Linux 3.12 Wheel from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: linux-x86_64-py3.12-wheels
 
       - name: Download aarch64 manylinux_2_34 Linux 3.11 Wheel from Artifactory
         uses: ./.github/actions/download-ci-artifact
@@ -244,6 +255,20 @@ jobs:
         with:
           name: windows-x86_64-py3.11-tests
 
+      # --------------------------
+      # Download testdata archives
+      # --------------------------
+
+      - name: Download testdata zip from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: testdata-zip
+
+      - name: Download testdata tar.bz2 from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: testdata-tarbz2
+
       # -----------------------------
       # Download other distributables
       # -----------------------------
@@ -268,6 +293,11 @@ jobs:
         with:
           name: windows-arm64-py3.11-zip
 
+      - name: Download ARM64 (ARM64x) Windows Zip Package
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64x-py3.11-zip
+
       - name: Download aarch64 manylinux_2_34 Linux TGZ Package from Artifactory
         uses: ./.github/actions/download-ci-artifact
         with:
@@ -287,6 +317,11 @@ jobs:
         uses: ./.github/actions/download-ci-artifact
         with:
           name: windows-x86_64-py3.11-pdb-zip
+
+      - name: Download Windows ARM64 (ARM64x) Windows PDB Archive from Artifactory
+        uses: ./.github/actions/download-ci-artifact
+        with:
+          name: windows-arm64x-py3.11-pdb-zip
 
       - name: Merge AMD Wheels
         run: |
@@ -310,11 +345,11 @@ jobs:
 
       - name: Verify wheel artifacts
         run: |
-          # After merge: 1 linux x86_64 + 4 linux aarch64 manylinux_2_34 + 4 arm64 + 4 merged AMD = 13 wheels
+          # After merge: 2 linux x86_64 (py3.10, py3.12) + 4 linux aarch64 manylinux_2_34 + 4 arm64 + 4 merged AMD = 14 wheels
           # (arm64ec and x86_64 originals are deleted by the merge step above)
           count=$(find "${{ github.workspace }}/build" -name "*.whl" | wc -l)
           echo "Found $count wheel(s)"
-          [ "$count" -eq 13 ] || { echo "ERROR: Expected 13 wheels, found $count"; exit 1; }
+          [ "$count" -eq 14 ] || { echo "ERROR: Expected 14 wheels, found $count"; exit 1; }
 
       - name: Verify NuGet artifact
         run: |
@@ -324,16 +359,67 @@ jobs:
 
       - name: Verify tarball artifacts
         run: |
-          count=$(find "${{ github.workspace }}/build" -name "*.tar.bz2" | wc -l)
-          echo "Found $count .tar.bz2 archive(s)"
-          [ "$count" -eq 3 ] || { echo "ERROR: Expected 3 .tar.bz2 archives, found $count"; exit 1; }
+          # Expected .tar.bz2 artifacts. Append its glob here for a new one.
+          expected=(
+            "onnxruntime-tests-linux-aarch64_manylinux_2_34.tar.bz2"
+            "onnxruntime-tests-linux-aarch64_oe_gcc11_2.tar.bz2"
+            "onnxruntime-tests-linux-x86_64.tar.bz2"
+            "onnxruntime-testdata.tar.bz2"
+          )
+          missing=()
+          for pattern in "${expected[@]}"; do
+            if ! find "${{ github.workspace }}/build" -type f -name "$pattern" | grep -q .; then
+              missing+=("$pattern")
+            fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "ERROR: missing .tar.bz2 artifacts:"
+            printf '  %s\n' "${missing[@]}"
+            exit 1
+          fi
+          actual_count=$(find "${{ github.workspace }}/build" -type f -name "*.tar.bz2" | wc -l)
+          if [ "$actual_count" -ne "${#expected[@]}" ]; then
+            echo "ERROR: expected ${#expected[@]} .tar.bz2 archive(s), found $actual_count. Inventory:"
+            find "${{ github.workspace }}/build" -type f -name "*.tar.bz2"
+            exit 1
+          fi
+          echo "Found ${#expected[@]} expected .tar.bz2 archive(s)."
 
-      - name: Verify Zip artifact
+      - name: Verify Zip artifacts
         run: |
-          # 4 test archives + 1 windows zip + 3 PDB archives = 8 zips
-          count=$(find "${{ github.workspace }}/build" -name "*.zip" | wc -l)
-          echo "Found $count Zip archive(s)"
-          [ "$count" -eq 8 ] || { echo "ERROR: Expected 8 Zip archives, found $count"; exit 1; }
+          # Expected .zip artifacts. Append its glob here for a new one.
+          # Versioned distributable + PDB zips use 'onnxruntime-qnn-<version>-win-<arch>{-pdb}.zip'.
+          expected=(
+            "onnxruntime-tests-android-aarch64.zip"
+            "onnxruntime-tests-windows-arm64.zip"
+            "onnxruntime-tests-windows-arm64ec.zip"
+            "onnxruntime-tests-windows-x86_64.zip"
+            "onnxruntime-testdata.zip"
+            "onnxruntime-qnn-*-win-arm64.zip"
+            "onnxruntime-qnn-*-win-arm64x.zip"
+            "onnxruntime-qnn-*-win-arm64-pdb.zip"
+            "onnxruntime-qnn-*-win-arm64ec-pdb.zip"
+            "onnxruntime-qnn-*-win-x64-pdb.zip"
+            "onnxruntime-qnn-*-win-arm64x-pdb.zip"
+          )
+          missing=()
+          for pattern in "${expected[@]}"; do
+            if ! find "${{ github.workspace }}/build" -type f -name "$pattern" | grep -q .; then
+              missing+=("$pattern")
+            fi
+          done
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "ERROR: missing .zip artifacts:"
+            printf '  %s\n' "${missing[@]}"
+            exit 1
+          fi
+          actual_count=$(find "${{ github.workspace }}/build" -type f -name "*.zip" | wc -l)
+          if [ "$actual_count" -ne "${#expected[@]}" ]; then
+            echo "ERROR: expected ${#expected[@]} Zip archive(s), found $actual_count. Inventory:"
+            find "${{ github.workspace }}/build" -type f -name "*.zip"
+            exit 1
+          fi
+          echo "Found ${#expected[@]} expected Zip archive(s)."
 
       - name: Verify TGZ artifact
         run: |

@@ -45,9 +45,9 @@
 
   add_dependencies(onnxruntime_providers_qnn ort_core_target)
 
-  message(STATUS ONNXRUNTIME_APPLICATION_SOURCE_ROOT ${ONNXRUNTIME_APPLICATION_SOURCE_ROOT})
+  message(STATUS "ONNXRUNTIME_APPLICATION_INCLUDES: " ${ONNXRUNTIME_APPLICATION_INCLUDES})
   target_include_directories(onnxruntime_providers_qnn PRIVATE ${CMAKE_CURRENT_BINARY_DIR}
-                                                               ${ONNXRUNTIME_APPLICATION_INCLUDE_ROOT}/core/session
+                                                               ${ONNXRUNTIME_APPLICATION_INCLUDES}
                                                                ${onnxruntime_QNN_HOME}/include/QNN
                                                                ${onnxruntime_QNN_HOME}/include)
 

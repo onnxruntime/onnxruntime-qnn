@@ -4,8 +4,6 @@
 #if !defined(ORT_MINIMAL_BUILD)
 
 #include <string>
-#include "core/graph/graph.h"
-#include "core/graph/node_attr_utils.h"
 
 #include "test/providers/qnn/qnn_test_utils.h"
 #include "test/unittest_util/qdq_test_utils.h"
@@ -39,7 +37,7 @@ template <typename QuantType>
 static GetTestQDQModelFn<QuantType> BuildQDQTransposeTestCase(const TestInputDef<float>& input_def,
                                                               const std::vector<ONNX_NAMESPACE::AttributeProto>& attrs) {
   return [input_def, attrs](ModelTestBuilder& builder, std::vector<QuantParams<QuantType>>& output_qparams) {
-    ORT_UNUSED_PARAMETER(output_qparams);
+    QNN_TEST_UNUSED_PARAMETER(output_qparams);
     // input
     MakeTestInput(builder, "input", input_def);
 

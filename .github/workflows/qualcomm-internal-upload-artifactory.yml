@@ -56,6 +56,16 @@ on:
            artifactory-maven-virtual, maven-central]
         type: string
         default: "test-users"
+      sign_artifact:
+        description: |
+          Sign the Windows artifacts by replacing the embedded
+          onnxruntime_providers_qnn.dll with the signed copy from the signed-libs
+          bundle in Artifactory. For NuGet packages, also replaces the managed
+          Qualcomm.ML.OnnxRuntime.QNN.dll. Applies to whichever artifact_format
+          is selected (wheel, nuget, zip, or all). Non-Windows artifacts and
+          non-native files pass through unchanged.
+        type: boolean
+        default: false
 
   workflow_dispatch:
     inputs: *common_inputs
@@ -109,6 +119,7 @@ jobs:
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           PYPI_API_KEY: ${{ secrets.PYPI_UPLOADER_PASSWORD }}
           TEST_PYPI_API_KEY: ${{ secrets.TEST_PYPI_UPLOADER_PASSWORD }}
+          JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
         run: |
           source uplevel_venv/bin/activate
           python ./qcom/scripts/upleveling/qnn_ep_uplevel.py \
@@ -117,7 +128,8 @@ jobs:
             --version_from ${{ inputs.version_from }} \
             --version_to ${{ inputs.version_to }} \
             --index_server_from ${{ inputs.index_server_from }} \
-            --index_server_to ${{ inputs.index_server_to }}
+            --index_server_to ${{ inputs.index_server_to }} \
+            ${{ inputs.sign_artifact && '--sign_artifact' || '' }}
 
   publish-nuget-workflow:
     if: ${{ inputs.artifact_format == 'nuget' || inputs.artifact_format == 'all' }}
@@ -135,6 +147,7 @@ jobs:
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
           NUGET_API_KEY: ${{ secrets.NUGET_UPLOADER_PASSWORD }}
           TEST_NUGET_API_KEY: ${{ secrets.TEST_NUGET_UPLOADER_PASSWORD }}
+          JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
         run: |
           py -m venv uplevel_venv
           .\uplevel_venv\Scripts\activate
@@ -151,7 +164,8 @@ jobs:
             -VersionFrom ${{ inputs.version_from }} `
             -VersionTo ${{ inputs.version_to }} `
             -IndexServerFrom ${{ inputs.index_server_from }} `
-            -IndexServerTo ${{ inputs.index_server_to }}
+            -IndexServerTo ${{ inputs.index_server_to }} `
+            -SignArtifact $${{ inputs.sign_artifact }}
 
   publish-zip-workflow:
     if: ${{ inputs.artifact_format == 'zip' || inputs.artifact_format == 'all' }}
@@ -170,6 +184,7 @@ jobs:
         env:
           ARTIFACTORY_USERNAME: ${{ secrets.ARTIFACTORY_USERNAME }}
           ARTIFACTORY_PASSWORD: ${{ secrets.ARTIFACTORY_UPLOADER_PASSWORD }}
+          JFROG_API_KEY: ${{ secrets.JFROG_API_KEY }}
         run: |
           source uplevel_venv/bin/activate
 
@@ -193,7 +208,8 @@ jobs:
             --version_to ${{ inputs.version_to }} \
             --index_server_from ${{ inputs.index_server_from }} \
             --index_server_to ${{ inputs.index_server_to }} \
-            --netrc_file "$NETRC_FILE"
+            --netrc_file "$NETRC_FILE" \
+            ${{ inputs.sign_artifact && '--sign_artifact' || '' }}
 
           # Clean up the temporary .netrc file
           rm -f "$NETRC_FILE"
