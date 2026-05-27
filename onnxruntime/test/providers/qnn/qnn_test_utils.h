@@ -50,6 +50,17 @@ inline gsl::span<const int64_t> AsSpan(std::initializer_list<int64_t> list) {
 using GetTestModelFn = std::function<void(ModelTestBuilder& builder)>;
 using ProviderOptions = std::unordered_map<std::string, std::string>;
 
+// Holds a serialized model and the builder used to construct it.
+struct ModelAndBuilder {
+  std::string model_data;
+  ModelTestBuilder builder;
+};
+
+// Builds a model via `model_build_fn` and serializes it into `result->model_data`.
+void CreateModelInMemory(std::unique_ptr<ModelAndBuilder>& result,
+                         const GetTestModelFn& model_build_fn,
+                         int opset_version = 18);
+
 // Forward declaration for QnnHTPBackendTests used in template functions below.
 class QnnHTPBackendTests;
 

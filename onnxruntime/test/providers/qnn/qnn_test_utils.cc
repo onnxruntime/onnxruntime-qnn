@@ -817,6 +817,21 @@ bool ReduceOpHasAxesInput(const std::string& op_type, int opset_version) {
   return (it != opset_with_axes_as_input.cend()) && (it->second <= opset_version);
 }
 
+void CreateModelInMemory(std::unique_ptr<ModelAndBuilder>& result,
+                         const GetTestModelFn& model_build_fn,
+                         int opset_version) {
+  const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
+  result = std::make_unique<ModelAndBuilder>();
+  model_build_fn(result->builder);
+  for (const auto& [domain, version] : domain_to_version) {
+    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{result->builder.model_.add_opset_import()};
+    opset_id_proto->set_domain(domain);
+    opset_id_proto->set_version(version);
+  }
+  result->builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
+  result->builder.model_.SerializeToString(&result->model_data);
+}
+
 }  // namespace test
 }  // namespace onnxruntime
 

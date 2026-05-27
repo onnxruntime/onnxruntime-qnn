@@ -21,30 +21,6 @@ namespace test {
 // HTP backend tests
 //
 
-namespace {
-
-struct ModelAndBuilder {
-  std::string model_data;
-  ModelTestBuilder builder;
-};
-
-void CreateModelInMemory(std::unique_ptr<ModelAndBuilder>& result,
-                         const GetTestModelFn& model_build_fn,
-                         int opset_version) {
-  const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
-  result = std::make_unique<ModelAndBuilder>();
-  model_build_fn(result->builder);
-  for (const auto& [domain, version] : domain_to_version) {
-    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{result->builder.model_.add_opset_import()};
-    opset_id_proto->set_domain(domain);
-    opset_id_proto->set_version(version);
-  }
-  result->builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
-  result->builder.model_.SerializeToString(&result->model_data);
-}
-
-}  // namespace
-
 // Test RandomNormalLike + Add to verify the output can be consumed by a downstream op.
 // This tests the full HTP path: RandomNormalLike (uint8) -> Dequantize -> Add -> output.
 TEST_F(QnnHTPBackendTests, RandomNormalLike_AddDownstream) {
@@ -107,7 +83,7 @@ TEST_F(QnnHTPBackendTests, RandomNormalLike_GraphInputRegistered) {
   Ort::SessionOptions so;
   so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
 
-  onnxruntime::ProviderOptions options;
+  onnxruntime::test::ProviderOptions options;
 #if defined(_WIN32)
   options["backend_path"] = "QnnHtp.dll";
 #else
@@ -115,7 +91,7 @@ TEST_F(QnnHTPBackendTests, RandomNormalLike_GraphInputRegistered) {
 #endif
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
-  RegisterQnnEpLibrary(registered_ep_device, so, onnxruntime::kQnnExecutionProvider, options);
+  RegisterQnnEpLibrary(registered_ep_device, so, kQnnExecutionProvider, options);
 
   ASSERT_NO_THROW({
     Ort::Session session(*ort_env, model->model_data.data(), model->model_data.size(), so);

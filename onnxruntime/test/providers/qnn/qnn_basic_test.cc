@@ -560,28 +560,6 @@ TEST_F(QnnCPUBackendTests, QnnSaver_OutputFiles) {
       << "params.bin not found in cwd or ./saver_output/";
 }
 
-struct ModelAndBuilder {
-  std::string model_data;
-  ModelTestBuilder builder;
-};
-
-// Creates a model in memory. Input feeds and output names can be accessed from result.builder.
-static void CreateModelInMemory(std::unique_ptr<ModelAndBuilder>& result,
-                                const GetTestModelFn& model_build_fn,
-                                const std::string& /*model_name*/,
-                                int opset_version = 18) {
-  const std::unordered_map<std::string, int> domain_to_version = {{"", opset_version}, {kMSDomain, 1}};
-  result = std::make_unique<ModelAndBuilder>();
-  model_build_fn(result->builder);
-  for (const auto& [domain, version] : domain_to_version) {
-    const gsl::not_null<ONNX_NAMESPACE::OperatorSetIdProto*> opset_id_proto{result->builder.model_.add_opset_import()};
-    opset_id_proto->set_domain(domain);
-    opset_id_proto->set_version(version);
-  }
-  result->builder.model_.set_ir_version(ONNX_NAMESPACE::Version::IR_VERSION);
-  result->builder.model_.SerializeToString(&result->model_data);
-}
-
 // Runs a session and verifies the outputs. Can be run by individual threads.
 static void RunSessionAndVerify(Ort::Session& session, const Ort::RunOptions& run_options,
                                 const std::unordered_map<std::string, Ort::Value>& feeds,
@@ -668,8 +646,7 @@ TEST_F(QnnCPUBackendTests, MultithreadSessionRun) {
   CreateModelInMemory(model,
                       F32BuildAdd3Tensors(TestInputDef<float>(shape, false, input_data),
                                           TestInputDef<float>(shape, false, input_data),
-                                          TestInputDef<float>(shape, false, input_data)),
-                      "add3.f32");
+                                          TestInputDef<float>(shape, false, input_data)));
 
   ProviderOptions options;
 #if defined(_WIN32)
@@ -744,8 +721,7 @@ TEST_F(QnnHTPBackendTests, MultithreadSessionRun) {
   CreateModelInMemory(model,
                       QDQBuildAdd3Tensors<uint8_t>(TestInputDef<float>(shape, false, input_data),
                                                    TestInputDef<float>(shape, false, input_data),
-                                                   TestInputDef<float>(shape, false, input_data)),
-                      "add3.qdq");
+                                                   TestInputDef<float>(shape, false, input_data)));
 
   ProviderOptions options;
 #if defined(_WIN32)
@@ -795,8 +771,7 @@ TEST_F(QnnHTPBackendTests, MultithreadHtpPowerCfgSessionRunOption) {
   CreateModelInMemory(model,
                       QDQBuildAdd3Tensors<uint8_t>(TestInputDef<float>(shape, false, input_data),
                                                    TestInputDef<float>(shape, false, input_data),
-                                                   TestInputDef<float>(shape, false, input_data)),
-                      "add3.qdq");
+                                                   TestInputDef<float>(shape, false, input_data)));
 
   ProviderOptions options;
 #if defined(_WIN32)
@@ -856,8 +831,7 @@ TEST_F(QnnHTPBackendTests, MultithreadDefaultHtpPowerCfgFromEpOption) {
   CreateModelInMemory(model,
                       QDQBuildAdd3Tensors<uint8_t>(TestInputDef<float>(shape, false, input_data),
                                                    TestInputDef<float>(shape, false, input_data),
-                                                   TestInputDef<float>(shape, false, input_data)),
-                      "add3.qdq");
+                                                   TestInputDef<float>(shape, false, input_data)));
 
   ProviderOptions options;
 #if defined(_WIN32)
@@ -908,8 +882,7 @@ TEST_F(QnnHTPBackendTests, MultithreadHtpPowerCfgDefaultAndRunOption) {
   CreateModelInMemory(model,
                       QDQBuildAdd3Tensors<uint8_t>(TestInputDef<float>(shape, false, input_data),
                                                    TestInputDef<float>(shape, false, input_data),
-                                                   TestInputDef<float>(shape, false, input_data)),
-                      "add3.qdq");
+                                                   TestInputDef<float>(shape, false, input_data)));
 
   ProviderOptions options;
 #if defined(_WIN32)
@@ -1567,7 +1540,7 @@ TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationTensorNameOverrides) {
   TestInputDef<float> input_def(shape, false, input_data);
 
   std::unique_ptr<ModelAndBuilder> model;
-  CreateModelInMemory(model, QDQBuildSigmoidForTensorNameTest<uint8_t>(input_def), "sigmoid.qdq", 21);
+  CreateModelInMemory(model, QDQBuildSigmoidForTensorNameTest<uint8_t>(input_def), 21);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
@@ -1989,7 +1962,7 @@ TEST_F(QnnHTPBackendTests, OffloadGraphIoQuantizationContextBinaryRoundTrip) {
   TestInputDef<float> input_def({1, 2, 2, 2}, false, input_data);
 
   std::unique_ptr<ModelAndBuilder> model;
-  CreateModelInMemory(model, QDQBuildSigmoidForTensorNameTest<uint8_t>(input_def), "sigmoid.qdq", 21);
+  CreateModelInMemory(model, QDQBuildSigmoidForTensorNameTest<uint8_t>(input_def), 21);
 
   ProviderOptions provider_options;
 #if defined(_WIN32)
@@ -2094,7 +2067,7 @@ static GetTestModelFn BuildPartitionAddedInputModel() {
 TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInput) {
   // Build model using public API
   std::unique_ptr<ModelAndBuilder> model;
-  CreateModelInMemory(model, BuildPartitionAddedInputModel(), "partition_added_input", 13);
+  CreateModelInMemory(model, BuildPartitionAddedInputModel(), 13);
 
   Ort::SessionOptions so;
   so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
@@ -2187,7 +2160,7 @@ static GetTestModelFn BuildPartitionAddedInputQDQModel() {
 TEST_F(QnnCPUBackendTests, PartitionAddedInputRegisteredAsGraphInputOffloadGraphIoQuantization) {
   // Build model using public API
   std::unique_ptr<ModelAndBuilder> model;
-  CreateModelInMemory(model, BuildPartitionAddedInputQDQModel(), "partition_added_input_qdq", 13);
+  CreateModelInMemory(model, BuildPartitionAddedInputQDQModel(), 13);
 
   Ort::SessionOptions so;
   so.SetGraphOptimizationLevel(ORT_ENABLE_ALL);
@@ -2284,7 +2257,7 @@ static GetTestModelFn BuildGraphInputFanoutQDQModel() {
 //      to avoid passing more inputs to graphExecute than the QNN graph has APP_WRITE tensors.
 TEST_F(QnnCPUBackendTests, OffloadGraphIoQuantizationMultipleQDQPairsOnGraphInput) {
   std::unique_ptr<ModelAndBuilder> model;
-  CreateModelInMemory(model, BuildGraphInputFanoutQDQModel(), "graph_input_fanout_qdq", 18);
+  CreateModelInMemory(model, BuildGraphInputFanoutQDQModel(), 18);
 
   Ort::SessionOptions so;
   so.SetGraphOptimizationLevel(ORT_DISABLE_ALL);
@@ -2370,7 +2343,7 @@ TEST_F(QnnCPUBackendTests, GraphInputOutputOrderMatchesOnnx) {
 
   // Build model using helper function
   std::unique_ptr<ModelAndBuilder> model;
-  CreateModelInMemory(model, BuildMultiReluModelForIOOrderTest(), "multi_relu_io_order", 13);
+  CreateModelInMemory(model, BuildMultiReluModelForIOOrderTest(), 13);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
@@ -2490,7 +2463,7 @@ TEST_F(QnnCPUBackendTests, GraphInputOutputOrderMatchesOnnxOffloadGraphIoQuantiz
 
   // Build QDQ model using helper function
   std::unique_ptr<ModelAndBuilder> model;
-  CreateModelInMemory(model, BuildMultiSigmoidQDQModelForIOOrderTest<uint8_t>(), "multi_sigmoid_qdq_io_order", 21);
+  CreateModelInMemory(model, BuildMultiSigmoidQDQModelForIOOrderTest<uint8_t>(), 21);
 
   RegisteredEpDeviceUniquePtr registered_ep_device;
   Ort::SessionOptions so;
