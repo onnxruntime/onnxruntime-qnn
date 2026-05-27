@@ -44,29 +44,32 @@ Ort::Status MakeIODefFromValueInfo(const OrtApi& ort_api,
 }
 
 // Returns the branch GraphProto for the named attribute ("then_branch" or "else_branch").
-const OrtGraph* GetBranchGraph(const OrtApi& ort_api,
-                               const OrtNode& if_node,
-                               const std::string& attr_name) {
+Ort::Status GetBranchGraph(const OrtApi& ort_api,
+                           const OrtNode& if_node,
+                           const std::string& attr_name,
+                           const OrtGraph*& out_graph) {
+  out_graph = nullptr;
   size_t num_subgraphs = 0;
-  if (ort_api.Node_GetNumSubgraphs(&if_node, &num_subgraphs) != nullptr || num_subgraphs == 0) {
-    return nullptr;
-  }
+  ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetNumSubgraphs(&if_node, &num_subgraphs));
+  RETURN_IF_NOT(num_subgraphs > 0, "If node has no subgraphs.");
+
   std::vector<const OrtGraph*> subgraphs(num_subgraphs);
   std::vector<const char*> names(num_subgraphs);
-  if (ort_api.Node_GetSubgraphs(&if_node, subgraphs.data(), num_subgraphs, names.data()) != nullptr) {
-    return nullptr;
-  }
+  ORT_CXX_RETURN_ON_API_FAIL(ort_api.Node_GetSubgraphs(&if_node, subgraphs.data(), num_subgraphs, names.data()));
+
   for (size_t i = 0; i < num_subgraphs; ++i) {
     if (names[i] && std::string(names[i]) == attr_name) {
-      return subgraphs[i];
+      out_graph = subgraphs[i];
+      return Ort::Status();
     }
   }
-  return nullptr;
+  return MAKE_EP_FAIL(("If node missing subgraph attribute: " + attr_name).c_str());
 }
 
-// Validate and retrieve a branch's single output name, dtype, shape.
+// Validate and retrieve a branch's single output: value-info pointer, name, dtype, shape.
 Ort::Status GetBranchSingleOutput(const OrtApi& ort_api,
                                   const OrtGraph* graph,
+                                  const OrtValueInfo*& out_vi,
                                   std::string& out_name,
                                   ONNXTensorElementDataType& out_type,
                                   std::vector<int64_t>& out_shape) {
@@ -76,13 +79,14 @@ Ort::Status GetBranchSingleOutput(const OrtApi& ort_api,
 
   std::vector<const OrtValueInfo*> outs(n);
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetOutputs(graph, outs.data(), n));
+  out_vi = outs[0];
 
   const char* name = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoName(outs[0], &name));
+  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoName(out_vi, &name));
   out_name = name;
 
   const OrtTypeInfo* type_info = nullptr;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(outs[0], &type_info));
+  ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetValueInfoTypeInfo(out_vi, &type_info));
 
   ONNXType value_type = ONNX_TYPE_UNKNOWN;
   ORT_CXX_RETURN_ON_API_FAIL(ort_api.GetOnnxTypeFromTypeInfo(type_info, &value_type));
@@ -128,7 +132,9 @@ Ort::Status TranslateBranch(QnnModelWrapper& qmw,
                            "` is not supported by QNN EP.")
                               .c_str());
     }
-    Ort::Status s = builder->AddToModelBuilder(qmw, unit, logger, do_op_validation);
+    Ort::Status s = do_op_validation
+                        ? builder->IsOpSupported(qmw, unit, logger)
+                        : builder->AddToModelBuilder(qmw, unit, logger, false);
     if (!s.IsOK()) {
       qmw.PopBranchGraphScope();
       return s;
@@ -141,22 +147,19 @@ Ort::Status TranslateBranch(QnnModelWrapper& qmw,
 
 // If a branch's declared output is not yet registered after TranslateBranch (e.g., the branch
 // has zero compute nodes because all Constants were folded into branch initializers), register
-// it now from the branch graph's initializer table.
+// it now from the branch initializer table using the value-info already retrieved by
+// GetBranchSingleOutput.
 Ort::Status EnsureBranchOutputRegistered(QnnModelWrapper& qmw,
                                          const OrtGraph* branch,
+                                         const OrtValueInfo* output_vi,
                                          const std::string& output_name) {
   if (qmw.IsQnnTensorWrapperExist(output_name)) {
     return Ort::Status();
   }
 
   const OrtApi& ort_api = qmw.GetOrtApi();
-  size_t n = 0;
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetNumOutputs(branch, &n));
-  std::vector<const OrtValueInfo*> outs(n);
-  ORT_CXX_RETURN_ON_API_FAIL(ort_api.Graph_GetOutputs(branch, outs.data(), n));
-
   OrtNodeUnitIODef io_def;
-  RETURN_IF_ERROR(MakeIODefFromValueInfo(ort_api, outs[0], io_def));
+  RETURN_IF_ERROR(MakeIODefFromValueInfo(ort_api, output_vi, io_def));
 
   qmw.PushBranchGraphScope(branch);
   QnnTensorWrapper wrapper;
@@ -240,18 +243,20 @@ Ort::Status IfOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qmw,
   const OrtNode& if_node = node_unit.GetNode();
 
   // Retrieve branch graphs.
-  const OrtGraph* then_graph = GetBranchGraph(ort_api, if_node, "then_branch");
-  const OrtGraph* else_graph = GetBranchGraph(ort_api, if_node, "else_branch");
-  RETURN_IF_NOT(then_graph != nullptr && else_graph != nullptr,
-                "If node missing then_branch or else_branch attribute.");
+  const OrtGraph* then_graph = nullptr;
+  const OrtGraph* else_graph = nullptr;
+  RETURN_IF_ERROR(GetBranchGraph(ort_api, if_node, "then_branch", then_graph));
+  RETURN_IF_ERROR(GetBranchGraph(ort_api, if_node, "else_branch", else_graph));
 
   // Validate branch outputs: single output, matching shape + dtype, no name collision.
+  const OrtValueInfo* then_vi = nullptr;
+  const OrtValueInfo* else_vi = nullptr;
   std::string then_name, else_name;
   ONNXTensorElementDataType then_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   ONNXTensorElementDataType else_type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
   std::vector<int64_t> then_shape, else_shape;
-  RETURN_IF_ERROR(GetBranchSingleOutput(ort_api, then_graph, then_name, then_type, then_shape));
-  RETURN_IF_ERROR(GetBranchSingleOutput(ort_api, else_graph, else_name, else_type, else_shape));
+  RETURN_IF_ERROR(GetBranchSingleOutput(ort_api, then_graph, then_vi, then_name, then_type, then_shape));
+  RETURN_IF_ERROR(GetBranchSingleOutput(ort_api, else_graph, else_vi, else_name, else_type, else_shape));
   RETURN_IF_NOT(then_type == else_type, "If branches must have identical output dtype.");
   RETURN_IF_NOT(then_shape == else_shape, "If branches must have identical output shape.");
 
@@ -266,8 +271,8 @@ Ort::Status IfOpBuilder::ProcessAttributesAndOutputs(QnnModelWrapper& qmw,
 
   // For purely constant branches (0 compute nodes after ORT folding), the branch's declared
   // output never gets registered by an op-builder. Register it here from the branch initializer.
-  RETURN_IF_ERROR(EnsureBranchOutputRegistered(qmw, then_graph, then_name));
-  RETURN_IF_ERROR(EnsureBranchOutputRegistered(qmw, else_graph, else_name));
+  RETURN_IF_ERROR(EnsureBranchOutputRegistered(qmw, then_graph, then_vi, then_name));
+  RETURN_IF_ERROR(EnsureBranchOutputRegistered(qmw, else_graph, else_vi, else_name));
 
   // Register the If output tensor.
   QnnTensorWrapper output_wrapper;

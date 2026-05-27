@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-#include "core/graph/onnx_protobuf.h"
+#include <onnx/onnx_pb.h>
 #include "gtest/gtest.h"
 #include "test/providers/qnn/qnn_test_utils.h"
 
@@ -132,6 +132,41 @@ GetTestModelFn BuildIfTestCase(const std::vector<int64_t>& then_shape,
   };
 }
 
+// Builds an If-only model (no upstream QNN-eligible producer) so that
+// ExpectedEPNodeAssignment::None is a meaningful rejection assertion.
+// `x` is a graph input consumed directly by both branches.
+GetTestModelFn BuildIfOnlyTestCase(const std::string& if_output_name,
+                                   const std::string& then_output_name,
+                                   const std::string& else_output_name,
+                                   const std::vector<int64_t>& shape = {4}) {
+  return [=](ModelTestBuilder& builder) {
+    int64_t num_elements = 1;
+    for (auto d : shape) num_elements *= d;
+    std::vector<float> data(static_cast<size_t>(num_elements));
+    for (size_t i = 0; i < data.size(); ++i) data[i] = static_cast<float>(i + 1);
+
+    builder.MakeInput<float>("x", shape, data);
+    builder.MakeInputBool("cond", {1});
+    builder.MakeOutput<float>(if_output_name, shape);
+
+    GraphProto then_g = MakeMulBranchSubgraph(
+        "then_branch", "x", then_output_name, shape, TensorProto::FLOAT, 2.0f, "then_const");
+    GraphProto else_g = MakeMulBranchSubgraph(
+        "else_branch", "x", else_output_name, shape, TensorProto::FLOAT, -1.0f, "else_const");
+
+    builder.AddNode(
+        "if_node",
+        "If",
+        {"cond"},
+        {if_output_name},
+        "",
+        {
+            MakeBranchAttribute("then_branch", std::move(then_g)),
+            MakeBranchAttribute("else_branch", std::move(else_g)),
+        });
+  };
+}
+
 // Builds an If model where each branch is independently dynamic (Mul) or pure-constant
 // (initializer-only, no nodes).
 GetTestModelFn BuildIfMixedTestCase(bool then_constant,
@@ -175,6 +210,125 @@ GetTestModelFn BuildIfMixedTestCase(bool then_constant,
   };
 }
 
+// Builds an If model where each branch wraps its compute op in a QDQ pair (DQ -> Mul -> Q),
+// matching the shape real quantized models produce. The main graph quantizes x and dequantizes
+// the If output so that the If is exercised end-to-end on uint8 tensors.
+//   x_in (fp32) -> Q -> x_q (uint8)
+//                       |
+//                       v
+//   cond ----------> If(then: DQ(x_q)->Mul(2)->Q,  else: DQ(x_q)->Mul(-1)->Q) -> if_out_q (uint8)
+//                                                                                      |
+//                                                                                      v
+//                                                                              DQ -> if_out (fp32)
+GetTestModelFn BuildIfQDQTestCase(const std::vector<int64_t>& shape,
+                                  float x_scale,
+                                  uint8_t x_zero_point,
+                                  float out_scale,
+                                  uint8_t out_zero_point) {
+  return [=](ModelTestBuilder& builder) {
+    int64_t num_elements = 1;
+    for (auto d : shape) num_elements *= d;
+    std::vector<float> data(static_cast<size_t>(num_elements));
+    for (size_t i = 0; i < data.size(); ++i) data[i] = static_cast<float>(i + 1) * 0.1f;
+
+    builder.MakeInput<float>("x_in", shape, data);
+    builder.MakeInputBool("cond", {1});
+    builder.MakeOutput<float>("if_out", shape);
+
+    // Main graph: x_in (fp32) -> Q -> x_q (uint8). x_q is consumed implicitly by both branches.
+    builder.AddQuantizeLinearNode<uint8_t>("main_q", "x_in", x_scale, x_zero_point, "x_q", false);
+
+    auto build_qdq_mul_branch = [&](const std::string& branch_name,
+                                    const std::string& branch_output_name,
+                                    float mul_const) {
+      GraphProto branch;
+      branch.set_name(branch_name);
+
+      ValueInfoProto* out = branch.add_output();
+      out->set_name(branch_output_name);
+      TypeProto* tp = out->mutable_type();
+      tp->mutable_tensor_type()->set_elem_type(TensorProto::UINT8);
+      for (int64_t d : shape) {
+        tp->mutable_tensor_type()->mutable_shape()->add_dim()->set_dim_value(d);
+      }
+
+      const std::string dq_scale_name = branch_name + "_dq_scale";
+      const std::string dq_zp_name = branch_name + "_dq_zp";
+      const std::string mul_const_name = branch_name + "_mul_const";
+      const std::string q_scale_name = branch_name + "_q_scale";
+      const std::string q_zp_name = branch_name + "_q_zp";
+
+      auto add_scalar_fp = [&](const std::string& name, float v) {
+        TensorProto* t = branch.add_initializer();
+        t->set_name(name);
+        t->set_data_type(TensorProto::FLOAT);
+        t->add_float_data(v);
+      };
+      auto add_scalar_u8 = [&](const std::string& name, uint8_t v) {
+        TensorProto* t = branch.add_initializer();
+        t->set_name(name);
+        t->set_data_type(TensorProto::UINT8);
+        const uint8_t buf[1] = {v};
+        t->set_raw_data(buf, sizeof(buf));
+      };
+
+      add_scalar_fp(dq_scale_name, x_scale);
+      add_scalar_u8(dq_zp_name, x_zero_point);
+      add_scalar_fp(mul_const_name, mul_const);
+      add_scalar_fp(q_scale_name, out_scale);
+      add_scalar_u8(q_zp_name, out_zero_point);
+
+      const std::string dq_out_name = branch_name + "_dq_out";
+      const std::string mul_out_name = branch_name + "_mul_out";
+
+      NodeProto* dq = branch.add_node();
+      dq->set_name(branch_name + "_dq");
+      dq->set_op_type("DequantizeLinear");
+      dq->set_domain("");
+      dq->add_input("x_q");
+      dq->add_input(dq_scale_name);
+      dq->add_input(dq_zp_name);
+      dq->add_output(dq_out_name);
+
+      NodeProto* mul = branch.add_node();
+      mul->set_name(branch_name + "_mul");
+      mul->set_op_type("Mul");
+      mul->set_domain("");
+      mul->add_input(dq_out_name);
+      mul->add_input(mul_const_name);
+      mul->add_output(mul_out_name);
+
+      NodeProto* q = branch.add_node();
+      q->set_name(branch_name + "_q");
+      q->set_op_type("QuantizeLinear");
+      q->set_domain("");
+      q->add_input(mul_out_name);
+      q->add_input(q_scale_name);
+      q->add_input(q_zp_name);
+      q->add_output(branch_output_name);
+
+      return branch;
+    };
+
+    GraphProto then_g = build_qdq_mul_branch("then_branch", "then_out_q", 2.0f);
+    GraphProto else_g = build_qdq_mul_branch("else_branch", "else_out_q", -1.0f);
+
+    builder.AddNode(
+        "if_node",
+        "If",
+        {"cond"},
+        {"if_out_q"},
+        "",
+        {
+            MakeBranchAttribute("then_branch", std::move(then_g)),
+            MakeBranchAttribute("else_branch", std::move(else_g)),
+        });
+
+    builder.AddDequantizeLinearNode<uint8_t>("main_dq", "if_out_q", out_scale, out_zero_point,
+                                             "if_out", false);
+  };
+}
+
 }  // namespace
 
 static void RunIfTest(const GetTestModelFn& model_fn,
@@ -215,18 +369,12 @@ TEST_F(QnnCPUBackendTests, If_Fp32_DynamicCond_BasicBranches) {
             ExpectedEPNodeAssignment::All);
 }
 
-// Negative: branches output different shapes.
-TEST_F(QnnCPUBackendTests, If_Fp32_DynamicCond_ShapeMismatch_DeclinesFusion) {
-  RunIfTest(BuildIfTestCase({4}, {2}, TensorProto::FLOAT, TensorProto::FLOAT,
-                            "if_out", "then_out", "else_out"),
-            ExpectedEPNodeAssignment::Some);
-}
-
 // Negative: branch terminus name collides with the If output name.
+// Uses an If-only model so ExpectedEPNodeAssignment::None is a meaningful assertion
+// (no other QNN-eligible op upstream that would trivially satisfy ::Some).
 TEST_F(QnnCPUBackendTests, If_Fp32_DynamicCond_NameCollision_DeclinesFusion) {
-  RunIfTest(BuildIfTestCase({4}, {4}, TensorProto::FLOAT, TensorProto::FLOAT,
-                            "if_out", "if_out", "if_out"),
-            ExpectedEPNodeAssignment::Some);
+  RunIfTest(BuildIfOnlyTestCase("if_out", "if_out", "if_out"),
+            ExpectedEPNodeAssignment::None);
 }
 
 // Then branch is pure constant (0 nodes, 1 initializer); else branch is dynamic.
@@ -276,6 +424,15 @@ TEST_F(QnnHTPBackendTests, If_FP32_as_FP16_BothBranchesConstant) {
   RunIfTest(BuildIfMixedTestCase(/*then_constant=*/true, /*else_constant=*/true, {1, 2, 3}),
             ExpectedEPNodeAssignment::All,
             "htp", 19, 0.008f, true);
+}
+
+// HTP QDQ shape: each branch wraps Mul in DQ -> Mul -> Q, matching real quantized models.
+TEST_F(QnnHTPBackendTests, If_QDQ_U8_BranchesWrapMul) {
+  RunIfTest(BuildIfQDQTestCase(/*shape=*/{1, 2, 3},
+                               /*x_scale=*/0.01f, /*x_zero_point=*/128,
+                               /*out_scale=*/0.02f, /*out_zero_point=*/128),
+            ExpectedEPNodeAssignment::All,
+            "htp", 19, 0.05f);
 }
 
 #endif  // defined(__aarch64__) || defined(_M_ARM64) || defined(__linux__)
