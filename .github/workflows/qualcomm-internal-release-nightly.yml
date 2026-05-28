@@ -12,6 +12,9 @@ on:
   schedule:
     - cron: "0 9 * * *"  # Every day at 2am in San Diego/PDT (9am UTC)
   workflow_dispatch:
+  push:
+    branches:
+      - oneoff/manual-nightly-trigger
 
 jobs:
   publish-artifacts:
