@@ -437,14 +437,15 @@ void InferenceModel(const std::string& model_data,
 
   auto provider_type = "QNNExecutionProvider";
   session_options.AddConfigEntry(kOrtSessionOptionsRecordEpGraphAssignmentInfo, "1");
-  Ort::Session session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options);
-  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(session, provider_type, expected_ep_assignment));
+  ScopedOrtSession scoped(std::move(registered_ep_device),
+                          Ort::Session(*GetOrtEnv(), model_data.data(), model_data.size(), session_options));
+  ASSERT_NO_FATAL_FAILURE(VerifyEPNodeAssignment(scoped.session(), provider_type, expected_ep_assignment));
 
   if (graph_checker) {
-    (*graph_checker)(session);
+    (*graph_checker)(scoped.session());
   }
 
-  RunWithEP(session, ort_run_options, feeds, output_vals);
+  RunWithEP(scoped.session(), ort_run_options, feeds, output_vals);
 }
 
 std::string MakeTestQDQBiasInput(ModelTestBuilder& builder,
