@@ -54,6 +54,10 @@ jobs:
 
       - name: Build wheel
         working-directory: ort-src
+        env:
+          # Upstream build.py reads NIGHTLY_BUILD from the env (not a CLI flag);
+          # the --nightly_build CLI arg is a fork-only addition (PR #433).
+          NIGHTLY_BUILD: "1"
         run: |
           set -euxo pipefail
 
@@ -80,7 +84,6 @@ jobs:
             --build --update --parallel \
             --build_wheel \
             --wheel_name_suffix=qcom_internal \
-            --nightly_build \
             --build_shared_lib \
             --cmake_extra_defines CMAKE_BUILD_RPATH_USE_ORIGIN:BOOL=TRUE \
             --cmake_generator Ninja \
