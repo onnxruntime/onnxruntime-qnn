@@ -1083,8 +1083,6 @@ void QnnBackendManager::ProcessContextFromBinListAsync(Qnn_ContextHandle_t conte
   auto s = AddQnnContextHandle(context);
   if (!s.IsOK()) {
     ORT_CXX_LOG_PTR(logger_ptr_, ORT_LOGGING_LEVEL_WARNING, ("Unable to add context " + context_ss.str()).c_str());
-  } else {
-    context_created_ = true;
   }
 }
 
@@ -1408,7 +1406,6 @@ Ort::Status QnnBackendManager::ReleaseContext() {
   // release QNN context handles
   contexts_.clear();
   context_map_.clear();
-  ep_context_handle_map_.clear();
 
   context_created_ = false;
   return Ort::Status();
